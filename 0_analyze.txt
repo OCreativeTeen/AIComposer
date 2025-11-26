@@ -1,0 +1,376 @@
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+
+
+
+--------------------------
+
+
+
+python -m venv venv
+      specify  python version  
+            (If Python is installed via Windows Store or py launcher)
+                py -3.10 -m venv myenv310
+                py -3.11 -m venv myenv310
+            else 
+                C:\Python310\python.exe -m venv myenv310-path
+     
+
+venv\Scripts\activate.bat
+
+or  ps
+.\venv\Scripts\Activate.ps1
+
+
+
+check CUDA version
+nvidia-smi
+
+
+
+pip install -r requirements.txt
+
+
+--------------------------
+
+Ctrl + ,  
+            Search:
+                terminal activate environment
+    
+                    Python: Terminal Activate Environment is checked (set to true).
+                        This setting makes Cursor automatically run the venv\Scripts\activate (or equivalent) command when a new terminal is opened in a workspace with a selected virtual environment interpreter.
+
+
+
+
+
+Ctrl-Shift-P    
+   >   Python: Select Interpreter
+            Choose the Python interpreter from your virtual environment (e.g., ./venv/Scripts/python.exe on Windows or ./venv/bin/python on Linux/macOS). This tells Cursor to use the virtual environment’s Python interpreter.
+
+
+
+
+
+
+
+
+https://aistudio.google.com/apikey
+
+
+
+Great! Now I can see the issue clearly:
+MoviePy v2.1.2 vs v2.2.1: There's a version mismatch (pip showed 2.2.1 but runtime shows 2.1.2)
+Missing Pillow: This is a critical dependency for image processing
+No moviepy.editor module: In newer versions of MoviePy, the structure has changed
+The main issues are:
+Missing Pillow dependency
+Incompatible MoviePy version - The newer versions don't have moviepy.editor
+
+
+
+
+check ,  if some effect on image to video can take benefit of nvidia GPU  process (cuda) ?? if yes, try to use GUP boost.
+
+also is there any other effects besides these lines of code provided ,  which based on nvidia GPU ?
+
+
+
+good, help me to add the new effect into this list (to use them)
+
+
+fo rthe new effect you added to effect_image_to_vidie, please add it to GUI create_image_tab ,  radiobutton for the effect setting & regenerated the video for the effect on image
+
+
+
+
+---------------------------------
+Speaker Diarization
+---------------------------------
+https://github.com/pyannote/pyannote-audio
+---------------------------------
+
+
+
+pip install yt-dlp openai-whisper ffmpeg-python
+
+or
+
+pip install yt-dlp faster-whisper ffmpeg-python
+
+
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+
+        pip uninstall torch -y
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+
+pip install --upgrade google-auth-oauthlib google-auth google-api-python-client
+
+
+
+
+ yt-dlp --list-subs https://www.youtube.com/watch?v=xHACoGA275g  
+
+
+
+
+IF USE  CUDA 12.X
+    https://developer.nvidia.com/cuda-12-1-0-download-archive
+        下载对应你系统的版本（Windows Installer），安装时勾选：
+            cuBLAS
+            cuDNN（可选）
+
+
+------------------------------------------------------------------
+Youtube Upload 
+
+注册 Google Cloud 项目
+    前往：Google Cloud Console
+    启用 YouTube Data API v3
+
+创建 OAuth 2.0 凭据
+    选择「OAuth 客户端 ID」
+    类型：Desktop app
+    下载 client_secrets.json
+
+
+    categoryId="22" 是「People & Blogs」，可更改：
+        1: Film & Animation
+        10: Music
+        22: People & Blogs
+        24: Entertainment
+
+
+stable-Diffusion
+
+IP-Adapter
+    https://huggingface.co/h94/IP-Adapter/tree/main/models
+
+------------------------------------------------------------------
+
+from pathlib import Path
+
+path = Path("sc/bs/c.mp3") 
+without_ext = str(path.with_suffix(''))
+print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
+
+
+------------------------------------------------------------------
+
+
+常用符号字符列表
+媒体控制符号
+播放控制: ▶ ◀ ⏸ ⏹ ⏺ ⏭ ⏮ ⏯
+音量: �� �� 🔈 �� 🔊 🔉 🔈 ��
+时间: ⏰ ⏱ ⏲ ⏳ ⌚ ⌛
+编辑工具符号
+剪切: ✂️ ✂ ✄ �� �� ��
+复制: �� �� �� ✏️ ✏ ✒ 🖊 ��
+粘贴: �� 📄 📝
+删除: 🗑️ �� ❌ ❎ ✖ ✗
+媒体相关符号
+视频: �� �� �� �� �� 🎬 �� ��
+音频: �� 🎶 🔊 🔉 �� 🎤 �� ��
+图片: ��️ �� ��️ 📷 📸 🖼️
+操作符号
+刷新/重置: �� ↻ ↺ �� �� ��
+设置: ⚙️ ⚙ 🔧 🔨 ��️ ��
+保存: �� 💾 �� �� �� ��
+加载: �� �� 📂 �� 📂 📁
+导航符号
+方向: ⬅ ➡ ⬆ ⬇ ↖ ↗ ↘ ↙
+箭头: ← → ↑ ↓ ↔ ↕ ↩ ↪
+页面: ◀ ▶ ◁ ▷ ◂ ▸
+状态符号
+成功: ✅ ✓ ✔ ☑ ✅ ✅
+错误: ❌ ❎ ✖ ✗ ⚠️ ⚠ 🚫 ��
+信息: ℹ️ ℹ �� 💡 💡 ��
+警告: ⚠️ ⚠ ⚠️ ⚠ ⚠️ ⚠
+数学符号
+基本: + - × ÷ = ≠ ≈ ±
+比较: < > ≤ ≥ ≦ ≧
+其他: ∞ ∑ ∏ √ ∛ ∜ ∫ ∂
+特殊符号
+星号: ★ ☆ ⭐ �� ✨ 💫
+心形: ❤ �� 💚 �� �� 🖤 �� ��
+几何: ● ○ ■ □ ▲ △ ▼ ▽ ◆ ◇
+线条: ─ │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼
+表情符号（适合按钮）
+常用: �� �� �� �� �� �� 😅 😂
+工具: �� �� ��️ ⚙️ 🔩 🔫 💣 ��
+手势: �� �� �� ✌ �� �� 🤘 �� 👉
+在你的代码中已经使用的符号：
+◀ - 后退
+▶ - 前进/播放
+�� - 重置
+✂️ - 剪切
+�� - 视频/PIP
+⏹ - 停止
+⚠️ - 警告
+× - 乘号
+�� - 提示
+你可以根据按钮的功能选择合适的符号。比如：
+播放按钮用 ▶
+停止按钮用 ⏹
+设置按钮用 ⚙️
+保存按钮用 💾
+删除按钮用 🗑️
+这些符号在大多数现代字体中都能正确显示，非常适合用于GUI界面的按钮文本。
+
+
+
+    def finish_av_for_scenarios(self, raw_scenarios, current_scenario):
+        current_id = (current_scenario["id"]/100)*100
+        main_audio = get_file_path(current_scenario, "main_audio")
+        main_video = get_file_path(current_scenario, "main_video")
+        start_time = 0.0
+        for i, s in enumerate(raw_scenarios):
+            s["id"] = current_id + 100
+            s["wan_style"] = current_scenario["wan_style"]
+            s["wan_shot"] = current_scenario["wan_shot"]
+            s["wan_angle"] = current_scenario["wan_angle"]
+            s["wan_color"] = current_scenario["wan_color"]
+            s["general_location"] = current_scenario["general_location"]
+
+            s["zero"] = current_scenario["zero"]
+            s["main_audio"] = main_audio
+            s["main_video"] = main_video
+            second = get_file_path(current_scenario, "second")
+            if second:
+                s["second"] = second    
+            second_audio = get_file_path(current_scenario, "second_audio")
+            if second_audio:
+                s["second_audio"] = second_audio
+
+            duration = s["duration"]
+            if isinstance(duration, str):
+                duration = float(duration)
+            if i == len(raw_scenarios) - 1:
+                duration = self.ffmpeg_audio_processor.get_duration(main_audio) - start_time
+            s["duration"] = duration
+
+            a = self.ffmpeg_audio_processor.audio_cut_fade(main_audio, start_time, duration)
+            olda, newa =self.refresh_scenario_media(s, "clip_audio", ".wav", a)
+            safe_remove(olda)
+
+            v = self.ffmpeg_processor.resize_video(main_video, None, None, start_time, start_time + duration)
+            self.refresh_scenario_media(s, "clip_video", ".mp4", v)
+
+            start_time += duration
+
+
+
+Complete List of Chinese Voice IDs (Speech-02 HD / System Voices)
+
+These IDs are usable via the API (i.e. “system voice_id”, not clone voices).
+
+Style / Label	Voice ID
+青涩青年 (young male, fresh)	male-qn-qingse 
+resource.ppio.com
+
+精英青年 (elite youth male)	male-qn-jingying 
+resource.ppio.com
+
+霸道青年 (domineering youth male)	male-qn-badao 
+resource.ppio.com
+
+青年大学生 (college youth male)	male-qn-daxuesheng 
+resource.ppio.com
+
+少女音色 (young girl)	female-shaonv 
+resource.ppio.com
+
+御姐音色 (cool-mature young woman)	female-yujie 
+resource.ppio.com
+
+成熟女性 (mature female)	female-chengshu 
+resource.ppio.com
+
+甜美女性 (sweet female)	female-tianmei 
+resource.ppio.com
+
+男性主持人 (male presenter / host)	presenter_male 
+resource.ppio.com
+
+女性主持人 (female presenter / host)	presenter_female 
+resource.ppio.com
+
+男性有声书 1 (audiobook male style 1)	audiobook_male_1 
+resource.ppio.com
+
+男性有声书 2 (audiobook male style 2)	audiobook_male_2 
+resource.ppio.com
+
+女性有声书 1 (audiobook female style 1)	audiobook_female_1 
+resource.ppio.com
+
+女性有声书 2 (audiobook female style 2)	audiobook_female_2 
+resource.ppio.com
+
+青涩青年-beta	male-qn-qingse-jingpin 
+resource.ppio.com
+
+精英青年-beta	male-qn-jingying-jingpin 
+resource.ppio.com
+
+霸道青年-beta	male-qn-badao-jingpin 
+resource.ppio.com
+
+青年大学生-beta	male-qn-daxuesheng-jingpin 
+resource.ppio.com
+
+少女-beta	female-shaonv-jingpin 
+resource.ppio.com
+
+御姐-beta	female-yujie-jingpin 
+resource.ppio.com
+
+成熟女性-beta	female-chengshu-jingpin 
+resource.ppio.com
+
+甜美女性-beta	female-tianmei-jingpin 
+resource.ppio.com
+
+聪明男童 (smart boy)	clever_boy 
+resource.ppio.com
+
+可爱男童 (cute boy)	cute_boy 
+resource.ppio.com
+
+萌萌女童 (cute girl)	lovely_girl 
+resource.ppio.com
+
+卡通猪小琪 (cartoon pig “Xiao Qi”)	cartoon_pig 
+resource.ppio.com
+
+病娇弟弟 (sickly cute little brother)	bingjiao_didi 
+resource.ppio.com
+
+俊朗男友 (handsome boyfriend)	junlang_nanyou 
+resource.ppio.com
+
+纯真学弟 (innocent junior schoolboy)	chunzhen_xuedi 
+resource.ppio.com
+
+冷淡学长 (“aloof senior student”)	lengdan_xiongzhang 
+resource.ppio.com
+
+霸道少爷 (domineering young master)	badao_shaoye 
+resource.ppio.com
+
+甜心小玲 (sweetheart “Xiaoling”)	tianxin_xiaoling 
+resource.ppio.com
+
+俏皮萌妹 (playful cute girl)	qiaopi_mengmei 
+resource.ppio.com
+
+妩媚御姐 (seductive older sister style)	wumei_yujie 
+resource.ppio.com
+
+嗲嗲学妹 (“coquettish younger female student”)	diadia_xuemei 
+resource.ppio.com
+
+淡雅学姐 (elegant senior female student)	danya_xuejie 
+resource.ppio.com

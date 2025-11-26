@@ -1,0 +1,82 @@
+# =============================
+# PyTorch Installation Guidance
+# =============================
+# For GPU (CUDA 12.1, recommended):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# For other CUDA versions, see: https://pytorch.org/get-started/locally/
+# For CPU-only (no CUDA):
+#   pip install torch torchvision torchaudio
+#
+# The rest of the requirements can be installed as usual:
+#   pip install -r requirements.txt
+# =============================
+
+#--extra-index-url https://download.pytorch.org/whl/cu121
+
+
+# =============================
+# rtx 2070
+# pip uninstall onnxruntime onnxruntime-gpu
+ 
+# python -m venv venv
+# py -3.10 -m venv venv
+
+     
+# venv\Scripts\activate
+
+# pip install -r requirements.txt
+
+# pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
+
+numpy==2.1.2
+
+# Whisper ASR
+faster-whisper
+hf_xet
+
+# OpenAI API
+openai>=1.0.0
+
+# Image/Video Processing
+pillow>=10.1.0
+rembg>=2.0.50
+moviepy
+ffmpeg-python
+opencv-python
+
+# YouTube Download
+yt-dlp
+
+# Web/API
+fastapi
+uvicorn
+pydantic
+python-multipart
+flask
+
+pyannote.audio
+
+# Google APIs
+google-auth-oauthlib
+google-auth
+google-api-python-client
+
+# Utility
+requests>=2.31.0
+python-dotenv
+aiofiles
+zhconv
+tkinterdnd2
+pygame
+
+# Audio recording
+sounddevice
+soundfile
+
+# Security/Auth
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Typing extensions (for older Python versions)
+typing-extensions>=4.0.0
