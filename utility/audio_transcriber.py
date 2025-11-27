@@ -30,8 +30,8 @@ class AudioTranscriber:
         device = torch.device("cuda") 
         hf_token = os.getenv("HF_TOKEN", "")
         self.pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization",
-            use_auth_token=hf_token
+            "pyannote/speaker-diarization-3.1",
+            token=hf_token
         )
         self.pipeline.to(device)
 

@@ -256,7 +256,7 @@ class MagicWorkflow:
                 safe_remove(file)
 
 
-    # av_type: image_generation, IMAGE, WS2V, FS2V, S2V, I2V, 2I2V, PS2V, AI2V
+    # av_type: image_generation, IMAGE, WS2V, FS2V, S2V, I2V, 2I2V, AI2V
     def build_prompt(self, scenario_data, style, extra, track, av_type):
         prompt_dict = {}
         # 提取当前场景的关键信息
@@ -1641,7 +1641,7 @@ class MagicWorkflow:
             return None
 
         choose_file_stem = Path(files[0]).stem
-        has_audio = True if "_L_WS2V" in choose_file_stem or "_R_WS2V" in choose_file_stem or "_S2V" in choose_file_stem or "_AI2V" in choose_file_stem or "_FS2V" in choose_file_stem or "_PS2V" in choose_file_stem else False
+        has_audio = True if "_L_WS2V" in choose_file_stem or "_R_WS2V" in choose_file_stem or "_S2V" in choose_file_stem or "_FS2V" in choose_file_stem   else False
 
         enhanced_video = output_mp4_folder + "/" + choose_file_stem + ".mp4"
         if not os.path.exists(enhanced_video):
@@ -1654,11 +1654,6 @@ class MagicWorkflow:
         if audio:
             if not has_audio:
                 enhanced_video = self.ffmpeg_processor.add_audio_to_video(enhanced_video, audio)
-            else:
-                previous_sound_duration = 0.0
-                if "_PS2V" in choose_file_stem:
-                    previous_sound_duration = scenario.get("previous_sound_duration", 0.0)
-                enhanced_video = self.ffmpeg_processor.resize_video(enhanced_video, None, None, previous_sound_duration, self.ffmpeg_audio_processor.get_duration(audio), 1)
         elif has_audio:
             audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
             olda, audio = self.refresh_scenario_media(scenario, audio_type, ".wav", audio)
@@ -1696,7 +1691,7 @@ class MagicWorkflow:
         elif animate_mode == "2I2V":
             self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path )
 
-        elif animate_mode == "S2V" or animate_mode == "PS2V" or animate_mode == "FS2V":
+        elif animate_mode == "S2V" or animate_mode == "FS2V":
             self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, video_path=sound_path, key=animate_mode, silence=False)
 
         elif animate_mode == "AI2V":

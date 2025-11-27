@@ -1826,7 +1826,7 @@ class WorkflowGUI:
         # 持续监控，不设置超时限制，直到GUI退出或找到文件
         
         try:
-            if clip_animation in ["S2V", "FS2V", "PS2V", "I2V", "2I2V", "AI2V"]:
+            if clip_animation in ["S2V", "FS2V", "I2V", "2I2V", "AI2V"]:
                 # 查找以场景ID开头的mp4文件
                 if clip_animation == "I2V":
                     pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_I2V_*.mp4")
@@ -1836,8 +1836,6 @@ class WorkflowGUI:
                     pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_S2V_*-audio.mp4")
                 elif clip_animation == "FS2V":
                     pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_FS2V_*-audio.mp4")
-                elif clip_animation == "PS2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_PS2V_*-audio.mp4")
                 elif clip_animation == "AI2V":
                     pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_AI2V_*.mp4")
 
@@ -4344,6 +4342,16 @@ class WorkflowGUI:
     def handle_av_replacement(self, av_path, replace_media_audio, media_type, initial_start_time=None, initial_end_time=None):
         """处理音频替换"""
         try:
+            if not av_path:
+                if media_type == 'clip':
+                    av_path = get_file_path(current_scenario, "clip")
+                elif media_type == 'zero':
+                    av_path = get_file_path(current_scenario, "zero")
+                elif media_type == 'one':
+                    av_path = get_file_path(current_scenario, "one")
+                else:
+                    av_path = get_file_path(current_scenario, "second")
+
             current_scenario = self.get_current_scenario()
             previous_scenario = self.get_previous_scenario()
             next_scenario = self.get_next_scenario()
@@ -4628,41 +4636,9 @@ class WorkflowGUI:
         if not wan_prompt or (isinstance(wan_prompt, str) and wan_prompt.strip() == "") or (isinstance(wan_prompt, dict) and len(wan_prompt) == 0):
             wan_prompt = self.workflow.build_prompt(scenario, "", "", image_typ, animate_mode)
 
-        action_path = get_file_path(scenario, "clip_action")
+        action_path = get_file_path(scenario, self.select_second_track)
 
         sound_path = get_file_path(scenario, "clip_audio")
-        if animate_mode == "PS2V":
-            previous_sound = None
-            next_sound = None
-
-            if previous_scenario:
-                previous_sound = get_file_path(previous_scenario, "clip_audio")
-                if previous_sound:
-                    previous_sound_duration = self.workflow.ffmpeg_audio_processor.get_duration(previous_sound)
-                    if previous_sound_duration > 3.0:
-                        previous_sound = self.workflow.ffmpeg_audio_processor.audio_cut_fade(previous_sound, previous_sound_duration-3.0, 3.0)
-            
-            if next_scenario:
-                next_sound = get_file_path(next_scenario, "clip_audio")
-                if next_sound:
-                    if self.workflow.ffmpeg_audio_processor.get_duration(next_sound) > 3.0:
-                        next_sound = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound, 0.0, 3.0)
-            
-            audio_list = []
-            if previous_sound:
-                scenario["previous_sound_duration"] = self.workflow.ffmpeg_audio_processor.get_duration(previous_sound)
-                audio_list.append(previous_sound)
-            else:
-                scenario["previous_sound_duration"] = 0.0
-            if sound_path:
-                audio_list.append(sound_path)
-            if next_sound:
-                scenario["next_sound_duration"] = self.workflow.ffmpeg_audio_processor.get_duration(next_sound)
-                audio_list.append(next_sound)
-            else:
-                scenario["next_sound_duration"] = 0.0
-
-            sound_path = self.workflow.ffmpeg_audio_processor.concat_audios(audio_list)
 
         self.workflow.rebuild_scenario_video(scenario, image_typ, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt)
         self.workflow.save_scenarios_to_json()

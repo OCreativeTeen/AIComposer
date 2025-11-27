@@ -15,31 +15,25 @@
 
 
 # =============================
-# rtx 2070
 # pip uninstall onnxruntime onnxruntime-gpu
  
 # python -m venv venv
-# py -3.10 -m venv venv
-
+####### py -3.10 -m venv venv
      
 # venv\Scripts\activate
 
+
+# pip install torch==2.8.0+cu128 torchvision==0.23.0+cu128 torchaudio==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+# pip install pyannote.audio
 # pip install -r requirements.txt
-
-# pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-
-
-numpy==2.1.2
 
 # Whisper ASR
 faster-whisper
-hf_xet
 
 # OpenAI API
 openai>=1.0.0
 
 # Image/Video Processing
-pillow>=10.1.0
 rembg>=2.0.50
 moviepy
 ffmpeg-python
@@ -55,7 +49,6 @@ pydantic
 python-multipart
 flask
 
-pyannote.audio
 
 # Google APIs
 google-auth-oauthlib
@@ -63,7 +56,6 @@ google-auth
 google-api-python-client
 
 # Utility
-requests>=2.31.0
 python-dotenv
 aiofiles
 zhconv
@@ -72,11 +64,10 @@ pygame
 
 # Audio recording
 sounddevice
-soundfile
 
 # Security/Auth
 python-jose[cryptography]
 passlib[bcrypt]
 
 # Typing extensions (for older Python versions)
-typing-extensions>=4.0.0
+#typing-extensions>=4.0.0

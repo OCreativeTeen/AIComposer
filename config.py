@@ -4,7 +4,7 @@ import uuid
 # =============================================================================
 # 基础路径配置
 # =============================================================================
-BASE_MEDIA_PATH = "/Projects/media"
+BASE_MEDIA_PATH = "/AI_MEDIA"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
@@ -379,7 +379,7 @@ TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "cir
 # =============================================================================
 # 图像生成默认风格配置
 
-_ANIMATE_TYPES = ["I2V", "I2VL", "I2VS", "2I2V", "WS2V", "S2V", "FS2V", "PS2V"] 
+_ANIMATE_TYPES = ["I2V", "I2VL", "I2VS", "2I2V", "WS2V", "S2V", "FS2V", "AI2V"] 
 ANIMATE_TYPES = _ANIMATE_TYPES + ["", "IMAGE"]
 
 
