@@ -16,7 +16,7 @@ import requests
 import glob
 import re
 from pathlib import Path
-from config import azure_subscription_key, azure_region, VIDEO_WIDTH, VIDEO_HEIGHT
+from config import azure_subscription_key, azure_region
 import config
 from typing import List, Dict, Optional, Union, Any, Generator
 import random
@@ -31,7 +31,7 @@ from utility.llm_api import LLMApi
 
 class MagicWorkflow:
 
-    def __init__(self, pid, language, channel, story_site):
+    def __init__(self, pid, language, channel, story_site, video_width=None, video_height=None):
         self.pid = pid
         self.language = language
         self.channel = channel
@@ -41,13 +41,25 @@ class MagicWorkflow:
         # 全局线程管理
         self.background_threads = []
 
-        self.ffmpeg_processor = FfmpegProcessor(pid, language)
+        # Get video dimensions from parameters or load from project config
+        if video_width is None or video_height is None:
+            # Try to load from project config
+            try:
+                from project_manager import ProjectConfigManager
+                config_manager = ProjectConfigManager(pid)
+                if config_manager.project_config:
+                    video_width = config_manager.project_config.get('video_width')
+                    video_height = config_manager.project_config.get('video_height')
+            except Exception as e:
+                print(f"⚠️  Could not load video dimensions from project config: {e}")
+        
+        self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
-        self.sd_processor = SDProcessor(pid, language, channel)
+        self.sd_processor = SDProcessor(self)
         self.downloader = YoutubeDownloader(pid)
         self.summarizer = TalkSummarizer(pid, language)
         self.speech_service = MinimaxSpeechService(self.pid)
-        self.transcriber = AudioTranscriber(pid, language, self.ffmpeg_audio_processor, model_size="small", device="cuda")
+        self.transcriber = AudioTranscriber(self, model_size="small", device="cuda")
 
         self.llm = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
 
@@ -130,8 +142,7 @@ class MagicWorkflow:
 
     def find_default_background_video(self):
         prefix, keywords = self.fetch_resource_prefix("", ["default"])
-        mp4 = self.find_matched_file(config.get_background_video_path()+"/"+self.channel, prefix+"/", "mp4", keywords)
-        return self.ffmpeg_processor.resize_video(mp4, VIDEO_WIDTH, VIDEO_HEIGHT)
+        return self.find_matched_file(config.get_background_video_path()+"/"+self.channel, prefix+"/", "mp4", keywords)
         
 
     def find_default_background_music(self):
@@ -741,7 +752,7 @@ class MagicWorkflow:
 
 
     def _create_image(self, sd_config, new_image_path, figures, positive, negative, seed):
-        if VIDEO_WIDTH >= VIDEO_HEIGHT:
+        if self.ffmpeg_processor.width >= self.ffmpeg_processor.height:
             sd_width, sd_height = 1920, 1080
         else:
             sd_width, sd_height = 1080, 1920
@@ -801,8 +812,8 @@ class MagicWorkflow:
             print("❌ 图像生成失败，返回 None")
             return
             
-        print(f"🔄 缩放图像从 {sd_width}x{sd_height} 到HD尺寸 {VIDEO_WIDTH}x{VIDEO_HEIGHT}")
-        hd_image = self.sd_processor.resize_image(image, VIDEO_WIDTH, VIDEO_HEIGHT)
+        print(f"🔄 缩放图像从 {sd_width}x{sd_height} 到HD尺寸 {self.ffmpeg_processor.width}x{self.ffmpeg_processor.height}")
+        hd_image = self.sd_processor.resize_image(image, self.ffmpeg_processor.width, self.ffmpeg_processor.height)
         # Convert back to binary format
         buffer = BytesIO()
         hd_image.save(buffer, format="PNG")
@@ -1150,7 +1161,7 @@ class MagicWorkflow:
                 img = img.convert('RGB')
             
             # resize image to 1920*1080
-            img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+            img = img.resize((self.ffmpeg_processor.width, self.ffmpeg_processor.height))
             img.save(image_path, 'WEBP', quality=90, method=6)
 
         description = self.sd_processor.describe_image_openai(image_path)
@@ -1313,64 +1324,6 @@ class MagicWorkflow:
         vv = self.ffmpeg_processor.concat_videos_demuxer(mv_list, True)
         os.replace(vv, whole_video_path)  
         config.clear_temp_files()
-
-
-    def build_title_video(self, title, script, language, background_video, background_audio, starting_video, trailing_duration, mode):
-        if background_audio:
-            if isinstance(background_audio, str):
-                background_video = self.ffmpeg_processor.trim_video_to_duration(background_video, self.ffmpeg_audio_processor.get_duration(background_audio))
-                background_video = self.ffmpeg_processor.add_audio_to_video(background_video, background_audio)
-            else:  # background_audio is a number, it means the duration of the video
-                background_video = self.ffmpeg_processor.trim_video_to_duration(background_video, background_audio)
-
-        switch = {
-            "zh": config.FONT_0,
-            "en": config.FONT_15,
-            "jp": config.FONT_11,
-            "tw": config.FONT_2,
-            "ar": config.FONT_13,
-            "th": config.FONT_14,
-            "tib": config.FONT_16,
-            "mn": config.FONT_17,
-            "kr": config.FONT_20,
-            "general": config.FONT_15
-        }
-
-        if mode == "16:9":
-            background_video = self.ffmpeg_processor.add_title_to_video(background_video, title, switch[language], 110, position="header")
-            if script:
-                background_video = self.ffmpeg_processor.add_title_to_video(background_video, script, switch[language], 65, position="footer")
-            if starting_video:
-                return self.ffmpeg_processor._add_center_video(background_video, starting_video, True, trailing_duration)
-            else:
-                return background_video
-        else:
-            background_video = self.ffmpeg_processor.add_title_to_video(background_video, title, switch[language], 80, position="header")
-            if script:
-                background_video = self.ffmpeg_processor.add_title_to_video(background_video, script, switch[language], 50, position="footer")
-            if starting_video:
-                return self.ffmpeg_processor.add_169_video_to_916_background(background_video, starting_video, 0.33, True, 0)
-            else:
-                return background_video
-
-
-    def title_speech_audio(self, background_music, voice_path, with_slide=True, extra_length=0):
-        voice_start_time = 1
-        full_length = self.ffmpeg_processor.get_duration(voice_path) + voice_start_time
-        if with_slide:
-            voice_start_time += 2
-            full_length += 2
-
-        full_length += extra_length
-        
-        background_audio = self.ffmpeg_audio_processor.audio_cut_fade(background_music, 0, full_length, 1.0, 0.2)
-
-        if with_slide:
-            slide_in_sound_path = f"{self.effect_path}/sliding.wav"
-            background_audio = self.ffmpeg_audio_processor.audio_mix(background_audio, 1.0, 1.0, slide_in_sound_path, 1.0)
-            background_audio = self.ffmpeg_audio_processor.audio_mix(background_audio, 1.0, 2.0, slide_in_sound_path, 1.0)
-
-        return self.ffmpeg_audio_processor.audio_mix(background_audio, 1.0, voice_start_time, voice_path, 1.0)
 
 
     def transcript_youtube_video(self, url, source_lang, translated_language):
@@ -1692,7 +1645,7 @@ class MagicWorkflow:
             self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path )
 
         elif animate_mode == "S2V" or animate_mode == "FS2V":
-            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, video_path=sound_path, key=animate_mode, silence=False)
+            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, key=animate_mode, silence=False)
 
         elif animate_mode == "AI2V":
             if not action_path:
@@ -1850,7 +1803,7 @@ class MagicWorkflow:
             clip= s["clip"]
             video_segments.append({"path":clip, "transition":"fade", "duration":1.0})
 
-        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, VIDEO_WIDTH, VIDEO_HEIGHT, keep_audio_if_has=True)
+        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, self.ffmpeg_processor.width, self.ffmpeg_processor.height, keep_audio_if_has=True)
 
         if zero_audio_only:
             audio_segments = []
@@ -1956,7 +1909,7 @@ class MagicWorkflow:
             clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio_scenario["clip_audio"], audio_scenario["start"], audio_scenario["duration"])
             olda, clip_audio = self.refresh_scenario_media(audio_scenario, "clip_audio", ".wav", clip_wav)
 
-            v = self.ffmpeg_processor.resize_video(raw_scenario["clip"], None, None, audio_scenario["start"], audio_scenario["end"])
+            v = self.ffmpeg_processor.resize_video(raw_scenario["clip"], None, audio_scenario["start"], audio_scenario["end"])
             #v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
             self.refresh_scenario_media(audio_scenario, "clip", ".mp4", v)
 

@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from mpmath import rational
-from config import ffmpeg_path, ffprobe_path, VIDEO_WIDTH, VIDEO_HEIGHT, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
+from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
 import config
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.file_util import copy_file
@@ -24,18 +24,22 @@ class FfmpegProcessor:
     NVENC_MAX_PIXELS = 8192 * 8192  # Maximum total pixels
 
 
-    def __init__(self, pid, language):
+    def __init__(self, pid, language, video_width=None, video_height=None):
         self.pid = pid
         self.ffmpeg_path = ffmpeg_path
         self.ffprobe_path = ffprobe_path
         
+        # Get video dimensions from parameters or use defaults (1920x1080)
+        self.width = int(video_width) if video_width else 1920
+        self.height = int(video_height) if video_height else 1080
+        
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
         # Calculate common overlay dimensions based on main dimensions
-        self.overlay_width_large = VIDEO_WIDTH // 2  # For center video overlay
-        self.overlay_height_large = VIDEO_HEIGHT // 2
-        self.overlay_width_small = int(VIDEO_WIDTH * 0.3)  # For sliding images
-        self.overlay_height_small = int(VIDEO_HEIGHT * 0.533)  # Maintain roughly square aspect
+        self.overlay_width_large = self.width // 2  # For center video overlay
+        self.overlay_height_large = self.height // 2
+        self.overlay_width_small = int(self.width * 0.3)  # For sliding images
+        self.overlay_height_small = int(self.height * 0.533)  # Maintain roughly square aspect
             
         self.language = language
         if language == "tw":
@@ -54,9 +58,9 @@ class FfmpegProcessor:
     def _is_nvenc_compatible(self, width=None, height=None):
         """Check if the given resolution is compatible with NVENC hardware encoder."""
         if width is None:
-            width = VIDEO_WIDTH
+            width = self.width
         if height is None:
-            height = VIDEO_HEIGHT
+            height = self.height
         
         # Check individual dimension limits
         if width > self.NVENC_MAX_WIDTH or height > self.NVENC_MAX_HEIGHT:
@@ -93,7 +97,7 @@ class FfmpegProcessor:
             if not self._check_nvenc_availability():
                 print(f"⚠️  NVENC encoder not available in FFmpeg build, using software encoding")
             else:
-                print(f"⚠️  Resolution {width or VIDEO_WIDTH}x{height or VIDEO_HEIGHT} exceeds NVENC limits, falling back to software encoding")
+                print(f"⚠️  Resolution {width or self.width}x{height or self.height} exceeds NVENC limits, falling back to software encoding")
             return {
                 "codec": "libx264",
                 "preset": "medium",
@@ -141,9 +145,9 @@ class FfmpegProcessor:
         if fps is None:
             fps = self.STANDARD_FPS
         if width is None:
-            width = VIDEO_WIDTH
+            width = self.width
         if height is None:
-            height = VIDEO_HEIGHT
+            height = self.height
         return f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={fps}"
 
 
@@ -152,9 +156,9 @@ class FfmpegProcessor:
         if fps is None:
             fps = self.STANDARD_FPS
         if width is None:
-            width = VIDEO_WIDTH
+            width = self.width
         if height is None:
-            height = VIDEO_HEIGHT
+            height = self.height
         return f"scale={width}:{height},fps={fps}"
    
     def _get_standardized_output_params(self):
@@ -248,7 +252,7 @@ class FfmpegProcessor:
                 output_path
             ])
             
-            print(f"🔄 Converting to MP4 and resizing to {VIDEO_WIDTH}x{VIDEO_HEIGHT}: {input_path}")
+            print(f"🔄 Converting to MP4 and resizing to {self.width}x{self.height}: {input_path}")
             subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             print(f"✅ Successfully converted and resized: {output_path}")
         except subprocess.CalledProcessError as e:
@@ -314,20 +318,6 @@ class FfmpegProcessor:
         except Exception as e:
             print(f"❌ Error in repeat_video_match_audio: {e}")
             return None
-
-
-    def trim_video_to_duration(self, input_video_path, target_duration):
-        width, height = self.check_video_size(input_video_path)
-        if width > height:
-            if VIDEO_WIDTH > VIDEO_HEIGHT:
-                return self.resize_video(input_video_path, VIDEO_WIDTH, VIDEO_HEIGHT, 0, target_duration)
-            else:
-                return self.resize_video(input_video_path, VIDEO_HEIGHT, VIDEO_HEIGHT*9/16, 0, target_duration)
-        else:
-            if VIDEO_WIDTH > VIDEO_HEIGHT:
-                return self.resize_video(input_video_path, VIDEO_HEIGHT*9/16, VIDEO_HEIGHT, 0, target_duration)
-            else:
-                return self.resize_video(input_video_path, VIDEO_WIDTH, VIDEO_HEIGHT, 0, target_duration)
 
 
     # on top of the mp4 from base_video_path, 
@@ -430,269 +420,226 @@ class FfmpegProcessor:
             raise RuntimeError(error_msg)
 
 
-    def resize_video(self, video_path, width, height, start_time=0, end_time=None, volume=1.0):
-        """Resize a video to the specified width and height."""
+    def refps_video(self, video_path, fps):
         try:
-            # Generate output path
             output_path = config.get_temp_file(self.pid, "mp4")
-            
-            # Get current video dimensions and frame rate
-            current_width, current_height = self.get_resolution(video_path)
-            duration = self.get_duration(video_path)
-            
-            # Get input video frame rate
-            input_fps = None
-            try:
-                result = subprocess.run([
-                    self.ffprobe_path,
-                    "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=r_frame_rate",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    video_path
-                ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-                
-                fps_fraction = result.stdout.strip()
-                if fps_fraction:
-                    if '/' in fps_fraction:
-                        num, den = fps_fraction.split('/')
-                        input_fps = float(num) / float(den)
-                    else:
-                        input_fps = float(fps_fraction)
-                    if input_fps <= 0:
-                        input_fps = None
-            except Exception as e:
-                print(f"⚠️  Could not get input video FPS: {e}, assuming needs FPS conversion")
-                input_fps = None
-            
-            # Check if FPS resampling is needed
-            need_fps_resample = (input_fps is not None and abs(input_fps - self.STANDARD_FPS) > 0.1)
-            
-            # Check if resize is needed (if we can't get dimensions, assume resize is needed)
-            need_resize = width and height and (current_width is None or current_height is None or 
-                          current_width != width or current_height != height)
-            
-            # Check if time trimming is needed
-            if start_time < 0:
-                start_time = 0
-            if end_time is None or end_time > duration:
-                end_time = duration
 
-            need_time_cut = (start_time > 0 or end_time < duration)
-
-            if not need_resize and not need_time_cut and not need_fps_resample and volume == 1.0:
-                print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")
-                import shutil
-                shutil.copy2(video_path, output_path)
-                return output_path
-            
-            print(f"🔧 Processing video: resize={need_resize}, time_cut={need_time_cut}, fps_resample={need_fps_resample} (input_fps={input_fps}, target_fps={self.STANDARD_FPS})")
-            
-            # Get dynamic encoder configuration based on target resolution
-            input_args = self._get_input_args(width, height)
-
-            # Build the command
             cmd = [
-                self.ffmpeg_path, "-y"
+                self.ffmpeg_path,
+                "-i", video_path,
+                "-vf", "fps="+fps,
+                "-c:v", "libx264",
+                "-crf", "18",
+                "-preset", "medium",
+                "-c:a", "copy",
+                output_path
             ]
             
-            cmd.extend(input_args)  # Add input args (like hwaccel)
+            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg Error 1: {e.stderr}")
 
-            cmd.extend([
-                "-i", video_path
-            ])
 
-            # Build video filter chain
-            video_filters = []
-            
-            # Add scale filter if resize is needed
-            if need_resize:
-                scale_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
-                video_filters.append(scale_filter)
-            
-            # Add FPS resampling filter if needed (this preserves original duration)
-            if need_fps_resample:
-                fps_filter = f"fps={self.STANDARD_FPS}:round=near"
-                video_filters.append(fps_filter)
-            
-            # Apply video filters if any
-            if video_filters:
-                cmd.extend([
-                    "-vf", ",".join(video_filters)
-                ])
+    def resize_video(self, video_path, width, start_time=0, end_time=None, volume=1.0, start_x=0, start_y=0):
+        """
+        Resize a video with optional cropping from start_x, start_y.
+        """
+        try:
+            # Get video metadata
+            current_width, current_height = self.get_resolution(video_path)
+            if not current_width or not current_height:
+                print(f"⚠️  Could not get input video dimensions")
+                return None
 
-            # Only add time parameters if time cutting is needed
-            if need_time_cut:
-                cmd.extend([
-                    "-ss", str(start_time),
-                    "-to", str(end_time)
-                ])
+            duration = self.get_duration(video_path) or 0.0
+            input_fps = self._get_video_fps(video_path)
+            
+            # Calculate crop dimensions and validate bounds
+            crop_width, crop_height, start_x, start_y = self._calculate_crop_dimensions( current_width, current_height, width, start_x, start_y )
+            
+            # Normalize time parameters
+            start_time, end_time = self._normalize_time_params(start_time, end_time, duration)
+            
+            # Determine what operations are needed
+            need_crop = (start_x > 0  or  start_y > 0  or  crop_width < current_width  or  crop_height < current_height)
 
-            # Get encoder configuration - use the properly formatted output args
-            encoder_args = self._get_output_args(width, height)
-            cmd.extend(encoder_args)
+            need_scale = (crop_width != self.width or crop_height != self.height)
+            need_fps_resample = (input_fps is not None and abs(input_fps - self.STANDARD_FPS) > 0.1)
+            need_time_cut = (start_time > 0 or end_time < duration)
             
-            if self.has_audio_stream(video_path) and volume > 0.0:
-                if volume != 1.0:
-                    cmd.extend([
-                        "-af", f"volume={volume}"
-                    ])
-                # Add audio settings - use copy if no volume change to preserve original duration
-                if volume == 1.0 and not need_fps_resample:
-                    # Try to copy audio stream to preserve original timing
-                    cmd.extend(["-c:a", "copy"])
-                else:
-                    # Re-encode audio to ensure sync with video (especially after FPS resampling)
-                    cmd.extend([
-                        "-c:a", "aac",  
-                        "-b:a", "192k",
-                        "-ar", str(self.STANDARD_AUDIO_RATE),
-                        "-ac", str(self.STANDARD_AUDIO_CHANNELS)
-                    ])
-
-            cmd.extend([
-                "-pix_fmt", "yuv420p",
-            ])
+            # Early exit if no changes needed
+            if not any([need_crop, need_scale, need_time_cut, need_fps_resample]) and volume == 1.0:
+                output_path = config.get_temp_file(self.pid, "mp4")
+                shutil.copy2(video_path, output_path)
+                print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")
+                return output_path
             
-            # Only set output frame rate if we didn't use fps filter (for consistency)
-            # If we used fps filter, the frame rate is already set by the filter
-            if not need_fps_resample:
-                cmd.extend([
-                    "-r", str(self.STANDARD_FPS),  # Output frame rate (only if not resampling)
-                ])
-            
-            cmd.extend([
-                #"-g", str(self.STANDARD_FPS),  # Keyframe interval
-                #"-keyint_min", str(self.STANDARD_FPS),
-                "-sc_threshold", "0",
-                "-vsync", "cfr",  # Constant frame rate - ensures proper frame rate handling
-                "-movflags", "+faststart",
-                "-avoid_negative_ts", "make_zero",
-                output_path
-            ])
+            # Build and execute FFmpeg command
+            output_path = config.get_temp_file(self.pid, "mp4")
+            cmd = self._build_resize_command(
+                video_path, output_path,
+                need_crop, need_scale, need_fps_resample, need_time_cut,
+                crop_width, crop_height, start_x, start_y,
+                start_time, end_time, volume, input_fps
+            )
             
             print(f"🔧 Executing FFmpeg command for resize_video: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            return output_path
             
-            try:
-                result = subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-                return output_path
-            except subprocess.CalledProcessError as e:
-                print(f"❌ Hardware encoding failed with exit code {e.returncode}, trying software encoding...")
-                
-                # Try software encoding as fallback
-                return self._resize_video_software_fallback(video_path, width, height, start_time, end_time, output_path)
-            
+        except subprocess.CalledProcessError as e:
+            print(f"❌ FFmpeg processing failed with exit code {e.returncode}: {e.stderr}")
+            return None
         except Exception as e:
             print(f"❌ Error in resize_video: {e}")
             return None
 
-    def _resize_video_software_fallback(self, video_path, width, height, start_time, end_time, output_path):
-        """Software encoding fallback when hardware encoding fails."""
+
+    def _get_video_fps(self, video_path):
+        """Get video FPS, returns None if unable to determine."""
         try:
-            print(f"🔄 Attempting software encoding fallback...")
+            result = subprocess.run([
+                self.ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path
+            ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             
-            # Get input video frame rate
-            input_fps = None
-            try:
-                result = subprocess.run([
-                    self.ffprobe_path,
-                    "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=r_frame_rate",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    video_path
-                ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            fps_fraction = result.stdout.strip()
+            if not fps_fraction:
+                return None
                 
-                fps_fraction = result.stdout.strip()
-                if fps_fraction:
-                    if '/' in fps_fraction:
-                        num, den = fps_fraction.split('/')
-                        input_fps = float(num) / float(den)
-                    else:
-                        input_fps = float(fps_fraction)
-                    if input_fps <= 0:
-                        input_fps = None
-            except Exception:
-                input_fps = None
-            
-            need_fps_resample = (input_fps is not None and abs(input_fps - self.STANDARD_FPS) > 0.1)
-            
-            # Build command with software encoding
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-i", video_path
-            ]
-            
-            # Build video filter chain
-            video_filters = []
-            
-            # Add scale filter if resize is needed
-            if width and height:
-                scale_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
-                video_filters.append(scale_filter)
-            
-            # Add FPS resampling filter if needed
-            if need_fps_resample:
-                fps_filter = f"fps={self.STANDARD_FPS}:round=near"
-                video_filters.append(fps_filter)
-            
-            # Apply video filters if any
-            if video_filters:
-                cmd.extend([
-                    "-vf", ",".join(video_filters)
-                ])
-            
-            # Add time parameters if time cutting is needed
-            if start_time > 0 or end_time is not None:
-                cmd.extend([
-                    "-ss", str(start_time),
-                    "-to", str(end_time)
-                ])
-            
-            # Software encoding settings
-            cmd.extend([
-                "-c:v", "libx264",
-                "-preset", "medium",
-                "-crf", "18",
-                "-pix_fmt", "yuv420p",
-            ])
-            
-            # Only set output frame rate if we didn't use fps filter
-            if not need_fps_resample:
-                cmd.extend([
-                    "-r", str(self.STANDARD_FPS),
-                ])
-            
-            cmd.extend([
-                "-sc_threshold", "0",
-                "-vsync", "cfr",
-                "-movflags", "+faststart",
-                "-avoid_negative_ts", "make_zero"
-            ])
-            
-            if self.has_audio_stream(video_path):
-                # Use copy if no FPS resampling to preserve original timing
-                if not need_fps_resample:
-                    cmd.extend(["-c:a", "copy"])
-                else:
-                    # Re-encode audio to ensure sync with video after FPS resampling
-                    cmd.extend([
-                        "-c:a", "aac",
-                        "-b:a", "192k",
-                        "-ar", str(self.STANDARD_AUDIO_RATE),
-                        "-ac", str(self.STANDARD_AUDIO_CHANNELS)
-                    ])
-            
-            cmd.append(output_path)
-            
-            print(f"🔧 Executing software encoding fallback: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            print(f"✅ Software encoding fallback successful")
-            return output_path
-            
+            if '/' in fps_fraction:
+                num, den = fps_fraction.split('/')
+                fps = float(num) / float(den)
+            else:
+                fps = float(fps_fraction)
+                
+            return fps if fps > 0 else None
         except Exception as e:
-            print(f"❌ Software encoding fallback also failed: {e}")
+            print(f"⚠️  Could not get input video FPS: {e}")
             return None
+
+
+    def _calculate_crop_dimensions(self, current_width, current_height, width, start_x, start_y):
+        """Calculate and validate crop dimensions."""
+        is_landscape = current_width > current_height
+
+        if width:
+            crop_width = width
+            crop_height = width * 9 // 16 if is_landscape else width * 16 // 9
+        else:
+            # Use original dimensions
+            crop_width = current_width
+            crop_height = current_width * 9 // 16 if is_landscape else current_width * 16 // 9
+        
+        # Validate and adjust crop position
+        start_x = max(0, start_x)
+        start_y = max(0, start_y)
+        
+        # Ensure crop area doesn't exceed video bounds
+        if start_x + crop_width > current_width:
+            crop_width = current_width - start_x
+        if start_y + crop_height > current_height:
+            crop_height = current_height - start_y
+        
+        return crop_width, crop_height, start_x, start_y
+
+
+    def _normalize_time_params(self, start_time, end_time, duration):
+        """Normalize and validate time parameters."""
+        # Ensure duration is a valid number
+        if duration is None or not isinstance(duration, (int, float)):
+            duration = 0.0
+        else:
+            duration = float(duration)
+        
+        # Normalize start_time
+        try:
+            start_time = max(0, float(start_time) if start_time is not None else 0)
+        except (ValueError, TypeError):
+            start_time = 0
+        
+        # Normalize end_time
+        if end_time is None:
+            end_time = duration
+        else:
+            try:
+                end_time = float(end_time)
+                if end_time > duration:
+                    end_time = duration
+            except (ValueError, TypeError):
+                end_time = duration
+        
+        return start_time, end_time
+
+    def _build_resize_command(self, video_path, output_path, need_crop, need_scale, need_fps_resample, 
+                             need_time_cut, crop_width, crop_height, start_x, start_y,
+                             start_time, end_time, volume, input_fps):
+        """Build FFmpeg command for video resizing."""
+        target_width, target_height = self.width, self.height
+        
+        cmd = [self.ffmpeg_path, "-y"]
+        cmd.extend(self._get_input_args(target_width, target_height))
+        cmd.extend(["-i", video_path])
+        
+        # Build video filter chain
+        video_filters = []
+        if need_crop:
+            video_filters.append(f"crop={crop_width}:{crop_height}:{start_x}:{start_y}")
+        if need_scale:
+            video_filters.append(
+                f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
+                f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black"
+            )
+        if need_fps_resample:
+            video_filters.append(f"fps={self.STANDARD_FPS}:round=near")
+        
+        if video_filters:
+            cmd.extend(["-vf", ",".join(video_filters)])
+        
+        # Add time trimming if needed
+        if need_time_cut:
+            cmd.extend(["-ss", str(start_time), "-to", str(end_time)])
+        
+        # Add encoder configuration
+        cmd.extend(self._get_output_args(target_width, target_height))
+        
+        # Add audio configuration
+        if self.has_audio_stream(video_path) and volume > 0.0:
+            if volume != 1.0:
+                cmd.extend(["-af", f"volume={volume}"])
+            if volume == 1.0 and not need_fps_resample:
+                cmd.extend(["-c:a", "copy"])
+            else:
+                cmd.extend([
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-ar", str(self.STANDARD_AUDIO_RATE),
+                    "-ac", str(self.STANDARD_AUDIO_CHANNELS)
+                ])
+        
+        # Add common output options
+        cmd.extend([
+            "-pix_fmt", "yuv420p",
+        ])
+        
+        # Add frame rate if not using fps filter
+        if not need_fps_resample:
+            cmd.extend(["-r", str(self.STANDARD_FPS)])
+        
+        cmd.extend([
+            "-sc_threshold", "0",
+            "-vsync", "cfr",
+            "-movflags", "+faststart",
+            "-avoid_negative_ts", "make_zero",
+            output_path
+        ])
+        
+        return cmd
 
 
     def image_audio_to_video(self, image_path, audio_path, animation_choice=1):
@@ -755,11 +702,11 @@ class FfmpegProcessor:
             
         elif animation_choice == 2:  # 向左移动
             # 创建图像放大并从右向左平移的效果
-            return f"{base_filter},scale=iw*1.2:ih*1.2,crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(iw-ow)*(1-t/10):0"
+            return f"{base_filter},scale=iw*1.2:ih*1.2,crop={self.width}:{self.height}:(iw-ow)*(1-t/10):0"
             
         elif animation_choice == 3:  # 向右移动
             # 创建图像放大并从左向右平移的效果  
-            return f"{base_filter},scale=iw*1.2:ih*1.2,crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(iw-ow)*(t/10):0"
+            return f"{base_filter},scale=iw*1.2:ih*1.2,crop={self.width}:{self.height}:(iw-ow)*(t/10):0"
             
         elif animation_choice == 4:  # 动画效果
             # 创建缓慢缩放效果
@@ -2333,214 +2280,6 @@ class FfmpegProcessor:
         return output_file
 
 
-    def _add_center_video(self, background_video, adding_video, fade, trailing_duration):
-        if fade:
-            adding_video = self.video_fade(adding_video, 2.0, 2.0)
-
-        adding_video_duration = self.get_duration(adding_video)
-        full_duration = self.get_duration(background_video)
-        if trailing_duration < 0:
-            adding_video_start = -trailing_duration
-        else:
-            if full_duration - adding_video_duration - trailing_duration > 1:
-                adding_video_start = full_duration - adding_video_duration - trailing_duration
-            else:
-                adding_video = self.trim_video_to_duration(adding_video, full_duration - 1)
-                adding_video_start = 1
-
-        output_file = config.get_temp_file(self.pid, "mp4")
-
-        """将视频添加到背景视频的中心位置"""
-        video_play_end_time = adding_video_start + adding_video_duration
-        
-        # 计算中心位置
-        center_x = (VIDEO_WIDTH - self.overlay_width_large) // 2
-        center_y = (VIDEO_HEIGHT - self.overlay_height_large) // 2
-        
-        video_filter_part = (
-            f"[1:v]scale={self.overlay_width_large}:{self.overlay_height_large},"
-            f"setpts=PTS-STARTPTS+{adding_video_start}/TB[fg_video];"
-            f"[0:v][fg_video]overlay=x={center_x}:y={center_y}:enable='between(t,{adding_video_start},{video_play_end_time})'[vout]"
-        )
-
-        # Check if videos have audio and build audio filter accordingly
-        has_adding_audio = self.has_audio_stream(adding_video)
-        has_background_audio = self.has_audio_stream(background_video)
-        
-        if has_adding_audio and has_background_audio:
-            # Both videos have audio - mix them
-            audio_filter_part = (
-                f"[0:a]volume=0.7[bg_audio];"  # Lower background audio slightly
-                f"[1:a]adelay={int(adding_video_start*1000)}|{int(adding_video_start*1000)},volume=1.0[delayed_adding_audio];"
-                f"[bg_audio][delayed_adding_audio]amix=inputs=2:duration=longest:dropout_transition=0,volume=1.0[aout]"
-            )
-            audio_map = ["-map", "[aout]"]
-        elif has_background_audio:
-            # Only background has audio
-            audio_filter_part = f"[0:a]volume=1.0[aout]"
-            audio_map = ["-map", "[aout]"]
-        elif has_adding_audio:
-            # Only adding video has audio (delayed to match video start time)
-            audio_filter_part = f"[1:a]adelay={int(adding_video_start*1000)}|{int(adding_video_start*1000)},volume=1.0[aout]"
-            audio_map = ["-map", "[aout]"]
-        else:
-            # No audio in either video
-            audio_filter_part = ""
-            audio_map = []
-        
-        # Combine video and audio filters
-        if audio_filter_part:
-            overlay_filter = f"{video_filter_part};{audio_filter_part}"
-        else:
-            overlay_filter = video_filter_part
-        
-        try:
-            # Get dynamic encoder configuration
-            # Note: For complex filter operations, we avoid hardware decoding acceleration
-            # but keep hardware encoding if compatible
-            output_args = self._get_output_args()
-            
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-i", background_video,
-                "-i", adding_video,
-                "-filter_complex", overlay_filter,
-                "-map", "[vout]"
-            ]
-            
-            # Add audio mapping if needed
-            cmd.extend(audio_map)
-            
-            # Add output encoding arguments
-            cmd.extend(output_args)  # Add output args (codec, preset, quality)
-            cmd.extend([
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                "-avoid_negative_ts", "make_zero",
-                "-fflags", "+genpts",
-                output_file
-            ])
-            
-            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            print(f"✅ Successfully added center video with audio mixing: {output_file}")
-
-        except Exception as e:
-            print(f"❌ FFmpeg Error adding center video: {e}")
-            print(f"❌ FFmpeg stderr: {e.stderr}")
-
-        return output_file
-
-
-    def add_sliding_images_to_title_background_video(self, base_video, left_image, right_image, end_time, mode="16:9"):
-        output_file = config.get_temp_file(self.pid, "mp4")
-        """添加从两侧滑入的图片"""
-        left_slide_start = 1.0
-        left_slide_duration = 1.0
-        left_end_time = end_time
-        
-        right_slide_start = 2.0
-        right_slide_duration = 1.0
-        right_end_time = end_time
-        
-        # Set correct dimensions and calculate overlay sizes based on mode
-        if mode == "9:16":
-            # Portrait mode: 607x1080
-            video_width = 607
-            video_height = 1080
-            # Fixed size overlay images for portrait mode (1024x1024 source → 300x300 display)
-            overlay_width_small = 384
-            overlay_height_small = 384
-            
-            # Position images vertically: bring them closer to center
-            left_overlay_y = int(video_height * 0.35 - overlay_height_small // 2)  # Lower the left image
-            right_overlay_y = int(video_height - overlay_height_small - 64)  # Higher the right image
-            
-            # X positioning: center the images horizontally
-            left_target_x = int((video_width - overlay_width_small) // 2)  # Center
-            right_target_x = int((video_width - overlay_width_small) // 2)  # Center
-            
-            print(f"🎬 9:16 mode: Video={video_width}x{video_height}, Overlay={overlay_width_small}x{overlay_height_small}")
-            print(f"   Left image: x={left_target_x}, y={left_overlay_y} (upper-middle)")
-            print(f"   Right image: x={right_target_x}, y={right_overlay_y} (lower-middle)")
-        else:
-            # Default 16:9 mode: use existing dimensions
-            video_width = VIDEO_WIDTH
-            video_height = VIDEO_HEIGHT
-            overlay_width_small = self.overlay_width_small
-            overlay_height_small = self.overlay_height_small
-            
-            # Both images at center vertically, positioned horizontally
-            left_overlay_y = (video_height - overlay_height_small) // 2
-            right_overlay_y = left_overlay_y
-            
-            left_target_x = int(video_width * 0.117)  # ~150 for 1280 width
-            right_target_x = video_width - overlay_width_small - left_target_x
-            
-            print(f"🎬 16:9 mode: Both images at y={left_overlay_y} (center)")
-        
-        left_x_expr = (
-            f"if(lt(t,{left_slide_start}),-w,"
-            f"if(lt(t,{left_slide_start + left_slide_duration}),"
-            f"-w+(t-{left_slide_start})/{left_slide_duration}*(w+{left_target_x}),"
-            f"{left_target_x}))"
-        )
-        
-        right_x_expr = (
-            f"if(lt(t,{right_slide_start}),W,"
-            f"if(lt(t,{right_slide_start + right_slide_duration}),"
-            f"W-(t-{right_slide_start})/{right_slide_duration}*(W-{right_target_x}),"
-            f"{right_target_x}))"
-        )
-        
-        final_slide_filter = (
-            f"[1:v]scale={overlay_width_small}:{overlay_height_small}[left_scaled];"
-            f"[2:v]scale={overlay_width_small}:{overlay_height_small}[right_scaled];"
-            f"[0:v][left_scaled]overlay="
-            f"x='{left_x_expr}':"
-            f"y={left_overlay_y}:"
-            f"enable='between(t,{left_slide_start},{left_end_time})'[bg_with_left];"
-            f"[bg_with_left][right_scaled]overlay="
-            f"x='{right_x_expr}':"
-            f"y={right_overlay_y}:"
-            f"enable='between(t,{right_slide_start},{right_end_time})'[vout]"
-        )
-
-        try:
-            # Get dynamic encoder configuration
-            # Note: For complex filter operations, we avoid hardware decoding acceleration
-            # but keep hardware encoding if compatible
-            output_args = self._get_output_args()
-            
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-i", base_video,
-                "-i", left_image,
-                "-i", right_image,
-                "-filter_complex", final_slide_filter,
-                "-map", "[vout]",
-                "-map", "0:a?"
-            ]
-            cmd.extend(output_args)  # Add output args (codec, preset, quality)
-            cmd.extend([
-                "-c:a", "copy",
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
-                "-avoid_negative_ts", "make_zero",
-                "-fflags", "+genpts",
-                output_file
-            ])
-            
-            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-
-        except subprocess.CalledProcessError as e:
-            print(f"FFmpeg Error adding sliding images: {e}")
-            print(f"FFmpeg stderr: {e.stderr}")
-
-        return output_file
-
-
     def _extend_and_standardize_video(self, input_video_path, extension_duration, width, height, output_path):
         try:
             # Get input video properties
@@ -2728,7 +2467,7 @@ class FfmpegProcessor:
                 print(f"🎬 Input video resolution: {vid_width}x{vid_height}")
             else:
                 # Fallback to default resolution if detection fails
-                vid_width, vid_height = VIDEO_WIDTH, VIDEO_HEIGHT
+                vid_width, vid_height = self.width, self.height
                 print(f"⚠️  Could not detect video resolution, using default: {vid_width}x{vid_height}")
             
             # Get dynamic encoder configuration based on input video resolution
@@ -3020,58 +2759,58 @@ class FfmpegProcessor:
                 print(f"🎲 Random mode selected: {mode}")
             
             # Calculate enlarged dimensions
-            enlarged_width = int(VIDEO_WIDTH * enlarge_ratio)
-            enlarged_height = int(VIDEO_HEIGHT * enlarge_ratio)
+            enlarged_width = int(self.width * enlarge_ratio)
+            enlarged_height = int(self.height * enlarge_ratio)
             
             # Build the appropriate filter based on mode
             if mode.lower() == "left":
                 # Scroll from left to right
-                crop_x_start = enlarged_width - VIDEO_WIDTH
+                crop_x_start = enlarged_width - self.width
                 crop_x_end = 0
                 crop_x_expr = f"if(gte(t,{duration}),{crop_x_end},{crop_x_start}+({crop_x_end}-{crop_x_start})*t/{duration})"
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
-                    f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:'{crop_x_expr}':0,"
+                    f"crop={self.width}:{self.height}:'{crop_x_expr}':0,"
                     f"fps={self.STANDARD_FPS}"
                 )
                 
             elif mode.lower() == "right":
                 # Scroll from right to left
                 crop_x_start = 0
-                crop_x_end = enlarged_width - VIDEO_WIDTH
+                crop_x_end = enlarged_width - self.width
                 crop_x_expr = f"if(gte(t,{duration}),{crop_x_end},{crop_x_start}+({crop_x_end}-{crop_x_start})*t/{duration})"
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
-                    f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:'{crop_x_expr}':0,"
+                    f"crop={self.width}:{self.height}:'{crop_x_expr}':0,"
                     f"fps={self.STANDARD_FPS}"
                 )
             
             elif mode.lower() == "still":
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
-                    f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT},"
+                    f"crop={self.width}:{self.height},"
                     f"fps={self.STANDARD_FPS}"
                 )
 
             elif mode.lower() == "up":
                 # Scroll from top to bottom
-                crop_y_start = enlarged_height - VIDEO_HEIGHT
+                crop_y_start = enlarged_height - self.height
                 crop_y_end = 0
                 crop_y_expr = f"if(gte(t,{duration}),{crop_y_end},{crop_y_start}+({crop_y_end}-{crop_y_start})*t/{duration})"
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
-                    f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:0:'{crop_y_expr}',"
+                    f"crop={self.width}:{self.height}:0:'{crop_y_expr}',"
                     f"fps={self.STANDARD_FPS}"
                 )
             
             elif mode.lower() == "down":
                 # Scroll from bottom to top
                 crop_y_start = 0
-                crop_y_end = enlarged_height - VIDEO_HEIGHT
+                crop_y_end = enlarged_height - self.height
                 crop_y_expr = f"if(gte(t,{duration}),{crop_y_end},{crop_y_start}+({crop_y_end}-{crop_y_start})*t/{duration})"
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
-                    f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:0:'{crop_y_expr}',"
+                    f"crop={self.width}:{self.height}:0:'{crop_y_expr}',"
                     f"fps={self.STANDARD_FPS}"
                 )
             
@@ -3082,14 +2821,14 @@ class FfmpegProcessor:
                 temp_small = os.path.join(self.temp_dir, f"zoom_small_{hash(image_path) % 10000}.mp4")
                 
                 # Create large version (zoomed in start)
-                large_scale = int(VIDEO_WIDTH * enlarge_ratio)
+                large_scale = int(self.width * enlarge_ratio)
                 subprocess.run([
                     self.ffmpeg_path, "-y", 
                     "-hwaccel", "cuda",
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={large_scale}:{int(VIDEO_HEIGHT * enlarge_ratio)},crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(iw-{VIDEO_WIDTH})/2:(ih-{VIDEO_HEIGHT})/2,fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={self.STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_large
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -3100,7 +2839,7 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={self.width}:{self.height},fps={self.STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_small
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -3143,19 +2882,19 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={self.width}:{self.height},fps={self.STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_small
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
                 # Create large version (zoom out end)
-                large_scale = int(VIDEO_WIDTH * enlarge_ratio)
+                large_scale = int(self.width * enlarge_ratio)
                 subprocess.run([
                     self.ffmpeg_path, "-y", 
                     "-hwaccel", "cuda",
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={large_scale}:{int(VIDEO_HEIGHT * enlarge_ratio)},crop={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(iw-{VIDEO_WIDTH})/2:(ih-{VIDEO_HEIGHT})/2,fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={self.STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_large
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -3411,22 +3150,22 @@ class FfmpegProcessor:
         output_file = config.get_temp_file(self.pid, "mp4")
         
         # 16:9 mode dimensions - final output size
-        output_width = VIDEO_WIDTH
-        output_height = VIDEO_HEIGHT
+        output_width = self.width
+        output_height = self.height
         
         # Get original image dimensions to work with full width
         original_width, original_height = self.get_resolution(background_image)
         if not original_width or not original_height:
             print(f"⚠️  Could not detect image resolution, falling back to resize method")
             # Fallback to original method if we can't detect resolution
-            background_image = self.resize_image(background_image, config.VIDEO_WIDTH, config.VIDEO_HEIGHT)
+            background_image = self.resize_image(background_image, self.width, self.height)
             bg_scale_width = int(output_width * 1.5)
             max_scroll = bg_scale_width - output_width
         else:
             print(f"🖼️  Original image: {original_width}x{original_height}")
             
             # Check if image is very large and pre-resize it for better performance and compatibility
-            max_processing_height = config.VIDEO_HEIGHT  # Maximum dimension for direct processing
+            max_processing_height = self.height  # Maximum dimension for direct processing
             if original_height > max_processing_height:
                 scale_down_factor = max_processing_height / original_height
                 intermediate_width = int(original_width * scale_down_factor)
@@ -3454,7 +3193,7 @@ class FfmpegProcessor:
                 bg_scale_width = int(output_width * 1.5)
                 max_scroll = bg_scale_width - output_width
                 # Resize the image to standard dimensions in this case
-                background_image = self.resize_image(background_image, config.VIDEO_WIDTH, config.VIDEO_HEIGHT)
+                background_image = self.resize_image(background_image, self.width, self.height)
             else:
                 # Use the full scaled width for maximum scroll effect
                 bg_scale_width = scaled_width
@@ -3533,14 +3272,14 @@ class FfmpegProcessor:
         output_file = config.get_temp_file(self.pid, "mp4")
         
         # Portrait mode: 607x1080 with scrolling effect
-        output_width = int(config.VIDEO_HEIGHT*9/16)
-        output_height = config.VIDEO_HEIGHT
+        output_width = int(self.height*9/16)
+        output_height = self.height
         
         # Detect background image resolution for encoder selection
         img_width, img_height = self.get_resolution(background_image)
         
         # Check if image is very large and pre-resize it for better performance and compatibility
-        max_processing_height = config.VIDEO_HEIGHT  # Maximum dimension for direct processing
+        max_processing_height = self.height  # Maximum dimension for direct processing
         if img_height > max_processing_height:
             scale_down_factor = max_processing_height / img_height
             intermediate_width = int(img_width * scale_down_factor)
@@ -3554,8 +3293,8 @@ class FfmpegProcessor:
             print(f"✅ Pre-resize complete, now processing: {img_width}x{img_height}")
         
         # Scale image to height 1080 while maintaining aspect ratio
-        scaled_height = config.VIDEO_HEIGHT
-        scaled_width = int(config.VIDEO_HEIGHT * img_width / img_height)  # Convert to integer
+        scaled_height = self.height
+        scaled_width = int(self.height * img_width / img_height)  # Convert to integer
         print(f"   Final scaling from {img_width}x{img_height} to {scaled_width}x{scaled_height}")
         
         # Ensure scaled_width is wide enough for scrolling
@@ -3701,7 +3440,7 @@ class FfmpegProcessor:
             
             if video_width == 0 or video_height == 0:
                 # Fallback to default dimensions
-                video_width, video_height = VIDEO_WIDTH, VIDEO_HEIGHT
+                video_width, video_height = self.width, self.height
                 print(f"⚠️  Could not detect video resolution, using default: {video_width}x{video_height}")
             
             print(f"🎬 Adding title to video: {video_width}x{video_height}, Duration: {video_duration:.2f}s")
@@ -4176,7 +3915,7 @@ class FfmpegProcessor:
             os.replace(input_video_path, output_video_path)
             return output_video_path
         elif segment_duration > target_duration:
-            new_clip_v = self.trim_video_to_duration(input_video_path, target_duration)
+            new_clip_v = self.resize_video(input_video_path, None, 0, target_duration)
             os.replace(new_clip_v, output_video_path)
             return output_video_path
 
@@ -4300,19 +4039,11 @@ class FfmpegProcessor:
     def add_picture_in_picture(self, background_video, slide_in_video, start_time=0, ratio=0.333, transition_duration=1.0, position="right", mask=None, edge_blur=20):
         try:
             # 计算小视频的尺寸，确保为偶数（FFmpeg要求）
-            # get size of slide_in_video
             slide_in_width, slide_in_height = self.get_resolution(background_video)
             small_width = int(slide_in_width * ratio)
-            small_height = int(slide_in_height * ratio)
-            
-            # 确保尺寸为偶数
             if small_width % 2 != 0:
                 small_width -= 1
-            if small_height % 2 != 0:
-                small_height -= 1
-
-            # 调整小视频尺寸
-            resized_video = self.resize_video(slide_in_video, small_width, small_height)
+            resized_video = self.resize_video(slide_in_video, small_width)
             
             # 添加淡入淡出效果和形状遮罩
             if transition_duration > 0:
@@ -4424,7 +4155,7 @@ class FfmpegProcessor:
 
     # ffmpeg -ss 00:00:01 -to 00:00:50 -i %1 -c:v libx264 -c:a aac %~n1_.mp4
     def split_video(self, original_clip, position):
-        first = self.resize_video( original_clip, VIDEO_WIDTH, VIDEO_HEIGHT, start_time=0, end_time=position)
-        second = self.resize_video( original_clip, VIDEO_WIDTH, VIDEO_HEIGHT, start_time=position)
+        first = self.resize_video( original_clip, None, start_time=0, end_time=position)
+        second = self.resize_video( original_clip, None, start_time=position)
         return first, second
 

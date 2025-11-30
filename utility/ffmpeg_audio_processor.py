@@ -1,7 +1,7 @@
 import os, json
 import subprocess
 from pathlib import Path
-from config import ffmpeg_path, ffprobe_path, VIDEO_WIDTH, VIDEO_HEIGHT, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
+from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
 import config
 from utility.file_util import copy_file
 

@@ -5,9 +5,8 @@ from PIL import Image
 from io import BytesIO
 from rembg import remove
 import os
-from .ffmpeg_audio_processor import FfmpegAudioProcessor
 import config
-from config import VIDEO_WIDTH, VIDEO_HEIGHT
+# VIDEO_WIDTH and VIDEO_HEIGHT are now obtained from project config via ffmpeg_processor
 from typing import Dict, Any
 import time
 import random
@@ -22,42 +21,34 @@ class SDProcessor:
     """
     图像处理流水线类，提供图像卡通化、背景移除等功能
     """
-    def __init__(self, pid, language, channel):
+    def __init__(self, workflow):
         self.prompt_url = ""
         self.prompt_model = ""
 
         self.gen_config = {
                 #"Story":{"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
                 #"Story":{"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0},
-                "Story":{"url": "http://10.0.0.235:8188", "model": "flux", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow.json"},
-                #"Host": {"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
-                #"Host": {"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0 },
-                "Host": {"url": "http://10.0.0.235:8188", "model": "flux1", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow_figure.json"},
-                "SD":   {"url": "http://10.0.0.215:7860/sdapi/v1/txt2img",   "model": "sd",  "seed": 1234567890, "steps": 30, "cfg": 7.0},
+                "Story":{"url": "http://10.0.0.x:8188", "model": "flux", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow.json"},
+                "Host": {"url": "http://10.0.0.x:8188", "model": "flux1", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow_figure.json"},
+                "SD":   {"url": "http://10.0.0.x:7860/sdapi/v1/txt2img",   "model": "sd",  "seed": 1234567890, "steps": 30, "cfg": 7.0},
 
-                #"I2V":  {"url": "http://10.0.0.210:9001/wan/image2video",    "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":16, "frame_rate":10, "max_frames":81,  "image_width":960, "image_height":540},
-                "I2V": {"url": "http://10.0.0.210:9001/wan/image2video",    "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":16, "frame_rate":10, "max_frames":121, "image_width":832, "image_height":480},
-                "2I2V": {"url": "http://10.0.0.210:9001/wan/imagesss2video", "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":4,  "frame_rate":10, "max_frames":121, "image_width":832, "image_height":480},
-                #                                                                                                                                                                       131                 683                 384         
-                "S2V":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":10, "max_frames":121, "image_width":683, "image_height":384},
-                "WS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":10, "max_frames":121, "image_width":432, "image_height":480},
+                "I2V": {"url": "http://10.0.0.210:9001/wan/image2video",    "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":16, "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
+                "2I2V": {"url": "http://10.0.0.210:9001/wan/imagesss2video", "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
 
-                "AI2V": {"url": "http://10.0.0.231:9001/wan/action_transfer","model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":211, "image_width":853, "image_height":480}
+                "S2V":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":81,  "image_width":832, "image_height":480},
+                "FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
+                "WS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
+
+                "AI2V": {"url": "http://10.0.0.231:9001/wan/action_transfer","model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480}
         }
 
-        self.pid = pid
-        self.language = language
-        self.channel = channel
-        self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
+        self.workflow = workflow
+        # Get video dimensions from ffmpeg_processor (will be set after workflow initialization)
+        # For now, use default values - they will be updated when workflow is created
         
         self.llm = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
 
-        self.project_path = config.get_project_path(pid)
-        self.temp_dir = config.get_temp_path(pid)
-        self.channel_path = config.get_channel_path(channel)
-        self.background_music_path = config.get_background_music_path()
-        self.background_image_path = config.get_background_image_path()
+        self.temp_dir = config.get_temp_path(self.workflow.pid)
         
         # Set default image dimensions to match video dimensions
         self.wan_vidoe_count = 0
@@ -1604,7 +1595,7 @@ class SDProcessor:
 
     def two_image_to_video(self, prompt, file_prefix, first_frame, last_frame, sound_path) :
         server_config = self.gen_config["2I2V"]
-        num_frames = server_config["frame_rate"] * self.ffmpeg_audio_processor.get_duration(sound_path) + 1
+        num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
 
@@ -1618,8 +1609,8 @@ class SDProcessor:
             "negative_prompt": "",
             'filename_prefix': file_prefix + "_2I2V_",
 
-            'image_width': server_config["image_width"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_height"],
-            'image_height': server_config["image_height"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_width"],
+            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
+            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
 
             "cfg_scale": server_config["cfg"],
             "steps": server_config["steps"],
@@ -1643,7 +1634,7 @@ class SDProcessor:
 
 
     def action_transfer_video(self, prompt, file_prefix, image_path, sound_path, action_path, key) :
-        duration = self.ffmpeg_audio_processor.get_duration(sound_path)
+        duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
         if duration <= 0.0:
             print(f"🔴 音频时长为0")
             return
@@ -1654,6 +1645,9 @@ class SDProcessor:
 
         server_config = self.gen_config[key]
         fps = server_config["frame_rate"]
+
+        action_path = self.workflow.ffmpeg_processor.refps_video(action_path, str(fps))
+
         num_frames = int(duration * fps)
         max_frames = server_config["max_frames"]
         if num_frames > max_frames:
@@ -1664,8 +1658,8 @@ class SDProcessor:
             "negative_prompt": "",
             'filename_prefix': file_prefix + "_" + key + "_",
 
-            'image_width': server_config["image_width"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_height"],
-            'image_height': server_config["image_height"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_width"],
+            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
+            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
 
             "cfg_scale": server_config["cfg"],
             "steps": server_config["steps"],
@@ -1689,13 +1683,13 @@ class SDProcessor:
 
 
     def sound_to_video(self, prompt, file_prefix, image_path, sound_path, key, silence=False) :
-        duration = self.ffmpeg_audio_processor.get_duration(sound_path)
+        duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
         if duration <= 0.0:
             print(f"🔴 音频时长为0")
             return
             
         if silence:
-            sound_path = self.ffmpeg_audio_processor.make_silence(duration)
+            sound_path = self.workflow.ffmpeg_audio_processor.make_silence(duration)
 
         # 如果 prompt 是字典，转换为 JSON 字符串
         if isinstance(prompt, dict):
@@ -1714,8 +1708,8 @@ class SDProcessor:
             "negative_prompt": "",
             'filename_prefix': file_prefix + "_" + key + "_",
 
-            'image_width': server_config["image_width"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_height"],
-            'image_height': server_config["image_height"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_width"],
+            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
+            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
 
             "cfg_scale": server_config["cfg"],
             "steps": server_config["steps"],
@@ -1740,7 +1734,7 @@ class SDProcessor:
 
     def image_to_video(self, prompt, file_prefix, image_path, sound_path, animate_mode) :
         server_config = self.gen_config[animate_mode]
-        num_frames = server_config["frame_rate"] * self.ffmpeg_audio_processor.get_duration(sound_path) + 1
+        num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
         
@@ -1754,8 +1748,8 @@ class SDProcessor:
             "negative_prompt": "",
             'filename_prefix': file_prefix + "_I2V_",
 
-            'image_width': server_config["image_width"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_height"],
-            'image_height': server_config["image_height"] if VIDEO_WIDTH > VIDEO_HEIGHT else server_config["image_width"],
+            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
+            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
             
             "cfg_scale": server_config["cfg"],
             "steps": server_config["steps"],
@@ -1808,32 +1802,3 @@ class SDProcessor:
             for file_obj in files_to_upload.values():
                 file_obj.close()
 
-        
-
-
-def main():
-    """示例用法"""
-    sd_image_processor = SDProcessor("20250527_11", "zh", "spirit_zh")
-
-    # 示例1: 文本到图像生成
-    positive_prompt = "a beautiful landscape with mountains and a lake"
-    negative_prompt = "low quality, blurry"
-    url = "http://10.0.0.215:8188"
-    workflow_path = "workflow/flux_workflow.json"
-    
-    # text2img_result = sd_image_processor.text2Image_flux(
-    #     positive_prompt, negative_prompt, url, workflow_path, 
-    #     cfg=1.0, seed=-1, steps=4, width=1024, height=1024
-    # )
-    
-    # 示例2: 图像到图像生成（需要参考图像）
-    # 现在支持 ImageScale 节点，可以在工作流中自动调整图像尺寸
-    # img2img_result = sd_image_processor.image2Image_flux(
-    #     positive_prompt, negative_prompt, url, "workflow/flux_workflow_figure.json",
-    #     "path/to/figure_image.png", cfg=1.0, seed=-1, steps=4, 
-    #     width=1920, height=1080, denoise=0.8  # 会自动应用到 ImageScale 节点
-    # )
-
-
-if __name__ == "__main__":
-    main()

@@ -13,16 +13,13 @@ import torch
 import re
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
-from utility.file_util import safe_file, read_json, write_json
+from utility.file_util import safe_file, read_json, write_json, clean_memory
 
 
 class AudioTranscriber:
 
-    def __init__(self, pid, language, ffmpeg_audio_processor, model_size, device):
-        self.pid = pid
-        self.language = language
-        
-        self.ffmpeg_audio_processor = ffmpeg_audio_processor
+    def __init__(self, workflow, model_size, device):
+        self.workflow = workflow
         self.model_size = model_size
         self.device = device
         self.llm_small = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
@@ -56,19 +53,19 @@ class AudioTranscriber:
     def transcribe_to_file(self, audio_path, language, min_sentence_duration, max_sentence_duration):
         script_json = self.transcribe_with_whisper(audio_path, language, min_sentence_duration, max_sentence_duration)
 
-        script_path = f"{config.get_project_path(self.pid)}/{Path(audio_path).stem}.srt.json"
+        script_path = f"{config.get_project_path(self.workflow.pid)}/{Path(audio_path).stem}.srt.json"
         write_json(script_path, script_json)  
         return script_path
 
 
     def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
-        script_path = f"{config.get_project_path(self.pid)}/{self.pid}.srt.json"
+        script_path = f"{config.get_project_path(self.workflow.pid)}/{self.workflow.pid}.srt.json"
         if safe_file(script_path):
             return read_json(script_path)
 
         start_time = datetime.now().strftime("%H:%M:%S")
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
-        audio_duration = self.ffmpeg_audio_processor.get_duration(audio_path)
+        audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
 
         #model = whisper.load_model(self.model_size, device="cuda") 
         #result = model.transcribe(mp3_path)
@@ -78,6 +75,8 @@ class AudioTranscriber:
             lang ="zh"
         srt_segments, _ = model.transcribe(audio_path, beam_size=5, language=lang)
         srt_segments = [obj.__dict__ for obj in srt_segments]  # ← 修复：生成器转列表，支持 len() 和索引、重复遍历
+
+        clean_memory()
 
         char_time_pair = []
         text_content = ""
@@ -96,16 +95,20 @@ class AudioTranscriber:
             text_content += segment_text + " "
             end_time = segment['end']
 
-        json_path = f"{config.get_project_path(self.pid)}/transcriber.debug.1.json"
+        json_path = f"{config.get_project_path(self.workflow.pid)}/transcriber.debug.1.json"
         with open(json_path, 'w') as f:
             json.dump(srt_segments, f, indent=4)
 
         print(f"调试信息: char_time_pair数量={len(char_time_pair)}")
 
+        clean_memory()
+
         sentences = self.reorganize_text_content(text_content, language)
         print(f"调试信息: 重组后句子数量={len(sentences)}")
         if len(sentences) == 0:
             return None
+
+        clean_memory()
 
         reorganized = []
         current_char_index = 0
@@ -147,17 +150,27 @@ class AudioTranscriber:
             current_char_index = end_pos
             print(f"句子时间: {sentence_start_time:.2f}s - {sentence_end_time:.2f}s")
 
-        with open(f"{config.get_temp_path(self.pid)}/transcribe_{Path(audio_path).stem}.txt", "w", encoding="utf-8") as f:
+        with open(f"{config.get_temp_path(self.workflow.pid)}/transcribe_{Path(audio_path).stem}.txt", "w", encoding="utf-8") as f:
             f.write(content)
 
         print(f"调试信息: reorganized数量={len(reorganized)}")
 
+        clean_memory()
+
         merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
         print(f"调试信息: merged数量={len(merged_segments)}")
 
+        clean_memory()
+
         # 4. Run diarization
-        diarization = self.pipeline(audio_path)
+        import torchaudio
+        audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
+        waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
+        audio_wav = {"waveform": waveform, "sample_rate": sample_rate}
+        diarization = self.pipeline(audio_wav)
         merged_segments = self.assign_speakers(merged_segments, diarization)
+
+        clean_memory()
 
         if len(merged_segments) > 0:
             if merged_segments[0]['start'] != 0.0:
@@ -201,6 +214,20 @@ class AudioTranscriber:
 
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
+        output = [] 
+        for segment in segments:
+            output.append({
+                "start": float(segment["start"]),
+                "end": float(segment["end"]),
+                "duration": float(segment["end"]) - float(segment["start"]),
+                "speaker": "SPEAKER_00",
+                "content": segment["content"]
+            })
+
+        return output
+
+
+    def assign_speakers_old(self, segments, diarization) -> List[Dict[str, Any]]:
         output = []
         first_speaker = None
 

@@ -145,9 +145,8 @@ class EnhancedMediaEditor:
         self.media_type = media_type  # "clip", "second", "zero"
         self.workflow = parent.workflow
         
-        # 初始化处理器
-        self.ffmpeg_audio_processor = FfmpegAudioProcessor(self.workflow.pid)
-        self.ffmpeg_processor = FfmpegProcessor(self.workflow.pid, self.workflow.language)
+        video_width = self.workflow.ffmpeg_processor.width
+        video_height = self.workflow.ffmpeg_processor.height
         
         # 媒体字段名映射
         if media_type == "clip":
@@ -337,8 +336,8 @@ class EnhancedMediaEditor:
                 self.display_video(file_path)
                 
                 # 如果视频有音频，提取音频
-                if self.ffmpeg_processor.has_audio_stream(file_path):
-                    audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(file_path)
+                if self.workflow.ffmpeg_processor.has_audio_stream(file_path):
+                    audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(file_path)
                     self.new_audio = audio_path
                     self.display_audio(audio_path)
                     messagebox.showinfo("提示", "已从视频中提取音频")
@@ -409,7 +408,7 @@ class EnhancedMediaEditor:
     def display_audio(self, audio_path):
         """显示音频信息"""
         try:
-            duration = self.ffmpeg_audio_processor.get_duration(audio_path)
+            duration = self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
             self.audio_info_label.config(text=f"音频: {os.path.basename(audio_path)} ({duration:.1f}s)")
             
             # 简单的音频可视化
@@ -472,9 +471,9 @@ class EnhancedMediaEditor:
                 # 有视频
                 if self.new_video:
                     # 新视频被拖入
-                    if not self.ffmpeg_processor.has_audio_stream(final_video) and final_audio:
+                    if not self.workflow.ffmpeg_processor.has_audio_stream(final_video) and final_audio:
                         # 视频没有音频，添加音频
-                        final_video = self.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
+                        final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
                     
                     # 更新场景
                     old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
@@ -482,18 +481,18 @@ class EnhancedMediaEditor:
                 
                 # 如果音频被更新，替换视频中的音频
                 if self.new_audio and not self.new_video:
-                    final_video = self.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
+                    final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
                     old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
                     final_video = new_v
                 
                 # 提取音频
-                if self.ffmpeg_processor.has_audio_stream(final_video):
-                    final_audio = self.ffmpeg_audio_processor.extract_audio_from_video(final_video)
+                if self.workflow.ffmpeg_processor.has_audio_stream(final_video):
+                    final_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(final_video)
             
             else:
                 # 没有视频，从图片和音频生成
                 if final_image and final_audio:
-                    final_video = self.ffmpeg_processor.image_audio_to_video( final_image, final_audio, self.animation_var.get() )
+                    final_video = self.workflow.ffmpeg_processor.image_audio_to_video( final_image, final_audio, self.animation_var.get() )
                     old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
                     final_video = new_v
             

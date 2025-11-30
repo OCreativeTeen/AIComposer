@@ -5,6 +5,7 @@ import uuid
 # 基础路径配置
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
+DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
@@ -174,8 +175,8 @@ def fetch_story_extract_text_content(pid: str, language: str):
 # =============================================================================
 # 视频配置
 # =============================================================================
-VIDEO_WIDTH = 1920
-VIDEO_HEIGHT = 1080
+# VIDEO_WIDTH and VIDEO_HEIGHT are now stored in project config files
+# Default values: 1920x1080 (can be changed to 1080x1920 when creating project)
 
 VIDEO_DURATION_DEFAULT = 59.0
 

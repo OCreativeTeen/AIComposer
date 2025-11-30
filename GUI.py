@@ -203,7 +203,14 @@ class WorkflowGUI:
             story_site = self.story_site_entry.get().strip()
             keywords = self.project_keywords.get().strip()
             
-            self.workflow = MagicWorkflow(pid, language, channel, story_site)
+            # Get video dimensions from project config
+            video_width = None
+            video_height = None
+            if self.current_project_config:
+                video_width = self.current_project_config.get('video_width')
+                video_height = self.current_project_config.get('video_height')
+            
+            self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
             self.speech_service = MinimaxSpeechService(pid)
             
             current_gui_title = self.video_title.get().strip()
@@ -291,8 +298,8 @@ class WorkflowGUI:
 
             'program_keywords': '',
             'story_site': '',
-            'video_width': str(config.VIDEO_WIDTH),
-            'video_height': str(config.VIDEO_HEIGHT)
+            'video_width': '1920',  # Default, should be set when creating project
+            'video_height': '1080'   # Default, should be set when creating project
         }
         
     def create_shared_info_area(self, parent):
@@ -422,7 +429,7 @@ class WorkflowGUI:
         start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(current_scenario)
         end_time = start_time_in_story + clip_duration
 
-        temp_track = self.workflow.ffmpeg_processor.resize_video(zero_path, None, None, start_time_in_story, end_time)
+        temp_track = self.workflow.ffmpeg_processor.resize_video(zero_path, None, start_time_in_story, end_time)
         temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(temp_track, clip_audio_path)
 
         self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', temp_track)
@@ -488,17 +495,17 @@ class WorkflowGUI:
             second_time = 0
 
         if to_end:
-            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, None, second_time, None, volume)
+            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, second_time, None, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, None, 1.0, 1.0,volume)
         else:
             clip_duration = self.workflow.find_clip_duration(current_scenario)
-            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, None, second_time, second_time+clip_duration, volume)
+            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, second_time, second_time+clip_duration, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, clip_duration, 1.0, 1.0, volume)
 
         return second_v, second_a
 
 
-    def select_second_track(self, track_id):
+    def choose_second_track(self, track_id):
        self.selected_second_track = track_id
        self.on_second_track_tab_changed()
 
@@ -522,10 +529,10 @@ class WorkflowGUI:
             start_time = start_time + self.second_delta
 
             if is_story_last_clip: 
-                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, None, start_time, None)
+                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, start_time)
                 second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, None, 0, 0, 1.0)
             else:    
-                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, None, start_time, start_time + clip_duration)
+                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, start_time, start_time+clip_duration)
                 second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, clip_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             
@@ -980,9 +987,9 @@ class WorkflowGUI:
         #ttk.Button(self.second_track_frame, text="◀", command=self.move_second_track_backward, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.second_track_frame, text="▶", command=self.move_second_track_forward, width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.select_second_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.select_second_track('one'), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.select_second_track('second'), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('one'), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('second'), width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="💫", command=self.swap_second, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔊", command=self.pip_second_sound, width=3).pack(side=tk.LEFT, padx=2)
@@ -3971,8 +3978,8 @@ class WorkflowGUI:
                 if config_loaded:
                     saved_language = self.current_project_config.get('language', 'tw')
                     saved_channel = self.current_project_config.get('channel', 'strange_zh')
-                    saved_video_width = self.current_project_config.get('video_width', str(config.VIDEO_WIDTH))
-                    saved_video_height = self.current_project_config.get('video_height', str(config.VIDEO_HEIGHT))
+                    saved_video_width = self.current_project_config.get('video_width', '1920')
+                    saved_video_height = self.current_project_config.get('video_height', '1080')
                     saved_promo_scroll_duration = self.current_project_config.get('promo_scroll_duration', 7.0)
                     
                     print(f"✅ 已加载项目配置: PID={saved_pid}, 语言={saved_language}, 频道={saved_channel}")
@@ -4036,13 +4043,13 @@ class WorkflowGUI:
                 
 
                     
-            # 加载视频尺寸
-            video_width = config_data.get('video_width', str(config.VIDEO_WIDTH))
+            # 加载视频尺寸（只读，不保存）
+            video_width = config_data.get('video_width', '1920')
             if hasattr(self, 'video_width'):
                 self.video_width.delete(0, tk.END)
                 self.video_width.insert(0, video_width)
                 
-            video_height = config_data.get('video_height', str(config.VIDEO_HEIGHT))
+            video_height = config_data.get('video_height', '1080')
             if hasattr(self, 'video_height'):
                 self.video_height.delete(0, tk.END)
                 self.video_height.insert(0, video_height)
@@ -4140,8 +4147,9 @@ class WorkflowGUI:
             'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '默认视频标题',
             'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
             'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
-            'video_width': getattr(self, 'video_width', None) and self.video_width.get() or str(config.VIDEO_WIDTH),
-            'video_height': getattr(self, 'video_height', None) and self.video_height.get() or str(config.VIDEO_HEIGHT),
+            # video_width and video_height are read-only from project config, not saved
+            'video_width': self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920',
+            'video_height': self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080',
             'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
             'conversation_content': getattr(self, 'conversation_content', None) or ''
         }
@@ -4181,8 +4189,9 @@ class WorkflowGUI:
 
                 'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
                 'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
-                'video_width': getattr(self, 'video_width', None) and self.video_width.get() or str(config.VIDEO_WIDTH),
-                'video_height': getattr(self, 'video_height', None) and self.video_height.get() or str(config.VIDEO_HEIGHT),
+                # video_width and video_height are read-only from project config, not saved
+                'video_width': self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920',
+                'video_height': self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080',
                 'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
                 'conversation_content': getattr(self, 'conversation_content', None) or ''
             }
@@ -4636,7 +4645,7 @@ class WorkflowGUI:
         if not wan_prompt or (isinstance(wan_prompt, str) and wan_prompt.strip() == "") or (isinstance(wan_prompt, dict) and len(wan_prompt) == 0):
             wan_prompt = self.workflow.build_prompt(scenario, "", "", image_typ, animate_mode)
 
-        action_path = get_file_path(scenario, self.select_second_track)
+        action_path = get_file_path(scenario, self.selected_second_track)
 
         sound_path = get_file_path(scenario, "clip_audio")
 

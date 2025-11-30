@@ -415,7 +415,13 @@ class MagicToolGUI:
             channel = self.get_channel()
             story_site = self.get_story_site()
             if pid and language and channel:
-                self.workflow = MagicWorkflow(pid, language, channel, story_site)
+                # Get video dimensions from project config
+                video_width = None
+                video_height = None
+                if self.current_project_config:
+                    video_width = self.current_project_config.get('video_width')
+                    video_height = self.current_project_config.get('video_height')
+                self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")
@@ -432,8 +438,12 @@ class MagicToolGUI:
             config_data['video_tags'] = self.video_tags.get() or config_data.get('video_tags', '')
             config_data['program_keywords'] = self.project_keywords.get() or config_data.get('program_keywords', '')
             config_data['story_site'] = self.story_site_entry.get() or config_data.get('story_site', '')
-            config_data['video_width'] = config_data.get('video_width', str(config.VIDEO_WIDTH))
-            config_data['video_height'] = config_data.get('video_height', str(config.VIDEO_HEIGHT))
+            # video_width and video_height are read-only from project config, not saved
+            # Keep existing values from project config
+            if 'video_width' not in config_data:
+                config_data['video_width'] = self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920'
+            if 'video_height' not in config_data:
+                config_data['video_height'] = self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080'
             
             # 保存 WAN 视频参数
             if hasattr(self, 'wan_style_var'):

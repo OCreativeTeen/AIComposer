@@ -48,7 +48,7 @@ uvicorn
 pydantic
 python-multipart
 flask
-
+psutil
 
 # Google APIs
 google-auth-oauthlib

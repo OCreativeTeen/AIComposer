@@ -4,15 +4,14 @@ import os
 import tempfile
 from PIL import Image, ImageTk, ImageDraw
 from pathlib import Path
-from config import VIDEO_WIDTH, VIDEO_HEIGHT
-
-
 class ImageAreaSelectorDialog:
     """对话框用于选择图像区域和设置垂直分割线"""
     
     def __init__(self, parent, source_image_path, video_width, video_height):
         self.parent = parent
         self.source_image_path = source_image_path
+        self.video_width = int(video_width)
+        self.video_height = int(video_height)
         
         # 结果变量
         self.result_image_path = None
@@ -62,8 +61,7 @@ class ImageAreaSelectorDialog:
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 说明标签
-        info_label = ttk.Label(main_frame, 
-                              text=f"拖拽选择图像区域 (比例: {VIDEO_WIDTH}×{VIDEO_HEIGHT})，移动垂直线设置分割位置")
+        info_label = ttk.Label(main_frame, text=f"拖拽选择图像区域 (比例: {self.video_width}×{self.video_height})，移动垂直线设置分割位置")
         info_label.pack(pady=(0, 10))
         
         # 画布框架
@@ -175,14 +173,16 @@ class ImageAreaSelectorDialog:
         img_width, img_height = self.display_image.size
         
         # 根据视频比例计算默认选择区域
-        if (VIDEO_WIDTH/VIDEO_HEIGHT) > (img_width / img_height):
+        video_aspect = self.video_width / self.video_height
+        img_aspect = img_width / img_height
+        if video_aspect > img_aspect:
             # 视频更宽，以图像宽度为准
             selection_width = img_width
-            selection_height = int(selection_width / (VIDEO_WIDTH/VIDEO_HEIGHT))
+            selection_height = int(selection_width / video_aspect)
         else:
             # 视频更高，以图像高度为准
             selection_height = img_height
-            selection_width = int(selection_height * (VIDEO_WIDTH/VIDEO_HEIGHT))
+            selection_width = int(selection_height * video_aspect)
         
         # 居中放置
         self.selection_start_x = self.image_offset_x + (img_width - selection_width) // 2
@@ -264,8 +264,9 @@ class ImageAreaSelectorDialog:
             self.update_info()
         else:
             # 创建新的选择区域
+            video_aspect = self.video_width / self.video_height
             width = abs(x - self.selection_start_x)
-            height = int(width / (VIDEO_WIDTH/VIDEO_HEIGHT))  # 保持视频比例
+            height = int(width / video_aspect)  # 保持视频比例
             
             # 调整起始点和尺寸
             if x < self.selection_start_x:
@@ -279,10 +280,10 @@ class ImageAreaSelectorDialog:
             max_height = self.image_offset_y + img_height - self.selection_start_y
             
             self.selection_width = min(width, max_width)
-            self.selection_height = min(height, max_height, int(self.selection_width / (VIDEO_WIDTH/VIDEO_HEIGHT)))
+            self.selection_height = min(height, max_height, int(self.selection_width / video_aspect))
             
             # 重新调整宽度以保持比例
-            self.selection_width = int(self.selection_height * (VIDEO_WIDTH/VIDEO_HEIGHT))
+            self.selection_width = int(self.selection_height * video_aspect)
             
             # 更新垂直分割线位置
             self.vertical_line_x = self.selection_start_x + self.selection_width // 2
@@ -391,9 +392,9 @@ class ImageAreaSelectorDialog:
             # 计算垂直线在选择区域内的相对位置，然后转换为视频坐标
             relative_line_pos = (self.vertical_line_x - self.selection_start_x) / self.selection_width
             # 使用视频宽度计算，与确认时返回的值保持一致
-            video_line_x = int(VIDEO_WIDTH * relative_line_pos)
+            video_line_x = int(self.video_width * relative_line_pos)
             
-            info_text = f"选择区域: {int(orig_w)}×{int(orig_h)} | 垂直线位置: {video_line_x} (在{VIDEO_WIDTH}px视频中)"
+            info_text = f"选择区域: {int(orig_w)}×{int(orig_h)} | 垂直线位置: {video_line_x} (在{self.video_width}px视频中)"
             self.info_var.set(info_text)
         else:
             self.info_var.set("请拖拽选择区域")
@@ -428,7 +429,7 @@ class ImageAreaSelectorDialog:
             cropped_image = self.original_image.crop(crop_box)
             
             # 调整到目标视频尺寸
-            resized_image = cropped_image.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
+            resized_image = cropped_image.resize((self.video_width, self.video_height), Image.Resampling.LANCZOS)
             
             # 保存为临时文件
             temp_dir = tempfile.gettempdir()
@@ -438,7 +439,7 @@ class ImageAreaSelectorDialog:
             
             # 计算垂直线在选择区域内的相对位置，然后转换为最终图像坐标
             relative_line_pos = (self.vertical_line_x - self.selection_start_x) / self.selection_width
-            self.vertical_line_position = int(VIDEO_WIDTH * 0.5) #relative_line_pos)
+            self.vertical_line_position = int(self.video_width * 0.5) #relative_line_pos)
             
             # 保存用户选择的目标字段
             self.target_field_choice = self.target_field_var.get()

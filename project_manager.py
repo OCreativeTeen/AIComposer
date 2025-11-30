@@ -287,15 +287,15 @@ class ProjectSelectionDialog:
         # 创建新项目配置对话框
         new_project_dialog = tk.Toplevel(self.dialog)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("400x380")
+        new_project_dialog.geometry("400x450")
         new_project_dialog.transient(self.dialog)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
         x = (new_project_dialog.winfo_screenwidth() - 400) // 2
-        y = (new_project_dialog.winfo_screenheight() - 380) // 2
-        new_project_dialog.geometry(f"400x380+{x}+{y}")
+        y = (new_project_dialog.winfo_screenheight() - 450) // 2
+        new_project_dialog.geometry(f"400x450+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -346,6 +346,16 @@ class ProjectSelectionDialog:
         story_site_entry.insert(0, self.default_project_config.get('default_story_site', ''))
         row += 1
         
+        # 视频分辨率选择
+        ttk.Label(main_frame, text="视频分辨率:").grid(row=row, column=0, sticky='w', pady=5)
+        resolution_frame = ttk.Frame(main_frame)
+        resolution_frame.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        
+        resolution_var = tk.StringVar(value="1920x1080")  # 默认横向
+        ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
+        row += 1
+        
         # 按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row, column=0, columnspan=2, pady=20)
@@ -357,6 +367,7 @@ class ProjectSelectionDialog:
             title = title_entry.get().strip()
             program_keywords = keywords_entry.get().strip()
             story_site = story_site_entry.get().strip()
+            resolution = resolution_var.get()
             
             if not pid:
                 messagebox.showerror("错误", "请输入项目ID")
@@ -364,6 +375,18 @@ class ProjectSelectionDialog:
             if not title:
                 messagebox.showerror("错误", "请输入标题")
                 return
+            
+            # 解析分辨率
+            if resolution == "1920x1080":
+                video_width = "1920"
+                video_height = "1080"
+            elif resolution == "1080x1920":
+                video_width = "1080"
+                video_height = "1920"
+            else:
+                # 默认值
+                video_width = self.default_project_config['default_video_width']
+                video_height = self.default_project_config['default_video_height']
                 
             # 创建新项目配置
             self.selected_config = {
@@ -372,8 +395,8 @@ class ProjectSelectionDialog:
                 'channel': channel,
                 'video_title': title,
                 'program_keywords': program_keywords,
-                'video_width': self.default_project_config['default_video_width'],
-                'video_height': self.default_project_config['default_video_height'],
+                'video_width': video_width,
+                'video_height': video_height,
                 **self.default_project_config.get('additional_fields', {}),
                 'story_site': story_site
             }

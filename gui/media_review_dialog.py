@@ -61,9 +61,10 @@ class AVReviewDialog:
         self.language = parent.workflow.language
         self.pid = parent.workflow.pid
         self.workflow = parent.workflow
-        self.ffmpeg_audio_processor = FfmpegAudioProcessor(self.pid)
-        self.ffmpeg_processor = FfmpegProcessor(self.pid, self.language)
-        self.transcriber = AudioTranscriber(self.pid, self.language, self.ffmpeg_audio_processor, model_size="small", device="cuda")
+        # Get video dimensions from workflow's ffmpeg_processor
+        video_width = self.workflow.ffmpeg_processor.width
+        video_height = self.workflow.ffmpeg_processor.height
+        self.transcriber = AudioTranscriber(self.workflow, model_size="small", device="cuda")
         self.summarizer = TalkSummarizer(self.pid, self.language)
 
         self.media_type_names = {
@@ -119,11 +120,11 @@ class AVReviewDialog:
         if initial_end_time:
             self.end_time = initial_end_time
         elif replace_media_audio or is_image_file(av_path):
-            self.end_time = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+            self.end_time = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         elif is_audio_file(av_path):
-            self.end_time = self.ffmpeg_audio_processor.get_duration(av_path)
+            self.end_time = self.workflow.ffmpeg_audio_processor.get_duration(av_path)
         else:
-            self.end_time = self.ffmpeg_processor.get_duration(av_path)
+            self.end_time = self.workflow.ffmpeg_processor.get_duration(av_path)
 
         self.result = None  # Will store the result when dialog is closed
         
@@ -138,6 +139,18 @@ class AVReviewDialog:
         self.video_after_id = None
         # Keep a list of image references to prevent garbage collection
         self.image_references = []
+        
+        # Crop selection variables
+        self.crop_start_x = 0
+        self.crop_start_y = 0
+        self.crop_width = None  # None means use full width
+        self.crop_height = None  # None means use full height
+        self.selection_rect = None  # Canvas rectangle ID for selection
+        self.selecting = False  # Whether user is currently selecting
+        self.selection_start_x = 0
+        self.selection_start_y = 0
+        self.video_original_width = None
+        self.video_original_height = None
         
         self.create_dialog()
 
@@ -193,7 +206,7 @@ class AVReviewDialog:
         ttk.Label(info_row, text=f"视频时长: { (self.end_time-self.start_time):.2f}秒").pack(side=tk.LEFT)
         ttk.Separator(info_row, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
         if self.source_video_path:
-            if self.ffmpeg_processor.has_audio_stream(self.source_video_path):
+            if self.workflow.ffmpeg_processor.has_audio_stream(self.source_video_path):
                 audio_status = "有音频"
                 audio_color = "green"
             else:
@@ -220,6 +233,32 @@ class AVReviewDialog:
         if DND_AVAILABLE:
             self.preview_canvas.drop_target_register(DND_FILES)
             self.preview_canvas.dnd_bind('<<Drop>>', self.on_video_dnd_drop)
+        
+        # Bind mouse events for crop selection
+        self.preview_canvas.bind("<Button-1>", self.on_canvas_click)
+        self.preview_canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.preview_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        
+        # Add crop controls below video preview
+        crop_control_frame = ttk.Frame(video_frame)
+        crop_control_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        ttk.Label(crop_control_frame, text="裁剪区域:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(crop_control_frame, text="X:").pack(side=tk.LEFT, padx=(0, 2))
+        self.crop_x_var = tk.IntVar(value=0)
+        ttk.Spinbox(crop_control_frame, from_=0, to=9999, textvariable=self.crop_x_var, width=8, command=self.on_crop_params_changed).pack(side=tk.LEFT, padx=(0, 5))
+        
+        ttk.Label(crop_control_frame, text="Y:").pack(side=tk.LEFT, padx=(0, 2))
+        self.crop_y_var = tk.IntVar(value=0)
+        ttk.Spinbox(crop_control_frame, from_=0, to=9999, textvariable=self.crop_y_var, width=8, command=self.on_crop_params_changed).pack(side=tk.LEFT, padx=(0, 5))
+        
+        ttk.Label(crop_control_frame, text="宽度:").pack(side=tk.LEFT, padx=(0, 2))
+        self.crop_width_var = tk.IntVar(value=0)  # 0 means auto
+        crop_width_spinbox = ttk.Spinbox(crop_control_frame, from_=0, to=9999, textvariable=self.crop_width_var, width=8, command=self.on_crop_params_changed)
+        crop_width_spinbox.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(crop_control_frame, text="(0=自动)").pack(side=tk.LEFT, padx=(0, 5))
+        
+        ttk.Button(crop_control_frame, text="清除选择", command=self.clear_crop_selection).pack(side=tk.LEFT, padx=(5, 0))
         
         # 中栏：图片显示 + 拖放
         image_frame = ttk.LabelFrame(media_container, text="图片 (可拖放图片文件)", padding=10)
@@ -286,7 +325,7 @@ class AVReviewDialog:
 
         ttk.Label(control_frame, text="开始(秒):").pack(side=tk.LEFT, padx=(0, 5))
         self.start_time_var = tk.DoubleVar(value=self.start_time)
-        max_duration = self.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+        max_duration = self.workflow.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         start_spinbox = ttk.Spinbox(control_frame, from_=0, to=max_duration, 
                                    textvariable=self.start_time_var, increment=0.1, width=8)
         start_spinbox.pack(side=tk.LEFT, padx=(0, 5))
@@ -458,7 +497,7 @@ class AVReviewDialog:
             self.waveform_canvas.create_line(x, y1, x, y2, fill="green", width=1)
         
         # Draw time markers  
-        display_duration = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+        display_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         if display_duration > 0:
             for i in range(0, int(display_duration) + 1, max(1, int(display_duration) // 10)):
                 x = (i / display_duration) * width
@@ -483,7 +522,7 @@ class AVReviewDialog:
                 width = self.waveform_canvas.winfo_width()
                 height = self.waveform_canvas.winfo_height()
                 
-                display_duration = self.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+                display_duration = self.workflow.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
                 if display_duration > 0:
                     start_x = (start / display_duration) * width
                     end_x = (end / display_duration) * width
@@ -506,9 +545,9 @@ class AVReviewDialog:
             
             # Get total duration from video or audio
             if self.source_video_path:
-                total_duration = self.ffmpeg_processor.get_duration(self.source_video_path)
+                total_duration = self.workflow.ffmpeg_processor.get_duration(self.source_video_path)
             elif self.source_audio_path:
-                total_duration = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+                total_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
             else:
                 total_duration = 0.0
             
@@ -543,9 +582,9 @@ class AVReviewDialog:
     def audio_fade(self):
         """Audio fade"""
         if self.source_audio_path:
-            self.source_audio_path = self.ffmpeg_audio_processor.audio_change(self.source_audio_path, 1.5, 1.5, 1.0, 0.0)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_change(self.source_audio_path, 1.5, 1.5, 1.0, 0.0)
         if self.source_video_path:
-            self.source_video_path = self.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
+            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
 
 
     def trim_video(self):
@@ -558,7 +597,7 @@ class AVReviewDialog:
 
         start_time = float(self.start_time_var.get())
         end_time = float(self.end_time_var.get())
-        duration = self.ffmpeg_processor.get_duration(video_path)
+        duration = self.workflow.ffmpeg_processor.get_duration(video_path)
         
         if end_time <= start_time:
             messagebox.showerror("错误", "结束时间必须大于开始时间")
@@ -569,8 +608,13 @@ class AVReviewDialog:
             return
 
         if start_time > 0 or end_time != duration:
-            video_path = self.ffmpeg_processor.resize_video(video_path, None, None, start_time, end_time)
-            self.source_video_path = self.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
+            # Get crop parameters if selection exists
+            crop_width = self.crop_width if self.crop_width else None
+            crop_height = self.crop_height if self.crop_height else None
+            
+            video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, start_time, end_time, 
+                                                                      volume=1.0, start_x=self.crop_start_x, start_y=self.crop_start_y )
+            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
 
 
 
@@ -586,7 +630,7 @@ class AVReviewDialog:
 
         start_time = float(self.start_time_var.get())
         end_time = float(self.end_time_var.get())
-        duration = self.ffmpeg_processor.get_duration(video_path) if video_path else self.ffmpeg_audio_processor.get_duration(audio_path)
+        duration = self.workflow.ffmpeg_processor.get_duration(video_path) if video_path else self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
         
         if end_time <= start_time:
             messagebox.showerror("错误", "结束时间必须大于开始时间")
@@ -597,8 +641,14 @@ class AVReviewDialog:
             return
         
         if start_time > 0 or end_time != duration:
-            self.source_audio_path = self.ffmpeg_audio_processor.audio_cut_fade( audio_path, start_time, end_time-start_time )
-            self.source_video_path = self.ffmpeg_processor.resize_video(video_path, None, None, start_time, end_time)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade( audio_path, start_time, end_time-start_time )
+            
+            # Get crop parameters if selection exists
+            crop_width = self.crop_width if self.crop_width else None
+            crop_height = self.crop_height if self.crop_height else None
+            
+            self.source_video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, start_time, end_time, 
+                                                                                  volume=1.0, start_x=self.crop_start_x, start_y=self.crop_start_y )
 
 
     def trim_transcribe_single(self):
@@ -867,8 +917,8 @@ class AVReviewDialog:
 
         fresh_json, self.source_audio_path = self.parent.workflow.regenerate_audio(fresh_json, self.language)
         if self.source_video_path:
-            duration = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
-            self.source_video_path = self.ffmpeg_processor.adjust_video_to_duration( self.source_video_path, duration )
+            duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+            self.source_video_path = self.workflow.ffmpeg_processor.adjust_video_to_duration( self.source_video_path, duration )
 
         self.audio_json = fresh_json
         audio_text = json.dumps(fresh_json, indent=2, ensure_ascii=False)
@@ -1015,7 +1065,7 @@ class AVReviewDialog:
             self.source_audio_path = recorded_file_path
             
             # 更新音频时长和时间选择器
-            duration = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+            duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
             self.start_time = 0.0
             self.end_time = duration
             self.start_time_var.set(0.0)
@@ -1056,19 +1106,19 @@ class AVReviewDialog:
             
             if self.track_mode.get() == 2:
                 if audio_path:
-                    audio_path = self.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 0.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 0.0, 1.0, 0.0)
                 if video_path:
-                    video_path = self.ffmpeg_processor.fade_video(video_path, 1.0, 0.0)
+                    video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 1.0, 0.0)
             elif self.track_mode.get() == 3:
                 if audio_path:
-                    audio_path = self.ffmpeg_audio_processor.audio_change(audio_path, 0.0, 1.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 0.0, 1.0, 1.0, 0.0)
                 if video_path:
-                    video_path = self.ffmpeg_processor.fade_video(video_path, 0.0, 1.0)
+                    video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 0.0, 1.0)
             elif self.track_mode.get() == 4:
                 if audio_path:
-                    audio_path = self.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 1.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 1.0, 1.0, 0.0)
                 if video_path:
-                    video_path = self.ffmpeg_processor.fade_video(video_path, 1.0, 1.0)
+                    video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 1.0, 1.0)
 
             v = self.current_scenario.get(self.video_field, None)
             a = self.current_scenario.get(self.audio_field, None)
@@ -1255,6 +1305,15 @@ class AVReviewDialog:
                     text="无法打开视频文件", fill="white", font=("Arial", 12)
                 )
                 return
+            
+            # Get video dimensions
+            self.video_original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.video_original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            # Update crop controls max values
+            if self.video_original_width and self.video_original_height:
+                # Update spinbox max values
+                self._update_crop_spinbox_max()
             
             # Read first frame
             ret, frame = cap.read()
@@ -1513,7 +1572,7 @@ class AVReviewDialog:
             
             # 重新生成视频
             print(f"🔄 正在重新生成视频...")
-            self.source_video_path = self.ffmpeg_processor.image_audio_to_video(
+            self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(
                 self.source_image_path, 
                 self.source_audio_path, 
                 animation_choice
@@ -1573,23 +1632,30 @@ class AVReviewDialog:
             self.video_cap.release()
             self.video_cap = None
 
+        # 清除裁剪选择
+        self.clear_crop_selection()
+        
+        # 重置视频尺寸
+        self.video_original_width = None
+        self.video_original_height = None
+
         self.start_time = 0.0
 
         if is_audio_file(av_path):
-            self.source_audio_path = self.ffmpeg_audio_processor.audio_change(av_path)
-            self.source_video_path = self.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_change(av_path)
+            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
         elif is_image_file(av_path):
             self.source_image_path = av_path
-            self.source_video_path = self.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
+            self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
         elif is_video_file(av_path):
-            if self.ffmpeg_processor.has_audio_stream(av_path) and not self.replace_media_audio:
-                self.source_video_path = self.ffmpeg_processor.resize_video(av_path, config.VIDEO_WIDTH, config.VIDEO_HEIGHT, 0, None)
-                self.source_audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(av_path)
+            if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and not self.replace_media_audio:
+                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, self.workflow.ffmpeg_processor.width)
+                self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
             else:
-                self.source_video_path = self.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
-                self.source_video_path = self.ffmpeg_processor.resize_video(self.source_video_path, config.VIDEO_WIDTH, config.VIDEO_HEIGHT, 0, None)
+                self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
+                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(self.source_video_path, self.workflow.ffmpeg_processor.width)
 
-        self.audio_duration = self.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+        self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         self.end_time = self.audio_duration
 
         # 重置播放状态
@@ -1601,3 +1667,327 @@ class AVReviewDialog:
 
         # 刷新视频显示（延迟加载确保视频资源准备就绪）
         self.dialog.after(100, self.load_video_first_frame)
+    
+    
+    def on_canvas_click(self, event):
+        """Handle mouse click on preview canvas to start crop selection"""
+        if not self.source_video_path:
+            return
+        
+        # Get canvas coordinates
+        canvas_x = event.x
+        canvas_y = event.y
+        
+        # Convert canvas coordinates to video coordinates
+        video_x, video_y = self.canvas_to_video_coords(canvas_x, canvas_y)
+        
+        if video_x is not None and video_y is not None:
+            self.selecting = True
+            self.selection_start_x = canvas_x
+            self.selection_start_y = canvas_y
+            
+            # Clear previous selection
+            if self.selection_rect:
+                self.preview_canvas.delete(self.selection_rect)
+            self.selection_rect = None
+    
+    
+    def on_canvas_drag(self, event):
+        """Handle mouse drag on preview canvas to update crop selection"""
+        if not self.selecting:
+            return
+        
+        # Get current canvas coordinates
+        canvas_x = event.x
+        canvas_y = event.y
+        
+        # Update selection rectangle
+        if self.selection_rect:
+            self.preview_canvas.delete(self.selection_rect)
+        
+        # Draw selection rectangle
+        x1 = min(self.selection_start_x, canvas_x)
+        y1 = min(self.selection_start_y, canvas_y)
+        x2 = max(self.selection_start_x, canvas_x)
+        y2 = max(self.selection_start_y, canvas_y)
+        
+        self.selection_rect = self.preview_canvas.create_rectangle(
+            x1, y1, x2, y2,
+            outline='yellow', width=2, dash=(5, 5)
+        )
+    
+    
+    def on_canvas_release(self, event):
+        """Handle mouse release on preview canvas to finalize crop selection"""
+        if not self.selecting:
+            return
+        
+        self.selecting = False
+        
+        # Get canvas coordinates
+        canvas_x = event.x
+        canvas_y = event.y
+        
+        # Convert to video coordinates
+        start_x, start_y = self.canvas_to_video_coords(
+            min(self.selection_start_x, canvas_x),
+            min(self.selection_start_y, canvas_y)
+        )
+        end_x, end_y = self.canvas_to_video_coords(
+            max(self.selection_start_x, canvas_x),
+            max(self.selection_start_y, canvas_y)
+        )
+
+        if start_x > end_x:
+            start_x, end_x = end_x, start_x
+        if start_y > end_y:
+            start_y, end_y = end_y, start_y
+        
+        if start_x is not None and start_y is not None and end_x is not None and end_y is not None:
+            # Update crop parameters
+            self.crop_start_x = max(0, int(start_x))
+            self.crop_start_y = max(0, int(start_y))
+            crop_w = max(1, int(end_x - start_x))
+            crop_h = max(1, int(end_y - start_y))
+            
+            # Store crop dimensions
+            self.crop_width = crop_w
+            self.crop_height = crop_h
+            
+            # Update UI controls
+            self.crop_x_var.set(self.crop_start_x)
+            self.crop_y_var.set(self.crop_start_y)
+            self.crop_width_var.set(crop_w)
+            
+            print(f"✓ 选择裁剪区域: ({self.crop_start_x}, {self.crop_start_y}), 尺寸: {crop_w}x{crop_h}")
+    
+    
+    def canvas_to_video_coords(self, canvas_x, canvas_y):
+        """Convert canvas coordinates to video coordinates"""
+        if not self.source_video_path or not self.video_original_width or not self.video_original_height:
+            return None, None
+        
+        try:
+            # Get canvas dimensions
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            
+            if canvas_width <= 1 or canvas_height <= 1:
+                return None, None
+            
+            # Get displayed image dimensions (from first frame)
+            if not hasattr(self, 'first_frame_photo') or not self.first_frame_photo:
+                return None, None
+            
+            # Find the image item on canvas
+            items = self.preview_canvas.find_all()
+            image_item = None
+            for item in items:
+                if self.preview_canvas.type(item) == 'image':
+                    image_item = item
+                    break
+            
+            if not image_item:
+                return None, None
+            
+            # Get image coordinates and dimensions
+            coords = self.preview_canvas.coords(image_item)
+            img_x = coords[0]
+            img_y = coords[1]
+            
+            # Get image dimensions from photo
+            img_width = self.first_frame_photo.width()
+            img_height = self.first_frame_photo.height()
+            
+            # Calculate image bounds
+            img_left = img_x - img_width // 2
+            img_right = img_x + img_width // 2
+            img_top = img_y - img_height // 2
+            img_bottom = img_y + img_height // 2
+            
+            # Check if click is within image bounds
+            if canvas_x < img_left or canvas_x > img_right or canvas_y < img_top or canvas_y > img_bottom:
+                return None, None
+            
+            # Convert to relative coordinates (0.0 to 1.0)
+            rel_x = (canvas_x - img_left) / img_width
+            rel_y = (canvas_y - img_top) / img_height
+            
+            # Convert to video coordinates
+            video_x = int(rel_x * self.video_original_width)
+            video_y = int(rel_y * self.video_original_height)
+            
+            return video_x, video_y
+            
+        except Exception as e:
+            print(f"⚠️ 坐标转换失败: {e}")
+            return None, None
+    
+    
+    def on_crop_params_changed(self, *args):
+        """Handle changes to crop parameter controls"""
+        try:
+            self.crop_start_x = self.crop_x_var.get()
+            self.crop_start_y = self.crop_y_var.get()
+            
+            width_val = self.crop_width_var.get()
+            if width_val == 0:
+                self.crop_width = None
+            else:
+                self.crop_width = width_val
+                # Calculate height based on aspect ratio if not set
+                if self.crop_width and self.video_original_width and self.video_original_height:
+                    aspect_ratio = self.video_original_height / self.video_original_width
+                    self.crop_height = int(self.crop_width * aspect_ratio)
+            
+            # Update selection rectangle display
+            self.update_crop_selection_display()
+        except Exception as e:
+            print(f"⚠️ 更新裁剪参数失败: {e}")
+    
+    
+    def update_crop_selection_display(self):
+        """Update the visual selection rectangle on canvas"""
+        if not self.source_video_path or self.crop_width is None or self.crop_width == 0:
+            # Clear selection if no crop is set
+            if self.selection_rect:
+                self.preview_canvas.delete(self.selection_rect)
+                self.selection_rect = None
+            return
+        
+        try:
+            # Clear previous selection
+            if self.selection_rect:
+                self.preview_canvas.delete(self.selection_rect)
+            
+            # Calculate crop height if not set
+            crop_h = self.crop_height
+            if not crop_h and self.video_original_width and self.video_original_height:
+                # Calculate height based on aspect ratio
+                aspect_ratio = self.video_original_height / self.video_original_width
+                crop_h = int(self.crop_width * aspect_ratio)
+            elif not crop_h:
+                crop_h = self.crop_width  # Fallback to square
+            
+            # Convert video coordinates to canvas coordinates
+            canvas_coords = self.video_to_canvas_coords(
+                self.crop_start_x, self.crop_start_y,
+                self.crop_start_x + self.crop_width,
+                self.crop_start_y + crop_h
+            )
+            
+            if canvas_coords:
+                x1, y1, x2, y2 = canvas_coords
+                self.selection_rect = self.preview_canvas.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline='yellow', width=2, dash=(5, 5)
+                )
+        except Exception as e:
+            print(f"⚠️ 更新选择显示失败: {e}")
+    
+    
+    def video_to_canvas_coords(self, video_x1, video_y1, video_x2, video_y2):
+        """Convert video coordinates to canvas coordinates"""
+        if not self.source_video_path or not self.video_original_width or not self.video_original_height:
+            return None
+        
+        try:
+            # Get canvas dimensions
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            
+            if canvas_width <= 1 or canvas_height <= 1:
+                return None
+            
+            # Get displayed image dimensions
+            if not hasattr(self, 'first_frame_photo') or not self.first_frame_photo:
+                return None
+            
+            # Find the image item on canvas
+            items = self.preview_canvas.find_all()
+            image_item = None
+            for item in items:
+                if self.preview_canvas.type(item) == 'image':
+                    image_item = item
+                    break
+            
+            if not image_item:
+                return None
+            
+            # Get image coordinates
+            coords = self.preview_canvas.coords(image_item)
+            img_x = coords[0]
+            img_y = coords[1]
+            
+            # Get image dimensions
+            img_width = self.first_frame_photo.width()
+            img_height = self.first_frame_photo.height()
+            
+            # Calculate image bounds
+            img_left = img_x - img_width // 2
+            img_top = img_y - img_height // 2
+            
+            # Convert to relative coordinates
+            rel_x1 = video_x1 / self.video_original_width
+            rel_y1 = video_y1 / self.video_original_height
+            rel_x2 = video_x2 / self.video_original_width
+            rel_y2 = video_y2 / self.video_original_height
+            
+            # Convert to canvas coordinates
+            canvas_x1 = img_left + rel_x1 * img_width
+            canvas_y1 = img_top + rel_y1 * img_height
+            canvas_x2 = img_left + rel_x2 * img_width
+            canvas_y2 = img_top + rel_y2 * img_height
+            
+            return (canvas_x1, canvas_y1, canvas_x2, canvas_y2)
+            
+        except Exception as e:
+            print(f"⚠️ 坐标转换失败: {e}")
+            return None
+    
+    
+    def clear_crop_selection(self):
+        """Clear the crop selection"""
+        self.crop_start_x = 0
+        self.crop_start_y = 0
+        self.crop_width = None
+        self.crop_height = None
+        
+        if self.selection_rect:
+            self.preview_canvas.delete(self.selection_rect)
+            self.selection_rect = None
+        
+        self.crop_x_var.set(0)
+        self.crop_y_var.set(0)
+        self.crop_width_var.set(0)
+        
+        print("✓ 已清除裁剪选择")
+    
+    
+    def _update_crop_spinbox_max(self):
+        """Update max values for crop spinboxes based on video dimensions"""
+        if not self.video_original_width or not self.video_original_height:
+            return
+        
+        try:
+            # Find and update crop spinboxes
+            def update_widget(widget):
+                if isinstance(widget, ttk.Spinbox):
+                    var = widget.cget('textvariable')
+                    if var:
+                        var_obj = self.dialog.nametowidget(var) if isinstance(var, str) else var
+                        if var_obj == self.crop_x_var:
+                            widget.configure(to=self.video_original_width)
+                        elif var_obj == self.crop_y_var:
+                            widget.configure(to=self.video_original_height)
+                        elif hasattr(self, 'crop_width_var') and var_obj == self.crop_width_var:
+                            widget.configure(to=self.video_original_width)
+                elif isinstance(widget, (ttk.Frame, tk.Frame)):
+                    for child in widget.winfo_children():
+                        update_widget(child)
+            
+            # Update all widgets
+            for widget in self.dialog.winfo_children():
+                update_widget(widget)
+        except Exception as e:
+            print(f"⚠️ 更新裁剪控件最大值失败: {e}")

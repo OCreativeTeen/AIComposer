@@ -423,7 +423,13 @@ class MagicToolGUI:
             channel = self.get_channel()
             story_site = self.get_story_site()
             if pid and language and channel:
-                self.workflow = MagicWorkflow(pid, language, channel, story_site)
+                # Get video dimensions from project config
+                video_width = None
+                video_height = None
+                if self.current_project_config:
+                    video_width = self.current_project_config.get('video_width')
+                    video_height = self.current_project_config.get('video_height')
+                self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")
@@ -439,8 +445,12 @@ class MagicToolGUI:
             config_data['video_title'] = self.video_title.get() or config_data.get('video_title', '')
             config_data['video_tags'] = self.video_tags.get() or config_data.get('video_tags', '')
             config_data['program_keywords'] = self.project_keywords.get() or config_data.get('program_keywords', '')
-            config_data['video_width'] = config_data.get('video_width', str(config.VIDEO_WIDTH))
-            config_data['video_height'] = config_data.get('video_height', str(config.VIDEO_HEIGHT))
+            # video_width and video_height are read-only from project config, not saved
+            # Keep existing values from project config
+            if 'video_width' not in config_data:
+                config_data['video_width'] = self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920'
+            if 'video_height' not in config_data:
+                config_data['video_height'] = self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080'
             
             # 保存音乐视频配置
             if hasattr(self, 'mv_name') and hasattr(self, 'mv_json_content'):
@@ -1815,85 +1825,6 @@ class MagicToolGUI:
         thread.daemon = True
         thread.start()
 
-    def process_video_file(self, file_path):
-        """Process video file using cut_video"""
-        start_time = self.split_start_time.get().strip()
-        end_time = self.split_end_time.get().strip()
-        
-        # Validate time inputs
-        try:
-            start_time_val = float(start_time) if start_time else 0
-            end_time_val = float(end_time) if end_time else None
-            
-            if start_time_val < 0:
-                messagebox.showerror("错误", "开始时间不能为负数")
-                return
-            
-            if end_time_val is not None and end_time_val <= start_time_val:
-                messagebox.showerror("错误", "结束时间必须大于开始时间")
-                return
-            
-            if end_time_val is None:
-                messagebox.showerror("错误", "视频分割需要指定结束时间")
-                return
-                
-        except ValueError:
-            messagebox.showerror("错误", "时间格式错误，请输入数字")
-            return
-
-        # Confirm processing
-        confirm_msg = f"确定要分割视频文件吗？\n\n文件: {os.path.basename(file_path)}\n开始时间: {start_time_val}秒\n结束时间: {end_time_val}秒"
-        if not messagebox.askyesno("确认分割", confirm_msg):
-            return
-
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "cut_video",
-            "status": "运行中",
-            "start_time": datetime.now()
-        }
-
-        def run_task():
-            try:
-                self.status_var.set("分割视频中...")
-                self.log_to_output(self.split_output, f"🎬 开始分割视频文件...")
-                self.log_to_output(self.split_output, f"文件: {file_path}")
-                self.log_to_output(self.split_output, f"开始时间: {start_time_val}秒")
-                self.log_to_output(self.split_output, f"结束时间: {end_time_val}秒")
-                
-                # Cut video
-                temp_output = self.workflow.ffmpeg_processor.resize_video(file_path,config.VIDEO_WIDTH, config.VIDEO_HEIGHT, str(start_time_val), str(end_time_val))
-                
-                # Create output filename with '__' suffix
-                source_dir = os.path.dirname(file_path)
-                source_name = os.path.splitext(os.path.basename(file_path))[0]
-                source_ext = os.path.splitext(file_path)[1]
-                output_path = os.path.join(source_dir, f"{source_name}__{source_ext}")
-                
-                # Move temp file to final location
-                import shutil
-                shutil.move(temp_output, output_path)
-
-                self.log_to_output(self.split_output, f"✅ 视频分割完成！")
-                self.log_to_output(self.split_output, f"输出文件: {output_path}")
-                self.status_var.set("就绪")
-                self.tasks[task_id]["status"] = "完成"
-
-                # Show success message
-                self.root.after(0, lambda: messagebox.showinfo("成功", f"视频分割完成！\n\n输出文件: {os.path.basename(output_path)}"))
-
-            except Exception as e:
-                error_msg = str(e)
-                self.log_to_output(self.split_output, f"❌ 视频分割失败: {error_msg}")
-                self.status_var.set("发生错误")
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = error_msg
-                self.root.after(0, lambda: messagebox.showerror("错误", f"视频分割失败: {error_msg}"))
-
-        # Run in separate thread
-        thread = threading.Thread(target=run_task)
-        thread.daemon = True
-        thread.start()
 
         
     def create_music_prompts_tab(self):
