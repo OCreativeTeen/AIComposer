@@ -14,6 +14,17 @@ import glob
 from datetime import datetime
 import config
 
+PROJECT_TYPE_STORY = "story"
+PROJECT_TYPE_SONG = "song"
+PROJECT_TYPE_MUSIC = "music"
+PROJECT_TYPE_TALK = "talk"
+PROJECT_TYPE_LIST = [
+    PROJECT_TYPE_STORY,
+    PROJECT_TYPE_SONG,
+    PROJECT_TYPE_MUSIC,
+    PROJECT_TYPE_TALK
+]
+
 
 class ProjectConfigManager:
     """管理每个项目的配置文件 - 可重用的项目配置管理器"""
@@ -41,6 +52,7 @@ class ProjectConfigManager:
                 pid = config_data.get('pid', '')
                 title = config_data.get('video_title', config_data.get('title', ''))
                 language = config_data.get('language', 'zh')
+                project_type = config_data.get('project_type', PROJECT_TYPE_STORY)  # 默认值
                 channel = config_data.get('channel', '')
                 video_size = f"{config_data.get('video_width', '1920')}x{config_data.get('video_height', '1080')}"
                 
@@ -52,6 +64,7 @@ class ProjectConfigManager:
                     'pid': pid,
                     'title': title,
                     'language': language,
+                    'project_type': project_type,
                     'channel': channel,
                     'video_size': video_size,
                     'last_modified': last_modified,
@@ -164,15 +177,15 @@ class ProjectSelectionDialog:
         """创建对话框"""
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("选择项目")
-        self.dialog.geometry("900x600")
+        self.dialog.geometry("1000x600")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
         
         # 使对话框居中
         self.dialog.update_idletasks()
-        x = (self.dialog.winfo_screenwidth() // 2) - (900 // 2)
+        x = (self.dialog.winfo_screenwidth() // 2) - (1000 // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (600 // 2)
-        self.dialog.geometry(f"900x600+{x}+{y}")
+        self.dialog.geometry(f"1000x600+{x}+{y}")
         
         # 主框架
         main_frame = ttk.Frame(self.dialog)
@@ -187,12 +200,13 @@ class ProjectSelectionDialog:
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
         
         # 创建Treeview显示项目列表
-        columns = ('PID', '标题', '语言', '频道', '尺寸', '最后修改')
+        columns = ('PID', '标题', '类型', '语言', '频道', '尺寸', '最后修改')
         self.project_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=12)
         
         # 设置列
         self.project_tree.heading('PID', text='项目ID')
         self.project_tree.heading('标题', text='标题')
+        self.project_tree.heading('类型', text='项目类型')
         self.project_tree.heading('语言', text='语言')
         self.project_tree.heading('频道', text='频道')
         self.project_tree.heading('尺寸', text='尺寸')
@@ -201,6 +215,7 @@ class ProjectSelectionDialog:
         # 设置列宽
         self.project_tree.column('PID', width=120)
         self.project_tree.column('标题', width=150)
+        self.project_tree.column('类型', width=80)
         self.project_tree.column('语言', width=60)
         self.project_tree.column('频道', width=100)
         self.project_tree.column('尺寸', width=80)
@@ -255,6 +270,7 @@ class ProjectSelectionDialog:
             self.project_tree.insert('', tk.END, values=(
                 project['pid'],
                 project['title'],
+                project['project_type'],
                 project['language'],
                 project['channel'],
                 project['video_size'],
@@ -287,15 +303,15 @@ class ProjectSelectionDialog:
         # 创建新项目配置对话框
         new_project_dialog = tk.Toplevel(self.dialog)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("400x450")
+        new_project_dialog.geometry("400x500")
         new_project_dialog.transient(self.dialog)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
         x = (new_project_dialog.winfo_screenwidth() - 400) // 2
-        y = (new_project_dialog.winfo_screenheight() - 450) // 2
-        new_project_dialog.geometry(f"400x450+{x}+{y}")
+        y = (new_project_dialog.winfo_screenheight() - 500) // 2
+        new_project_dialog.geometry(f"400x500+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -316,6 +332,13 @@ class ProjectSelectionDialog:
         language_combo = ttk.Combobox(main_frame, values=self.default_project_config['languages'], state="readonly", width=22)
         language_combo.grid(row=row, column=1, padx=(10, 0), pady=5)
         language_combo.set(self.default_project_config['default_language'])
+        row += 1
+        
+        # 项目类型选择
+        ttk.Label(main_frame, text="项目类型:").grid(row=row, column=0, sticky='w', pady=5)
+        project_type_combo = ttk.Combobox(main_frame, values=PROJECT_TYPE_LIST, state="readonly", width=22)
+        project_type_combo.grid(row=row, column=1, padx=(10, 0), pady=5)
+        project_type_combo.set(PROJECT_TYPE_STORY)  # 默认设置为 story
         row += 1
         
         # 频道选择
@@ -363,6 +386,7 @@ class ProjectSelectionDialog:
         def on_create():
             pid = pid_entry.get().strip()
             language = language_combo.get()
+            project_type = project_type_combo.get()
             channel = channel_combo.get()
             title = title_entry.get().strip()
             program_keywords = keywords_entry.get().strip()
@@ -392,6 +416,7 @@ class ProjectSelectionDialog:
             self.selected_config = {
                 'pid': pid,
                 'language': language,
+                'project_type': project_type,
                 'channel': channel,
                 'video_title': title,
                 'program_keywords': program_keywords,

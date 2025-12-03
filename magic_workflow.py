@@ -4,7 +4,6 @@ from urllib.parse import urlparse, parse_qs
 from torch._inductor.ir import NoneAsConstantBuffer
 from utility.audio_transcriber import AudioTranscriber
 from utility.youtube_downloader import YoutubeDownloader
-from utility.talk_summerizer import TalkSummarizer
 from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
@@ -22,17 +21,18 @@ from typing import List, Dict, Optional, Union, Any, Generator
 import random
 from datetime import datetime
 from io import BytesIO
-from PIL import Image
 from utility.file_util import get_file_path, safe_remove, copy_file
 from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
+from project_manager import PROJECT_TYPE_STORY, PROJECT_TYPE_SONG, PROJECT_TYPE_MUSIC, PROJECT_TYPE_TALK, PROJECT_TYPE_LIST
 
 
 class MagicWorkflow:
 
-    def __init__(self, pid, language, channel, story_site, video_width=None, video_height=None):
+    def __init__(self, pid, project_type, language, channel, story_site, video_width=None, video_height=None):
         self.pid = pid
+        self.project_type = project_type
         self.language = language
         self.channel = channel
         self.story_site = story_site
@@ -57,7 +57,7 @@ class MagicWorkflow:
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
         self.downloader = YoutubeDownloader(pid)
-        self.summarizer = TalkSummarizer(pid, language)
+        self.llm_api = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
         self.speech_service = MinimaxSpeechService(self.pid)
         self.transcriber = AudioTranscriber(self, model_size="small", device="cuda")
 
@@ -218,7 +218,10 @@ class MagicWorkflow:
 
             back_video = get_file_path(scenario, "back")
             if back_video:
-                valid_media_files.append(back_video)
+                backs = back_video.split(',')
+                for back in backs:
+                    if back and os.path.exists(back):
+                        valid_media_files.append(back)
 
             clip_image = get_file_path(scenario, "clip_image")
             if clip_image:
@@ -267,13 +270,13 @@ class MagicWorkflow:
                 safe_remove(file)
 
 
-    # av_type: image_generation, IMAGE, WS2V, FS2V, S2V, I2V, 2I2V, AI2V
     def build_prompt(self, scenario_data, style, extra, track, av_type):
         prompt_dict = {}
+
         # 提取当前场景的关键信息
         speaker = scenario_data.get("speaker", "")
         speaker_position = scenario_data.get("speaker_position", "")
-        speaker_mood = scenario_data.get("mood", "calm")
+        person_mood = scenario_data.get("mood", "calm")
 
         if ("clip" in track or "zero" in track) and "IMAGE" in av_type:
             if style:
@@ -284,24 +287,21 @@ class MagicWorkflow:
                 content = scenario_data['content']
                 if speaker:
                     if speaker_position and speaker_position == "left":
-                        prompt_dict["SPEAKING"] = f"the person on left-side is in {speaker_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the person on left-side is in {person_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the person on right-side is listening this content : {content}, while engaging with lots of reactions, expressions, and hand movements."
                     elif speaker_position and speaker_position == "right":
-                        prompt_dict["SPEAKING"] = f"the person on right-side is in {speaker_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the person on right-side is in {person_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the person on left-side is listening this content : ({content}), while engaging with lots of reactions, expressions, and hand movements."
                     else:
-                        prompt_dict["SPEAKING"] = f"the person is in {speaker_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the person is in {person_mood} mood to say ({content}),  while acting like ({scenario_data['speaker_action']})"
                 else:
                     prompt_dict["SPEAKING"] = content
 
         if "clip" in track or "zero" in track:
-            if "person_in_story_action" in scenario_data:
-                person_in_story_action = scenario_data['person_in_story_action']
-                # if person_in_story_action has words like ["no xx person", "no xx character", "none"], then don't add it to the content
-                person_lower = person_in_story_action.lower()
-                # Check for patterns like: "no person", "no specific person", "no other character", "none", etc.
+            if "person_action" in scenario_data:
+                person_lower = scenario_data['person_action'].lower()
                 has_negative_pattern = (
                     re.search(r'\bno\b.*\bpersons?\b', person_lower) or  # matches "no person", "no persons", "no specific person"
                     re.search(r'\bno\b.*\bcharacters?\b', person_lower) or  # matches "no character", "no characters", "no other character"
@@ -309,7 +309,12 @@ class MagicWorkflow:
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["PERSON_RELATION"] = person_in_story_action
+                    prompt_dict["PERSON"] = ""
+                    if av_type in config.ANIMATE_S2V and self.project_type == PROJECT_TYPE_SONG:
+                        prompt_dict["PERSON"] = prompt_dict["PERSON"]+"Singing with body/hand movements.\n"
+                    if person_mood and person_mood != "":
+                        prompt_dict["PERSON"] = prompt_dict["PERSON"]+f"The person is in {person_mood} mood.\n"
+                    prompt_dict["PERSON"] = prompt_dict["PERSON"] + scenario_data['person_action']
             if "camera_light" in scenario_data:
                 prompt_dict["CAMERA_LIGHTING"] = scenario_data['camera_light']
 
@@ -427,7 +432,7 @@ class MagicWorkflow:
 
             user_prompt = self.transcriber.fetch_text_from_json(introduction_story)
             
-            introduction_story = self.summarizer.generate_text_summary(config.STORY_SUMMARY_SYSTEM_PROMPT, user_prompt, 1)
+            introduction_story = self.llm_api.generate_text_summary(config.STORY_SUMMARY_SYSTEM_PROMPT, user_prompt)
 
             introduction_story = f"""
             "Introducation_story" : "The hosts start the dialogue just after they {introduction_type}, that talks about : '{introduction_story}'.     (the dialogue is carried out immediately after this talk)",
@@ -443,7 +448,7 @@ class MagicWorkflow:
 
             user_prompt = self.transcriber.fetch_text_from_json(previous_dialogue)
 
-            previous_dialogue = self.summarizer.generate_text_summary(config.STORY_SUMMARY_SYSTEM_PROMPT, user_prompt, 1)
+            previous_dialogue = self.llm_api.generate_text_summary(config.STORY_SUMMARY_SYSTEM_PROMPT, user_prompt)
 
             previous_dialogue = f"""
                 "Previous_Dialogue" : "This dialogue follows the previous story-telling-dialogue, talking about : '{previous_dialogue}'.    !!! This dialogue may mention the previous content quickly, but DO NOT talking the details again !!!",
@@ -455,17 +460,17 @@ class MagicWorkflow:
 
 
         if general_location:
-            dialogue_opening = self.summarizer.generate_text_summary(config.NOTEBOOKLM_OPENING_DIALOGUE_PROMPT.format(location=location), user_prompt, 1)
+            dialogue_opening = self.llm_api.generate_text_summary(config.NOTEBOOKLM_OPENING_DIALOGUE_PROMPT.format(location=location), user_prompt)
             dialogue_opening = f"""
                 "Dialogue_Openning" : "The dialogue should open with Immersive-Narrative like : '{dialogue_opening}'.  (Don't directly use, please re-organize / re-phrase the content in more infectious way)",
                 """
     
-            dialogue_ending = self.summarizer.generate_text_summary(config.NOTEBOOKLM_ENDING_DIALOGUE_PROMPT.format(location=location), user_prompt, 1)
+            dialogue_ending = self.llm_api.generate_text_summary(config.NOTEBOOKLM_ENDING_DIALOGUE_PROMPT.format(location=location), user_prompt)
             dialogue_ending = f"""
                 "Dialogue_Ending" : "The dialogue should end like : '{dialogue_ending}'.     (Don't directly use, please re-organize / re-phrase the content in more infectious way)",
                 """
 
-            immersive_env_scene = self.summarizer.generate_simple_text_summary(config.NOTEBOOKLM_LOCATION_ENVIRONMENT_PROMPT.format(location=location, general_location=general_location), 1)
+            immersive_env_scene = self.llm_api.generate_simple_text_summary(config.NOTEBOOKLM_LOCATION_ENVIRONMENT_PROMPT.format(location=location, general_location=general_location))
             # replace all new line characters with space
             immersive_env_scene = immersive_env_scene.replace("\n", " ").replace("\r", " ")
             location = f"""
@@ -497,13 +502,13 @@ class MagicWorkflow:
         user_prompt = self.transcriber.fetch_text_from_json(config.get_project_path(self.pid)+"/main.srt.json")
         
         title_json_path = config.get_titles_path(self.pid, self.language)
-        return self.summarizer.generate_json_summary(system_prompt, user_prompt, title_json_path)
+        return self.llm_api.generate_json_summary(system_prompt, user_prompt, title_json_path)
 
 
     def prepare_suno_music(self, suno_lang, content, atmosphere, expression, structure, 
                                 leading_melody, instruments, rhythm_groove):
         
-        content = self.summarizer.generate_text_summary(config.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT, content, 1)
+        content = self.llm_api.generate_text_summary(config.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT, content)
         suno_style_prompt = config.SUNO_STYLE_PROMPT.format(
             target=suno_lang,
             atmosphere=atmosphere,
@@ -514,7 +519,7 @@ class MagicWorkflow:
             rhythm=rhythm_groove
         )
         # Build enhanced system prompt with new parameters
-        music_prompt = self.summarizer.generate_json_summary(config.SUNO_MUSIC_SYSTEM_PROMPT.format(language_style=suno_lang), content)
+        music_prompt = self.llm_api.generate_json_summary(config.SUNO_MUSIC_SYSTEM_PROMPT.format(language_style=suno_lang), content)
 
         if music_prompt and len(music_prompt) > 0:
             content += "\n*** " + music_prompt[0]["music_expression"]
@@ -540,7 +545,7 @@ class MagicWorkflow:
         user_prompt = config.fetch_story_extract_text_content(self.pid, self.language)
 
         veo_json_path = config.get_project_path(self.pid) + "/veo_prompts.json"
-        return self.summarizer.generate_json_summary(system_prompt, user_prompt, veo_json_path)
+        return self.llm_api.generate_json_summary(system_prompt, user_prompt, veo_json_path)
 
 
     def find_clip_duration(self, current_scenario):
@@ -712,7 +717,7 @@ class MagicWorkflow:
 
     def shift_scenario(self, n, m, position):
         """分离为n张图片"""
-        if n<=0  or n > len(self.scenarios) or m<=0  or m > len(self.scenarios):
+        if n<0  or n > len(self.scenarios) or m<0  or m > len(self.scenarios):
             return False
 
         if abs(n-m) != 1:
@@ -780,31 +785,6 @@ class MagicWorkflow:
                 cfg = sd_config["cfg"],
                 seed = seed or sd_config["seed"],
                 steps = sd_config["steps"],
-            )
-        elif sd_config["model"] == "flux":
-            image = self.sd_processor.text2Image_flux(
-                positive,
-                negative, 
-                sd_config["url"], 
-                sd_config["workflow"],
-                sd_config["cfg"], 
-                seed or sd_config["seed"], 
-                sd_config["steps"], 
-                sd_width, 
-                sd_height
-            )
-        elif sd_config["model"] == "flux1":
-            image = self.sd_processor.image2Image_flux(
-                positive,
-                negative, 
-                sd_config["url"], 
-                sd_config["workflow"],
-                figures,
-                sd_config["cfg"], 
-                seed or sd_config["seed"], 
-                sd_config["steps"], 
-                sd_width, 
-                sd_height
             )
             
         # 检查图像生成是否成功
@@ -1131,7 +1111,7 @@ class MagicWorkflow:
 
 
     def refresh_scenario_media(self, scenario, media_type, media_postfix, replacement=None, make_replacement_copy=False):
-        new_media_stem = media_type + "_" + str(int(datetime.now().timestamp()*100 + self.media_count%100))
+        new_media_stem = media_type + "_" + str(scenario["id"]) + "_" + str(int(datetime.now().timestamp()*100 + self.media_count%100))
         self.media_count = (self.media_count + 1) % 100
 
         old_media_path = scenario.get(media_type, None)
@@ -1145,50 +1125,30 @@ class MagicWorkflow:
 
             
     def replace_scenario_image(self, current_scenario, source_image_path, vertical_line_position, target_field):
-        oldi, image_path = self.refresh_scenario_media(current_scenario, target_field, ".webp")
+        oldi, image_path = self.refresh_scenario_media(current_scenario, target_field, ".webp", source_image_path)
 
-        with Image.open(source_image_path) as img:
-            # 转换为RGB模式（如果是RGBA或其他模式）
-            if img.mode in ('RGBA', 'LA'):
-                # 创建白色背景
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'RGBA':
-                    background.paste(img, mask=img.split()[-1])  # 使用alpha通道作为mask
-                else:
-                    background.paste(img)
-                img = background
-            elif img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            # resize image to 1920*1080
-            img = img.resize((self.ffmpeg_processor.width, self.ffmpeg_processor.height))
-            img.save(image_path, 'WEBP', quality=90, method=6)
-
-        description = self.sd_processor.describe_image_openai(image_path)
-        current_scenario[target_field + "_extra"] = description
+        # 调用 describe_image 描述图片（支持文件路径或 base64 字符串）
+        scenario_data = self.sd_processor.describe_image(image_path)
+        self.update_scenario_image_fields(current_scenario, scenario_data)
 
         current_scenario[target_field + "_split"] = vertical_line_position
         clip_image_last = get_file_path(current_scenario, target_field + "_last")
         if not clip_image_last:
             current_scenario[target_field + "_last"] = image_path
 
-        target_image = get_file_path(current_scenario, target_field)
-        target_image_last = get_file_path(current_scenario, target_field + "_last")
+        #target_image = get_file_path(current_scenario, target_field)
+        #target_image_last = get_file_path(current_scenario, target_field + "_last")
          
-        ss = self.scenarios_in_story(current_scenario)
-        for scenario in ss:
-            if scenario == current_scenario:
-                continue
-
-            image = get_file_path(scenario, target_field)
-            if not image and target_image:
-                self.refresh_scenario_media(scenario, target_field, ".webp", target_image, True)
-                scenario[target_field + "_extra"] = description
-
-            image_last = get_file_path(scenario, target_field + "_last")
-            if not image_last and target_image_last:
-                self.refresh_scenario_media(scenario, target_field + "_last", ".webp", target_image_last, True)
-
+        #ss = self.scenarios_in_story(current_scenario)
+        #for scenario in ss:
+        #    if scenario == current_scenario:
+        #        continue
+        #    image = get_file_path(scenario, target_field)
+        #    if not image and target_image:
+        #        self.refresh_scenario_media(scenario, target_field, ".webp", target_image, True)
+        #    image_last = get_file_path(scenario, target_field + "_last")
+        #    if not image_last and target_image_last:
+        #        self.refresh_scenario_media(scenario, target_field + "_last", ".webp", target_image_last, True)
         self.save_scenarios_to_json()
 
 
@@ -1559,10 +1519,10 @@ class MagicWorkflow:
     def check_generated_clip_video(self, scenario, video_type, audio_type):
         clip_animation = scenario.get("clip_animation", "")
         second_animation = scenario.get("second_animation", "")
-        if clip_animation not in config._ANIMATE_TYPES and second_animation not in config._ANIMATE_TYPES:
+        if clip_animation not in config.ANIMATE_SOURCE and second_animation not in config.ANIMATE_SOURCE:
             return None
 
-        output_mp4_folder = "Z:/output_mp4"
+        output_mp4_folder = "Z:/wan_video/output_mp4"
 
         # 生成基础文件名前缀（不包括类型后缀）
         # 格式: av_type + "_" + pid + "_" + scenario_id
@@ -1570,22 +1530,12 @@ class MagicWorkflow:
         
         # 定义文件类型模式列表，匹配格式: base_name + type_suffix + _timestamp.mp4
         # timestamp格式为 %d%H%M%S (8位数字: 日期+小时+分钟+秒)
-        type_patterns = [
-            (r"_I2V_\d{8}\.mp4$", "_I2V"),
-            (r"_2I2V_\d{8}\.mp4$", "_2I2V"),
-            (r"_L_WS2V_\d{8}\.mp4$", "_L_WS2V"),
-            (r"_R_WS2V_\d{8}\.mp4$", "_R_WS2V"),
-            (r"_S2V_\d{8}\.mp4$", "_S2V"),
-            (r"_FS2V_\d{8}\.mp4$", "_FS2V"),
-            (r"_AI2V_\d{8}\.mp4$", "_AI2V")
-        ]
-        
         files = []
         for file in os.listdir(output_mp4_folder):
             # 检查文件是否以基础名称开头
             if file.startswith(base_name):
                 # 检查是否匹配任何一个类型模式
-                for pattern, type_suffix in type_patterns:
+                for pattern, type_suffix in config.ANIMATE_TYPE_PATTERNS:
                     if re.search(pattern, file):
                         files.append(file)
                         break
@@ -1594,7 +1544,7 @@ class MagicWorkflow:
             return None
 
         choose_file_stem = Path(files[0]).stem
-        has_audio = True if "_L_WS2V" in choose_file_stem or "_R_WS2V" in choose_file_stem or "_S2V" in choose_file_stem or "_FS2V" in choose_file_stem   else False
+        has_audio = any(item in choose_file_stem for item in config.ANIMATE_WITH_AUDIO)
 
         enhanced_video = output_mp4_folder + "/" + choose_file_stem + ".mp4"
         if not os.path.exists(enhanced_video):
@@ -1603,10 +1553,11 @@ class MagicWorkflow:
         os.replace(enhanced_video, enhanced_video + ".bak.mp4")
         enhanced_video = enhanced_video + ".bak.mp4"
 
+        enhanced_video = self.ffmpeg_processor.resize_video(enhanced_video, self.ffmpeg_processor.width)
+
         audio = get_file_path(scenario, audio_type)
-        if audio:
-            if not has_audio:
-                enhanced_video = self.ffmpeg_processor.add_audio_to_video(enhanced_video, audio)
+        if audio: # always cut to the same duration as the audio
+            enhanced_video = self.ffmpeg_processor.add_audio_to_video(enhanced_video, audio)
         elif has_audio:
             audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
             olda, audio = self.refresh_scenario_media(scenario, audio_type, ".wav", audio)
@@ -1634,25 +1585,25 @@ class MagicWorkflow:
 
         file_prefix = video_type + "_" + self.pid + "_" + str(scenario.get("id", ""))
         
-        if animate_mode == "IMAGE":
-            v = self.ffmpeg_processor.image_audio_to_video(image_path, sound_path, 1)
-            self.refresh_scenario_media(scenario, video_type, ".mp4", v, True)
+        #if animate_mode == "IMAGE":
+        #    v = self.ffmpeg_processor.image_audio_to_video(image_path, sound_path, 1)
+        #    self.refresh_scenario_media(scenario, video_type, ".mp4", v, True)
 
-        elif animate_mode == "I2V":
+        if animate_mode in config.ANIMATE_I2V:
             self.sd_processor.image_to_video( prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, animate_mode=animate_mode )
 
-        elif animate_mode == "2I2V":
-            self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path )
+        elif animate_mode in config.ANIMATE_2I2V:
+            self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path, animate_mode=animate_mode )
 
-        elif animate_mode == "S2V" or animate_mode == "FS2V":
-            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, key=animate_mode, silence=False)
+        elif animate_mode in config.ANIMATE_S2V:
+            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
-        elif animate_mode == "AI2V":
+        elif animate_mode in config.ANIMATE_AI2V:
             if not action_path:
                 action_path = f"{config.DEFAULT_MEDIA_PATH}/default_action.mp4"
-            self.sd_processor.action_transfer_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, action_path=action_path, key=animate_mode)
+            self.sd_processor.action_transfer_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, action_path=action_path, animate_mode=animate_mode)
 
-        elif animate_mode == "WS2V":
+        elif animate_mode in config.ANIMATE_WS2V:
             vertical_line_position = scenario.get("clip_image_split", 0)
             if vertical_line_position == 0:
                 return
@@ -1669,13 +1620,13 @@ class MagicWorkflow:
             if speaker_position == "left":
                 left_prompt.pop("LISTENING", None)
                 right_prompt.pop("SPEAKING", None)
-                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=file_prefix+"_L", image_path=left_image, sound_path=sound_path, key="WS2V", silence=False)
-                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=file_prefix+"_R", image_path=right_image, sound_path=sound_path, key="WS2V", silence=True)
+                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=file_prefix+"_L", image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
+                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=file_prefix+"_R", image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
             elif speaker_position == "right":
                 left_prompt.pop("SPEAKING", None)
                 right_prompt.pop("LISTENING", None)
-                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=file_prefix+"_L", image_path=left_image, sound_path=sound_path, key="WS2V", silence=True)
-                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=file_prefix+"_R", image_path=right_image, sound_path=sound_path, key="WS2V", silence=False)
+                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=file_prefix+"_L", image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
+                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=file_prefix+"_R", image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
     def _process_single_files(self, scenario, found_files):
@@ -1785,11 +1736,55 @@ class MagicWorkflow:
             print(f"❌ 增强双视频时出错: {str(e)}")
 
 
-    def finalize_video(self, title, program_keywords, zero_audio_only):
+    def promotion_video(self, title, program_keywords):
+        self.post_init(title, program_keywords)
+
+        promotion_scenarios = []
+        for s in self.scenarios:
+            promotion_info = s.get("promotion_info", None)
+            if promotion_info and len(promotion_info) > 0:
+                promotion_scenarios.append(s)
+        
+        if len(promotion_scenarios) == 0:
+            return
+
+        video_segments = []
+        zero_audio = None
+        zero_offset = None
+        for s in promotion_scenarios:
+            promotion_info = s.get("promotion_info", "")
+            clip = s.get("clip", None)
+            if zero_offset is None:
+                zero_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.get_scenario_detail(s)
+            if zero_audio is None:
+                zero_audio = get_file_path(s, "zero_audio")
+
+            clip_lang = s.get("content_language", "")
+            if not clip_lang or clip_lang not in config.FONT_LIST:
+                font = self.font_video
+            else:
+                font = config.FONT_LIST[clip_lang]
+        
+            promotion_info = "hl_" + self.transcriber.translate_text(promotion_info, self.language, self.language)
+            clip_temp = self.ffmpeg_processor.add_script_to_video(clip, promotion_info, font)
+            video_segments.append({"path":clip_temp, "transition":"fade", "duration":1.0})
+
+        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, self.ffmpeg_processor.width, self.ffmpeg_processor.height, keep_audio_if_has=True)
+        if zero_audio is not None and zero_offset is not None:
+            audio_zero = self.ffmpeg_audio_processor.audio_cut_fade(zero_audio, zero_offset, self.ffmpeg_processor.get_duration(video_temp))
+            video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_zero)
+            
+        promotion_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_promotion.mp4"
+        os.replace(video_temp, promotion_video_path)
+
+        config.clear_temp_files()
+        print(f"✅ Promotion video created: {promotion_video_path}")
+
+
+    def finalize_video(self, title, program_keywords):
         self.post_init(title, program_keywords)
         
         #start = 0.0
-        
         #if self.video_prepares["starting"]["video_path"] and os.path.exists(self.video_prepares["starting"]["video_path"]):
         #    video_segments.append({"path":self.video_prepares["starting"]["video_path"], "transition":"fade", "duration":1.0})
         #    start = start + self.ffmpeg_processor.get_duration(self.video_prepares["starting"]["video_path"])
@@ -1805,50 +1800,15 @@ class MagicWorkflow:
 
         video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, self.ffmpeg_processor.width, self.ffmpeg_processor.height, keep_audio_if_has=True)
 
-        if zero_audio_only:
-            audio_segments = []
-            current_zero = None
-            for s in self.scenarios:
-                if not current_zero or current_zero != s["zero"]:
-                    current_zero = s["zero"]
-                    audio_segments.append(current_zero)
-
+        audio_segments = []
+        current_zero = None
+        for s in self.scenarios:
+            if not current_zero or current_zero != s["zero"]:
+                current_zero = s["zero"]
+                audio_segments.append(current_zero)
+        if audio_segments and len(audio_segments) > 0:
             audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
             video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
-        else:
-            audio_segments = []
-            started = None
-            last_end = 0.0
-            for s in self.scenarios:
-                duration = self.find_clip_duration(s)
-
-                zero = get_file_path(s, "zero")
-                zero_clip_position = s.get("zero_clip_position", -1.0)
-                zero_volume = s.get("zero_clip_volume", None)
-                zero_ending = s.get("zero_ending", False)
-                zero_end = s.get("zero_end", None)
-
-                if not zero_end or not zero_volume or zero_clip_position < 0.0 or zero_clip_position >= duration-0.1:
-                    audio_segments.append( self.ffmpeg_audio_processor.make_silence(duration) )
-                    continue
-
-                if not started:
-                    started = s.get("zero_start", None)
-                    if zero_clip_position > 0.0:
-                        audio_segments.append( self.ffmpeg_audio_processor.make_silence(zero_clip_position) )
-
-                if started:
-                    if zero_ending:
-                        audio_segments.append( self.ffmpeg_audio_processor.audio_cut_fade(zero, started, zero_end-started, 1.0, 1.0, zero_volume) )
-                        started = None
-
-                if not zero_end:
-                    last_end = 0.0
-                else:
-                    last_end = zero_end
-
-            audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
-            video_temp = self.ffmpeg_processor.video_audio_mix(video_temp, audio_temp)
 
         final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
         os.replace(video_temp, final_video_path)
@@ -1864,6 +1824,42 @@ class MagicWorkflow:
         print(f"✅ Final video with audio created: {final_video_path}")
 
 
+    def make_background_audio(self):
+        audio_segments = []
+        started = None
+        last_end = 0.0
+        for s in self.scenarios:
+            duration = self.find_clip_duration(s)
+
+            zero = get_file_path(s, "zero")
+            zero_clip_position = s.get("zero_clip_position", -1.0)
+            zero_volume = s.get("zero_clip_volume", None)
+            zero_ending = s.get("zero_ending", False)
+            zero_end = s.get("zero_end", None)
+
+            if not zero_end or not zero_volume or zero_clip_position < 0.0 or zero_clip_position >= duration-0.1:
+                audio_segments.append( self.ffmpeg_audio_processor.make_silence(duration) )
+                continue
+
+            if not started:
+                started = s.get("zero_start", None)
+                if zero_clip_position > 0.0:
+                    audio_segments.append( self.ffmpeg_audio_processor.make_silence(zero_clip_position) )
+
+            if started:
+                if zero_ending:
+                    audio_segments.append( self.ffmpeg_audio_processor.audio_cut_fade(zero, started, zero_end-started, 1.0, 1.0, zero_volume) )
+                    started = None
+
+            if not zero_end:
+                last_end = 0.0
+            else:
+                last_end = zero_end
+
+        audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
+        return audio_temp
+
+
     def prepare_scenarios_from_json(self, raw_scenario, raw_index, audio_json, style, shot, angle, color):
         # keep raw_id as integer    
         raw_id = int((raw_scenario["id"]/100)*100)
@@ -1872,10 +1868,9 @@ class MagicWorkflow:
             language=config.LANGUAGES[self.language],
             length=512
         )
-        text_summary = self.summarizer.generate_text_summary(
+        text_summary = self.llm_api.generate_text_summary(
                             system_prompt, 
-                            "\n".join([segment["content"] for segment in audio_json]),
-                            1 
+                            "\n".join([segment["content"] for segment in audio_json])
                         )
         text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
 
@@ -1924,10 +1919,9 @@ class MagicWorkflow:
             length=512
         )
 
-        text_summary = self.summarizer.generate_text_summary(
+        text_summary = self.llm_api.generate_text_summary(
                             system_prompt, 
-                            "\n".join([segment["content"] for segment in audio_json]),
-                            1 
+                            "\n".join([segment["content"] for segment in audio_json])
                         )
         text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
 
@@ -1941,7 +1935,7 @@ class MagicWorkflow:
                             )
         user_prompt = json.dumps(audio_json, ensure_ascii=False, indent=2)
 
-        raw_scenarios = self.summarizer.generate_json_summary(system_prompt, user_prompt, raw_json_path)
+        raw_scenarios = self.llm_api.generate_json_summary(system_prompt, user_prompt, raw_json_path)
 
         for i, scenario_data in enumerate(raw_scenarios):
             scenario_data.update({
@@ -2008,14 +2002,14 @@ class MagicWorkflow:
                                 angle=scenario["wan_angle"], 
                                 color=scenario["wan_color"]
                             )
-        new_scenario = self.summarizer.generate_json_summary(system_prompt, script_content, None, False)
+        new_scenario = self.llm_api.generate_json_summary(system_prompt, script_content, None, False)
         if isinstance(new_scenario, list):
             if len(new_scenario) == 0:
                 return
             new_scenario = new_scenario[0]
 
         scenario["story_expression"] = new_scenario.get("story_expression", scenario.get("story_expression", ""))
-        scenario["person_in_story_action"] = new_scenario.get("person_in_story_action", scenario.get("person_in_story_action", ""))
+        scenario["person_action"] = new_scenario.get("person_action", scenario.get("person_action", ""))
         scenario["era_time"] = new_scenario.get("era_time", scenario.get("era_time", ""))
         scenario["location"] = new_scenario.get("location", scenario.get("location", ""))
         scenario["sound_effect"] = new_scenario.get("sound_effect", scenario.get("sound_effect", ""))
@@ -2056,7 +2050,7 @@ class MagicWorkflow:
                 #"story_expression": "",
                 #"content": "",
                 #"era_time": "",
-                #"person_in_story_action": "",
+                #"person_action": "",
                 #"speaker_action": "",
                 #"camera_light": "",
                 
@@ -2075,5 +2069,29 @@ class MagicWorkflow:
         self.refresh_scenario_media(scenario, "zero_audio", ".wav", background_music)
         self.refresh_scenario_media(scenario, "zero_image", ".webp", background_image)
         self.sync_scenario_audio(scenario, True)
+
+        self.save_scenarios_to_json()
+
+
+
+    def update_scenario_image_fields(self, current_scenario, scenario_data):
+        story = scenario_data.get("story_expression", "")
+        if story:
+            current_scenario["story_expression"] = story
+        person = scenario_data.get("person_action", "")
+        if person:
+            current_scenario["person_action"] = person
+        era = scenario_data.get("era_time", "")
+        if era:
+            current_scenario["era_time"] = era
+        location = scenario_data.get("location", "")
+        if location:
+            current_scenario["location"] = location
+        camera = scenario_data.get("camera_light", "")
+        if camera:
+            current_scenario["camera_light"] = camera
+        sound = scenario_data.get("sound_effect", "")
+        if sound:
+            current_scenario["sound_effect"] = sound
 
         self.save_scenarios_to_json()

@@ -1462,11 +1462,7 @@ class FfmpegProcessor:
                         # Use resize_video which standardizes all parameters
                         standardized_path = self.resize_video(
                             video_seg["path"],
-                            width,
-                            height,
-                            start_time=0,
-                            end_time=None,
-                            volume=1.0
+                            width
                         )
                         # Move to expected path
                         import shutil
@@ -3124,21 +3120,54 @@ class FfmpegProcessor:
 
 
 
+    def resize_image_smart(self, input_image):
+        return self.resize_image(input_image, self.width, self.height)
+
+
     def resize_image(self, input_image, width, height):
-        """Resize an image to the specified dimensions."""
+        """Smart resize image to the specified dimensions with intelligent cropping."""
         output_image = config.get_temp_file(self.pid, "webp")
-        try:
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-i", input_image,
-                "-vf", f"scale={width}:{height}",
-                output_image
-            ]
-            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            return output_image
-        except Exception as e:
-            print(f"❌ Error resizing image: {str(e)}")
-            return None
+
+        from PIL import Image
+        input_width, input_height = self.get_resolution(input_image)
+
+        with Image.open(input_image) as img:
+            # WEBP格式支持RGB和RGBA模式，只转换不支持的模式
+            if img.mode not in ('RGB', 'RGBA'):
+                # 对于LA模式（灰度+透明），转换为RGBA以保留透明信息
+                if img.mode == 'LA':
+                    img = img.convert('RGBA')
+                else:
+                    # 其他模式（如P模式、灰度图等）转换为RGB
+                    img = img.convert('RGB')
+            
+            # 计算宽高比
+            input_ratio = input_width / input_height
+            target_ratio = width / height
+            
+            # 如果宽高比基本相同（误差小于1%），直接缩放
+            if abs(input_ratio - target_ratio) < 0.01:
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            else:
+                # 宽高比不同，需要智能裁剪
+                if input_ratio > target_ratio:
+                    # 输入图像更宽，裁剪左右两侧，保留中间部分
+                    new_width = int(input_height * target_ratio)
+                    left = (input_width - new_width) // 2
+                    img = img.crop((left, 0, left + new_width, input_height))
+                else:
+                    # 输入图像更高，裁剪上下两侧，保留中间部分
+                    new_height = int(input_width / target_ratio)
+                    top = (input_height - new_height) // 2
+                    img = img.crop((0, top, input_width, top + new_height))
+                
+                # 裁剪后缩放到目标尺寸
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            
+            img.save(output_image, 'WEBP', quality=90, method=6)
+
+        return output_image
+
 
 
     def create_scroll_background_video_169(self, background_image, duration, repeat_duration):
@@ -3158,7 +3187,7 @@ class FfmpegProcessor:
         if not original_width or not original_height:
             print(f"⚠️  Could not detect image resolution, falling back to resize method")
             # Fallback to original method if we can't detect resolution
-            background_image = self.resize_image(background_image, self.width, self.height)
+            background_image = self.resize_image_smart(background_image)
             bg_scale_width = int(output_width * 1.5)
             max_scroll = bg_scale_width - output_width
         else:
@@ -3172,7 +3201,7 @@ class FfmpegProcessor:
                 intermediate_height = int(original_height * scale_down_factor)
                 
                 print(f"   Pre-resizing to intermediate size: {intermediate_width}x{intermediate_height}")
-                background_image = self.resize_image(background_image, intermediate_width, intermediate_height)
+                background_image = self.resize_image_smart(background_image, intermediate_width, intermediate_height)
                 
                 # Update dimensions for further processing
                 original_width, original_height = intermediate_width, intermediate_height
@@ -3193,7 +3222,7 @@ class FfmpegProcessor:
                 bg_scale_width = int(output_width * 1.5)
                 max_scroll = bg_scale_width - output_width
                 # Resize the image to standard dimensions in this case
-                background_image = self.resize_image(background_image, self.width, self.height)
+                background_image = self.resize_image_smart(background_image, self.width, self.height)
             else:
                 # Use the full scaled width for maximum scroll effect
                 bg_scale_width = scaled_width
@@ -3286,7 +3315,7 @@ class FfmpegProcessor:
             intermediate_height = int(img_height * scale_down_factor)
             
             print(f"   Pre-resizing to intermediate size: {intermediate_width}x{intermediate_height}")
-            background_image = self.resize_image(background_image, intermediate_width, intermediate_height)
+            background_image = self.resize_image_smart(background_image, intermediate_width, intermediate_height)
             
             # Update dimensions for further processing
             img_width, img_height = intermediate_width, intermediate_height
@@ -3392,37 +3421,81 @@ class FfmpegProcessor:
         return all(ord(char) < 128 for char in text)
 
 
-    def add_script_to_video(self, input_video_path, script, font, font_size, position="footer"):
-        script = script.replace("\r", "")
-        total_length = len(script)
-        lines = script.split("\n")
+    def add_script_to_video(self, input_video_path, content, font):
+        position = "footer"
+        font_size = 90
+        if content.lower().startswith("h_"):
+            position = "header"
+            content = content[2:]   
+        elif content.lower().startswith("b_"):
+            position = "body"
+            content = content[2:]
+        elif content.lower().startswith("f_"):
+            position = "footer"
+            content = content[2:]
+        elif content.lower().startswith("hm_"):
+            position = "header"
+            content = content[3:]
+        elif content.lower().startswith("bm_"):
+            position = "body"
+            content = content[3:]
+        elif content.lower().startswith("fm_"):
+            position = "footer"
+            content = content[3:]
+        elif content.lower().startswith("hl_"):
+            font_size = 130
+            position = "header"
+            content = content[2:]   
+        elif content.lower().startswith("bl_"):
+            font_size = 130
+            position = "body"
+            content = content[3:]
+        elif content.lower().startswith("fl_"):
+            font_size = 130
+            position = "footer"
+            content = content[3:]
+        elif content.lower().startswith("hs_"):
+            position = "header"
+            font_size = 60
+            content = content[3:]
+        elif content.lower().startswith("bs_"):
+            position = "body"
+            font_size = 60
+            content = content[3:]
+        elif content.lower().startswith("fs_"):
+            position = "footer"
+            font_size = 60
+            content = content[3:]
+
+        content = content.replace("\r", "")
+        total_length = len(content)
+        lines = content.split("\n")
+        
         start_pos = 0.0
         for line in lines:
             line_length = self.countLineLength(line)
             # separate the line by the space, if section is english, count length like : length = charaters / 3
 
             font_s = font_size
-            if line_length > 10:
-                font_s -= 5
-            elif line_length > 20:
-                font_s -= 10
-            elif line_length > 30:
-                font_s -= 15
-            elif line_length > 40:
+            if line_length > 20:
                 font_s -= 20
-            else:
-                font_s -= 30
+            elif line_length > 15:
+                font_s -= 15
+            elif line_length > 10:
+                font_s -= 10
+            elif line_length > 6:
+                font_s -= 5
 
             end_pos = start_pos + line_length / total_length
             if end_pos > 1.0:
                 end_pos = 1.0
-            input_video_path = self.add_title_to_video(input_video_path, line, font, font_size, (start_pos, end_pos), position)
+            input_video_path = self.add_title_to_video(input_video_path, line, font, font_s, (start_pos, end_pos), position)
             start_pos = end_pos
 
         return input_video_path
 
 
-    def add_title_to_video(self, input_video_path, title, font, font_size, title_show_portion=(0.02, 0.98), position="header"):
+    def add_title_to_video(self, input_video_path, title, font, font_size, title_show_portion=(0.01, 0.99), position="header"):
         output_file = config.get_temp_file(self.pid, "mp4")
         
         lines = title.split("_")
@@ -3450,12 +3523,28 @@ class FfmpegProcessor:
             fadein_start = start_portion * video_duration
             fadein_end = end_portion * video_duration
             
+            # Calculate fade duration dynamically based on show duration (max 0.5s or 5% of show duration)
+            show_duration = fadein_end - fadein_start
+            fade_duration = min(0.5, show_duration * 0.05)  # Use 5% of show duration or max 0.5s
+            fade_duration = max(0.1, fade_duration)  # Minimum 0.1s for smooth fade
+            
+            # Calculate actual fade start and end times
+            fade_in_end_time = fadein_start + fade_duration
+            fade_out_start_time = fadein_end - fade_duration
+            
+            print(f"   Title show portion: {start_portion:.2f} - {end_portion:.2f} ({show_duration:.2f}s)")
+            print(f"   Fade duration: {fade_duration:.2f}s")
+            print(f"   Fade in: {fadein_start:.2f}s - {fade_in_end_time:.2f}s")
+            print(f"   Full display: {fade_in_end_time:.2f}s - {fade_out_start_time:.2f}s")
+            print(f"   Fade out: {fade_out_start_time:.2f}s - {fadein_end:.2f}s")
+            
             # Calculate available text width for wrapping based on video dimensions
             aspect_ratio = video_width / video_height
             if aspect_ratio < 1.0:
-                available_width = int(video_width * 0.9)  # 90% of width for narrow screens
+                available_width = int(video_width * 0.92)  # 90% of width for narrow screens
+                #font_size = int(font_size * 0.7)
             else:
-                available_width = int(video_width * 0.75)  # 75% of width for wider screens
+                available_width = int(video_width * 0.85)  # 75% of width for wider screens
             
             # Calculate text wrapping with language-aware character width estimation
             script_type, estimated_char_width = self._detect_script_and_estimate_char_width(title, font_size)
@@ -3520,8 +3609,8 @@ class FfmpegProcessor:
                 f"line_spacing={line_spacing_reduction}:"  # Reduce spacing between lines
                 f"x=(w-text_w)/2:y={text_y_pos}:"
                 f"enable='between(t,{fadein_start},{fadein_end})':"
-                f"alpha='if(lt(t,{fadein_start + 1}),(t-{fadein_start})/1,"
-                f"if(lt(t,{fadein_end - 1}),1,1-(t-{fadein_end - 1})/1))'"
+                f"alpha='if(lt(t,{fade_in_end_time}),(t-{fadein_start})/{fade_duration},"
+                f"if(lt(t,{fade_out_start_time}),1,1-(t-{fade_out_start_time})/{fade_duration}))'"
             )
             
             spacing_percentage = 70 if aspect_ratio < 1.0 else 50

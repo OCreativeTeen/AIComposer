@@ -221,44 +221,140 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
 
-    def finish_av_for_scenarios(self, raw_scenarios, current_scenario):
-        current_id = (current_scenario["id"]/100)*100
-        main_audio = get_file_path(current_scenario, "main_audio")
-        main_video = get_file_path(current_scenario, "main_video")
-        start_time = 0.0
-        for i, s in enumerate(raw_scenarios):
-            s["id"] = current_id + 100
-            s["wan_style"] = current_scenario["wan_style"]
-            s["wan_shot"] = current_scenario["wan_shot"]
-            s["wan_angle"] = current_scenario["wan_angle"]
-            s["wan_color"] = current_scenario["wan_color"]
-            s["general_location"] = current_scenario["general_location"]
 
-            s["zero"] = current_scenario["zero"]
-            s["main_audio"] = main_audio
-            s["main_video"] = main_video
-            second = get_file_path(current_scenario, "second")
-            if second:
-                s["second"] = second    
-            second_audio = get_file_path(current_scenario, "second_audio")
-            if second_audio:
-                s["second_audio"] = second_audio
 
-            duration = s["duration"]
-            if isinstance(duration, str):
-                duration = float(duration)
-            if i == len(raw_scenarios) - 1:
-                duration = self.ffmpeg_audio_processor.get_duration(main_audio) - start_time
-            s["duration"] = duration
 
-            a = self.ffmpeg_audio_processor.audio_cut_fade(main_audio, start_time, duration)
-            olda, newa =self.refresh_scenario_media(s, "clip_audio", ".wav", a)
-            safe_remove(olda)
+    def _check_output_folder(self, scenario_index, scenario):
+        """检查 X:\output 文件夹中的新视频文件"""
+        import glob
+        import time
+        
+        clip_animation = scenario.get("clip_animation", "")
+        if clip_animation not in config.ANIMATE_SOURCE:
+            # 不需要监控的场景，清理监控记录
+            if scenario_index in self.monitoring_scenarios:
+                del self.monitoring_scenarios[scenario_index]
+            return
+        
+        output_folder = "X:\\output"
+        if not os.path.exists(output_folder):
+            return
+        
+        scenario_id = scenario.get('id', '')
+        
+        # 初始化监控记录
+        if scenario_index not in self.monitoring_scenarios:
+            self.monitoring_scenarios[scenario_index] = {
+                "found_files": [],
+                "start_time": time.time()
+            }
+        
+        monitor_info = self.monitoring_scenarios[scenario_index]
+        
+        # 持续监控，不设置超时限制，直到GUI退出或找到文件
+        
+        try:
+            if clip_animation == "WS2V":
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_L_WS2V_*-audio.mp4")
+                left_files = glob.glob(pattern)
 
-            v = self.ffmpeg_processor.resize_video(main_video, None, None, start_time, start_time + duration)
-            self.refresh_scenario_media(s, "clip_video", ".mp4", v)
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_R_WS2V_*-audio.mp4")
+                right_files = glob.glob(pattern)
+                
+                # 过滤掉已处理的文件
+                new_left_files = [f for f in left_files if f not in self.processed_output_files]
+                new_right_files = [f for f in right_files if f not in self.processed_output_files]
+                
+                # 检查是否两边都有文件
+                if new_left_files and new_right_files:
+                    # 排序确保配对的一致性
+                    new_left_files.sort()
+                    new_right_files.sort()
+                    
+                    # 取每组的第一个文件
+                    left_file = new_left_files[0]
+                    right_file = new_right_files[0]
+                    
+                    print(f"🎬 发现左侧视频: {os.path.basename(left_file)}")
+                    print(f"🎬 发现右侧视频: {os.path.basename(right_file)}")
+                    
+                    # 将这两个文件放入 found_files
+                    files_to_process = [left_file, right_file]
+                    
+                    # 标记所有找到的文件为已处理（不仅是配对的两个）
+                    for file_path in left_files + right_files:
+                        self.processed_output_files.add(file_path)
+                    
+                    # 在主线程中处理文件
+                    self.root.after(0, lambda idx=scenario_index, files=files_to_process: 
+                        self._process_output_files(idx, files, "dual"))
+                    
+                    # 处理完成，移除监控
+                    del self.monitoring_scenarios[scenario_index]
 
-            start_time += duration
+            elif clip_animation in config.ANIMATE_TARGET: # without WS2V
+                # 查找以场景ID开头的mp4文件
+                if clip_animation == "I2V":
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_I2V_*.mp4")
+                elif clip_animation == "2I2V":
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_2I2V_*.mp4")
+                elif clip_animation == "S2V":
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_S2V_*-audio.mp4")
+                elif clip_animation == "FS2V":
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_FS2V_*-audio.mp4")
+                elif clip_animation == "AI2V":
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_AI2V_*.mp4")
+
+                left_files = glob.glob(pattern)
+                
+                if not monitor_info["found_files"]:
+                    monitor_info["found_files"] = left_files
+                    return
+                
+                # 检查是否有新文件
+                new_files = [f for f in left_files if f not in monitor_info["found_files"] and f not in self.processed_output_files]
+                if new_files:
+                    for file_path in new_files:
+                        print(f"🎬 发现新视频文件: {os.path.basename(file_path)}")
+                        monitor_info["found_files"].append(file_path)
+                        self.processed_output_files.add(file_path)
+                    
+                    # 在主线程中处理文件
+                    self.root.after(0, lambda idx=scenario_index, files=new_files: 
+                        self._process_output_files(idx, files, "single"))
+                    
+                    # 处理完成，移除监控
+                    del self.monitoring_scenarios[scenario_index]
+            
+        
+        except Exception as e:
+            print(f"❌ 检查输出文件夹时出错: {str(e)}")
+
+
+    
+    def _process_output_files(self, scenario_index, files, file_type):
+        """处理从 X:\output 发现的文件"""
+        try:
+            if scenario_index >= len(self.workflow.scenarios):
+                return
+            
+            scenario = self.workflow.scenarios[scenario_index]
+            
+            if file_type == "single":
+                self.workflow._process_single_files(scenario, files)
+            elif file_type == "dual":
+                self.workflow._process_dual_files(scenario, files)
+            
+            # 处理完成后刷新GUI
+            self.root.after(0, lambda: self.refresh_gui_scenarios())
+            
+        except Exception as e:
+            print(f"❌ 处理输出文件时出错: {str(e)}")
+    
+
+
+
+
 
 
 

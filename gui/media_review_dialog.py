@@ -9,8 +9,8 @@ from utility.file_util import get_file_path, safe_remove, safe_file
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.audio_transcriber import AudioTranscriber
-from utility.talk_summerizer import TalkSummarizer
 import config
+from utility.llm_api import LLMApi
 import json
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 
@@ -65,7 +65,7 @@ class AVReviewDialog:
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
         self.transcriber = AudioTranscriber(self.workflow, model_size="small", device="cuda")
-        self.summarizer = TalkSummarizer(self.pid, self.language)
+        self.summarizer = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
 
         self.media_type_names = {
             "clip": "场景媒体 (clip)",
@@ -119,7 +119,7 @@ class AVReviewDialog:
         self.start_time = initial_start_time if initial_start_time else 0.0
         if initial_end_time:
             self.end_time = initial_end_time
-        elif replace_media_audio or is_image_file(av_path):
+        elif replace_media_audio=="replace" or replace_media_audio=="trim" or is_image_file(av_path):
             self.end_time = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         elif is_audio_file(av_path):
             self.end_time = self.workflow.ffmpeg_audio_processor.get_duration(av_path)
@@ -879,7 +879,7 @@ class AVReviewDialog:
         # 使用编辑后的系统提示
         formatted_system_prompt = edited_prompt[0]
 
-        new_scenarios = self.summarizer.generate_json_summary(
+        new_scenarios = self.summarizer.llm.generate_json_summary(
             system_prompt=formatted_system_prompt,
             user_prompt=refresh_content,
             expect_list=True
@@ -1648,7 +1648,7 @@ class AVReviewDialog:
             self.source_image_path = av_path
             self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
         elif is_video_file(av_path):
-            if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and not self.replace_media_audio:
+            if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and self.replace_media_audio=="keep":
                 self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, self.workflow.ffmpeg_processor.width)
                 self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
             else:

@@ -143,7 +143,7 @@ class WorkflowGUI:
         
         # 添加当前效果和图像类型选择变量
         self.current_effect_var = tk.StringVar(value=config.SPECIAL_EFFECTS[0])
-        self.scenario_second_animation = tk.StringVar(value=config.ANIMATE_TYPES[0])
+        self.scenario_second_animation = tk.StringVar(value=config.ANIMATE_SOURCE[0])
         
         # 创建动画名称到提示语的映射字典（双向）
         self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config.ANIMATION_PROMPTS}
@@ -197,20 +197,17 @@ class WorkflowGUI:
     def create_workflow_instance(self):
         """立即创建工作流实例（非懒加载）"""
         try:
-            pid = self.get_pid()
-            language = self.shared_language.cget('text')
-            channel = self.shared_channel.cget('text')
-            story_site = self.story_site_entry.get().strip()
-            keywords = self.project_keywords.get().strip()
-            
             # Get video dimensions from project config
-            video_width = None
-            video_height = None
-            if self.current_project_config:
-                video_width = self.current_project_config.get('video_width')
-                video_height = self.current_project_config.get('video_height')
-            
-            self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
+            video_width = self.current_project_config.get('video_width')
+            video_height = self.current_project_config.get('video_height')
+            pid = self.current_project_config.get('pid')
+            language = self.current_project_config.get('language')
+            channel = self.current_project_config.get('channel')
+            story_site = self.current_project_config.get('story_site')
+            keywords = self.current_project_config.get('program_keywords')
+            project_type = self.current_project_config.get('project_type')
+
+            self.workflow = MagicWorkflow(pid, project_type, language, channel, story_site, video_width, video_height)
             self.speech_service = MinimaxSpeechService(pid)
             
             current_gui_title = self.video_title.get().strip()
@@ -326,8 +323,9 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="场景交换", command=self.swap_scenario).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video(zero_audio_only=False)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1_frame, text="推广合成", command=lambda:self.run_promotion_video()).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="上传视频", command=self.run_upload_video).pack(side=tk.LEFT, padx=2)
         #ttk.Button(scenario_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
 
@@ -361,17 +359,6 @@ class WorkflowGUI:
         self.project_keywords = ttk.Entry(title_frame, width=15)
         self.project_keywords.pack(side=tk.LEFT)
         
-        # 视频尺寸组
-        size_frame = ttk.Frame(row1_frame)
-        size_frame.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(size_frame, text="尺寸").pack(side=tk.LEFT)
-        self.video_width = ttk.Entry(size_frame, width=5)
-        self.video_width.pack(side=tk.LEFT)
-        ttk.Label(size_frame, text="×").pack(side=tk.LEFT)
-        self.video_height = ttk.Entry(size_frame, width=5)
-        self.video_height.pack(side=tk.LEFT)
-
-
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
         tool_frame = ttk.Frame(row1_frame)
@@ -1125,7 +1112,7 @@ class WorkflowGUI:
         ttk.Label(duration_promo_frame, text="主动画:").pack(side=tk.LEFT, padx=(5, 5))
         self.scenario_main_animate = tk.StringVar(value="")
         self.main_animate_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scenario_main_animate, 
-                                               values=config.ANIMATE_TYPES, 
+                                               values=config.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.main_animate_combobox.pack(side=tk.LEFT)
         self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
@@ -1133,7 +1120,7 @@ class WorkflowGUI:
 
         ttk.Label(duration_promo_frame, text="次动画:").pack(side=tk.LEFT, padx=(0, 5))
         self.second_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scenario_second_animation,
-                                               values=config.ANIMATE_TYPES, 
+                                               values=config.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.second_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
         self.second_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
@@ -1211,6 +1198,17 @@ class WorkflowGUI:
         ttk.Label(video_edit_frame, text="左右:").grid(row=15, column=0, sticky=tk.NW, pady=2)
         self.scenario_speaker_position = ttk.Combobox(video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
         self.scenario_speaker_position.grid(row=15, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # add a choice list to choose font of the title, values are from config.FONT_LIST(choose from all languages, show language name in choice, keep value), default value to self.workflow.font_video
+        ttk.Label(video_edit_frame, text="标题字体:").grid(row=16, column=0, sticky=tk.NW, pady=2)
+        self.scenario_language = ttk.Combobox(video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
+        self.scenario_language.grid(row=16, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scenario_language.set(self.shared_language.cget('text'))
+
+        # add a text field "promotion info" here, default empty, if enter text, then need to save to current scenario["promotion_info"] 
+        ttk.Label(video_edit_frame, text="宣传信息:").grid(row=17, column=0, sticky=tk.NW, pady=2)
+        self.scenario_promotion_info = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scenario_promotion_info.grid(row=17, column=1, sticky=tk.W, padx=5, pady=2)
 
         # 第二轨道播放状态
         self.second_track_playing = False
@@ -1718,7 +1716,27 @@ class WorkflowGUI:
         
         # 通知新完成的任务
         for task_id, task_info in newly_completed:
-            self.notify_task_completion(task_id, task_info)
+            """通知任务完成"""
+            task_type = task_info.get("type", "未知任务")
+            task_status = task_info.get("status", "未知状态")
+            pid = task_info.get("pid", "")
+            
+            if task_status == "完成":
+                title = "✅ 任务完成"
+                message = f"任务类型: {task_type}\n项目ID: {pid}\n状态: 成功完成"
+                if "result" in task_info:
+                    message += f"\n结果: {task_info['result']}"
+            else:
+                title = "❌ 任务失败"
+                message = f"任务类型: {task_type}\n项目ID: {pid}\n状态: 执行失败"
+                if "error" in task_info:
+                    message += f"\n错误: {task_info['error']}"
+            
+            # 显示通知对话框
+            messagebox.showinfo(title, message)
+
+
+
         
         # 检查生成的视频（后台持续检查）
         self.check_generated_videos_background()
@@ -1803,153 +1821,29 @@ class WorkflowGUI:
             self.start_video_check_thread()
     
     
-    def _check_output_folder(self, scenario_index, scenario):
-        """检查 X:\output 文件夹中的新视频文件"""
-        import glob
-        import time
-        
-        clip_animation = scenario.get("clip_animation", "")
-        if clip_animation not in ["S2V", "FS2V", "WS2V", "2I2V", "I2V", "AI2V"]:
-            # 不需要监控的场景，清理监控记录
-            if scenario_index in self.monitoring_scenarios:
-                del self.monitoring_scenarios[scenario_index]
-            return
-        
-        output_folder = "X:\\output"
-        if not os.path.exists(output_folder):
-            return
-        
-        scenario_id = scenario.get('id', '')
-        
-        # 初始化监控记录
-        if scenario_index not in self.monitoring_scenarios:
-            self.monitoring_scenarios[scenario_index] = {
-                "found_files": [],
-                "start_time": time.time()
-            }
-        
-        monitor_info = self.monitoring_scenarios[scenario_index]
-        
-        # 持续监控，不设置超时限制，直到GUI退出或找到文件
-        
-        try:
-            if clip_animation in ["S2V", "FS2V", "I2V", "2I2V", "AI2V"]:
-                # 查找以场景ID开头的mp4文件
-                if clip_animation == "I2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_I2V_*.mp4")
-                elif clip_animation == "2I2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_2I2V_*.mp4")
-                elif clip_animation == "S2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_S2V_*-audio.mp4")
-                elif clip_animation == "FS2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_FS2V_*-audio.mp4")
-                elif clip_animation == "AI2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_AI2V_*.mp4")
+    def run_promotion_video(self):
+        pid = self.get_pid()
+        task_id = str(uuid.uuid4())
+        self.tasks[task_id] = {
+            "type": "promotion_video",
+            "status": "运行中",
+            "start_time": datetime.now(),
+            "pid": pid
+        }
+        def run_task():
+            try:
+                self.workflow.promotion_video(self.video_title.get().strip(), "") #self.program_keywords.get().strip())
+                self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
+                self.tasks[task_id]["status"] = "完成"
+            except Exception as e:
+                self.log_to_output(self.video_output, f"❌ 最终视频生成失败: {str(e)}")
+                self.tasks[task_id]["status"] = "失败"
+                self.tasks[task_id]["error"] = str(e)
 
-                left_files = glob.glob(pattern)
-                
-                if not monitor_info["found_files"]:
-                    monitor_info["found_files"] = left_files
-                    return
-                
-                # 检查是否有新文件
-                new_files = [f for f in left_files if f not in monitor_info["found_files"] and f not in self.processed_output_files]
-                if new_files:
-                    for file_path in new_files:
-                        print(f"🎬 发现新视频文件: {os.path.basename(file_path)}")
-                        monitor_info["found_files"].append(file_path)
-                        self.processed_output_files.add(file_path)
-                    
-                    # 在主线程中处理文件
-                    self.root.after(0, lambda idx=scenario_index, files=new_files: 
-                        self._process_output_files(idx, files, "single"))
-                    
-                    # 处理完成，移除监控
-                    del self.monitoring_scenarios[scenario_index]
-            
-            elif clip_animation == "WS2V":
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_L_WS2V_*-audio.mp4")
-                left_files = glob.glob(pattern)
-
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_R_WS2V_*-audio.mp4")
-                right_files = glob.glob(pattern)
-                
-                # 过滤掉已处理的文件
-                new_left_files = [f for f in left_files if f not in self.processed_output_files]
-                new_right_files = [f for f in right_files if f not in self.processed_output_files]
-                
-                # 检查是否两边都有文件
-                if new_left_files and new_right_files:
-                    # 排序确保配对的一致性
-                    new_left_files.sort()
-                    new_right_files.sort()
-                    
-                    # 取每组的第一个文件
-                    left_file = new_left_files[0]
-                    right_file = new_right_files[0]
-                    
-                    print(f"🎬 发现左侧视频: {os.path.basename(left_file)}")
-                    print(f"🎬 发现右侧视频: {os.path.basename(right_file)}")
-                    
-                    # 将这两个文件放入 found_files
-                    files_to_process = [left_file, right_file]
-                    
-                    # 标记所有找到的文件为已处理（不仅是配对的两个）
-                    for file_path in left_files + right_files:
-                        self.processed_output_files.add(file_path)
-                    
-                    # 在主线程中处理文件
-                    self.root.after(0, lambda idx=scenario_index, files=files_to_process: 
-                        self._process_output_files(idx, files, "dual"))
-                    
-                    # 处理完成，移除监控
-                    del self.monitoring_scenarios[scenario_index]
-        
-        except Exception as e:
-            print(f"❌ 检查输出文件夹时出错: {str(e)}")
-    
-    def _process_output_files(self, scenario_index, files, file_type):
-        """处理从 X:\output 发现的文件"""
-        try:
-            if scenario_index >= len(self.workflow.scenarios):
-                return
-            
-            scenario = self.workflow.scenarios[scenario_index]
-            
-            if file_type == "single":
-                self.workflow._process_single_files(scenario, files)
-            elif file_type == "dual":
-                self.workflow._process_dual_files(scenario, files)
-            
-            # 处理完成后刷新GUI
-            self.root.after(0, lambda: self.refresh_gui_scenarios())
-            
-        except Exception as e:
-            print(f"❌ 处理输出文件时出错: {str(e)}")
-    
-
-    def notify_task_completion(self, task_id, task_info):
-        """通知任务完成"""
-        task_type = task_info.get("type", "未知任务")
-        task_status = task_info.get("status", "未知状态")
-        pid = task_info.get("pid", "")
-        
-        if task_status == "完成":
-            title = "✅ 任务完成"
-            message = f"任务类型: {task_type}\n项目ID: {pid}\n状态: 成功完成"
-            if "result" in task_info:
-                message += f"\n结果: {task_info['result']}"
-        else:
-            title = "❌ 任务失败"
-            message = f"任务类型: {task_type}\n项目ID: {pid}\n状态: 执行失败"
-            if "error" in task_info:
-                message += f"\n错误: {task_info['error']}"
-        
-        # 显示通知对话框
-        messagebox.showinfo(title, message)
+        threading.Thread(target=run_task, daemon=True).start()
 
 
-    def run_finalize_video(self, zero_audio_only):
+    def run_finalize_video(self):
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -1961,7 +1855,7 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(self.video_title.get().strip(), "", zero_audio_only) #self.program_keywords.get().strip())
+                self.workflow.finalize_video(self.video_title.get().strip(), "") #self.program_keywords.get().strip())
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -2542,7 +2436,7 @@ class WorkflowGUI:
         self.current_effect_var.set(current_effect)
         
         # 加载当前场景的图像类型设置
-        current_image_type = scenario_data.get("second_animation", config.ANIMATE_TYPES[0])
+        current_image_type = scenario_data.get("second_animation", config.ANIMATE_SOURCE[0])
         self.scenario_second_animation.set(current_image_type)
         
         self.scenario_story_expression.delete("1.0", tk.END)
@@ -2555,7 +2449,7 @@ class WorkflowGUI:
         self.scenario_location.insert(0, scenario_data.get("location", ""))
 
         self.scenario_person_in_story.delete("1.0", tk.END)
-        self.scenario_person_in_story.insert("1.0", scenario_data.get("person_in_story_action", ""))
+        self.scenario_person_in_story.insert("1.0", scenario_data.get("person_action", ""))
         
         self.scenario_speaker_action.delete("1.0", tk.END)
         self.scenario_speaker_action.insert("1.0", scenario_data.get("speaker_action", ""))
@@ -2577,6 +2471,10 @@ class WorkflowGUI:
         
         self.scenario_story_content.delete("1.0", tk.END)
         self.scenario_story_content.insert("1.0", scenario_data.get("content", ""))
+        
+        # 加载宣传信息
+        self.scenario_promotion_info.delete("1.0", tk.END)
+        self.scenario_promotion_info.insert("1.0", scenario_data.get("promotion_info", ""))
 
 
     def update_video_progress_display(self):
@@ -2626,6 +2524,7 @@ class WorkflowGUI:
         self.scenario_mood.set("calm")
         self.scenario_camera_light.delete("1.0", tk.END)
         self.scenario_story_content.delete("1.0", tk.END)
+        self.scenario_promotion_info.delete("1.0", tk.END)
 
 
     def prev_scenario(self):
@@ -2819,8 +2718,8 @@ class WorkflowGUI:
     def print_title(self):
         """打印标题"""
         current_scenario = self.update_current_scenario()
-        title = current_scenario['content']
-        if not title or title.strip() == "":
+        content = current_scenario['content']
+        if not content or content.strip() == "":
             messagebox.showinfo("标题", "标题为空")
             return
         clip_video = get_file_path(current_scenario, "clip")
@@ -2828,58 +2727,16 @@ class WorkflowGUI:
             messagebox.showinfo("标题", "视频为空")
             return
        
-        title = self.workflow.transcriber.translate_text(title, self.workflow.language, self.workflow.language)
-        current_scenario["keywords"] = title
+        content = self.workflow.transcriber.translate_text(content, self.workflow.language, self.workflow.language)
 
-        position = "footer"
-        font_size = 105
-        if title.startswith("h_"):
-            position = "header"
-            title = title[2:]   
-        elif title.startswith("b_"):
-            position = "body"
-            title = title[2:]
-        elif title.startswith("f_"):
-            position = "footer"
-            title = title[2:]
-        if title.startswith("hl_"):
-            font_size = 190
-            position = "header"
-            title = title[2:]   
-        elif title.startswith("bl_"):
-            font_size = 190
-            position = "body"
-            title = title[2:]
-        elif title.startswith("fl_"):
-            font_size = 190
-            position = "footer"
-            title = title[2:]
-        elif title.startswith("hm_"):
-            position = "header"
-            font_size = 80
-            title = title[3:]
-        elif title.startswith("bm_"):
-            position = "body"
-            font_size = 80
-            title = title[3:]
-        elif title.startswith("fm_"):
-            position = "footer"
-            font_size = 80
-            title = title[3:]
-        elif title.startswith("hs_"):
-            position = "header"
-            font_size = 60
-            title = title[3:]
-        elif title.startswith("bs_"):
-            position = "body"
-            font_size = 60
-            title = title[3:]
-        elif title.startswith("fs_"):
-            position = "footer"
-            font_size = 60
-            title = title[3:]
+        content_language = self.scenario_language.get()
+        if content_language in config.FONT_LIST:
+            current_scenario["content_language"] = content_language
+            font = config.FONT_LIST[content_language]
+        else:
+            font = self.workflow.font_title
 
-        v = self.workflow.ffmpeg_processor.add_script_to_video(clip_video, title, self.workflow.font_video, font_size, position)
+        v = self.workflow.ffmpeg_processor.add_script_to_video(clip_video, content, font)
         back = current_scenario.get('back', '')
         current_scenario['back'] = clip_video + "," + back
         self.workflow.refresh_scenario_media(current_scenario, "clip", ".mp4", v)
@@ -3489,6 +3346,7 @@ class WorkflowGUI:
             messagebox.showerror("错误", "文件不存在")
             return
         
+        file_path = self.workflow.ffmpeg_processor.resize_image_smart(file_path)
         try:
             # 获取当前场景
             current_scenario = self.get_current_scenario()
@@ -3497,8 +3355,11 @@ class WorkflowGUI:
                 return
             
             # 复制图片到项目目录
-            self.workflow.refresh_scenario_media(current_scenario, image_type, ".webp", file_path, True)
+            oldi, image_path = self.workflow.refresh_scenario_media(current_scenario, image_type, ".webp", file_path, True)
             
+            scenario_data = self.workflow.sd_processor.describe_image(image_path)
+            self.workflow.update_scenario_image_fields(current_scenario, scenario_data)
+
             # 刷新显示
             self.display_image_on_canvas_for_track(image_type)
             
@@ -3627,19 +3488,10 @@ class WorkflowGUI:
             # 在后台线程中调用 OpenAI API
             def describe_in_background():
                 try:
-                    # 调用 OpenAI 描述图片
-                    description = self.workflow.sd_processor.describe_image_openai(image_path)
-                    
-                    # 在主线程中更新场景数据
-                    def update_scenario():
-                        current_scenario[extra_field] = description
-                        self.workflow.save_scenarios_to_json()
-                        print(f"✅ {display_name} 描述已保存到 {extra_field}")
-                        print(f"📝 描述内容: {description[:100]}..." if len(description) > 100 else f"📝 描述内容: {description}")
-                        messagebox.showinfo("成功", f"{display_name} 描述已保存到 {extra_field}\n\n{description[:200]}..." if len(description) > 200 else f"{display_name} 描述已保存到 {extra_field}\n\n{description}")
-                    
-                    self.root.after(0, update_scenario)
-                    
+                    # 调用 describe_image 描述图片（支持文件路径或 base64 字符串）
+                    scenario_data = self.workflow.sd_processor.describe_image(image_path)
+                    self.workflow.update_scenario_image_fields(current_scenario, scenario_data)
+                    messagebox.showinfo("成功", f"{display_name} 描述已保存")
                 except Exception as e:
                     error_msg = f"描述图片失败: {str(e)}"
                     print(f"❌ {error_msg}")
@@ -3799,22 +3651,25 @@ class WorkflowGUI:
         current_scenario = self.get_current_scenario()
         ss = self.workflow.scenarios_in_story(current_scenario)
         if len(ss) <= 1:
-            result = messagebox.askyesno("警告", "⚠️ 删除唯一场景?")
-            if result:
+            result = messagebox.askyesnocancel("警告", "⚠️ 删除唯一场景?")
+            if result is True:
                 ss = self.workflow.replace_scenario(self.current_scenario_index)
         else:
             if ss[-1] == current_scenario:
-                result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
-                if result:
+                result = messagebox.askyesnocancel("警告", "⚠️ 删除当前场景?")
+                if result is True:
                     ss = self.workflow.replace_scenario(self.current_scenario_index)
             else:
-                result = messagebox.askyesno("警告", "⚠️ 合并还是删除场景\nYes: 合并\nNo: 删除")
-                if result:
+                result = messagebox.askyesnocancel("警告", "⚠️ 请选择操作：\n是: 合并场景\n否: 删除场景\n取消: 取消操作")
+                if result is True:
+                    # 合并场景
                     self.workflow.merge_scenario(self.current_scenario_index, self.current_scenario_index+1)
-                else:
+                elif result is False:
+                    # 删除场景
                     result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
                     if result:
                         ss = self.workflow.replace_scenario(self.current_scenario_index)
+                # result is None 表示取消，不做任何操作
             
         self.refresh_gui_scenarios()
         messagebox.showinfo("合并场景", "完成")
@@ -3936,7 +3791,7 @@ class WorkflowGUI:
             "story_expression": self.scenario_story_expression.get("1.0", tk.END).strip(),
             "era_time": self.scenario_era_time.get("1.0", tk.END).strip(),
             "location": self.scenario_location.get(),
-            "person_in_story_action": self.scenario_person_in_story.get("1.0", tk.END).strip(),
+            "person_action": self.scenario_person_in_story.get("1.0", tk.END).strip(),
             "speaker_action": self.scenario_speaker_action.get("1.0", tk.END).strip(),
             "extra": self.scenario_extra.get("1.0", tk.END).strip(),
             "speaker": self.scenario_speaker.get(),
@@ -3944,7 +3799,8 @@ class WorkflowGUI:
             "mood": self.scenario_mood.get(),         # 语音合成情绪
             "camera_light": self.scenario_camera_light.get("1.0", tk.END).strip(),
             "clip_animation": self.scenario_main_animate.get(),
-            "content": self.scenario_story_content.get("1.0", tk.END).strip()
+            "content": self.scenario_story_content.get("1.0", tk.END).strip(),
+            "promotion_info": self.scenario_promotion_info.get("1.0", tk.END).strip()
         })
         self.workflow.save_scenarios_to_json()
         return scenario
@@ -3953,57 +3809,35 @@ class WorkflowGUI:
     def load_config(self):
         """加载当前项目的配置"""
         try:
+            if not self.current_project_config:
+                print("⚠️ 没有当前项目配置")
+                exit()
             # 临时禁用自动保存，避免加载过程中触发保存
             self._loading_config = True
-            config_loaded = False
+            self.apply_config_to_gui(self.current_project_config)
             
-            if self.current_project_config:
-                # 使用统一的配置应用方法
-                self.apply_config_to_gui(self.current_project_config)
-                
-                # 检查是否有有效PID
-                saved_pid = self.current_project_config.get('pid', '')
-                if saved_pid:
-                    config_loaded = True
-                    
-                # 同步标题到workflow
-                saved_video_title = self.current_project_config.get('video_title', '默认标题')
-                if saved_video_title and saved_video_title != '默认标题':
-                    self.video_title.delete(0, tk.END)
-                    self.video_title.insert(0, saved_video_title)
-                    # 只在workflow已创建时设置标题
-                    if hasattr(self, 'workflow') and self.workflow is not None:
-                        self.workflow.set_title(saved_video_title)
+            # 检查是否有有效PID
+            saved_pid = self.current_project_config.get('pid', '')
+            if not saved_pid:
+                print("⚠️ 项目配置中没有有效的PID")
+                exit()
 
-                if config_loaded:
-                    saved_language = self.current_project_config.get('language', 'tw')
-                    saved_channel = self.current_project_config.get('channel', 'strange_zh')
-                    saved_video_width = self.current_project_config.get('video_width', '1920')
-                    saved_video_height = self.current_project_config.get('video_height', '1080')
-                    saved_promo_scroll_duration = self.current_project_config.get('promo_scroll_duration', 7.0)
-                    
-                    print(f"✅ 已加载项目配置: PID={saved_pid}, 语言={saved_language}, 频道={saved_channel}")
-                    print(f"   视频标题: {saved_video_title}")
-                    print(f"   视频尺寸: {saved_video_width}x{saved_video_height}")
-                    print(f"   宣传视频滚动持续时间: {saved_promo_scroll_duration}秒")
-                else:
-                    print("⚠️ 项目配置中没有有效的PID，将自动生成新PID")
-            else:
-                print("⚠️ 没有当前项目配置，将使用默认配置")
-                # 使用默认配置初始化所有字段
-                default_config = self.create_default_config()
-                self.apply_config_to_gui(default_config)
-            
-            # PID现在在项目创建时设置，不再自动生成
-            if not config_loaded:
-                print("⚠️ 项目配置无效，PID/语言/频道将保持默认值")
-                
+            # 同步标题到workflow
+            saved_video_title = self.current_project_config.get('video_title', '默认标题')
+            if saved_video_title and saved_video_title != '默认标题':
+                self.video_title.delete(0, tk.END)
+                self.video_title.insert(0, saved_video_title)
+                # 只在workflow已创建时设置标题
+                if hasattr(self, 'workflow') and self.workflow is not None:
+                    self.workflow.set_title(saved_video_title)
+
         except Exception as e:
             print(f"❌ 加载配置失败: {e}")
-            print("⚠️ 将使用默认配置")
+            exit()
         finally:
             # 重新启用自动保存
             self._loading_config = False
+
 
     def apply_config_to_gui(self, config_data):
         """将配置数据应用到GUI组件"""
@@ -4040,21 +3874,6 @@ class WorkflowGUI:
             if hasattr(self, 'story_site_entry'):
                 self.story_site_entry.delete(0, tk.END)
                 self.story_site_entry.insert(0, story_site_entry)
-                
-
-                    
-            # 加载视频尺寸（只读，不保存）
-            video_width = config_data.get('video_width', '1920')
-            if hasattr(self, 'video_width'):
-                self.video_width.delete(0, tk.END)
-                self.video_width.insert(0, video_width)
-                
-            video_height = config_data.get('video_height', '1080')
-            if hasattr(self, 'video_height'):
-                self.video_height.delete(0, tk.END)
-                self.video_height.insert(0, video_height)
-            
-            # WAN 选项已移到 WanPromptEditorDialog 中，不再需要加载到 GUI
                 
             # 加载宣传视频滚动持续时间
             promo_scroll_duration = config_data.get('promo_scroll_duration', 7.0)
@@ -4151,7 +3970,9 @@ class WorkflowGUI:
             'video_width': self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920',
             'video_height': self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080',
             'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
-            'conversation_content': getattr(self, 'conversation_content', None) or ''
+            'conversation_content': getattr(self, 'conversation_content', None) or '',
+            # project_type is read-only from project config
+            'project_type': self.current_project_config.get('project_type', 'story') if self.current_project_config else 'story'
         }
 
         # Add audio_prepares data if available
@@ -4208,6 +4029,9 @@ class WorkflowGUI:
                     config_data['generated_titles'] = self.current_project_config['generated_titles']
                 if 'generated_tags' in self.current_project_config:
                     config_data['generated_tags'] = self.current_project_config['generated_tags']
+                # Preserve project_type from existing config
+                if 'project_type' in self.current_project_config:
+                    config_data['project_type'] = self.current_project_config['project_type']
             
             # 更新当前项目配置
             self.current_project_config = config_data
@@ -4233,7 +4057,8 @@ class WorkflowGUI:
             self.scenario_speaker_action,
             self.scenario_extra,
             self.scenario_camera_light,
-            self.scenario_story_content
+            self.scenario_story_content,
+            self.scenario_promotion_info
         ]
         
         for field in scenario_fields:
@@ -4425,28 +4250,21 @@ class WorkflowGUI:
     def handle_image_replacement(self, source_image_path):
         """处理图像替换"""
         try:
-            # 获取视频尺寸
-            video_width = self.video_width.get() or "1920"
-            video_height = self.video_height.get() or "1080"
-            
             # 导入图像区域选择对话框
             from gui.image_area_selector_dialog import show_image_area_selector
-            
             # 显示图像区域选择对话框
             selected_image_path, vertical_line_position, target_field = show_image_area_selector(
-                self, source_image_path, video_width, video_height
+                self, source_image_path, self.workflow.ffmpeg_processor.width, self.workflow.ffmpeg_processor.height
             )
             
             if selected_image_path is None:
                 return  # 用户取消了选择
             
-            # 字段名映射
             field_names = {
                 "clip_image": "当前场景图片",
                 "clip_image_last": "最后场景图片"
             }
             
-            # 弹出确认对话框
             dialog = messagebox.askyesno("确认替换场景的图像/视频", 
                                        f"确定要替换 {field_names.get(target_field, target_field)} 吗？\n垂直分割线位置: {vertical_line_position}")
             if not dialog:
@@ -4457,6 +4275,8 @@ class WorkflowGUI:
                     pass
                 return
             
+            selected_image_path = self.workflow.ffmpeg_processor.resize_image_smart(selected_image_path)
+
             current_scenario = self.get_current_scenario()
             self.workflow.replace_scenario_image(current_scenario, selected_image_path, vertical_line_position, target_field)
             
@@ -4619,18 +4439,15 @@ class WorkflowGUI:
         return self.update_scenario_field(scenario_index, "second_animation", image_type)
         
 
-    def generate_video(self, scenario, previous_scenario, next_scenario, image_typ):
-        image_path = get_file_path(scenario, image_typ+"_image")
-        image_last_path = get_file_path(scenario, image_typ+"_image_last")
+    def generate_video(self, scenario, previous_scenario, next_scenario, track):
+        image_path = get_file_path(scenario, track+"_image")
+        image_last_path = get_file_path(scenario, track+"_image_last")
 
-        animate_mode = scenario.get(image_typ+"_animation", "")
-        if animate_mode not in config.ANIMATE_TYPES or animate_mode.strip() == "":
+        animate_mode = scenario.get(track+"_animation", "")
+        if animate_mode not in config.ANIMATE_SOURCE or animate_mode.strip() == "":
             return
 
-        if animate_mode == "2I2V" and not image_last_path:
-            animate_mode = "I2V"
-
-        wan_prompt = scenario.get(image_typ+"_prompt", "")
+        wan_prompt = scenario.get(track+"_prompt", "")
         
         # 如果 wan_prompt 是字符串（JSON格式），尝试解析为字典
         if isinstance(wan_prompt, str) and wan_prompt.strip():
@@ -4643,13 +4460,18 @@ class WorkflowGUI:
         
         # 检查 prompt 是否为空（支持字符串和字典两种格式）
         if not wan_prompt or (isinstance(wan_prompt, str) and wan_prompt.strip() == "") or (isinstance(wan_prompt, dict) and len(wan_prompt) == 0):
-            wan_prompt = self.workflow.build_prompt(scenario, "", "", image_typ, animate_mode)
+            wan_prompt = self.workflow.build_prompt(scenario, "", "", track, animate_mode)
+            scenario[track+"_prompt"] = wan_prompt
 
         action_path = get_file_path(scenario, self.selected_second_track)
 
         sound_path = get_file_path(scenario, "clip_audio")
+        next_sound_path = get_file_path(next_scenario, "clip_audio")
+        if next_sound_path:
+            next_sound_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound_path, 0, 0.75)
+            sound_path = self.workflow.ffmpeg_audio_processor.concat_audios([sound_path, next_sound_path])
 
-        self.workflow.rebuild_scenario_video(scenario, image_typ, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt)
+        self.workflow.rebuild_scenario_video(scenario, track, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt)
         self.workflow.save_scenarios_to_json()
 
 
@@ -4748,7 +4570,7 @@ class WorkflowGUI:
                 print(formatted_user_prompt)
 
                 # 调用generate_immersive_story，使用用户输入的故事内容和格式化后的prompt
-                result = self.workflow.summarizer.generate_json_summary(
+                result = self.workflow.llm_api.generate_json_summary(
                     system_prompt = formatted_system_prompt,
                     user_prompt = formatted_user_prompt,
                     output_path = config.get_project_path(self.get_pid()) + "/short.json"

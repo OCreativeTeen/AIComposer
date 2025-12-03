@@ -76,7 +76,16 @@ def is_video_file(file_path):
 
 def clean_memory(cuda=True, verbose=True):
     import gc, sys, os, ctypes
-    import psutil
+    
+    # 尝试导入 psutil，如果不存在则设为 None
+    try:
+        import psutil
+        has_psutil = True
+    except ImportError:
+        psutil = None
+        has_psutil = False
+        if verbose:
+            print("⚠️ 警告: psutil 未安装，将跳过内存统计。建议运行: pip install psutil")
 
     if cuda:
         try:
@@ -127,7 +136,15 @@ def clean_memory(cuda=True, verbose=True):
     gc.collect()
 
     # Summary
-    process = psutil.Process(os.getpid())
-    mem = process.memory_info().rss / 1024**2
-    if verbose:
-        print(f"=== Cleanup Complete | RAM now: {mem:.2f} MB ===\n")
+    if has_psutil:
+        try:
+            process = psutil.Process(os.getpid())
+            mem = process.memory_info().rss / 1024**2
+            if verbose:
+                print(f"=== Cleanup Complete | RAM now: {mem:.2f} MB ===\n")
+        except Exception as e:
+            if verbose:
+                print(f"=== Cleanup Complete (内存统计失败: {e}) ===\n")
+    else:
+        if verbose:
+            print("=== Cleanup Complete ===\n")

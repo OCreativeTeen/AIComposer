@@ -429,7 +429,7 @@ class MagicToolGUI:
                 if self.current_project_config:
                     video_width = self.current_project_config.get('video_width')
                     video_height = self.current_project_config.get('video_height')
-                self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
+                self.workflow = MagicWorkflow(pid, "story", language, channel, story_site, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")

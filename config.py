@@ -222,6 +222,18 @@ FONTS_BY_LANGUAGE = {
     "mn": [FONT_17]
 }
 
+FONT_LIST = {
+    "zh": FONT_0,
+    "tw": FONT_10,
+    "general": FONT_15,
+    "jp": FONT_11,
+    "kr": FONT_20,
+    "ar": FONT_13,
+    "th": FONT_14,
+    "tib": FONT_16,
+    "mn": FONT_17
+}
+
 
 
 # =============================================================================
@@ -380,8 +392,26 @@ TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "cir
 # =============================================================================
 # 图像生成默认风格配置
 
-_ANIMATE_TYPES = ["I2V", "I2VL", "I2VS", "2I2V", "WS2V", "S2V", "FS2V", "AI2V"] 
-ANIMATE_TYPES = _ANIMATE_TYPES + ["", "IMAGE"]
+ANIMATE_TARGET = ["I2V", "2I2V", "S2V", "FS2V", "WS2V", "AI2V"]
+ANIMATE_I2V = ["I2V", "I2V_0", "I2V_1", "I2V_2"]
+ANIMATE_2I2V = ["2I2V", "2I2V_0", "2I2V_1", "2I2V_2"]
+ANIMATE_S2V = ["S2V", "S2V_0", "S2V_1", "S2V_2", "FS2V", "FS2V_0", "FS2V_1", "FS2V_2"]
+ANIMATE_WS2V = ["WS2V", "WS2V_0", "WS2V_1", "WS2V_2"]
+ANIMATE_AI2V = ["AI2V", "AI2V_0", "AI2V_1", "AI2V_2"]
+ANIMATE_SOURCE = [""] + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_S2V + ANIMATE_WS2V + ANIMATE_AI2V
+
+
+ANIMATE_TYPE_PATTERNS = [
+    (r"_I2V_\d{8}\.mp4$", "_I2V"),
+    (r"_2I2V_\d{8}\.mp4$", "_2I2V"),
+    (r"_L_WS2V_\d{8}\.mp4$", "_L_WS2V"),
+    (r"_R_WS2V_\d{8}\.mp4$", "_R_WS2V"),
+    (r"_S2V_\d{8}\.mp4$", "_S2V"),
+    (r"_FS2V_\d{8}\.mp4$", "_FS2V"),
+    (r"_AI2V_\d{8}\.mp4$", "_AI2V")
+]
+
+ANIMATE_WITH_AUDIO = ["_L_WS2V", "_R_WS2V", "_S2V", "_FS2V"]
 
 
 HOST_FIGURE_ACTIONS = [
@@ -523,6 +553,35 @@ YOUTUBE_CATEGORY_ID = [
 # =============================================================================
 
 
+IMAGE_DESCRIPTION_SYSTEM_PROMPT = """
+You are a professional expert who is good at analyzing & describing the image (attached in the user-prompt) as a Scenario, in English.
+
+Please give details (Visual-Summary / camera-scene, and sound-effects) as below (FYI, don't use doubel-quotes & newlines in the values at all !):
+
+        ** story_expression (highlight the story/theme details from this image)
+		** person_action (if the image has persons, describe who [gender/age/race/has-glasses/occupation-guess/personality-guess(MBTI)], what [his/her action/mood, body-hands movements while speaking], and their relations)
+		** era_time (era [1980s, 20's century, middle ages, etc] time & season [summer morning, winter night, etc]; weather [sunny, cloudy, rainy, etc])
+        ** location (specific building/street/market, like [israel airforce museum, jerusalem old city, etc]; then add descriptions about/around it)
+		** camera_light (camera path;  color_light [like subtle fog, sunlight filtering, etc])
+        ** sound_effect (sound_effect [sound_effect, like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc])
+
+        ***FYI*** all values of the fields should NOT has double-quotes & newlinesin the valuesat all !
+
+-------------------------------
+The response format: json dictionary
+like:
+
+    {{
+        "story_expression": "The narrative centers on a young rural woman and King Solomon, contrasting royal splendor with humble labor. Her sunburned skin and exhaustion reflect class inequality and the pain of being judged by appearance, revealing a yearning for dignity and love.",
+        "person_action": "A young woman in coarse linen bends under the weight of her labor, her hands stained by soil. She pauses, shielding her eyes from the sun, silently enduring her brothers’ harsh demands.",
+        "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
+        "location": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
+        "camera_light": "The camera begins with a medium-wide shot sweeping through the vineyard, dust floating in the golden light. It glides forward along the rows, finally rising in a low angle toward the woman’s weary face, sunlight filtering through vine leaves in warm amber tones.",
+        "sound_effect": "crickets-chirping, gentle breeze through vines"
+    }}
+"""
+
+
 SCENARIO_BUILD_SYSTEM_PROMPT = """
 You are a professional expert who is good at merge audio-text segments into complete sentences (each sentence describe a complete thought),
 from the audio-text segments (in json format) given in 'user-prompt', like below:
@@ -649,7 +708,7 @@ For Each Scenario, please add details (Visual-Summary / camera-scenem, and sound
         ** content (take from the content field of each given scenario, in original language)
         ** story_expression (Use less than 100 words, to highlight the story/theme details for this piece of content. If the content is from narrator, extract only what the narrator is describing (the events, scenes, characters, and plot), remove any direct info of the narrator)
         ** speaker_action (if the content is speaking from narrator, describe his action/reaction/emotion, mood, body language, expressions, or movements while speaking; Include any signs of mood, attitude, or dramatic delivery)
-		** person_in_story_action (if inside the story of the cotent, has persons other than narrator. then describe who (gender/age/background) & what he/she is doing/reacting/mood, and relations between them)
+		** person_action (if inside the story of the content, has persons other than narrator. then describe who (gender/age/background) & what he/she is doing/reacting/mood, and relations between them)
 		** camera_light (camera to show the story (NOT include the narrator/speaker): path [short path go through with the camera ~ NO FAST CAMERA MOVE!!];  color_light [Light & shadow, like subtle fog, sunlight filtering, etc])
 		** era_time (era [1980s, 20's century, middle ages, etc] time & season [summer morning, winter night, etc]; weather [sunny, cloudy, rainy, etc])
 		** keywords (get the key words from the content field of each given scenario, in original language; may be showed as title of the scenario)
@@ -675,7 +734,7 @@ like:
         "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
         "keywords": "所罗门王, 书拉密女, 葡萄园, 晒黑, 自卑, 劳作",
         "location": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
-        "person_in_story_action": "A young woman in coarse linen bends under the weight of her labor, her hands stained by soil. She pauses, shielding her eyes from the sun, silently enduring her brothers’ harsh demands.",
+        "person_action": "A young woman in coarse linen bends under the weight of her labor, her hands stained by soil. She pauses, shielding her eyes from the sun, silently enduring her brothers’ harsh demands.",
         "camera_light": "The camera begins with a medium-wide shot sweeping through the vineyard, dust floating in the golden light. It glides forward along the rows, finally rising in a low angle toward the woman’s weary face, sunlight filtering through vine leaves in warm amber tones.",
         "sound_effect": "crickets-chirping, gentle breeze through vines"
     }},
@@ -687,7 +746,7 @@ like:
         "era_time": "1000 BC, ancient time; early evening; calm, golden dusk",
         "keywords": "所罗门王, 乡下姑娘, 身份对比, 戏剧张力",
         "location": "Dusty path outside Jerusalem; a narrow trail leading from vineyards toward the city walls where shepherds pass and distant bells echo softly.",
-        "person_in_story_action": "The girl walks slowly down a dusty road, her simple garments fluttering in the warm breeze. In contrast, the distant palace glimmers with gold. Their worlds feel impossibly far apart yet destined to converge.",
+        "person_action": "The girl walks slowly down a dusty road, her simple garments fluttering in the warm breeze. In contrast, the distant palace glimmers with gold. Their worlds feel impossibly far apart yet destined to converge.",
         "camera_light": "Camera tracks low along the dirt road, revealing the girl’s shadow stretching long under the sinking sun. The lens catches motes of dust glowing in the air, then tilts up toward the distant palace bathed in warm evening light.",
         "sound_effect": "soft footsteps on gravel, distant sheep bells"
     }},
@@ -702,7 +761,7 @@ like:
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "keywords": "情郎离开, 焦虑, 噩梦, 患得患失",
         "location": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
-        "person_in_story_action": "The young woman lies restless on her straw bed, tears staining her cheeks. In her dream, she sees her lover’s silhouette retreating through mist, her hands trembling as she tries to reach him but remains frozen in place.",
+        "person_action": "The young woman lies restless on her straw bed, tears staining her cheeks. In her dream, she sees her lover’s silhouette retreating through mist, her hands trembling as she tries to reach him but remains frozen in place.",
         "camera_light": "The camera begins outside the cottage with a low angle following the moonlight through the window. It glides slowly toward her sleeping form, shifting focus between flickering candlelight and her tense, sweat-dampened face. Pale blue tones mix with amber shadows, creating a dreamlike unease.",
         "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker"
     }},
@@ -725,7 +784,7 @@ For Each Scenario, please add details (Visual-Summary / camera-scenem, and sound
         ** content (take from the content field of each given scenario, in original language)
         ** story_expression (Use less than 100 words, to highlight the story/theme details for this piece of content. If the content is from narrator, extract only what the narrator is describing (the events, scenes, characters, and plot), remove any direct info of the narrator)
         ** speaker_action (if the content is speaking from narrator, describe his action/reaction/emotion, mood, body language, expressions, or movements while speaking; Include any signs of mood, attitude, or dramatic delivery)
-		** person_in_story_action (if inside the story of the cotent, has persons other than narrator. then describe who (gender/age/background) & what he/she is doing/reacting/mood, and relations between them)
+		** person_action (if inside the story of the cotent, has persons other than narrator. then describe who (gender/age/background) & what he/she is doing/reacting/mood, and relations between them)
 		** camera_light (camera to show the story (NOT include the narrator/speaker): path [short path go through with the camera ~ NO FAST CAMERA MOVE!!];  color_light [Light & shadow, like subtle fog, sunlight filtering, etc])
 		** era_time (era [1980s, 20's century, middle ages, etc] time & season [summer morning, winter night, etc]; weather [sunny, cloudy, rainy, etc])
 		** keywords (get the key words from the content field of each given scenario, in original language; may be showed as title of the scenario)
@@ -753,7 +812,7 @@ like:
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "keywords": "情郎离开, 焦虑, 噩梦, 患得患失",
         "location": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
-        "person_in_story_action": "The young woman lies restless on her straw bed, tears staining her cheeks. In her dream, she sees her lover’s silhouette retreating through mist, her hands trembling as she tries to reach him but remains frozen in place.",
+        "person_action": "The young woman lies restless on her straw bed, tears staining her cheeks. In her dream, she sees her lover’s silhouette retreating through mist, her hands trembling as she tries to reach him but remains frozen in place.",
         "camera_light": "The camera begins outside the cottage with a low angle following the moonlight through the window. It glides slowly toward her sleeping form, shifting focus between flickering candlelight and her tense, sweat-dampened face. Pale blue tones mix with amber shadows, creating a dreamlike unease.",
         "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker"
     }}

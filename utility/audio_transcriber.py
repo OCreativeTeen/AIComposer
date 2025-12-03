@@ -10,10 +10,14 @@ import config
 from pathlib import Path
 from pyannote.audio import Pipeline
 import torch
-import re
+import torchaudio
+import warnings
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
 from utility.file_util import safe_file, read_json, write_json, clean_memory
+
+# 抑制 torchcodec 警告（如果功能正常，这个警告可以忽略）
+warnings.filterwarnings('ignore', message='.*torchcodec.*', category=UserWarning)
 
 
 class AudioTranscriber:
@@ -163,11 +167,18 @@ class AudioTranscriber:
         clean_memory()
 
         # 4. Run diarization
-        import torchaudio
-        audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
-        waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
-        audio_wav = {"waveform": waveform, "sample_rate": sample_rate}
-        diarization = self.pipeline(audio_wav)
+        # 使用预加载的音频数据避免 torchcodec 依赖问题
+        try:
+            # 先尝试使用预加载的音频数据（推荐方法，避免 torchcodec 依赖）
+            audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
+            waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
+            audio_data = {"waveform": waveform, "sample_rate": sample_rate}
+            diarization = self.pipeline(audio_data)
+        except Exception as e:
+            # 如果预加载失败，回退到直接使用文件路径（可能会触发警告）
+            print(f"警告: 预加载音频失败，使用文件路径: {e}")
+            diarization = self.pipeline(audio_path)
+        
         merged_segments = self.assign_speakers(merged_segments, diarization)
 
         clean_memory()

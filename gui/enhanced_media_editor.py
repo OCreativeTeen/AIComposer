@@ -36,13 +36,13 @@ class MediaTypeSelector:
     
     def __init__(self, parent, av_path=None, current_scenario=None):
         self.result = None
-        self.replace_audio = False
+        self.replace_audio = "trim"
         self.av_path = av_path
         self.current_scenario = current_scenario
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("选择媒体类型")
-        self.dialog.geometry("450x500")
+        self.dialog.geometry("450x520")
         self.dialog.transient(parent)
         self.dialog.grab_set()
         
@@ -75,18 +75,23 @@ class MediaTypeSelector:
             audio_frame = ttk.LabelFrame(options_frame, text="音频处理选项", padding=10)
             audio_frame.pack(fill=tk.X, pady=10)
             
-            self.audio_option_var = tk.StringVar(value="keep")
-            
-            ttk.Radiobutton(audio_frame, 
-                          text="保留视频自带的音频", 
-                          variable=self.audio_option_var, 
-                          value="keep").pack(anchor=tk.W, pady=5)
-            
+            self.audio_option_var = tk.StringVar(value="replace")
+
             ttk.Radiobutton(audio_frame, 
                           text="用场景现有音频替换视频音频", 
                           variable=self.audio_option_var, 
                           value="replace").pack(anchor=tk.W, pady=5)
-            
+
+            ttk.Radiobutton(audio_frame, 
+                          text="保留视频自带音频并剪到现有长度", 
+                          variable=self.audio_option_var, 
+                          value="trim").pack(anchor=tk.W, pady=5)
+
+            ttk.Radiobutton(audio_frame, 
+                          text="保留视频自带的音频", 
+                          variable=self.audio_option_var, 
+                          value="keep").pack(anchor=tk.W, pady=5)
+
             # 说明文字
             info_label = ttk.Label(audio_frame, 
                                   text="💡 替换选项：将使用场景中对应的音频文件\n(clip_audio/second_audio/zero_audio)", 
@@ -122,13 +127,12 @@ class MediaTypeSelector:
     def select(self, media_type):
         self.result = media_type
         # 检查用户是否选择了替换音频
-        if hasattr(self, 'audio_option_var'):
-            self.replace_audio = (self.audio_option_var.get() == "replace")
+        self.replace_audio = self.audio_option_var.get()
         self.dialog.destroy()
     
     def cancel(self):
         self.result = None
-        self.replace_audio = False
+        self.replace_audio = "trim"
         self.dialog.destroy()
     
     def show(self):

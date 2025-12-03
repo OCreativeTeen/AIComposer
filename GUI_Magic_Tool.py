@@ -421,7 +421,7 @@ class MagicToolGUI:
                 if self.current_project_config:
                     video_width = self.current_project_config.get('video_width')
                     video_height = self.current_project_config.get('video_height')
-                self.workflow = MagicWorkflow(pid, language, channel, story_site, video_width, video_height)
+                self.workflow = MagicWorkflow(pid, "story", language, channel, story_site, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")
@@ -1911,7 +1911,7 @@ class MagicToolGUI:
 
                     story_json_path = config.get_story_json_path(pid)
                     # 调用generate_immersive_story，使用用户输入的故事内容和格式化后的prompt
-                    result = self.get_current_workflow().summarizer.generate_json_summary(
+                    result = self.get_current_workflow().llm_api.generate_json_summary(
                         system_prompt=formatted_system_prompt,
                         user_prompt=formatted_user_prompt,
                         output_path=story_json_path
@@ -1943,7 +1943,7 @@ class MagicToolGUI:
                     try:
                         system_prompt = config.STORY_IMAGE_SUMMARY_SYSTEM_PROMPT
                         user_prompt = simplified_content_widget.get(1.0, tk.END)
-                        story_summary_content = self.get_current_workflow().summarizer.generate_text_summary(system_prompt, user_prompt, 1)
+                        story_summary_content = self.get_current_workflow().llm_api.generate_text_summary(system_prompt, user_prompt)
                         with open(config.get_story_summary_path(pid, language), "w", encoding='utf-8') as f:
                             f.write(story_summary_content)
 
