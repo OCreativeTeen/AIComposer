@@ -416,7 +416,7 @@ class WorkflowGUI:
         start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(current_scenario)
         end_time = start_time_in_story + clip_duration
 
-        temp_track = self.workflow.ffmpeg_processor.resize_video(zero_path, None, start_time_in_story, end_time)
+        temp_track = self.workflow.ffmpeg_processor.trim_video(zero_path, start_time_in_story, end_time)
         temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(temp_track, clip_audio_path)
 
         self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', temp_track)
@@ -482,11 +482,11 @@ class WorkflowGUI:
             second_time = 0
 
         if to_end:
-            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, second_time, None, volume)
+            second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, None, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, None, 1.0, 1.0,volume)
         else:
             clip_duration = self.workflow.find_clip_duration(current_scenario)
-            second_v = self.workflow.ffmpeg_processor.resize_video(second_track_path, None, second_time, second_time+clip_duration, volume)
+            second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, second_time+clip_duration, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, clip_duration, 1.0, 1.0, volume)
 
         return second_v, second_a
@@ -516,10 +516,10 @@ class WorkflowGUI:
             start_time = start_time + self.second_delta
 
             if is_story_last_clip: 
-                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, start_time)
+                second_track_copy = self.workflow.ffmpeg_processor.trim_video(second_path, start_time)
                 second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, None, 0, 0, 1.0)
             else:    
-                second_track_copy = self.workflow.ffmpeg_processor.resize_video(second_path, None, start_time, start_time+clip_duration)
+                second_track_copy = self.workflow.ffmpeg_processor.trim_video(second_path, start_time, start_time+clip_duration)
                 second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, clip_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             

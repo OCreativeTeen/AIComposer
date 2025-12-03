@@ -441,7 +441,7 @@ class FfmpegProcessor:
             print(f"FFmpeg Error 1: {e.stderr}")
 
 
-    def resize_video(self, video_path, width, start_time=0, end_time=None, volume=1.0, start_x=0, start_y=0):
+    def trim_video(self, video_path, start_time=0, end_time=None, volume=1.0, start_x=0, start_y=0):
         """
         Resize a video with optional cropping from start_x, start_y.
         """
@@ -456,7 +456,7 @@ class FfmpegProcessor:
             input_fps = self._get_video_fps(video_path)
             
             # Calculate crop dimensions and validate bounds
-            crop_width, crop_height, start_x, start_y = self._calculate_crop_dimensions( current_width, current_height, width, start_x, start_y )
+            crop_width, crop_height, start_x, start_y = self._calculate_crop_dimensions( current_width, current_height, start_x, start_y )
             
             # Normalize time parameters
             start_time, end_time = self._normalize_time_params(start_time, end_time, duration)
@@ -464,7 +464,7 @@ class FfmpegProcessor:
             # Determine what operations are needed
             need_crop = (start_x > 0  or  start_y > 0  or  crop_width < current_width  or  crop_height < current_height)
 
-            need_scale = (crop_width != self.width or crop_height != self.height)
+            need_scale = (crop_height != self.height)
             need_fps_resample = (input_fps is not None and abs(input_fps - self.STANDARD_FPS) > 0.1)
             need_time_cut = (start_time > 0 or end_time < duration)
             
@@ -524,17 +524,12 @@ class FfmpegProcessor:
             return None
 
 
-    def _calculate_crop_dimensions(self, current_width, current_height, width, start_x, start_y):
+    def _calculate_crop_dimensions(self, current_width, current_height, start_x, start_y):
         """Calculate and validate crop dimensions."""
         is_landscape = current_width > current_height
 
-        if width:
-            crop_width = width
-            crop_height = width * 9 // 16 if is_landscape else width * 16 // 9
-        else:
-            # Use original dimensions
-            crop_width = current_width
-            crop_height = current_width * 9 // 16 if is_landscape else current_width * 16 // 9
+        crop_width = current_width
+        crop_height = current_height
         
         # Validate and adjust crop position
         start_x = max(0, start_x)
@@ -1397,7 +1392,7 @@ class FfmpegProcessor:
         return audio_analysis
 
 
-    def _concat_videos_with_transitions(self, video_segments, width, height, keep_audio_if_has):
+    def _concat_videos_with_transitions(self, video_segments, keep_audio_if_has):
         """
         Concatenate videos with transitions while preserving permanent effects
         
@@ -1449,8 +1444,6 @@ class FfmpegProcessor:
                         success = self._extend_and_standardize_video(
                             video_seg["path"], 
                             extension_needed-0.03334, 
-                            width, 
-                            height, 
                             temp_extended_path
                         )
                         
@@ -1459,14 +1452,9 @@ class FfmpegProcessor:
                     else:
                         # Last video - just standardize without extension
                         print(f"         (Last video - standardizing without extension)")
-                        # Use resize_video which standardizes all parameters
-                        standardized_path = self.resize_video(
-                            video_seg["path"],
-                            width
-                        )
                         # Move to expected path
                         import shutil
-                        shutil.move(standardized_path, temp_extended_path)
+                        shutil.copy2(video_seg["path"], temp_extended_path)
                     
                     # Verify extended video
                     if not os.path.exists(temp_extended_path):
@@ -2276,14 +2264,11 @@ class FfmpegProcessor:
         return output_file
 
 
-    def _extend_and_standardize_video(self, input_video_path, extension_duration, width, height, output_path):
+    def _extend_and_standardize_video(self, input_video_path, extension_duration, output_path):
         try:
             # Get input video properties
             input_duration = self.get_duration(input_video_path)
-            vid_width, vid_height = self.get_resolution(input_video_path)
-            
-            if not vid_width or not vid_height:
-                vid_width, vid_height = width, height
+            width, height = self.get_resolution(input_video_path)
             
             # Get encoder configuration
             input_args = self._get_input_args(width, height)
@@ -4004,7 +3989,7 @@ class FfmpegProcessor:
             os.replace(input_video_path, output_video_path)
             return output_video_path
         elif segment_duration > target_duration:
-            new_clip_v = self.resize_video(input_video_path, None, 0, target_duration)
+            new_clip_v = self.trim_video(input_video_path, 0, target_duration)
             os.replace(new_clip_v, output_video_path)
             return output_video_path
 
@@ -4129,10 +4114,10 @@ class FfmpegProcessor:
         try:
             # 计算小视频的尺寸，确保为偶数（FFmpeg要求）
             slide_in_width, slide_in_height = self.get_resolution(background_video)
-            small_width = int(slide_in_width * ratio)
-            if small_width % 2 != 0:
-                small_width -= 1
-            resized_video = self.resize_video(slide_in_video, small_width)
+            small_height = int(slide_in_height * ratio)
+            if small_height % 2 != 0:
+                small_height -= 1
+            ???? resized_video = self.resize_video(slide_in_video, small_height)
             
             # 添加淡入淡出效果和形状遮罩
             if transition_duration > 0:
@@ -4244,7 +4229,7 @@ class FfmpegProcessor:
 
     # ffmpeg -ss 00:00:01 -to 00:00:50 -i %1 -c:v libx264 -c:a aac %~n1_.mp4
     def split_video(self, original_clip, position):
-        first = self.resize_video( original_clip, None, start_time=0, end_time=position)
-        second = self.resize_video( original_clip, None, start_time=position)
+        first = self.trim_video( original_clip, start_time=0, end_time=position)
+        second = self.trim_video( original_clip, start_time=position)
         return first, second
 

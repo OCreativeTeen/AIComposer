@@ -1553,7 +1553,7 @@ class MagicWorkflow:
         os.replace(enhanced_video, enhanced_video + ".bak.mp4")
         enhanced_video = enhanced_video + ".bak.mp4"
 
-        enhanced_video = self.ffmpeg_processor.resize_video(enhanced_video, self.ffmpeg_processor.width)
+        ???? enhanced_video = self.ffmpeg_processor.resize_video(enhanced_video, self.ffmpeg_processor.height)
 
         audio = get_file_path(scenario, audio_type)
         if audio: # always cut to the same duration as the audio
@@ -1904,7 +1904,7 @@ class MagicWorkflow:
             clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio_scenario["clip_audio"], audio_scenario["start"], audio_scenario["duration"])
             olda, clip_audio = self.refresh_scenario_media(audio_scenario, "clip_audio", ".wav", clip_wav)
 
-            v = self.ffmpeg_processor.resize_video(raw_scenario["clip"], None, audio_scenario["start"], audio_scenario["end"])
+            v = self.ffmpeg_processor.trim_video(raw_scenario["clip"], audio_scenario["start"], audio_scenario["end"])
             #v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
             self.refresh_scenario_media(audio_scenario, "clip", ".mp4", v)
 
