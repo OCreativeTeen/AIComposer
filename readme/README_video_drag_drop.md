@@ -51,7 +51,7 @@ def extend_video_to_duration(input_video_path, target_duration, output_video_pat
 ```python
 def on_video_drop(event)                    # 处理视频拖拽事件
 def handle_video_replacement(source_path)   # 处理视频替换逻辑
-def get_current_video_scenario_duration()   # 获取当前场景时长
+def get_current_video_scene_duration()   # 获取当前场景时长
 def is_video_file(file_path)               # 验证视频文件格式
 ```
 

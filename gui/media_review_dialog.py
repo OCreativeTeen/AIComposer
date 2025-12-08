@@ -13,6 +13,9 @@ import config
 from utility.llm_api import LLMApi
 import json
 from utility.file_util import is_audio_file, is_video_file, is_image_file
+import config_prompt
+import project_manager
+
 
 # 尝试导入拖放支持
 try:
@@ -53,11 +56,11 @@ except ImportError:
 class AVReviewDialog:
     """Dialog for reviewing and configuring audio replacement with drag-and-drop support"""
     
-    def __init__(self, parent, av_path, current_scenario, previous_scenario, next_scenario, media_type, replace_media_audio, initial_start_time, initial_end_time):
+    def __init__(self, parent, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio, initial_start_time, initial_end_time):
         self.parent = parent
-        self.current_scenario = current_scenario
-        self.previous_scenario = previous_scenario
-        self.next_scenario = next_scenario
+        self.current_scene = current_scene
+        self.previous_scene = previous_scene
+        self.next_scene = next_scene
         self.language = parent.workflow.language
         self.pid = parent.workflow.pid
         self.workflow = parent.workflow
@@ -65,7 +68,7 @@ class AVReviewDialog:
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
         self.transcriber = AudioTranscriber(self.workflow, model_size="small", device="cuda")
-        self.summarizer = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
+        self.llm_api = LLMApi()
 
         self.media_type_names = {
             "clip": "场景媒体 (clip)",
@@ -96,18 +99,18 @@ class AVReviewDialog:
             self.audio_field = "one_audio"
             self.image_field = "one_image"
         # Initialize source paths
-        self.source_audio_path = get_file_path(self.current_scenario, self.audio_field)
-        self.source_video_path = get_file_path(self.current_scenario, self.video_field)
-        self.source_image_path = get_file_path(self.current_scenario, self.image_field)
+        self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
+        self.source_video_path = get_file_path(self.current_scene, self.video_field)
+        self.source_image_path = get_file_path(self.current_scene, self.image_field)
         
         self.transcribe_way = "single"
         
         # 新增拖放媒体
         self.animation_choice = 1
 
-        # only keep "content", "speaker", "story_expression", "mood", "era_time" fields of each element
-        #self.audio_json = [{"content": item["content"], "speaker": item["speaker"], "story_expression": item["story_expression"], "mood": item["mood"]} for item in [self.current_scenario]]
-        self.audio_json = [self.current_scenario]
+        # only keep "content", "speaker", "visual_start", "subject", "visual_end", "era_time", "environment", "cinematography", "sound_effect" fields of each element
+        #self.audio_json = [{"content": item["content"], "speaker": item["speaker"], "visual_start": item["visual_start"], "subject": item["subject"], "visual_end": item["visual_end"], "era_time": item["era_time"], "environment": item["environment"], "cinematography": item["cinematography"], "sound_effect": item["sound_effect"]} for item in [self.current_scene]]
+        self.audio_json = [self.current_scene]
         self.audio_regenerated = False
 
         self.current_playback_time = 0.0
@@ -397,7 +400,7 @@ class AVReviewDialog:
         
         # 提示词模板组
         ttk.Label(fresh_buttons_frame, text="模板:").pack(side=tk.LEFT, padx=(0, 5))
-        self.prompt_selector = ttk.Combobox(fresh_buttons_frame, values=config.SPEAKING_PROMPTS_LIST, state="readonly", width=25)
+        self.prompt_selector = ttk.Combobox(fresh_buttons_frame, values=config_prompt.SPEAKING_PROMPTS_LIST, state="readonly", width=25)
         self.prompt_selector.pack(side=tk.LEFT, padx=(0, 10))
         self.prompt_selector.current(0)  # 默认选择第一个
 
@@ -414,7 +417,7 @@ class AVReviewDialog:
         self.actors.current(0)
 
         ttk.Label(fresh_buttons_frame, text="补充").pack(side=tk.LEFT, padx=(0, 5))
-        self.speaking_addon = ttk.Combobox(fresh_buttons_frame, values=config.SPEAKING_ADDON, state="readonly", width=15)
+        self.speaking_addon = ttk.Combobox(fresh_buttons_frame, values=config_prompt.SPEAKING_ADDON, state="readonly", width=15)
         self.speaking_addon.pack(side=tk.LEFT, padx=(0, 10))
         self.speaking_addon.current(0)
 
@@ -607,15 +610,17 @@ class AVReviewDialog:
             messagebox.showerror("错误", "时间选择超出音频范围")
             return
 
-        if start_time > 0 or end_time != duration:
+        if start_time > 0 or end_time < duration:
+            video_path = self.workflow.ffmpeg_processor.trim_video( video_path, start_time, end_time, volume=1.0 )
+
             # Get crop parameters if selection exists
             crop_width = self.crop_width if self.crop_width else None
             crop_height = self.crop_height if self.crop_height else None
-            
-            video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, start_time, end_time, 
-                                                                      volume=1.0, start_x=self.crop_start_x, start_y=self.crop_start_y )
-            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
 
+            video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=crop_width, height=crop_height )
+            #video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, start_time, end_time, 
+            #                                                          volume=1.0, start_x=self.crop_start_x, start_y=self.crop_start_y )
+            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
 
 
     def trim_media(self):
@@ -640,15 +645,15 @@ class AVReviewDialog:
             messagebox.showerror("错误", "时间选择超出音频范围")
             return
         
-        if start_time > 0 or end_time != duration:
+        if start_time > 0 or end_time < duration:
             self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade( audio_path, start_time, end_time-start_time )
-            
+
+            self.source_video_path = self.workflow.ffmpeg_processor.trim_video( video_path, start_time, end_time )
+
             # Get crop parameters if selection exists
             crop_width = self.crop_width if self.crop_width else None
             crop_height = self.crop_height if self.crop_height else None
-            
-            self.source_video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, start_time, end_time, 
-                                                                                  volume=1.0, start_x=self.crop_start_x, start_y=self.crop_start_y )
+            self.source_video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, crop_height )
 
 
     def trim_transcribe_single(self):
@@ -792,7 +797,8 @@ class AVReviewDialog:
     def remix_json(self):
         refresh_content = self.fresh_json_text.get(1.0, tk.END).strip()
         if not refresh_content or refresh_content.strip() == "":
-            return
+            project_type = project_manager.PROJECT_CONFIG.get('project_type', 'story')
+            refresh_content = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(type_name=project_type, story=project_manager.PROJECT_CONFIG.get('story', ''), inspiration=project_manager.PROJECT_CONFIG.get('inspiration', ''))
 
         # try to format formatted_user_prompt as json , if success, take 'content' field of each elemet, concat together as whole content
         try:
@@ -802,30 +808,30 @@ class AVReviewDialog:
             print(f"⚠️ 刷新内容格式化失败")
 
 
-        previous_scenario_content = self.previous_scenario["content"] if self.previous_scenario and hasattr(self.previous_scenario, "content") else ""
-        previous_story_content = self.previous_scenario["story_summary"] if self.previous_scenario and hasattr(self.previous_scenario, "story_summary") else ""
+        previous_scene_content = self.previous_scene["content"] if self.previous_scene and hasattr(self.previous_scene, "content") else ""
+        previous_story_content = self.previous_scene["story_summary"] if self.previous_scene and hasattr(self.previous_scene, "story_summary") else ""
 
-        next_scenario_content = self.next_scenario["content"] if self.next_scenario and hasattr(self.next_scenario, "content") else ""
-        next_story_content = self.next_scenario["story_summary"] if self.next_scenario and hasattr(self.next_scenario, "story_summary")  else ""
+        next_scene_content = self.next_scene["content"] if self.next_scene and hasattr(self.next_scene, "content") else ""
+        next_story_content = self.next_scene["story_summary"] if self.next_scene and hasattr(self.next_scene, "story_summary")  else ""
 
         prompt_name = self.prompt_selector.get()
         if prompt_name == "Reorganize-Text":
             engaging = ""
-            selected_prompt = config.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Previous-Scenario":
-            engaging = "[the conversation is following the previous speaking like: " + previous_scenario_content + "]"
-            selected_prompt = config.SPEAKING_PROMPTS["Reorganize-Text"]
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
+        elif prompt_name == "Reorganize-Text-with-Previous-Scene":
+            engaging = "[the conversation is following the previous speaking like: " + previous_scene_content + "]"
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
         elif prompt_name == "Reorganize-Text-with-Previous-Story":
             engaging = "[the conversation is following the previous story : " + previous_story_content + "]"
-            selected_prompt = config.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Next-Scenario":
-            engaging = "[the conversation will be followed by the next speaking like: " + next_scenario_content + "]"
-            selected_prompt = config.SPEAKING_PROMPTS["Reorganize-Text"]
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
+        elif prompt_name == "Reorganize-Text-with-Next-Scene":
+            engaging = "[the conversation will be followed by the next speaking like: " + next_scene_content + "]"
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
         elif prompt_name == "Reorganize-Text-with-Next-Story":
             engaging = "[the conversation will be followed by the next story : " + next_story_content + "]"
-            selected_prompt = config.SPEAKING_PROMPTS["Reorganize-Text"]
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
         else:
-            selected_prompt = config.SPEAKING_PROMPTS[prompt_name]
+            selected_prompt = config_prompt .SPEAKING_PROMPTS[prompt_name]
             engaging = ""
 
         format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
@@ -879,13 +885,13 @@ class AVReviewDialog:
         # 使用编辑后的系统提示
         formatted_system_prompt = edited_prompt[0]
 
-        new_scenarios = self.summarizer.llm.generate_json_summary(
+        new_scenes = self.llm_api.generate_json_summary(
             system_prompt=formatted_system_prompt,
             user_prompt=refresh_content,
             expect_list=True
         )
 
-        formatted_json = json.dumps(new_scenarios, indent=2, ensure_ascii=False)
+        formatted_json = json.dumps(new_scenes, indent=2, ensure_ascii=False)
         # clean self.fresh_json_text, then insert formatted_json
         self.fresh_json_text.delete(1.0, tk.END)
         self.fresh_json_text.insert(1.0, formatted_json)
@@ -1120,16 +1126,16 @@ class AVReviewDialog:
                 if video_path:
                     video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 1.0, 1.0)
 
-            v = self.current_scenario.get(self.video_field, None)
-            a = self.current_scenario.get(self.audio_field, None)
-            i = self.current_scenario.get(self.image_field, None)
+            v = self.current_scene.get(self.video_field, None)
+            a = self.current_scene.get(self.audio_field, None)
+            i = self.current_scene.get(self.image_field, None)
 
             if v != video_path:
-                self.parent.workflow.refresh_scenario_media(self.current_scenario, self.video_field, ".mp4", video_path, True)
+                self.parent.workflow.refresh_scene_media(self.current_scene, self.video_field, ".mp4", video_path, True)
             if a != audio_path:
-                self.parent.workflow.refresh_scenario_media(self.current_scenario, self.audio_field, ".wav", audio_path, True)
+                self.parent.workflow.refresh_scene_media(self.current_scene, self.audio_field, ".wav", audio_path, True)
             if i != self.source_image_path:
-                self.parent.workflow.refresh_scenario_media(self.current_scenario, self.image_field, ".webp", self.source_image_path, True)
+                self.parent.workflow.refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
             self.result = {
                 'audio_json': self.audio_json,
@@ -1649,11 +1655,11 @@ class AVReviewDialog:
             self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
         elif is_video_file(av_path):
             if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and self.replace_media_audio=="keep":
-                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, self.workflow.ffmpeg_processor.width)
+                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
                 self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
             else:
                 self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
-                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(self.source_video_path, self.workflow.ffmpeg_processor.width)
+                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(self.source_video_path, width=self.workflow.ffmpeg_processor.width, height=None)
 
         self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         self.end_time = self.audio_duration

@@ -7,6 +7,7 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import os
+import json
 import threading
 import time
 from datetime import datetime
@@ -14,21 +15,16 @@ import pygame
 import uuid
 from magic_workflow import MagicWorkflow
 import config
+import config_prompt
 from PIL import Image, ImageTk
-from pathlib import Path
 from project_manager import ProjectConfigManager, create_project_dialog
+import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
-from gui.video_review_dialog import VideoReviewDialog
-from gui.background_selector_dialog import BackgroundSelectorDialog
-from gui.animation_selector_dialog import show_animation_selector
-from gui.raw_scenarios_editor import RawScenariosEditor
 import cv2
 import os
 from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, copy_file
 from gui.media_review_dialog import AVReviewDialog
-from gui.enhanced_media_editor import show_enhanced_media_editor
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
-from gui.raw_scenarios_editor import RawScenariosEditor
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 import tkinterdnd2 as TkinterDnD
@@ -97,7 +93,7 @@ class WorkflowGUI:
         # 如果传入的root不是TkinterDnD.Tk，需要重新创建
         if root != self.root:
             root.destroy()
-            
+
         self.root.title("魔法工作流 GUI")
         try:
             self.root.state('zoomed') # Windows全屏
@@ -117,8 +113,7 @@ class WorkflowGUI:
 
         # 初始化配置加载标志
         self._loading_config = False
-        self.current_project_config = None
-        self.current_scenario_index = 0
+        self.current_scene_index = 0
 
         # 显示项目选择对话框
         if not self.show_project_selection():
@@ -130,7 +125,7 @@ class WorkflowGUI:
         self.completed_tasks = []  # 存储已完成的任务
         self.last_notified_tasks = set()  # 跟踪已通知的任务
         self.status_update_timer_id = None  # 状态更新定时器ID
-        self.monitoring_scenarios = {}  # 跟踪正在监控的场景 {scenario_index: {"found_files": [], "start_time": time}}
+        self.monitoring_scenes = {}  # 跟踪正在监控的场景 {scene_index: {"found_files": [], "start_time": time}}
         self.processed_output_files = set()  # 跟踪已处理的 X:\output 文件
         
         # 单例后台检查线程控制
@@ -139,11 +134,11 @@ class WorkflowGUI:
         self.video_check_stop_event = threading.Event()  # 停止事件
         
         # 添加视频效果选择存储
-        self.effect_radio_vars = {}  # {scenario_index: tk.StringVar}
+        self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
         
         # 添加当前效果和图像类型选择变量
         self.current_effect_var = tk.StringVar(value=config.SPECIAL_EFFECTS[0])
-        self.scenario_second_animation = tk.StringVar(value=config.ANIMATE_SOURCE[0])
+        self.scene_second_animation = tk.StringVar(value=config.ANIMATE_SOURCE[0])
         
         # 创建动画名称到提示语的映射字典（双向）
         self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config.ANIMATION_PROMPTS}
@@ -198,14 +193,14 @@ class WorkflowGUI:
         """立即创建工作流实例（非懒加载）"""
         try:
             # Get video dimensions from project config
-            video_width = self.current_project_config.get('video_width')
-            video_height = self.current_project_config.get('video_height')
-            pid = self.current_project_config.get('pid')
-            language = self.current_project_config.get('language')
-            channel = self.current_project_config.get('channel')
-            story_site = self.current_project_config.get('story_site')
-            keywords = self.current_project_config.get('program_keywords')
-            project_type = self.current_project_config.get('project_type')
+            video_width = project_manager.PROJECT_CONFIG.get('video_width')
+            video_height = project_manager.PROJECT_CONFIG.get('video_height')
+            pid = project_manager.PROJECT_CONFIG.get('pid')
+            language = project_manager.PROJECT_CONFIG.get('language')
+            channel = project_manager.PROJECT_CONFIG.get('channel')
+            story_site = project_manager.PROJECT_CONFIG.get('story_site')
+            keywords = project_manager.PROJECT_CONFIG.get('program_keywords')
+            project_type = project_manager.PROJECT_CONFIG.get('project_type')
 
             self.workflow = MagicWorkflow(pid, project_type, language, channel, story_site, video_width, video_height)
             self.speech_service = MinimaxSpeechService(pid)
@@ -222,36 +217,36 @@ class WorkflowGUI:
             self.workflow = None
 
 
-    def get_current_scenario(self):
-        if not hasattr(self, 'workflow') or self.workflow is None or not hasattr(self.workflow, 'scenarios') or self.workflow.scenarios is None:
+    def get_current_scene(self):
+        if not hasattr(self, 'workflow') or self.workflow is None or not hasattr(self.workflow, 'scenes') or self.workflow.scenes is None:
             return None
             
-        if self.workflow.scenarios and self.current_scenario_index >= 0 and self.current_scenario_index < len(self.workflow.scenarios):
-            return self.workflow.scenarios[self.current_scenario_index]
+        if self.workflow.scenes and self.current_scene_index >= 0 and self.current_scene_index < len(self.workflow.scenes):
+            return self.workflow.scenes[self.current_scene_index]
         else:
             return None
     
 
-    def get_previous_scenario(self):
-        if self.workflow.scenarios and self.current_scenario_index > 0 and self.current_scenario_index < len(self.workflow.scenarios):
-            return self.workflow.scenarios[self.current_scenario_index - 1]
+    def get_previous_scene(self):
+        if self.workflow.scenes and self.current_scene_index > 0 and self.current_scene_index < len(self.workflow.scenes):
+            return self.workflow.scenes[self.current_scene_index - 1]
         else:
             return None    
 
 
-    def get_next_scenario(self):
-        if self.workflow.scenarios and self.current_scenario_index >= 0 and self.current_scenario_index < len(self.workflow.scenarios)-1:
-            return self.workflow.scenarios[self.current_scenario_index + 1]
+    def get_next_scene(self):
+        if self.workflow.scenes and self.current_scene_index >= 0 and self.current_scene_index < len(self.workflow.scenes)-1:
+            return self.workflow.scenes[self.current_scene_index + 1]
         else:
             return None
 
 
-    def get_previous_story_last_scenario(self):
-        if self.workflow.scenarios and self.current_scenario_index > 0 and self.current_scenario_index < len(self.workflow.scenarios):
-            # loop from self.current_scenario_index to 0,  
-            for i in range(self.current_scenario_index, 0, -1):
-                if self.workflow.scenarios[i]["id"]%10000 != self.workflow.scenarios[self.current_scenario_index]["id"]%10000:
-                    return self.workflow.scenarios[i]
+    def get_previous_story_last_scene(self):
+        if self.workflow.scenes and self.current_scene_index > 0 and self.current_scene_index < len(self.workflow.scenes):
+            # loop from self.current_scene_index to 0,  
+            for i in range(self.current_scene_index, 0, -1):
+                if self.workflow.scenes[i]["id"]%10000 != self.workflow.scenes[self.current_scene_index]["id"]%10000:
+                    return self.workflow.scenes[i]
         return None    
 
     
@@ -262,24 +257,26 @@ class WorkflowGUI:
         if result == 'cancel':
             return False
         elif result == 'new':
-            # 使用从新项目对话框获取的配置
-            self.current_project_config = selected_config
-            
             # 立即创建ProjectConfigManager并保存新项目配置
             pid = selected_config.get('pid')
-            if pid:
-                try:
-                    config_manager = ProjectConfigManager(pid)
-                    config_manager.project_config = selected_config.copy()
-                    config_manager.save_project_config()
-                    print(f"✅ 新项目配置已保存: {pid}")
-                except Exception as e:
-                    print(f"❌ 保存新项目配置失败: {e}")
+            try:
+                # 先设置全局 project_manager.PROJECT_CONFIG
+                ProjectConfigManager.set_global_config(selected_config)
+                # 然后创建 ProjectConfigManager 并保存
+                config_manager = ProjectConfigManager(pid)
+                config_manager.save_project_config(selected_config)
+                print(f"✅ 新项目配置已保存: {pid}")
+            except Exception as e:
+                print(f"❌ 保存新项目配置失败: {e}")
             
             return True
         elif result == 'open':
             # 打开现有项目
-            self.current_project_config = selected_config
+            if selected_config is None:
+                print("❌ 错误：selected_config 为 None")
+                return False
+            # 注意：project_manager.PROJECT_CONFIG 已经在 open_selected() 中设置了，这里再次确认设置
+            ProjectConfigManager.set_global_config(selected_config)
             return True
         
         return False
@@ -308,26 +305,26 @@ class WorkflowGUI:
         row1_frame = ttk.Frame(shared_frame)
         row1_frame.pack(fill=tk.X, pady=(0, 5))
         
-        scenario_nav_row = ttk.Frame(row1_frame)
-        scenario_nav_row.pack(side=tk.LEFT, padx=(0, 10))
+        scene_nav_row = ttk.Frame(row1_frame)
+        scene_nav_row.pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Label(scenario_nav_row, text="场景:").pack(side=tk.LEFT)
-        ttk.Button(scenario_nav_row, text="◀", width=3, command=self.prev_scenario).pack(side=tk.LEFT, padx=2)
-        self.scenario_label = ttk.Label(scenario_nav_row, text="0 / 0", width=7)
-        self.scenario_label.pack(side=tk.LEFT, padx=2)
-        ttk.Button(scenario_nav_row, text="▶", width=3, command=self.next_scenario).pack(side=tk.LEFT, padx=2)
+        ttk.Label(scene_nav_row, text="场景:").pack(side=tk.LEFT)
+        ttk.Button(scene_nav_row, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
+        self.scene_label = ttk.Label(scene_nav_row, text="0 / 0", width=7)
+        self.scene_label.pack(side=tk.LEFT, padx=2)
+        ttk.Button(scene_nav_row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
         
         # 分隔符
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Button(row1_frame, text="拷贝图",   command=self.copy_images_to_next).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="场景交换", command=self.swap_scenario).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1_frame, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT, padx=2)
         #ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="推广合成", command=lambda:self.run_promotion_video()).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="上传视频", command=self.run_upload_video).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(scenario_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         pid_frame = ttk.Frame(row1_frame)
@@ -369,7 +366,7 @@ class WorkflowGUI:
         ttk.Button(tool_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
 
    
-    def open_image_prompt_dialog(self, create_image_callback, scenario, image_mode):
+    def open_image_prompt_dialog(self, create_image_callback, scene, image_mode, start:bool, language:str):
         """打开提示词审查对话框，用于在创建图像前预览和编辑提示词"""
         from gui.image_prompts_review_dialog import ImagePromptsReviewDialog
         
@@ -377,56 +374,58 @@ class WorkflowGUI:
             parent=self,
             workflow=self.workflow,
             create_image_callback=create_image_callback,
-            scenario=scenario,
-            track=image_mode
+            scene=scene,
+            track=image_mode,
+            start=start,
+            language=language
         )
         dialog.show()
 
 
     def swap_second(self):
         """交换第一轨道与第二轨道"""
-        current_scenario = self.get_current_scenario()
-        clip_video_path = get_file_path(current_scenario, 'clip')
-        clip_audio_path = get_file_path(current_scenario, 'clip_audio')
-        track_path = get_file_path(current_scenario, "second")
+        current_scene = self.get_current_scene()
+        clip_video_path = get_file_path(current_scene, 'clip')
+        clip_audio_path = get_file_path(current_scene, 'clip_audio')
+        track_path = get_file_path(current_scene, "second")
         if not track_path:
             messagebox.showwarning("警告", "second 轨道视频文件不存在")
             return
         temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(track_path, clip_audio_path)
 
-        self.workflow.refresh_scenario_media(current_scenario, "second", '.mp4', clip_video_path)
-        self.workflow.refresh_scenario_media(current_scenario, "second_audio", '.wav', clip_audio_path, True)
+        self.workflow.refresh_scene_media(current_scene, "second", '.mp4', clip_video_path)
+        self.workflow.refresh_scene_media(current_scene, "second_audio", '.wav', clip_audio_path, True)
 
-        self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', temp_track)
-        self.refresh_gui_scenarios()
+        self.workflow.refresh_scene_media(current_scene, 'clip', '.mp4', temp_track)
+        self.refresh_gui_scenes()
 
 
     def swap_zero(self):
         """交换第一轨道与第二轨道"""
-        current_scenario = self.get_current_scenario()
-        clip_video_path = get_file_path(current_scenario, 'clip')
-        clip_audio_path = get_file_path(current_scenario, 'clip_audio')
-        zero_path = get_file_path(current_scenario, "zero")
+        current_scene = self.get_current_scene()
+        clip_video_path = get_file_path(current_scene, 'clip')
+        clip_audio_path = get_file_path(current_scene, 'clip_audio')
+        zero_path = get_file_path(current_scene, "zero")
         if not zero_path:
             messagebox.showwarning("警告", "zero轨道视频文件不存在")
             return
 
-        self.workflow.refresh_scenario_media(current_scenario, "back", '.mp4', clip_video_path)
+        self.workflow.refresh_scene_media(current_scene, "back", '.mp4', clip_video_path)
 
-        start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(current_scenario)
+        start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
         end_time = start_time_in_story + clip_duration
 
         temp_track = self.workflow.ffmpeg_processor.trim_video(zero_path, start_time_in_story, end_time)
         temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(temp_track, clip_audio_path)
 
-        self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', temp_track)
-        self.refresh_gui_scenarios()
+        self.workflow.refresh_scene_media(current_scene, 'clip', '.mp4', temp_track)
+        self.refresh_gui_scenes()
 
 
     def track_recover(self):
-        current_scenario = self.get_current_scenario()
-        clip = current_scenario.get('clip', None)
-        back = current_scenario.get('back', None)
+        current_scene = self.get_current_scene()
+        clip = current_scene.get('clip', None)
+        back = current_scene.get('back', None)
         if not back:
             messagebox.showwarning("警告", "背景视频文件不存在")
             return
@@ -446,23 +445,23 @@ class WorkflowGUI:
             return
 
         if clip:
-            current_scenario['back'] = clip + "," + back
+            current_scene['back'] = clip + "," + back
 
-        self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', back_path)
-        self.workflow.save_scenarios_to_json()
-        self.refresh_gui_scenarios()
+        self.workflow.refresh_scene_media(current_scene, 'clip', '.mp4', back_path)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
 
     def reset_second_track_playing_offset(self):
-        self.second_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(self.get_current_scenario())
+        self.second_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(self.get_current_scene())
         self.second_track_paused_time = None
         self.update_second_track_time_display()
 
 
     def fetch_second_clip(self, to_end, volume):
-        current_scenario = self.get_current_scenario()
-        second_track_path = get_file_path(current_scenario, 'second')
-        second_audio_path = get_file_path(current_scenario, 'second_audio')
+        current_scene = self.get_current_scene()
+        second_track_path = get_file_path(current_scene, 'second')
+        second_audio_path = get_file_path(current_scene, 'second_audio')
         if not second_track_path:
             messagebox.showwarning("警告", "第二轨道视频文件不存在")
             return
@@ -476,7 +475,7 @@ class WorkflowGUI:
             second_time = second_pos / self.STANDARD_FPS
 
         if second_time <= 0:
-            second_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(current_scenario)
+            second_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
 
         if second_track_duration < second_time:
             second_time = 0
@@ -485,7 +484,7 @@ class WorkflowGUI:
             second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, None, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, None, 1.0, 1.0,volume)
         else:
-            clip_duration = self.workflow.find_clip_duration(current_scenario)
+            clip_duration = self.workflow.find_clip_duration(current_scene)
             second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, second_time+clip_duration, volume)
             second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, clip_duration, 1.0, 1.0, volume)
 
@@ -501,18 +500,18 @@ class WorkflowGUI:
     def pip_second_track(self):
         """将第二轨道作为画中画叠加到主轨道视频上"""
         try:
-            current_scenario = self.get_current_scenario()
-            second_path = get_file_path(current_scenario, self.selected_second_track)
-            second_audio = get_file_path(current_scenario, self.selected_second_track+'_audio')
-            second_left = get_file_path(current_scenario, self.selected_second_track+'_left')
-            second_right = get_file_path(current_scenario, self.selected_second_track+'_right')
+            current_scene = self.get_current_scene()
+            second_path = get_file_path(current_scene, self.selected_second_track)
+            second_audio = get_file_path(current_scene, self.selected_second_track+'_audio')
+            second_left = get_file_path(current_scene, self.selected_second_track+'_left')
+            second_right = get_file_path(current_scene, self.selected_second_track+'_right')
             if not second_path or not second_audio:
                 messagebox.showwarning("警告", "第二轨道视频文件不存在")
                 return
 
-            clip_video = get_file_path(current_scenario, "clip")
-            clip_audio = get_file_path(current_scenario, "clip_audio")
-            start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scenario_detail(current_scenario)
+            clip_video = get_file_path(current_scene, "clip")
+            clip_audio = get_file_path(current_scene, "clip_audio")
+            start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
             start_time = start_time + self.second_delta
 
             if is_story_last_clip: 
@@ -534,15 +533,15 @@ class WorkflowGUI:
                 settings = pip_dialog.result
                 print(f"📺 用户选择的画中画设置: {settings}")
 
-                back = current_scenario.get('back', '')
-                current_scenario['back'] = clip_video + "," + back
+                back = current_scene.get('back', '')
+                current_scene['back'] = clip_video + "," + back
 
                 if settings['position'] == "full":
                     v = self.workflow.ffmpeg_processor.add_audio_to_video(second_track_copy, clip_audio)
-                    self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', v)
+                    self.workflow.refresh_scene_media(current_scene, 'clip', '.mp4', v)
                 elif settings['position'] == "av":
-                    self.workflow.refresh_scenario_media(current_scenario, 'clip', '.mp4', second_track_copy)
-                    self.workflow.refresh_scenario_media(current_scenario, 'clip_audio', '.wav', second_audio_copy)
+                    self.workflow.refresh_scene_media(current_scene, 'clip', '.mp4', second_track_copy)
+                    self.workflow.refresh_scene_media(current_scene, 'clip_audio', '.wav', second_audio_copy)
                 else:
                     # 处理画中画
                     self.process_picture_in_picture(
@@ -556,8 +555,8 @@ class WorkflowGUI:
                     )
 
                 # 更新显示
-                self.workflow.save_scenarios_to_json()
-                self.refresh_gui_scenarios()
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
                 messagebox.showinfo("成功", f"画中画处理完成")
 
             else:
@@ -614,9 +613,9 @@ class WorkflowGUI:
 
             output_audio = None
             if settings['audio_volume'] == 0.0:
-                olda, output_audio = self.workflow.refresh_scenario_media(self.get_current_scenario(), "clip_audio", ".wav", background_audio, True)
+                olda, output_audio = self.workflow.refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", background_audio, True)
                 output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, background_audio)
-                olda, output_video = self.workflow.refresh_scenario_media(self.get_current_scenario(), "clip", ".mp4", output_video, True)
+                olda, output_video = self.workflow.refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
             else:
                 output_audio = background_audio
                 if overlay_audio:
@@ -633,10 +632,10 @@ class WorkflowGUI:
                         volume_main = 1+volume_main    
 
                     output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(background_audio, volume_main, current_time, overlay_audio, volume_overlay)
-                    olda, output_audio = self.workflow.refresh_scenario_media(self.get_current_scenario(), "clip_audio", ".wav", output_audio, True)
+                    olda, output_audio = self.workflow.refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio, True)
 
                     output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, output_audio)
-                    olda, output_video = self.workflow.refresh_scenario_media(self.get_current_scenario(), "clip", ".mp4", output_video, True)
+                    olda, output_video = self.workflow.refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
             
             return output_video, output_audio
 
@@ -800,11 +799,9 @@ class WorkflowGUI:
         self.clip_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
         self.clip_image_canvas.create_text(75, 37, text="Clip\nImage", fill="gray", font=("Arial", 8), 
                                         justify=tk.CENTER, tags="hint")
-        try:
-            self.clip_image_canvas.drop_target_register(DND_FILES)
-            self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
-        except: pass
-        self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('clip_image'))
+
+        self.clip_image_canvas.drop_target_register(DND_FILES)
+        self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
 
         # Bottom: clip_image_last
         self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, 
@@ -812,11 +809,9 @@ class WorkflowGUI:
         self.clip_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
         self.clip_image_last_canvas.create_text(75, 37, text="Clip\nLast", fill="gray", font=("Arial", 8), 
                                             justify=tk.CENTER, tags="hint")
-        try:
-            self.clip_image_last_canvas.drop_target_register(DND_FILES)
-            self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
-        except: pass
-        self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('clip_image_last'))
+
+        self.clip_image_last_canvas.drop_target_register(DND_FILES)
+        self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
 
         # === Zero Image Canvas (zero_image + zero_image_last) ===
         zero_img_frame = ttk.Frame(images_container)
@@ -832,11 +827,9 @@ class WorkflowGUI:
         self.zero_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
         self.zero_image_canvas.create_text(75, 37, text="Zero\nImage", fill="gray", font=("Arial", 8), 
                                         justify=tk.CENTER, tags="hint")
-        try:
-            self.zero_image_canvas.drop_target_register(DND_FILES)
-            self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
-        except: pass
-        self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('zero_image'))
+
+        self.zero_image_canvas.drop_target_register(DND_FILES)
+        self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
 
         # Bottom: zero_image_last
         self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, 
@@ -844,11 +837,9 @@ class WorkflowGUI:
         self.zero_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
         self.zero_image_last_canvas.create_text(75, 37, text="Zero\nLast", fill="gray", font=("Arial", 8), 
                                             justify=tk.CENTER, tags="hint")
-        try:
-            self.zero_image_last_canvas.drop_target_register(DND_FILES)
-            self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
-        except: pass
-        self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('zero_image_last'))
+
+        self.zero_image_last_canvas.drop_target_register(DND_FILES)
+        self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
 
         # === One Image Canvas (one_image + one_image_last) ===
         one_img_frame = ttk.Frame(images_container)
@@ -864,11 +855,9 @@ class WorkflowGUI:
         self.one_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
         self.one_image_canvas.create_text(75, 37, text="One\nImage", fill="gray", font=("Arial", 8), 
                                         justify=tk.CENTER, tags="hint")
-        try:
-            self.one_image_canvas.drop_target_register(DND_FILES)
-            self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
-        except: pass
-        self.one_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('one_image'))
+
+        self.one_image_canvas.drop_target_register(DND_FILES)
+        self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
 
         # Bottom: one_image_last
         self.one_image_last_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, 
@@ -876,11 +865,9 @@ class WorkflowGUI:
         self.one_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
         self.one_image_last_canvas.create_text(75, 37, text="One\nLast", fill="gray", font=("Arial", 8), 
                                             justify=tk.CENTER, tags="hint")
-        try:
-            self.one_image_last_canvas.drop_target_register(DND_FILES)
-            self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
-        except: pass
-        self.one_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('one_image_last'))
+
+        self.one_image_last_canvas.drop_target_register(DND_FILES)
+        self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
 
         # === Second Image Canvas (second_image + second_image_last) ===
         second_img_frame = ttk.Frame(images_container)
@@ -896,11 +883,9 @@ class WorkflowGUI:
         self.second_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
         self.second_image_canvas.create_text(75, 37, text="Second\nImage", fill="gray", font=("Arial", 8), 
                                             justify=tk.CENTER, tags="hint")
-        try:
-            self.second_image_canvas.drop_target_register(DND_FILES)
-            self.second_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image'))
-        except: pass
-        self.second_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('second_image'))
+
+        self.second_image_canvas.drop_target_register(DND_FILES)
+        self.second_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image'))
 
         # Bottom: second_image_last
         self.second_image_last_canvas = tk.Canvas(second_canvas_container, bg='gray20', width=150, height=75, 
@@ -908,11 +893,9 @@ class WorkflowGUI:
         self.second_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
         self.second_image_last_canvas.create_text(75, 37, text="Second\nLast", fill="gray", font=("Arial", 8), 
                                                 justify=tk.CENTER, tags="hint")
-        try:
-            self.second_image_last_canvas.drop_target_register(DND_FILES)
-            self.second_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image_last'))
-        except: pass
-        self.second_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_double_click('second_image_last'))
+
+        self.second_image_last_canvas.drop_target_register(DND_FILES)
+        self.second_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image_last'))
         
 
         # 视频轨道预览区域 - 使用Tab控件（包含second和zero）
@@ -1047,10 +1030,9 @@ class WorkflowGUI:
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
-        ttk.Button(video_control_frame, text="分离", command=self.split_current_scenario, width=5).pack(side=tk.LEFT, padx=1) 
+        ttk.Button(video_control_frame, text="分离", command=self.split_current_scene, width=5).pack(side=tk.LEFT, padx=1) 
         ttk.Button(video_control_frame, text="下移", command=self.shift_forward, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="上移", command=self.shift_before, width=5).pack(side=tk.LEFT, padx=1)
-        ttk.Button(video_control_frame, text="延伸", command=self.extend_scenario, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="删合", command=self.merge_or_delete, width=5).pack(side=tk.LEFT, padx=1)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
@@ -1069,14 +1051,14 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         # 存储按钮引用以便后续控制状态
-        self.insert_scenario_button = ttk.Button(video_control_frame, text="前插", command=self.insert_scenario, width=6)
-        self.insert_scenario_button.pack(side=tk.LEFT, padx=1)
+        self.insert_scene_button = ttk.Button(video_control_frame, text="前插", command=self.insert_scene, width=6)
+        self.insert_scene_button.pack(side=tk.LEFT, padx=1)
 
-        self.append_scenario_button = ttk.Button(video_control_frame, text="后插", command=self.append_scenario, width=6)
-        self.append_scenario_button.pack(side=tk.LEFT, padx=1)
+        self.append_scene_button = ttk.Button(video_control_frame, text="后插", command=self.append_scene, width=6)
+        self.append_scene_button.pack(side=tk.LEFT, padx=1)
 
-        #ttk.Button(scenario_nav_row, text="智分场景", 
-        #          command=self.split_smart_scenario).pack(side=tk.LEFT, padx=2) 
+        #ttk.Button(scene_nav_row, text="智分场景", 
+        #          command=self.split_smart_scene).pack(side=tk.LEFT, padx=2) 
 
         # 视频进度标签
         self.video_progress_label = ttk.Label(video_control_frame, text="00:00 / 00:00")
@@ -1099,19 +1081,22 @@ class WorkflowGUI:
         video_edit_frame.configure(width=650)
         video_edit_frame.pack_propagate(False)
         
+        row_number = 1
+
         # 持续时间和宣传模式在同一行
         duration_promo_frame = ttk.Frame(video_edit_frame)
-        duration_promo_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
-        
+        duration_promo_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
+        row_number += 1
+
         # 持续时间（只读）
         ttk.Label(duration_promo_frame, text="持续:").pack(side=tk.LEFT)
-        self.scenario_duration = ttk.Entry(duration_promo_frame, width=12, state="readonly")
-        self.scenario_duration.pack(side=tk.LEFT, padx=(2, 10))
+        self.scene_duration = ttk.Entry(duration_promo_frame, width=12, state="readonly")
+        self.scene_duration.pack(side=tk.LEFT, padx=(2, 10))
         
         # 宣传模式（可编辑）
         ttk.Label(duration_promo_frame, text="主动画:").pack(side=tk.LEFT, padx=(5, 5))
-        self.scenario_main_animate = tk.StringVar(value="")
-        self.main_animate_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scenario_main_animate, 
+        self.scene_main_animate = tk.StringVar(value="")
+        self.main_animate_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_main_animate, 
                                                values=config.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.main_animate_combobox.pack(side=tk.LEFT)
@@ -1119,7 +1104,7 @@ class WorkflowGUI:
 
 
         ttk.Label(duration_promo_frame, text="次动画:").pack(side=tk.LEFT, padx=(0, 5))
-        self.second_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scenario_second_animation,
+        self.second_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_second_animation,
                                                values=config.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.second_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
@@ -1127,88 +1112,103 @@ class WorkflowGUI:
 
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(video_edit_frame)
-        type_mood_action_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
+        type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
+        row_number += 1
 
-        ttk.Button(type_mood_action_frame, text="生场视频", width=8,  command=self.regenerate_scenario).pack(side=tk.LEFT)
-
+        ttk.Button(type_mood_action_frame, text="重生场面", width=8,  command=self.refresh_scene_visual).pack(side=tk.LEFT)
         ttk.Button(type_mood_action_frame, text="生场音频", width=8,  command=self.regenerate_audio).pack(side=tk.LEFT)
-
+        ttk.Button(type_mood_action_frame, text="生主动画", width=8,  command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生次动画", width=8,  command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
 
 
         action_frame = ttk.Frame(video_edit_frame)
-        action_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
+        action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
+        row_number += 1
 
-        ttk.Button(action_frame, text="生主图片", width=8, command=self.recreate_clip_image).pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="生主图-中", width=8, command=lambda: self.recreate_clip_image("zh", True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="生主图-英", width=8, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(action_frame, text="生次图片", width=8, command=self.recreate_second_image).pack(side=tk.LEFT, padx=2)
+       
+        ttk.Label(video_edit_frame, text="内容:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_story_content = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_story_content.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        ttk.Button(action_frame, text="生主动画", width=8,  command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
-
-        ttk.Button(action_frame, text="生次动画", width=8,  command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
-
-
-        ttk.Label(video_edit_frame, text="故事:").grid(row=4, column=0, sticky=tk.NW, pady=2)
-        self.scenario_story_expression = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_story_expression.grid(row=4, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_subject = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_subject.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
         
-        # 时代时间
-        ttk.Label(video_edit_frame, text="时代:").grid(row=5, column=0, sticky=tk.NW, pady=2)
-        self.scenario_era_time = scrolledtext.ScrolledText(video_edit_frame, width=35, height=1)
-        self.scenario_era_time.grid(row=5, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="开场画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_visual_start = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_visual_start.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(video_edit_frame, text="结束画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_visual_end = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_visual_end.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(video_edit_frame, text="时代:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_era_time = scrolledtext.ScrolledText(video_edit_frame, width=35, height=1)
+        self.scene_era_time.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
         
-        # 具体地点
-        ttk.Label(video_edit_frame, text="地点:").grid(row=6, column=0, sticky=tk.NW, pady=2)
-        self.scenario_location = ttk.Entry(video_edit_frame, width=35)
-        self.scenario_location.grid(row=6, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="环境:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_environment = ttk.Entry(video_edit_frame, width=35)
+        self.scene_environment.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+        
+        ttk.Label(video_edit_frame, text="电影摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_cinematography = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_cinematography.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+        
+        ttk.Label(video_edit_frame, text="音效:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_sound_effect = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_sound_effect.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        # 镜头光影
-        ttk.Label(video_edit_frame, text="镜头:").grid(row=7, column=0, sticky=tk.NW, pady=2)
-        self.scenario_camera_light = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_camera_light.grid(row=7, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="FYI:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_extra =  scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_extra.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        # 故事内容
-        ttk.Label(video_edit_frame, text="内容:").grid(row=8, column=0, sticky=tk.NW, pady=2)
-        self.scenario_story_content = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_story_content.grid(row=8, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="讲员动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker_action = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_speaker_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        # 人物关系
-        ttk.Label(video_edit_frame, text="人物:").grid(row=9, column=0, sticky=tk.NW, pady=2)
-        self.scenario_person_in_story = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_person_in_story.grid(row=9, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="情绪:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_mood = ttk.Combobox(video_edit_frame, width=35, values=EXPRESSION_STYLES, state="readonly")
+        self.scene_mood.set("calm")  # 设置默认值
+        self.scene_mood.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        # 动作情绪
-        ttk.Label(video_edit_frame, text="动作:").grid(row=10, column=0, sticky=tk.NW, pady=2)
-        self.scenario_speaker_action = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_speaker_action.grid(row=10, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker = ttk.Combobox(video_edit_frame, width=32, values=config.ROLES)
+        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
-        # extra
-        ttk.Label(video_edit_frame, text="FYI:").grid(row=11, column=0, sticky=tk.NW, pady=2)
-        self.scenario_extra =  scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_extra.grid(row=11, column=1, sticky=tk.W, padx=5, pady=2)
-
-        ttk.Label(video_edit_frame, text="情绪:").grid(row=13, column=0, sticky=tk.NW, pady=2)
-        self.scenario_mood = ttk.Combobox(video_edit_frame, width=35, values=EXPRESSION_STYLES, state="readonly")
-        self.scenario_mood.set("calm")  # 设置默认值
-        self.scenario_mood.grid(row=13, column=1, sticky=tk.W, padx=5, pady=2)
-
-        ttk.Label(video_edit_frame, text="讲员:").grid(row=14, column=0, sticky=tk.NW, pady=2)
-        self.scenario_speaker = ttk.Combobox(video_edit_frame, width=32, values=config.ROLES)
-        self.scenario_speaker.grid(row=14, column=1, sticky=tk.W, padx=5, pady=2)
-
-        ttk.Label(video_edit_frame, text="左右:").grid(row=15, column=0, sticky=tk.NW, pady=2)
-        self.scenario_speaker_position = ttk.Combobox(video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
-        self.scenario_speaker_position.grid(row=15, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(video_edit_frame, text="左右:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker_position = ttk.Combobox(video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
+        self.scene_speaker_position.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
         # add a choice list to choose font of the title, values are from config.FONT_LIST(choose from all languages, show language name in choice, keep value), default value to self.workflow.font_video
-        ttk.Label(video_edit_frame, text="标题字体:").grid(row=16, column=0, sticky=tk.NW, pady=2)
-        self.scenario_language = ttk.Combobox(video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
-        self.scenario_language.grid(row=16, column=1, sticky=tk.W, padx=5, pady=2)
-        self.scenario_language.set(self.shared_language.cget('text'))
+        ttk.Label(video_edit_frame, text="标题字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_language = ttk.Combobox(video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
+        self.scene_language.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+        self.scene_language.set(self.shared_language.cget('text'))
 
-        # add a text field "promotion info" here, default empty, if enter text, then need to save to current scenario["promotion_info"] 
-        ttk.Label(video_edit_frame, text="宣传信息:").grid(row=17, column=0, sticky=tk.NW, pady=2)
-        self.scenario_promotion_info = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
-        self.scenario_promotion_info.grid(row=17, column=1, sticky=tk.W, padx=5, pady=2)
+        # add a text field "promotion info" here, default empty, if enter text, then need to save to current scene["promotion_info"] 
+        ttk.Label(video_edit_frame, text="宣传信息:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_promotion_info = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        self.scene_promotion_info.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
         # 第二轨道播放状态
         self.second_track_playing = False
@@ -1336,7 +1336,7 @@ class WorkflowGUI:
         self.promo_actor_narrator.set(config.HOSTS[0])  # Default to voice1
         self.promo_actor_narrator.pack(side=tk.TOP)
         
-        # add a text fields to keep the story scenarios duration, default to config.VIDEO_DURATION_DEFAULT
+        # add a text fields to keep the story scenes duration, default to config.VIDEO_DURATION_DEFAULT
         duration_frame = ttk.Frame(controls_frame)
         duration_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(duration_frame, text="片段时长").pack(side=tk.LEFT)
@@ -1790,22 +1790,22 @@ class WorkflowGUI:
             return
         
         try:
-            if not hasattr(self.workflow, 'scenarios') or not self.workflow.scenarios:
+            if not hasattr(self.workflow, 'scenes') or not self.workflow.scenes:
                 return
             
             # 遍历所有场景，检查是否有新生成的视频
-            for scenario_index, scenario in enumerate(self.workflow.scenarios):
+            for scene_index, scene in enumerate(self.workflow.scenes):
                 if self.video_check_stop_event.is_set():
                     break
                 
                 try:
                     # 1. 检查 /wan_video/output_mp4 中已增强的视频
-                    self.workflow.check_generated_clip_video(scenario, "clip", "clip_audio")
-                    self.workflow.check_generated_clip_video(scenario, "second", "second_audio")
-                    self.workflow.check_generated_clip_video(scenario, "zero", "zero_audio")
+                    self.workflow.check_generated_clip_video(scene, "clip", "clip_audio")
+                    self.workflow.check_generated_clip_video(scene, "second", "second_audio")
+                    self.workflow.check_generated_clip_video(scene, "zero", "zero_audio")
                     
                     # 2. 检查 X:\output 中新生成的原始视频（监控逻辑）
-                    #self._check_output_folder(scenario_index, scenario)
+                    #self._check_output_folder(scene_index, scene)
                 except Exception as e:
                     # 忽略单个场景的错误，继续检查其他场景
                     pass
@@ -1939,10 +1939,10 @@ class WorkflowGUI:
             self.current_video_frame = None
 
 
-    def clear_video_scenario_fields(self):
-        self.scenario_duration.config(state="normal")
-        self.scenario_duration.delete(0, tk.END)
-        self.scenario_duration.config(state="readonly")
+    def clear_video_scene_fields(self):
+        self.scene_duration.config(state="normal")
+        self.scene_duration.delete(0, tk.END)
+        self.scene_duration.config(state="readonly")
         
         self.clear_video_preview()
 
@@ -1950,9 +1950,9 @@ class WorkflowGUI:
     def load_video_first_frame(self):
         self._cleanup_video_before_switch()
 
-        current_scenario = self.get_current_scenario()
+        current_scene = self.get_current_scene()
             
-        video_path = get_file_path(current_scenario, "clip")
+        video_path = get_file_path(current_scene, "clip")
         if not video_path:
             return
 
@@ -2042,10 +2042,10 @@ class WorkflowGUI:
 
 
     def toggle_video_playback(self):
-        current_scenario = self.get_current_scenario()
+        current_scene = self.get_current_scene()
         video_path = None
-        if current_scenario:
-            video_path = get_file_path(current_scenario, "clip")
+        if current_scene:
+            video_path = get_file_path(current_scene, "clip")
             
         if not video_path:
             self.log_to_output(self.video_output, "❌ 没有可播放的视频文件")
@@ -2069,10 +2069,10 @@ class WorkflowGUI:
 
     def play_video(self):
         """播放视频"""
-        current_scenario = self.get_current_scenario()
+        current_scene = self.get_current_scene()
         video_path = None
-        if current_scenario:
-            video_path = get_file_path(current_scenario, "clip")
+        if current_scene:
+            video_path = get_file_path(current_scene, "clip")
             
         if not video_path:
             return
@@ -2098,7 +2098,7 @@ class WorkflowGUI:
 
 
     def start_audio_playback(self):
-        clip = get_file_path(self.get_current_scenario(), "clip_audio")
+        clip = get_file_path(self.get_current_scene(), "clip_audio")
         if not clip:
             return
         pygame.mixer.music.load(clip)
@@ -2151,7 +2151,7 @@ class WorkflowGUI:
         self.video_start_time = None
         self.video_pause_time = None
             
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def play_next_frame(self):
@@ -2227,8 +2227,8 @@ class WorkflowGUI:
                 current_time = current_frame / self.STANDARD_FPS
             
             # 获取音频实际时长
-            current_scenario = self.get_current_scenario()
-            total_time = self.workflow.find_clip_duration(current_scenario)
+            current_scene = self.get_current_scene()
+            total_time = self.workflow.find_clip_duration(current_scene)
             if total_time <= 0:
                 total_time = total_frames / self.STANDARD_FPS
             
@@ -2259,23 +2259,23 @@ class WorkflowGUI:
                 self.log_to_output(self.video_output, "✅ 视频播放完毕")
 
 
-    def refresh_gui_scenarios(self):
+    def refresh_gui_scenes(self):
         """刷新场景列表"""
-        # self.workflow.load_scenarios()
-        if self.current_scenario_index >= len(self.workflow.scenarios) :
-            self.current_scenario_index = 0
+        # self.workflow.load_scenes()
+        if self.current_scene_index >= len(self.workflow.scenes) :
+            self.current_scene_index = 0
 
         # 清理所有轨道的 VideoCapture（避免使用旧场景的视频）
         self.cleanup_track_video_captures()
 
         # 检查现有图像
-        self.update_scenario_display()
+        self.update_scene_display()
         
         # 更新视频进度显示
         self.update_video_progress_display()
 
         # 更新按钮状态
-        self.update_scenario_buttons_state()
+        self.update_scene_buttons_state()
 
         self.reset_second_track_playing_offset()
 
@@ -2345,7 +2345,7 @@ class WorkflowGUI:
 
 
     def load_second_track_first_frame(self):
-        track_path = get_file_path(self.get_current_scenario(), self.selected_second_track)
+        track_path = get_file_path(self.get_current_scene(), self.selected_second_track)
 
         """加载第二轨道视频的第一帧到画布"""
         try:
@@ -2407,74 +2407,80 @@ class WorkflowGUI:
                                                justify=tk.CENTER, tags="hint")
 
 
-    def update_scenario_display(self):
+    def update_scene_display(self):
         """更新场景显示"""
-        if len(self.workflow.scenarios) == 0:
-            self.scenario_label.config(text="0 / 0")
-            self.clear_scenario_fields()
-            self.clear_video_scenario_fields()
+        if len(self.workflow.scenes) == 0:
+            self.scene_label.config(text="0 / 0")
+            self.clear_scene_fields()
+            self.clear_video_scene_fields()
             return
             
-        self.scenario_label.config(text=f"{self.current_scenario_index + 1} / {len(self.workflow.scenarios)}")
-        scenario_data = self.get_current_scenario()
-        if not scenario_data:
+        self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
+        scene_data = self.get_current_scene()
+        if not scene_data:
             return
         
         # 显示持续时间
-        self.scenario_duration.config(state="normal")
-        self.scenario_duration.delete(0, tk.END)
-        duration = self.workflow.find_clip_duration(scenario_data)
-        self.scenario_duration.insert(0, f"{duration:.2f} 秒")
-        self.scenario_duration.config(state="readonly")
+        self.scene_duration.config(state="normal")
+        self.scene_duration.delete(0, tk.END)
+        duration = self.workflow.find_clip_duration(scene_data)
+        self.scene_duration.insert(0, f"{duration:.2f} 秒")
+        self.scene_duration.config(state="readonly")
         
         # 设置宣传复选框状态
-        clip_animation = scenario_data.get("clip_animation", "")
-        self.scenario_main_animate.set(clip_animation)
+        clip_animation = scene_data.get("clip_animation", "")
+        self.scene_main_animate.set(clip_animation)
         
-        # 加载当前场景的效果设置 - 直接从scenarios JSON中读取
-        current_effect = scenario_data.get("effect", config.SPECIAL_EFFECTS[0])
+        # 加载当前场景的效果设置 - 直接从scenes JSON中读取
+        current_effect = scene_data.get("effect", config.SPECIAL_EFFECTS[0])
         self.current_effect_var.set(current_effect)
         
         # 加载当前场景的图像类型设置
-        current_image_type = scenario_data.get("second_animation", config.ANIMATE_SOURCE[0])
-        self.scenario_second_animation.set(current_image_type)
+        current_image_type = scene_data.get("second_animation", config.ANIMATE_SOURCE[0])
+        self.scene_second_animation.set(current_image_type)
         
-        self.scenario_story_expression.delete("1.0", tk.END)
-        self.scenario_story_expression.insert("1.0", scenario_data.get("story_expression", ""))
+        self.scene_visual_start.delete("1.0", tk.END)
+        self.scene_visual_start.insert("1.0", scene_data.get("visual_start", ""))
         
-        self.scenario_era_time.delete("1.0", tk.END)
-        self.scenario_era_time.insert("1.0", scenario_data.get("era_time", ""))
+        self.scene_subject.delete("1.0", tk.END)
+        self.scene_subject.insert("1.0", scene_data.get("subject", ""))
         
-        self.scenario_location.delete(0, tk.END)
-        self.scenario_location.insert(0, scenario_data.get("location", ""))
+        self.scene_visual_end.delete("1.0", tk.END)
+        self.scene_visual_end.insert("1.0", scene_data.get("visual_end", ""))
+        
+        self.scene_era_time.delete("1.0", tk.END)
+        self.scene_era_time.insert("1.0", scene_data.get("era_time", ""))
+        
+        self.scene_environment.delete(0, tk.END)
+        self.scene_environment.insert(0, scene_data.get("environment", ""))
 
-        self.scenario_person_in_story.delete("1.0", tk.END)
-        self.scenario_person_in_story.insert("1.0", scenario_data.get("person_action", ""))
+        self.scene_cinematography.delete("1.0", tk.END)
+        self.scene_cinematography.insert("1.0", json.dumps(scene_data.get("cinematography", "")))
         
-        self.scenario_speaker_action.delete("1.0", tk.END)
-        self.scenario_speaker_action.insert("1.0", scenario_data.get("speaker_action", ""))
+        self.scene_sound_effect.delete("1.0", tk.END)
+        self.scene_sound_effect.insert("1.0", scene_data.get("sound_effect", ""))
+        
+        self.scene_extra.delete("1.0", tk.END)   
+        self.scene_extra.insert("1.0", scene_data.get("extra", ""))
 
-        self.scenario_extra.delete("1.0", tk.END)   
-        self.scenario_extra.insert("1.0", scenario_data.get("extra", ""))
+        self.scene_speaker_action.delete("1.0", tk.END)
+        self.scene_speaker_action.insert("1.0", scene_data.get("speaker_action", ""))
 
-        # scenario_mood字段用于语音合成情绪
-        self.scenario_speaker.set(scenario_data.get("speaker", ""))
-        self.scenario_speaker_position.set(scenario_data.get("speaker_position", ""))
-        voice_synthesis_mood = scenario_data.get("mood", "calm")
+        # scene_mood字段用于语音合成情绪
+        self.scene_speaker.set(scene_data.get("speaker", ""))
+        self.scene_speaker_position.set(scene_data.get("speaker_position", ""))
+        voice_synthesis_mood = scene_data.get("mood", "calm")
         if voice_synthesis_mood in EXPRESSION_STYLES:
-            self.scenario_mood.set(voice_synthesis_mood)
+            self.scene_mood.set(voice_synthesis_mood)
         else:
-            self.scenario_mood.set("calm")
+            self.scene_mood.set("calm")
         
-        self.scenario_camera_light.delete("1.0", tk.END)
-        self.scenario_camera_light.insert("1.0", scenario_data.get("camera_light", ""))
-        
-        self.scenario_story_content.delete("1.0", tk.END)
-        self.scenario_story_content.insert("1.0", scenario_data.get("content", ""))
+        self.scene_story_content.delete("1.0", tk.END)
+        self.scene_story_content.insert("1.0", scene_data.get("content", ""))
         
         # 加载宣传信息
-        self.scenario_promotion_info.delete("1.0", tk.END)
-        self.scenario_promotion_info.insert("1.0", scenario_data.get("promotion_info", ""))
+        self.scene_promotion_info.delete("1.0", tk.END)
+        self.scene_promotion_info.insert("1.0", scene_data.get("promotion_info", ""))
 
 
     def update_video_progress_display(self):
@@ -2483,9 +2489,9 @@ class WorkflowGUI:
             return
 
         try:
-            current_scenario = self.get_current_scenario()
-            if current_scenario:
-                clip_video = get_file_path(current_scenario, "clip")
+            current_scene = self.get_current_scene()
+            if current_scene:
+                clip_video = get_file_path(current_scene, "clip")
                 if clip_video:
                     total_duration = self.workflow.ffmpeg_processor.get_duration(clip_video)
                 else:
@@ -2506,79 +2512,78 @@ class WorkflowGUI:
             print(f"⚠️ 更新视频进度显示失败: {e}")
 
 
-    def clear_scenario_fields(self):
-        self.scenario_duration.config(state="normal")
-        self.scenario_duration.delete(0, tk.END)
-        self.scenario_duration.config(state="readonly")
+    def clear_scene_fields(self):
+        self.scene_duration.config(state="normal")
+        self.scene_duration.delete(0, tk.END)
+        self.scene_duration.config(state="readonly")
         
-        self.scenario_main_animate.set("")
+        self.scene_main_animate.set("")
         
-        self.scenario_story_expression.delete("1.0", tk.END)
-        self.scenario_era_time.delete("1.0", tk.END)
-        self.scenario_location.delete(0, tk.END)
-        self.scenario_person_in_story.delete("1.0", tk.END)
-        self.scenario_speaker_action.delete("1.0", tk.END)
-        self.scenario_extra.delete("1.0", tk.END)
-        self.scenario_speaker.set("")
-        self.scenario_speaker_position.set("")
-        self.scenario_mood.set("calm")
-        self.scenario_camera_light.delete("1.0", tk.END)
-        self.scenario_story_content.delete("1.0", tk.END)
-        self.scenario_promotion_info.delete("1.0", tk.END)
+        self.scene_visual_start.delete("1.0", tk.END)
+        self.scene_era_time.delete("1.0", tk.END)
+        self.scene_environment.delete(0, tk.END)
+        self.scene_speaker.delete("1.0", tk.END)
+        self.scene_speaker_action.delete("1.0", tk.END)
+        self.scene_extra.delete("1.0", tk.END)
+        self.scene_speaker_position.set("")
+        self.scene_mood.set("calm")
+        self.scene_story_content.delete("1.0", tk.END)
+        self.scene_cinematography.delete("1.0", tk.END)
+        self.scene_promotion_info.delete("1.0", tk.END)
 
 
-    def prev_scenario(self):
+    def prev_scene(self):
         """上一个场景"""
-        self.update_current_scenario()
+        self.update_current_scene()
         
-        self.current_scenario_index -= 1
-        if self.current_scenario_index < 0:
-            self.current_scenario_index = len(self.workflow.scenarios) - 1
+        self.current_scene_index -= 1
+        if self.current_scene_index < 0:
+            self.current_scene_index = len(self.workflow.scenes) - 1
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
-    def next_scenario(self):
+    def next_scene(self):
         """下一个场景"""
-        self.update_current_scenario()
+        self.update_current_scene()
         
-        self.current_scenario_index += 1
-        if self.current_scenario_index >= len(self.workflow.scenarios):
-            self.current_scenario_index = 0
+        self.current_scene_index += 1
+        if self.current_scene_index >= len(self.workflow.scenes):
+            self.current_scene_index = 0
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
-    def split_current_scenario(self):
+    def split_current_scene(self):
         """分离当前场景"""      
         position = pygame.mixer.music.get_pos() / 1000.0
-        self.workflow.split_scenario_at_position(self.current_scenario_index, position+self.playing_delta)
+        self.workflow.split_scene_at_position(self.current_scene_index, position+self.playing_delta)
         self.playing_delta = 0.0
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def clean_media_mark(self):
         """标记清理"""
-        for scenario in self.workflow.scenarios:
-            scenario["clip_animation"] = ""
+        for scene in self.workflow.scenes:
+            scene["clip_animation"] = ""
 
-        self.workflow.save_scenarios_to_json()
+        self.workflow.save_scenes_to_json()
         messagebox.showinfo("成功", "标记清理成功！")
 
 
     def start_video_gen_batch(self):
         """启动WAN批生成"""
-        current_scenario = self.get_current_scenario()
-        previous_scenario = self.get_previous_scenario()
-        next_scenario = self.get_next_scenario()
+        current_scene = self.get_current_scene()
+        previous_scene = self.get_previous_scene()
+        next_scene = self.get_next_scene()
 
-        ss = self.workflow.scenarios_in_story(current_scenario)
-        for scenario in ss:
-            self.generate_video(scenario, previous_scenario, next_scenario, "clip")
-            self.generate_video(scenario, previous_scenario, next_scenario, "second")
+        ss = self.workflow.scenes_in_story(current_scene)
+        for scene in ss:
+            self.generate_video(scene, previous_scene, next_scene, "clip")
+            self.generate_video(scene, previous_scene, next_scene, "second")
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
         messagebox.showinfo("成功", "WAN视频批量生成成功！")
 
 
@@ -2591,7 +2596,7 @@ class WorkflowGUI:
     def clean_media(self):
         """媒体清理"""
         self.workflow.clean_media()
-        self.workflow.save_scenarios_to_json()
+        self.workflow.save_scenes_to_json()
         messagebox.showinfo("成功", "媒体清理成功！")
 
 
@@ -2615,63 +2620,45 @@ class WorkflowGUI:
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
 
 
-    def insert_scenario(self):
-        self.update_scenario_buttons_state()
-        current_scenario = self.get_current_scenario()
-        if current_scenario and not self.workflow.first_scenario_of_story(current_scenario):
+    def insert_scene(self):
+        self.update_scene_buttons_state()
+        current_scene = self.get_current_scene()
+        if current_scene and not self.workflow.first_scene_of_story(current_scene):
             return
-        self.add_root_scenario(False)
 
-
-    def append_scenario(self):
-        self.update_scenario_buttons_state()
-        current_scenario = self.get_current_scenario()
-        if current_scenario and not self.workflow.last_scenario_of_story(current_scenario):
-            return
-        self.add_root_scenario(True)
-
-
-    def add_root_scenario(self, is_append):
-        """增加场景"""
-        #dialog = BackgroundSelectorDialog(self, self.workflow, new_clip_image)
-        #self.root.wait_window(dialog.dialog)
-
-        # 检查用户是否确认了选择
-        #if dialog.result and dialog.result.get('confirmed'):
-
-        #background_images = dialog.result.get('background_images')  # 获取图片列表
-        #background_music = dialog.result.get('background_music')
-
-        background_images = [self.workflow.find_default_background_image()]  # 传递图片列表
-        background_music = self.workflow.find_default_background_music()
-        background_video = self.workflow.find_default_background_video()
-
-        # 创建新场景
-        self.workflow.add_root_scenario(
-            self.current_scenario_index,
-            self.story_site_entry.get(), 
-            background_images[0],  # 传递图片列表
-            background_music,
-            background_video,
-            is_append
+        self.workflow.add_default_root_scene(
+            self.current_scene_index,
+            self.story_site_entry.get(),
+            False,
         )
-        self.refresh_gui_scenarios()
-        
-        # 显示成功消息
-        image_names = ", ".join([os.path.basename(img) for img in background_images])
-        messagebox.showinfo("成功", f"场景已添加\n背景图片 ({len(background_images)} 张): {image_names}\n背景音乐: {os.path.basename(background_music)}")
-        #else:
-        #    # 用户取消了操作
-        #    messagebox.showinfo("取消", "未添加新场景")
+
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+
+
+    def append_scene(self):
+        self.update_scene_buttons_state()
+        current_scene = self.get_current_scene()
+        if current_scene and not self.workflow.last_scene_of_story(current_scene):
+            return
+
+        self.workflow.add_default_root_scene(
+            self.current_scene_index,
+            self.story_site_entry.get(),
+            True,
+        )
+
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
 
     def reverse_video(self):
         """翻转视频"""
-        current_scenario = self.get_current_scenario()
-        oldv, newv = self.workflow.refresh_scenario_media(current_scenario, "clip", ".mp4")
+        current_scene = self.get_current_scene()
+        oldv, newv = self.workflow.refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.reverse_video(oldv), newv)
-        self.workflow.save_scenarios_to_json()
-        self.refresh_gui_scenarios()
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
 
     def get_current_playback_position(self):
@@ -2708,41 +2695,41 @@ class WorkflowGUI:
 
     def mirror_video(self):
         """镜像视频"""
-        current_scenario = self.get_current_scenario()
-        oldv, newv = self.workflow.refresh_scenario_media(current_scenario, "clip", ".mp4")
+        current_scene = self.get_current_scene()
+        oldv, newv = self.workflow.refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.mirror_video(oldv), newv)
-        self.workflow.save_scenarios_to_json()
-        self.refresh_gui_scenarios()
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
 
     def print_title(self):
         """打印标题"""
-        current_scenario = self.update_current_scenario()
-        content = current_scenario['content']
+        current_scene = self.update_current_scene()
+        content = current_scene['content']
         if not content or content.strip() == "":
             messagebox.showinfo("标题", "标题为空")
             return
-        clip_video = get_file_path(current_scenario, "clip")
+        clip_video = get_file_path(current_scene, "clip")
         if not clip_video:
             messagebox.showinfo("标题", "视频为空")
             return
        
         content = self.workflow.transcriber.translate_text(content, self.workflow.language, self.workflow.language)
 
-        content_language = self.scenario_language.get()
+        content_language = self.scene_language.get()
         if content_language in config.FONT_LIST:
-            current_scenario["content_language"] = content_language
+            current_scene["content_language"] = content_language
             font = config.FONT_LIST[content_language]
         else:
             font = self.workflow.font_title
 
         v = self.workflow.ffmpeg_processor.add_script_to_video(clip_video, content, font)
-        back = current_scenario.get('back', '')
-        current_scenario['back'] = clip_video + "," + back
-        self.workflow.refresh_scenario_media(current_scenario, "clip", ".mp4", v)
+        back = current_scene.get('back', '')
+        current_scene['back'] = clip_video + "," + back
+        self.workflow.refresh_scene_media(current_scene, "clip", ".mp4", v)
 
-        self.workflow.save_scenarios_to_json()
-        self.refresh_gui_scenarios()
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
 
     def toggle_track_playback(self):
@@ -2763,8 +2750,8 @@ class WorkflowGUI:
 
     def play_second_track(self):
         """播放第二轨道视频的当前场景时间段（支持从暂停状态和偏移位置恢复）"""
-        second_video_path = get_file_path(self.get_current_scenario(), self.selected_second_track)
-        second_audio_path = get_file_path(self.get_current_scenario(), self.selected_second_track+'_audio')
+        second_video_path = get_file_path(self.get_current_scene(), self.selected_second_track)
+        second_audio_path = get_file_path(self.get_current_scene(), self.selected_second_track+'_audio')
         try:
             # 检查是否是从暂停状态恢复
             is_resuming = (self.second_track_cap and self.second_track_paused_time)
@@ -3010,14 +2997,14 @@ class WorkflowGUI:
     def play_pip_lr(self):
         """同步播放 second_left 和 second_right 视频（支持从暂停恢复）"""
         try:
-            current_scenario = self.get_current_scenario()
-            if not current_scenario:
+            current_scene = self.get_current_scene()
+            if not current_scene:
                 return
             
             # 获取视频路径
-            left_path = current_scenario.get('second_left')
-            right_path = current_scenario.get('second_right')
-            audio_path = current_scenario.get('clip_audio')
+            left_path = current_scene.get('second_left')
+            right_path = current_scene.get('second_right')
+            audio_path = current_scene.get('clip_audio')
             
             if not left_path or not right_path:
                 messagebox.showwarning("提示", "当前场景没有 second_left 或 second_right 视频")
@@ -3277,12 +3264,12 @@ class WorkflowGUI:
     def load_pip_lr_first_frame(self):
         """加载 PIP L/R 视频的第一帧"""
         try:
-            current_scenario = self.get_current_scenario()
-            if not current_scenario:
+            current_scene = self.get_current_scene()
+            if not current_scene:
                 return
             
-            left_path = current_scenario.get(self.selected_second_track+'_left')
-            right_path = current_scenario.get(self.selected_second_track+'_right')
+            left_path = current_scene.get(self.selected_second_track+'_left')
+            right_path = current_scene.get(self.selected_second_track+'_right')
             
             if not left_path or not right_path:
                 # 清空画布显示提示
@@ -3349,21 +3336,21 @@ class WorkflowGUI:
         file_path = self.workflow.ffmpeg_processor.resize_image_smart(file_path)
         try:
             # 获取当前场景
-            current_scenario = self.get_current_scenario()
-            if not current_scenario:
+            current_scene = self.get_current_scene()
+            if not current_scene:
                 messagebox.showerror("错误", "没有选中场景")
                 return
             
             # 复制图片到项目目录
-            oldi, image_path = self.workflow.refresh_scenario_media(current_scenario, image_type, ".webp", file_path, True)
-            
-            scenario_data = self.workflow.sd_processor.describe_image(image_path)
-            self.workflow.update_scenario_image_fields(current_scenario, scenario_data)
+            oldi, image_path = self.workflow.refresh_scene_media(current_scene, image_type, ".webp", file_path, True)
+
+            if image_type == 'clip_image' or image_type == 'clip_image_last':
+                self.workflow.ask_replace_scene_info_from_image(current_scene, image_path)
 
             # 刷新显示
             self.display_image_on_canvas_for_track(image_type)
             
-            self.workflow.save_scenarios_to_json()
+            self.workflow.save_scenes_to_json()
             print(f"✅ 已更新 {image_type}: {os.path.basename(file_path)}")
             messagebox.showinfo("成功", f"已更新 {image_type.replace('_', ' ')}")
             
@@ -3375,11 +3362,11 @@ class WorkflowGUI:
 
     def display_image_on_canvas_for_track(self, image_type):
         try:
-            current_scenario = self.get_current_scenario()
-            if not current_scenario:
+            current_scene = self.get_current_scene()
+            if not current_scene:
                 return
             
-            image_path = current_scenario.get(image_type)
+            image_path = current_scene.get(image_type)
             if not image_path or not os.path.exists(image_path):
                 return
             
@@ -3453,61 +3440,6 @@ class WorkflowGUI:
         self.display_image_on_canvas_for_track('one_image_last')
 
     
-    def on_image_double_click(self, image_type):
-        """处理图片双击事件 - 使用OpenAI描述图片"""
-        try:
-            current_scenario = self.get_current_scenario()
-            if not current_scenario:
-                messagebox.showwarning("警告", "请先选择一个场景")
-                return
-            
-            # 获取对应的图片路径
-            from utility.file_util import get_file_path
-            image_path = get_file_path(current_scenario, image_type)
-            
-            if not image_path or not os.path.exists(image_path):
-                messagebox.showwarning("警告", f"未找到 {image_type} 图片")
-                return
-            
-            # 确定要保存描述的字段名
-            if image_type == 'clip_image':
-                extra_field = 'clip_extra'
-                display_name = "场景图片"
-            elif image_type == 'second_image':
-                extra_field = 'second_extra'
-                display_name = "第二轨道图片"
-            elif image_type == 'zero_image':
-                extra_field = 'zero_extra'
-                display_name = "背景轨道图片"
-            else:
-                return
-            
-            # 显示处理中的提示
-            print(f"🔍 正在使用 OpenAI 描述 {display_name}...")
-            
-            # 在后台线程中调用 OpenAI API
-            def describe_in_background():
-                try:
-                    # 调用 describe_image 描述图片（支持文件路径或 base64 字符串）
-                    scenario_data = self.workflow.sd_processor.describe_image(image_path)
-                    self.workflow.update_scenario_image_fields(current_scenario, scenario_data)
-                    messagebox.showinfo("成功", f"{display_name} 描述已保存")
-                except Exception as e:
-                    error_msg = f"描述图片失败: {str(e)}"
-                    print(f"❌ {error_msg}")
-                    self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-            
-            # 启动后台线程
-            import threading
-            thread = threading.Thread(target=describe_in_background, daemon=True)
-            thread.start()
-            
-        except Exception as e:
-            error_msg = f"处理双击事件失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
-
-
     def on_track_volume_change(self, *args):
         """音量变化处理（共用）"""
         volume = self.track_volume_var.get()
@@ -3618,157 +3550,127 @@ class WorkflowGUI:
     def shift_forward(self):
         """前移当前场景"""
         position = pygame.mixer.music.get_pos() / 1000.0
-        self.workflow.shift_scenario(self.current_scenario_index, self.current_scenario_index+1, position+self.playing_delta)
+        self.workflow.shift_scene(self.current_scene_index, self.current_scene_index+1, position+self.playing_delta)
         self.playing_delta = 0.0
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def shift_before(self):
         """下移当前场景"""
         position = pygame.mixer.music.get_pos() / 1000.0
-        self.workflow.shift_scenario(self.current_scenario_index, self.current_scenario_index-1, position+self.playing_delta)
+        self.workflow.shift_scene(self.current_scene_index, self.current_scene_index-1, position+self.playing_delta)
         self.playing_delta = 0.0
 
-        self.refresh_gui_scenarios()
-
-
-    def extend_scenario(self):
-        """扩展当前场景"""
-        if self.playing_delta <= 0:
-            messagebox.showinfo("警告", "⚠️ 当前场景无法扩展 - " + str(self.playing_delta))
-            return
-        self.workflow.extend_scenario(self.current_scenario_index, self.playing_delta)
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def merge_or_delete(self):
         """合并当前图片与下一张图片"""
-        if len(self.workflow.scenarios) == 0:
+        if len(self.workflow.scenes) == 0:
             messagebox.showinfo("警告", "⚠️ 无场景")
             return
 
-        current_scenario = self.get_current_scenario()
-        ss = self.workflow.scenarios_in_story(current_scenario)
+        current_scene = self.get_current_scene()
+        ss = self.workflow.scenes_in_story(current_scene)
         if len(ss) <= 1:
             result = messagebox.askyesnocancel("警告", "⚠️ 删除唯一场景?")
             if result is True:
-                ss = self.workflow.replace_scenario(self.current_scenario_index)
+                ss = self.workflow.replace_scene(self.current_scene_index)
         else:
-            if ss[-1] == current_scenario:
+            if ss[-1] == current_scene:
                 result = messagebox.askyesnocancel("警告", "⚠️ 删除当前场景?")
                 if result is True:
-                    ss = self.workflow.replace_scenario(self.current_scenario_index)
+                    ss = self.workflow.replace_scene(self.current_scene_index)
             else:
                 result = messagebox.askyesnocancel("警告", "⚠️ 请选择操作：\n是: 合并场景\n否: 删除场景\n取消: 取消操作")
                 if result is True:
                     # 合并场景
-                    self.workflow.merge_scenario(self.current_scenario_index, self.current_scenario_index+1)
+                    self.workflow.merge_scene(self.current_scene_index, self.current_scene_index+1)
                 elif result is False:
                     # 删除场景
                     result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
                     if result:
-                        ss = self.workflow.replace_scenario(self.current_scenario_index)
+                        ss = self.workflow.replace_scene(self.current_scene_index)
                 # result is None 表示取消，不做任何操作
             
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
         messagebox.showinfo("合并场景", "完成")
 
 
     def swap_with_next_image(self):
         """交换当前图片与下一张图片"""
-        current_index = self.current_scenario_index
-        current_scenario = self.workflow.scenarios[current_index]
+        current_index = self.current_scene_index
+        current_scene = self.workflow.scenes[current_index]
 
-        ss = self.workflow.scenarios_in_story(current_scenario)
-        if len(ss) <= 1 or current_scenario == ss[-1]:
+        ss = self.workflow.scenes_in_story(current_scene)
+        if len(ss) <= 1 or current_scene == ss[-1]:
             messagebox.showinfo("警告", "⚠️ 当前场景无法交换")
             return
         
         next_index = current_index + 1
-        next_scenario = self.workflow.scenarios[next_index]
+        next_scene = self.workflow.scenes[next_index]
 
         # 查找当前场景和下一个场景的图像文件
-        temp_image = current_scenario["clip_image"]
-        current_scenario["clip_image"] = next_scenario["clip_image"]
-        next_scenario["clip_image"] = temp_image
+        temp_image = current_scene["clip_image"]
+        current_scene["clip_image"] = next_scene["clip_image"]
+        next_scene["clip_image"] = temp_image
 
-        # self.workflow._generate_video_from_image(current_scenario)
-        # self.workflow._generate_video_from_image(next_scenario)
+        # self.workflow._generate_video_from_image(current_scene)
+        # self.workflow._generate_video_from_image(next_scene)
         
         # 显示成功消息
         messagebox.showinfo("成功", f"已成功交换场景 {current_index + 1} 和场景 {next_index + 1} 的图片！")
 
 
-    def swap_scenario(self):
+    def swap_scene(self):
         """交换当前场景与下一张场景"""
-        self.workflow.swap_scenario(self.current_scenario_index, self.current_scenario_index+1)
-        self.refresh_gui_scenarios()
+        self.workflow.swap_scene(self.current_scene_index, self.current_scene_index+1)
+        self.refresh_gui_scenes()
 
 
-    def regenerate_scenario(self):
-        self.workflow.refresh_scenario( self.get_current_scenario() )
-        self.refresh_gui_scenarios()
+    def refresh_scene_visual(self):
+        self.workflow.refresh_scene_visual( self.get_current_scene() )
+        self.refresh_gui_scenes()
 
 
     def copy_images_to_next(self):
-        current_scenario = self.get_current_scenario()
-        next_scenario = self.workflow.next_scenario_of_story(current_scenario)
-        if current_scenario and next_scenario:
-            clip_image_split = current_scenario.get("clip_image_split", "")
-            clip_animation = current_scenario.get("clip_animation", "")
-            second_animation = current_scenario.get("second_animation", "")
+        current_scene = self.get_current_scene()
+        next_scene = self.workflow.next_scene_of_story(current_scene)
+        if current_scene and next_scene:
+            clip_image_split = current_scene.get("clip_image_split", "")
+            clip_animation = current_scene.get("clip_animation", "")
+            second_animation = current_scene.get("second_animation", "")
 
-            next_scenario["clip_image_split"] = clip_image_split
-            next_scenario["clip_animation"] =  clip_animation
-            next_scenario["second_animation"] = second_animation
+            next_scene["clip_image_split"] = clip_image_split
+            next_scene["clip_animation"] =  clip_animation
+            next_scene["second_animation"] = second_animation
 
-            clip_image = current_scenario.get("clip_image", "")
-            clip_image_last = current_scenario.get("clip_image_last", "")
+            clip_image = current_scene.get("clip_image", "")
+            clip_image_last = current_scene.get("clip_image_last", "")
             if clip_image:
-                self.workflow.refresh_scenario_media(next_scenario, "clip_image", ".webp", clip_image, True)
+                self.workflow.refresh_scene_media(next_scene, "clip_image", ".webp", clip_image, True)
             if clip_image_last:
-                self.workflow.refresh_scenario_media(next_scenario, "clip_image_last", ".webp", clip_image_last, True)
+                self.workflow.refresh_scene_media(next_scene, "clip_image_last", ".webp", clip_image_last, True)
 
-            second_image = current_scenario.get("second_image", "")
-            second_image_last = current_scenario.get("second_image_last", "")
+            second_image = current_scene.get("second_image", "")
+            second_image_last = current_scene.get("second_image_last", "")
             if second_image:
-                self.workflow.refresh_scenario_media(next_scenario, "second_image", ".webp", second_image, True)
+                self.workflow.refresh_scene_media(next_scene, "second_image", ".webp", second_image, True)
             if second_image_last:
-                self.workflow.refresh_scenario_media(next_scenario, "second_image_last", ".webp", second_image_last, True)
+                self.workflow.refresh_scene_media(next_scene, "second_image_last", ".webp", second_image_last, True)
 
-            self.workflow.save_scenarios_to_json()
-            self.refresh_gui_scenarios()
-
-
-    def recreate_second_image(self):
-        """重新创建次图，先打开对话框让用户审查和编辑提示词"""
-        scenario = self.get_current_scenario()
-        # 定义创建图像的回调函数
-        def create_second_image(edited_positive, edited_negative):
-            oldi, newi = self.workflow.refresh_scenario_media(scenario, "second_image", ".webp")
-            self.workflow._create_image(self.workflow.sd_processor.gen_config["Story"], 
-                                        newi,
-                                        None,
-                                        edited_positive,
-                                        edited_negative,
-                                        int(time.time())
-                                    )
-            self.workflow.save_scenarios_to_json()
-            self.refresh_gui_scenarios()
-            print("✅ 次图已重新创建")
-        
-        # 构建正面提示词预览
-        self.open_image_prompt_dialog(create_second_image, scenario, "second")
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
 
 
-    def recreate_clip_image(self):
+    def recreate_clip_image(self, language:str, start:bool):
         """重新创建主图，先打开对话框让用户审查和编辑提示词"""
-        scenario = self.get_current_scenario()
+        scene = self.get_current_scene()
         
         # 定义创建图像的回调函数
         def create_clip_image(edited_positive, edited_negative):
-            oldi, newi = self.workflow.refresh_scenario_media(scenario, "clip_image", ".webp")
+            oldi, newi = self.workflow.refresh_scene_media(scene, "clip_image", ".webp")
             self.workflow._create_image(self.workflow.sd_processor.gen_config["Story"], 
                                         newi,
                                         None,
@@ -3777,53 +3679,58 @@ class WorkflowGUI:
                                         edited_negative,
                                         int(time.time())
                                     )
-            self.workflow.save_scenarios_to_json()
-            self.refresh_gui_scenarios()
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
             print("✅ 主图已重新创建")
         
         # 构建正面提示词预览
-        self.open_image_prompt_dialog(create_clip_image, scenario, "clip")
+        self.open_image_prompt_dialog(create_clip_image, scene, "clip", start, language)
 
 
-    def update_current_scenario(self):
-        scenario = self.get_current_scenario()
-        scenario.update({
-            "story_expression": self.scenario_story_expression.get("1.0", tk.END).strip(),
-            "era_time": self.scenario_era_time.get("1.0", tk.END).strip(),
-            "location": self.scenario_location.get(),
-            "person_action": self.scenario_person_in_story.get("1.0", tk.END).strip(),
-            "speaker_action": self.scenario_speaker_action.get("1.0", tk.END).strip(),
-            "extra": self.scenario_extra.get("1.0", tk.END).strip(),
-            "speaker": self.scenario_speaker.get(),
-            "speaker_position": self.scenario_speaker_position.get(),  # 添加讲员位置字段
-            "mood": self.scenario_mood.get(),         # 语音合成情绪
-            "camera_light": self.scenario_camera_light.get("1.0", tk.END).strip(),
-            "clip_animation": self.scenario_main_animate.get(),
-            "content": self.scenario_story_content.get("1.0", tk.END).strip(),
-            "promotion_info": self.scenario_promotion_info.get("1.0", tk.END).strip()
+    def update_current_scene(self):
+        scene = self.get_current_scene()
+        scene.update({
+            "content": self.scene_story_content.get("1.0", tk.END).strip(),
+            "subject": self.scene_subject.get("1.0", tk.END).strip(),
+            "visual_start": self.scene_visual_start.get("1.0", tk.END).strip(),
+            "visual_end": self.scene_visual_end.get("1.0", tk.END).strip(),
+            "era_time": self.scene_era_time.get("1.0", tk.END).strip(),
+            "environment": self.scene_environment.get(),
+            "cinematography": self.scene_cinematography.get("1.0", tk.END).strip(),
+            "sound_effect": self.scene_sound_effect.get("1.0", tk.END).strip(),
+            "extra": self.scene_extra.get("1.0", tk.END).strip(),
+            "speaker_action": self.scene_speaker_action.get("1.0", tk.END).strip(),
+            "speaker": self.scene_speaker.get(),
+            "speaker_position": self.scene_speaker_position.get(),  # 添加讲员位置字段
+            "mood": self.scene_mood.get(),         # 语音合成情绪
+            "clip_animation": self.scene_main_animate.get(),
+            "promotion_info": self.scene_promotion_info.get("1.0", tk.END).strip()
         })
-        self.workflow.save_scenarios_to_json()
-        return scenario
+        self.workflow.save_scenes_to_json()
+        return scene
 
 
     def load_config(self):
         """加载当前项目的配置"""
         try:
-            if not self.current_project_config:
-                print("⚠️ 没有当前项目配置")
+            # 检查 project_manager.PROJECT_CONFIG 是否已设置
+            if project_manager.PROJECT_CONFIG is None:
+                print("❌ 错误：project_manager.PROJECT_CONFIG 未设置！请确保已选择项目。")
+                print(f"   调试信息：show_project_selection 应该已经设置了 project_manager.PROJECT_CONFIG")
                 exit()
+            
             # 临时禁用自动保存，避免加载过程中触发保存
             self._loading_config = True
-            self.apply_config_to_gui(self.current_project_config)
+            self.apply_config_to_gui(project_manager.PROJECT_CONFIG)
             
             # 检查是否有有效PID
-            saved_pid = self.current_project_config.get('pid', '')
+            saved_pid = project_manager.PROJECT_CONFIG.get('pid', '')
             if not saved_pid:
                 print("⚠️ 项目配置中没有有效的PID")
                 exit()
 
             # 同步标题到workflow
-            saved_video_title = self.current_project_config.get('video_title', '默认标题')
+            saved_video_title = project_manager.PROJECT_CONFIG.get('video_title', '默认标题')
             if saved_video_title and saved_video_title != '默认标题':
                 self.video_title.delete(0, tk.END)
                 self.video_title.insert(0, saved_video_title)
@@ -3924,32 +3831,29 @@ class WorkflowGUI:
     def show_save_confirmation_on_exit(self):
         """退出时显示保存确认对话框"""
         try:
-            if self.current_project_config:
-                pid = self.current_project_config.get('pid', '未知PID')
-                title = self.current_project_config.get('video_title', '未知标题')
+            pid = project_manager.PROJECT_CONFIG.get('pid', '未知PID')
+            title = project_manager.PROJECT_CONFIG.get('video_title', '未知标题')
+            
+            # 检查是否有未保存的更改
+            current_data = self.get_current_config_data()
+            has_changes = current_data != project_manager.PROJECT_CONFIG
+            
+            if has_changes:
+                result = messagebox.askyesnocancel(
+                    "保存项目配置", 
+                    f"是否保存当前项目的配置？\n\n项目: {pid}\n标题: {title}\n\n点击'是'保存并退出\n点击'否'不保存直接退出\n点击'取消'返回应用",
+                    icon='question'
+                )
                 
-                # 检查是否有未保存的更改
-                current_data = self.get_current_config_data()
-                has_changes = current_data != self.current_project_config
-                
-                if has_changes:
-                    result = messagebox.askyesnocancel(
-                        "保存项目配置", 
-                        f"是否保存当前项目的配置？\n\n项目: {pid}\n标题: {title}\n\n点击'是'保存并退出\n点击'否'不保存直接退出\n点击'取消'返回应用",
-                        icon='question'
-                    )
-                    
-                    if result is None:  # 用户点击取消
-                        return False  # 不关闭应用
-                    elif result:  # 用户点击是
-                        self.save_config()
-                        print(f"✅ 已保存项目配置: {pid} - {title}")
-                    else:  # 用户点击否
-                        print(f"⚠️ 项目配置未保存: {pid} - {title}")
-                else:
-                    print(f"📋 项目配置无变化，无需保存: {pid} - {title}")
+                if result is None:  # 用户点击取消
+                    return False  # 不关闭应用
+                elif result:  # 用户点击是
+                    self.save_config()
+                    print(f"✅ 已保存项目配置: {pid} - {title}")
+                else:  # 用户点击否
+                    print(f"⚠️ 项目配置未保存: {pid} - {title}")
             else:
-                print("⚠️ 没有当前项目配置")
+                print(f"📋 项目配置无变化，无需保存: {pid} - {title}")
                 
             return True  # 继续关闭应用
             
@@ -3967,12 +3871,12 @@ class WorkflowGUI:
             'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
             'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
             # video_width and video_height are read-only from project config, not saved
-            'video_width': self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920',
-            'video_height': self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080',
+            'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
+            'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
             'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
             'conversation_content': getattr(self, 'conversation_content', None) or '',
             # project_type is read-only from project config
-            'project_type': self.current_project_config.get('project_type', 'story') if self.current_project_config else 'story'
+            'project_type': project_manager.PROJECT_CONFIG.get('project_type', 'story') if project_manager.PROJECT_CONFIG else 'story'
         }
 
         # Add audio_prepares data if available
@@ -4011,8 +3915,8 @@ class WorkflowGUI:
                 'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
                 'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
                 # video_width and video_height are read-only from project config, not saved
-                'video_width': self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920',
-                'video_height': self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080',
+                'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
+                'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
                 'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
                 'conversation_content': getattr(self, 'conversation_content', None) or ''
             }
@@ -4022,23 +3926,22 @@ class WorkflowGUI:
                 config_data['audio_prepares'] = workflow.video_prepares
             
             # Preserve video_id and other important fields from existing config
-            if hasattr(self, 'current_project_config') and self.current_project_config:
-                if 'video_id' in self.current_project_config:
-                    config_data['video_id'] = self.current_project_config['video_id']
-                if 'generated_titles' in self.current_project_config:
-                    config_data['generated_titles'] = self.current_project_config['generated_titles']
-                if 'generated_tags' in self.current_project_config:
-                    config_data['generated_tags'] = self.current_project_config['generated_tags']
+            if hasattr(self, 'current_project_config') and project_manager.PROJECT_CONFIG:
+                if 'video_id' in project_manager.PROJECT_CONFIG:
+                    config_data['video_id'] = project_manager.PROJECT_CONFIG['video_id']
+                if 'generated_titles' in project_manager.PROJECT_CONFIG:
+                    config_data['generated_titles'] = project_manager.PROJECT_CONFIG['generated_titles']
+                if 'generated_tags' in project_manager.PROJECT_CONFIG:
+                    config_data['generated_tags'] = project_manager.PROJECT_CONFIG['generated_tags']
                 # Preserve project_type from existing config
-                if 'project_type' in self.current_project_config:
-                    config_data['project_type'] = self.current_project_config['project_type']
+                if 'project_type' in project_manager.PROJECT_CONFIG:
+                    config_data['project_type'] = project_manager.PROJECT_CONFIG['project_type']
             
             # 更新当前项目配置
-            self.current_project_config = config_data
+            project_manager.PROJECT_CONFIG = config_data
             
             # 保存到文件
             config_manager = ProjectConfigManager(self.get_pid())
-            config_manager.project_config = config_data.copy()
             config_manager.save_project_config(config_data)
                 
         except Exception as e:
@@ -4049,35 +3952,37 @@ class WorkflowGUI:
     def bind_edit_events(self):
         """绑定编辑事件"""
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
-        scenario_fields = [
-            self.scenario_story_expression,
-            self.scenario_era_time,
-            self.scenario_location,
-            self.scenario_person_in_story,
-            self.scenario_speaker_action,
-            self.scenario_extra,
-            self.scenario_camera_light,
-            self.scenario_story_content,
-            self.scenario_promotion_info
+        scene_fields = [
+            self.scene_visual_start,
+            self.scene_era_time,
+            self.scene_environment,
+            self.scene_speaker,
+            self.scene_speaker_action,
+            self.scene_extra,
+            self.scene_cinematography,
+            self.scene_subject,
+            self.scene_visual_end,
+            self.scene_story_content,
+            self.scene_promotion_info
         ]
         
-        for field in scenario_fields:
+        for field in scene_fields:
             # 绑定Enter键事件（Ctrl+Enter在ScrolledText中触发保存）
-            field.bind('<Control-Return>', self.on_scenario_field_enter)
-            field.bind('<Control-Enter>', self.on_scenario_field_enter)
+            field.bind('<Control-Return>', self.on_scene_field_enter)
+            field.bind('<Control-Enter>', self.on_scene_field_enter)
             # 也绑定失去焦点事件作为备选保存机制
-            field.bind('<FocusOut>', self.on_scenario_field_focus_out)
+            field.bind('<FocusOut>', self.on_scene_field_focus_out)
         
         # 为Entry和Combobox字段单独绑定失去焦点事件
         entry_combobox_fields = [
-            self.scenario_speaker,
-            self.scenario_mood,
-            self.scenario_speaker_position
+            self.scene_speaker,
+            self.scene_mood,
+            self.scene_speaker_position
         ]
         
         for field in entry_combobox_fields:
-            field.bind('<FocusOut>', self.on_scenario_field_focus_out)
-            field.bind('<<ComboboxSelected>>', self.on_scenario_field_change)
+            field.bind('<FocusOut>', self.on_scene_field_focus_out)
+            field.bind('<<ComboboxSelected>>', self.on_scene_field_change)
         
         print("📝 已绑定场景编辑字段的自动保存事件 (Ctrl+Enter 或失去焦点时保存)")
     
@@ -4128,29 +4033,29 @@ class WorkflowGUI:
         
         self.save_config()
 
-    def on_scenario_edit(self, event=None):
+    def on_scene_edit(self, event=None):
         """当场景信息被编辑时的回调（现在不需要）"""
         # 保存按钮现在总是可用
         pass
 
-    def on_scenario_field_enter(self, event=None):
+    def on_scene_field_enter(self, event=None):
         """当在场景编辑字段中按下Ctrl+Enter时的回调"""
-        # 保存当前场景信息到JSON并传播到相同raw_scenario_index的场景
-        self.update_current_scenario()
+        # 保存当前场景信息到JSON并传播到相同raw_scene_index的场景
+        self.update_current_scene()
         return "break"  # 阻止默认的换行行为
 
-    def on_scenario_field_focus_out(self, event=None):
+    def on_scene_field_focus_out(self, event=None):
         """当场景编辑字段失去焦点时的回调"""
         # 延迟保存以避免频繁操作
         if hasattr(self, '_save_timer'):
             self.root.after_cancel(self._save_timer)
-        self._save_timer = self.root.after(500, lambda: self.update_current_scenario())  # 500ms延迟
+        self._save_timer = self.root.after(500, lambda: self.update_current_scene())  # 500ms延迟
 
-    def on_scenario_field_change(self, event=None):
+    def on_scene_field_change(self, event=None):
         """当场景字段值发生变化时的回调（如Combobox选择变化）"""
         # 立即保存当前场景信息
-        self.update_current_scenario()
-        print(f"✅ 场景 {self.current_scenario_index + 1} 情绪已更新为: {self.scenario_mood.get()}")
+        self.update_current_scene()
+        print(f"✅ 场景 {self.current_scene_index + 1} 情绪已更新为: {self.scene_mood.get()}")
 
     def on_volume_change(self, *args):
         """当音量滑块值发生变化时的回调"""
@@ -4160,7 +4065,7 @@ class WorkflowGUI:
     def on_tab_changed(self, event):
         if not hasattr(self, 'workflow') or self.workflow is None:
             return
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def setup_drag_and_drop(self):
@@ -4178,21 +4083,21 @@ class WorkflowGUI:
         try:
             if not av_path:
                 if media_type == 'clip':
-                    av_path = get_file_path(current_scenario, "clip")
+                    av_path = get_file_path(current_scene, "clip")
                 elif media_type == 'zero':
-                    av_path = get_file_path(current_scenario, "zero")
+                    av_path = get_file_path(current_scene, "zero")
                 elif media_type == 'one':
-                    av_path = get_file_path(current_scenario, "one")
+                    av_path = get_file_path(current_scene, "one")
                 else:
-                    av_path = get_file_path(current_scenario, "second")
+                    av_path = get_file_path(current_scene, "second")
 
-            current_scenario = self.get_current_scenario()
-            previous_scenario = self.get_previous_scenario()
-            next_scenario = self.get_next_scenario()
-            scenarios_same_story = self.workflow.scenarios_in_story(current_scenario)
+            current_scene = self.get_current_scene()
+            previous_scene = self.get_previous_scene()
+            next_scene = self.get_next_scene()
+            scenes_same_story = self.workflow.scenes_in_story(current_scene)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
-            review_dialog = AVReviewDialog(self, av_path, current_scenario, previous_scenario, next_scenario, media_type, replace_media_audio, initial_start_time, initial_end_time)
+            review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio, initial_start_time, initial_end_time)
             
             # 等待对话框关闭
             self.root.wait_window(review_dialog.dialog)
@@ -4200,14 +4105,14 @@ class WorkflowGUI:
             if media_type != "clip" :
                 transcribe_way = "" if ('transcribe_way' not in review_dialog.result) else review_dialog.result['transcribe_way']
                 if transcribe_way == "multiple":
-                    for sss in scenarios_same_story:
-                        sss[media_type] = current_scenario[media_type]
-                        sss[media_type+"_audio"]  = current_scenario[media_type+"_audio"]
-                        sss[media_type+"_image"]  = current_scenario[media_type+"_image"]
-                self.workflow.save_scenarios_to_json()
+                    for sss in scenes_same_story:
+                        sss[media_type] = current_scene[media_type]
+                        sss[media_type+"_audio"]  = current_scene[media_type+"_audio"]
+                        sss[media_type+"_image"]  = current_scene[media_type+"_image"]
+                self.workflow.save_scenes_to_json()
                 return
 
-            self.workflow.save_scenarios_to_json()
+            self.workflow.save_scenes_to_json()
 
             # media_type == clip
             if (not review_dialog.result) or ('transcribe_way' not in review_dialog.result) or (review_dialog.result['transcribe_way'] == "none"):
@@ -4218,28 +4123,28 @@ class WorkflowGUI:
             audio_json = review_dialog.result['audio_json']
 
             # WAN 参数现在保存在对话框中，使用场景中已有的值或默认值
-            if "wan_style" not in current_scenario:
-                current_scenario["wan_style"] = ""
-            if "wan_shot" not in current_scenario:
-                current_scenario["wan_shot"] = ""
-            if "wan_angle" not in current_scenario:
-                current_scenario["wan_angle"] = ""
-            if "wan_color" not in current_scenario:
-                current_scenario["wan_color"] = ""
+            if "wan_style" not in current_scene:
+                current_scene["wan_style"] = ""
+            if "wan_shot" not in current_scene:
+                current_scene["wan_shot"] = ""
+            if "wan_angle" not in current_scene:
+                current_scene["wan_angle"] = ""
+            if "wan_color" not in current_scene:
+                current_scene["wan_color"] = ""
 
-            current_scenario["clip_animation"] = ""
+            current_scene["clip_animation"] = ""
 
             if transcribe_way == "single":
-                current_scenario["content"] = "\n".join([segment["content"] for segment in audio_json])
-                self.workflow.refresh_scenario(current_scenario)
+                current_scene["content"] = "\n".join([segment["content"] for segment in audio_json])
+                self.workflow.refresh_scene_visual(current_scene)
             elif transcribe_way == "multiple":
-                self.workflow.prepare_scenarios_from_json(  raw_scenario=current_scenario,
-                                                            raw_index=self.current_scenario_index,
-                                                            audio_json=audio_json, 
-                                                            style=current_scenario["wan_style"],
-                                                            shot=current_scenario["wan_shot"],
-                                                            angle=current_scenario["wan_angle"],
-                                                            color=current_scenario["wan_color"] )
+                self.workflow.prepare_scenes_from_json( raw_scene=current_scene,
+                                                        raw_index=self.current_scene_index,
+                                                        audio_json=audio_json, 
+                                                        style=current_scene["wan_style"],
+                                                        shot=current_scene["wan_shot"],
+                                                        angle=current_scene["wan_angle"],
+                                                        color=current_scene["wan_color"] )
 
             messagebox.showinfo("成功", f"音频已成功替换！\n\n")
                 
@@ -4277,11 +4182,11 @@ class WorkflowGUI:
             
             selected_image_path = self.workflow.ffmpeg_processor.resize_image_smart(selected_image_path)
 
-            current_scenario = self.get_current_scenario()
-            self.workflow.replace_scenario_image(current_scenario, selected_image_path, vertical_line_position, target_field)
+            current_scene = self.get_current_scene()
+            self.workflow.replace_scene_image(current_scene, selected_image_path, vertical_line_position, target_field)
             
             # 刷新GUI显示
-            self.refresh_gui_scenarios()
+            self.refresh_gui_scenes()
             
             # 记录操作
             print(f"✅ 图像已替换到 {field_names.get(target_field, target_field)}，垂直分割线位置: {vertical_line_position}")
@@ -4315,15 +4220,25 @@ class WorkflowGUI:
         
         if is_image_file(dropped_file):
             self.handle_image_replacement(dropped_file)
-        elif is_audio_file(dropped_file) or is_video_file(dropped_file):
+        elif is_audio_file(dropped_file):
+            # ask user if want to replace audio for just current scene or all scenes
+            dialog = messagebox.askyesnocancel("确认替换音频", "确定要替换当前场景的音频吗？\n或者替换所有场景的音频？")
+            if dialog == tk.YES:
+                self.workflow.replace_scene_audio(self.get_current_scene(), dropped_file, 0)
+            elif dialog == tk.NO:
+                start_time = 0.0
+                for scene in self.workflow.scenes:
+                    self.workflow.replace_scene_audio(scene, dropped_file, start_time)
+                    start_time += self.workflow.ffmpeg_processor.get_duration(scene["clip_audio"])
+        elif is_video_file(dropped_file):
             from gui.enhanced_media_editor import MediaTypeSelector
-            selector = MediaTypeSelector(self.root, dropped_file, self.get_current_scenario())
+            selector = MediaTypeSelector(self.root, dropped_file, self.get_current_scene())
             replace_media_audio, media_type = selector.show()
             if not media_type:
                 return  # 用户取消
             self.handle_av_replacement(dropped_file, replace_media_audio, media_type)
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def on_video_canvas_configure(self, event):
@@ -4338,73 +4253,73 @@ class WorkflowGUI:
 
 
     def on_video_canvas_double_click(self, event):
-        current_scenario = self.get_current_scenario()
+        current_scene = self.get_current_scene()
         from gui.enhanced_media_editor import MediaTypeSelector
-        selector = MediaTypeSelector(self.root, None, current_scenario)
+        selector = MediaTypeSelector(self.root, None, current_scene)
         replace_media_audio, media_type = selector.show()
         if not media_type:
             return  # 用户取消
         elif media_type == 'clip':
-            dropped_file = get_file_path(current_scenario, "clip")
+            dropped_file = get_file_path(current_scene, "clip")
         elif media_type == 'zero':
-            dropped_file = get_file_path(current_scenario, "zero")
+            dropped_file = get_file_path(current_scene, "zero")
         elif media_type == 'one':
-            dropped_file = get_file_path(current_scenario, "one")
+            dropped_file = get_file_path(current_scene, "one")
         else:
-            dropped_file = get_file_path(current_scenario, "second")
+            dropped_file = get_file_path(current_scene, "second")
 
         self.handle_av_replacement(dropped_file, replace_media_audio, media_type)
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def on_clip_animation_change(self, event=None):
-        current_scenario = self.get_current_scenario()
-        current_scenario["clip_animation"] = self.scenario_main_animate.get()
-        self.workflow.save_scenarios_to_json()
+        current_scene = self.get_current_scene()
+        current_scene["clip_animation"] = self.scene_main_animate.get()
+        self.workflow.save_scenes_to_json()
 
     def on_video_clip_animation_change(self, event=None):
         """当视频标签页宣传模式发生变化时的回调函数"""
         # 保存当前场景的宣传模式到JSON
-        current_scenario = self.get_current_scenario()
-        current_scenario["clip_animation"] = self.scenario_main_animate.get()
-        self.workflow.save_scenarios_to_json()
-        self.log_to_output(self.video_output, f"✅ 宣传模式已更新为: {self.scenario_main_animate.get()}")
+        current_scene = self.get_current_scene()
+        current_scene["clip_animation"] = self.scene_main_animate.get()
+        self.workflow.save_scenes_to_json()
+        self.log_to_output(self.video_output, f"✅ 宣传模式已更新为: {self.scene_main_animate.get()}")
 
 
     def on_image_type_change(self, event=None):
         """处理图像类型选择变化"""
-        selected_image_type = self.scenario_second_animation.get()
-        print(f"✅ 场景 {self.current_scenario_index + 1} 图像类型已设置为: {selected_image_type}")
+        selected_image_type = self.scene_second_animation.get()
+        print(f"✅ 场景 {self.current_scene_index + 1} 图像类型已设置为: {selected_image_type}")
         
-        # 保存图像类型到scenarios JSON文件
-        self.save_second_animation_to_scenarios_json(self.current_scenario_index, selected_image_type)
+        # 保存图像类型到scenes JSON文件
+        self.save_second_animation_to_scenes_json(self.current_scene_index, selected_image_type)
         
         # 标记配置已更改
         self._config_changed = True
 
 
-    def update_scenario_field(self, scenario_index, field_name, field_value):
+    def update_scene_field(self, scene_index, field_name, field_value):
         """更新单个场景的特定字段"""
         try:
             workflow = self.workflow
             
-            if scenario_index >= len(workflow.scenarios):
-                print(f"❌ 场景索引 {scenario_index} 超出范围")
+            if scene_index >= len(workflow.scenes):
+                print(f"❌ 场景索引 {scene_index} 超出范围")
                 return False
             
             # 调试：显示更新前的状态
-            old_value = workflow.scenarios[scenario_index].get(field_name, "未设置")
-            print(f"🔍 调试: 场景 {scenario_index + 1} 的 {field_name} 从 '{old_value}' 更新为 '{field_value}'")
+            old_value = workflow.scenes[scene_index].get(field_name, "未设置")
+            print(f"🔍 调试: 场景 {scene_index + 1} 的 {field_name} 从 '{old_value}' 更新为 '{field_value}'")
             
             # 更新workflow内存中的数据
-            workflow.scenarios[scenario_index][field_name] = field_value
+            workflow.scenes[scene_index][field_name] = field_value
             
             # 验证更新
-            new_value = workflow.scenarios[scenario_index].get(field_name)
-            print(f"✅ 验证: 场景 {scenario_index + 1} 的 {field_name} 现在是 '{new_value}'")
+            new_value = workflow.scenes[scene_index].get(field_name)
+            print(f"✅ 验证: 场景 {scene_index + 1} 的 {field_name} 现在是 '{new_value}'")
             
-            return self.workflow.save_scenarios_to_json()
+            return self.workflow.save_scenes_to_json()
             
         except Exception as e:
             print(f"❌ 更新场景字段失败: {str(e)}")
@@ -4413,41 +4328,41 @@ class WorkflowGUI:
             return False
 
 
-    def update_scenario_fields(self, scenario_index, field_updates):
+    def update_scene_fields(self, scene_index, field_updates):
         """批量更新单个场景的多个字段"""
         try:
             workflow = self.workflow
             
-            if scenario_index >= len(workflow.scenarios):
-                print(f"❌ 场景索引 {scenario_index} 超出范围")
+            if scene_index >= len(workflow.scenes):
+                print(f"❌ 场景索引 {scene_index} 超出范围")
                 return False
             
             # 批量更新workflow内存中的数据
             for field_name, field_value in field_updates.items():
-                workflow.scenarios[scenario_index][field_name] = field_value
+                workflow.scenes[scene_index][field_name] = field_value
             # 立即保存到JSON文件
             field_names = list(field_updates.keys())
-            return self.workflow.save_scenarios_to_json()
+            return self.workflow.save_scenes_to_json()
             
         except Exception as e:
             print(f"❌ 批量更新场景字段失败: {str(e)}")
             return False
 
         
-    def save_second_animation_to_scenarios_json(self, scenario_index, image_type):
-        """保存单个场景的图像类型到scenarios JSON文件"""
-        return self.update_scenario_field(scenario_index, "second_animation", image_type)
+    def save_second_animation_to_scenes_json(self, scene_index, image_type):
+        """保存单个场景的图像类型到scenes JSON文件"""
+        return self.update_scene_field(scene_index, "second_animation", image_type)
         
 
-    def generate_video(self, scenario, previous_scenario, next_scenario, track):
-        image_path = get_file_path(scenario, track+"_image")
-        image_last_path = get_file_path(scenario, track+"_image_last")
+    def generate_video(self, scene, previous_scene, next_scene, track):
+        image_path = get_file_path(scene, track+"_image")
+        image_last_path = get_file_path(scene, track+"_image_last")
 
-        animate_mode = scenario.get(track+"_animation", "")
+        animate_mode = scene.get(track+"_animation", "")
         if animate_mode not in config.ANIMATE_SOURCE or animate_mode.strip() == "":
             return
 
-        wan_prompt = scenario.get(track+"_prompt", "")
+        wan_prompt = scene.get(track+"_prompt", "")
         
         # 如果 wan_prompt 是字符串（JSON格式），尝试解析为字典
         if isinstance(wan_prompt, str) and wan_prompt.strip():
@@ -4460,19 +4375,19 @@ class WorkflowGUI:
         
         # 检查 prompt 是否为空（支持字符串和字典两种格式）
         if not wan_prompt or (isinstance(wan_prompt, str) and wan_prompt.strip() == "") or (isinstance(wan_prompt, dict) and len(wan_prompt) == 0):
-            wan_prompt = self.workflow.build_prompt(scenario, "", "", track, animate_mode)
-            scenario[track+"_prompt"] = wan_prompt
+            wan_prompt = self.workflow.build_prompt(scene, "", "", track, animate_mode, False, self.workflow.language)
+            scene[track+"_prompt"] = wan_prompt
 
-        action_path = get_file_path(scenario, self.selected_second_track)
+        action_path = get_file_path(scene, self.selected_second_track)
 
-        sound_path = get_file_path(scenario, "clip_audio")
-        next_sound_path = get_file_path(next_scenario, "clip_audio")
+        sound_path = get_file_path(scene, "clip_audio")
+        next_sound_path = get_file_path(next_scene, "clip_audio")
         if next_sound_path:
             next_sound_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound_path, 0, 0.75)
             sound_path = self.workflow.ffmpeg_audio_processor.concat_audios([sound_path, next_sound_path])
 
-        self.workflow.rebuild_scenario_video(scenario, track, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt)
-        self.workflow.save_scenarios_to_json()
+        self.workflow.rebuild_scene_video(scene, track, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt)
+        self.workflow.save_scenes_to_json()
 
 
     def regenerate_video(self, track):
@@ -4480,38 +4395,38 @@ class WorkflowGUI:
         if track == None:
             track = self.selected_second_track
 
-        scenario = self.get_current_scenario()
-        previous_scenario = self.get_previous_scenario()
-        next_scenario = self.get_next_scenario()
+        scene = self.get_current_scene()
+        previous_scene = self.get_previous_scene()
+        next_scene = self.get_next_scene()
         
         # 定义生成视频的回调函数
         def generate_callback(wan_prompt):
             # 保存提示词
-            scenario[track+"_prompt"] = wan_prompt
+            scene[track+"_prompt"] = wan_prompt
             # 使用编辑后的 prompt 生成视频
-            self.generate_video(scenario, previous_scenario, next_scenario, track)
-            # 监控已集成到后台定时器中，无需单独调用 trace_scenario_wan_video
+            self.generate_video(scene, previous_scene, next_scene, track)
+            # 监控已集成到后台定时器中，无需单独调用 trace_scene_wan_video
             # 后台检查会自动开始监控有 clip_animation 的场景
-            self.workflow.save_scenarios_to_json()
-            self.refresh_gui_scenarios()
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
         
         # 显示编辑对话框
-        show_wan_prompt_editor(self, self.workflow, generate_callback, scenario, track)
+        show_wan_prompt_editor(self, self.workflow, generate_callback, scene, track)
  
 
     def regenerate_audio(self):
         """音频重生"""
-        scenario = self.get_current_scenario()
-        t, mix_audio = self.workflow.regenerate_audio_item(scenario, 0, self.workflow.language)
+        scene = self.get_current_scene()
+        t, mix_audio = self.workflow.regenerate_audio_item(scene, 0, self.workflow.language)
 
-        olda, clip_audio = self.workflow.refresh_scenario_media(scenario, "clip_audio", ".wav", mix_audio)
+        olda, clip_audio = self.workflow.refresh_scene_media(scene, "clip_audio", ".wav", mix_audio)
 
-        clip_video = get_file_path(scenario, "clip")
+        clip_video = get_file_path(scene, "clip")
         if clip_video:
             clip_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, clip_audio)
-            oldv, clip_video = self.workflow.refresh_scenario_media(scenario, "clip", ".mp4", clip_video)
+            oldv, clip_video = self.workflow.refresh_scene_media(scene, "clip", ".mp4", clip_video)
 
-        self.refresh_gui_scenarios()
+        self.refresh_gui_scenes()
 
 
     def promo_load_story_content(self):
@@ -4552,7 +4467,7 @@ class WorkflowGUI:
                 else:
                     female_actor = f"There are {self.promo_actor_female_number.get()} female-actors in the story conversation"
 
-                format_args = config.SHORT_STORY_PROMPT.get("format_args", {}).copy()  # 复制预设参数
+                format_args = config_prompt.SHORT_STORY_PROMPT.get("format_args", {}).copy()  # 复制预设参数
                 format_args.update({  # 添加运行时变量
                     "narrator": f"Narrator is {self.promo_actor_narrator.get()}",
                     "actor_male": male_actor,
@@ -4561,7 +4476,7 @@ class WorkflowGUI:
                 })
                 
                 # 使用合并后的参数格式化system_prompt
-                formatted_system_prompt = config.SHORT_STORY_PROMPT["system_prompt"].format(**format_args)
+                formatted_system_prompt = config_prompt.SHORT_STORY_PROMPT["system_prompt"].format(**format_args)
                 print("🤖 系统提示:")
                 print(formatted_system_prompt)
 
@@ -4698,21 +4613,21 @@ class WorkflowGUI:
         return "break"  # Prevent default handling
 
 
-    def update_scenario_buttons_state(self):
+    def update_scene_buttons_state(self):
         """更新场景插入按钮的状态"""
-        current_scenario = self.get_current_scenario()
+        current_scene = self.get_current_scene()
         
         # 更新前插按钮状态
-        if not current_scenario or self.workflow.first_scenario_of_story(current_scenario):
-            self.insert_scenario_button.config(state="normal")
+        if not current_scene or self.workflow.first_scene_of_story(current_scene):
+            self.insert_scene_button.config(state="normal")
         else:
-            self.insert_scenario_button.config(state="disabled")
+            self.insert_scene_button.config(state="disabled")
         
         # 更新后插按钮状态
-        if current_scenario and self.workflow.last_scenario_of_story(current_scenario):
-            self.append_scenario_button.config(state="normal")
+        if current_scene and self.workflow.last_scene_of_story(current_scene):
+            self.append_scene_button.config(state="normal")
         else:
-            self.append_scenario_button.config(state="disabled")
+            self.append_scene_button.config(state="disabled")
 
 
 

@@ -61,13 +61,7 @@ class LLMApiTester:
             print("\n📝 测试基础聊天功能...")
             start_time = time.time()
             
-            response = api.openai_completion(
-                messages=self.test_message,
-                temperature=0.7,
-                max_tokens=200
-            )
-            
-            response_text = api.parse_response(response)
+            response_text = api.generate_text(self.test_message, "")
             test_result["response_time"] = time.time() - start_time
             test_result["basic_chat"]["success"] = True
             test_result["basic_chat"]["response"] = response_text[:200] + "..." if len(response_text) > 200 else response_text
@@ -101,31 +95,6 @@ class LLMApiTester:
         except Exception as e:
             test_result["json_response"]["error"] = str(e)
             print(f"❌ JSON响应测试失败：{e}")
-        
-        # 测试3：流式响应
-        try:
-            print("\n🌊 测试流式响应功能...")
-            
-            stream_response = api.openai_completion(
-                messages=self.test_message,
-                temperature=0.7,
-                max_tokens=150,
-                stream=True
-            )
-            
-            collected_text = ""
-            for chunk in api.parse_response(stream_response, stream=True):
-                collected_text += chunk
-                print(chunk, end="", flush=True)
-            
-            test_result["stream_response"]["success"] = True
-            test_result["stream_response"]["response"] = collected_text[:200] + "..." if len(collected_text) > 200 else collected_text
-            
-            print(f"\n✅ 流式响应测试成功")
-            
-        except Exception as e:
-            test_result["stream_response"]["error"] = str(e)
-            print(f"❌ 流式响应测试失败：{e}")
         
         return test_result
     
@@ -187,79 +156,6 @@ class LLMApiTester:
                 "response_time": 0
             }
 
-
-    def test_utility_functions(self):
-        """测试工具函数"""
-        self.print_separator("测试工具函数")
-        
-        api = LLMApi()
-        
-        # 测试消息创建
-        self.print_test_header("消息创建功能")
-        try:
-            message = api.create_message("user", "测试消息")
-            print(f"✅ 创建消息成功：{message}")
-            
-            messages = api.create_messages(
-                ("system", "你是一个有用的助手"),
-                ("user", "你好")
-            )
-            print(f"✅ 创建消息列表成功：{messages}")
-        except Exception as e:
-            print(f"❌ 消息创建测试失败：{e}")
-        
-        # 测试JSON处理
-        self.print_test_header("JSON处理功能")
-        try:
-            test_json_text = '{"name": "测试", "value": 123, "items": [1, 2, 3]}'
-            json_data = api.parse_json_response(test_json_text)
-            print(f"✅ JSON解析成功：{json_data}")
-            
-            element = api.get_json_element(json_data, "name")
-            print(f"✅ JSON元素获取成功：{element}")
-            
-            array_element = api.get_json_element(json_data, "items.1")
-            print(f"✅ JSON数组元素获取成功：{array_element}")
-        except Exception as e:
-            print(f"❌ JSON处理测试失败：{e}")
-    
-    def generate_report(self):
-        """生成测试报告"""
-        self.print_separator("测试报告")
-        
-        total_models = len(self.test_results)
-        successful_models = 0
-        
-        print(f"📊 测试统计：")
-        print(f"   总模型数：{total_models}")
-        
-        for model_name, result in self.test_results.items():
-            basic_success = result.get("basic_chat", {}).get("success", False)
-            json_success = result.get("json_response", {}).get("success", False)
-            stream_success = result.get("stream_response", {}).get("success", False)
-            
-            if basic_success:
-                successful_models += 1
-            
-            print(f"\n🔍 {model_name}:")
-            print(f"   基础聊天：{'✅' if basic_success else '❌'}")
-            print(f"   JSON响应：{'✅' if json_success else '❌'}")
-            print(f"   流式响应：{'✅' if stream_success else '❌'}")
-            print(f"   响应时间：{result.get('response_time', 0):.2f}秒")
-            
-            if not basic_success:
-                error = result.get("basic_chat", {}).get("error", "未知错误")
-                print(f"   错误信息：{error}")
-        
-        print(f"\n📈 成功率：{successful_models}/{total_models} ({successful_models/total_models*100:.1f}%)" if total_models > 0 else "")
-        
-        # 保存详细报告到文件
-        try:
-            with open("llm_test_report.json", "w", encoding="utf-8") as f:
-                json.dump(self.test_results, f, ensure_ascii=False, indent=2)
-            print(f"\n💾 详细测试报告已保存到：llm_test_report.json")
-        except Exception as e:
-            print(f"❌ 保存报告失败：{e}")
 
 def main():
     """主函数"""

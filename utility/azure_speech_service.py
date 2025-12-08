@@ -1,12 +1,9 @@
 import requests
-import json
 import os
-from typing import Optional, Dict, List
+from typing import Dict, List
 import hashlib
 import re
-import time
 from .ffmpeg_audio_processor import FfmpegAudioProcessor
-from .llm_api import LLMApi
 import config
 
 
@@ -29,8 +26,6 @@ class AzureSpeechService:
             raise ValueError("请提供有效的 Azure 订阅密钥")
         if not self.region or self.region.startswith('YOUR_'):
             raise ValueError("请提供有效的 Azure 区域")
-        
-        self.llm_large = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
         
         self.subscription_key = subscription_key
         self.region = region

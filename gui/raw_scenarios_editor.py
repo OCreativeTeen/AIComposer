@@ -6,8 +6,8 @@ import json
 import os
 
 
-class RawScenariosEditor:
-    """Raw scenarios JSON editor dialog"""
+class RawScenesEditor:
+    """Raw scenes JSON editor dialog"""
     
     def __init__(self, parent, json_file_path):
         self.parent = parent
@@ -19,7 +19,7 @@ class RawScenariosEditor:
     def create_dialog(self):
         """创建JSON编辑对话框"""
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title(f"Raw Scenarios Editor - {os.path.basename(self.json_file_path)}")
+        self.dialog.title(f"Raw scenes Editor - {os.path.basename(self.json_file_path)}")
         self.dialog.geometry("1200x800")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
@@ -38,7 +38,7 @@ class RawScenariosEditor:
         title_frame = ttk.Frame(main_frame)
         title_frame.pack(fill=tk.X, pady=(0, 15))
         
-        ttk.Label(title_frame, text="Raw Scenarios JSON Editor", 
+        ttk.Label(title_frame, text="Raw scenes JSON Editor", 
                  font=("Arial", 16, "bold")).pack(side=tk.LEFT)
         
         ttk.Label(title_frame, text="编辑完成后点击保存按钮", 

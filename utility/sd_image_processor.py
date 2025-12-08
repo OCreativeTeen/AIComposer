@@ -8,12 +8,8 @@ import os
 import config
 # VIDEO_WIDTH and VIDEO_HEIGHT are now obtained from project config via ffmpeg_processor
 from typing import Dict, Any
-import time
-import random
-from pathlib import Path
-from .file_util import safe_file
-from .llm_api import LLMApi
-
+import config_prompt
+from . import llm_api
 
 
 class SDProcessor:
@@ -41,14 +37,14 @@ class SDProcessor:
                 "2I2V_1": {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
                 "2I2V_2": {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
 
-                "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":728, "image_height":400},
-                "S2V_0":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":728, "image_height":400},
-                "S2V_1":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":728, "image_height":400},
-                "S2V_2":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":728, "image_height":400},
-                "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "60", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":106, "image_width":768, "image_height":432},
-                "FS2V_0": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":106, "image_width":768, "image_height":432},
-                "FS2V_1": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":106, "image_width":768, "image_height":432},
-                "FS2V_2": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":106, "image_width":768, "image_height":432},
+                "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+                "S2V_0":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+                "S2V_1":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+                "S2V_2":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+                "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
+                "FS2V_0": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
+                "FS2V_1": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
+                "FS2V_2": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
                 "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":468, "image_height":480},
                 "WS2V_0": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
                 "WS2V_1": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
@@ -64,10 +60,8 @@ class SDProcessor:
         # Get video dimensions from ffmpeg_processor (will be set after workflow initialization)
         # For now, use default values - they will be updated when workflow is created
         
-        self.llm_api = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
+        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
 
-        self.temp_dir = config.get_temp_path(self.workflow.pid)
-        
         # Set default image dimensions to match video dimensions
         self.wan_vidoe_count = 0
         self.infinite_vidoe_count = 0
@@ -332,8 +326,7 @@ class SDProcessor:
     def _save_curl_command(self, url, payload, api_type):
         """生成并保存curl命令用于调试"""
         try:
-            # 创建调试目录
-            debug_dir = os.path.join(self.temp_dir, "debug_curls")
+            debug_dir = os.path.join(config.get_temp_path(self.workflow.pid), "debug_curls")
             os.makedirs(debug_dir, exist_ok=True)
             
             # 生成时间戳用于文件名
@@ -440,8 +433,12 @@ class SDProcessor:
             # 移除所有空白字符
             img_base64 = img_base64.replace('\n', '').replace('\r', '').replace(' ', '').replace('\t', '')
             
-            system_prompt = config.IMAGE_DESCRIPTION_SYSTEM_PROMPT
+            system_prompt = config_prompt.IMAGE_DESCRIPTION_SYSTEM_PROMPT
             user_prompt = [
+                {
+                    "type": "text",
+                    "text": "Describe this image"
+                },                
                 {
                     "type": "image_url",
                     "image_url": {
@@ -449,8 +446,8 @@ class SDProcessor:
                     }
                 }
             ]
-            scenario_data = self.llm_api.generate_json_summary(system_prompt, user_prompt, None, False)
-            return scenario_data
+            scene_data = self.llm_api.generate_json_summary(system_prompt, user_prompt, None, False)
+            return scene_data
         except Exception as e:
             print(f"❌ 图片描述失败: {str(e)}")
             return None

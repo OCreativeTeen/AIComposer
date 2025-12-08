@@ -77,9 +77,9 @@
 1. **`__init__()`** - 添加配置文件管理和窗口关闭事件绑定
 2. **`generate_auto_pid()`** - 添加配置保存
 3. **`on_pid_change()`** - 添加配置保存
-4. **`refresh_scenarios()`** - 添加项目路径显示和图像检查
-5. **`load_scenario_image()`** - 使用项目路径，添加详细状态信息
-6. **`update_scenario_display()`** - 修改按钮状态逻辑
+4. **`refresh_scenes()`** - 添加项目路径显示和图像检查
+5. **`load_scene_image()`** - 使用项目路径，添加详细状态信息
+6. **`update_scene_display()`** - 修改按钮状态逻辑
 7. **`bind_edit_events()`** - 简化，因为按钮现在总是可用
 
 ### 用户体验改进
@@ -135,7 +135,7 @@ magic_workflow_gui_config.json  # GUI配置文件（PID、语言、频道）
 /Projects/Channel/media/program/publish/
 ├── {PID}.json                 # 段落数据文件
 ├── {PID}.srt                  # 字幕文件
-└── {PID}_scenarios.json       # 场景索引文件
+└── {PID}_scenes.json       # 场景索引文件
 ```
 
 ## 注意事项

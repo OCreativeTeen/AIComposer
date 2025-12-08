@@ -34,11 +34,11 @@ except ImportError:
 class MediaTypeSelector:
     """对话框：选择要编辑的媒体类型和音频处理选项"""
     
-    def __init__(self, parent, av_path=None, current_scenario=None):
+    def __init__(self, parent, av_path=None, current_scene=None):
         self.result = None
         self.replace_audio = "trim"
         self.av_path = av_path
-        self.current_scenario = current_scenario
+        self.current_scene = current_scene
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("选择媒体类型")
@@ -143,9 +143,9 @@ class MediaTypeSelector:
 class EnhancedMediaEditor:
     """增强的媒体编辑器，支持视频/音频/图片的拖放编辑"""
     
-    def __init__(self, parent, scenario, media_type="clip"):
+    def __init__(self, parent, scene, media_type="clip"):
         self.parent = parent
-        self.scenario = scenario
+        self.scene = scene
         self.media_type = media_type  # "clip", "second", "zero"
         self.workflow = parent.workflow
         
@@ -167,9 +167,9 @@ class EnhancedMediaEditor:
             self.image_field = "zero_image"
         
         # 当前媒体路径
-        self.current_video = get_file_path(scenario, self.video_field)
-        self.current_audio = get_file_path(scenario, self.audio_field)
-        self.current_image = get_file_path(scenario, self.image_field)
+        self.current_video = get_file_path(scene, self.video_field)
+        self.current_audio = get_file_path(scene, self.audio_field)
+        self.current_image = get_file_path(scene, self.image_field)
         
         # 新媒体路径（拖放后的）
         self.new_video = None
@@ -480,13 +480,13 @@ class EnhancedMediaEditor:
                         final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
                     
                     # 更新场景
-                    old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
+                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
                 
                 # 如果音频被更新，替换视频中的音频
                 if self.new_audio and not self.new_video:
                     final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
-                    old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
+                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
                 
                 # 提取音频
@@ -497,18 +497,18 @@ class EnhancedMediaEditor:
                 # 没有视频，从图片和音频生成
                 if final_image and final_audio:
                     final_video = self.workflow.ffmpeg_processor.image_audio_to_video( final_image, final_audio, self.animation_var.get() )
-                    old_v, new_v = self.workflow.refresh_scenario_media(self.scenario, self.video_field, ".mp4", final_video)
+                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
             
             # 更新音频
             if final_audio:
-                old_a, new_a = self.workflow.refresh_scenario_media(self.scenario, self.audio_field, ".wav", final_audio)
+                old_a, new_a = self.workflow.refresh_scene_media(self.scene, self.audio_field, ".wav", final_audio)
             
             # 更新图片
             if self.new_image:
-                old_i, new_i = self.workflow.refresh_scenario_media(self.scenario, self.image_field, ".webp", final_image)
+                old_i, new_i = self.workflow.refresh_scene_media(self.scene, self.image_field, ".webp", final_image)
             
-            self.workflow.save_scenarios_to_json()
+            self.workflow.save_scenes_to_json()
             self.result = "ok"
             self.cleanup()
             self.dialog.destroy()
@@ -540,7 +540,7 @@ class EnhancedMediaEditor:
         return self.result
 
 
-def show_enhanced_media_editor(parent, scenario):
+def show_enhanced_media_editor(parent, scene):
     """显示增强的媒体编辑器"""
     # 首先选择媒体类型
     selector = MediaTypeSelector(parent.root if hasattr(parent, 'root') else parent)
@@ -548,7 +548,7 @@ def show_enhanced_media_editor(parent, scenario):
     
     if media_type:
         # 打开编辑器
-        editor = EnhancedMediaEditor(parent, scenario, media_type)
+        editor = EnhancedMediaEditor(parent, scene, media_type)
         return editor.show()
     
     return None

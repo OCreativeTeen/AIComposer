@@ -1,12 +1,11 @@
 import requests
 import json
 import os
-from typing import Optional, Dict, List
+from typing import Dict, List
 import hashlib
 import re
 import time
-from .ffmeg_audio_processor import FfmpegAudioProcessor
-from .llm_api import LLMApi
+from .ffmpeg_audio_processor import FfmpegAudioProcessor
 import config
 
 
@@ -26,8 +25,6 @@ class ElevenLabsSpeechService:
         # Validate inputs
         if not self.api_key or self.api_key.startswith('YOUR_'):
             raise ValueError("请提供有效的 ElevenLabs API 密钥")
-        
-        self.llm_large = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
         
         self.base_url = config.elevenlabs_base_url
         self.pid = pid
@@ -165,49 +162,7 @@ class ElevenLabsSpeechService:
         result = [seg for seg in result if seg.strip()]
         
         return result
-    
-    def enhance_text_with_llm(self, text: str, voice: str, mood: str) -> str:
-        """
-        使用 LLM 优化文本以提高语音表现力
-        
-        Args:
-            text: 原始文本
-            voice: 语音名称
-            mood: 情绪风格
-            
-        Returns:
-            优化后的文本
-        """
-        # 分割文本
-        text_segments = self.split_text_into_segments(text)
-        
-        system_prompt = config.ELEVENLABS_TEXT_ENHANCEMENT_SYSTEM_PROMPT.format(mood=mood)
 
-        # 构建包含所有片段的用户提示
-        segments_text = "\n".join([f"{i+1}. {segment}" for i, segment in enumerate(text_segments)])
-        
-        user_prompt = config.ELEVENLABS_TEXT_ENHANCEMENT_USER_PROMPT.format(
-            segments_text=segments_text,
-            voice=voice,
-            mood=mood
-        )
-
-        response = self.llm_large.openai_completion(
-            messages=[
-                self.llm_large.create_message("system", system_prompt),
-                self.llm_large.create_message("user", user_prompt)
-            ],
-            temperature=0.3,
-            max_tokens=8000,
-            top_p=0.9,
-            stream=False
-        )
-        
-        # 提取LLM返回的优化文本
-        enhanced_text = self.llm_large.parse_response(response)
-        
-        return enhanced_text
-    
 
     def synthesize_speech(self, text: str, voice_id: str, voice_settings: Dict, 
                          model_id: str = None) -> bytes:
@@ -353,100 +308,6 @@ class ElevenLabsSpeechService:
         # 合并所有音频
         self.ffmpeg_audio_processor.concat_audios(output_path, audio_path_list)
     
-
-    def make_transition_conversation(self, conversation_prompt, prev_story_section, next_story_section, system_prompt_const, user_prompt_const) :
-        """
-        2 speakers :   1 is m (male) /  2 is f (female)
-        have comment converstation to about a story, in the middle of the story (between prev_story_section & next_story_section)
-
-        use self.llm_large, to generate a conversation between these 2, express content is [current_content]
-        this conversation is following the prev_story_section, and will connect the next_story_section 
-        
-        the conversation should be natural (connect prev_story_section and next_story_section): 
-       
-        and the output should be json array like:
-        [
-            {
-                "voice": "m",
-                "speaker_name": "主持人A",
-                "mood": "cheerful",
-                "content": "大家好，我是 佳伟, 欢迎来到我们的 聊斋新语 节目"
-            },
-            {
-                "voice": "f",
-                "speaker_name": "主持人B",
-                "mood": "cheerful",
-                "content": "我是 莹莹, 让我们一起来说说新的聊斋故事吧？记得点赞关注哦！"
-            }
-        ]
-
-        self.llm_large has method 'extract_json_from_response', you can use it to extract the json array from the response
-        """
-        names = conversation_prompt["speaker_name"].split("|")
-        name1 = names[0]
-        name2 = names[1]
-        voices = conversation_prompt["voice"].split("|")
-        voice1 = voices[0]
-        voice2 = voices[1]
-        sex1 = "male" if voice1 == "m" else "female"
-        sex2 = "male" if voice2 == "m" else "female"
-
-        system_prompt = system_prompt_const.format(
-            sex1=sex1,
-            sex2=sex2,
-            name1=name1,
-            name2=name2,
-            voice1=voice1,
-            voice2=voice2
-        )
-
-
-        # 构建上下文信息
-        prevv_context_info = ""
-        if prev_story_section:
-            #sex = "male" if prev_story_section['voice'] == "m" else "female"
-            prevv_context_info = f"Just watched/listened story section ending with : ... {prev_story_section['content']}\n"
-        
-        next_context_info = ""
-        if next_story_section:
-            #sex = "male" if next_story_section['voice'] == "m" else "female"
-            next_context_info = f"And will continue watched/listened Next story section, starting with :  {next_story_section['content']}\n"
-
-        user_prompt = user_prompt_const.format(
-            conversation_prompt=conversation_prompt["content"],
-            prevv_context_info=prevv_context_info,
-            next_context_info=next_context_info
-        )
-
-        try:
-            response = self.llm_large.openai_completion(
-                messages=[
-                    self.llm_large.create_message("system", system_prompt),
-                    self.llm_large.create_message("user", user_prompt)
-                ],
-                temperature=0.7,
-                max_tokens=2000,
-                top_p=0.9,
-                stream=False
-            )
-            
-            # 获取完整响应文本
-            response_text = self.llm_large.parse_response(response)
-            
-            # 提取JSON数组
-            conversation_json = self.llm_large.parse_json_response(response_text)
-            
-            if not conversation_json:
-                raise ValueError("无法从LLM响应中提取有效的JSON格式")
-            
-            print(f"生成的对话片段：")
-            
-            return conversation_json
-            
-        except Exception as e:
-            print(f"生成对话时出错: {str(e)}")
-            return None
-
 
     def get_available_voices(self) -> Dict:
         """

@@ -224,41 +224,41 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
 
-    def _check_output_folder(self, scenario_index, scenario):
+    def _check_output_folder(self, scene_index, scene):
         """检查 X:\output 文件夹中的新视频文件"""
         import glob
         import time
         
-        clip_animation = scenario.get("clip_animation", "")
+        clip_animation = scene.get("clip_animation", "")
         if clip_animation not in config.ANIMATE_SOURCE:
             # 不需要监控的场景，清理监控记录
-            if scenario_index in self.monitoring_scenarios:
-                del self.monitoring_scenarios[scenario_index]
+            if scene_index in self.monitoring_scenes:
+                del self.monitoring_scenes[scene_index]
             return
         
         output_folder = "X:\\output"
         if not os.path.exists(output_folder):
             return
         
-        scenario_id = scenario.get('id', '')
+        scene_id = scene.get('id', '')
         
         # 初始化监控记录
-        if scenario_index not in self.monitoring_scenarios:
-            self.monitoring_scenarios[scenario_index] = {
+        if scene_index not in self.monitoring_scenes:
+            self.monitoring_scenes[scene_index] = {
                 "found_files": [],
                 "start_time": time.time()
             }
         
-        monitor_info = self.monitoring_scenarios[scenario_index]
+        monitor_info = self.monitoring_scenes[scene_index]
         
         # 持续监控，不设置超时限制，直到GUI退出或找到文件
         
         try:
             if clip_animation == "WS2V":
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_L_WS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_L_WS2V_*-audio.mp4")
                 left_files = glob.glob(pattern)
 
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_R_WS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_R_WS2V_*-audio.mp4")
                 right_files = glob.glob(pattern)
                 
                 # 过滤掉已处理的文件
@@ -286,24 +286,24 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                         self.processed_output_files.add(file_path)
                     
                     # 在主线程中处理文件
-                    self.root.after(0, lambda idx=scenario_index, files=files_to_process: 
+                    self.root.after(0, lambda idx=scene_index, files=files_to_process: 
                         self._process_output_files(idx, files, "dual"))
                     
                     # 处理完成，移除监控
-                    del self.monitoring_scenarios[scenario_index]
+                    del self.monitoring_scenes[scene_index]
 
             elif clip_animation in config.ANIMATE_TARGET: # without WS2V
                 # 查找以场景ID开头的mp4文件
                 if clip_animation == "I2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_I2V_*.mp4")
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_I2V_*.mp4")
                 elif clip_animation == "2I2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_2I2V_*.mp4")
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_2I2V_*.mp4")
                 elif clip_animation == "S2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_S2V_*-audio.mp4")
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_S2V_*-audio.mp4")
                 elif clip_animation == "FS2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_FS2V_*-audio.mp4")
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_FS2V_*-audio.mp4")
                 elif clip_animation == "AI2V":
-                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scenario_id}_AI2V_*.mp4")
+                    pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_AI2V_*.mp4")
 
                 left_files = glob.glob(pattern)
                 
@@ -320,11 +320,11 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                         self.processed_output_files.add(file_path)
                     
                     # 在主线程中处理文件
-                    self.root.after(0, lambda idx=scenario_index, files=new_files: 
+                    self.root.after(0, lambda idx=scene_index, files=new_files: 
                         self._process_output_files(idx, files, "single"))
                     
                     # 处理完成，移除监控
-                    del self.monitoring_scenarios[scenario_index]
+                    del self.monitoring_scenes[scene_index]
             
         
         except Exception as e:
@@ -332,25 +332,230 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
     
-    def _process_output_files(self, scenario_index, files, file_type):
+    def _process_output_files(self, scene_index, files, file_type):
         """处理从 X:\output 发现的文件"""
         try:
-            if scenario_index >= len(self.workflow.scenarios):
+            if scene_index >= len(self.workflow.scenes):
                 return
             
-            scenario = self.workflow.scenarios[scenario_index]
+            scene = self.workflow.scenes[scene_index]
             
             if file_type == "single":
-                self.workflow._process_single_files(scenario, files)
+                self.workflow._process_single_files(scene, files)
             elif file_type == "dual":
-                self.workflow._process_dual_files(scenario, files)
+                self.workflow._process_dual_files(scene, files)
             
             # 处理完成后刷新GUI
-            self.root.after(0, lambda: self.refresh_gui_scenarios())
+            self.root.after(0, lambda: self.refresh_gui_scenes())
             
         except Exception as e:
             print(f"❌ 处理输出文件时出错: {str(e)}")
     
+
+
+
+
+
+    def load_scenes(self):
+        self.scenes = []
+        scenes_file = config.get_scenes_path(self.pid)
+        if not os.path.exists(scenes_file):
+            return
+
+        with open(scenes_file, "r", encoding="utf-8") as f:
+            self.scenes = json.load(f)
+
+        if len(self.scenes) == 0:
+            #background_image = self.find_default_background_media("jpeg")
+            #background_music = self.find_default_background_music("mp3")
+            #background_video = self.ffmpeg_processor.image_audio_to_video(background_image, background_music, 1)
+            #self.add_root_scene(0, self.story_site, background_image, background_music, background_video, False)
+            #self.save_scenes_to_json()
+            return
+            
+
+        changed = False    
+        for scene in self.scenes:
+            zero_video = get_file_path(scene, "zero")
+            zero_audio = get_file_path(scene, "zero_audio")
+            zero_image = get_file_path(scene, "zero_image")
+
+            if not zero_audio:
+                if zero_video:
+                    oldv, zero_audio = self.refresh_scene_media(scene, "zero_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(zero_video))
+                else:
+                    olda, zero_audio = self.refresh_scene_media(scene, "zero_audio", ".wav", self.find_default_background_music("mp3"))
+                ss = self.scenes_in_story(scene)
+                for s in ss:
+                    s["zero_audio"] = zero_audio
+                changed = True
+            if not zero_image:
+                zero_image = self.find_default_background_media("jpeg")
+                oldi, zero_image = self.refresh_scene_media(scene, "zero_image", ".webp", zero_image)
+                ss = self.scenes_in_story(scene)
+                for s in ss:
+                    s["zero_image"] = zero_image
+                changed = True
+            if not zero_video:
+                zero_video = self.ffmpeg_processor.image_audio_to_video(zero_image, zero_audio, 1)
+                oldv, zero_video = self.refresh_scene_media(scene, "zero", ".mp4", zero_video)
+                ss = self.scenes_in_story(scene)
+                for s in ss:
+                    s["zero"] = zero_video
+                changed = True
+
+
+        for scene in self.scenes:
+            clip_audio = get_file_path(scene, "clip_audio")
+            clip_video = get_file_path(scene, "clip")
+            clip_image = get_file_path(scene, "clip_image")
+            if not clip_audio:
+                if clip_video:
+                    olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(clip_video))
+                else:
+                    olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", self.find_default_background_music("mp3"))
+                changed = True
+            if not clip_image:
+                oldi, clip_image = self.refresh_scene_media(scene, "clip_image", ".webp", self.find_default_background_media("jpeg"))
+                changed = True
+            if not clip_video:
+                clip_video = self.ffmpeg_processor.image_audio_to_video(clip_image, clip_audio, 1)
+                oldv, clip_video = self.refresh_scene_media(scene, "clip", ".mp4", clip_video)
+                changed = True
+
+            second_audio = get_file_path(scene, "second_audio")
+            second_image = get_file_path(scene, "second_image")
+            second_video = get_file_path(scene, "second")
+            if not second_audio:
+                if second_video:
+                    olda, second_audio = self.refresh_scene_media(scene, "second_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(second_video))
+                else:
+                    olda, second_audio = self.refresh_scene_media(scene, "second_audio", ".wav", self.find_default_background_music("mp3"))
+                changed = True
+            if not second_image:
+                oldi, second_image = self.refresh_scene_media(scene, "second_image", ".webp", self.find_default_background_media("jpeg"))
+                changed = True
+            if not second_video:
+                second_video = self.ffmpeg_processor.image_audio_to_video(second_image, second_audio, 1)
+                oldv, second_video = self.refresh_scene_media(scene, "second", ".mp4", second_video)
+                changed = True
+
+        for scene in self.scenes:
+            start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.get_scene_detail(scene)
+            if is_story_last_clip:
+                zero_audio = get_file_path(scene, "zero_audio")
+                clip_video = get_file_path(scene, "clip")
+                clip_audio = get_file_path(scene, "clip_audio")
+                if zero_audio:
+                    zero_audio_duration = self.ffmpeg_audio_processor.get_duration(zero_audio)
+                    if zero_audio_duration > start_time_in_story + clip_duration + 0.1: # need to fix
+                        a = self.ffmpeg_audio_processor.extend_audio(clip_audio, 0, zero_audio_duration-start_time_in_story)
+                        olda, a = self.refresh_scene_media(scene, "clip_audio", ".wav", a)
+                        v = self.ffmpeg_processor.add_audio_to_video(clip_video, a)
+                        self.refresh_scene_media(scene, "clip", ".mp4", v)
+
+        if changed:
+            self.save_scenes_to_json()
+
+
+
+
+    def sync_scene_audio(self, scene, force=False):
+        #clip_image = get_file_path(scene, "clip_image")
+        # second = scene.get("second")
+        zero = get_file_path(scene, "zero")
+        if not zero:
+            print(f"❌ 没有找到zero视频")
+            return None
+
+        zero_audio = get_file_path(scene, "zero_audio")
+        if not zero_audio:
+            print(f"❌ 没有找到zero音频")
+            return None
+
+        zero_image = get_file_path(scene, "zero_image")
+        if not zero_image:
+            print(f"❌ 没有找到zero图片")
+            return None
+
+        clip_video = get_file_path(scene, "clip")
+        if not clip_video or force:
+            oldv, clip_video = self.refresh_scene_media(scene, "clip", ".mp4", zero, True)
+
+        clip_audio = get_file_path(scene, "clip_audio")
+        if not clip_audio or force:
+            olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", zero_audio, True)
+
+        clip_image = get_file_path(scene, "clip_image")
+        if not clip_image or force:
+            oldi, clip_image = self.refresh_scene_media(scene, "clip_image", ".webp", zero_image, True)
+
+        return clip_audio
+
+
+
+
+
+
+
+
+
+
+    def visualize_scenes(self, audio_path, audio_json, general_location, style, shot, angle, color):
+        system_prompt = config_prompt.VISUAL_STORY_SUMMARIZATION_SYSTEM_PROMPT.format(
+            language=config.LANGUAGES[self.language],
+            length=512
+        )
+
+        text_summary = self.llm_api.generate_text_summary(
+                            system_prompt, 
+                            "\n".join([segment["content"] for segment in audio_json])
+                        )
+        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
+
+        raw_json_path = f"{config.get_project_path(self.pid)}/{Path(audio_path).stem}.json"
+
+        system_prompt = config_prompt.SCENE_SUMMARY_SYSTEM_PROMPT
+        system_prompt = system_prompt + f"\n***FYI*** Generally, video/image is in \'{style}\' style &  \'{color}\' colors; the camera using \'{shot}\' shot, in \'{angle}\' angle."
+
+        user_prompt = json.dumps(audio_json, ensure_ascii=False, indent=2)
+
+        raw_scenes = self.llm_api.generate_json_summary(system_prompt, user_prompt, raw_json_path)
+
+        for i, scene_data in enumerate(raw_scenes):
+            scene_data.update({
+                # "effect": config.get_next_special_effect(),
+                # "raw_scene_index": f"{audio_stem}_raw_{i}",
+                "clip_animation": "",
+                "second_animation": "",
+                "main_audio": audio_path,
+                "story_summary": text_summary
+            })
+
+        with open(raw_json_path, "w", encoding="utf-8") as f:
+            json.dump(raw_scenes, f, ensure_ascii=False, indent=2)
+
+        print(f"raw scenes summary done for {audio_path}...")
+        return raw_scenes, raw_json_path
+
+
+
+
+
+
+        system_prompt = config_prompt.VISUAL_STORY_SUMMARIZATION_SYSTEM_PROMPT.format(
+            language=config.LANGUAGES[self.language],
+            length=512
+        )
+        text_summary = self.llm_api.generate_text(
+                            system_prompt, 
+                            "\n".join([segment["content"] for segment in audio_json])
+                        )
+        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
+
+
+
+
 
 
 

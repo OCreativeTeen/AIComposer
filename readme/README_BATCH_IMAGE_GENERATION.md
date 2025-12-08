@@ -19,7 +19,7 @@
 在使用批量图像生成之前，确保以下文件已准备就绪：
 
 ### 必需文件
-- `{pid}_scenarios.json` - 场景数据文件
+- `{pid}_scenes.json` - 场景数据文件
 - `{pid}_paragraphs.json` - 段落数据文件  
 - `{pid}.aac` - 音频文件
 - `{pid}_{language}.srt` - 字幕文件
@@ -219,7 +219,7 @@ crontab -e
    • project004: 60 张图像 (3500秒)
 
 ❌ 失败项目:
-   • project005: 缺少文件: scenarios.json
+   • project005: 缺少文件: scenes.json
 ```
 
 ## 故障排除
@@ -228,7 +228,7 @@ crontab -e
 
 #### 1. 缺少必需文件
 ```
-错误: 项目 project001 不满足要求，缺少文件: scenarios.json
+错误: 项目 project001 不满足要求，缺少文件: scenes.json
 ```
 
 **解决方案**：

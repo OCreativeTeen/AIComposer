@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import config
+import config_prompt
 
 
 WAN_VIDEO_STYLE = [
@@ -71,7 +72,7 @@ WAN_VIDEO_COLOR = [
 class WanPromptEditorDialog:
     """WAN 视频提示词编辑对话框 - 支持风格、镜头、角度、色彩选择"""
     
-    def __init__(self, parent, workflow, generate_video_callback, scenario, track):
+    def __init__(self, parent, workflow, generate_video_callback, scene, track):
         """
         初始化对话框
         
@@ -79,17 +80,17 @@ class WanPromptEditorDialog:
             parent: 父窗口
             workflow: 工作流实例
             generate_video_callback: 生成视频的回调函数
-            scenario: 场景数据
+            scene: 场景数据
             track: 轨道类型 ("clip", "second", "zero")
         """
         self.parent = parent
         self.workflow = workflow
-        self.scenario = scenario
+        self.scene = scene
         self.track = track
         self.generate_video_callback = generate_video_callback
         
         # 获取或初始化 WAN 参数
-        self.extra_description = scenario.get(track + "_extra", "")
+        self.extra_description = scene.get(track + "_extra", "")
         
         # 创建对话框
         self.dialog = tk.Toplevel(parent.root if hasattr(parent, 'root') else parent)
@@ -120,7 +121,7 @@ class WanPromptEditorDialog:
         self.prompt_text = self._create_prompt_frame(main_frame)
         
         # 获取已保存的 prompt（可能是字典或字符串）
-        saved_prompt = self.scenario.get(self.track + "_prompt", "")
+        saved_prompt = self.scene.get(self.track + "_prompt", "")
         if isinstance(saved_prompt, dict):
             # 如果是字典，格式化为 JSON 字符串显示
             import json
@@ -150,7 +151,7 @@ class WanPromptEditorDialog:
         
         # 风格
         ttk.Label(row1, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_style_var = tk.StringVar(value=self.scenario.get('wan_style', WAN_VIDEO_STYLE[0]))
+        self.wan_style_var = tk.StringVar(value=self.scene.get('wan_style', WAN_VIDEO_STYLE[0]))
         style_combo = ttk.Combobox(row1, textvariable=self.wan_style_var,
                                    values=WAN_VIDEO_STYLE, state="readonly", width=25)
         style_combo.pack(side=tk.LEFT, padx=(0, 20))
@@ -158,7 +159,7 @@ class WanPromptEditorDialog:
         
         # 镜头
         ttk.Label(row1, text="镜头:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_shot_var = tk.StringVar(value=self.scenario.get('wan_shot', WAN_VIDEO_SHOT[0]))
+        self.wan_shot_var = tk.StringVar(value=self.scene.get('wan_shot', WAN_VIDEO_SHOT[0]))
         shot_combo = ttk.Combobox(row1, textvariable=self.wan_shot_var,
                                   values=WAN_VIDEO_SHOT, state="readonly", width=25)
         shot_combo.pack(side=tk.LEFT, padx=(0, 0))
@@ -170,7 +171,7 @@ class WanPromptEditorDialog:
         
         # 角度
         ttk.Label(row2, text="角度:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_angle_var = tk.StringVar(value=self.scenario.get('wan_angle', WAN_VIDEO_ANGLE[0]))
+        self.wan_angle_var = tk.StringVar(value=self.scene.get('wan_angle', WAN_VIDEO_ANGLE[0]))
         angle_combo = ttk.Combobox(row2, textvariable=self.wan_angle_var,
                                    values=WAN_VIDEO_ANGLE, state="readonly", width=25)
         angle_combo.pack(side=tk.LEFT, padx=(0, 20))
@@ -178,7 +179,7 @@ class WanPromptEditorDialog:
         
         # 色彩
         ttk.Label(row2, text="色彩:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_color_var = tk.StringVar(value=self.scenario.get('wan_color', WAN_VIDEO_COLOR[0]))
+        self.wan_color_var = tk.StringVar(value=self.scene.get('wan_color', WAN_VIDEO_COLOR[0]))
         color_combo = ttk.Combobox(row2, textvariable=self.wan_color_var,
                                    values=WAN_VIDEO_COLOR, state="readonly", width=25)
         color_combo.pack(side=tk.LEFT, padx=(0, 0))
@@ -262,7 +263,7 @@ class WanPromptEditorDialog:
         prompt = self.prompt_text.get(1.0, tk.END).strip()
         response = self.workflow.llm.openai_completion(
             messages=[
-                self.workflow.llm.create_message("user", config.REMIX_PROMPT.format(image_content=extra, raw_prompt=prompt))
+                self.workflow.llm.create_message("user", config_prompt.REMIX_PROMPT.format(image_content=extra, raw_prompt=prompt))
             ],
             temperature=0.3,
         )
@@ -296,8 +297,8 @@ class WanPromptEditorDialog:
             wan_desc = "(" + ", ".join(wan_params) + ")"
             extra = wan_desc + "  :  " + extra if extra else wan_desc
         
-        animate_mode = self.scenario.get(self.track+"_animation", "")
-        new_prompt = self.workflow.build_prompt(self.scenario, "", extra, self.track, animate_mode)
+        animate_mode = self.scene.get(self.track+"_animation", "")
+        new_prompt = self.workflow.build_prompt(self.scene, "", extra, self.track, animate_mode, False, self.workflow.language)
 
         # 更新文本框（如果是字典，转换为字符串显示）
         self.prompt_text.delete(1.0, tk.END)
@@ -345,10 +346,10 @@ class WanPromptEditorDialog:
             pass
         
         # 保存 WAN 参数到场景
-        self.scenario['wan_style'] = self.wan_style_var.get()
-        self.scenario['wan_shot'] = self.wan_shot_var.get()
-        self.scenario['wan_angle'] = self.wan_angle_var.get()
-        self.scenario['wan_color'] = self.wan_color_var.get()
+        self.scene['wan_style'] = self.wan_style_var.get()
+        self.scene['wan_shot'] = self.wan_shot_var.get()
+        self.scene['wan_angle'] = self.wan_angle_var.get()
+        self.scene['wan_color'] = self.wan_color_var.get()
         
         # 关闭对话框
         self.dialog.destroy()
@@ -375,7 +376,7 @@ class WanPromptEditorDialog:
         self.dialog.wait_window()
 
 
-def show_wan_prompt_editor(parent, workflow, generate_video_callback, scenario, track):
+def show_wan_prompt_editor(parent, workflow, generate_video_callback, scene, track):
     """便捷函数：显示 WAN Prompt 编辑对话框"""
-    dialog = WanPromptEditorDialog(parent, workflow, generate_video_callback, scenario, track)
+    dialog = WanPromptEditorDialog(parent, workflow, generate_video_callback, scene, track)
     dialog.show()

@@ -93,7 +93,7 @@ NEGATIVE_PROMPT_OPTIONS = [
 class ImagePromptsReviewDialog:
     """提示词审查对话框 - 用于在创建图像前预览和编辑提示词"""
     
-    def __init__(self, parent, workflow, create_image_callback, scenario, track):
+    def __init__(self, parent, workflow, create_image_callback, scene, track, start:bool, language:str):
         """
         初始化提示词审查对话框
         
@@ -102,13 +102,14 @@ class ImagePromptsReviewDialog:
             positive_prompt: 初始正面提示词
             negative_prompt: 初始负面提示词
             create_image_callback: 创建图像的回调函数
-            scenario: 场景数据（可选）
+            scene: 场景数据（可选）
             speaking_mode: 是否为讲述模式
         """
         self.workflow = workflow
-        self.scenario = scenario
+        self.scene = scene
         self.track = track
-
+        self.start = start
+        self.language = language
         self.create_image_callback = create_image_callback
         
         # 创建对话框
@@ -118,14 +119,11 @@ class ImagePromptsReviewDialog:
         self.dialog.transient(parent.root if hasattr(parent, 'root') else parent)
         self.dialog.grab_set()
         
-        # 准备初始提示词
-        self.extra_description = scenario.get(track + "_extra", "")
+        self.extra_description = scene.get(track + "_extra", "")
         
-        # 构建界面
         self._create_ui()
-
-        # 居中显示
         self._center_dialog()
+
     
     def _create_ui(self):
         """创建用户界面"""
@@ -138,6 +136,10 @@ class ImagePromptsReviewDialog:
         
         # 正面提示词框架
         self.positive_text = self._create_positive_frame(main_frame)
+        self.dialog.clipboard_clear()
+        self.dialog.clipboard_append(self.positive_text.get(1.0, tk.END).strip())
+        self.dialog.update()  # 确保剪贴板操作完成
+
         self._on_style_change(None)
         
         # 负面提示词框架
@@ -147,6 +149,7 @@ class ImagePromptsReviewDialog:
         # 按钮框架
         self._create_button_frame(main_frame)
     
+
     def _create_style_frame(self, parent):
         """创建图像特效选择框架"""
         style_frame = ttk.LabelFrame(parent, text="图像特效", padding=10)
@@ -160,6 +163,7 @@ class ImagePromptsReviewDialog:
         image_style_combo.pack(side=tk.LEFT, padx=(5, 0))
         image_style_combo.bind('<<ComboboxSelected>>', self._on_style_change)
     
+
     def _create_positive_frame(self, parent):
         """创建正面提示词框架"""
         positive_frame = ttk.LabelFrame(parent, text="正面提示词", padding=10)
@@ -189,6 +193,7 @@ class ImagePromptsReviewDialog:
         
         return positive_text
     
+
     def _create_negative_frame(self, parent):
         """创建负面提示词框架"""
         negative_frame = ttk.LabelFrame(parent, text="负面提示词", padding=10)
@@ -218,6 +223,7 @@ class ImagePromptsReviewDialog:
         
         return negative_text
     
+
     def _create_button_frame(self, parent):
         """创建按钮框架"""
         button_frame = ttk.Frame(parent)
@@ -242,12 +248,19 @@ class ImagePromptsReviewDialog:
             extra = "(Image-style:"+new_style+ ")  :  " + extra
 
         # 重新构建正面提示词
-        new_positive = self.workflow.build_prompt(self.scenario, new_style, extra, self.track, "IMAGE_GENERATION")
+        new_positive = self.workflow.build_prompt(self.scene, new_style, extra, self.track, "IMAGE_GENERATION", self.start, self.language)
         
         # 更新文本框（如果是字典，转换为字符串显示）
         self.positive_text.delete(1.0, tk.END)
-        positive_str = self.workflow.prompt_dict_to_string(new_positive)
-        self.positive_text.insert(tk.END, positive_str)
+        if isinstance(new_positive, dict):
+            import json
+            new_positive = json.dumps(new_positive, ensure_ascii=False, indent=2)
+
+        self.positive_text.insert(tk.END, new_positive)
+        # 将内容复制到剪贴板，方便用户粘贴到其他应用/窗口
+        self.dialog.clipboard_clear()
+        self.dialog.clipboard_append(new_positive)
+        self.dialog.update()  # 确保剪贴板操作完成
         print(f"🎨 特效已更新为: {new_style}")
 
 

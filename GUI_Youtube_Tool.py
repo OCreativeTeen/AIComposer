@@ -7,8 +7,10 @@ import json
 from datetime import datetime
 from magic_workflow import MagicWorkflow
 import config
+import config_prompt
 from pathlib import Path
 from project_manager import ProjectConfigManager, create_project_dialog
+import project_manager
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from PIL import Image, ImageTk
@@ -216,7 +218,7 @@ class TitleSelectionDialog:
             config_manager = ProjectConfigManager(self.pid)
             
             # 获取生成的标题
-            generated_titles = config_manager.project_config.get('generated_titles', [])
+            generated_titles = PROJECT_CONFIG.get('generated_titles', [])
             for i, title in enumerate(generated_titles):
                 if title and title.strip():
                     title_options.append(f"[AI-{i+1}] {title}")
@@ -244,7 +246,7 @@ class TitleSelectionDialog:
             config_manager = ProjectConfigManager(self.pid)
             
             # 获取生成的标签
-            generated_tags = config_manager.project_config.get('generated_tags', [])
+            generated_tags = PROJECT_CONFIG.get('generated_tags', [])
             for i, tag in enumerate(generated_tags):
                 if tag and tag.strip():
                     tags_options.append(f"[AI-{i+1}] {tag}")
@@ -326,8 +328,8 @@ class TitleSelectionDialog:
             # 获取项目配置管理器
             config_manager = ProjectConfigManager()
             config_manager.load_config(self.pid)
-            config_manager.project_config['video_title'] = final_title
-            config_manager.project_config['video_tags'] = final_tags
+            PROJECT_CONFIG['video_title'] = final_title
+            PROJECT_CONFIG['video_tags'] = final_tags
             config_manager.save_project_config()
             
             print(f"✅ 已保存选择的标题和标签到项目配置: {final_title}, {final_tags}")
@@ -396,7 +398,6 @@ class MagicToolGUI:
             if pid:
                 try:
                     config_manager = ProjectConfigManager(pid)
-                    config_manager.project_config = selected_config.copy()
                     config_manager.save_project_config()
                     print(f"✅ 新项目配置已保存: {pid}")
                 except Exception as e:
@@ -407,6 +408,7 @@ class MagicToolGUI:
             return True
         elif result == 'open':
             # 打开现有项目
+            ProjectConfigManager.set_global_config(selected_config)
             self.current_project_config = selected_config
             self.current_language = selected_config.get('language', 'zh')
             # 立即创建workflow
@@ -468,9 +470,9 @@ class MagicToolGUI:
                 config_data['veo_json_content'] = self.veo_json_content.get(1.0, tk.END).strip() or config_data.get('veo_json_content', '')
             
             # 保存SUNO音乐提示词配置
-            config_data['suno_language'] = self.suno_language.get() or config_data.get('suno_language', config.SUNO_LANGUAGH[0])
-            config_data['suno_expression'] = self.suno_expression.get() or config_data.get('suno_expression', list(config.SUNO_CONTENT.keys())[0])
-            config_data['music_atmosphere'] = self.suno_atmosphere.get() or config_data.get('music_atmosphere', config.SUNO_ATMOSPHERE[0])
+            config_data['suno_language'] = self.suno_language.get() or config_data.get('suno_language', config_prompt.SUNO_LANGUAGE[0])
+            config_data['suno_expression'] = self.suno_expression.get() or config_data.get('suno_expression', list(config_prompt.SUNO_CONTENT.keys())[0])
+            config_data['music_atmosphere'] = self.suno_atmosphere.get() or config_data.get('music_atmosphere', config_prompt.SUNO_ATMOSPHERE[0])
             config_data['music_structure_category'] = self.suno_structure_category.get() or config_data.get('music_structure_category', self.suno_structure_categories[0] if hasattr(self, 'suno_structure_categories') else '')
             config_data['music_structure_comparison'] = self.suno_structure.get() or config_data.get('music_structure_comparison', '')
             config_data['music_melody_category'] = self.suno_melody_category.get() or config_data.get('music_melody_category', self.suno_melody_categories[0] if hasattr(self, 'suno_melody_categories') else '')
@@ -506,7 +508,6 @@ class MagicToolGUI:
             pid = config_data['pid']
             if pid:
                 config_manager = ProjectConfigManager(pid)
-                config_manager.project_config = config_data.copy()
                 config_manager.save_project_config(config_data)
                 self.current_project_config = config_data
                 print(f"✅ Magic Tool项目配置已保存: {pid}")
@@ -577,10 +578,10 @@ class MagicToolGUI:
                 self.veo_json_content.insert(1.0, self.current_project_config.get('veo_json_content', ''))
             
             # 加载SUNO音乐提示词配置
-            self.suno_language.set(self.current_project_config.get('suno_language', config.SUNO_LANGUAGH[0]))
-            self.suno_expression.set(self.current_project_config.get('suno_expression', list(config.SUNO_CONTENT.keys())[0]))
+            self.suno_language.set(self.current_project_config.get('suno_language', config_prompt.SUNO_LANGUAGE[0]))
+            self.suno_expression.set(self.current_project_config.get('suno_expression', list(config_prompt.SUNO_CONTENT.keys())[0]))
             # Load new music parameters
-            self.suno_atmosphere.set(self.current_project_config.get('music_atmosphere', config.SUNO_ATMOSPHERE[0]))
+            self.suno_atmosphere.set(self.current_project_config.get('music_atmosphere', config_prompt.SUNO_ATMOSPHERE[0]))
             
             # Load structure category and specific structure
             structure_category = self.current_project_config.get('music_structure_category', self.suno_structure_categories[0] if hasattr(self, 'suno_structure_categories') else '')
@@ -788,9 +789,9 @@ class MagicToolGUI:
                 self.veo_json_content.insert(1.0, self.current_project_config.get('veo_json_content', ''))
             
             # 更新SUNO音乐提示词配置
-            self.suno_language.set(self.current_project_config.get('suno_language', config.SUNO_LANGUAGH[0]))
-            self.suno_expression.set(self.current_project_config.get('suno_expression', list(config.SUNO_CONTENT.keys())[0]))
-            self.suno_atmosphere.set(self.current_project_config.get('music_atmosphere', config.SUNO_ATMOSPHERE[0]))
+            self.suno_language.set(self.current_project_config.get('suno_language', config_prompt.SUNO_LANGUAGE[0]))
+            self.suno_expression.set(self.current_project_config.get('suno_expression', list(config_prompt.SUNO_CONTENT.keys())[0]))
+            self.suno_atmosphere.set(self.current_project_config.get('music_atmosphere', config_prompt.SUNO_ATMOSPHERE[0]))
             
             # Update structure category and specific structure
             structure_category = self.current_project_config.get('music_structure_category', self.suno_structure_categories[0] if hasattr(self, 'suno_structure_categories') else '')
@@ -1846,24 +1847,24 @@ class MagicToolGUI:
         
         # Target input
         ttk.Label(row1_frame, text="语言:").pack(side=tk.LEFT)
-        self.suno_language = ttk.Combobox(row1_frame, values=config.SUNO_LANGUAGH, state="normal", width=30)
-        self.suno_language.set(config.SUNO_LANGUAGH[0])
+        self.suno_language = ttk.Combobox(row1_frame, values=config_prompt.SUNO_LANGUAGE, state="normal", width=30)
+        self.suno_language.set(config_prompt.SUNO_LANGUAGE[0])
         self.suno_language.pack(side=tk.LEFT, padx=(5, 15))
         self.suno_language.bind('<FocusOut>', self.on_project_config_change)
         self.suno_language.bind('<<ComboboxSelected>>', self.on_project_config_change)
 
         # Overall Atmosphere input
         ttk.Label(row1_frame, text="内容:").pack(side=tk.LEFT)
-        self.suno_expression = ttk.Combobox(row1_frame, values=list(config.SUNO_CONTENT.keys()), state="normal", width=30)
-        self.suno_expression.set(list(config.SUNO_CONTENT.keys())[0])
+        self.suno_expression = ttk.Combobox(row1_frame, values=list(config_prompt.SUNO_CONTENT.keys()), state="normal", width=30)
+        self.suno_expression.set(list(config_prompt.SUNO_CONTENT.keys())[0])
         self.suno_expression.pack(side=tk.LEFT, padx=(5, 15))
         self.suno_expression.bind('<FocusOut>', self.on_project_config_change)
         self.suno_expression.bind('<<ComboboxSelected>>', self.on_project_config_change)
 
         # Overall Atmosphere input
         ttk.Label(row1_frame, text="氛围:").pack(side=tk.LEFT)
-        self.suno_atmosphere = ttk.Combobox(row1_frame, values=config.SUNO_ATMOSPHERE, state="normal", width=30)
-        self.suno_atmosphere.set(config.SUNO_ATMOSPHERE[0])
+        self.suno_atmosphere = ttk.Combobox(row1_frame, values=config_prompt.SUNO_ATMOSPHERE, state="normal", width=30)
+        self.suno_atmosphere.set(config_prompt.SUNO_ATMOSPHERE[0])
         self.suno_atmosphere.pack(side=tk.LEFT, padx=(5, 15))
         self.suno_atmosphere.bind('<FocusOut>', self.on_project_config_change)
         self.suno_atmosphere.bind('<<ComboboxSelected>>', self.on_project_config_change)
@@ -1875,7 +1876,7 @@ class MagicToolGUI:
 
         # Structure Category input
         ttk.Label(row2_frame, text="结构:").pack(side=tk.LEFT)
-        self.suno_structure_categories = [list(structure.keys())[0] for structure in config.SUNO_STRUCTURE]
+        self.suno_structure_categories = [list(structure.keys())[0] for structure in config_prompt.SUNO_STRUCTURE]
         self.suno_structure_category = ttk.Combobox(row2_frame, values=self.suno_structure_categories, state="normal", width=30)
         self.suno_structure_category.set(self.suno_structure_categories[0])
         self.suno_structure_category.pack(side=tk.LEFT, padx=(5, 15))
@@ -1891,7 +1892,7 @@ class MagicToolGUI:
 
         # Melody Category input
         ttk.Label(row2_frame, text="旋律:").pack(side=tk.LEFT)
-        self.suno_melody_categories = [list(melody.keys())[0] for melody in config.SUNO_MELODY]
+        self.suno_melody_categories = [list(melody.keys())[0] for melody in config_prompt.SUNO_MELODY]
         self.suno_melody_category = ttk.Combobox(row2_frame, values=self.suno_melody_categories, state="normal", width=30)
         self.suno_melody_category.set(self.suno_melody_categories[0])
         self.suno_melody_category.pack(side=tk.LEFT, padx=(5, 15))
@@ -1911,7 +1912,7 @@ class MagicToolGUI:
 
         # Leading Instruments input - 2-level selection
         ttk.Label(row3_frame, text="乐器:").pack(side=tk.LEFT)
-        self.suno_instruments_categories = [list(instrument.keys())[0] for instrument in config.SUNO_INSTRUMENTS]
+        self.suno_instruments_categories = [list(instrument.keys())[0] for instrument in config_prompt.SUNO_INSTRUMENTS]
         self.suno_instruments_category = ttk.Combobox(row3_frame, values=self.suno_instruments_categories, state="normal", width=30)
         self.suno_instruments_category.set(self.suno_instruments_categories[0])
         self.suno_instruments_category.pack(side=tk.LEFT, padx=(5, 15))
@@ -1927,7 +1928,7 @@ class MagicToolGUI:
         
         # Rhythm Groove Category input
         ttk.Label(row3_frame, text="律动:").pack(side=tk.LEFT)
-        self.suno_rhythm_categories = [list(groove.keys())[0] for groove in config.SUNO_RHYTHM_GROOVE]
+        self.suno_rhythm_categories = [list(groove.keys())[0] for groove in config_prompt.SUNO_RHYTHM_GROOVE]
         self.suno_rhythm_category = ttk.Combobox(row3_frame, values=self.suno_rhythm_categories, state="normal", width=30)
         self.suno_rhythm_category.set(self.suno_rhythm_categories[0])
         self.suno_rhythm_category.pack(side=tk.LEFT, padx=(5, 15))
@@ -1986,7 +1987,7 @@ class MagicToolGUI:
         # Set example options from config
         example_options = ["选择示例内容..."] + [f"示例 {i+1}: {example[:50]}..." if len(example) > 50 
                                                 else f"示例 {i+1}: {example}" 
-                                                for i, example in enumerate(config.SUNO_CONTENT_EXAMPLES)]
+                                                for i, example in enumerate(config_prompt.SUNO_CONTENT_EXAMPLES)]
         self.music_example_combobox['values'] = example_options
         self.music_example_combobox.set("选择示例内容...")
         self.music_example_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
@@ -2036,7 +2037,7 @@ class MagicToolGUI:
         if hasattr(self, 'suno_structure_category') and hasattr(self, 'suno_structure'):
             selected_category = self.suno_structure_category.get()
             # Find the corresponding structure object in SUNO_STRUCTURE
-            for structure in config.SUNO_STRUCTURE:
+            for structure in config_prompt.SUNO_STRUCTURE:
                 if selected_category in structure:
                     structures = structure[selected_category]
                     self.suno_structure['values'] = structures
@@ -2052,7 +2053,7 @@ class MagicToolGUI:
         if hasattr(self, 'suno_melody_category') and hasattr(self, 'suno_leading_melody'):
             selected_category = self.suno_melody_category.get()
             # Find the corresponding melody object in SUNO_MELODY
-            for melody in config.SUNO_MELODY:
+            for melody in config_prompt.SUNO_MELODY:
                 if selected_category in melody:
                     melodies = melody[selected_category]
                     self.suno_leading_melody['values'] = melodies
@@ -2068,7 +2069,7 @@ class MagicToolGUI:
         if hasattr(self, 'suno_instruments_category') and hasattr(self, 'suno_instruments'):
             selected_category = self.suno_instruments_category.get()
             # Find the corresponding instrument object in SUNO_INSTRUMENTS
-            for instrument in config.SUNO_INSTRUMENTS:
+            for instrument in config_prompt.SUNO_INSTRUMENTS:
                 if selected_category in instrument:
                     instruments = instrument[selected_category]
                     self.suno_instruments['values'] = instruments
@@ -2084,7 +2085,7 @@ class MagicToolGUI:
         if hasattr(self, 'suno_rhythm_category') and hasattr(self, 'suno_rhythm'):
             selected_category = self.suno_rhythm_category.get()
             # Find the corresponding groove object in SUNO_RHYTHM_GROOVE
-            for groove in config.SUNO_RHYTHM_GROOVE:
+            for groove in config_prompt.SUNO_RHYTHM_GROOVE:
                 if selected_category in groove:
                     styles = groove[selected_category]
                     self.suno_rhythm['values'] = styles
@@ -2113,8 +2114,8 @@ class MagicToolGUI:
             # Extract the example index from the selection
             if selected.startswith("示例 "):
                 example_num = int(selected.split(":")[0].replace("示例 ", "")) - 1
-                if 0 <= example_num < len(config.SUNO_CONTENT_EXAMPLES):
-                    example_content = config.SUNO_CONTENT_EXAMPLES[example_num]
+                if 0 <= example_num < len(config_prompt.SUNO_CONTENT_EXAMPLES):
+                    example_content = config_prompt.SUNO_CONTENT_EXAMPLES[example_num]
                     
                     # Get current cursor position
                     cursor_pos = self.music_content.index(tk.INSERT)
@@ -2226,9 +2227,9 @@ class MagicToolGUI:
     
     def clear_music_prompts(self):
         """Clear music prompts configuration"""
-        self.suno_language.set(config.SUNO_LANGUAGH[0])
-        self.suno_expression.set(list(config.SUNO_CONTENT.keys())[0])
-        self.suno_atmosphere.set(config.SUNO_ATMOSPHERE[0])
+        self.suno_language.set(config_prompt.SUNO_LANGUAGE[0])
+        self.suno_expression.set(list(config_prompt.SUNO_CONTENT.keys())[0])
+        self.suno_atmosphere.set(config_prompt.SUNO_ATMOSPHERE[0])
         
         # Reset structure to first category and first structure
         if hasattr(self, 'suno_structure_category'):

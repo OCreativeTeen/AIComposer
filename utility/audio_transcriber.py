@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 import re
 import os
 import json
-import textwrap
 import zhconv
-from .llm_api import LLMApi
+from . import llm_api
+import config_prompt
+
 import config
 from pathlib import Path
 from pyannote.audio import Pipeline
@@ -26,7 +27,7 @@ class AudioTranscriber:
         self.workflow = workflow
         self.model_size = model_size
         self.device = device
-        self.llm_small = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
+        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
 
         device = torch.device("cuda") 
         hf_token = os.getenv("HF_TOKEN", "")
@@ -200,28 +201,10 @@ class AudioTranscriber:
 
 
     def merge_sentences(self, segments, language, min_sentence_duration, max_sentence_duration):
-        system_prompt = config.SCENARIO_BUILD_SYSTEM_PROMPT.format(language=language, min_sentence_duration=min_sentence_duration, max_sentence_duration=max_sentence_duration)
+        system_prompt = config_prompt.MERGE_SENTENCES_SYSTEM_PROMPT.format(language=language, min_sentence_duration=min_sentence_duration, max_sentence_duration=max_sentence_duration)
         user_prompt = json.dumps(segments, ensure_ascii=False, indent=2)
 
-        response = self.llm_small.openai_completion(
-            messages=[
-                self.llm_small.create_message("system", system_prompt),
-                self.llm_small.create_message("user", user_prompt)
-            ],
-            temperature=0.1,
-            max_tokens=8000,
-            top_p=0.9,
-            stream=False
-        )
-
-        content = self.llm_small.parse_response(response)
-        if not content:
-            raise Exception("翻译API返回了空内容")
-
-        # 提取JSON数组
-        merged_segments = self.llm_small.parse_json_response(content)
-
-        return merged_segments
+        return self.llm_api.generate_json_summary(system_prompt, user_prompt, None, True)
 
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
@@ -272,23 +255,10 @@ class AudioTranscriber:
 
 
     def reorganize_text_content(self, text, language):
-        system_prompt = config.SRT_REORGANIZATION_SYSTEM_PROMPT.format(language=language)
-        prompt = config.SRT_REORGANIZATION_USER_PROMPT.format(text=text)
-
-        response = self.llm_small.openai_completion(
-            messages=[
-                self.llm_small.create_message("system", system_prompt),
-                self.llm_small.create_message("user", prompt)
-            ],
-            temperature=0.1,
-            max_tokens=8000,
-            top_p=0.9,
-            stream=False
-        )
-
-        content = self.llm_small.parse_response(response)
-        if not content:
-            raise Exception("翻译API返回了空内容")
+        system_prompt = config_prompt.SRT_REORGANIZATION_SYSTEM_PROMPT.format(language=language)
+        prompt = config_prompt.SRT_REORGANIZATION_USER_PROMPT.format(text=text)
+        
+        content = self.llm_api.generate_text(system_prompt, prompt)
 
         content = self.chinese_convert(content, language)
         # 去掉开头和结尾的空格, 换行符
@@ -530,28 +500,17 @@ class AudioTranscriber:
             return self.chinese_convert(text, target_language)
         
         try:
-            system_prompt = config.TRANSLATION_SYSTEM_PROMPT.format(
+            system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
                 source_language=config.LANGUAGES[source_language],
                 target_language=config.LANGUAGES[target_language]
             )
-            prompt = config.TRANSLATION_USER_PROMPT.format(
+            prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
                 source_language=config.LANGUAGES[source_language],
                 target_language=config.LANGUAGES[target_language],
                 text=text
             )
 
-            response = self.llm_small.openai_completion(
-                messages=[
-                    self.llm_small.create_message("system", system_prompt),
-                    self.llm_small.create_message("user", prompt)
-                ],
-                temperature=0.1,
-                max_tokens=8000,
-                top_p=0.9,
-                stream=False
-            )
-            
-            content = self.llm_small.parse_response(response)
+            content = self.llm_api.generate_text(system_prompt, prompt)
             if not content:
                 raise Exception("翻译API返回了空内容")
             return content.strip()

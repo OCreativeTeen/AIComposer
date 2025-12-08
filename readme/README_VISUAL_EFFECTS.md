@@ -50,7 +50,7 @@
 
 ### 文件命名规则
 - 增强后的视频文件名格式：`原文件名_enhanced_效果名.mp4`
-- 例如：`scenario_1_enhanced_glow.mp4`
+- 例如：`scene_1_enhanced_glow.mp4`
 
 ### 错误处理
 - 自动检测视频和音频文件是否存在

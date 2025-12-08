@@ -7,9 +7,10 @@ import json
 from datetime import datetime
 from magic_workflow import MagicWorkflow
 import config
+import config_prompt
 from pathlib import Path
 from project_manager import ProjectConfigManager, create_project_dialog
-
+import project_manager
 
 
 
@@ -203,7 +204,7 @@ class TitleSelectionDialog:
             config_manager = ProjectConfigManager(self.pid)
             
             # 获取生成的标题
-            generated_titles = config_manager.project_config.get('generated_titles', [])
+            generated_titles = project_manager.PROJECT_CONFIG.get('generated_titles', [])
             for i, title in enumerate(generated_titles):
                 if title and title.strip():
                     title_options.append(f"[AI-{i+1}] {title}")
@@ -231,7 +232,7 @@ class TitleSelectionDialog:
             config_manager = ProjectConfigManager(self.pid)
             
             # 获取生成的标签
-            generated_tags = config_manager.project_config.get('generated_tags', [])
+            generated_tags = project_manager.PROJECT_CONFIG.get('generated_tags', [])
             for i, tag in enumerate(generated_tags):
                 if tag and tag.strip():
                     tags_options.append(f"[AI-{i+1}] {tag}")
@@ -313,9 +314,9 @@ class TitleSelectionDialog:
             # 获取项目配置管理器
             config_manager = ProjectConfigManager()
             config_manager.load_config(self.pid)
-            config_manager.project_config['video_title'] = final_title
-            config_manager.project_config['video_tags'] = final_tags
-            config_manager.save_project_config()
+            project_manager.PROJECT_CONFIG['video_title'] = final_title
+            project_manager.PROJECT_CONFIG['video_tags'] = final_tags
+            config_manager.save_project_manager.PROJECT_CONFIG()
             
             print(f"✅ 已保存选择的标题和标签到项目配置: {final_title}, {final_tags}")
             
@@ -356,7 +357,7 @@ class MagicToolGUI:
         self.tasks = {}
         self.workflow = None
         self.current_language = "zh"  # Default language
-        self.current_project_config = None
+        self.current_project_manager.PROJECT_CONFIG = None
         
         # Initialize checkbox variables
         self.enable_starting = tk.BooleanVar(value=True)
@@ -380,7 +381,7 @@ class MagicToolGUI:
             return False
         elif result == 'new':
             # 使用从新项目对话框获取的配置
-            self.current_project_config = selected_config
+            self.current_project_manager.PROJECT_CONFIG = selected_config
             self.current_language = selected_config.get('language', 'zh')
             
             # 立即创建ProjectConfigManager并保存新项目配置
@@ -388,8 +389,8 @@ class MagicToolGUI:
             if pid:
                 try:
                     config_manager = ProjectConfigManager(pid)
-                    config_manager.project_config = selected_config.copy()
-                    config_manager.save_project_config()
+                    ProjectConfigManager.set_global_config(selected_config)
+                    config_manager.save_project_manager.PROJECT_CONFIG()
                     print(f"✅ 新项目配置已保存: {pid}")
                 except Exception as e:
                     print(f"❌ 保存新项目配置失败: {e}")
@@ -399,7 +400,8 @@ class MagicToolGUI:
             return True
         elif result == 'open':
             # 打开现有项目
-            self.current_project_config = selected_config
+            ProjectConfigManager.set_global_config(selected_config)
+            self.current_project_manager.PROJECT_CONFIG = selected_config
             self.current_language = selected_config.get('language', 'zh')
             # 立即创建workflow
             self.create_workflow()
@@ -418,9 +420,9 @@ class MagicToolGUI:
                 # Get video dimensions from project config
                 video_width = None
                 video_height = None
-                if self.current_project_config:
-                    video_width = self.current_project_config.get('video_width')
-                    video_height = self.current_project_config.get('video_height')
+                if self.current_project_manager.PROJECT_CONFIG:
+                    video_width = self.current_project_manager.PROJECT_CONFIG.get('video_width')
+                    video_height = self.current_project_manager.PROJECT_CONFIG.get('video_height')
                 self.workflow = MagicWorkflow(pid, "story", language, channel, story_site, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
@@ -429,10 +431,10 @@ class MagicToolGUI:
             print(f"❌ 创建Workflow失败: {str(e)}")
             self.workflow = None
     
-    def save_project_config(self):
+    def save_project_manager.PROJECT_CONFIG(self):
         try:
             # 更新当前配置
-            config_data = self.current_project_config.copy()
+            config_data = self.current_project_manager.PROJECT_CONFIG.copy()
             config_data['language'] = self.current_language
             config_data['video_title'] = self.video_title.get() or config_data.get('video_title', '')
             config_data['video_tags'] = self.video_tags.get() or config_data.get('video_tags', '')
@@ -441,9 +443,9 @@ class MagicToolGUI:
             # video_width and video_height are read-only from project config, not saved
             # Keep existing values from project config
             if 'video_width' not in config_data:
-                config_data['video_width'] = self.current_project_config.get('video_width', '1920') if self.current_project_config else '1920'
+                config_data['video_width'] = self.current_project_manager.PROJECT_CONFIG.get('video_width', '1920') if self.current_project_manager.PROJECT_CONFIG else '1920'
             if 'video_height' not in config_data:
-                config_data['video_height'] = self.current_project_config.get('video_height', '1080') if self.current_project_config else '1080'
+                config_data['video_height'] = self.current_project_manager.PROJECT_CONFIG.get('video_height', '1080') if self.current_project_manager.PROJECT_CONFIG else '1080'
             
             # 保存 WAN 视频参数
             if hasattr(self, 'wan_style_var'):
@@ -460,22 +462,21 @@ class MagicToolGUI:
                 config_data['thumbnail_font_color'] = self.thumbnail_font_color.get()
             
             # Preserve generated titles and tags if they exist
-            if 'generated_titles' in self.current_project_config:
-                config_data['generated_titles'] = self.current_project_config['generated_titles']
-            if 'generated_tags' in self.current_project_config:
-                config_data['generated_tags'] = self.current_project_config['generated_tags']
+            if 'generated_titles' in self.current_project_manager.PROJECT_CONFIG:
+                config_data['generated_titles'] = self.current_project_manager.PROJECT_CONFIG['generated_titles']
+            if 'generated_tags' in self.current_project_manager.PROJECT_CONFIG:
+                config_data['generated_tags'] = self.current_project_manager.PROJECT_CONFIG['generated_tags']
             
             # Preserve video_id if it exists
-            if 'video_id' in self.current_project_config:
-                config_data['video_id'] = self.current_project_config['video_id']
+            if 'video_id' in self.current_project_manager.PROJECT_CONFIG:
+                config_data['video_id'] = self.current_project_manager.PROJECT_CONFIG['video_id']
             
             # 保存到文件
             pid = config_data['pid']
             if pid:
                 config_manager = ProjectConfigManager(pid)
-                config_manager.project_config = config_data.copy()
-                config_manager.save_project_config(config_data)
-                self.current_project_config = config_data
+                config_manager.save_project_manager.PROJECT_CONFIG(config_data)
+                self.current_project_manager.PROJECT_CONFIG = config_data
                 print(f"✅ Magic Tool项目配置已保存: {pid}")
                 
         except Exception as e:
@@ -483,7 +484,7 @@ class MagicToolGUI:
     
     def on_closing(self):
         """窗口关闭时的处理"""
-        self.save_project_config()
+        self.save_project_manager.PROJECT_CONFIG()
         self.root.destroy()
         
     def setup_ui(self):
@@ -493,7 +494,7 @@ class MagicToolGUI:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Project configuration area at the top
-        self.create_project_config_area(main_frame)
+        self.create_project_manager.PROJECT_CONFIG_area(main_frame)
         
         # Language selection
         self.create_language_selector(main_frame)
@@ -519,7 +520,7 @@ class MagicToolGUI:
         # 恢复缩略图字体颜色设置
         self.root.after(300, self.restore_thumbnail_font_color)
     
-    def create_project_config_area(self, parent):
+    def create_project_manager.PROJECT_CONFIG_area(self, parent):
         """创建项目配置区域"""
         project_frame = ttk.LabelFrame(parent, text="项目配置", padding="10")
         project_frame.pack(fill=tk.X, padx=5, pady=(0, 10))
@@ -536,13 +537,13 @@ class MagicToolGUI:
         
         # PID (只读)
         ttk.Label(row1, text="项目ID:").pack(side=tk.LEFT)
-        self.project_pid = ttk.Label(row1, text=self.current_project_config.get('pid', ''), 
+        self.project_pid = ttk.Label(row1, text=self.current_project_manager.PROJECT_CONFIG.get('pid', ''), 
                                     relief="sunken", width=25, background="white")
         self.project_pid.pack(side=tk.LEFT, padx=(5, 15))
         
         # 频道 (只读)
         ttk.Label(row1, text="频道:").pack(side=tk.LEFT)
-        self.project_channel = ttk.Label(row1, text=self.current_project_config.get('channel', ''), 
+        self.project_channel = ttk.Label(row1, text=self.current_project_manager.PROJECT_CONFIG.get('channel', ''), 
                                         relief="sunken", width=12, background="white")
         self.project_channel.pack(side=tk.LEFT, padx=(5, 15))
         
@@ -559,34 +560,34 @@ class MagicToolGUI:
         ttk.Label(row2, text="项目标题:").pack(side=tk.LEFT)
         self.video_title = ttk.Combobox(row2, width=70)
         self.video_title.pack(side=tk.LEFT, padx=(5, 15))
-        self.video_title.bind('<FocusOut>', self.on_project_config_change)
-        self.video_title.bind('<<ComboboxSelected>>', self.on_project_config_change)
-        self.video_title.set(self.current_project_config.get('video_title', ''))
+        self.video_title.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.video_title.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.video_title.set(self.current_project_manager.PROJECT_CONFIG.get('video_title', ''))
 
         # 项目标签 (使用Combobox)
         ttk.Label(row3, text="项目标签:").pack(side=tk.LEFT)
         self.video_tags = ttk.Combobox(row3, width=35)
         self.video_tags.pack(side=tk.LEFT, padx=(5, 15))
-        self.video_tags.bind('<FocusOut>', self.on_project_config_change)
-        self.video_tags.bind('<<ComboboxSelected>>', self.on_project_config_change)
-        self.video_tags.set(self.current_project_config.get('video_tags', ''))
+        self.video_tags.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.video_tags.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.video_tags.set(self.current_project_manager.PROJECT_CONFIG.get('video_tags', ''))
         
         # 关键字
         ttk.Label(row3, text="关键字:").pack(side=tk.LEFT)
         self.project_keywords = ttk.Entry(row3, width=25)
-        self.project_keywords.insert(0, self.current_project_config.get('program_keywords', ''))
+        self.project_keywords.insert(0, self.current_project_manager.PROJECT_CONFIG.get('program_keywords', ''))
         self.project_keywords.pack(side=tk.LEFT, padx=(5, 15))
-        self.project_keywords.bind('<FocusOut>', self.on_project_config_change)
+        self.project_keywords.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 故事场地
         ttk.Label(row3, text="故事场地:").pack(side=tk.LEFT)
         self.story_site_entry = ttk.Entry(row3, width=20)
-        self.story_site_entry.insert(0, self.current_project_config.get('story_site', ''))
+        self.story_site_entry.insert(0, self.current_project_manager.PROJECT_CONFIG.get('story_site', ''))
         self.story_site_entry.pack(side=tk.LEFT, padx=(5, 15))
-        self.story_site_entry.bind('<FocusOut>', self.on_project_config_change)
+        self.story_site_entry.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 保存按钮
-        ttk.Button(row3, text="保存配置", command=self.save_project_config).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(row3, text="保存配置", command=self.save_project_manager.PROJECT_CONFIG).pack(side=tk.RIGHT, padx=5)
         
         # 第四行：WAN 视频生成选项（风格/镜头/角度/色彩）
         row4 = ttk.Frame(project_frame)
@@ -596,68 +597,68 @@ class MagicToolGUI:
         wan_style_frame = ttk.Frame(row4)
         wan_style_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(wan_style_frame, text="视频风格:").pack(side=tk.LEFT)
-        self.wan_style_var = tk.StringVar(value=self.current_project_config.get('wan_style', config.WAN_VIDEO_STYLE[0]) if hasattr(self, 'current_project_config') and self.current_project_config else config.WAN_VIDEO_STYLE[0])
+        self.wan_style_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_style', config.WAN_VIDEO_STYLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_STYLE[0])
         self.wan_style_combo = ttk.Combobox(wan_style_frame, textvariable=self.wan_style_var,
                                             values=config.WAN_VIDEO_STYLE, state="readonly", width=20)
         self.wan_style_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_style_combo.bind('<<ComboboxSelected>>', self.on_project_config_change)
+        self.wan_style_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 镜头类型
         wan_shot_frame = ttk.Frame(row4)
         wan_shot_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(wan_shot_frame, text="镜头类型:").pack(side=tk.LEFT)
-        self.wan_shot_var = tk.StringVar(value=self.current_project_config.get('wan_shot', config.WAN_VIDEO_SHOT[0]) if hasattr(self, 'current_project_config') and self.current_project_config else config.WAN_VIDEO_SHOT[0])
+        self.wan_shot_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_shot', config.WAN_VIDEO_SHOT[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_SHOT[0])
         self.wan_shot_combo = ttk.Combobox(wan_shot_frame, textvariable=self.wan_shot_var,
                                            values=config.WAN_VIDEO_SHOT, state="readonly", width=20)
         self.wan_shot_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_shot_combo.bind('<<ComboboxSelected>>', self.on_project_config_change)
+        self.wan_shot_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 拍摄角度
         wan_angle_frame = ttk.Frame(row4)
         wan_angle_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(wan_angle_frame, text="拍摄角度:").pack(side=tk.LEFT)
-        self.wan_angle_var = tk.StringVar(value=self.current_project_config.get('wan_angle', config.WAN_VIDEO_ANGLE[0]) if hasattr(self, 'current_project_config') and self.current_project_config else config.WAN_VIDEO_ANGLE[0])
+        self.wan_angle_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_angle', config.WAN_VIDEO_ANGLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_ANGLE[0])
         self.wan_angle_combo = ttk.Combobox(wan_angle_frame, textvariable=self.wan_angle_var,
                                             values=config.WAN_VIDEO_ANGLE, state="readonly", width=20)
         self.wan_angle_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_angle_combo.bind('<<ComboboxSelected>>', self.on_project_config_change)
+        self.wan_angle_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 色彩风格
         wan_color_frame = ttk.Frame(row4)
         wan_color_frame.pack(side=tk.LEFT)
         ttk.Label(wan_color_frame, text="色彩风格:").pack(side=tk.LEFT)
-        self.wan_color_var = tk.StringVar(value=self.current_project_config.get('wan_color', config.WAN_VIDEO_COLOR[0]) if hasattr(self, 'current_project_config') and self.current_project_config else config.WAN_VIDEO_COLOR[0])
+        self.wan_color_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_color', config.WAN_VIDEO_COLOR[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_COLOR[0])
         self.wan_color_combo = ttk.Combobox(wan_color_frame, textvariable=self.wan_color_var,
                                             values=config.WAN_VIDEO_COLOR, state="readonly", width=20)
         self.wan_color_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_color_combo.bind('<<ComboboxSelected>>', self.on_project_config_change)
+        self.wan_color_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
     
     def change_project(self):
         """更改项目"""
         if self.show_project_selection():
             # 更新显示
-            self.project_pid.config(text=self.current_project_config.get('pid', ''))
-            self.project_channel.config(text=self.current_project_config.get('channel', ''))
+            self.project_pid.config(text=self.current_project_manager.PROJECT_CONFIG.get('pid', ''))
+            self.project_channel.config(text=self.current_project_manager.PROJECT_CONFIG.get('channel', ''))
             self.project_language.config(text=self.current_language)
             
             # 更新字段内容
             self.video_title.delete(0, tk.END)
-            self.video_title.insert(0, self.current_project_config.get('video_title', ''))
+            self.video_title.insert(0, self.current_project_manager.PROJECT_CONFIG.get('video_title', ''))
 
             self.video_tags.delete(0, tk.END)
-            self.video_tags.insert(0, self.current_project_config.get('video_tags', ''))
+            self.video_tags.insert(0, self.current_project_manager.PROJECT_CONFIG.get('video_tags', ''))
 
             self.project_keywords.delete(0, tk.END)
-            self.project_keywords.insert(0, self.current_project_config.get('program_keywords', ''))
+            self.project_keywords.insert(0, self.current_project_manager.PROJECT_CONFIG.get('program_keywords', ''))
 
             self.story_site_entry.delete(0, tk.END)
-            self.story_site_entry.insert(0, self.current_project_config.get('story_site', ''))
+            self.story_site_entry.insert(0, self.current_project_manager.PROJECT_CONFIG.get('story_site', ''))
             
             # 更新 WAN 视频参数
-            self.wan_style_var.set(self.current_project_config.get('wan_style', config.WAN_VIDEO_STYLE[0]))
-            self.wan_shot_var.set(self.current_project_config.get('wan_shot', config.WAN_VIDEO_SHOT[0]))
-            self.wan_angle_var.set(self.current_project_config.get('wan_angle', config.WAN_VIDEO_ANGLE[0]))
-            self.wan_color_var.set(self.current_project_config.get('wan_color', config.WAN_VIDEO_COLOR[0]))
+            self.wan_style_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_style', config.WAN_VIDEO_STYLE[0]))
+            self.wan_shot_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_shot', config.WAN_VIDEO_SHOT[0]))
+            self.wan_angle_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_angle', config.WAN_VIDEO_ANGLE[0]))
+            self.wan_color_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_color', config.WAN_VIDEO_COLOR[0]))
             
             # 更新语言选择器
             self.language_var.set(self.current_language)
@@ -667,8 +668,8 @@ class MagicToolGUI:
             self.load_generated_titles_and_tags_to_combobox()
             
             # 如果自动加载没有找到数据，尝试强制从JSON文件加载
-            if (not self.current_project_config.get('generated_titles') or 
-                not self.current_project_config.get('generated_tags')):
+            if (not self.current_project_manager.PROJECT_CONFIG.get('generated_titles') or 
+                not self.current_project_manager.PROJECT_CONFIG.get('generated_tags')):
                 try:
                     self.force_reload_titles_and_tags()
                 except:
@@ -676,13 +677,13 @@ class MagicToolGUI:
             
             # 恢复缩略图字体颜色设置
             if hasattr(self, 'thumbnail_font_color'):
-                saved_color = self.current_project_config.get('thumbnail_font_color', '白色')
+                saved_color = self.current_project_manager.PROJECT_CONFIG.get('thumbnail_font_color', '白色')
                 self.thumbnail_font_color.set(saved_color)
                 print(f"🎨 已恢复字体颜色设置: {saved_color}")
             
             # Workflow已经在show_project_selection中创建了
             
-            messagebox.showinfo("成功", f"已切换到项目: {self.current_project_config.get('pid', '')}")
+            messagebox.showinfo("成功", f"已切换到项目: {self.current_project_manager.PROJECT_CONFIG.get('pid', '')}")
     
     def load_generated_titles_and_tags_to_combobox(self):
         """加载生成的标题和标签到Combobox选择列表"""
@@ -701,8 +702,8 @@ class MagicToolGUI:
             print(f"✅ Widgets are ready, proceeding with data loading...")
             
             # 获取生成的标题和标签
-            generated_titles = self.current_project_config.get("generated_titles", None)
-            generated_tags = self.current_project_config.get("generated_tags", None)
+            generated_titles = self.current_project_manager.PROJECT_CONFIG.get("generated_titles", None)
+            generated_tags = self.current_project_manager.PROJECT_CONFIG.get("generated_tags", None)
             
             # 如果项目配置中没有生成的标题和标签，尝试从titles_choices.json文件加载
             if not generated_titles or not generated_tags:
@@ -722,16 +723,16 @@ class MagicToolGUI:
                         
                         # 更新当前配置，避免下次重复读取文件
                         if generated_titles:
-                            self.current_project_config['generated_titles'] = generated_titles
+                            self.current_project_manager.PROJECT_CONFIG['generated_titles'] = generated_titles
                         if generated_tags:
-                            self.current_project_config['generated_tags'] = generated_tags
+                            self.current_project_manager.PROJECT_CONFIG['generated_tags'] = generated_tags
                             
                 except Exception as e:
                     print(f"⚠️ 从titles_choices.json加载标题和标签失败: {str(e)}")
             
             # 获取当前保存的值
-            current_title = self.current_project_config.get('video_title', '')
-            current_tags = self.current_project_config.get('video_tags', '')
+            current_title = self.current_project_manager.PROJECT_CONFIG.get('video_title', '')
+            current_tags = self.current_project_manager.PROJECT_CONFIG.get('video_tags', '')
             
             print(f"📝 当前值: title='{current_title}', tags='{current_tags}'")
             
@@ -801,18 +802,18 @@ class MagicToolGUI:
                 
                 # 强制更新配置
                 if 'titles' in titles_choices_data:
-                    self.current_project_config['generated_titles'] = titles_choices_data['titles']
+                    self.current_project_manager.PROJECT_CONFIG['generated_titles'] = titles_choices_data['titles']
                     print(f"✅ 强制重新加载了 {len(titles_choices_data['titles'])} 个标题")
                 
                 if 'tags' in titles_choices_data:
-                    self.current_project_config['generated_tags'] = titles_choices_data['tags']
+                    self.current_project_manager.PROJECT_CONFIG['generated_tags'] = titles_choices_data['tags']
                     print(f"✅ 强制重新加载了 {len(titles_choices_data['tags'])} 个标签")
                 
                 # 更新Combobox
                 self.load_generated_titles_and_tags_to_combobox()
                 
                 # 保存到项目配置文件
-                self.save_project_config()
+                self.save_project_manager.PROJECT_CONFIG()
                 
                 self.log_to_output(self.script_output, f"✅ 已从titles_choices.json重新加载标题和标签")
                 messagebox.showinfo("成功", "已重新加载标题和标签选项")
@@ -826,10 +827,10 @@ class MagicToolGUI:
             self.log_to_output(self.script_output, f"❌ {error_msg}")
             messagebox.showerror("错误", error_msg)
     
-    def on_project_config_change(self, event=None):
+    def on_project_manager.PROJECT_CONFIG_change(self, event=None):
         """项目配置改变时的处理"""
         # 自动保存配置
-        self.root.after(100, self.save_project_config)  # 延迟保存避免频繁写入
+        self.root.after(100, self.save_project_manager.PROJECT_CONFIG)  # 延迟保存避免频繁写入
         
     def create_language_selector(self, parent):
         """Create language selection frame"""
@@ -964,8 +965,8 @@ class MagicToolGUI:
     def restore_thumbnail_font_color(self):
         """Restore thumbnail font color from saved config"""
         try:
-            if hasattr(self, 'thumbnail_font_color') and self.current_project_config:
-                saved_color = self.current_project_config.get('thumbnail_font_color', '白色')
+            if hasattr(self, 'thumbnail_font_color') and self.current_project_manager.PROJECT_CONFIG:
+                saved_color = self.current_project_manager.PROJECT_CONFIG.get('thumbnail_font_color', '白色')
                 self.thumbnail_font_color.set(saved_color)
                 print(f"🎨 已恢复字体颜色设置: {saved_color}")
         except Exception as e:
@@ -1035,7 +1036,7 @@ class MagicToolGUI:
             if hasattr(self, 'thumbnail_preview'):
                 self.thumbnail_preview.delete("all")
                 # Add placeholder text
-                existing_thumbnail = self.current_project_config.get('thumbnail_image', None)
+                existing_thumbnail = self.current_project_manager.PROJECT_CONFIG.get('thumbnail_image', None)
                 if existing_thumbnail:
                     self.update_thumbnail_preview(existing_thumbnail)
                 else:    
@@ -1265,7 +1266,7 @@ class MagicToolGUI:
         self.log_to_output(self.audio_output, f"语言已切换到: {self.current_language}")
         
         # 保存项目配置
-        self.save_project_config()
+        self.save_project_manager.PROJECT_CONFIG()
         
         # 重新创建workflow以使用新语言
         self.create_workflow()
@@ -1325,11 +1326,11 @@ class MagicToolGUI:
         tags_text = tags_text.replace("-", "\n")
         selected_font_name = self.thumbnail_font.get().strip()
         
-        for scenario in self.get_current_workflow().scenarios:
-            if scenario.get('promo_mode', None) == "IMAGE_MAIN":
-                if os.path.exists(scenario['image']):
-                    if scenario['image'] != self.thumbnail_image_path.get().strip():
-                        self.thumbnail_image_path.set(scenario['image'])
+        for scene in self.get_current_workflow().scenes:
+            if scene.get('promo_mode', None) == "IMAGE_MAIN":
+                if os.path.exists(scene['image']):
+                    if scene['image'] != self.thumbnail_image_path.get().strip():
+                        self.thumbnail_image_path.set(scene['image'])
                         break
 
         self.run_generate_thumbnail()
@@ -1344,11 +1345,11 @@ class MagicToolGUI:
             return
 
         if search: 
-            for scenario in self.get_current_workflow().scenarios:
-                if scenario.get('promo_mode', None) == "IMAGE_MAIN":
-                    if os.path.exists(scenario['image']):
-                        if scenario['image'] != self.thumbnail_image_path.get().strip():
-                            self.thumbnail_image_path.set(scenario['image'])
+            for scene in self.get_current_workflow().scenes:
+                if scene.get('promo_mode', None) == "IMAGE_MAIN":
+                    if os.path.exists(scene['image']):
+                        if scene['image'] != self.thumbnail_image_path.get().strip():
+                            self.thumbnail_image_path.set(scene['image'])
                             break
 
         image_path = self.thumbnail_image_path.get().strip()
@@ -1700,7 +1701,7 @@ class MagicToolGUI:
 
     def get_pid(self):
         """获取当前项目ID"""
-        return self.current_project_config.get('pid', '') if self.current_project_config else ''
+        return self.current_project_manager.PROJECT_CONFIG.get('pid', '') if self.current_project_manager.PROJECT_CONFIG else ''
     
     def get_language(self):
         """获取当前语言"""
@@ -1708,11 +1709,11 @@ class MagicToolGUI:
     
     def get_channel(self):
         """获取当前频道"""
-        return self.current_project_config.get('channel', 'strange_zh') if self.current_project_config else 'strange_zh'
+        return self.current_project_manager.PROJECT_CONFIG.get('channel', 'strange_zh') if self.current_project_manager.PROJECT_CONFIG else 'strange_zh'
     
     def get_story_site(self):
         """获取当前场地"""
-        return self.current_project_config.get('story_site', '') if self.current_project_config else ''
+        return self.current_project_manager.PROJECT_CONFIG.get('story_site', '') if self.current_project_manager.PROJECT_CONFIG else ''
     
     def get_current_workflow(self):
         """获取当前工作流实例"""
@@ -1810,7 +1811,7 @@ class MagicToolGUI:
         actor_narrator.set(config.ACTORS_NARRATOR[0])  # Default to voice1
         actor_narrator.pack(side=tk.TOP)
         
-        # add a text fields to keep the story scenarios duration, default to config.VIDEO_DURATION_DEFAULT
+        # add a text fields to keep the story scenes duration, default to config.VIDEO_DURATION_DEFAULT
         duration_frame = ttk.Frame(controls_frame)
         duration_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Label(duration_frame, text="片段时长").pack(side=tk.LEFT)
@@ -1886,7 +1887,7 @@ class MagicToolGUI:
                 try:
                     # 获取选中的prompt pair
                     selected_prompt_name = prompt_selector.get()
-                    selected_prompt = config.SPEAKING_PROMPTS[selected_prompt_name]
+                    selected_prompt = config_prompt.SPEAKING_PROMPTS[selected_prompt_name]
 
                     format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
 
@@ -1931,44 +1932,6 @@ class MagicToolGUI:
             thread = threading.Thread(target=regenerate_task)
             thread.daemon = True
             thread.start()
-
-
-        def on_generate_immersive_story_images():
-            """生成故事图像"""
-            try:
-                # 调用工作流生成图像
-                workflow = self.get_current_workflow()                # Use appropriate output widget
-                # 在后台线程中生成图像
-                def generate_images_task():
-                    try:
-                        system_prompt = config.STORY_IMAGE_SUMMARY_SYSTEM_PROMPT
-                        user_prompt = simplified_content_widget.get(1.0, tk.END)
-                        story_summary_content = self.get_current_workflow().llm_api.generate_text_summary(system_prompt, user_prompt)
-                        with open(config.get_story_summary_path(pid, language), "w", encoding='utf-8') as f:
-                            f.write(story_summary_content)
-
-                        image_style = config.IMAGE_STYLES[0]
-                        negative = config.NEGATIVE_PROMPT_OPTIONS[0]
-
-                        # 调用生成图像的方法
-                        result = workflow.create_story_images(story_json_widget.get(1.0, tk.END), image_style, config.story_summary_content, negative,"3")
-                        
-                        if result:
-                            self.root.after(0, lambda: messagebox.showinfo("成功", f"故事图像生成完成！\n结果: {result}"))
-                        else:
-                            self.root.after(0, lambda: messagebox.showerror("错误", "图像生成失败"))
-
-                    except Exception as e:
-                        error_msg = f"生成图像失败: {str(e)}"
-                        self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-                
-                import threading
-                thread = threading.Thread(target=generate_images_task)
-                thread.daemon = True
-                thread.start()
-
-            except Exception as e:
-                messagebox.showerror("错误", f"操作失败: {str(e)}")
 
 
         # 定义生成音频函数
@@ -2054,7 +2017,7 @@ class MagicToolGUI:
         prompt_selector.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 从config获取提示词对列表
-        prompt_pairs = config.SPEAKING_PROMPTS_LIST
+        prompt_pairs = config_prompt.SPEAKING_PROMPTS_LIST
         prompt_selector["values"] = prompt_pairs
         prompt_selector.current(0)  # 默认选择第一个
 
@@ -2079,10 +2042,6 @@ class MagicToolGUI:
 
         ttk.Button(button_frame, text="生成故事音频222", 
                   command=on_generate_audio).pack(side=tk.LEFT, padx=(20, 20))
-
-
-        ttk.Button(button_frame, text="生成沉浸故事图像333", 
-                  command=on_generate_immersive_story_images).pack(side=tk.LEFT, padx=(20, 20))
 
         # Audio Player Section
         audio_player_frame = ttk.LabelFrame(main_frame, text="音频播放器", padding=10)
@@ -2695,7 +2654,7 @@ class MagicToolGUI:
                     self.workflow.title = selected_title
                     
                     # 保存配置
-                    self.save_project_config()
+                    self.save_project_manager.PROJECT_CONFIG()
                     
                     print(f"✅ 标题已更新: {selected_title}")
                     if selected_tags:
@@ -2848,9 +2807,9 @@ class MagicToolGUI:
         # 定义文件编辑器配置
         editors_config = [
             {
-                'name': 'scenarios_json', 
+                'name': 'scenes_json', 
                 'title': '场景文件 (JSON)',
-                'file_suffix': 'full_scenarios.json',
+                'file_suffix': 'full_scenes.json',
                 'file_type': 'json',
                 'description': '存储所有场景的详细信息，包括时间戳和音频信息'
             },
@@ -2932,8 +2891,8 @@ class MagicToolGUI:
                                    command=lambda: self.format_json_content(config['name']))
             format_btn.pack(side=tk.LEFT, padx=(0, 5))
             
-            # 如果是scenarios JSON，添加更新时长按钮
-            if config['name'] == 'scenarios_json':
+            # 如果是scenes JSON，添加更新时长按钮
+            if config['name'] == 'scenes_json':
                 duration_btn = ttk.Button(btn_frame, text="更新时长",
                                         command=lambda: self.update_duration_displays())
                 duration_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -2943,9 +2902,9 @@ class MagicToolGUI:
                                command=lambda: self.refresh_file_content(config['name']))
         refresh_btn.pack(side=tk.LEFT)
 
-        # Duration display area for scenarios JSON files
+        # Duration display area for scenes JSON files
         duration_frame = None
-        if config['name'] == 'scenarios_json':
+        if config['name'] == 'scenes_json':
             duration_frame = ttk.Frame(tab_frame)
             duration_frame.pack(fill=tk.X, pady=(0, 5))
             
@@ -3032,8 +2991,8 @@ class MagicToolGUI:
                 self.log_to_output(self.script_output, 
                                  f"✅ 已加载{config['title']}: {os.path.basename(file_path)}")
                 
-                # 如果是JSON文件且是scenarios，更新时长显示
-                if config['file_type'] == 'json' and editor_name == 'scenarios_json':
+                # 如果是JSON文件且是scenes，更新时长显示
+                if config['file_type'] == 'json' and editor_name == 'scenes_json':
                     self.root.after(50, self.update_duration_displays)
             else:
                 editor.delete("1.0", tk.END)
@@ -3112,8 +3071,8 @@ class MagicToolGUI:
             
             self.log_to_output(self.script_output, f"✅ {config['title']}已格式化")
             
-            # 如果是scenarios，更新时长显示
-            if editor_name == 'scenarios_json':
+            # 如果是scenes，更新时长显示
+            if editor_name == 'scenes_json':
                 self.root.after(50, self.update_duration_displays)
             
         except json.JSONDecodeError as e:
@@ -3152,27 +3111,27 @@ class MagicToolGUI:
                 pass
         self.log_to_output(self.script_output, f"💾 已保存 {saved_count} 个文件")
 
-    def load_scenarios_json(self):
-        """加载scenarios.json文件"""
-        if hasattr(self, 'file_editors') and 'scenarios_json' in self.file_editors:
-            self.load_file_content('scenarios_json')
+    def load_scenes_json(self):
+        """加载scenes.json文件"""
+        if hasattr(self, 'file_editors') and 'scenes_json' in self.file_editors:
+            self.load_file_content('scenes_json')
 
-    def save_scenarios_json(self):
-        """保存scenarios.json文件"""
-        if hasattr(self, 'file_editors') and 'scenarios_json' in self.file_editors:
-            self.save_file_content('scenarios_json')
+    def save_scenes_json(self):
+        """保存scenes.json文件"""
+        if hasattr(self, 'file_editors') and 'scenes_json' in self.file_editors:
+            self.save_file_content('scenes_json')
 
-    def format_scenarios_json(self):
-        """格式化scenarios.json内容"""
-        if hasattr(self, 'file_editors') and 'scenarios_json' in self.file_editors:
-            self.format_json_content('scenarios_json')
+    def format_scenes_json(self):
+        """格式化scenes.json内容"""
+        if hasattr(self, 'file_editors') and 'scenes_json' in self.file_editors:
+            self.format_json_content('scenes_json')
 
     def extract_durations_from_json(self, json_content, data_type):
         """从JSON内容中提取时长信息
         
         Args:
             json_content: JSON字符串内容
-            data_type: 'scenarios' 
+            data_type: 'scenes' 
         
         Returns:
             list: 时长列表（秒）
@@ -3182,14 +3141,14 @@ class MagicToolGUI:
         try:
             data = json.loads(json_content)
             
-            if data_type == 'scenarios':
-                # 从scenarios中提取duration字段
-                self.log_to_output(self.script_output, f"🔍 scenarios数据类型: {type(data)}, 长度: {len(data) if isinstance(data, list) else 'N/A'}")
+            if data_type == 'scenes':
+                # 从scenes中提取duration字段
+                self.log_to_output(self.script_output, f"🔍 scenes数据类型: {type(data)}, 长度: {len(data) if isinstance(data, list) else 'N/A'}")
                 
                 if isinstance(data, list):
-                    for i, scenario in enumerate(data):
-                        if isinstance(scenario, dict) and 'duration' in scenario:
-                            duration = scenario.get('duration', 0)
+                    for i, scene in enumerate(data):
+                        if isinstance(scene, dict) and 'duration' in scene:
+                            duration = scene.get('duration', 0)
                             try:
                                 durations.append(float(duration))
                             except (ValueError, TypeError):
@@ -3199,10 +3158,10 @@ class MagicToolGUI:
                         else:
                             durations.append(0.0)
                             if i < 3:
-                                available_keys = list(scenario.keys())[:5] if isinstance(scenario, dict) else []
+                                available_keys = list(scene.keys())[:5] if isinstance(scene, dict) else []
                                 self.log_to_output(self.script_output, f"🔍 场景{i}: 无duration字段, 可用字段: {available_keys}")
                 else:
-                    self.log_to_output(self.script_output, f"❌ scenarios数据不是列表格式: {type(data)}")
+                    self.log_to_output(self.script_output, f"❌ scenes数据不是列表格式: {type(data)}")
                     
         except json.JSONDecodeError as e:
             self.log_to_output(self.script_output, f"❌ JSON解析失败: {str(e)[:100]}")
@@ -3215,20 +3174,20 @@ class MagicToolGUI:
         """更新时长显示"""
         self.log_to_output(self.script_output, "🔍 开始更新时长显示...")
         
-        # 更新scenarios时长显示
-        if 'scenarios_json' in self.file_editors and 'duration_display' in self.file_editors['scenarios_json']:
-            self.log_to_output(self.script_output, "🔍 正在处理scenarios时长...")
-            scenarios_editor = self.file_editors['scenarios_json']['editor']
-            scenarios_content = scenarios_editor.get("1.0", tk.END).strip()
+        # 更新scenes时长显示
+        if 'scenes_json' in self.file_editors and 'duration_display' in self.file_editors['scenes_json']:
+            self.log_to_output(self.script_output, "🔍 正在处理scenes时长...")
+            scenes_editor = self.file_editors['scenes_json']['editor']
+            scenes_content = scenes_editor.get("1.0", tk.END).strip()
             
-            if scenarios_content and scenarios_content != "" and not scenarios_content.startswith("//"):
-                self.log_to_output(self.script_output, f"🔍 scenarios内容长度: {len(scenarios_content)} 字符")
-                scenario_durations = self.extract_durations_from_json(scenarios_content, 'scenarios')
+            if scenes_content and scenes_content != "" and not scenes_content.startswith("//"):
+                self.log_to_output(self.script_output, f"🔍 scenes内容长度: {len(scenes_content)} 字符")
+                scene_durations = self.extract_durations_from_json(scenes_content, 'scenes')
                 
-                if scenario_durations and any(d > 0 for d in scenario_durations):
+                if scene_durations and any(d > 0 for d in scene_durations):
                     # 格式化显示：保留1位小数，用颜色标识过长的场景
                     duration_texts = []
-                    for i, duration in enumerate(scenario_durations):
+                    for i, duration in enumerate(scene_durations):
                         if duration > 15:  # 超过15秒的场景用红色警告
                             duration_texts.append(f"⚠️{duration:.1f}")
                         elif duration > 12:  # 超过12秒的场景用橙色提醒
@@ -3237,31 +3196,31 @@ class MagicToolGUI:
                             duration_texts.append(f"{duration:.1f}")
                     
                     display_text = f"[{', '.join(duration_texts)}]"
-                    total_duration = sum(scenario_durations)
-                    avg_duration = total_duration / len(scenario_durations) if scenario_durations else 0
-                    display_text += f" | 总计: {total_duration:.1f}s, 平均: {avg_duration:.1f}s, 共{len(scenario_durations)}个"
+                    total_duration = sum(scene_durations)
+                    avg_duration = total_duration / len(scene_durations) if scene_durations else 0
+                    display_text += f" | 总计: {total_duration:.1f}s, 平均: {avg_duration:.1f}s, 共{len(scene_durations)}个"
                     
-                    self.file_editors['scenarios_json']['duration_display'].config(
+                    self.file_editors['scenes_json']['duration_display'].config(
                         text=display_text, foreground='black')
-                    self.log_to_output(self.script_output, f"✅ 场景时长已更新: 平均 {avg_duration:.1f}s, 共{len(scenario_durations)}个场景")
+                    self.log_to_output(self.script_output, f"✅ 场景时长已更新: 平均 {avg_duration:.1f}s, 共{len(scene_durations)}个场景")
                 else:
-                    self.file_editors['scenarios_json']['duration_display'].config(
+                    self.file_editors['scenes_json']['duration_display'].config(
                         text="无法解析场景时长数据 (可能缺少duration字段)", foreground='red')
-                    self.log_to_output(self.script_output, f"❌ 场景时长解析失败，提取到 {len(scenario_durations)} 个时长值")
+                    self.log_to_output(self.script_output, f"❌ 场景时长解析失败，提取到 {len(scene_durations)} 个时长值")
             else:
-                self.file_editors['scenarios_json']['duration_display'].config(
+                self.file_editors['scenes_json']['duration_display'].config(
                     text="未加载数据", foreground='gray')
-                self.log_to_output(self.script_output, "⚠️ scenarios编辑器为空或包含默认文本")
+                self.log_to_output(self.script_output, "⚠️ scenes编辑器为空或包含默认文本")
         else:
-            self.log_to_output(self.script_output, "⚠️ scenarios_json编辑器或duration_display不存在")
+            self.log_to_output(self.script_output, "⚠️ scenes_json编辑器或duration_display不存在")
 
     def check_and_reload_modified_json_files(self):
         """检查JSON文件是否被外部修改，如果是则重新加载并更新时长显示"""
         try:
             modified_files = []
             
-            # 只检查scenarios JSON文件
-            for editor_name in ['scenarios_json']:
+            # 只检查scenes JSON文件
+            for editor_name in ['scenes_json']:
                 if editor_name not in self.file_editors:
                     continue
                     
@@ -3341,13 +3300,13 @@ class MagicToolGUI:
     # name_values will be [{"name":"n1", "value":"v1"}, {"name":"n2", "value":"v2"}]
     def update_config_json(self, name_values):
         try:
-            updated_config = self.current_project_config.copy()
+            updated_config = self.current_project_manager.PROJECT_CONFIG.copy()
             for nv in name_values:
                 updated_config[nv["name"]] = nv["value"]  # Fixed typo: was "vlaue"
-            self.current_project_config = updated_config
+            self.current_project_manager.PROJECT_CONFIG = updated_config
             
             config_manager = ProjectConfigManager(self.get_pid())
-            config_manager.save_project_config(updated_config)
+            config_manager.save_project_manager.PROJECT_CONFIG(updated_config)
             return True
         except Exception as e:
             self.log_to_output(self.script_output, f"❌ 保存题目内容到配置失败: {str(e)}")

@@ -17,128 +17,6 @@ class FfmpegAudioProcessor:
         self.effect_path = config.get_effect_path()
 
 
-    def audio_change(self, audio_path, fade_in_length=0.0, fade_out_length=0.0, volume=1.0, extend_length=0.0):
-        output_path = config.get_temp_file(self.pid, "wav")
-        try:
-            # Validate volume parameter
-            if not (0.1 <= volume <= 5.0):
-                raise ValueError(f'Volume must be between 0.1 and 5.0, got {volume}')
-            
-            # Debug output
-            print(f'🔊 Converting to stereo with volume: {volume} (1.0=normal, <1.0=quieter, >1.0=louder)')
-            if fade_in_length > 0.0 or fade_out_length > 0.0:
-                print(f'🎵 Adding fade effects - In: {fade_in_length}s, Out: {fade_out_length}s')
-            print(f'📁 Input: {audio_path}')
-            print(f'📁 Output: {output_path}')
-            
-            # Build FFmpeg command
-            cmd = [
-                self.ffmpeg_path, "-y",
-                "-i", audio_path,
-                "-vn",
-                "-ac", "2",
-                "-ar", "44100",
-                "-c:a", "pcm_s16le"
-            ]
-            
-            # Build audio filter string
-            audio_filters = []
-            
-            # Add fade effects if fade_in_length or fade_out_length > 0
-            if fade_in_length > 0.0 or fade_out_length > 0.0:
-                # Get audio duration to calculate fade out start time
-                duration = self.get_duration(audio_path)
-                if duration is None:
-                    print(f"⚠️ Could not determine audio duration, skipping fade effects")
-                else:
-                    print(f'🎵 Audio duration: {duration:.2f}s')
-                    
-                    # Add fade in filter if fade_in_length > 0
-                    if fade_in_length > 0.0:
-                        audio_filters.append(f"afade=t=in:st=0:d={fade_in_length}:curve=esin")
-                        print(f'🎵 Adding fade in: {fade_in_length}s')
-                    
-                    # Add fade out filter if fade_out_length > 0
-                    if fade_out_length > 0.0:
-                        fade_out_start = max(0, duration - fade_out_length)
-                        audio_filters.append(f"afade=t=out:st={fade_out_start}:d={fade_out_length}:curve=esin")
-                        print(f'🎵 Adding fade out: {fade_out_length}s starting at {fade_out_start:.2f}s')
-            
-            # Add volume filter if volume is not 1.0 (normal)
-            if volume != 1.0:
-                audio_filters.append(f"volume={volume}")
-            
-            # Add padding (silence extension) if extend_length > 0
-            if extend_length > 0.0:
-                audio_filters.append(f"apad=pad_dur={extend_length}")
-                print(f'🔇 Extending audio with {extend_length} seconds of silence')
-            
-            # Apply audio filters if any exist
-            if audio_filters:
-                filter_string = ",".join(audio_filters)
-                cmd.extend(["-af", filter_string])
-                print(f'🔧 Audio filters applied: {filter_string}')
-
-            cmd.append(output_path)
-            
-            subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            
-            # Verify the output file was created
-            if os.path.exists(output_path):
-                print(f'✅ Stereo conversion completed successfully: {output_path}')
-                return output_path
-            else:
-                print(f'❌ Output file was not created: {output_path}')
-                return None
-                
-        except subprocess.CalledProcessError as e:
-            print(f"FFmpeg Error in audio_to_stereo: {e.stderr}")
-            return None
-        except Exception as e:
-            print(f"An error occurred in audio_to_stereo: {e}")
-            return None
-
-
-    def concat_audios(self, audio_list):
-        output_path = config.get_temp_file(self.pid, "wav")
-        if len(audio_list) == 0:
-            return None
-        if len(audio_list) == 1:
-            copy_file(audio_list[0], output_path)
-            return output_path
-
-        try:
-            audio_list_path = os.path.join(config.get_temp_path(self.pid), "concat_list.txt")
-            with open(audio_list_path, "w", encoding='utf-8') as f:
-                for audio in audio_list:
-                    # Use forward slashes for cross-platform compatibility
-                    audio_escaped = audio.replace('\\', '/')
-                    f.write(f"file '{audio_escaped}'\n")
-
-            # Step 3: Concatenate the normalized audio files
-            concat_cmd = [
-                self.ffmpeg_path, "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", audio_list_path,
-                "-c:a", "pcm_s16le",
-                "-ac", "2",
-                "-ar", "44100",
-                "-avoid_negative_ts", "make_zero",
-                "-fflags", "+genpts",
-                output_path
-            ]
-            
-            subprocess.run(concat_cmd, check=True, capture_output=True, 
-                         text=True, encoding='utf-8', errors='ignore')
-            print(f"Successfully concatenated {len(audio_list)} audio files to: {output_path}")
-
-        except Exception as e:
-            print(f"Error in concat_audios: {e}")
-
-        return output_path
-
-
     def make_silence(self, duration):
         noise_wav_path = config.get_background_music_path()+"/noise.wav"
         return self.audio_cut_fade(noise_wav_path, 0, duration, 0, 1.0)
@@ -237,17 +115,14 @@ class FfmpegAudioProcessor:
         if not audio_list or len(audio_list) == 0:
             return None
         
-        # If only one audio file, return it directly
         if len(audio_list) == 1:
             return self.to_wav(audio_list[0])
         
         output_path = config.get_temp_file(self.pid, "wav")
         
         try:
-            # Build FFmpeg command to mix multiple audio files
-            cmd = ['ffmpeg', '-y']
+            cmd = [self.ffmpeg_path, '-y']
             
-            # Add input files
             for audio_file in audio_list:
                 if audio_file and os.path.exists(audio_file):
                     cmd.extend(['-i', audio_file])
@@ -255,15 +130,13 @@ class FfmpegAudioProcessor:
                     print(f"警告：音频文件不存在或为空: {audio_file}")
                     continue
             
-            # If no valid audio files found
             valid_inputs = sum(1 for audio in audio_list if audio and os.path.exists(audio))
             if valid_inputs == 0:
                 print("错误：没有找到有效的音频文件")
                 return None
             elif valid_inputs == 1:
-                # Only one valid file, copy it
                 valid_file = next(audio for audio in audio_list if audio and os.path.exists(audio))
-                return valid_file
+                return self.to_wav(valid_file)
             
             # Mix all inputs with equal volume, keep longest duration
             filter_complex = f"amix=inputs={valid_inputs}:duration=longest:normalize=0"
@@ -291,6 +164,63 @@ class FfmpegAudioProcessor:
             return None
         except Exception as e:
             print(f"❌ 音频混合异常: {str(e)}")
+            return None
+
+
+    def concat_audios(self, audio_list):
+        if not audio_list or len(audio_list) == 0:
+            return None
+        
+        output_path = config.get_temp_file(self.pid, "wav")
+        
+        if len(audio_list) == 1:
+            # Convert to wav for consistency
+            return self.to_wav(audio_list[0])
+
+        try:
+            valid_audio_list = [audio for audio in audio_list if audio and os.path.exists(audio)]
+            
+            if len(valid_audio_list) == 0:
+                print("错误：没有找到有效的音频文件")
+                return None
+            elif len(valid_audio_list) == 1:
+                return self.to_wav(valid_audio_list[0])
+            
+            audio_list_path = os.path.join(config.get_temp_path(self.pid), "concat_list.txt")
+            with open(audio_list_path, "w", encoding='utf-8') as f:
+                for audio in valid_audio_list:
+                    audio_escaped = audio.replace('\\', '/')
+                    f.write(f"file '{audio_escaped}'\n")
+
+            # Concatenate the audio files
+            concat_cmd = [
+                self.ffmpeg_path, "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", audio_list_path,
+                "-c:a", "pcm_s16le",
+                "-ac", "2",
+                "-ar", "44100",
+                "-avoid_negative_ts", "make_zero",
+                "-fflags", "+genpts",
+                output_path
+            ]
+            
+            subprocess.run(concat_cmd, check=True, capture_output=True, 
+                         text=True, encoding='utf-8', errors='ignore')
+            
+            if os.path.exists(output_path):
+                print(f"✅ 成功连接 {len(valid_audio_list)} 个音频文件: {output_path}")
+                return output_path
+            else:
+                print("❌ 音频连接失败：输出文件未生成")
+                return None
+
+        except subprocess.CalledProcessError as e:
+            print(f"❌ FFmpeg音频连接错误: {e.stderr}")
+            return None
+        except Exception as e:
+            print(f"❌ 音频连接异常: {str(e)}")
             return None
 
 
@@ -361,19 +291,58 @@ class FfmpegAudioProcessor:
         return temp_file
 
 
-    def extend_audio(self, audio_path, target_length):
-        original_duration = self.get_duration(audio_path)
-        if original_duration >= target_length:
-            return audio_path
+    def extend_audio(self, audio_path, start_time, target_length):
+        """
+        从指定开始时间扩展音频到目标长度。
+        如果音频长度不足，会在末尾添加静音。
+        如果音频长度已满足要求，会进行裁剪。
         
+        Args:
+            audio_path: 输入音频文件路径
+            start_time: 开始时间（秒）
+            target_length: 目标长度（秒）
+            
+        Returns:
+            处理后的音频文件路径，失败时返回 None
+        """
+        # 参数验证
+        if target_length <= 0:
+            print(f"⚠️ 目标时长必须大于0: {target_length}")
+            return None
+            
+        original_duration = self.get_duration(audio_path)
+        if original_duration <= 0.0 or start_time < 0.0 or start_time >= original_duration:
+            print(f"⚠️ 音频时长或开始时间不合法: {audio_path}, original_duration: {original_duration}, start_time: {start_time}")
+            return None
+        
+        # 计算从开始时间到结尾的可用时长
+        available_duration = original_duration - start_time
+        
+        # 如果音频长度已满足要求，直接裁剪
+        if available_duration >= target_length:
+            print(f"ℹ️ 音频时长 ({available_duration:.2f}s) 已满足目标时长 ({target_length:.2f}s)，进行裁剪")
+            return self.audio_cut_fade(audio_path, start_time, target_length, 0, 1.0)
+        
+        # 需要扩展：先裁剪音频，然后添加静音
         try:
+            # 裁剪音频（从 start_time 到结尾）
+            cut_audio_path = self.audio_cut_fade(audio_path, start_time, available_duration, 0, 1.0)
+            
+            # 检查裁剪是否成功
+            if not cut_audio_path or not os.path.exists(cut_audio_path):
+                print(f"❌ 音频裁剪失败: {cut_audio_path}")
+                return None
+            
+            # 计算需要添加的静音时长
             output_path = config.get_temp_file(self.pid, "wav")
+            silence_duration = target_length - available_duration
             
-            silence_duration = target_length - original_duration
+            print(f'🔇 扩展音频: 原始时长 {available_duration:.2f}s -> 目标时长 {target_length:.2f}s (添加 {silence_duration:.2f}s 静音)')
             
+            # 将裁剪后的音频与静音连接
             subprocess.run([
                 self.ffmpeg_path, "-y",
-                "-i", audio_path,
+                "-i", cut_audio_path,
                 "-f", "lavfi",
                 "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100:duration={silence_duration}",
                 "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1",
@@ -383,10 +352,21 @@ class FfmpegAudioProcessor:
                 output_path
             ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             
+            # 验证输出文件是否生成
+            if not os.path.exists(output_path):
+                print(f"❌ 扩展音频失败：输出文件未生成")
+                return None
+            
             return output_path
-        except Exception as e:
-            print(f"An error occurred in extend_audio: {e}")
+                
+        except subprocess.CalledProcessError as e:
+            print(f"❌ FFmpeg 错误 (extend_audio): {e.stderr}")
             return None
+        except Exception as e:
+            print(f"❌ 扩展音频时发生错误: {e}")
+            return None
+
+
 
     def audio_cut_fade(self, raw_auddio_path, start_time, output_length, fade_in=0, fade_out=0, volume=1.0):
         output_path = config.get_temp_file(self.pid, "wav")

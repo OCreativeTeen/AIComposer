@@ -22,13 +22,13 @@ except ImportError:
 class VideoReviewDialog:
     """Dialog for reviewing and configuring video replacement"""
     
-    def __init__(self, parent, source_video_path, current_scenario_duration, 
-                       initial_start_time, initial_end_time, scenarios_length):
+    def __init__(self, parent, source_video_path, current_scene_duration, 
+                       initial_start_time, initial_end_time, scenes_length):
         self.parent = parent
         self.source_video_path = source_video_path
-        self.current_scenario_duration = current_scenario_duration
+        self.current_scene_duration = current_scene_duration
         self.result = None  # Will store the result when dialog is closed
-        self.scenarios_length = scenarios_length
+        self.scenes_length = scenes_length
         
         self.video_duration = parent.workflow.ffmpeg_processor.get_duration(source_video_path)
         self.source_has_audio = parent.workflow.ffmpeg_processor.has_audio_stream(source_video_path)
@@ -69,7 +69,7 @@ class VideoReviewDialog:
         ttk.Label(info_row1, text=f"源视频时长: {self.video_duration:.2f}秒").pack(side=tk.LEFT)
 
         ttk.Separator(info_row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
-        ttk.Label(info_row1, text=f"目标时长: {self.current_scenario_duration:.2f}秒").pack(side=tk.LEFT)
+        ttk.Label(info_row1, text=f"目标时长: {self.current_scene_duration:.2f}秒").pack(side=tk.LEFT)
 
         ttk.Separator(info_row1, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
         audio_status = "有音频" if self.source_has_audio else "无音频"
@@ -172,7 +172,7 @@ class VideoReviewDialog:
         self.second_track_radio.pack(side=tk.LEFT, padx=10)
 
         # 如果主轨道被锁定，禁用主轨道选项
-        if self.scenarios_length==0:
+        if self.scenes_length==0:
             self.second_track_radio.config(state=tk.DISABLED)
 
         # Audio transcription frame
@@ -184,7 +184,7 @@ class VideoReviewDialog:
         transcribe_label.pack(pady=(0, 5))
         
         self.transcribe_audio_var = tk.StringVar(value="NONE")
-        transcribe_options = ["NONE", "Single-Scenario", "Multiple-Scenarios"]
+        transcribe_options = ["NONE", "Single-scene", "Multiple-scenes"]
         transcribe_combobox = ttk.Combobox(
             transcribe_frame,
             textvariable=self.transcribe_audio_var,
@@ -196,7 +196,7 @@ class VideoReviewDialog:
         # Add note about transcription
         transcribe_note = ttk.Label(
             transcribe_frame, 
-            text="NONE: 不转录\nSingle-Scenario: 单个场景\nMultiple-Scenarios: 多个场景",
+            text="NONE: 不转录\nSingle-scene: 单个场景\nMultiple-scenes: 多个场景",
             foreground="gray",
             font=("TkDefaultFont", 8)
         )

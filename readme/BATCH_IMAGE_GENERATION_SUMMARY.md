@@ -59,7 +59,7 @@ python run_image_generator.py --create-sample
 
 ### 1. 准备阶段
 ```bash
-# 确保项目有必需文件：scenarios.json, paragraphs.json, audio, script
+# 确保项目有必需文件：scenes.json, paragraphs.json, audio, script
 ```
 
 ### 2. 配置阶段

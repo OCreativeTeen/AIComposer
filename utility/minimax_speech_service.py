@@ -6,7 +6,6 @@ import hashlib
 import re
 import time
 from .ffmpeg_audio_processor import FfmpegAudioProcessor
-from .llm_api import LLMApi
 import config
 import base64
 import binascii
@@ -20,8 +19,6 @@ class MinimaxSpeechService:
         self.access_token = os.getenv("MINIMAX_KEY", "")
         group_id = os.getenv("MINIMAX_GROUP_ID", "")
         self.tts_url = f"https://api.minimaxi.chat/v1/t2a_v2?GroupId={group_id}" 
-        
-        self.llm_large = LLMApi(model=LLMApi.GEMINI_2_0_FLASH)
         
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         print(f"TTS URL: {self.tts_url}")

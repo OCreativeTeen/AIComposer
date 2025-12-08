@@ -48,7 +48,7 @@
 
 新增以下方法：
 
-1. **`create_image_for_scenario(scenario_data, scenario_index, previous_scenario, description="")`**
+1. **`create_image_for_scene(scene_data, scene_index, previous_scene, description="")`**
    - 为单个场景生成图像
    - 支持前一个场景作为参考以保持连续性
    - 支持自定义描述
@@ -63,13 +63,13 @@
 4. **`load_paragraphs()`**
    - 从JSON文件加载段落数据
 
-5. **`get_scenario_by_index(scenario_index)`**
+5. **`get_scene_by_index(scene_index)`**
    - 根据索引获取场景数据和位置信息
 
-6. **`update_scenario(scenario_index, updated_scenario)`**
+6. **`update_scene(scene_index, updated_scene)`**
    - 更新指定索引的场景数据（保持start_time不变）
 
-7. **`get_total_scenarios_count()`**
+7. **`get_total_scenes_count()`**
    - 获取总场景数量
 
 ### GUI改进 (`magic_workflow_gui.py`)
@@ -113,7 +113,7 @@
 
 场景索引文件保存在：
 ```
-/Projects/Channel/media/program/publish/{PID}_scenarios.json
+/Projects/Channel/media/program/publish/{PID}_scenes.json
 ```
 
 ## 测试
