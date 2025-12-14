@@ -448,14 +448,14 @@ class MagicToolGUI:
                 config_data['video_height'] = self.current_project_manager.PROJECT_CONFIG.get('video_height', '1080') if self.current_project_manager.PROJECT_CONFIG else '1080'
             
             # 保存 WAN 视频参数
-            if hasattr(self, 'wan_style_var'):
-                config_data['wan_style'] = self.wan_style_var.get()
-            if hasattr(self, 'wan_shot_var'):
-                config_data['wan_shot'] = self.wan_shot_var.get()
-            if hasattr(self, 'wan_angle_var'):
-                config_data['wan_angle'] = self.wan_angle_var.get()
-            if hasattr(self, 'wan_color_var'):
-                config_data['wan_color'] = self.wan_color_var.get()
+            if hasattr(self, 'camear_style_var'):
+                config_data['camear_style'] = self.camear_style_var.get()
+            if hasattr(self, 'camera_shot_var'):
+                config_data['camera_shot'] = self.camera_shot_var.get()
+            if hasattr(self, 'camera_angle_var'):
+                config_data['camera_angle'] = self.camera_angle_var.get()
+            if hasattr(self, 'camera_color_var'):
+                config_data['camera_color'] = self.camera_color_var.get()
             
             # Save thumbnail font color if available
             if hasattr(self, 'thumbnail_font_color'):
@@ -594,44 +594,44 @@ class MagicToolGUI:
         row4.pack(fill=tk.X, pady=2)
         
         # 视频风格
-        wan_style_frame = ttk.Frame(row4)
-        wan_style_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(wan_style_frame, text="视频风格:").pack(side=tk.LEFT)
-        self.wan_style_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_style', config.WAN_VIDEO_STYLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_STYLE[0])
-        self.wan_style_combo = ttk.Combobox(wan_style_frame, textvariable=self.wan_style_var,
+        camear_style_frame = ttk.Frame(row4)
+        camear_style_frame.pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(camear_style_frame, text="视频风格:").pack(side=tk.LEFT)
+        self.camear_style_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camear_style', config.WAN_VIDEO_STYLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_STYLE[0])
+        self.camear_style_combo = ttk.Combobox(camear_style_frame, textvariable=self.camear_style_var,
                                             values=config.WAN_VIDEO_STYLE, state="readonly", width=20)
-        self.wan_style_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_style_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.camear_style_combo.pack(side=tk.LEFT, padx=(5, 0))
+        self.camear_style_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 镜头类型
-        wan_shot_frame = ttk.Frame(row4)
-        wan_shot_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(wan_shot_frame, text="镜头类型:").pack(side=tk.LEFT)
-        self.wan_shot_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_shot', config.WAN_VIDEO_SHOT[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_SHOT[0])
-        self.wan_shot_combo = ttk.Combobox(wan_shot_frame, textvariable=self.wan_shot_var,
+        camera_shot_frame = ttk.Frame(row4)
+        camera_shot_frame.pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(camera_shot_frame, text="镜头类型:").pack(side=tk.LEFT)
+        self.camera_shot_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_shot', config.WAN_VIDEO_SHOT[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_SHOT[0])
+        self.camera_shot_combo = ttk.Combobox(camera_shot_frame, textvariable=self.camera_shot_var,
                                            values=config.WAN_VIDEO_SHOT, state="readonly", width=20)
-        self.wan_shot_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_shot_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.camera_shot_combo.pack(side=tk.LEFT, padx=(5, 0))
+        self.camera_shot_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 拍摄角度
-        wan_angle_frame = ttk.Frame(row4)
-        wan_angle_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(wan_angle_frame, text="拍摄角度:").pack(side=tk.LEFT)
-        self.wan_angle_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_angle', config.WAN_VIDEO_ANGLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_ANGLE[0])
-        self.wan_angle_combo = ttk.Combobox(wan_angle_frame, textvariable=self.wan_angle_var,
+        camera_angle_frame = ttk.Frame(row4)
+        camera_angle_frame.pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(camera_angle_frame, text="拍摄角度:").pack(side=tk.LEFT)
+        self.camera_angle_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_angle', config.WAN_VIDEO_ANGLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_ANGLE[0])
+        self.camera_angle_combo = ttk.Combobox(camera_angle_frame, textvariable=self.camera_angle_var,
                                             values=config.WAN_VIDEO_ANGLE, state="readonly", width=20)
-        self.wan_angle_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_angle_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.camera_angle_combo.pack(side=tk.LEFT, padx=(5, 0))
+        self.camera_angle_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
         
         # 色彩风格
-        wan_color_frame = ttk.Frame(row4)
-        wan_color_frame.pack(side=tk.LEFT)
-        ttk.Label(wan_color_frame, text="色彩风格:").pack(side=tk.LEFT)
-        self.wan_color_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('wan_color', config.WAN_VIDEO_COLOR[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_COLOR[0])
-        self.wan_color_combo = ttk.Combobox(wan_color_frame, textvariable=self.wan_color_var,
+        camera_color_frame = ttk.Frame(row4)
+        camera_color_frame.pack(side=tk.LEFT)
+        ttk.Label(camera_color_frame, text="色彩风格:").pack(side=tk.LEFT)
+        self.camera_color_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_color', config.WAN_VIDEO_COLOR[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_COLOR[0])
+        self.camera_color_combo = ttk.Combobox(camera_color_frame, textvariable=self.camera_color_var,
                                             values=config.WAN_VIDEO_COLOR, state="readonly", width=20)
-        self.wan_color_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.wan_color_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
+        self.camera_color_combo.pack(side=tk.LEFT, padx=(5, 0))
+        self.camera_color_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
     
     def change_project(self):
         """更改项目"""
@@ -655,10 +655,10 @@ class MagicToolGUI:
             self.story_site_entry.insert(0, self.current_project_manager.PROJECT_CONFIG.get('story_site', ''))
             
             # 更新 WAN 视频参数
-            self.wan_style_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_style', config.WAN_VIDEO_STYLE[0]))
-            self.wan_shot_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_shot', config.WAN_VIDEO_SHOT[0]))
-            self.wan_angle_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_angle', config.WAN_VIDEO_ANGLE[0]))
-            self.wan_color_var.set(self.current_project_manager.PROJECT_CONFIG.get('wan_color', config.WAN_VIDEO_COLOR[0]))
+            self.camear_style_var.set(self.current_project_manager.PROJECT_CONFIG.get('camear_style', config.WAN_VIDEO_STYLE[0]))
+            self.camera_shot_var.set(self.current_project_manager.PROJECT_CONFIG.get('camera_shot', config.WAN_VIDEO_SHOT[0]))
+            self.camera_angle_var.set(self.current_project_manager.PROJECT_CONFIG.get('camera_angle', config.WAN_VIDEO_ANGLE[0]))
+            self.camera_color_var.set(self.current_project_manager.PROJECT_CONFIG.get('camera_color', config.WAN_VIDEO_COLOR[0]))
             
             # 更新语言选择器
             self.language_var.set(self.current_language)
@@ -1672,12 +1672,12 @@ class MagicToolGUI:
                 else:
                     starting_mode = "simple"
 
-                wan_style = getattr(self, 'wan_style_var', None) and self.wan_style_var.get() or config.WAN_VIDEO_STYLE[0]
-                wan_shot = getattr(self, 'wan_shot_var', None) and self.wan_shot_var.get() or config.WAN_VIDEO_SHOT[0]
-                wan_angle = getattr(self, 'wan_angle_var', None) and self.wan_angle_var.get() or config.WAN_VIDEO_ANGLE[0]
-                wan_color = getattr(self, 'wan_color_var', None) and self.wan_color_var.get() or config.WAN_VIDEO_COLOR[0]
+                camear_style = getattr(self, 'camear_style_var', None) and self.camear_style_var.get() or config.WAN_VIDEO_STYLE[0]
+                camera_shot = getattr(self, 'camera_shot_var', None) and self.camera_shot_var.get() or config.WAN_VIDEO_SHOT[0]
+                camera_angle = getattr(self, 'camera_angle_var', None) and self.camera_angle_var.get() or config.WAN_VIDEO_ANGLE[0]
+                camera_color = getattr(self, 'camera_color_var', None) and self.camera_color_var.get() or config.WAN_VIDEO_COLOR[0]
                 large_site_name = self.story_site_entry.get().strip() if hasattr(self, 'story_site_entry') else ''
-                result = workflow.prepare_project( starting_mode, self.enable_ending.get(), 26.0, new_title, None, program_keywords, large_site_name, wan_style, wan_shot, wan_angle, wan_color )
+                result = workflow.prepare_project( starting_mode, self.enable_ending.get(), 26.0, new_title, None, program_keywords, large_site_name, camear_style, camera_shot, camera_angle, camera_color )
                 
                 message = f"生成了 {len(result)} 个段落"
                 self.log_to_output(self.script_output, f"✅ 项目脚本生成成功！{message}")

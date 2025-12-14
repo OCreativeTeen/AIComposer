@@ -1,6 +1,10 @@
 import json
 import os
 import shutil
+from datetime import datetime
+import project_manager
+import config
+
 
 
 def copy_file(source, destination):
@@ -72,6 +76,27 @@ def is_video_file(file_path):
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv'}
     file_ext = os.path.splitext(file_path)[1].lower()
     return file_ext in video_extensions
+
+
+
+media_count = 0
+pid = None
+
+def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
+    global media_count, pid
+    new_media_stem = media_type + "_" + str(scene["id"]) + "_" + str(int(datetime.now().timestamp()*100 + media_count%100))
+    media_count = (media_count + 1) % 100
+
+    old_media_path = scene.get(media_type, None)
+    if pid is None:
+        pid = project_manager.PROJECT_CONFIG.get('pid')
+    scene[media_type] = config.get_media_path(pid) + "/" + new_media_stem + media_postfix
+
+    if replacement:
+        copy_file(replacement, scene[media_type])
+        if not make_replacement_copy:
+            safe_remove(replacement)
+    return old_media_path, scene[media_type]
 
 
 def clean_memory(cuda=True, verbose=True):

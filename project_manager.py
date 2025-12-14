@@ -179,8 +179,9 @@ class ContentEditorDialog:
         self.channel = channel
         # 保存三个字段的内容
         self.result_story = initial_story
-        if self.result_story == "" or self.result_story is None:
-            self.result_story = config_prompt.STORY_OUTLINE_PROMPT.format(type_name=self.project_type, language=self.language)
+
+        #if self.result_story == "" or self.result_story is None:
+        #    self.result_story = config_prompt.STORY_OUTLINE_PROMPT.format(type_name=self.project_type, language=config.LANGUAGES[self.language])
             
         self.result_inspiration = initial_inspiration
         self.result_poem = initial_poem

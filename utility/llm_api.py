@@ -9,9 +9,10 @@ import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
 import tkinter.messagebox as messagebox
 import tkinter.ttk as ttk
+import config
 
 
-OLLAMA = "gemma3:27b-it-qat"
+OLLAMA = "gemma3:12b-it-qat"
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"
 GEMINI_2_0_FLASH = "gemini-2.0-flash"  # 免费
@@ -42,22 +43,22 @@ class LLMApi:
         self.openai_client = OpenAI(
             api_key = os.getenv("OPENAI_API_KEY", ""),
             base_url = MODELS[GPT_MINI]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(90.0))
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.google_client = OpenAI(
             api_key = os.getenv("GOOGLE_API_KEY", ""),
             base_url =  MODELS[GPT_MINI]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(90.0))
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.ollama_client = OpenAI(
             api_key="ollama",
             base_url =  MODELS[OLLAMA]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(90.0))
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.manal_client = OpenAI(
             api_key="ollama",
             base_url =  MODELS[MANUAL]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(90.0))
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
     
 
@@ -333,12 +334,12 @@ class LLMApi:
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
-                    "temperature": 0.5, # Low (0.0–0.3) predictable;  Medium (0.4–0.7) creativity & reliability;  High (0.8–1.0) very creative
-                    "top_p": 0.9,
-                    "max_tokens": 64000,
+                    "max_tokens": 256000,
                     "stream": False
                 }
                 # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
+                with open("ollama_request_params.json", "w", encoding="utf-8") as f:
+                    json.dump(request_params, f, ensure_ascii=False, indent=2)
                 try:
                     print(f"🔄 使用 OLLAMA 模型 ({model}) 生成文本...")
                     response = self.ollama_client.chat.completions.create(**request_params)
@@ -401,6 +402,7 @@ class LLMApi:
         # 创建单选按钮
         ttk.Radiobutton(main_frame, text=f"GPT Mini ({GPT_MINI})", variable=selected_model, value=GPT_MINI).pack(anchor='w', pady=5)
         ttk.Radiobutton(main_frame, text=f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})", variable=selected_model, value=GEMINI_2_0_FLASH).pack(anchor='w', pady=5)
+        ttk.Radiobutton(main_frame, text=f"OLLAMA ({OLLAMA})", variable=selected_model, value=OLLAMA).pack(anchor='w', pady=5)
         ttk.Radiobutton(main_frame, text=f"Manual ({MANUAL})", variable=selected_model, value=MANUAL).pack(anchor='w', pady=5)
         
         # 用于存储结果
@@ -469,7 +471,11 @@ class LLMApi:
         ttk.Label(system_frame, text="提示词 (Prompt):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
         system_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, width=90, height=15)
         system_text.pack(fill=tk.BOTH, expand=True)
-        content = system_prompt +" \n\n ----- user-promt ----\n\n" + user_prompt
+        content = ""
+        if isinstance(system_prompt, str):
+            content = content +system_prompt
+        if isinstance(user_prompt, str):
+            content = content +" \n\n ----- user-promt ----\n\n" + user_prompt
         system_text.insert('1.0', content)
         # 将内容复制到剪贴板，方便用户粘贴到其他应用/窗口
         dialog.clipboard_clear()

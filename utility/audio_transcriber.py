@@ -27,7 +27,7 @@ class AudioTranscriber:
         self.workflow = workflow
         self.model_size = model_size
         self.device = device
-        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
+        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
 
         device = torch.device("cuda") 
         hf_token = os.getenv("HF_TOKEN", "")
@@ -64,9 +64,9 @@ class AudioTranscriber:
 
 
     def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
-        script_path = f"{config.get_project_path(self.workflow.pid)}/{self.workflow.pid}.srt.json"
+        script_path = f"{config.get_temp_path(self.workflow.pid)}/{self.workflow.pid}.srt.json"
         if safe_file(script_path):
-            return read_json(script_path)
+           return read_json(script_path)
 
         start_time = datetime.now().strftime("%H:%M:%S")
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
@@ -169,18 +169,18 @@ class AudioTranscriber:
 
         # 4. Run diarization
         # 使用预加载的音频数据避免 torchcodec 依赖问题
-        try:
-            # 先尝试使用预加载的音频数据（推荐方法，避免 torchcodec 依赖）
-            audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
-            waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
-            audio_data = {"waveform": waveform, "sample_rate": sample_rate}
-            diarization = self.pipeline(audio_data)
-        except Exception as e:
-            # 如果预加载失败，回退到直接使用文件路径（可能会触发警告）
-            print(f"警告: 预加载音频失败，使用文件路径: {e}")
-            diarization = self.pipeline(audio_path)
+        #try:
+        #    # 先尝试使用预加载的音频数据（推荐方法，避免 torchcodec 依赖）
+        #    audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
+        #    waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
+        #    audio_data = {"waveform": waveform, "sample_rate": sample_rate}
+        #    diarization = self.pipeline(audio_data)
+        #except Exception as e:
+        #    # 如果预加载失败，回退到直接使用文件路径（可能会触发警告）
+        #    print(f"警告: 预加载音频失败，使用文件路径: {e}")
+        #    diarization = self.pipeline(audio_path)
         
-        merged_segments = self.assign_speakers(merged_segments, diarization)
+        merged_segments = self.assign_speakers(merged_segments, None)
 
         clean_memory()
 

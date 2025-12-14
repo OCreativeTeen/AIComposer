@@ -5,7 +5,7 @@ from .sd_image_processor import SDProcessor
 from .audio_transcriber import AudioTranscriber
 from .youtube_downloader import YoutubeDownloader
 from .llm_api import LLMApi
-from .minimax_speech_service import MinimaxSpeechService
+from .media_scanner import MediaScanner
 
 
 

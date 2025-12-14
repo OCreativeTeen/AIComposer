@@ -480,13 +480,13 @@ class EnhancedMediaEditor:
                         final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
                     
                     # 更新场景
-                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
+                    old_v, new_v = refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
                 
                 # 如果音频被更新，替换视频中的音频
                 if self.new_audio and not self.new_video:
                     final_video = self.workflow.ffmpeg_processor.add_audio_to_video(final_video, final_audio)
-                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
+                    old_v, new_v = refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
                 
                 # 提取音频
@@ -497,16 +497,16 @@ class EnhancedMediaEditor:
                 # 没有视频，从图片和音频生成
                 if final_image and final_audio:
                     final_video = self.workflow.ffmpeg_processor.image_audio_to_video( final_image, final_audio, self.animation_var.get() )
-                    old_v, new_v = self.workflow.refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
+                    old_v, new_v = refresh_scene_media(self.scene, self.video_field, ".mp4", final_video)
                     final_video = new_v
             
             # 更新音频
             if final_audio:
-                old_a, new_a = self.workflow.refresh_scene_media(self.scene, self.audio_field, ".wav", final_audio)
+                old_a, new_a = refresh_scene_media(self.scene, self.audio_field, ".wav", final_audio)
             
             # 更新图片
             if self.new_image:
-                old_i, new_i = self.workflow.refresh_scene_media(self.scene, self.image_field, ".webp", final_image)
+                old_i, new_i = refresh_scene_media(self.scene, self.image_field, ".webp", final_image)
             
             self.workflow.save_scenes_to_json()
             self.result = "ok"

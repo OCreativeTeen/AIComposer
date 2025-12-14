@@ -12,16 +12,18 @@ import random
 import unicodedata
 
 
+# Standardized framerate to prevent sync issues
+STANDARD_FPS = 60
+STANDARD_AUDIO_RATE = 44100
+STANDARD_AUDIO_CHANNELS = 2
+
+# NVENC limitations
+NVENC_MAX_WIDTH = 4096
+NVENC_MAX_HEIGHT = 4096
+NVENC_MAX_PIXELS = 8192 * 8192  # Maximum total pixels
+
+
 class FfmpegProcessor:
-    # Standardized framerate to prevent sync issues
-    STANDARD_FPS = 60
-    STANDARD_AUDIO_RATE = 44100
-    STANDARD_AUDIO_CHANNELS = 2
-    
-    # NVENC limitations
-    NVENC_MAX_WIDTH = 4096
-    NVENC_MAX_HEIGHT = 4096
-    NVENC_MAX_PIXELS = 8192 * 8192  # Maximum total pixels
 
 
     def __init__(self, pid, language, video_width=None, video_height=None):
@@ -63,11 +65,11 @@ class FfmpegProcessor:
             height = self.height
         
         # Check individual dimension limits
-        if width > self.NVENC_MAX_WIDTH or height > self.NVENC_MAX_HEIGHT:
+        if width > NVENC_MAX_WIDTH or height > NVENC_MAX_HEIGHT:
             return False
         
         # Check total pixel count
-        if width * height > self.NVENC_MAX_PIXELS:
+        if width * height > NVENC_MAX_PIXELS:
             return False
         
         return True
@@ -143,7 +145,7 @@ class FfmpegProcessor:
     def _get_scale_filter(self, width=None, height=None, fps=None):
         """Generate scale filter string with configurable dimensions and standardized fps"""
         if fps is None:
-            fps = self.STANDARD_FPS
+            fps = STANDARD_FPS
         if width is None:
             width = self.width
         if height is None:
@@ -154,7 +156,7 @@ class FfmpegProcessor:
     def _get_simple_scale_filter(self, width=None, height=None, fps=None):
         """Generate simple scale filter string without padding but with standardized fps"""
         if fps is None:
-            fps = self.STANDARD_FPS
+            fps = STANDARD_FPS
         if width is None:
             width = self.width
         if height is None:
@@ -172,12 +174,12 @@ class FfmpegProcessor:
         return [
             "-c:a", "aac",  # Audio codec
             "-b:a", "192k",  # Audio bitrate
-            "-ac", str(self.STANDARD_AUDIO_CHANNELS),  # Audio channels
-            "-ar", str(self.STANDARD_AUDIO_RATE),  # Audio sample rate
-            "-r", str(self.STANDARD_FPS),  # Fixed frame rate
+            "-ac", str(STANDARD_AUDIO_CHANNELS),  # Audio channels
+            "-ar", str(STANDARD_AUDIO_RATE),  # Audio sample rate
+            "-r", str(STANDARD_FPS),  # Fixed frame rate
             "-pix_fmt", "yuv420p",  # Pixel format for compatibility
-            "-g", str(self.STANDARD_FPS),  # GOP size (keyframe interval)
-            "-keyint_min", str(self.STANDARD_FPS),  # Minimum keyframe interval
+            "-g", str(STANDARD_FPS),  # GOP size (keyframe interval)
+            "-keyint_min", str(STANDARD_FPS),  # Minimum keyframe interval
             "-sc_threshold", "0",  # Disable scene detection
             "-movflags", "+faststart",  # Optimize for streaming
             "-avoid_negative_ts", "make_zero",  # Avoid negative timestamps
@@ -247,7 +249,7 @@ class FfmpegProcessor:
                 "-b:a", "192k",         # Audio bitrate
                 "-ac", "2",
                 "-ar", "44100",
-                "-r", str(self.STANDARD_FPS),  # Ensure consistent framerate
+                "-r", str(STANDARD_FPS),  # Ensure consistent framerate
                 "-movflags", "+faststart",
                 output_path
             ])
@@ -398,7 +400,7 @@ class FfmpegProcessor:
             # 添加其他参数
             cmd.extend([
                 "-pix_fmt", "yuv420p",
-                "-r", str(self.STANDARD_FPS),
+                "-r", str(STANDARD_FPS),
                 "-t", str(base_duration),   # 限制输出时长为基础视频时长
                 output_path
             ])
@@ -563,7 +565,7 @@ class FfmpegProcessor:
         ])
         
         # Add frame rate if not using fps filter
-        cmd.extend(["-r", str(self.STANDARD_FPS)])
+        cmd.extend(["-r", str(STANDARD_FPS)])
         
         cmd.extend([
             "-sc_threshold", "0",
@@ -590,14 +592,14 @@ class FfmpegProcessor:
             cmd.extend([
                 "-c:a", "aac",
                 "-b:a", "192k",
-                "-ar", str(self.STANDARD_AUDIO_RATE),
-                "-ac", str(self.STANDARD_AUDIO_CHANNELS)
+                "-ar", str(STANDARD_AUDIO_RATE),
+                "-ac", str(STANDARD_AUDIO_CHANNELS)
             ])
         
         # Add common output options
         cmd.extend([
             "-pix_fmt", "yuv420p",
-            "-r", str(self.STANDARD_FPS),
+            "-r", str(STANDARD_FPS),
             "-sc_threshold", "0",
             "-vsync", "cfr",
             "-movflags", "+faststart",
@@ -636,12 +638,12 @@ class FfmpegProcessor:
             cmd.extend([
                 "-c:a", "aac",
                 "-b:a", "192k",
-                "-ac", str(self.STANDARD_AUDIO_CHANNELS),
-                "-ar", str(self.STANDARD_AUDIO_RATE),
+                "-ac", str(STANDARD_AUDIO_CHANNELS),
+                "-ar", str(STANDARD_AUDIO_RATE),
                 "-pix_fmt", "yuv420p",  # Changed from yuva420p for better compatibility
-                "-r", str(self.STANDARD_FPS),
-                "-g", str(self.STANDARD_FPS),  # Keyframe interval
-                "-keyint_min", str(self.STANDARD_FPS),
+                "-r", str(STANDARD_FPS),
+                "-g", str(STANDARD_FPS),  # Keyframe interval
+                "-keyint_min", str(STANDARD_FPS),
                 "-sc_threshold", "0",
                 "-shortest",  # Use shortest stream duration (audio duration)
                 "-movflags", "+faststart",
@@ -773,10 +775,10 @@ class FfmpegProcessor:
                     "-b:a", "192k",
                     "-ac", "2",
                     "-ar", "44100",
-                    "-r", str(self.STANDARD_FPS),
+                    "-r", str(STANDARD_FPS),
                     "-pix_fmt", "yuv420p",
-                    "-g", str(self.STANDARD_FPS),
-                    "-keyint_min", str(self.STANDARD_FPS),
+                    "-g", str(STANDARD_FPS),
+                    "-keyint_min", str(STANDARD_FPS),
                     "-sc_threshold", "0",
                     "-shortest",
                     "-movflags", "+faststart",
@@ -849,10 +851,10 @@ class FfmpegProcessor:
             "-b:a", "192k",
             "-ac", "2",
             "-ar", "44100",
-            "-r", str(self.STANDARD_FPS),
+            "-r", str(STANDARD_FPS),
             "-pix_fmt", "yuv420p",
-            "-g", str(self.STANDARD_FPS),
-            "-keyint_min", str(self.STANDARD_FPS),
+            "-g", str(STANDARD_FPS),
+            "-keyint_min", str(STANDARD_FPS),
             "-sc_threshold", "0",
             "-movflags", "+faststart",
             "-avoid_negative_ts", "make_zero",
@@ -1020,7 +1022,7 @@ class FfmpegProcessor:
             "-c:a", "aac",  # Audio codec
             "-b:a", "192k",  # Audio bitrate
             "-pix_fmt", "yuv420p",  # Pixel format for compatibility
-            "-r", str(self.STANDARD_FPS),  # Output frame rate - handle fps conversion here
+            "-r", str(STANDARD_FPS),  # Output frame rate - handle fps conversion here
             "-t", str(bg_duration),  # CRITICAL: Limit output duration to background duration
             "-movflags", "+faststart",
             "-avoid_negative_ts", "make_zero",
@@ -1175,7 +1177,7 @@ class FfmpegProcessor:
                     cmd.extend(["-af", ",".join(audio_filters)])
                     print(f"🎵 添加音频淡入淡出效果: {','.join(audio_filters)}")
                 
-                cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(self.STANDARD_AUDIO_RATE), "-ac", str(self.STANDARD_AUDIO_CHANNELS)])
+                cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(STANDARD_AUDIO_RATE), "-ac", str(STANDARD_AUDIO_CHANNELS)])
             
             # 使用标准的 H.264 编码，输出为 MP4 (不支持 alpha 通道)
             cmd.extend([
@@ -1257,10 +1259,10 @@ class FfmpegProcessor:
                         cmd.extend(["-af", ",".join(audio_filters)])
                         print(f"🎵 添加音频淡入淡出效果: {','.join(audio_filters)}")
                     
-                    cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(self.STANDARD_AUDIO_RATE), "-ac", str(self.STANDARD_AUDIO_CHANNELS)])
+                    cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(STANDARD_AUDIO_RATE), "-ac", str(STANDARD_AUDIO_CHANNELS)])
                 else:
                     # 保持原始音频不变 - 不应用任何淡入淡出效果
-                    cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(self.STANDARD_AUDIO_RATE), "-ac", str(self.STANDARD_AUDIO_CHANNELS)])
+                    cmd.extend(["-c:a", "aac", "-b:a", "192k", "-ar", str(STANDARD_AUDIO_RATE), "-ac", str(STANDARD_AUDIO_CHANNELS)])
             
             # Use qtrle codec which supports alpha channel, in a .mov container
             cmd.extend([
@@ -1473,7 +1475,7 @@ class FfmpegProcessor:
             print(f"   📝 Building video scale filters for {n_videos} videos...")
             for i in range(n_videos):
                 # xfade requires all videos to have the same resolution, so we must scale
-                video_filters.append(f"[{i}:v]fps={self.STANDARD_FPS}:round=near,{self._get_simple_scale_filter(self.width, self.height)}[v{i}]")
+                video_filters.append(f"[{i}:v]fps={STANDARD_FPS}:round=near,{self._get_simple_scale_filter(self.width, self.height)}[v{i}]")
             print(f"      ✅ Created {len(video_filters)} video scale filters")
             
             # Build audio filter chain if processing audio
@@ -1507,10 +1509,10 @@ class FfmpegProcessor:
                     
                     if has_audio[i]:
                         # Video has audio - extract and trim
-                        audio_filters.append(f"[{i}:a]aresample={self.STANDARD_AUDIO_RATE},aformat=sample_fmts=fltp:sample_rates={self.STANDARD_AUDIO_RATE}:channel_layouts=stereo,atrim=0:{audio_to_keep:.3f},asetpts=PTS-STARTPTS[a{i}]")
+                        audio_filters.append(f"[{i}:a]aresample={STANDARD_AUDIO_RATE},aformat=sample_fmts=fltp:sample_rates={STANDARD_AUDIO_RATE}:channel_layouts=stereo,atrim=0:{audio_to_keep:.3f},asetpts=PTS-STARTPTS[a{i}]")
                     else:
                         # Video has no audio - create silent audio for trimmed duration
-                        audio_filters.append(f"anullsrc=channel_layout=stereo:sample_rate={self.STANDARD_AUDIO_RATE}:duration={audio_to_keep:.3f}[a{i}]")
+                        audio_filters.append(f"anullsrc=channel_layout=stereo:sample_rate={STANDARD_AUDIO_RATE}:duration={audio_to_keep:.3f}[a{i}]")
                     
                     print(f"         Audio {i}: keeping {audio_to_keep:.2f}s of {extended_durations[i]:.2f}s")
                 
@@ -1605,8 +1607,8 @@ class FfmpegProcessor:
                 cmd.extend([
                     "-c:a", "aac",
                     "-b:a", "192k",
-                    "-ac", str(self.STANDARD_AUDIO_CHANNELS),
-                    "-ar", str(self.STANDARD_AUDIO_RATE)
+                    "-ac", str(STANDARD_AUDIO_CHANNELS),
+                    "-ar", str(STANDARD_AUDIO_RATE)
                 ])
             
             # Use software encoding for complex filter operations to avoid hardware encoder issues
@@ -1619,7 +1621,7 @@ class FfmpegProcessor:
                     "-c:v", "libx264",
                     "-preset", "medium",
                     "-crf", "20",
-                    "-r", str(self.STANDARD_FPS),
+                    "-r", str(STANDARD_FPS),
                     "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart", 
                     "-avoid_negative_ts", "make_zero",
@@ -1632,7 +1634,7 @@ class FfmpegProcessor:
                     "-c:v", "h264_nvenc",
                     "-preset", "fast",
                     "-crf", "20",
-                    "-r", str(self.STANDARD_FPS),
+                    "-r", str(STANDARD_FPS),
                     "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart", 
                     "-avoid_negative_ts", "make_zero",
@@ -2264,16 +2266,16 @@ class FfmpegProcessor:
                     "-af", f"apad=pad_dur={extension_duration:.5f}",
                     "-c:a", "aac",
                     "-b:a", "192k",
-                    "-ar", str(self.STANDARD_AUDIO_RATE),
-                    "-ac", str(self.STANDARD_AUDIO_CHANNELS)
+                    "-ar", str(STANDARD_AUDIO_RATE),
+                    "-ac", str(STANDARD_AUDIO_CHANNELS)
                 ])
             
             # Add standard output parameters
             cmd.extend([
                 "-pix_fmt", "yuv420p",
-                "-r", str(self.STANDARD_FPS),
-                "-g", str(self.STANDARD_FPS),
-                "-keyint_min", str(self.STANDARD_FPS),
+                "-r", str(STANDARD_FPS),
+                "-g", str(STANDARD_FPS),
+                "-keyint_min", str(STANDARD_FPS),
                 "-sc_threshold", "0",
                 "-movflags", "+faststart",
                 "-avoid_negative_ts", "make_zero",
@@ -2439,8 +2441,8 @@ class FfmpegProcessor:
             extension_cmd.extend(output_args)  # Add output args (codec, preset, quality)
             extension_cmd.extend([
                 "-pix_fmt", "yuv420p",
-                "-r", str(self.STANDARD_FPS),
-                "-g", str(self.STANDARD_FPS),  # Keyframe interval
+                "-r", str(STANDARD_FPS),
+                "-g", str(STANDARD_FPS),  # Keyframe interval
                 "-avoid_negative_ts", "make_zero",
                 temp_extension_video
             ])
@@ -2511,7 +2513,7 @@ class FfmpegProcessor:
                 ]
                 concat_cmd_encode.extend(output_args_concat)
                 concat_cmd_encode.extend([
-                    "-r", str(self.STANDARD_FPS),
+                    "-r", str(STANDARD_FPS),
                     "-pix_fmt", "yuv420p",
                     "-avoid_negative_ts", "make_zero",
                     "-fflags", "+genpts",
@@ -2636,7 +2638,7 @@ class FfmpegProcessor:
             scroll_distance = end_x - start_x
             
             # 计算总帧数和滚动表达式 - 使用基于帧数的计算，避免时间精度问题
-            total_frames = int(duration * self.STANDARD_FPS)
+            total_frames = int(duration * STANDARD_FPS)
             # 使用帧号(n)而不是时间(t)，确保精确控制
             # 当帧数达到总帧数时锁定在end_x位置
             crop_x_expr = f"if(gte(n,{total_frames}),{end_x},{start_x}+({end_x}-{start_x})*n/{total_frames})"
@@ -2646,7 +2648,7 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={scaled_width}:{scaled_height},"
                     f"crop={display_width}:{display_height}:'{crop_x_expr}':0,"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
                 print(f"🎬 滚动动画: 从 x={start_x} 到 x={end_x} (距离: {scroll_distance}px)")
             else:
@@ -2654,7 +2656,7 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={scaled_width}:{scaled_height},"
                     f"crop={display_width}:{display_height}:{start_x}:0,"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
                 print(f"📐 静态裁剪: x={start_x} (滚动距离太小: {scroll_distance}px)")
             
@@ -2667,7 +2669,7 @@ class FfmpegProcessor:
                 "-preset", "medium",
                 "-crf", "23",
                 "-pix_fmt", "yuv420p",
-                "-r", str(self.STANDARD_FPS),
+                "-r", str(STANDARD_FPS),
                 "-t", str(duration),  # 严格控制输出时长
                 "-movflags", "+faststart",
                 "-avoid_negative_ts", "make_zero",
@@ -2722,7 +2724,7 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
                     f"crop={self.width}:{self.height}:'{crop_x_expr}':0,"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
                 
             elif mode.lower() == "right":
@@ -2733,14 +2735,14 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
                     f"crop={self.width}:{self.height}:'{crop_x_expr}':0,"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
             
             elif mode.lower() == "still":
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
                     f"crop={self.width}:{self.height},"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
 
             elif mode.lower() == "up":
@@ -2751,7 +2753,7 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
                     f"crop={self.width}:{self.height}:0:'{crop_y_expr}',"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
             
             elif mode.lower() == "down":
@@ -2762,7 +2764,7 @@ class FfmpegProcessor:
                 video_filter = (
                     f"scale={enlarged_width}:{enlarged_height},"
                     f"crop={self.width}:{self.height}:0:'{crop_y_expr}',"
-                    f"fps={self.STANDARD_FPS}"
+                    f"fps={STANDARD_FPS}"
                 )
             
             elif mode.lower() == "zoom in":
@@ -2779,7 +2781,7 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_large
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -2790,7 +2792,7 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={self.width}:{self.height},fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={self.width}:{self.height},fps={STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_small
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -2833,7 +2835,7 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={self.width}:{self.height},fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={self.width}:{self.height},fps={STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_small
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -2845,7 +2847,7 @@ class FfmpegProcessor:
                     "-loop", "1", 
                     "-t", str(duration), 
                     "-i", image_path,
-                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={self.STANDARD_FPS}",
+                    "-vf", f"scale={large_scale}:{int(self.height * enlarge_ratio)},crop={self.width}:{self.height}:(iw-{self.width})/2:(ih-{self.height})/2,fps={STANDARD_FPS}",
                     "-c:v", "h264_nvenc", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", temp_large
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
                 
@@ -2891,7 +2893,7 @@ class FfmpegProcessor:
                     "-preset", "medium",
                     "-crf", "23",
                     "-pix_fmt", "yuv420p",
-                    "-r", str(self.STANDARD_FPS),
+                    "-r", str(STANDARD_FPS),
                     "-movflags", "+faststart",
                     "-avoid_negative_ts", "make_zero",
                     "-fflags", "+genpts",
@@ -2944,7 +2946,7 @@ class FfmpegProcessor:
                 "-preset", "medium",
                 "-crf", "18",     # High quality to preserve burned-in effects
                 "-pix_fmt", "yuv420p",
-                "-r", str(self.STANDARD_FPS),
+                "-r", str(STANDARD_FPS),
                 "-movflags", "+faststart",
                 temp_mov
             ]
@@ -3204,7 +3206,7 @@ class FfmpegProcessor:
 
         filter_complex = (
             f"[0:v]scale={bg_scale_width}:{output_height},"
-            f"trim=duration={duration},fps={self.STANDARD_FPS},"
+            f"trim=duration={duration},fps={STANDARD_FPS},"
             f"crop={output_width}:{output_height}:{crop_expr}:0[outv]"
         )
 
@@ -3313,7 +3315,7 @@ class FfmpegProcessor:
         # Build video filter chain (use -vf instead of -filter_complex for simple linear chain)
         video_filter = (
             f"scale={scaled_width}:{scaled_height},"
-            f"fps={self.STANDARD_FPS},"
+            f"fps={STANDARD_FPS},"
             f"crop={output_width}:{output_height}:'{crop_expr}':0"
         )
         
@@ -4005,8 +4007,8 @@ class FfmpegProcessor:
             cmd.extend(output_args)
             cmd.extend([
                 "-pix_fmt", "yuv420p",
-                "-g", str(self.STANDARD_FPS),
-                "-keyint_min", str(self.STANDARD_FPS),
+                "-g", str(STANDARD_FPS),
+                "-keyint_min", str(STANDARD_FPS),
                 output_video_path
             ])
             
@@ -4204,4 +4206,36 @@ class FfmpegProcessor:
         first = self.trim_video( original_clip, start_time=0, end_time=position)
         second = self.trim_video( original_clip, start_time=position)
         return first, second
+
+
+
+    def _combine_left_right_videos(self, left_video_path: str, right_video_path: str, output_video_path: str) -> bool:
+        """Combine left and right videos into a single video horizontally with smart audio handling"""
+        try:
+            left_has_audio = self.has_audio_stream(left_video_path)
+            right_has_audio = self.has_audio_stream(right_video_path)
+            
+            # Build ffmpeg command based on audio situation
+            if not left_has_audio and not right_has_audio:
+                cmd = f'ffmpeg -y -i "{left_video_path}" -i "{right_video_path}" -filter_complex "[0:v][1:v]hstack=inputs=2:shortest=1[v]" -map "[v]" -c:v libx264 -pix_fmt yuv420p -crf 18 "{output_video_path}"'
+                
+            elif left_has_audio and not right_has_audio:
+                cmd = f'ffmpeg -y -i "{left_video_path}" -i "{right_video_path}" -filter_complex "[0:v][1:v]hstack=inputs=2:shortest=1[v]" -map "[v]" -map "0:a" -c:v libx264 -c:a aac -pix_fmt yuv420p -crf {quality} "{output_video_path}"'
+                
+            elif not left_has_audio and right_has_audio:
+                cmd = f'ffmpeg -y -i "{left_video_path}" -i "{right_video_path}" -filter_complex "[0:v][1:v]hstack=inputs=2:shortest=1[v]" -map "[v]" -map "1:a" -c:v libx264 -c:a aac -pix_fmt yuv420p -crf {quality} "{output_video_path}"'
+                
+            else:
+                cmd = f'ffmpeg -y -i "{left_video_path}" -i "{right_video_path}" -filter_complex "[0:v][1:v]hstack=inputs=2:shortest=1[v];[0:a][1:a]amix=inputs=2:duration=shortest:dropout_transition=2:normalize=0[a]" -map "[v]" -map "[a]" -c:v libx264 -c:a aac -pix_fmt yuv420p -crf {quality} "{output_video_path}"'
+            
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore')
+            print("Video combination completed successfully")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            print(f"Video combination failed, command: {cmd}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error combining left and right videos: {e}")
+            return False
 

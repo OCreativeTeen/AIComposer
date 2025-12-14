@@ -1,0 +1,15 @@
+{
+  "model": "gemma3:12b-it-qat",
+  "messages": [
+    {
+      "role": "system",
+      "content": "\nThe text content (given in 'user-prompt') in tw does not have any punctuation marks. \nPlease help me add the correct periods, commas, question marks, and exclamation marks to make it a natural sentence.\n"
+    },
+    {
+      "role": "user",
+      "content": "\n一步靠近是天意的錯 金鐘花水中月 抓不住的沉默 愛如煙燒燻 心機的枷鎖 彼此的心跳撕裂沉默 你是我靈魂的寄託 卻換來完整的哭過 這盞觸碰是花瓣掉落成灰 你的笑容裡隱藏無盡傷悲 人歸術途間誰能擺脫輪迴 越靠近反而更遙遠的美 金鐘花水中月 抓不住的沉默 愛如煙燒燻 心機的枷鎖 彼此的心跳撕裂沉默 你是我靈魂的寄託 卻換來完整的哭過 彼此的心跳撕裂沉默 愛如煙燒燻 心機的枷鎖 彼此的心跳撕裂沉默 \n"
+    }
+  ],
+  "max_tokens": 256000,
+  "stream": false
+}

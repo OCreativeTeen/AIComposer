@@ -223,6 +223,120 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
 
+    def _process_single_files(self, scene, found_files):
+        """处理 S2V 模式的单个视频文件"""
+        try:
+            # 等待30秒确保文件完全生成
+            print("⏳ 等待30秒确保文件生成完成...")
+            time.sleep(30)
+            
+            for new_mp4 in found_files:
+                print(f"📹 处理 S2V 视频文件: {os.path.basename(new_mp4)}")
+                
+                # 移动文件到项目媒体文件夹
+                oldv, clip_raw_video = refresh_scene_media(scene, "clip_raw_video", ".mp4", new_mp4)
+
+                temp_video =  config.get_temp_path(self.pid) + "/" + self.make_scene_name(scene, "clip", ".mp4")
+                copy_file(clip_raw_video, temp_video)
+                
+                print(f"✅ 文件已移动到: {clip_raw_video}")
+                
+                # 调用 REST API 增强视频
+                self._enhance_single_video(temp_video)
+            
+        except Exception as e:
+            print(f"❌ 处理 S2V 文件时出错: {str(e)}")
+
+
+
+    def _process_dual_files(self, scene, found_files):
+        """处理 WS2V 模式的双视频文件"""
+        try:
+            # 等待30秒确保文件完全生成
+            print("⏳ 等待60秒确保文件生成完成...")
+            time.sleep(60)
+            
+            temp_video =  config.get_temp_path(self.pid) + "/" + self.make_scene_name(scene, "clip", ".mp4")
+            # 假设前两个文件分别是左右视频
+            left_mp4 = found_files[0]
+            right_mp4 = found_files[1]
+            
+            print(f"📹 处理 WS2V 左视频: {os.path.basename(left_mp4)}")
+            print(f"📹 处理 WS2V 右视频: {os.path.basename(right_mp4)}")
+            
+            # 移动文件到项目媒体文件夹
+            oldv1, clip_raw_video = refresh_scene_media(scene, "clip_raw_video", ".mp4", left_mp4)
+            copy_file(clip_raw_video, temp_video)
+            
+            oldv2, clip_raw_video2 = refresh_scene_media(scene, "clip_raw_video2", ".mp4", right_mp4)
+            
+            print(f"✅ 左视频已移动到: {clip_raw_video}")
+            print(f"✅ 右视频已移动到: {clip_raw_video2}")
+            
+            # 调用 REST API 增强双视频
+            self._enhance_dual_video(temp_video, clip_raw_video2)
+            
+        except Exception as e:
+            print(f"❌ 处理 WS2V 文件时出错: {str(e)}")
+    
+
+
+
+    def _enhance_single_video(self, video_path):
+        """调用 REST API 增强单个视频"""
+        try:
+            url = "http://10.0.0.179:5000/process/single"
+            
+            with open(video_path, 'rb') as video_file:
+                files = {'video': video_file}
+                
+                print(f"🚀 正在调用视频增强API: {url}")
+                response = requests.post(url, files=files, timeout=300)
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    print("✅ 单视频增强成功")
+                    print(f"📄 响应: {response.text}")
+                else:
+                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
+                    print(f"📄 错误信息: {response.text}")
+                    
+        except requests.exceptions.RequestException as e:
+            print(f"❌ REST API 调用失败: {str(e)}")
+        except Exception as e:
+            print(f"❌ 增强单视频时出错: {str(e)}")
+    
+    
+
+    def _enhance_dual_video(self, left_video_path, right_video_path):
+        """调用 REST API 增强双视频"""
+        try:
+            url = "http://10.0.0.179:5000/process/dual"
+            
+            with open(left_video_path, 'rb') as left_file, open(right_video_path, 'rb') as right_file:
+                files = {
+                    'left_video': left_file,
+                    'right_video': right_file
+                }
+                
+                print(f"🚀 正在调用双视频增强API: {url}")
+                response = requests.post(url, files=files, timeout=300)
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    print("✅ 双视频增强成功")
+                    print(f"📄 响应: {response.text}")
+                else:
+                    print(f"❌ 双视频增强失败，状态码: {response.status_code}")
+                    print(f"📄 错误信息: {response.text}")
+                    
+        except requests.exceptions.RequestException as e:
+            print(f"❌ REST API 调用失败: {str(e)}")
+        except Exception as e:
+            print(f"❌ 增强双视频时出错: {str(e)}")
+
+
+
+
+
 
     def _check_output_folder(self, scene_index, scene):
         """检查 X:\output 文件夹中的新视频文件"""
@@ -382,23 +496,23 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
             if not zero_audio:
                 if zero_video:
-                    oldv, zero_audio = self.refresh_scene_media(scene, "zero_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(zero_video))
+                    oldv, zero_audio = refresh_scene_media(scene, "zero_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(zero_video))
                 else:
-                    olda, zero_audio = self.refresh_scene_media(scene, "zero_audio", ".wav", self.find_default_background_music("mp3"))
+                    olda, zero_audio = refresh_scene_media(scene, "zero_audio", ".wav", self.find_default_background_music("mp3"))
                 ss = self.scenes_in_story(scene)
                 for s in ss:
                     s["zero_audio"] = zero_audio
                 changed = True
             if not zero_image:
                 zero_image = self.find_default_background_media("jpeg")
-                oldi, zero_image = self.refresh_scene_media(scene, "zero_image", ".webp", zero_image)
+                oldi, zero_image = refresh_scene_media(scene, "zero_image", ".webp", zero_image)
                 ss = self.scenes_in_story(scene)
                 for s in ss:
                     s["zero_image"] = zero_image
                 changed = True
             if not zero_video:
                 zero_video = self.ffmpeg_processor.image_audio_to_video(zero_image, zero_audio, 1)
-                oldv, zero_video = self.refresh_scene_media(scene, "zero", ".mp4", zero_video)
+                oldv, zero_video = refresh_scene_media(scene, "zero", ".mp4", zero_video)
                 ss = self.scenes_in_story(scene)
                 for s in ss:
                     s["zero"] = zero_video
@@ -411,16 +525,16 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
             clip_image = get_file_path(scene, "clip_image")
             if not clip_audio:
                 if clip_video:
-                    olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(clip_video))
+                    olda, clip_audio = refresh_scene_media(scene, "clip_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(clip_video))
                 else:
-                    olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", self.find_default_background_music("mp3"))
+                    olda, clip_audio = refresh_scene_media(scene, "clip_audio", ".wav", self.find_default_background_music("mp3"))
                 changed = True
             if not clip_image:
-                oldi, clip_image = self.refresh_scene_media(scene, "clip_image", ".webp", self.find_default_background_media("jpeg"))
+                oldi, clip_image = refresh_scene_media(scene, "clip_image", ".webp", self.find_default_background_media("jpeg"))
                 changed = True
             if not clip_video:
                 clip_video = self.ffmpeg_processor.image_audio_to_video(clip_image, clip_audio, 1)
-                oldv, clip_video = self.refresh_scene_media(scene, "clip", ".mp4", clip_video)
+                oldv, clip_video = refresh_scene_media(scene, "clip", ".mp4", clip_video)
                 changed = True
 
             second_audio = get_file_path(scene, "second_audio")
@@ -428,16 +542,16 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
             second_video = get_file_path(scene, "second")
             if not second_audio:
                 if second_video:
-                    olda, second_audio = self.refresh_scene_media(scene, "second_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(second_video))
+                    olda, second_audio = refresh_scene_media(scene, "second_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(second_video))
                 else:
-                    olda, second_audio = self.refresh_scene_media(scene, "second_audio", ".wav", self.find_default_background_music("mp3"))
+                    olda, second_audio = refresh_scene_media(scene, "second_audio", ".wav", self.find_default_background_music("mp3"))
                 changed = True
             if not second_image:
-                oldi, second_image = self.refresh_scene_media(scene, "second_image", ".webp", self.find_default_background_media("jpeg"))
+                oldi, second_image = refresh_scene_media(scene, "second_image", ".webp", self.find_default_background_media("jpeg"))
                 changed = True
             if not second_video:
                 second_video = self.ffmpeg_processor.image_audio_to_video(second_image, second_audio, 1)
-                oldv, second_video = self.refresh_scene_media(scene, "second", ".mp4", second_video)
+                oldv, second_video = refresh_scene_media(scene, "second", ".mp4", second_video)
                 changed = True
 
         for scene in self.scenes:
@@ -450,9 +564,9 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                     zero_audio_duration = self.ffmpeg_audio_processor.get_duration(zero_audio)
                     if zero_audio_duration > start_time_in_story + clip_duration + 0.1: # need to fix
                         a = self.ffmpeg_audio_processor.extend_audio(clip_audio, 0, zero_audio_duration-start_time_in_story)
-                        olda, a = self.refresh_scene_media(scene, "clip_audio", ".wav", a)
+                        olda, a = refresh_scene_media(scene, "clip_audio", ".wav", a)
                         v = self.ffmpeg_processor.add_audio_to_video(clip_video, a)
-                        self.refresh_scene_media(scene, "clip", ".mp4", v)
+                        refresh_scene_media(scene, "clip", ".mp4", v)
 
         if changed:
             self.save_scenes_to_json()
@@ -480,15 +594,15 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
         clip_video = get_file_path(scene, "clip")
         if not clip_video or force:
-            oldv, clip_video = self.refresh_scene_media(scene, "clip", ".mp4", zero, True)
+            oldv, clip_video = refresh_scene_media(scene, "clip", ".mp4", zero, True)
 
         clip_audio = get_file_path(scene, "clip_audio")
         if not clip_audio or force:
-            olda, clip_audio = self.refresh_scene_media(scene, "clip_audio", ".wav", zero_audio, True)
+            olda, clip_audio = refresh_scene_media(scene, "clip_audio", ".wav", zero_audio, True)
 
         clip_image = get_file_path(scene, "clip_image")
         if not clip_image or force:
-            oldi, clip_image = self.refresh_scene_media(scene, "clip_image", ".webp", zero_image, True)
+            oldi, clip_image = refresh_scene_media(scene, "clip_image", ".webp", zero_image, True)
 
         return clip_audio
 
@@ -553,6 +667,95 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                         )
         text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
 
+
+
+
+
+
+
+
+
+
+
+
+
+    def _confirm_process_video(self, video_path: str) -> bool:
+        """
+        预览视频并让用户确认是否继续处理。
+        优先弹出图形对话框，无法创建时回退到控制台提示。
+        """
+        abs_path = str(Path(video_path).resolve())
+
+        # 若文件不存在，直接终止
+        if not Path(abs_path).exists():
+            self.logger.error(f"Video not found for confirmation: {abs_path}")
+            return False
+
+        def _launch_default_player():
+            """使用系统默认播放器播放视频"""
+            try:
+                if sys.platform.startswith("win"):
+                    os.startfile(abs_path)  # type: ignore[attr-defined]
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", abs_path])
+                else:
+                    subprocess.Popen(["xdg-open", abs_path])
+            except Exception as e:
+                # 避免非 ASCII 日志导致编码异常
+                self.logger.warning(f"Cannot auto-open video for preview: {e}")
+
+        # 弹窗确认；失败则使用命令行确认
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            from tkinter import ttk
+
+            root = tk.Tk()
+            root.title("确认处理视频")
+            root.geometry("520x180")
+            root.resizable(False, False)
+
+            ttk.Label(root, text="是否处理该视频？").pack(pady=6)
+            path_box = tk.Text(root, height=3, wrap="word")
+            path_box.insert("1.0", abs_path)
+            path_box.configure(state="disabled")
+            path_box.pack(fill="both", padx=10)
+
+            btn_frame = ttk.Frame(root)
+            btn_frame.pack(pady=10)
+
+            result = {"value": None}
+
+            def on_confirm(event=None):
+                result["value"] = True
+                root.destroy()
+
+            def on_cancel(event=None):
+                result["value"] = False
+                root.destroy()
+
+            def on_play(event=None):
+                _launch_default_player()
+
+            ttk.Button(btn_frame, text="播放/预览", command=on_play).grid(row=0, column=0, padx=5)
+            ttk.Button(btn_frame, text="确认处理", command=on_confirm).grid(row=0, column=1, padx=5)
+            ttk.Button(btn_frame, text="取消", command=on_cancel).grid(row=0, column=2, padx=5)
+
+            root.bind("<Return>", on_confirm)
+            root.bind("<Escape>", on_cancel)
+            root.mainloop()
+
+            if result["value"] is not None:
+                return result["value"]
+        except Exception as e:
+            self.logger.warning(f"GUI confirm failed; fallback to console: {e}")
+
+        try:
+            answer = input(f"Process video '{abs_path}'? (y/N): ").strip().lower()
+            return answer in ("y", "yes")
+        except Exception as e:
+            self.logger.error(f"User confirmation failed: {e}")
+            return False
 
 
 

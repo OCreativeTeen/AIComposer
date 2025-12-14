@@ -119,7 +119,7 @@ class ImagePromptsReviewDialog:
         self.dialog.transient(parent.root if hasattr(parent, 'root') else parent)
         self.dialog.grab_set()
         
-        self.extra_description = scene.get(track + "_extra", "")
+        self.extra_description = scene.get("extra", "")
         
         self._create_ui()
         self._center_dialog()

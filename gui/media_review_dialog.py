@@ -1,11 +1,8 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 import os, time, threading
-import subprocess
-import tempfile
-import copy  # 添加 copy 模块导入
 from PIL import Image, ImageTk
-from utility.file_util import get_file_path, safe_remove, safe_file
+from utility.file_util import get_file_path, safe_remove, safe_file, refresh_scene_media
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.audio_transcriber import AudioTranscriber
@@ -15,6 +12,7 @@ import json
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
 import project_manager
+
 
 
 # 尝试导入拖放支持
@@ -62,7 +60,6 @@ class AVReviewDialog:
         self.previous_scene = previous_scene
         self.next_scene = next_scene
         self.language = parent.workflow.language
-        self.pid = parent.workflow.pid
         self.workflow = parent.workflow
         # Get video dimensions from workflow's ffmpeg_processor
         video_width = self.workflow.ffmpeg_processor.width
@@ -449,8 +446,9 @@ class AVReviewDialog:
         ttk.Button(audio_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="剪音视", command=self.trim_media).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="剪视频", command=self.trim_video).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="单转录", command=self.trim_transcribe_single).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="多转录", command=self.trim_transcribe_multiple).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="单转录", command=lambda: self.trim_transcribe("single")).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="多转录", command=lambda: self.trim_transcribe("multiple")).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="多转录合并", command=lambda: self.trim_transcribe("multiple_merge")).pack(side=tk.LEFT)
         
         # Audio transcription options section
         transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
@@ -585,7 +583,7 @@ class AVReviewDialog:
     def audio_fade(self):
         """Audio fade"""
         if self.source_audio_path:
-            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_change(self.source_audio_path, 1.5, 1.5, 1.0, 0.0)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.to_wav(self.source_audio_path, 1.5, 1.5, 1.0, 0.0)
         if self.source_video_path:
             self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
 
@@ -656,16 +654,9 @@ class AVReviewDialog:
             self.source_video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, crop_height )
 
 
-    def trim_transcribe_single(self):
-        self.trim_media()
-        self.update_dialog_title("single")
-        if not self.audio_regenerated or self.media_type=="clip":
-            self._transcribe_recorded_audio()
-
-
-    def trim_transcribe_multiple(self):
-        self.trim_media()
-        self.update_dialog_title("multiple")
+    def trim_transcribe(self, mode):
+        #self.trim_media()
+        self.update_dialog_title(mode)
         if not self.audio_regenerated and self.media_type=="clip":
             self._transcribe_recorded_audio()
 
@@ -1112,17 +1103,17 @@ class AVReviewDialog:
             
             if self.track_mode.get() == 2:
                 if audio_path:
-                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 0.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.to_wav(audio_path, 1.0, 0.0, 1.0, 0.0)
                 if video_path:
                     video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 1.0, 0.0)
             elif self.track_mode.get() == 3:
                 if audio_path:
-                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 0.0, 1.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.to_wav(audio_path, 0.0, 1.0, 1.0, 0.0)
                 if video_path:
                     video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 0.0, 1.0)
             elif self.track_mode.get() == 4:
                 if audio_path:
-                    audio_path = self.workflow.ffmpeg_audio_processor.audio_change(audio_path, 1.0, 1.0, 1.0, 0.0)
+                    audio_path = self.workflow.ffmpeg_audio_processor.to_wav(audio_path, 1.0, 1.0, 1.0, 0.0)
                 if video_path:
                     video_path = self.workflow.ffmpeg_processor.fade_video(video_path, 1.0, 1.0)
 
@@ -1131,11 +1122,11 @@ class AVReviewDialog:
             i = self.current_scene.get(self.image_field, None)
 
             if v != video_path:
-                self.parent.workflow.refresh_scene_media(self.current_scene, self.video_field, ".mp4", video_path, True)
+                refresh_scene_media(self.current_scene, self.video_field, ".mp4", video_path, True)
             if a != audio_path:
-                self.parent.workflow.refresh_scene_media(self.current_scene, self.audio_field, ".wav", audio_path, True)
+                refresh_scene_media(self.current_scene, self.audio_field, ".wav", audio_path, True)
             if i != self.source_image_path:
-                self.parent.workflow.refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
+                refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
             self.result = {
                 'audio_json': self.audio_json,
@@ -1648,8 +1639,11 @@ class AVReviewDialog:
         self.start_time = 0.0
 
         if is_audio_file(av_path):
-            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_change(av_path)
-            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.to_wav(av_path)
+            self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
+            self.end_time_var.set(self.workflow.ffmpeg_audio_processor.get_duration(av_path))
+            self.update_play_time_display()
+            self.update_duration_display()
         elif is_image_file(av_path):
             self.source_image_path = av_path
             self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
@@ -1657,6 +1651,9 @@ class AVReviewDialog:
             if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and self.replace_media_audio=="keep":
                 self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
                 self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
+                self.end_time_var.set(self.workflow.ffmpeg_audio_processor.get_duration(av_path))
+                self.update_play_time_display()
+                self.update_duration_display()
             else:
                 self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
                 self.source_video_path = self.workflow.ffmpeg_processor.resize_video(self.source_video_path, width=self.workflow.ffmpeg_processor.width, height=None)

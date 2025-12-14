@@ -90,7 +90,7 @@ class WanPromptEditorDialog:
         self.generate_video_callback = generate_video_callback
         
         # 获取或初始化 WAN 参数
-        self.extra_description = scene.get(track + "_extra", "")
+        self.extra_description = scene.get("extra", "")
         
         # 创建对话框
         self.dialog = tk.Toplevel(parent.root if hasattr(parent, 'root') else parent)
@@ -151,16 +151,16 @@ class WanPromptEditorDialog:
         
         # 风格
         ttk.Label(row1, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_style_var = tk.StringVar(value=self.scene.get('wan_style', WAN_VIDEO_STYLE[0]))
-        style_combo = ttk.Combobox(row1, textvariable=self.wan_style_var,
+        self.camear_style_var = tk.StringVar(value=self.scene.get('camear_style', WAN_VIDEO_STYLE[0]))
+        style_combo = ttk.Combobox(row1, textvariable=self.camear_style_var,
                                    values=WAN_VIDEO_STYLE, state="readonly", width=25)
         style_combo.pack(side=tk.LEFT, padx=(0, 20))
         style_combo.bind('<<ComboboxSelected>>', self._on_params_change)
         
         # 镜头
         ttk.Label(row1, text="镜头:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_shot_var = tk.StringVar(value=self.scene.get('wan_shot', WAN_VIDEO_SHOT[0]))
-        shot_combo = ttk.Combobox(row1, textvariable=self.wan_shot_var,
+        self.camera_shot_var = tk.StringVar(value=self.scene.get('camera_shot', WAN_VIDEO_SHOT[0]))
+        shot_combo = ttk.Combobox(row1, textvariable=self.camera_shot_var,
                                   values=WAN_VIDEO_SHOT, state="readonly", width=25)
         shot_combo.pack(side=tk.LEFT, padx=(0, 0))
         shot_combo.bind('<<ComboboxSelected>>', self._on_params_change)
@@ -171,16 +171,16 @@ class WanPromptEditorDialog:
         
         # 角度
         ttk.Label(row2, text="角度:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_angle_var = tk.StringVar(value=self.scene.get('wan_angle', WAN_VIDEO_ANGLE[0]))
-        angle_combo = ttk.Combobox(row2, textvariable=self.wan_angle_var,
+        self.camera_angle_var = tk.StringVar(value=self.scene.get('camera_angle', WAN_VIDEO_ANGLE[0]))
+        angle_combo = ttk.Combobox(row2, textvariable=self.camera_angle_var,
                                    values=WAN_VIDEO_ANGLE, state="readonly", width=25)
         angle_combo.pack(side=tk.LEFT, padx=(0, 20))
         angle_combo.bind('<<ComboboxSelected>>', self._on_params_change)
         
         # 色彩
         ttk.Label(row2, text="色彩:").pack(side=tk.LEFT, padx=(0, 5))
-        self.wan_color_var = tk.StringVar(value=self.scene.get('wan_color', WAN_VIDEO_COLOR[0]))
-        color_combo = ttk.Combobox(row2, textvariable=self.wan_color_var,
+        self.camera_color_var = tk.StringVar(value=self.scene.get('camera_color', WAN_VIDEO_COLOR[0]))
+        color_combo = ttk.Combobox(row2, textvariable=self.camera_color_var,
                                    values=WAN_VIDEO_COLOR, state="readonly", width=25)
         color_combo.pack(side=tk.LEFT, padx=(0, 0))
         color_combo.bind('<<ComboboxSelected>>', self._on_params_change)
@@ -244,8 +244,6 @@ class WanPromptEditorDialog:
                   command=self._clear_prompt).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(left_buttons, text="重置", 
                   command=lambda: self._on_params_change(None)).pack(side=tk.LEFT)
-        ttk.Button(left_buttons, text="REMIX", 
-                  command=self._remix_prompt).pack(side=tk.LEFT)
         
         # 右侧操作按钮
         right_buttons = ttk.Frame(button_frame)
@@ -257,31 +255,16 @@ class WanPromptEditorDialog:
                   command=self._on_generate).pack(side=tk.LEFT)
     
 
-    def _remix_prompt(self):
-        """重置提示词"""
-        extra = self.extra_description
-        prompt = self.prompt_text.get(1.0, tk.END).strip()
-        response = self.workflow.llm.openai_completion(
-            messages=[
-                self.workflow.llm.create_message("user", config_prompt.REMIX_PROMPT.format(image_content=extra, raw_prompt=prompt))
-            ],
-            temperature=0.3,
-        )
-        prompt = self.workflow.llm.parse_response(response)
-        self.prompt_text.delete(1.0, tk.END)
-        self.prompt_text.insert(tk.END, prompt)
-
-
     def _on_params_change(self, event):
         """WAN 参数改变时重新构建提示词"""
         # 构建额外描述
         extra = self.extra_description
         
         # 添加 WAN 参数
-        style = self.wan_style_var.get()
-        shot = self.wan_shot_var.get()
-        angle = self.wan_angle_var.get()
-        color = self.wan_color_var.get()
+        style = self.camear_style_var.get()
+        shot = self.camera_shot_var.get()
+        angle = self.camera_angle_var.get()
+        color = self.camera_color_var.get()
         
         wan_params = []
         if style and style != "":
@@ -302,7 +285,8 @@ class WanPromptEditorDialog:
 
         # 更新文本框（如果是字典，转换为字符串显示）
         self.prompt_text.delete(1.0, tk.END)
-        prompt_str = self.workflow.prompt_dict_to_string(new_prompt)
+        import json
+        prompt_str = json.dumps(new_prompt, ensure_ascii=False, indent=2)
         self.prompt_text.insert(tk.END, prompt_str)
         
         print(f"🎬 WAN 提示词已更新 - 风格:{style}, 镜头:{shot}, 角度:{angle}, 色彩:{color}")
@@ -346,10 +330,10 @@ class WanPromptEditorDialog:
             pass
         
         # 保存 WAN 参数到场景
-        self.scene['wan_style'] = self.wan_style_var.get()
-        self.scene['wan_shot'] = self.wan_shot_var.get()
-        self.scene['wan_angle'] = self.wan_angle_var.get()
-        self.scene['wan_color'] = self.wan_color_var.get()
+        self.scene['camear_style'] = self.camear_style_var.get()
+        self.scene['camera_shot'] = self.camera_shot_var.get()
+        self.scene['camera_angle'] = self.camera_angle_var.get()
+        self.scene['camera_color'] = self.camera_color_var.get()
         
         # 关闭对话框
         self.dialog.destroy()

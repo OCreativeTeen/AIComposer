@@ -12,7 +12,26 @@ import config_prompt
 from . import llm_api
 
 
+GEN_CONFIG = {
+        #"Story":{"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
+        #"Story":{"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0},
+        "Story":{"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow.json"},
+        "Host": {"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow_figure.json"},
+        "SD":   {"url": "http://10.0.0.x:7860/sdapi/v1/txt2img",       "face": "sd",  "seed": 1234567890, "steps": 30,"cfg": 7.0},
+
+        "I2V":    {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+        "2I2V":   {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
+
+        "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
+        "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
+        "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":468, "image_height":480},
+        #"FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
+        "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480}
+}
+
+
 class SDProcessor:
+
 
     """
     图像处理流水线类，提供图像卡通化、背景移除等功能
@@ -21,46 +40,12 @@ class SDProcessor:
         self.prompt_url = ""
         self.prompt_model = ""
 
-        self.gen_config = {
-                #"Story":{"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
-                #"Story":{"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0},
-                "Story":{"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow.json"},
-                "Host": {"url": "http://10.0.0.x:8188",                        "face": "flux","seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\flux_workflow_figure.json"},
-                "SD":   {"url": "http://10.0.0.x:7860/sdapi/v1/txt2img",       "face": "sd",  "seed": 1234567890, "steps": 30,"cfg": 7.0},
-
-                "I2V":    {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "I2V_0":  {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":16, "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "I2V_1":  {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":16, "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "I2V_2":  {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":16, "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "2I2V":   {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "2I2V_0": {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "2I2V_1": {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-                "2I2V_2": {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":4,  "frame_rate":15, "max_frames":121, "image_width":832, "image_height":480},
-
-                "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
-                "S2V_0":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
-                "S2V_1":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
-                "S2V_2":  {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
-                "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "FS2V_0": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "FS2V_1": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "FS2V_2": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":468, "image_height":480},
-                "WS2V_0": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "0",  "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
-                "WS2V_1": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
-                "WS2V_2": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":432, "image_height":480},
-                #"FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-                "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
-                "AI2V_0": {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "0", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
-                "AI2V_1": {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "15", "seed": 1234567890, "steps": 4, "cfg": 0.1, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
-                "AI2V_2": {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "33", "seed": 1234567890, "steps": 4, "cfg": 0.2, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480}
-        }
 
         self.workflow = workflow
         # Get video dimensions from ffmpeg_processor (will be set after workflow initialization)
         # For now, use default values - they will be updated when workflow is created
         
-        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
+        self.llm_api = llm_api.LLMApi()
 
         # Set default image dimensions to match video dimensions
         self.wan_vidoe_count = 0
@@ -131,10 +116,10 @@ class SDProcessor:
         }
 
         # Generate curl command for debugging
-        self._save_curl_command(self.gen_config['SD']['url'], payload, "img2img")
+        self._save_curl_command(GEN_CONFIG['SD']['url'], payload, "img2img")
         
         # Send request to AUTOMATIC1111 API
-        response = requests.post(self.gen_config['SD']['url'], json=payload, timeout=60)
+        response = requests.post(GEN_CONFIG['SD']['url'], json=payload, timeout=60)
 
         # Get and decode result
         r = response.json()
@@ -436,17 +421,13 @@ class SDProcessor:
             system_prompt = config_prompt.IMAGE_DESCRIPTION_SYSTEM_PROMPT
             user_prompt = [
                 {
-                    "type": "text",
-                    "text": "Describe this image"
-                },                
-                {
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{img_base64}"
                     }
                 }
             ]
-            scene_data = self.llm_api.generate_json_summary(system_prompt, user_prompt, None, False)
+            scene_data = self.llm_api.generate_json_summary(system_prompt, user_prompt, "describe_image_response.txt", False)
             return scene_data
         except Exception as e:
             print(f"❌ 图片描述失败: {str(e)}")
@@ -454,7 +435,7 @@ class SDProcessor:
 
 
     def two_image_to_video(self, prompt, file_prefix, first_frame, last_frame, sound_path, animate_mode) :
-        server_config = self.gen_config[animate_mode]
+        server_config = GEN_CONFIG[animate_mode]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
@@ -467,7 +448,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_2I2V_"+server_config["face"]+"_",
+            'filename_prefix': file_prefix + "_2I2V_",
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -503,7 +484,7 @@ class SDProcessor:
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
 
-        server_config = self.gen_config[animate_mode]
+        server_config = GEN_CONFIG[animate_mode]
         fps = server_config["frame_rate"]
 
         action_path = self.workflow.ffmpeg_processor.refps_video(action_path, str(fps))
@@ -516,7 +497,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_AI2V_"+server_config["face"]+"_",
+            'filename_prefix': file_prefix + "_AI2V_",
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -542,35 +523,54 @@ class SDProcessor:
         self.infinite_vidoe_count += 1
 
 
-    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, animate_mode, silence=False) :
-        duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
-        if duration <= 0.0:
-            print(f"🔴 音频时长为0")
-            return
-            
-        if silence:
-            sound_path = self.workflow.ffmpeg_audio_processor.make_silence(duration)
-
+    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, animate_mode, silence=False) :
         # 如果 prompt 是字典，转换为 JSON 字符串
         if isinstance(prompt, dict):
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
 
-        server_config = self.gen_config[animate_mode]
-        fps = server_config["frame_rate"]//2 if silence else server_config["frame_rate"]
-        num_frames = int(duration * fps)
-        max_frames = server_config["max_frames"]//2 + 2 if silence else server_config["max_frames"]
-        if num_frames > max_frames:
-            num_frames = max_frames
+        server_config = GEN_CONFIG[animate_mode]
+
+        if not silence:
+            fps = server_config["frame_rate"]
+            max_frames = server_config["max_frames"]
+            duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
+            if int(duration*fps)+1 <= max_frames:
+                max_frames = int(duration*fps)+1
+                if max_frames % fps == 0:
+                    max_frames += 1
+            elif next_sound_path:
+                batch_sec = (max_frames-1.0)/fps
+                batches = int(duration/batch_sec)
+                remind_sec = duration - batches*batch_sec
+                add_sec = batch_sec - remind_sec - 0.06
+                if add_sec > 0.0:
+                    next_sound_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound_path, 0, add_sec)
+                    sound_path = self.workflow.ffmpeg_audio_processor.concat_audios([sound_path, next_sound_path])
+                    duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
+        else:    
+            fps = server_config["frame_rate"]//2
+            max_frames = int(server_config["max_frames"]//2)
+            if max_frames % 2 == 0:
+                max_frames += 1
+            duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
+            sound_path = self.workflow.ffmpeg_audio_processor.make_silence(duration)
+
+        #num_frames = int(duration * fps)
+        #if num_frames % 2 == 0:
+        #    num_frames += 1
+        #if num_frames > max_frames:
+        #    num_frames = max_frames
 
         if animate_mode in config.ANIMATE_WS2V:
-            amode = "_WS2V_"
+            amode = "_WS2V"
         else:
-            amode = "_S2V_"
+            amode = "_S2V"
+
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + amode + server_config["face"] + "_",
+            'filename_prefix': file_prefix + amode + "_",
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -581,7 +581,7 @@ class SDProcessor:
 
             'motion_frame': server_config["motion_frame"],
             'frame_rate': fps,
-            'num_frames': int(num_frames)
+            'num_frames': int(max_frames)
         }
 
         files = {
@@ -597,7 +597,7 @@ class SDProcessor:
 
 
     def image_to_video(self, prompt, file_prefix, image_path, sound_path, animate_mode) :
-        server_config = self.gen_config[animate_mode]
+        server_config = GEN_CONFIG[animate_mode]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
@@ -610,7 +610,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_I2V_"+server_config["face"]+"_",
+            'filename_prefix': file_prefix + "_I2V_",
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],

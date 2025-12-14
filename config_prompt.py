@@ -1,48 +1,5 @@
 import config_prompt
 
-PROJECT_STORY_INIT_PROMPT = """
-Based on the initial {type_name} story script & initial inspiration provided in the user prompt, write a {type_name} story script in {language} with the following requirement:
-
-Please expand it into more complete {type_name} script with the following requirements:
-
-    **** Develop the story into a full narrative structure, including setup, development, foreshadowing, twists, climax, and resolution.
-    **** The script should be divided into multiple story sections, with each section representing a distinct visual moment and action, and all scenes should connect smoothly to form a coherent and engaging story.
-"""
-
-
-INSPIRATION_PROMPT = """
-You are a professional expert skilled in articulating the inspiration behind a {type_name} 
-
-(We given a initial {type_name} story script & initial inspiration provided in the user-prompt)
-
-Please describe the story’s inspiration (in {language}) in a beautiful, profound, and uplifting manner—one that offers wisdom, practical life guidance, and emotional enrichment, 
-helping the reader to reflect, grow, and find meaning.
-"""
-
-
-POEM_PROMPT = """
-You are a professional expert skilled in writing poems for a {type_name} in {language}, 
-Please write a poem based on the initial {type_name} story script & initial inspiration provided in the user-prompt, 
-
---------------
-the initial poem content is:
-{initial_content}
-"""
-
-
-INITIAL_CONTENT_USER_PROMPT = """
---------------------
-Initial {type_name} script on topic of {topic}:
---------------------
-{story}
-
-
---------------------
-Initial Inspiration:
---------------------
-{inspiration}
-
-"""
 
 STORY_OUTLINE_PROMPT = """
 You are a professional expert who is good at writing a story-outline for a {type_name} script in {language}.
@@ -127,6 +84,52 @@ Here is an example for a Chinese script:
 """
 
 
+PROJECT_STORY_INIT_PROMPT = """
+Based on the initial {type_name} story script & initial inspiration provided in the user prompt, write a {type_name} story script in {language} with the following requirement:
+
+Please expand it into more complete {type_name} script with the following requirements:
+
+    **** Develop the story into a full narrative structure, including setup, development, foreshadowing, twists, climax, and resolution.
+    **** The script should be divided into multiple story sections, with each section representing a distinct visual moment and action, and all scenes should connect smoothly to form a coherent and engaging story.
+"""
+
+
+INSPIRATION_PROMPT = """
+You are a professional expert skilled in articulating the inspiration behind a {type_name} 
+
+(We given a initial {type_name} story script & initial inspiration provided in the user-prompt)
+
+Please describe the story’s inspiration (in {language}) in a beautiful, profound, and uplifting manner—one that offers wisdom, practical life guidance, and emotional enrichment, 
+helping the reader to reflect, grow, and find meaning.
+"""
+
+
+POEM_PROMPT = """
+You are a professional expert skilled in writing poems for a {type_name} in {language}, 
+Please write a poem based on the initial {type_name} story script & initial inspiration provided in the user-prompt, 
+
+--------------
+the initial poem content is:
+{initial_content}
+"""
+
+
+INITIAL_CONTENT_USER_PROMPT = """
+--------------------
+Initial {type_name} script on topic of {topic}:
+--------------------
+{story}
+
+
+--------------------
+Initial Inspiration:
+--------------------
+{inspiration}
+
+"""
+
+
+
 
 PROJECT_STORY_SCENES_PROMPT = """
 Based on the story-outline provided in the user prompt, write a {type_name} script for topic of {topic}, in {language}, with the following requirement:
@@ -143,10 +146,10 @@ Based on the story-outline provided in the user prompt, write a {type_name} scri
         ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
 		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
         ** speaker_action (If the content is from a narrator, describe his/har (mood/reaction/emotion/body language)  ~~~ in English)
-		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
+		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 
 -------------------------------
 The response format: 
@@ -161,15 +164,15 @@ like:
         "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
         "visual_start": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
         "visual_end": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
+        "speaker_action": "Narrator speaks with solemn gravity, eyes looking upward towards an unseen oppressive force, hand gesturing slowly downward to simulate the fall from grace.",
+        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
         "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
+        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
         "cinematography": {{
             "camera_movement": "Wide shot, rapid tilt down following the falling body",
             "lighting_style": "High contrast, strobe lighting from lightning, cool purple and dark grey tones",
             "lens_type": "Wide angle 24mm"
-        }},
-        "speaker_action": "Narrator speaks with solemn gravity, eyes looking upward towards an unseen oppressive force, hand gesturing slowly downward to simulate the fall from grace.",
-        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
-        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell"
+        }}
     }},
     {{
         "content": "白素心化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许明舟。两人目光交汇，许明舟那清澈的眼神唤醒了白素心前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
@@ -177,15 +180,15 @@ like:
         "subject": "白素心：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
         "visual_start": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
         "visual_end": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
+        "speaker_action": "Narrator's tone softens into warmth and rhythm, describing the beauty of the encounter, but ends with a slight frown and a shift in gaze, indicating the lurking threat.",
+        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
+        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
         "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
         "cinematography": {{
             "camera_movement": "Slow motion dolly-in on the couple's faces, then rack focus to the sky",
             "lighting_style": "Soft diffused daylight, low contrast, misty cyan and white palette",
             "lens_type": "Telephoto 85mm (Bokeh effect)"
-        }},
-        "speaker_action": "Narrator's tone softens into warmth and rhythm, describing the beauty of the encounter, but ends with a slight frown and a shift in gaze, indicating the lurking threat.",
-        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
-        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble"
+        }}
     }},
     {{
         "content": "大水漫灌，许明舟命悬一线。白素心不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许明舟看着面前的庞然大物，惊恐地问：‘你……是谁？’",
@@ -193,15 +196,15 @@ like:
         "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
         "visual_start": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
         "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
+        "speaker_action": "Narrator raises voice volume dramatically, gesturing expansively with arms to mimic the chaotic flood and the grand transformation, face showing tragic desperation.",
+        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
+        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
         "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",
         "cinematography": {{    
             "camera_movement": "Handheld shaky cam (simulating panic), looking up at the monster from human perspective",
             "lighting_style": "Harsh dynamic lighting from lightning strikes, deep shadows, blue and black palette",
             "lens_type": "Wide angle 16mm (emphasizing scale)"
-        }},
-        "speaker_action": "Narrator raises voice volume dramatically, gesturing expansively with arms to mimic the chaotic flood and the grand transformation, face showing tragic desperation.",
-        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
-        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping"
+        }}
     }},
     ......
 ]
@@ -222,10 +225,10 @@ Please give details (Visual-Summary / camera-scene, and sound-effects) as below 
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
         ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
 		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
-		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
+		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 
         ***FYI*** all values of the fields should NOT has double-quotes & newlinesin the valuesat all !
 
@@ -239,12 +242,12 @@ like:
         "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
         "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
         "environment": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
-        "cinematography": {
+        "sound_effect": "crickets-chirping, gentle breeze through vines",
+        "cinematography": {{
             "camera_movement": "The camera begins with a medium-wide shot sweeping through the vineyard. It glides forward along the rows, finally rising in a low angle toward the woman’s weary face, sunlight filtering through vine leaves in warm amber tones.",
             "lighting_style": "dust floating in the golden light",
             "lens_type": "Standard 50mm"
-        }
-        "sound_effect": "crickets-chirping, gentle breeze through vines"
+        }}
     }}
 """
 
@@ -380,8 +383,8 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
-		** cinematography (camera movement;  lighting_style [like subtle fog, sunlight filtering, etc]; lens_type [Standard 50mm, Telephoto 200mm, etc])
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
+		** cinematography (camera movement;  lighting_style [like subtle fog, sunlight filtering, etc]; lens_type [Standard 50mm, Telephoto 200mm, etc])
 
         ***FYI*** all values of the fields should NOT has double-quotes & newlinesin the valuesat all !
 
@@ -402,12 +405,12 @@ like:
         "speaker_action": "The speaker's tone is gentle yet heavy with empathy, as if retelling a painful memory. The body leans slightly forward, brows knitted, hands loosely clasped as the words linger with compassion and sorrow.",
         "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
         "environment": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
-        "cinematography": {
+        "sound_effect": "crickets-chirping, gentle breeze through vines",
+        "cinematography": {{
             "camera_movement": "The camera begins with a medium-wide shot sweeping through the vineyard, dust floating in the golden light. It glides forward along the rows, finally rising in a low angle toward the woman’s weary face, sunlight filtering through vine leaves in warm amber tones.",
             "lighting_style": "dust floating in the golden light",
             "lens_type": "Standard 50mm"
-        }
-        "sound_effect": "crickets-chirping, gentle breeze through vines"
+        }}
     }},
     {{
         "duration": 10.00,
@@ -419,12 +422,12 @@ like:
         "speaker_action": "The speaker's mood is contemplative yet curious, eyes slightly widened in wonder, a soft half-smile suggesting anticipation as fingers tap lightly on the table, reflecting on fate’s irony.",
         "era_time": "1000 BC, ancient time; early evening; calm, golden dusk",
         "environment": "Dusty path outside Jerusalem; a narrow trail leading from vineyards toward the city walls where shepherds pass and distant bells echo softly.",
-        "cinematography": {
+        "sound_effect": "soft footsteps on gravel, distant sheep bells",
+        "cinematography": {{
             "camera_movement": "Camera tracks low along the dirt road, revealing the girl’s shadow stretching long under the sinking sun. The lens catches motes of dust glowing in the air, then tilts up toward the distant palace bathed in warm evening light.",
             "lighting_style": "warm evening light",
             "lens_type": "Standard 50mm"
-        },
-        "sound_effect": "soft footsteps on gravel, distant sheep bells"
+        }}
     }},
     {{
         "duration": 23.11,
@@ -436,12 +439,12 @@ like:
         "speaker_action": "The speaker's tone trembles between sorrow and intensity, the eyes glisten, breath slows before each line, shoulders slightly trembling as if reliving the anguish of separation.",
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "environment": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
-        "cinematography": {
+        "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker",
+        "cinematography": {{
             "camera_movement": "The camera begins outside the cottage with a low angle following the moonlight through the window. It glides slowly toward her sleeping form, shifting focus between flickering candlelight and her tense, sweat-dampened face. Pale blue tones mix with amber shadows, creating a dreamlike unease.",
             "lighting_style": "moonlight filtering",
             "lens_type": "Standard 50mm"
-        },
-        "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker"
+        }}
     }},
     ......
 ]
@@ -449,9 +452,9 @@ like:
 """
 
 # 内容总结相关Prompt
-SCENE_SUMMARY_SYSTEM_PROMPT = """
-You are a professional expert who is good at generating the Visual-Summary (image-generation) and sound-effects (audio-generation)
-from the story-content & the whole story are given in 'user-prompt'
+SCENE_REFRESH_SYSTEM_PROMPT = """
+You are a professional expert who is good at enhancing the Visual description of the existing given Scene (in json format) given in 'user-prompt',
+Please pay attention to enhance the 'content'; and if has 'extra' field,  use its value in the enhancement strongly.
 
 ---------------------------------
 
@@ -466,8 +469,8 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
-		** cinematography (camera movement;  lighting_style [like subtle fog, sunlight filtering, etc]; lens_type [Standard 50mm, Telephoto 200mm, etc])
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
+		** cinematography (camera movement;  lighting_style [like subtle fog, sunlight filtering, etc]; lens_type [Standard 50mm, Telephoto 200mm, etc])
 
         ***FYI*** all values of the fields should NOT has double-quotes & newlinesin the valuesat all !
 
@@ -485,12 +488,12 @@ like:
         "speaker_action": "The speaker's tone trembles between sorrow and intensity, the eyes glisten, breath slows before each line, shoulders slightly trembling as if reliving the anguish of separation.",
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "environment": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
-        "cinematography": {
+        "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker",
+        "cinematography": {{
             "camera_movement": "The camera begins outside the cottage with a low angle following the moonlight through the window. It glides slowly toward her sleeping form, shifting focus between flickering candlelight and her tense, sweat-dampened face. Pale blue tones mix with amber shadows, creating a dreamlike unease.",
             "lighting_style": "moonlight filtering",
             "lens_type": "Standard 50mm"
-        },
-        "sound_effect": "wind-blowing through cracks, faint heartbeat, candle flicker"
+        }}
     }}
 
 """
@@ -1137,16 +1140,3 @@ ZERO_MIX = [
     "END",
     "START_END"
 ]
-
-
-REMIX_PROMPT = """
-Make a prompt to generate a video from an image, the image-content is as below: 
-{image_content}
-
-Here already has some raw-prompt for the video-generation as below 
-(but it may has conflicts with the image-content, please remix it to make it more suitable for the image ~ i.e., if image-content has NO person, but raw-prompt has person, then remove person in the remix-prompt): 
-{raw_prompt}
-
-*** keep the Remix-prompt concise & short, less than 100 words ***
-*** directly give the remix-prompt, don't add any other text or comments ***
-"""

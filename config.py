@@ -391,6 +391,18 @@ ACTORS = [
 
 ANIMATION_PROMPTS = [
     {
+        "name": "歌唱",
+        "prompt": "Singing with slowly body/hand movements."
+    },
+    {
+        "name": "转镜",
+        "prompt": "Camera rotates slowly."
+    },
+    {
+        "name": "渐变",
+        "prompt": "Time-lapse / change gradually along long period."
+    },
+    {
         "name": "动态",
         "prompt": "The still image awakens with motion: the scene stirs gently — mist drifts, light flickers softly over old textures, and shadows breathe with calm mystery. The camera moves slowly and gracefully, maintaining perfect focus and stability. A cinematic awakening filled with depth, clarity, and timeless atmosphere."
     },
@@ -399,20 +411,12 @@ ANIMATION_PROMPTS = [
         "prompt": "The still image awakens with motion: the scene breathes softly, touched by time. Light flows like silk, mist curls around ancient relics, and shadows shift with tender rhythm. The camera drifts slowly, preserving a serene, clear, and dreamlike atmosphere. A poetic fantasy — gentle, warm, and still."
     },
     {
-        "name": "神秘",
-        "prompt": "The still image awakens with motion: ancient whispers rise beneath the mist. Dim light flickers through fog, and glowing symbols pulse faintly. The camera glides slowly, uncovering layers of hidden truth while keeping clarity and focus. Calm, sacred, and cinematic — filled with quiet mystery."
-    },
-    {
         "name": "梦幻",
         "prompt": "The still image awakens with motion: colors melt like memory, and sparkles drift in slow rhythm. Light bends through haze, reflections ripple softly. The camera floats gently as if in a dream — everything clear, smooth, and luminous. A slow, poetic vision of beauty and wonder."
     },
     {
         "name": "古风",
         "prompt": "The still image awakens with motion: sunlight filters through soft mist over tiled roofs and silk curtains. Water ripples faintly, leaves stir in a slow breeze. The camera moves with calm precision, preserving clarity and fine detail. Serene, elegant, and timeless — a cinematic memory of antiquity."
-    },
-    {
-        "name": "镜头",
-        "prompt": "The still image awakens with motion: light glides across stone and shadow. The camera moves slowly — a smooth, steady orbit or drift, revealing depth without haste. Everything remains crystal clear, stable, and cinematic — filled with quiet grace."
     },
     {
         "name": "史诗",
@@ -437,10 +441,6 @@ ANIMATION_PROMPTS = [
     {
         "name": "时间流逝",
         "prompt": "The still image awakens with motion: light changes gently, shadows lengthen, and clouds drift slowly. The camera moves subtly, preserving clarity as moments flow by. A serene unfolding of time — smooth, stable, and poetic."
-    },
-    {
-        "name": "光影",
-        "prompt": "The still image awakens with motion: beams of light drift slowly across textured surfaces, casting long, graceful shadows. The camera moves smoothly and quietly, keeping every detail sharp. Cinematic, refined, and full of living light."
     },
     {
         "name": "神圣",
@@ -494,12 +494,14 @@ TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "cir
 # 图像生成默认风格配置
 
 ANIMATE_TARGET = ["I2V", "2I2V", "S2V", "FS2V", "WS2V", "AI2V"]
-ANIMATE_I2V = ["I2V", "I2V_0", "I2V_1", "I2V_2"]
-ANIMATE_2I2V = ["2I2V", "2I2V_0", "2I2V_1", "2I2V_2"]
-ANIMATE_S2V = ["S2V", "S2V_0", "S2V_1", "S2V_2", "FS2V", "FS2V_0", "FS2V_1", "FS2V_2"]
-ANIMATE_WS2V = ["WS2V", "WS2V_0", "WS2V_1", "WS2V_2"]
-ANIMATE_AI2V = ["AI2V", "AI2V_0", "AI2V_1", "AI2V_2"]
+ANIMATE_I2V = ["I2V"]
+ANIMATE_2I2V = ["2I2V"]
+ANIMATE_S2V = ["S2V", "FS2V"]
+ANIMATE_WS2V = ["WS2V"]
+ANIMATE_AI2V = ["AI2V"]
 ANIMATE_SOURCE = [""] + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_S2V + ANIMATE_WS2V + ANIMATE_AI2V
+
+FACE_ENHANCE = ["0", "15", "30", "60"]
 
 
 ANIMATE_TYPE_PATTERNS = [
@@ -507,7 +509,7 @@ ANIMATE_TYPE_PATTERNS = [
     (r"_2I2V_\d{8}\.mp4$", "_2I2V"),
     (r"_L_WS2V_\d{8}\.mp4$", "_L_WS2V"),
     (r"_R_WS2V_\d{8}\.mp4$", "_R_WS2V"),
-    (r"_S2V_\d{8}\.mp4$", "_S2V"),
+    (r"_S2V_\d{8}\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
     (r"_FS2V_\d{8}\.mp4$", "_FS2V"),
     (r"_AI2V_\d{8}\.mp4$", "_AI2V")
 ]

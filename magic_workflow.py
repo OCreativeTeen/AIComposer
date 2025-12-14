@@ -1,26 +1,21 @@
-from hashlib import new
 from urllib.parse import urlparse, parse_qs
 
-from torch._inductor.ir import NoneAsConstantBuffer
 import config_prompt
 from utility.audio_transcriber import AudioTranscriber
 from utility.youtube_downloader import YoutubeDownloader
 from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-import os, time
+import os
 import json
 import shutil
-import threading
-import requests
 import re
 from pathlib import Path
 from config import azure_subscription_key, azure_region
 import config
-from typing import List, Dict, Optional, Union, Any, Generator
 from datetime import datetime
 from io import BytesIO
-from utility.file_util import get_file_path, safe_remove, copy_file
+from utility.file_util import get_file_path, safe_remove, refresh_scene_media
 from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
@@ -36,7 +31,6 @@ class MagicWorkflow:
         self.language = language
         self.channel = channel
         self.story_site = story_site
-        self.media_count = 0
         
         # 全局线程管理
         self.background_threads = []
@@ -317,33 +311,6 @@ class MagicWorkflow:
         return prompt_dict
 
 
-    def create_story_images(self, story_json_content, image_style, extra_description, negative, image_folder):
-        """创建故事图像"""
-        print(f"🎭 开始创建沉浸式故事音频...")
-        # 读取沉浸故事JSON
-        story_json = json.loads(story_json_content)
-        
-        if not story_json:
-            print(f"❌ 沉浸故事内容为空")
-            return None
-        
-        print(f"📝 沉浸故事包含 {len(story_json)} 个对话片段")
-
-        for i,conversation in enumerate(story_json):
-            scene = {}
-            scene["clip_image"] = f"{config.get_project_path(self.pid)}/{image_folder}/{i}.png"
-            scene["summary"] = conversation["english_explanation"],
-
-            self._create_image(   self.workflow.sd_processor.gen_config["Story"], 
-                                                scene, 
-                                                "clip",
-                                                image_style, 
-                                                extra_description, 
-                                                negative,
-                                                int(time.time())    )
-        return  True 
-
-
     def create_story_audio(self, story_json_path, audio_path, video_duration):
         """创建沉浸式故事音频"""
         try:
@@ -548,7 +515,7 @@ class MagicWorkflow:
         return start_time_in_story, clip_duration, story_duration, indx, len(ss), s == ss[-1]
 
 
-    def merge_scene(self, from_index, to_index):
+    def merge_scene(self, from_index, to_index, keep_current=False):
         if not (from_index-to_index==1 or from_index-to_index==-1):
             return False
         if from_index > len(self.scenes) - 1 or from_index < 0:
@@ -557,29 +524,29 @@ class MagicWorkflow:
             return False
 
         from_scene = self.scenes[from_index]
+        same_main_scenes = self.scenes_in_story(from_scene)
+        if len(same_main_scenes) <= 1:
+            return False
+
         to_scene = self.scenes[to_index]
 
+        if not keep_current:
+            from_scene["content"] = to_scene["content"]
         # merged_duration = self.find_duration(from_scene) + self.find_duration(to_scene)
         if from_index > to_index:
-            from_scene["content"] = to_scene["content"] + ". " + from_scene["content"]
             audio_list = [get_file_path(to_scene, "clip_audio"), get_file_path(from_scene, "clip_audio")]
             video_list = [get_file_path(to_scene, "clip"), get_file_path(from_scene, "clip")]
         else:
-            from_scene["content"] = from_scene["content"] + ". " + to_scene["content"]
             audio_list = [get_file_path(from_scene, "clip_audio"), get_file_path(to_scene, "clip_audio")]
             video_list = [get_file_path(from_scene, "clip"), get_file_path(to_scene, "clip")]
 
         same_main_scenes = self.scenes_in_story(from_scene)
-        if len(same_main_scenes) > 1:
-            self.refresh_scene_media(from_scene, "clip_audio", ".wav",  self.ffmpeg_audio_processor.concat_audios(audio_list))
-            self.refresh_scene_media(from_scene, "clip", ".mp4",  self.ffmpeg_processor.concat_videos(video_list, True))
-        else:
-            self.refresh_scene_media(from_scene, "clip_audio", ".wav", get_file_path(from_scene, "main_audio"), True)
-            self.refresh_scene_media(from_scene, "clip", ".mp4", get_file_path(from_scene, "main_video"), True)
+        refresh_scene_media(from_scene, "clip_audio", ".wav",  self.ffmpeg_audio_processor.concat_audios(audio_list))
+        refresh_scene_media(from_scene, "clip", ".mp4",  self.ffmpeg_processor.concat_videos(video_list, True))
 
         del self.scenes[to_index]
 
-        self.refresh_scene_visual(from_scene)
+        # self.refresh_scene_visual(from_scene)
 
         #self._generate_video_from_image(from_scene)
         return True
@@ -631,6 +598,88 @@ class MagicWorkflow:
         return True
 
 
+
+    def split_smart_scene(self, current_scene, section_duration):
+        """将场景按照指定时长分割成多个部分"""
+        # 找到当前场景的索引
+        current_index = None
+        for i, scene in enumerate(self.scenes):
+            if scene is current_scene:
+                current_index = i
+                break
+        
+        if current_index is None:
+            return False
+        
+        original_duration = self.find_clip_duration(current_scene)
+        if original_duration <= 0:
+            return False
+        
+        # 计算需要分割成几个部分
+        sections = int(original_duration / section_duration)
+        if original_duration / section_duration > sections:
+            sections += 1
+        
+        # 如果只需要一个部分，不需要分割
+        if sections <= 1:
+            return False
+        
+        original_content = current_scene.get("content", "")
+        original_audio_clip = get_file_path(current_scene, "clip_audio")
+        original_video_clip = get_file_path(current_scene, "clip")
+        
+        # 获取当前场景的section ID，用于生成新的场景ID
+        max_section_id = current_scene["id"]
+        current_section = current_scene["id"] // 100
+        for s in self.scenes:
+            if s["id"] // 100 == current_section and s["id"] > max_section_id:
+                max_section_id = s["id"]
+        
+        # 创建所有新场景的列表
+        new_scenes = []
+        start_time = 0.0
+        
+        for i in range(sections):
+            # 计算当前部分的时长
+            if i == sections - 1:
+                # 最后一个部分的时长是 original_duration - start_time
+                part_duration = original_duration - start_time
+            else:
+                part_duration = section_duration
+            
+            # 创建新场景
+            if i == 0:
+                # 第一个场景使用原场景
+                new_scene = current_scene
+            else:
+                new_scene = current_scene.copy()
+            
+            # 分割音频：从 start_time 开始，提取 part_duration 长度
+            if original_audio_clip:
+                trimmed_audio = self.ffmpeg_audio_processor.audio_cut_fade(
+                    original_audio_clip, start_time, part_duration, 0, 0, 1.0
+                )
+                refresh_scene_media(new_scene, "clip_audio", ".wav", trimmed_audio)
+            
+            # 分割视频：从 start_time 开始，提取到 start_time + part_duration
+            if original_video_clip:
+                trimmed_video = self.ffmpeg_processor.trim_video(
+                    original_video_clip, start_time=start_time, end_time=start_time + part_duration
+                )
+                refresh_scene_media(new_scene, "clip", ".mp4", trimmed_video)
+            
+            # 更新场景ID和内容
+            new_scene["content"] = original_content
+            new_scene["id"] = max_section_id + i + 1
+            
+            new_scenes.append(new_scene)
+            start_time += part_duration
+        
+        # 使用 replace_scene_with_others 一次性替换原场景
+        return self.replace_scene_with_others(current_index, new_scenes)
+
+
+
     def split_scene_at_position(self, n, position):
         """分离当前场景"""
         if n<0  or n >= len(self.scenes):
@@ -653,12 +702,12 @@ class MagicWorkflow:
         current_ratio = position / original_duration
 
         first, second = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
-        self.refresh_scene_media(current_scene, "clip_audio", ".wav", first)
-        self.refresh_scene_media(next_scene, "clip_audio", ".wav", second)
+        refresh_scene_media(current_scene, "clip_audio", ".wav", first)
+        refresh_scene_media(next_scene, "clip_audio", ".wav", second)
 
         first, second = self.ffmpeg_processor.split_video(original_video_clip, position)
-        self.refresh_scene_media(current_scene, "clip", ".mp4", first)
-        self.refresh_scene_media(next_scene, "clip", ".mp4", second)
+        refresh_scene_media(current_scene, "clip", ".mp4", first)
+        refresh_scene_media(next_scene, "clip", ".mp4", second)
 
         # max section id -->  raw_id = int((raw_scene["id"]/100)*100)
         # every 100 is a section of id, so we need to find the max section id out of same section
@@ -672,9 +721,9 @@ class MagicWorkflow:
             if s["id"] > max_section_id:
                 max_section_id = s["id"]
 
-        current_scene["content"] = original_content[:int(len(original_content)*current_ratio)]
+        current_scene["content"] = original_content  #original_content[:int(len(original_content)*current_ratio)]
         current_scene["id"] = max_section_id + 1
-        next_scene["content"] = original_content[int(len(original_content)*(1.0-current_ratio)):]
+        next_scene["content"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
 
         #self._generate_video_from_image(current_scene)
@@ -708,21 +757,21 @@ class MagicWorkflow:
         firsta, seconda = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
 
         if n < m: 
-            self.refresh_scene_media(current_scene, "clip_audio", ".wav", firsta)
+            refresh_scene_media(current_scene, "clip_audio", ".wav", firsta)
             mergeda = self.ffmpeg_audio_processor.concat_audios([seconda, get_file_path(next_scene, "clip_audio")])
-            self.refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
+            refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
         else:
-            self.refresh_scene_media(current_scene, "clip_audio", ".wav", seconda)
+            refresh_scene_media(current_scene, "clip_audio", ".wav", seconda)
             mergeda = self.ffmpeg_audio_processor.concat_audios([get_file_path(next_scene, "clip_audio"), firsta])
-            self.refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
+            refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
 
         current_video = get_file_path(current_scene, "clip")
         current_video = self.ffmpeg_processor.add_audio_to_video(current_video, current_scene["clip_audio"])
-        self.refresh_scene_media(current_scene, "clip", ".mp4", current_video)
+        refresh_scene_media(current_scene, "clip", ".mp4", current_video)
 
         next_video = get_file_path(next_scene, "clip")
         next_video = self.ffmpeg_processor.add_audio_to_video(next_video, next_scene["clip_audio"])  
-        self.refresh_scene_media(next_scene, "clip", ".mp4", next_video)
+        refresh_scene_media(next_scene, "clip", ".mp4", next_video)
 
         self.save_scenes_to_json()
 
@@ -781,6 +830,12 @@ class MagicWorkflow:
         if os.path.exists(scenes_file):
             with open(scenes_file, "r", encoding="utf-8") as f:
                 self.scenes = json.load(f)
+            
+            # 规范化加载的场景数据，清理可能的转义累积
+            for scene in self.scenes:
+                if "cinematography" in scene:
+                    scene["cinematography"] = self._normalize_json_string_field(scene["cinematography"])
+            
             return
 
         system_prompt = config_prompt.PROJECT_STORY_SCENES_PROMPT.format( 
@@ -797,8 +852,16 @@ class MagicWorkflow:
 
         raw_json_path = f"{config.get_project_path(self.pid)}/scenes.json"
         self.scenes = self.llm_api.generate_json_summary(system_prompt, user_prompt, raw_json_path)
+
+        # ask user if the initial scenes are in same story, result True or False
+        import tkinter.messagebox as messagebox
+        result = messagebox.askyesno("询问", "是否将初始场景视为同一故事？")
+
         for scene in self.scenes:
-            self.initialize_default_root_scene(scene)
+            if result:
+                self.initialize_default_root_scene(scene, 10000)
+            else:
+                self.initialize_default_root_scene(scene, 100)
 
         self.save_scenes_to_json()
 
@@ -905,11 +968,109 @@ class MagicWorkflow:
         return self.transcriber.chinese_convert(srt_content, self.language)
 
 
+    def _normalize_json_string_field(self, value):
+        """规范化可能是字符串形式JSON的字段值，避免转义累积
+        
+        处理三种情况：
+        1. 已经是字典/列表对象 -> 直接返回
+        2. 是字符串形式的JSON -> 解析为对象
+        3. 是多层转义的JSON字符串 -> 逐层解析直到得到对象
+        """
+        # 如果已经是字典或列表，直接返回
+        if isinstance(value, (dict, list)):
+            return value
+        
+        # 如果不是字符串，直接返回
+        if not isinstance(value, str):
+            return value
+        
+        # 如果是空字符串，直接返回
+        if not value.strip():
+            return value
+        
+        value_stripped = value.strip()
+        
+        # 如果字符串不像 JSON（不以 { 或 [ 或 " 开头），直接返回
+        if not ((value_stripped.startswith('{') and value_stripped.endswith('}')) or 
+                (value_stripped.startswith('[') and value_stripped.endswith(']')) or
+                (value_stripped.startswith('"') and value_stripped.endswith('"'))):
+            return value
+        
+        # 尝试逐层解析 JSON 字符串
+        current_value = value_stripped
+        max_iterations = 20  # 增加到20次，处理更深层的嵌套
+        
+        for iteration in range(max_iterations):
+            try:
+                # 尝试解析当前值
+                parsed = json.loads(current_value)
+                
+                # 如果解析结果是字典或列表，返回它
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+                
+                # 如果解析结果是字符串，检查它是否还是 JSON 格式
+                if isinstance(parsed, str):
+                    parsed_stripped = parsed.strip()
+                    if ((parsed_stripped.startswith('{') and parsed_stripped.endswith('}')) or
+                        (parsed_stripped.startswith('[') and parsed_stripped.endswith(']'))):
+                        # 继续下一轮解析
+                        current_value = parsed_stripped
+                        continue
+                    else:
+                        # 不再是 JSON 格式的字符串，返回它
+                        return parsed
+                
+                # 其他类型（数字、布尔等），返回它
+                return parsed
+                
+            except json.JSONDecodeError as e:
+                # 解析失败，尝试清理转义字符
+                old_value = current_value
+                
+                # 先尝试移除最外层的引号对（如果有）
+                if current_value.startswith('"""') and current_value.endswith('"""'):
+                    current_value = current_value[3:-3]
+                elif current_value.startswith('""') and current_value.endswith('""'):
+                    current_value = current_value[2:-2]
+                elif current_value.startswith('"') and current_value.endswith('"') and len(current_value) > 2:
+                    current_value = current_value[1:-1]
+                
+                # 检查是否有转义引号或反斜杠
+                if '\\"' in current_value:
+                    # 移除转义引号
+                    current_value = current_value.replace('\\"', '"')
+                
+                if '\\\\' in current_value:
+                    # 移除转义反斜杠
+                    current_value = current_value.replace('\\\\', '\\')
+                
+                # 如果清理后有变化，继续尝试
+                if current_value != old_value:
+                    continue
+                
+                # 无法继续清理，返回当前值
+                return current_value
+        
+        # 达到最大迭代次数，返回当前值
+        return current_value
+
     def save_scenes_to_json(self):
         # config.clear_temp_files()
         try:
+            # 在保存之前规范化可能包含JSON字符串的字段
+            normalized_scenes = []
+            json_string_fields = ['cinematography']  # 可能需要规范化的字段列表
+            
+            for scene in self.scenes:
+                normalized_scene = scene.copy()
+                for field in json_string_fields:
+                    if field in normalized_scene:
+                        normalized_scene[field] = self._normalize_json_string_field(normalized_scene[field])
+                normalized_scenes.append(normalized_scene)
+            
             with open(config.get_scenes_path(self.pid), "w", encoding="utf-8") as f:
-                json.dump(self.scenes, f, ensure_ascii=False, indent=2)
+                json.dump(normalized_scenes, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
             print(f"❌ 保存scenes到JSON失败: {str(e)}")
@@ -926,7 +1087,7 @@ class MagicWorkflow:
             if int(s["id"]/10000) == root_id:
                 scenes.append(s)
 
-        scenes.sort(key=lambda x: x["id"])
+        #scenes.sort(key=lambda x: x["id"])
         return scenes
 
 
@@ -957,8 +1118,8 @@ class MagicWorkflow:
         
  
     def replace_scene_second(self, current_scene, source_video_path, source_audio_path):
-        oldv, secondv = self.refresh_scene_media(current_scene, "second", ".mp4", source_video_path)
-        olda, seconda = self.refresh_scene_media(current_scene, "second_audio", ".wav", source_audio_path)
+        oldv, secondv = refresh_scene_media(current_scene, "second", ".mp4", source_video_path)
+        olda, seconda = refresh_scene_media(current_scene, "second_audio", ".wav", source_audio_path)
 
         for s in self.scenes_in_story(current_scene):
             s["second"] = secondv
@@ -976,21 +1137,6 @@ class MagicWorkflow:
         except:
             return True
         
-
-    def refresh_scene_media(self, scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
-        new_media_stem = media_type + "_" + str(scene["id"]) + "_" + str(int(datetime.now().timestamp()*100 + self.media_count%100))
-        self.media_count = (self.media_count + 1) % 100
-
-        old_media_path = scene.get(media_type, None)
-        scene[media_type] = config.get_media_path(self.pid) + "/" + new_media_stem + media_postfix
-
-        if replacement:
-            copy_file(replacement, scene[media_type])
-            if not make_replacement_copy:
-                safe_remove(replacement)
-        return old_media_path, scene[media_type]
-
- 
     def ask_replace_scene_info_from_image(self, current_scene, image_path):
         """询问用户是否要分析图像并更新场景数据"""
         import tkinter.messagebox as messagebox
@@ -1014,7 +1160,7 @@ class MagicWorkflow:
 
 
     def replace_scene_image(self, current_scene, source_image_path, vertical_line_position, target_field):
-        oldi, image_path = self.refresh_scene_media(current_scene, target_field, ".webp", source_image_path)
+        oldi, image_path = refresh_scene_media(current_scene, target_field, ".webp", source_image_path)
 
         current_scene[target_field + "_split"] = vertical_line_position
         clip_image_last = get_file_path(current_scene, target_field + "_last")
@@ -1031,10 +1177,10 @@ class MagicWorkflow:
         #        continue
         #    image = get_file_path(scene, target_field)
         #    if not image and target_image:
-        #        self.refresh_scene_media(scene, target_field, ".webp", target_image, True)
+        #        refresh_scene_media(scene, target_field, ".webp", target_image, True)
         #    image_last = get_file_path(scene, target_field + "_last")
         #    if not image_last and target_image_last:
-        #        self.refresh_scene_media(scene, target_field + "_last", ".webp", target_image_last, True)
+        #        refresh_scene_media(scene, target_field + "_last", ".webp", target_image_last, True)
         self.save_scenes_to_json()
 
 
@@ -1322,74 +1468,8 @@ class MagicWorkflow:
         return json_item["end"], json_item["speak_audio"]
 
 
-    def make_scene_name(self, scene, av_type, postfix):
-        if not scene:
-            return av_type + "_" + self.pid + "_" + "0000" + postfix
-        return av_type + "_" + self.pid + "_" + str(scene.get("id", "")) + postfix
 
-
-    def check_generated_clip_video(self, scene, video_type, audio_type):
-        clip_animation = scene.get("clip_animation", "")
-        second_animation = scene.get("second_animation", "")
-        if clip_animation not in config.ANIMATE_SOURCE and second_animation not in config.ANIMATE_SOURCE:
-            return None
-
-        output_mp4_folder = "Z:/wan_video/output_mp4"
-
-        # 生成基础文件名前缀（不包括类型后缀）
-        # 格式: av_type + "_" + pid + "_" + scene_id
-        base_name = self.make_scene_name(scene, video_type, "")
-        
-        # 定义文件类型模式列表，匹配格式: base_name + type_suffix + _timestamp.mp4
-        # timestamp格式为 %d%H%M%S (8位数字: 日期+小时+分钟+秒)
-        files = []
-        for file in os.listdir(output_mp4_folder):
-            # 检查文件是否以基础名称开头
-            if file.startswith(base_name):
-                # 检查是否匹配任何一个类型模式
-                for pattern, type_suffix in config.ANIMATE_TYPE_PATTERNS:
-                    if re.search(pattern, file):
-                        files.append(file)
-                        break
-
-        if len(files) == 0:
-            return None
-
-        choose_file_stem = Path(files[0]).stem
-        has_audio = any(item in choose_file_stem for item in config.ANIMATE_WITH_AUDIO)
-
-        enhanced_video = output_mp4_folder + "/" + choose_file_stem + ".mp4"
-        if not os.path.exists(enhanced_video):
-            print(f"⚠️ 文件已经处理过，跳过: {enhanced_video}")
-            return
-        os.replace(enhanced_video, enhanced_video + ".bak.mp4")
-        enhanced_video = enhanced_video + ".bak.mp4"
-
-        enhanced_video = self.ffmpeg_processor.resize_video(enhanced_video, width=None, height=self.ffmpeg_processor.height)
-
-        audio = get_file_path(scene, audio_type)
-        if audio: # always cut to the same duration as the audio
-            enhanced_video = self.ffmpeg_processor.add_audio_to_video(enhanced_video, audio)
-        elif has_audio:
-            audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
-            olda, audio = self.refresh_scene_media(scene, audio_type, ".wav", audio)
-
-        if "_L_WS2V" in choose_file_stem:
-            self.refresh_scene_media(scene, video_type+"_left", ".mp4", enhanced_video, True)
-            #if scene[video_type+"_left"] and scene[video_type+"_right"]:
-            #    scene["clip_animation"] = ""
-        elif "_R_WS2V" in choose_file_stem:
-            self.refresh_scene_media(scene, video_type+"_right", ".mp4", enhanced_video, True)
-            #if scene[video_type+"_left"] and scene[video_type+"_right"]:
-            #    scene["clip_animation"] = ""
-        else:
-            oldv, enhanced_video = self.refresh_scene_media(scene, video_type, ".mp4", enhanced_video, True)
-            #scene["clip_animation"] = ""
-
-        self.save_scenes_to_json()
-
-
-    def rebuild_scene_video(self, scene, video_type, animate_mode, image_path, image_last_path, sound_path, action_path, wan_prompt):
+    def rebuild_scene_video(self, scene, video_type, animate_mode, image_path, image_last_path, sound_path, next_sound_path, action_path, wan_prompt):
         if not sound_path or not image_path:
             return
         if not image_last_path:
@@ -1399,7 +1479,7 @@ class MagicWorkflow:
         
         #if animate_mode == "IMAGE":
         #    v = self.ffmpeg_processor.image_audio_to_video(image_path, sound_path, 1)
-        #    self.refresh_scene_media(scene, video_type, ".mp4", v, True)
+        #    refresh_scene_media(scene, video_type, ".mp4", v, True)
 
         if animate_mode in config.ANIMATE_I2V:
             self.sd_processor.image_to_video( prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, animate_mode=animate_mode )
@@ -1408,7 +1488,7 @@ class MagicWorkflow:
             self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path, animate_mode=animate_mode )
 
         elif animate_mode in config.ANIMATE_S2V:
-            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, animate_mode=animate_mode, silence=False)
+            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, next_sound_path=next_sound_path, animate_mode=animate_mode, silence=False)
 
         elif animate_mode in config.ANIMATE_AI2V:
             if not action_path:
@@ -1441,119 +1521,12 @@ class MagicWorkflow:
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=file_prefix+"_R", image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
-    def _process_single_files(self, scene, found_files):
-        """处理 S2V 模式的单个视频文件"""
-        try:
-            # 等待30秒确保文件完全生成
-            print("⏳ 等待30秒确保文件生成完成...")
-            time.sleep(30)
-            
-            for new_mp4 in found_files:
-                print(f"📹 处理 S2V 视频文件: {os.path.basename(new_mp4)}")
-                
-                # 移动文件到项目媒体文件夹
-                oldv, clip_raw_video = self.refresh_scene_media(scene, "clip_raw_video", ".mp4", new_mp4)
-
-                temp_video =  config.get_temp_path(self.pid) + "/" + self.make_scene_name(scene, "clip", ".mp4")
-                copy_file(clip_raw_video, temp_video)
-                
-                print(f"✅ 文件已移动到: {clip_raw_video}")
-                
-                # 调用 REST API 增强视频
-                self._enhance_single_video(temp_video)
-            
-        except Exception as e:
-            print(f"❌ 处理 S2V 文件时出错: {str(e)}")
-
-
-    def _process_dual_files(self, scene, found_files):
-        """处理 WS2V 模式的双视频文件"""
-        try:
-            # 等待30秒确保文件完全生成
-            print("⏳ 等待60秒确保文件生成完成...")
-            time.sleep(60)
-            
-            temp_video =  config.get_temp_path(self.pid) + "/" + self.make_scene_name(scene, "clip", ".mp4")
-            # 假设前两个文件分别是左右视频
-            left_mp4 = found_files[0]
-            right_mp4 = found_files[1]
-            
-            print(f"📹 处理 WS2V 左视频: {os.path.basename(left_mp4)}")
-            print(f"📹 处理 WS2V 右视频: {os.path.basename(right_mp4)}")
-            
-            # 移动文件到项目媒体文件夹
-            oldv1, clip_raw_video = self.refresh_scene_media(scene, "clip_raw_video", ".mp4", left_mp4)
-            copy_file(clip_raw_video, temp_video)
-            
-            oldv2, clip_raw_video2 = self.refresh_scene_media(scene, "clip_raw_video2", ".mp4", right_mp4)
-            
-            print(f"✅ 左视频已移动到: {clip_raw_video}")
-            print(f"✅ 右视频已移动到: {clip_raw_video2}")
-            
-            # 调用 REST API 增强双视频
-            self._enhance_dual_video(temp_video, clip_raw_video2)
-            
-        except Exception as e:
-            print(f"❌ 处理 WS2V 文件时出错: {str(e)}")
-    
-
-    def _enhance_single_video(self, video_path):
-        """调用 REST API 增强单个视频"""
-        try:
-            url = "http://10.0.0.179:5000/process/single"
-            
-            with open(video_path, 'rb') as video_file:
-                files = {'video': video_file}
-                
-                print(f"🚀 正在调用视频增强API: {url}")
-                response = requests.post(url, files=files, timeout=300)
-                
-                if response.status_code >= 200 and response.status_code < 300:
-                    print("✅ 单视频增强成功")
-                    print(f"📄 响应: {response.text}")
-                else:
-                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
-                    print(f"📄 错误信息: {response.text}")
-                    
-        except requests.exceptions.RequestException as e:
-            print(f"❌ REST API 调用失败: {str(e)}")
-        except Exception as e:
-            print(f"❌ 增强单视频时出错: {str(e)}")
-    
-
-    def _enhance_dual_video(self, left_video_path, right_video_path):
-        """调用 REST API 增强双视频"""
-        try:
-            url = "http://10.0.0.179:5000/process/dual"
-            
-            with open(left_video_path, 'rb') as left_file, open(right_video_path, 'rb') as right_file:
-                files = {
-                    'left_video': left_file,
-                    'right_video': right_file
-                }
-                
-                print(f"🚀 正在调用双视频增强API: {url}")
-                response = requests.post(url, files=files, timeout=300)
-                
-                if response.status_code >= 200 and response.status_code < 300:
-                    print("✅ 双视频增强成功")
-                    print(f"📄 响应: {response.text}")
-                else:
-                    print(f"❌ 双视频增强失败，状态码: {response.status_code}")
-                    print(f"📄 错误信息: {response.text}")
-                    
-        except requests.exceptions.RequestException as e:
-            print(f"❌ REST API 调用失败: {str(e)}")
-        except Exception as e:
-            print(f"❌ 增强双视频时出错: {str(e)}")
-
-
     def replace_scene_audio(self, scene, audio_path, audio_start_time):
         audio_duration = self.ffmpeg_processor.get_duration(scene["clip_audio"])
         extended_audio = self.ffmpeg_audio_processor.extend_audio(audio_path, audio_start_time, audio_duration)
-        olda, newa = self.refresh_scene_media(scene, "clip_audio", ".wav", extended_audio)
+        olda, newa = refresh_scene_media(scene, "clip_audio", ".wav", extended_audio)
         newv = self.ffmpeg_processor.add_audio_to_video(scene["clip"], newa)
-        self.refresh_scene_media(scene, "clip", ".mp4", newv)
+        refresh_scene_media(scene, "clip", ".mp4", newv)
 
 
     def promotion_video(self, title, program_keywords):
@@ -1680,44 +1653,59 @@ class MagicWorkflow:
         return audio_temp
 
 
-    def prepare_scenes_from_json(self, raw_scene, raw_index, audio_json, style, shot, angle, color):
+    def merge_scenes_from_json(self, raw_scene, audio_json):
+        scene_size = len(self.scenes)
+        audio_size = len(audio_json)
+
+        merge_size = min(scene_size, audio_size)
+        audio = self.ffmpeg_audio_processor.to_wav(raw_scene["clip_audio"])
+        video = self.ffmpeg_processor.resize_video(raw_scene["clip"], None, None) 
+  
+        for i in range(merge_size):
+            audio_scene = audio_json[i]
+            preserved_fields = {field: audio_scene[field] for field in ["start", "end", "duration", "speaker"] if field in audio_scene}
+            self.scenes[i].update(preserved_fields)
+            
+            update_fields = {
+                "clip_animation": ""
+            }
+            audio_scene.update(update_fields)
+
+            clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, audio_scene["start"], audio_scene["duration"])
+            olda, clip_audio = refresh_scene_media(self.scenes[i], "clip_audio", ".wav", clip_wav)
+
+            v = self.ffmpeg_processor.trim_video(video, audio_scene["start"], audio_scene["end"])
+            v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
+            # v = self.ffmpeg_processor.image_audio_to_video(self.scenes[i]["clip_image"], clip_audio)
+            refresh_scene_media(self.scenes[i], "clip", ".mp4", v)
+
+
+    def prepare_scenes_from_json(self, raw_scene, audio_json):
         # keep raw_id as integer    
         raw_id = int((raw_scene["id"]/100)*100)
+        audio = self.ffmpeg_audio_processor.to_wav(raw_scene["clip_audio"])
+        video = self.ffmpeg_processor.resize_video(raw_scene["clip"], None, None) 
 
         start_time = 0.0
         for audio_scene in audio_json:
-            raw_id += 100
-            # 保存 audio_scene 中需要保留的字段
-            preserved_fields = {}
-            for field in ["start", "end", "duration", "speaker", "content"]:
-                if field in audio_scene:
-                    preserved_fields[field] = audio_scene[field]
-            
-            # 克隆 raw_scene 的所有字段到 audio_scene
+            preserved_fields = {field: audio_scene[field] for field in ["start", "end", "duration", "speaker", "content"] if field in audio_scene}
             audio_scene.update(raw_scene.copy())
-            
-            # 恢复保留的字段（覆盖从 raw_scene 复制的值）
             audio_scene.update(preserved_fields)
             
-            # 更新特定字段
-            audio_scene.update({
+            raw_id += 100
+            update_fields = {
                 "id": raw_id,
-                "wan_style": style,
-                "wan_shot": shot,
-                "wan_angle": angle,
-                "wan_color": color,
                 "clip_animation": ""
-            })
+            }
+            audio_scene.update(update_fields)
+
             self.refresh_scene_visual(audio_scene)
 
-            clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio_scene["clip_audio"], audio_scene["start"], audio_scene["duration"])
-            olda, clip_audio = self.refresh_scene_media(audio_scene, "clip_audio", ".wav", clip_wav)
-
-            v = self.ffmpeg_processor.trim_video(raw_scene["clip"], audio_scene["start"], audio_scene["end"])
-            #v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
-            self.refresh_scene_media(audio_scene, "clip", ".mp4", v)
-
-        self.replace_scene_with_others(raw_index, audio_json)
+            clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, audio_scene["start"], audio_scene["duration"])
+            olda, clip_audio = refresh_scene_media(audio_scene, "clip_audio", ".wav", clip_wav)
+            v = self.ffmpeg_processor.trim_video(video, audio_scene["start"], audio_scene["end"])
+            v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
+            refresh_scene_media(audio_scene, "clip", ".mp4", v)
 
         return audio_json
 
@@ -1735,23 +1723,19 @@ class MagicWorkflow:
         return True
 
 
-    def refresh_scene_visual(self, scene, script_content=None):
-        if script_content:
-            scene["content"] = script_content
-        else:
-            script_content = scene.get("content", "")
+    def refresh_scene_visual(self, scene):
+        script_content = json.dumps(scene, ensure_ascii=False, indent=2)
  
         if not script_content or script_content == "":
             return
 
-        script_content = "This scens is about:\n--------\n" + script_content + "\n\n--------\nAnd it is a scene insidethe whole story as below:\n--------\n" + project_manager.PROJECT_CONFIG.get("story", "")
-        system_prompt = config_prompt.SCENE_SUMMARY_SYSTEM_PROMPT
-        wan_style = scene.get("wan_style", None)
-        wan_color = scene.get("wan_color", None)
-        wan_shot = scene.get("wan_shot", None)
-        wan_angle = scene.get("wan_angle", None)
-        if wan_style and wan_color and wan_shot and wan_angle:
-            system_prompt = system_prompt + f'\n***FYI*** Generally, video/image is in \'{wan_style}\' style &  \'{wan_color}\' colors; the camera using \'{wan_shot}\' shot, in \'{wan_angle}\' angle.'
+        system_prompt = config_prompt.SCENE_REFRESH_SYSTEM_PROMPT
+        camear_style = scene.get("camear_style", None)
+        camera_color = scene.get("camera_color", None)
+        camera_shot = scene.get("camera_shot", None)
+        camera_angle = scene.get("camera_angle", None)
+        if camear_style and camera_color and camera_shot and camera_angle:
+            system_prompt = system_prompt + f'\n***FYI*** Generally, video/image is in \'{camear_style}\' style &  \'{camera_color}\' colors; the camera using \'{camera_shot}\' shot, in \'{camera_angle}\' angle.'
 
         new_scene = self.llm_api.generate_json_summary(system_prompt, script_content, None, False)
         if isinstance(new_scene, list):
@@ -1771,7 +1755,7 @@ class MagicWorkflow:
         return max_id
 
 
-    def initialize_default_root_scene(self, scene):
+    def initialize_default_root_scene(self, scene, root_id_factor):
         prefix, keywords = config.fetch_resource_prefix("", ["default"])
 
         if not self.background_image:
@@ -1785,16 +1769,18 @@ class MagicWorkflow:
         if not self.background_video:
             self.background_video = self.ffmpeg_processor.image_audio_to_video(self.background_image, self.background_music, 1)
 
-        next_root_id = (int(self.max_id()/10000) + 1)*10000
+        next_root_id = (int(self.max_id()/root_id_factor) + 1)*root_id_factor
+        if next_root_id < 10000:
+            next_root_id = 10000
         scene["id"] = next_root_id
 
-        oldv, zero =self.refresh_scene_media(scene, "zero", ".mp4", self.background_video, True)
-        olda, zero_audio = self.refresh_scene_media(scene, "zero_audio", ".wav", self.background_music, True)
-        oldi, zero_image = self.refresh_scene_media(scene, "zero_image", ".webp", self.background_image, True)
+        oldv, zero =refresh_scene_media(scene, "zero", ".mp4", self.background_video, True)
+        olda, zero_audio = refresh_scene_media(scene, "zero_audio", ".wav", self.background_music, True)
+        oldi, zero_image = refresh_scene_media(scene, "zero_image", ".webp", self.background_image, True)
 
-        self.refresh_scene_media(scene, "clip", ".mp4", zero, True)
-        self.refresh_scene_media(scene, "clip_audio", ".wav", zero_audio, True)
-        self.refresh_scene_media(scene, "clip_image", ".webp", zero_image, True)
+        refresh_scene_media(scene, "clip", ".mp4", zero, True)
+        refresh_scene_media(scene, "clip_audio", ".wav", zero_audio, True)
+        refresh_scene_media(scene, "clip_image", ".webp", zero_image, True)
 
 
     def add_default_root_scene(self, scene_index, site, is_append=False):
@@ -1804,7 +1790,7 @@ class MagicWorkflow:
                 "environment": site,
                 "clip_animation": "",
             }
-        self.initialize_default_root_scene(scene)
+        self.initialize_default_root_scene(scene, 10000)
 
         if not self.scenes:
             self.scenes = [scene]
@@ -1842,7 +1828,8 @@ class MagicWorkflow:
             current_scene["environment"] = environment
         cinematography = scene_data.get("cinematography", "")
         if cinematography:
-            current_scene["cinematography"] = cinematography
+            # 规范化 cinematography 字段，确保正确处理 JSON 字符串
+            current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
         sound = scene_data.get("sound_effect", "")
         if sound:
             current_scene["sound_effect"] = sound

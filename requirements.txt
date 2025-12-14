@@ -29,6 +29,7 @@
 
 # Whisper ASR
 faster-whisper
+pyannote.audio
 
 # OpenAI API
 openai>=1.0.0
