@@ -10,8 +10,8 @@ import config_prompt
 import config
 from pathlib import Path
 from pyannote.audio import Pipeline
-import torch
-import torchaudio
+#import torch
+#import torchaudio
 import warnings
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
@@ -29,13 +29,13 @@ class AudioTranscriber:
         self.device = device
         self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
 
-        device = torch.device("cuda") 
-        hf_token = os.getenv("HF_TOKEN", "")
-        self.pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            token=hf_token
-        )
-        self.pipeline.to(device)
+        #device = torch.device("cuda") 
+        #hf_token = os.getenv("HF_TOKEN", "")
+        # self.pipeline = Pipeline.from_pretrained(
+        #    "pyannote/speaker-diarization-3.1",
+        #    token=hf_token
+        #)
+        # self.pipeline.to(device)
 
 
     def fetch_srt_from_json(self, script_path):
@@ -81,7 +81,7 @@ class AudioTranscriber:
         srt_segments, _ = model.transcribe(audio_path, beam_size=5, language=lang)
         srt_segments = [obj.__dict__ for obj in srt_segments]  # ← 修复：生成器转列表，支持 len() 和索引、重复遍历
 
-        clean_memory()
+        # clean_memory()
 
         char_time_pair = []
         text_content = ""
@@ -106,14 +106,14 @@ class AudioTranscriber:
 
         print(f"调试信息: char_time_pair数量={len(char_time_pair)}")
 
-        clean_memory()
+        #clean_memory()
 
         sentences = self.reorganize_text_content(text_content, language)
         print(f"调试信息: 重组后句子数量={len(sentences)}")
         if len(sentences) == 0:
             return None
 
-        clean_memory()
+        # clean_memory()
 
         reorganized = []
         current_char_index = 0
@@ -160,12 +160,12 @@ class AudioTranscriber:
 
         print(f"调试信息: reorganized数量={len(reorganized)}")
 
-        clean_memory()
+        # clean_memory()
 
         merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
         print(f"调试信息: merged数量={len(merged_segments)}")
 
-        clean_memory()
+        # clean_memory()
 
         # 4. Run diarization
         # 使用预加载的音频数据避免 torchcodec 依赖问题
@@ -182,7 +182,7 @@ class AudioTranscriber:
         
         merged_segments = self.assign_speakers(merged_segments, None)
 
-        clean_memory()
+        #clean_memory()
 
         if len(merged_segments) > 0:
             if merged_segments[0]['start'] != 0.0:

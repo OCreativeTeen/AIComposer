@@ -7,8 +7,19 @@ import config
 
 
 
-def copy_file(source, destination):
+def safe_copy_overwrite(source, destination):
+    # shutil.copyfile(left_video.file_path, temp_left_path)
     try:
+        # 确保目标目录存在
+        dest_dir = os.path.dirname(destination)
+        if dest_dir and not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+        
+        # 如果目标文件已存在，先删除以确保覆盖
+        if os.path.exists(destination):
+            os.remove(destination)
+        
+        # 复制文件（保留元数据）
         shutil.copy2(source, destination)
         return destination
     except Exception as e:
@@ -93,10 +104,19 @@ def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make
     scene[media_type] = config.get_media_path(pid) + "/" + new_media_stem + media_postfix
 
     if replacement:
-        copy_file(replacement, scene[media_type])
+        safe_copy_overwrite(replacement, scene[media_type])
         if not make_replacement_copy:
             safe_remove(replacement)
     return old_media_path, scene[media_type]
+
+
+
+def build_scene_media_prefix(pid, scene_id, media_type, animate_type, with_timestamp):
+    if with_timestamp:
+        timestamp = datetime.now().strftime("%d%H%M%S")
+        return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type + "_" + timestamp
+    else:
+        return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type
 
 
 def clean_memory(cuda=True, verbose=True):

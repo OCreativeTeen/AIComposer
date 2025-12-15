@@ -106,6 +106,7 @@ def find_matched_file(folder, prefix, post, keywords=None, used_files=None):
 # 基础路径配置
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
+INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input_mp4"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
@@ -505,13 +506,13 @@ FACE_ENHANCE = ["0", "15", "30", "60"]
 
 
 ANIMATE_TYPE_PATTERNS = [
-    (r"_I2V_\d{8}\.mp4$", "_I2V"),
-    (r"_2I2V_\d{8}\.mp4$", "_2I2V"),
-    (r"_L_WS2V_\d{8}\.mp4$", "_L_WS2V"),
-    (r"_R_WS2V_\d{8}\.mp4$", "_R_WS2V"),
-    (r"_S2V_\d{8}\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
-    (r"_FS2V_\d{8}\.mp4$", "_FS2V"),
-    (r"_AI2V_\d{8}\.mp4$", "_AI2V")
+    (r"_I2V(_\d{8})?\.mp4$", "_I2V"),
+    (r"_2I2V(_\d{8})?\.mp4$", "_2I2V"),
+    (r"_L_WS2V(_\d{8})?\.mp4$", "_L_WS2V"),
+    (r"_R_WS2V(_\d{8})?\.mp4$", "_R_WS2V"),
+    (r"_S2V(_\d{8})?\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
+    (r"_FS2V(_\d{8})?\.mp4$", "_FS2V"),
+    (r"_AI2V(_\d{8})?\.mp4$", "_AI2V")
 ]
 
 ANIMATE_WITH_AUDIO = ["_L_WS2V", "_R_WS2V", "_S2V", "_FS2V"]

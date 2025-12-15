@@ -571,7 +571,7 @@ class ProjectSelectionDialog:
         pid_entry = ttk.Entry(main_frame, width=25)
         pid_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
         # 自动生成默认PID
-        auto_pid = f"project_{datetime.now().strftime('%Y%m%d_%H%M')}"
+        auto_pid = f"p{datetime.now().strftime('%Y%m%d%H%M')}"
         pid_entry.insert(0, auto_pid)
         row += 1
         

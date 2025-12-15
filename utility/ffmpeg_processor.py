@@ -7,7 +7,7 @@ from mpmath import rational
 from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
 import config
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.file_util import copy_file
+from utility.file_util import safe_copy_overwrite
 import random
 import unicodedata
 
@@ -443,30 +443,42 @@ class FfmpegProcessor:
             print(f"FFmpeg Error 1: {e.stderr}")
 
 
-    def resize_video(self, video_path, width, height):
+    def resize_video(self, video_path, width, height, startx=None, starty=None):
         try:
             crop_width, crop_height = self.get_resolution(video_path)
             x_y_ratio = (float(crop_width)/float(crop_height))
+            if x_y_ratio > 1.0:
+                x_y_ratio = 16.0/9.0
+            else:
+                x_y_ratio = 9.0/16.0
 
             if height is None and width is None:
                 height = crop_height
                 width = crop_width
             elif width is None:
-                width = height * x_y_ratio
+                width = int(height * x_y_ratio)
             elif height is None:
-                height = crop_height / x_y_ratio
+                height = int(width / x_y_ratio)
 
-            need_scale = (crop_height != self.height or crop_width != self.width)
+            # Check if cropping is needed
+            need_crop = (startx is not None and startx != 0) or (starty is not None and starty != 0)
+            need_scale = (crop_height != height or crop_width != width)
             
             output_path = config.get_temp_file(self.pid, "mp4")
             # Early exit if no changes needed
-            if not need_scale:
+            if not need_scale and not need_crop:
                 shutil.copy2(video_path, output_path)
                 print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")
                 return output_path
             
+            # Normalize startx and starty (default to 0 if None)
+            if startx is None:
+                startx = 0
+            if starty is None:
+                starty = 0
+            
             # Build and execute FFmpeg command
-            cmd = self._build_resize_command( video_path, output_path, crop_width, crop_height )
+            cmd = self._build_resize_command( video_path, output_path, width, height, startx, starty )
             
             print(f"🔧 Executing FFmpeg command for resize_video: {' '.join(cmd)}")
             subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
@@ -541,14 +553,29 @@ class FfmpegProcessor:
             return None
 
 
-    def _build_resize_command(self, video_path, output_path, target_width, target_height):
-        """Build FFmpeg command for video resizing."""
+    def _build_resize_command(self, video_path, output_path, target_width, target_height, startx=0, starty=0):
+        """Build FFmpeg command for video resizing with optional cropping."""
         cmd = [self.ffmpeg_path, "-y"]
         cmd.extend(self._get_input_args(None, None))
         cmd.extend(["-i", video_path])
         
-        # Add video scaling filter
-        cmd.extend(["-vf", f"scale={target_width}:{target_height}"])
+        # Build video filter chain
+        # If cropping is needed, combine crop and scale filters
+        need_crop = (startx != 0 or starty != 0)
+        
+        if need_crop:
+            # Get original video dimensions for crop calculation
+            original_width, original_height = self.get_resolution(video_path)
+            # Calculate crop width and height (crop to target size before scaling)
+            crop_w = min(target_width, original_width - startx)
+            crop_h = min(target_height, original_height - starty)
+            # Build filter chain: crop first, then scale
+            vf_filter = f"crop={crop_w}:{crop_h}:{startx}:{starty},scale={target_width}:{target_height}"
+        else:
+            # Only scale if no cropping needed
+            vf_filter = f"scale={target_width}:{target_height}"
+        
+        cmd.extend(["-vf", vf_filter])
         
         # Add video encoder configuration
         cmd.extend(["-c:v", "libx264"])
@@ -1810,7 +1837,7 @@ class FfmpegProcessor:
 
         video_out_path = config.get_temp_file(self.pid, "mp4")
         if len(video_paths) == 1:
-            copy_file(video_paths[0], video_out_path)
+            safe_copy_overwrite(video_paths[0], video_out_path)
             return video_out_path
         
         try:

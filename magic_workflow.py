@@ -859,9 +859,9 @@ class MagicWorkflow:
 
         for scene in self.scenes:
             if result:
-                self.initialize_default_root_scene(scene, 10000)
-            else:
                 self.initialize_default_root_scene(scene, 100)
+            else:
+                self.initialize_default_root_scene(scene, 10000)
 
         self.save_scenes_to_json()
 

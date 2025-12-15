@@ -23,7 +23,7 @@ import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
 import os
-from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, refresh_scene_media
+from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, refresh_scene_media, build_scene_media_prefix
 from gui.media_review_dialog import AVReviewDialog
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
@@ -189,9 +189,15 @@ class WorkflowGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
 
+
+    pid = None
+
     def get_pid(self):
-        return self.shared_pid.cget('text').strip() or ''
+        if self.pid is None:
+            self.pid = project_manager.PROJECT_CONFIG.get('pid')
+        return self.pid
     
+
 
     def create_workflow_instance(self):
         """立即创建工作流实例（非懒加载）"""
@@ -199,22 +205,21 @@ class WorkflowGUI:
             # Get video dimensions from project config
             video_width = project_manager.PROJECT_CONFIG.get('video_width')
             video_height = project_manager.PROJECT_CONFIG.get('video_height')
-            pid = project_manager.PROJECT_CONFIG.get('pid')
             language = project_manager.PROJECT_CONFIG.get('language')
             channel = project_manager.PROJECT_CONFIG.get('channel')
             story_site = project_manager.PROJECT_CONFIG.get('story_site')
             keywords = project_manager.PROJECT_CONFIG.get('program_keywords')
             project_type = project_manager.PROJECT_CONFIG.get('project_type')
 
-            self.workflow = MagicWorkflow(pid, project_type, language, channel, story_site, video_width, video_height)
-            self.speech_service = MinimaxSpeechService(pid)
+            self.workflow = MagicWorkflow(self.get_pid(), project_type, language, channel, story_site, video_width, video_height)
+            self.speech_service = MinimaxSpeechService(self.get_pid())
             
             current_gui_title = self.video_title.get().strip()
             self.workflow.post_init(current_gui_title, keywords)
 
             self.on_tab_changed(None)
             
-            print(f"✅ 工作流实例创建完成 - PID: {pid}")
+            print("✅ 工作流实例创建完成")
             
         except Exception as e:
             print(f"❌ 创建工作流实例失败: {e}")
@@ -1078,11 +1083,22 @@ class WorkflowGUI:
         self.append_scene_button = ttk.Button(video_control_frame, text="后插", command=self.append_scene, width=6)
         self.append_scene_button.pack(side=tk.LEFT, padx=1)
 
-        #ttk.Button(scene_nav_row, text="智分场景", 
-        #          command=self.split_smart_scene).pack(side=tk.LEFT, padx=2) 
+        # add 2 marks, to mark the current video progress seconds，　then add a button 'make_silence'　to make the audio  period between mark1 mark2 be silient
+        separator = ttk.Separator(video_control_frame, orient='vertical')
+        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        
+        ttk.Button(video_control_frame, text="静音", command=self.make_silence_between_marks, width=6).pack(side=tk.LEFT, padx=1)
+        # Mark buttons and labels
+        ttk.Button(video_control_frame, text="M1", command=self.set_mark1, width=3).pack(side=tk.LEFT, padx=1)
+        self.mark1_label = ttk.Label(video_control_frame, text="--:--.--", width=10)
+        self.mark1_label.pack(side=tk.LEFT, padx=1)
+        
+        ttk.Button(video_control_frame, text="M2", command=self.set_mark2, width=3).pack(side=tk.LEFT, padx=1)
+        self.mark2_label = ttk.Label(video_control_frame, text="--:--.--", width=10)
+        self.mark2_label.pack(side=tk.LEFT, padx=1)
 
         # 视频进度标签
-        self.video_progress_label = ttk.Label(video_control_frame, text="00:00 / 00:00")
+        self.video_progress_label = ttk.Label(video_control_frame, text="00:00.00 / 00:00.00")
         self.video_progress_label.pack(side=tk.RIGHT, padx=1)
         
         # 初始化视频进度显示
@@ -1095,17 +1111,21 @@ class WorkflowGUI:
         self.video_start_time = None
         self.video_pause_time = None  # 记录暂停时的累计播放时间
         
+        # 标记时间点
+        self.mark1_time = None
+        self.mark2_time = None
+        
         # 右侧：场景信息显示区域
-        video_edit_frame = ttk.LabelFrame(main_content, text="场景信息", padding=10)
-        video_edit_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+        self.video_edit_frame = ttk.LabelFrame(main_content, text="场景信息", padding=10)
+        self.video_edit_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         # 设置右侧面板的固定宽度，防止被挤压
-        video_edit_frame.configure(width=650)
-        video_edit_frame.pack_propagate(False)
+        self.video_edit_frame.configure(width=650)
+        self.video_edit_frame.pack_propagate(False)
         
         row_number = 1
 
         # 持续时间和宣传模式在同一行
-        duration_promo_frame = ttk.Frame(video_edit_frame)
+        duration_promo_frame = ttk.Frame(self.video_edit_frame)
         duration_promo_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
@@ -1132,7 +1152,7 @@ class WorkflowGUI:
         self.second_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
 
         # 类型、情绪、动作选择（在同一行）
-        type_mood_action_frame = ttk.Frame(video_edit_frame)
+        type_mood_action_frame = ttk.Frame(self.video_edit_frame)
         type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
@@ -1142,7 +1162,7 @@ class WorkflowGUI:
         ttk.Button(type_mood_action_frame, text="生次动画", width=10,  command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
 
 
-        action_frame = ttk.Frame(video_edit_frame)
+        action_frame = ttk.Frame(self.video_edit_frame)
         action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
@@ -1156,91 +1176,91 @@ class WorkflowGUI:
         # add a choice list to choose the enhance level, values are from config.FACE_ENHANCE, default value to "0"
         self.enhance_level = ttk.Combobox(action_frame, width=5, values=config.FACE_ENHANCE)
         self.enhance_level.pack(side=tk.LEFT, padx=2)
-        self.enhance_level.set(config.FACE_ENHANCE[0])
+        self.enhance_level.set(config.FACE_ENHANCE[2])
 
        
-        ttk.Label(video_edit_frame, text="内容:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_story_content = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="内容:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_story_content = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_story_content.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add the text field to show the keywords
-        ttk.Label(video_edit_frame, text="关键词:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_keywords = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="关键词:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_keywords = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_keywords.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_subject = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_subject = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_subject.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(video_edit_frame, text="开场画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_visual_start = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="开场画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_visual_start = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_visual_start.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="结束画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_visual_end = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="结束画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_visual_end = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_visual_end.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="时代:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_era_time = scrolledtext.ScrolledText(video_edit_frame, width=35, height=1)
+        ttk.Label(self.video_edit_frame, text="时代:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_era_time = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=1)
         self.scene_era_time.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(video_edit_frame, text="环境:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_environment = ttk.Entry(video_edit_frame, width=35)
+        ttk.Label(self.video_edit_frame, text="环境:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_environment = ttk.Entry(self.video_edit_frame, width=35)
         self.scene_environment.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(video_edit_frame, text="电影摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_cinematography = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="电影摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_cinematography = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_cinematography.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(video_edit_frame, text="音效:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_sound_effect = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="音效:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_sound_effect = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_sound_effect.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="FYI:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_extra =  scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="FYI:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_extra =  scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_extra.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="讲员动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker_action = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="讲员动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker_action = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_speaker_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="情绪:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_mood = ttk.Combobox(video_edit_frame, width=35, values=EXPRESSION_STYLES, state="readonly")
+        ttk.Label(self.video_edit_frame, text="情绪:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_mood = ttk.Combobox(self.video_edit_frame, width=35, values=EXPRESSION_STYLES, state="readonly")
         self.scene_mood.set("calm")  # 设置默认值
         self.scene_mood.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(video_edit_frame, width=32, values=config.ROLES)
+        ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config.ROLES)
         self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(video_edit_frame, text="左右:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker_position = ttk.Combobox(video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
+        ttk.Label(self.video_edit_frame, text="左右:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker_position = ttk.Combobox(self.video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
         self.scene_speaker_position.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add a choice list to choose font of the title, values are from config.FONT_LIST(choose from all languages, show language name in choice, keep value), default value to self.workflow.font_video
-        ttk.Label(video_edit_frame, text="标题字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_language = ttk.Combobox(video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
+        ttk.Label(self.video_edit_frame, text="标题字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_language = ttk.Combobox(self.video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
         self.scene_language.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         self.scene_language.set(self.shared_language.cget('text'))
 
         # add a text field "promotion info" here, default empty, if enter text, then need to save to current scene["promotion_info"] 
-        ttk.Label(video_edit_frame, text="宣传信息:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_promotion_info = scrolledtext.ScrolledText(video_edit_frame, width=35, height=2)
+        ttk.Label(self.video_edit_frame, text="宣传信息:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_promotion_info = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_promotion_info.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
@@ -1823,12 +1843,12 @@ class WorkflowGUI:
         for scene_index, scene in enumerate(self.workflow.scenes):
             clip_animation = scene.get("clip_animation", "")
             if clip_animation in config.ANIMATE_SOURCE and clip_animation != "":
-                scene_name = "clip" + "_" + self.workflow.pid + "_" + str(scene.get("id", ""))
+                scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
                 animate_gen_list.append((scene_name, "clip", scene))
 
             second_animation = scene.get("second_animation", "")
             if second_animation in config.ANIMATE_SOURCE and second_animation != "":
-                scene_name = "second" + "_" + self.workflow.pid + "_" + str(scene.get("id", ""))
+                scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "second", "", False)
                 animate_gen_list.append((scene_name, "second", scene))
 
         if animate_gen_list == []:
@@ -2257,30 +2277,13 @@ class WorkflowGUI:
                     self.current_video_frame = ImageTk.PhotoImage(pil_image)
                     self.video_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_video_frame)
             
-            # 更新进度显示 - 使用音频实际时长
-            if self.video_start_time:
-                elapsed_time = time.time() - self.video_start_time
-                current_time = elapsed_time + (self.video_pause_time or 0)
-            else:
-                current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES)
-                current_time = current_frame / STANDARD_FPS
+            current_time, total_time = self.get_current_video_time()
             
-            # 获取音频实际时长
-            current_scene = self.get_current_scene()
-            total_time = self.workflow.find_clip_duration(current_scene)
-            if total_time <= 0:
-                total_time = total_frames / STANDARD_FPS
+            # Format time with 0.01 second precision
+            current_time_str = self.format_time_with_centiseconds(current_time)
+            total_time_str = self.format_time_with_centiseconds(total_time)
             
-            # 确保不超过总时长
-            if current_time > total_time:
-                current_time = total_time
-            
-            current_min = int(current_time // 60)
-            current_sec = int(current_time % 60)
-            total_min = int(total_time // 60)
-            total_sec = int(total_time % 60)
-            
-            self.video_progress_label.config(text=f"{current_min:02d}:{current_sec:02d} / {total_min:02d}:{total_sec:02d}")
+            self.video_progress_label.config(text=f"{current_time_str} / {total_time_str}")
             
             # 计算下一帧的延迟时间（毫秒）- 正常1倍播放速度
             delay = int(1000 / STANDARD_FPS)  # 正常播放速度
@@ -2544,6 +2547,163 @@ class WorkflowGUI:
         self.scene_promotion_info.delete("1.0", tk.END)
         self.scene_promotion_info.insert("1.0", scene_data.get("promotion_info", ""))
 
+        input_media_path = get_file_path(scene_data, "clip_input")
+        if input_media_path:
+            video_width, video_height = self.workflow.ffmpeg_processor.check_video_size(input_media_path)
+            # set self.video_edit_frame text tobe "视频尺寸: width x height"
+            self.video_edit_frame.config(text=f"视频尺寸: {video_width} x {video_height}")
+            self.video_edit_frame.update()
+
+
+
+    def format_time_with_centiseconds(self, seconds):
+        """Format time as MM:SS.CC (minutes:seconds.centiseconds)"""
+        if seconds is None or seconds < 0:
+            return "00:00.00"
+        
+        minutes = int(seconds // 60)
+        remaining_seconds = seconds % 60
+        secs = int(remaining_seconds)
+        centiseconds = int((remaining_seconds - secs) * 100)
+        
+        return f"{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+
+
+    def get_current_video_time(self):
+        """Get current video playback time in seconds"""
+        #if self.video_start_time:
+        #    elapsed_time = time.time() - self.video_start_time
+        #    current_time = elapsed_time + (self.video_pause_time or 0)
+        #else:
+        current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES)
+        current_time = current_frame / STANDARD_FPS
+
+        total_time = self.workflow.find_clip_duration(self.get_current_scene())
+        
+        if current_time > total_time:
+            current_time = total_time
+
+        return current_time, total_time
+
+
+    def set_mark1(self):
+        """Set mark1 to current video time"""
+        current_time, total_time = self.get_current_video_time()
+        current_time = current_time + self.playing_delta
+        self.mark1_time = current_time
+        time_str = self.format_time_with_centiseconds(current_time)
+        self.mark1_label.config(text=time_str)
+        print(f"✓ 设置标记1: {time_str}")
+    
+
+    def set_mark2(self):
+        """Set mark2 to current video time"""
+        current_time, total_time = self.get_current_video_time()
+        current_time = current_time + self.playing_delta
+        self.mark2_time = current_time
+        time_str = self.format_time_with_centiseconds(current_time)
+        self.mark2_label.config(text=time_str)
+        print(f"✓ 设置标记2: {time_str}")
+    
+
+    def make_silence_between_marks(self):
+        """Make audio silent between mark1 and mark2"""
+        if self.mark1_time is None or self.mark2_time is None:
+            messagebox.showwarning("警告", "请先设置标记1和标记2")
+            return
+        
+        mark1 = min(self.mark1_time, self.mark2_time)
+        mark2 = max(self.mark1_time, self.mark2_time)
+        
+        if mark1 >= mark2:
+            messagebox.showwarning("警告", "标记1和标记2时间相同或无效")
+            return
+        
+        try:
+            current_scene = self.get_current_scene()
+            if not current_scene:
+                messagebox.showerror("错误", "没有当前场景")
+                return
+            
+            clip_audio_path = get_file_path(current_scene, "clip_audio")
+            if not clip_audio_path or not os.path.exists(clip_audio_path):
+                messagebox.showerror("错误", "找不到音频文件")
+                return
+            
+            # Get total duration
+            total_duration = self.workflow.ffmpeg_processor.get_duration(clip_audio_path)
+            if total_duration <= 0:
+                messagebox.showerror("错误", "无法获取音频时长")
+                return
+            
+            # Ensure marks are within audio duration
+            mark1 = max(0.0, min(mark1, total_duration))
+            mark2 = max(mark1, min(mark2, total_duration))
+            
+            if mark1 >= mark2:
+                messagebox.showwarning("警告", "标记时间无效")
+                return
+            
+            print(f"🔇 静音处理: {mark1:.2f}s 到 {mark2:.2f}s")
+            
+            # Split audio into three parts: before mark1, between marks (silent), after mark2
+            audio_segments = []
+            
+            # Part 1: from start to mark1
+            if mark1 > 0:
+                part1 = self.workflow.ffmpeg_audio_processor.audio_cut_fade(
+                    clip_audio_path, 0, mark1, 0, 0, 1.0
+                )
+                if part1:
+                    audio_segments.append(part1)
+            
+            # Part 2: silent segment from mark1 to mark2
+            silent_duration = mark2 - mark1
+            silent_segment = self.workflow.ffmpeg_audio_processor.make_silence(silent_duration)
+            if silent_segment:
+                audio_segments.append(silent_segment)
+            
+            # Part 3: from mark2 to end
+            if mark2 < total_duration:
+                part3_duration = total_duration - mark2
+                part3 = self.workflow.ffmpeg_audio_processor.audio_cut_fade(
+                    clip_audio_path, mark2, part3_duration, 0, 0, 1.0
+                )
+                if part3:
+                    audio_segments.append(part3)
+            
+            # Concatenate all segments
+            if audio_segments:
+                output_audio = self.workflow.ffmpeg_audio_processor.concat_audios(audio_segments)
+                if output_audio and os.path.exists(output_audio):
+                    # Update scene audio file
+                    old_audio, new_audio = refresh_scene_media(
+                        current_scene, "clip_audio", ".wav", output_audio, True
+                    )
+                    
+                    # Update video with new audio
+                    clip_video = get_file_path(current_scene, "clip")
+                    if clip_video and os.path.exists(clip_video):
+                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(
+                            clip_video, new_audio
+                        )
+                        if output_video:
+                            refresh_scene_media(
+                                current_scene, "clip", ".mp4", output_video, True
+                            )
+                    
+                    messagebox.showinfo("成功", f"已将 {mark1:.2f}s 到 {mark2:.2f}s 之间的音频静音")
+                    print(f"✅ 静音处理完成")
+                else:
+                    messagebox.showerror("错误", "音频处理失败")
+            else:
+                messagebox.showerror("错误", "无法创建音频片段")
+                
+        except Exception as e:
+            error_msg = f"静音处理失败: {str(e)}"
+            print(f"❌ {error_msg}")
+            messagebox.showerror("错误", error_msg)
+
 
     def update_video_progress_display(self):
         """更新视频进度显示（未播放时显示总时长）"""
@@ -2559,18 +2719,16 @@ class WorkflowGUI:
                 else:
                     total_duration = 0.0
                 
-                total_min = int(total_duration // 60)
-                total_sec = int(total_duration % 60)
-                
                 if self.video_playing:
                     pass
                 else:
-                    self.video_progress_label.config(text=f"00:00 / {total_min:02d}:{total_sec:02d}")
+                    total_time_str = self.format_time_with_centiseconds(total_duration)
+                    self.video_progress_label.config(text=f"00:00.00 / {total_time_str}")
             else:
-                self.video_progress_label.config(text="00:00 / 00:00")
+                self.video_progress_label.config(text="00:00.00 / 00:00.00")
                 
         except Exception as e:
-            self.video_progress_label.config(text="00:00 / 00:00")
+            self.video_progress_label.config(text="00:00.00 / 00:00.00")
             print(f"⚠️ 更新视频进度显示失败: {e}")
 
 
@@ -4071,6 +4229,13 @@ class WorkflowGUI:
                 # Preserve project_type from existing config
                 if 'project_type' in project_manager.PROJECT_CONFIG:
                     config_data['project_type'] = project_manager.PROJECT_CONFIG['project_type']
+                # Preserve inspiration, poem, and story from existing config
+                if 'inspiration' in project_manager.PROJECT_CONFIG:
+                    config_data['inspiration'] = project_manager.PROJECT_CONFIG['inspiration']
+                if 'poem' in project_manager.PROJECT_CONFIG:
+                    config_data['poem'] = project_manager.PROJECT_CONFIG['poem']
+                if 'story' in project_manager.PROJECT_CONFIG:
+                    config_data['story'] = project_manager.PROJECT_CONFIG['story']
             
             # 更新当前项目配置
             project_manager.PROJECT_CONFIG = config_data
@@ -4214,7 +4379,7 @@ class WorkflowGUI:
         self.video_canvas.bind('<Double-Button-1>', self.on_video_canvas_double_click)
 
 
-    def handle_av_replacement(self, av_path, replace_media_audio, media_type, initial_start_time=None, initial_end_time=None):
+    def handle_av_replacement(self, av_path, replace_media_audio, media_type):
         """处理音频替换"""
         try:
             if not av_path:
@@ -4233,7 +4398,7 @@ class WorkflowGUI:
             scenes_same_story = self.workflow.scenes_in_story(current_scene)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
-            review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio, initial_start_time, initial_end_time)
+            review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
             
             # 等待对话框关闭
             self.root.wait_window(review_dialog.dialog)

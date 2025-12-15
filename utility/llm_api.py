@@ -414,6 +414,7 @@ class LLMApi:
         
         def on_cancel():
             # 取消时保持 result[0] 为 None
+            result[0] = MANUAL
             dialog.destroy()
         
         # 按钮框架

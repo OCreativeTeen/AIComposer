@@ -9,7 +9,7 @@ import re
 import os
 import time
 from utility.ffmpeg_processor import FfmpegProcessor
-from utility.file_util import refresh_scene_media, copy_file, get_file_path
+from utility.file_util import refresh_scene_media, safe_copy_overwrite, get_file_path, build_scene_media_prefix
 import config
 import requests
 import tkinter.messagebox as messagebox
@@ -35,9 +35,7 @@ class VideoFileInfo:
     
     def get_output_name(self) -> str:
         """Get output filename without side indicator"""
-        # add timestamp to the output name
-        timestamp = datetime.now().strftime("%d%H%M%S")
-        return f"{self.video_type}_{self.pid}_{self.scenario_id}_{self.video_mode}_{timestamp}.mp4"
+        return build_scene_media_prefix(self.pid, self.scenario_id, self.video_type, self.video_mode, True) + ".mp4"
 
 
 
@@ -326,8 +324,8 @@ class MediaScanner:
         temp_left_path = gen_folder + "/" + (left_video.filename.replace(".mp4", "_tmp.mp4"))
         right_work_path = gen_folder + "/" + right_video.filename
         
-        shutil.copyfile(left_video.file_path, temp_left_path)
-        shutil.copyfile(right_video.file_path, str(right_work_path))
+        safe_copy_overwrite(left_video.file_path, temp_left_path)
+        safe_copy_overwrite(right_video.file_path, str(right_work_path))
         
         # Rename files with .bak.mp4 extension (replace .mp4 with .bak.mp4)
         left_bak_path = str(Path(left_video.file_path).with_suffix('.bak.mp4'))
@@ -344,7 +342,7 @@ class MediaScanner:
 
 
     def _process_single_video(self, video_info: VideoFileInfo, gen_folder: str):
-        shutil.copyfile(video_info.file_path, gen_folder + "/" + video_info.get_output_name())
+        safe_copy_overwrite(video_info.file_path, gen_folder + "/" + video_info.get_output_name())
         # Rename file with .bak.mp4 extension (replace .mp4 with .bak.mp4)
         bak_path = str(Path(video_info.file_path).with_suffix('.bak.mp4'))
         os.rename(video_info.file_path, bak_path)
@@ -404,28 +402,31 @@ class MediaScanner:
         animate_mode = scene.get(av_type + "_animation", "")
         if animate_mode.strip() == "":
             return
+
+        processed = False    
         if animate_mode in config.ANIMATE_WS2V:
             left_input = get_file_path(scene, av_type + "_left_input")
             right_input = get_file_path(scene, av_type + "_right_input")
             if left_input and right_input:
                 width_left, height_left = self.ffmpeg_processor.check_video_size(left_input)
-                width_right, height_right = self.ffmpeg_processor.check_video_size(right_input)
-                #if abs(width_left - width_right) > 10  and  abs(height_left - height_right) > 10:
-                if True:
+                if abs(height_left - self.ffmpeg_processor.height) > 10 :
                     self._enhance_single_video(left_input, level)
-                    self._enhance_single_video(right_input, level)
-                    return
+                    processed = True
 
+                width_right, height_right = self.ffmpeg_processor.check_video_size(right_input)
+                if abs(height_right - self.ffmpeg_processor.height) > 10:
+                    self._enhance_single_video(right_input, level)
+                    processed = True
         else:
             input = get_file_path(scene, av_type + "_input")
             if input:
                 width, height = self.ffmpeg_processor.check_video_size(input)
-                #if abs(height - self.ffmpeg_processor.height) > 10:
-                if True:
+                if abs(height - self.ffmpeg_processor.height) > 10:
                     self._enhance_single_video(input, level)
-                    return
+                    processed = True
 
-        messagebox.showerror("视频增强失败", f"视频尺寸不正确，无法增强:\n{input}")
+        if not processed:
+            messagebox.showerror("视频增强失败", f"视频尺寸不正确，无法增强:\n{input}")
  
 
     def _enhance_single_video(self, video_path, level:str):
@@ -435,7 +436,7 @@ class MediaScanner:
         try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
             url = self.ENHANCE_SERVERS[self.current_enhance_server]
             rename_path = video_path.replace("_original", "_" + level + "_")
-            copy_file(video_path, rename_path)
+            safe_copy_overwrite(video_path, rename_path)
             
             with open(rename_path, 'rb') as video_file:
                 files = {'video': video_file}
