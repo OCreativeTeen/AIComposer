@@ -317,15 +317,18 @@ class WorkflowGUI:
         scene_nav_row = ttk.Frame(row1_frame)
         scene_nav_row.pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Label(scene_nav_row, text="场景:").pack(side=tk.LEFT)
+        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Button(scene_nav_row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Label(scene_nav_row, text="场景:").pack(side=tk.LEFT)
         ttk.Button(scene_nav_row, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
         self.scene_label = ttk.Label(scene_nav_row, text="0 / 0", width=7)
         self.scene_label.pack(side=tk.LEFT, padx=2)
         ttk.Button(scene_nav_row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Button(scene_nav_row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
-        # 分隔符
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
         ttk.Button(row1_frame, text="拷贝图",   command=self.copy_images_to_next).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
 
@@ -463,9 +466,6 @@ class WorkflowGUI:
 
 
     def reset_track_offset(self):
-        self.playing_delta = 0.0
-        self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
-
         """重置第二轨道播放偏移量到当前场景的起始位置"""
         current_scene = self.get_current_scene()
         if not current_scene:
@@ -522,7 +522,7 @@ class WorkflowGUI:
 
 
 
-    def pip_second_track(self):
+    def pip_second_track(self, from_zero):
         """将第二轨道作为画中画叠加到主轨道视频上"""
         try:
             current_scene = self.get_current_scene()
@@ -537,6 +537,9 @@ class WorkflowGUI:
             clip_video = get_file_path(current_scene, "clip")
             clip_audio = get_file_path(current_scene, "clip_audio")
             start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
+            if from_zero:
+                start_time = 0
+
             start_time = start_time + self.second_delta
 
             if is_story_last_clip: 
@@ -981,14 +984,15 @@ class WorkflowGUI:
         
         #ttk.Button(self.second_track_frame, text="◀", command=self.move_second_track_backward, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.second_track_frame, text="▶", command=self.move_second_track_forward, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(False), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(True), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('one'), width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('second'), width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="💫", command=self.swap_second, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔊", command=self.pip_second_sound, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=2)
         
         # 添加音量控制滑块（共用，根据当前tab自动选择）
@@ -1857,12 +1861,12 @@ class WorkflowGUI:
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
             self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
-            self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
+            #self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
 
             # 2. 检查 /wan_video/output_mp4 中已增强的视频
             self.media_scanner.check_gen_video(config.BASE_MEDIA_PATH+"\\input_mp4", animate_gen_list) # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
             self.media_scanner.check_gen_video("Z:\\wan_video\\output_mp4", animate_gen_list)          # clip_project_20251208_1710_10708_S2V_13231028_0_.mp4
-            #self.media_scanner.check_gen_video("W:\\wan_video\\output_mp4", animate_gen_list)
+            self.media_scanner.check_gen_video("W:\\wan_video\\output_mp4", animate_gen_list)
 
             self.workflow.save_scenes_to_json()
 
@@ -3940,7 +3944,7 @@ class WorkflowGUI:
         """增强主图或次图"""
         scene = self.get_current_scene()
         level = self.enhance_level.get()
-        self.media_scanner.enhance_clip(scene, "clip" if clip_or_second else "second", level)
+        self.media_scanner.enhance_clip(self.get_pid(), scene, "clip" if clip_or_second else "second", level)
         self.refresh_gui_scenes()
 
 
@@ -4398,6 +4402,8 @@ class WorkflowGUI:
             scenes_same_story = self.workflow.scenes_in_story(current_scene)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
+            if media_type != "clip":
+                replace_media_audio = "keep"
             review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
             
             # 等待对话框关闭

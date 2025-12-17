@@ -112,6 +112,7 @@ def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make
 
 
 def build_scene_media_prefix(pid, scene_id, media_type, animate_type, with_timestamp):
+    scene_id = str(scene_id)
     if with_timestamp:
         timestamp = datetime.now().strftime("%d%H%M%S")
         return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type + "_" + timestamp

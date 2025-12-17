@@ -9,7 +9,7 @@ from utility.audio_transcriber import AudioTranscriber
 import config
 from utility.llm_api import LLMApi
 import json
-from utility.file_util import is_audio_file, is_video_file, is_image_file, safe_copy_overwrite, build_scene_media_prefix
+from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
 import project_manager
 from pathlib import Path
@@ -96,8 +96,8 @@ class AVReviewDialog:
             self.audio_field = "one_audio"
             self.image_field = "one_image"
         # Initialize source paths
-        self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
         self.source_video_path = get_file_path(self.current_scene, self.video_field)
+        self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
         self.source_image_path = get_file_path(self.current_scene, self.image_field)
         
         self.transcribe_way = "single"
@@ -444,11 +444,11 @@ class AVReviewDialog:
         audio_buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
         ttk.Button(audio_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="剪音视", command=self.trim_media).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="剪视频", command=self.trim_video).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="单转录", command=lambda: self.trim_transcribe("single")).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="多转录", command=lambda: self.trim_transcribe("multiple")).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="多转录合并", command=lambda: self.trim_transcribe("multiple_merge")).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
+        ttk.Button(audio_buttons_frame, text="多转录合并", command=lambda: self.transcribe_audio("multiple_merge")).pack(side=tk.LEFT)
         
         # Audio transcription options section
         transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
@@ -588,7 +588,7 @@ class AVReviewDialog:
             self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
 
 
-    def trim_video(self):
+    def trim_video(self, audio_unchange):
         self.update_dialog_title("none")
 
         video_path = safe_file(self.source_video_path)
@@ -604,13 +604,17 @@ class AVReviewDialog:
             messagebox.showerror("错误", "结束时间必须大于开始时间")
             return
         
-        if start_time < 0 or end_time > duration:
-            messagebox.showerror("错误", "时间选择超出音频范围")
-            return
+        if end_time > duration:
+            end_time = duration
+        if start_time < 0:
+            start_time = 0.0
 
         if start_time > 0.05 or abs(duration-end_time) > 0.05:
             video_path = self.workflow.ffmpeg_processor.trim_video( video_path, start_time, end_time, volume=1.0 )
-            video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
+            if audio_unchange:
+                video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio_path, True)
+            else:    
+                self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade( audio_path, start_time, end_time-start_time )
 
         if self.crop_start_x and self.crop_start_y:
             crop_x =self.crop_start_x
@@ -632,51 +636,15 @@ class AVReviewDialog:
             video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=self.workflow.ffmpeg_processor.width, height=self.workflow.ffmpeg_processor.height)
 
         self.source_video_path = video_path
-        # input_media_path = config.INPUT_MEDIA_PATH + "/" + build_scene_media_prefix(self.workflow.pid, str(self.current_scene["id"]), self.media_type, "I2V", True) + ".mp4"
-        # resize to 1/2
-        video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=int(self.workflow.ffmpeg_processor.width/2), height=int(self.workflow.ffmpeg_processor.height/2) )
-        safe_copy_overwrite(video_path, self.current_scene[self.media_type+"_input"])
 
 
 
-    def trim_media(self):
-        self.update_dialog_title("none")
-
-        """Trim media"""
-        """Trim and transcribe audio"""
-        video_path = safe_file(self.source_video_path)
-        audio_path = safe_file(self.source_audio_path)
-        if not audio_path or not video_path:
-            return
-
-        start_time = float(self.start_time_var.get())
-        end_time = float(self.end_time_var.get())
-        duration = self.workflow.ffmpeg_processor.get_duration(video_path) if video_path else self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
-        
-        if end_time <= start_time:
-            messagebox.showerror("错误", "结束时间必须大于开始时间")
-            return
-        
-        if start_time < 0 or end_time > duration:
-            messagebox.showerror("错误", "时间选择超出音频范围")
-            return
-        
-        if start_time > 0 or end_time < duration:
-            self.source_audio_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade( audio_path, start_time, end_time-start_time )
-
-            self.source_video_path = self.workflow.ffmpeg_processor.trim_video( video_path, start_time, end_time )
-
-            # Get crop parameters if selection exists
-            crop_width = self.crop_width if self.crop_width else None
-            crop_height = self.crop_height if self.crop_height else None
-            self.source_video_path = self.workflow.ffmpeg_processor.resize_video( video_path, crop_width, crop_height )
-
-
-    def trim_transcribe(self, mode):
+    def transcribe_audio(self, mode):
         #self.trim_media()
         self.update_dialog_title(mode)
         if not self.audio_regenerated and self.media_type=="clip":
             self._transcribe_recorded_audio()
+
 
 
     def _transcribe_recorded_audio(self):
@@ -1639,23 +1607,25 @@ class AVReviewDialog:
 
         if is_audio_file(av_path):
             self.source_audio_path = self.workflow.ffmpeg_audio_processor.to_wav(av_path)
-            self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
+            if not self.source_video_path and self.source_image_path:
+                self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path)
+            if self.source_video_path:
+                self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True, True)
         elif is_image_file(av_path):
             self.source_image_path = av_path
-            self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path, self.animation_choice)
+            if self.source_audio_path and not self.source_video_path:
+                self.source_video_path = self.workflow.ffmpeg_processor.image_audio_to_video(self.source_image_path, self.source_audio_path)
         elif is_video_file(av_path):
-            if self.workflow.ffmpeg_processor.has_audio_stream(av_path) and self.replace_media_audio=="keep":
-                input_media_path = config.INPUT_MEDIA_PATH + "/" + build_scene_media_prefix(self.workflow.pid, str(self.current_scene["id"]), self.media_type, "S2V", True) + ".mp4"
-                safe_copy_overwrite(av_path, input_media_path)
-                self.current_scene[self.media_type+"_input"] = input_media_path
+            if not self.source_audio_path:
                 self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
-                self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
+                if not self.source_audio_path and self.workflow.ffmpeg_processor.has_audio_stream(av_path):
+                    self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
             else:
-                self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
-                input_media_path = config.INPUT_MEDIA_PATH + "/" + build_scene_media_prefix(self.workflow.pid, str(self.current_scene["id"]), self.media_type, "I2V", True) + ".mp4"
-                safe_copy_overwrite(self.source_video_path, input_media_path)
-                self.current_scene[self.media_type+"_input"] = input_media_path
-                self.source_video_path = self.workflow.ffmpeg_processor.resize_video(self.source_video_path, width=self.workflow.ffmpeg_processor.width, height=None)
+                if self.replace_media_audio=="keep":
+                    self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(av_path)
+                    self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
+                else:
+                    self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(av_path, self.source_audio_path, True, True)
 
         self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
         self.end_time = self.audio_duration

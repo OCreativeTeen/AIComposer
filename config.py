@@ -134,9 +134,12 @@ def get_temp_path(pid: str) -> str:
 
 
 tmp_file_list = []
-def get_temp_file(pid: str, ext: str) -> str:
+def get_temp_file(pid: str, ext: str, filename: str = None) -> str:
     """获取临时文件路径"""
-    filename = f"{uuid.uuid4()}.{ext}"
+    if not filename:
+        filename = f"{uuid.uuid4()}.{ext}"
+    else:
+        filename = filename + "." + ext
     temp_dir = f"{PROJECT_DATA_PATH}/{pid}/temp"
     # 确保临时目录存在
     os.makedirs(temp_dir, exist_ok=True)
@@ -508,14 +511,14 @@ FACE_ENHANCE = ["0", "15", "30", "60"]
 ANIMATE_TYPE_PATTERNS = [
     (r"_I2V(_\d{8})?\.mp4$", "_I2V"),
     (r"_2I2V(_\d{8})?\.mp4$", "_2I2V"),
-    (r"_L_WS2V(_\d{8})?\.mp4$", "_L_WS2V"),
-    (r"_R_WS2V(_\d{8})?\.mp4$", "_R_WS2V"),
+    (r"_LWS2V(_\d{8})?\.mp4$", "_LWS2V"),
+    (r"_RWS2V(_\d{8})?\.mp4$", "_RWS2V"),
     (r"_S2V(_\d{8})?\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
     (r"_FS2V(_\d{8})?\.mp4$", "_FS2V"),
     (r"_AI2V(_\d{8})?\.mp4$", "_AI2V")
 ]
 
-ANIMATE_WITH_AUDIO = ["_L_WS2V", "_R_WS2V", "_S2V", "_FS2V"]
+ANIMATE_WITH_AUDIO = ["_LWS2V", "_RWS2V", "_S2V", "_FS2V"]
 
 
 HOST_FIGURE_ACTIONS = [

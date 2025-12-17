@@ -1271,52 +1271,6 @@ class MagicWorkflow:
         return promo_video_path
 
 
-    def build_single_mv(self, background_music_mp3, background_images):
-        whole_duration = self.ffmpeg_audio_processor.get_duration(background_music_mp3)
-        duration_count = 0
-        video_list = [] 
-
-        for repeat in range(1, 10):
-            if whole_duration and duration_count > whole_duration:
-                break
-            for background_image_path in background_images:
-                background_video_path = f"{self.channel_path}/{Path(background_image_path).stem}.mp4"
-                if self.project_169_mode():
-                    duration = 30
-                else:
-                    duration = 60
-
-                if not os.path.exists(background_video_path):
-                    if self.project_169_mode():
-                        v = self.ffmpeg_processor.create_scroll_background_video_169(background_image_path, duration, duration)
-                    else:
-                        v = self.ffmpeg_processor.create_scroll_background_video_916(background_image_path, duration, duration)
-                    os.replace(v, background_video_path)
-
-                video_list.append( {"path":background_video_path, "transition":"fade", "duration":1.0} )
-                duration_count += duration
-                if duration_count > whole_duration:
-                    break
-
-        vv = self.ffmpeg_processor.concat_videos_demuxer(video_list)
-        vv = self.ffmpeg_processor.add_audio_to_video(vv, background_music_mp3)
-        project_background_video = f"{config.get_media_path(self.pid)}/background_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp4"
-        os.replace(vv, project_background_video)
-
-        return project_background_video
-
-
-    def build_full_music_video(self, mv_name, item_list, rebuild=False):
-        mv_list = []
-        for i, item in enumerate(item_list):
-            mv_temp = self.build_single_mv(item)
-            mv_list.append( {"path":mv_temp, "transition":"fade", "duration":1.0} )
-
-        whole_video_path = f"{self.publish_path}/full_music_video_{mv_name}.mp4"
-        vv = self.ffmpeg_processor.concat_videos_demuxer(mv_list, True)
-        os.replace(vv, whole_video_path)  
-        config.clear_temp_files()
-
 
     def transcript_youtube_video(self, url, source_lang, translated_language):
         try:

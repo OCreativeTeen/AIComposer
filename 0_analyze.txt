@@ -382,10 +382,10 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
         
         try:
             if clip_animation == "WS2V":
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_L_WS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_LWS2V_*-audio.mp4")
                 left_files = glob.glob(pattern)
 
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_R_WS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_RWS2V_*-audio.mp4")
                 right_files = glob.glob(pattern)
                 
                 # 过滤掉已处理的文件

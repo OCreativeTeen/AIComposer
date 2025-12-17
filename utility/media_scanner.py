@@ -90,7 +90,7 @@ class VideoPairManager:
 
 class MediaScanner:
 
-    ENHANCE_SERVERS = ["http://10.0.0.235:5000/process"]
+    ENHANCE_SERVERS = ["http://10.0.0.210:5000/process", "http://10.0.0.235:5000/process"]
     current_enhance_server = 0
 
 
@@ -186,9 +186,9 @@ class MediaScanner:
         """
         # L_WS2V pattern - handle different video types
         l_ws2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_L_WS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_L_WS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_L_WS2V__(.+?).*-audio(\.mp4)?$'
+            r'^(clip)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$',
+            r'^(second)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$',
+            r'^(zero)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$'
         ]
         for pattern in l_ws2v_patterns:
             match = re.match(pattern, filename)
@@ -205,9 +205,9 @@ class MediaScanner:
 
         # R_WS2V pattern - handle different video types
         r_ws2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_R_WS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_R_WS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_R_WS2V__(.+?).*-audio(\.mp4)?$'
+            r'^(clip)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$',
+            r'^(second)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$',
+            r'^(zero)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$'
         ]
         for pattern in r_ws2v_patterns:
             match = re.match(pattern, filename)
@@ -374,7 +374,7 @@ class MediaScanner:
             print(f"⚠️ 文件已经处理过，跳过: {gen_video}")
             return
 
-        original_gen_video = folder_path + "/" + gen_video_stem + "_original.mp4"
+        original_gen_video = folder_path + "/" + gen_video_stem + "_bak.mp4"
         os.replace(gen_video, original_gen_video)
 
         gen_video = self.ffmpeg_processor.resize_video(original_gen_video, width=None, height=self.ffmpeg_processor.height)
@@ -386,59 +386,64 @@ class MediaScanner:
         #    audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
         #    olda, audio = refresh_scene_media(scene, av_type + "_audio", ".wav", audio)
 
-        if "_L_WS2V" == type_suffix:
-            scene[av_type+"_left_input"] = original_gen_video
+        if "_LWS2V" == type_suffix:
+            #scene[av_type+"_left_input"] = original_gen_video
             refresh_scene_media(scene, av_type+"_left", ".mp4", gen_video, True)
-        elif "_R_WS2V" == type_suffix:
-            scene[av_type+"_right_input"] = original_gen_video
+        elif "_RWS2V" == type_suffix:
+            #scene[av_type+"_right_input"] = original_gen_video
             refresh_scene_media(scene, av_type+"_right", ".mp4", gen_video, True)
         else:
-            scene[av_type+"_input"] = original_gen_video
+            #scene[av_type+"_input"] = original_gen_video
             oldv, gen_video = refresh_scene_media(scene, av_type, ".mp4", gen_video, True)
 
 
 
-    def enhance_clip(self, scene, av_type, level:str):
+    def enhance_clip(self, pid, scene, av_type, level:str):
         animate_mode = scene.get(av_type + "_animation", "")
         if animate_mode.strip() == "":
             return
 
         processed = False    
         if animate_mode in config.ANIMATE_WS2V:
-            left_input = get_file_path(scene, av_type + "_left_input")
-            right_input = get_file_path(scene, av_type + "_right_input")
+            left_input = get_file_path(scene, av_type + "_left")
+            right_input = get_file_path(scene, av_type + "_right")
             if left_input and right_input:
-                width_left, height_left = self.ffmpeg_processor.check_video_size(left_input)
-                if abs(height_left - self.ffmpeg_processor.height) > 10 :
-                    self._enhance_single_video(left_input, level)
-                    processed = True
+                result = messagebox.askyesno("警告", f"⚠️ 增强处理{av_type}左右视频：\n是: 继续\n否: 撤消")
+                if result is True:
+                    enhance_left_input = build_scene_media_prefix(pid, scene["id"], av_type, "LWS2V", True)
+                    enhance_left_input = config.get_temp_file(self.pid, "mp4", enhance_left_input + "_" + level + "_")
+                    safe_copy_overwrite(left_input, enhance_left_input)
+                    self._enhance_single_video(enhance_left_input)
 
-                width_right, height_right = self.ffmpeg_processor.check_video_size(right_input)
-                if abs(height_right - self.ffmpeg_processor.height) > 10:
-                    self._enhance_single_video(right_input, level)
+                    enhance_right_input = build_scene_media_prefix(pid, scene["id"], av_type, "RWS2V", True)
+                    enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
+                    safe_copy_overwrite(right_input, enhance_right_input)
+                    self._enhance_single_video(enhance_right_input)
+
                     processed = True
         else:
-            input = get_file_path(scene, av_type + "_input")
+            input = get_file_path(scene, av_type)
             if input:
-                width, height = self.ffmpeg_processor.check_video_size(input)
-                if abs(height - self.ffmpeg_processor.height) > 10:
-                    self._enhance_single_video(input, level)
+                result = messagebox.askyesno("警告", f"⚠️ 增强处理{av_type}视频：\n是: 继续\n否: 撤消")
+                if result is True:
+                    enhance_input = build_scene_media_prefix(pid, scene["id"], av_type, animate_mode, True)
+                    enhance_input = config.get_temp_file(pid, "mp4", enhance_input+"_"+level+"_")
+                    safe_copy_overwrite(input, enhance_input)
+                    self._enhance_single_video(enhance_input)
+
                     processed = True
 
         if not processed:
             messagebox.showerror("视频增强失败", f"视频尺寸不正确，无法增强:\n{input}")
  
 
-    def _enhance_single_video(self, video_path, level:str):
+    def _enhance_single_video(self, video_path):
         """调用 REST API 增强单个视频"""
         self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
 
         try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
             url = self.ENHANCE_SERVERS[self.current_enhance_server]
-            rename_path = video_path.replace("_original", "_" + level + "_")
-            safe_copy_overwrite(video_path, rename_path)
-            
-            with open(rename_path, 'rb') as video_file:
+            with open(video_path, 'rb') as video_file:
                 files = {'video': video_file}
                 
                 print(f"🚀 正在调用视频增强API: {url}")
@@ -455,5 +460,6 @@ class MediaScanner:
             print(f"❌ REST API 调用失败: {str(e)}")
         except Exception as e:
             print(f"❌ 增强单视频时出错: {str(e)}")
+
 
 
