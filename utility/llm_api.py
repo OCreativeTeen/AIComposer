@@ -1,15 +1,13 @@
 import json
 import re
-from typing import List, Dict, Optional, Union, Any, Generator
+from typing import List, Dict, Union, Any, Generator
 from openai import OpenAI
 import time
 import os
 import httpx
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
-import tkinter.messagebox as messagebox
 import tkinter.ttk as ttk
-import config
 
 
 OLLAMA = "gemma3:12b-it-qat"
@@ -304,9 +302,10 @@ class LLMApi:
         try:
             # popup dialog to ask user choose from GPT_MINI, GEMINI_2_0_FLASH, or MANUAL, return choice as model
             if self.model == MANUAL or self.model is None:
-                model = self._show_model_dialog()
+                model, manual_response = self._show_model_dialog(system_prompt, user_prompt)
             else:
                 model = self.model
+                manual_response = None
 
             # 准备请求参数（在确定模型后设置）
             if model == GPT_MINI:
@@ -350,7 +349,8 @@ class LLMApi:
                     print(f"   请求参数: model={request_params.get('model')}, messages数量={len(messages)}")
                     raise ollama_error
             else:
-                description = self._show_mock_dialog(system_prompt, user_prompt)
+                # Manual 模式：使用对话框中输入的响应
+                description = manual_response if manual_response else ""
 
             if description:
                 return description
@@ -363,8 +363,8 @@ class LLMApi:
         return ""
 
 
-    def _show_model_dialog(self) -> str:
-        """弹出对话框让用户选择模型：GPT_MINI, GEMINI_2_0_FLASH, 或 MANUAL"""
+    def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
+        """弹出对话框让用户选择模型并查看/编辑请求和响应"""
         # 创建根窗口（如果不存在）
         root = None
         try:
@@ -379,75 +379,6 @@ class LLMApi:
         # 创建对话框
         dialog = tk.Toplevel(root)
         dialog.title("选择 LLM 模型")
-        dialog.geometry("400x250")
-        dialog.transient(root)
-        dialog.grab_set()
-        
-        # 居中显示
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 400) // 2
-        y = (dialog.winfo_screenheight() - 200) // 2
-        dialog.geometry(f"400x250+{x}+{y}")
-        
-        # 主框架
-        main_frame = ttk.Frame(dialog, padding=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 标题
-        ttk.Label(main_frame, text="请选择要使用的 LLM 模型：", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 15))
-        
-        # 用于存储选择的变量
-        selected_model = tk.StringVar(value=GPT_MINI)  # 默认选择 GPT_MINI
-        
-        # 创建单选按钮
-        ttk.Radiobutton(main_frame, text=f"GPT Mini ({GPT_MINI})", variable=selected_model, value=GPT_MINI).pack(anchor='w', pady=5)
-        ttk.Radiobutton(main_frame, text=f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})", variable=selected_model, value=GEMINI_2_0_FLASH).pack(anchor='w', pady=5)
-        ttk.Radiobutton(main_frame, text=f"OLLAMA ({OLLAMA})", variable=selected_model, value=OLLAMA).pack(anchor='w', pady=5)
-        ttk.Radiobutton(main_frame, text=f"Manual ({MANUAL})", variable=selected_model, value=MANUAL).pack(anchor='w', pady=5)
-        
-        # 用于存储结果
-        result = [None]  # 使用列表以便在闭包中修改
-        
-        def on_ok():
-            result[0] = selected_model.get()
-            dialog.destroy()
-        
-        def on_cancel():
-            # 取消时保持 result[0] 为 None
-            result[0] = MANUAL
-            dialog.destroy()
-        
-        # 按钮框架
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(20, 0))
-        
-        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
-        
-        # 等待对话框关闭
-        dialog.wait_window()
-        
-        # 如果用户点击取消，返回默认值 GPT_MINI
-        # 如果用户点击确定，返回选择的模型
-        return result[0] if result[0] is not None else GPT_MINI
-
-
-    def _show_mock_dialog(self, system_prompt, user_prompt) -> str:
-        """在 MOCK 模式下显示对话框，允许用户编辑 system_prompt 并输入 JSON 响应"""
-        # 创建根窗口（如果不存在）
-        root = None
-        try:
-            root = tk._default_root
-            if root is None:
-                root = tk.Tk()
-                root.withdraw()  # 隐藏主窗口
-        except:
-            root = tk.Tk()
-            root.withdraw()
-        
-        # 创建对话框
-        dialog = tk.Toplevel(root)
-        dialog.title("LLM Mock - 编辑提示词并输入 JSON 响应")
         dialog.geometry("1000x800")
         dialog.transient(root)
         dialog.grab_set()
@@ -462,46 +393,90 @@ class LLMApi:
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 创建 Notebook 来组织标签页
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        # 模型选择区域
+        model_frame = ttk.LabelFrame(main_frame, text="选择 LLM 模型", padding=10)
+        model_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # System Prompt 标签页
-        system_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(system_frame, text="Prompt (可编辑)")
-        ttk.Label(system_frame, text="提示词 (Prompt):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        system_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, width=90, height=15)
-        system_text.pack(fill=tk.BOTH, expand=True)
-        content = ""
+        # 用于存储选择的变量
+        selected_model = tk.StringVar(value=GPT_MINI)  # 默认选择 GPT_MINI
+        
+        # 创建单选按钮
+        ttk.Radiobutton(model_frame, text=f"GPT Mini ({GPT_MINI})", variable=selected_model, value=GPT_MINI).pack(anchor='w', pady=2)
+        ttk.Radiobutton(model_frame, text=f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})", variable=selected_model, value=GEMINI_2_0_FLASH).pack(anchor='w', pady=2)
+        ttk.Radiobutton(model_frame, text=f"OLLAMA ({OLLAMA})", variable=selected_model, value=OLLAMA).pack(anchor='w', pady=2)
+        ttk.Radiobutton(model_frame, text=f"Manual ({MANUAL})", variable=selected_model, value=MANUAL).pack(anchor='w', pady=2)
+        
+        # 请求内容区域（分成两部分）
+        request_frame = ttk.LabelFrame(main_frame, text="请求内容 (Request)", padding=10)
+        request_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # 上部：System Prompt
+        ttk.Label(request_frame, text="System Prompt:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+        system_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
+        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         if isinstance(system_prompt, str):
-            content = content +system_prompt
-        if isinstance(user_prompt, str):
-            content = content +" \n\n ----- user-promt ----\n\n" + user_prompt
-        system_text.insert('1.0', content)
-        # 将内容复制到剪贴板，方便用户粘贴到其他应用/窗口
-        dialog.clipboard_clear()
-        dialog.clipboard_append(content)
-        dialog.update()  # 确保剪贴板操作完成
+            system_text.insert('1.0', system_prompt)
         
-        # JSON Response 标签页
-        response_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(response_frame, text="Response (输入响应)")
-        ttk.Label(response_frame, text="响应 (Response):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, width=90, height=15)
+        # 分隔线
+        separator = ttk.Separator(request_frame, orient='horizontal')
+        separator.pack(fill=tk.X, pady=5)
+        
+        # 下部：User Prompt
+        ttk.Label(request_frame, text="User Prompt:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(5, 5))
+        user_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
+        user_text.pack(fill=tk.BOTH, expand=True)
+        if isinstance(user_prompt, str):
+            user_text.insert('1.0', user_prompt)
+        
+        # 响应内容区域（只在 Manual 模式时显示）
+        response_frame = ttk.LabelFrame(main_frame, text="响应内容 (Response) - 仅 Manual 模式", padding=10)
+        ttk.Label(response_frame, text="响应 (Response):", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+        response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, height=8)
         response_text.pack(fill=tk.BOTH, expand=True)
         response_text.insert('1.0', '')
         
         # 用于存储结果
-        result = [None]  # 使用列表以便在闭包中修改
+        result_model = [None]
+        result_response = [None]
+        
+        def update_response_visibility():
+            """根据选择的模型显示/隐藏响应区域"""
+            if selected_model.get() == MANUAL:
+                response_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            else:
+                response_frame.pack_forget()
+        
+        # 绑定模型选择变化事件
+        selected_model.trace('w', lambda *args: update_response_visibility())
+        update_response_visibility()  # 初始更新（默认选择 GPT_MINI，所以响应区域会被隐藏）
         
         def on_ok():
-            # 获取响应文本内容
-            response_content = response_text.get('1.0', tk.END).strip()
-            result[0] = response_content  # 即使为空字符串也保存
+            model = selected_model.get()
+            result_model[0] = model
+            
+            # 只有在 Manual 模式时才获取响应内容
+            if model == MANUAL:
+                response_content = response_text.get('1.0', tk.END).strip()
+                result_response[0] = response_content
+                
+                # 只有在 Manual 模式时才合并并复制到剪贴板
+                content = ""
+                if isinstance(system_prompt, str):
+                    content = content + system_prompt
+                if isinstance(user_prompt, str):
+                    content = content + " \n\n ----- user-promt ----\n\n" + user_prompt
+                dialog.clipboard_clear()
+                dialog.clipboard_append(content)
+                dialog.update()
+            else:
+                result_response[0] = None
+            
             dialog.destroy()
         
         def on_cancel():
-            # 取消时保持 result[0] 为 None
+            # 取消时返回 MANUAL 和 None
+            result_model[0] = MANUAL
+            result_response[0] = None
             dialog.destroy()
         
         # 按钮框架
@@ -514,8 +489,9 @@ class LLMApi:
         # 等待对话框关闭
         dialog.wait_window()
         
-        # 如果用户点击取消，result[0] 仍然是 None，返回空字符串
-        # 如果用户点击确定，result[0] 包含响应文本（可能为空字符串）
-        return result[0] if result[0] is not None else ""
+        # 返回模型和响应（如果选择的是 Manual）
+        model = result_model[0] if result_model[0] is not None else GPT_MINI
+        response = result_response[0] if result_response[0] is not None else None
+        return model, response
 
-    
+

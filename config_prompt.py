@@ -703,13 +703,11 @@ SHORT_STORY_PROMPT = {
 #     **中段（展开）：**Indie Folk / J-Pop（加入弦乐、口风琴、小鼓点，带着童心与轻快感）
 #     **高潮（释放）：**Cinematic Pop / World Music（加入合唱感、鼓点加强、弦乐堆叠，情绪高涨）
 
-SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT = """
-You are a professional to enrich the context from 'user prompt', that will be used to make prompt for music creation purpose:
-* add more details with richer musical direction and mood guidanc.
-* transcend from the orginal content, to distill/extract deeper profound, elevated emotions and higher realm of resonance that moves and inspires.
-* output in English (if the orginal content is not english, try to translate it to english, and then enhance the english content).
-"""
-
+SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT = [
+"Following below as example of a music style/genre, make prompt to create similar music (in English): * (add more details with richer musical direction and mood guidanc) * (transcend from the orginal content, to distill/extract deeper profound, elevated emotions and higher realm of resonance that moves and inspires)",
+"对(YOUTUBE链接)的音乐, 详细分析其音乐/歌曲的特性(风格,情绪,气氛,地域,时代,节奏,乐器,人声特质,人声伴唱,内容类型等等), 以此生成提示词(PROMPT), 用在SUNO-AI来生成类似的音乐/歌曲",
+"Conduct an in-depth analysis of the music from the specified YouTube link, identifying key attributes including style, mood, emotion, atmosphere, regional and historical context, tempo, instrumentation, vocal characteristics, backing vocals, and lyrical themes. Use these attributes to create effective prompts for SUNO AI to generate similar music or songs."
+]
 
 SUNO_LANGUAGE = [
     "Instrumental Music",

@@ -14,6 +14,7 @@ import project_manager
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from PIL import Image, ImageTk
+from utility.llm_api import LLMApi
 import shutil
 
 # Try to import TkinterDnD for drag and drop support
@@ -364,7 +365,7 @@ class MagicToolGUI:
         else:
             self.root = root or tk.Tk()
         self.root.title("Youtube Tools - 工具集")
-        self.root.geometry("1200x1200")  # Slightly larger for project config area
+        self.root.geometry("2000x1000")  # Increased width for side-by-side layout
         
         # Initialize variables
         self.tasks = {}
@@ -380,6 +381,8 @@ class MagicToolGUI:
         
         self.setup_ui()
         
+        self.llm_api = LLMApi()
+
         # Bind window close event to save config
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
@@ -484,6 +487,7 @@ class MagicToolGUI:
             
             config_data['music_json_content'] = self.music_content.get(1.0, tk.END).strip() or config_data.get('music_json_content', '')
             config_data['music_prompt_content'] = self.music_prompt.get(1.0, tk.END).strip() or config_data.get('music_prompt_content', '') if hasattr(self, 'music_prompt') else config_data.get('music_prompt_content', '')
+            config_data['music_lyricsp_content'] = self.music_lyrics.get(1.0, tk.END).strip() or config_data.get('music_lyrics_content', '') if hasattr(self, 'music_lyrics') else config_data.get('music_lyrics_content', '')
             
             # 保存NotebookLM配置
             if hasattr(self, 'notebooklm_style') and hasattr(self, 'notebooklm_topic') and hasattr(self, 'notebooklm_prompt_content'):
@@ -632,7 +636,11 @@ class MagicToolGUI:
             if hasattr(self, 'music_prompt'):
                 self.music_prompt.delete(1.0, tk.END)
                 self.music_prompt.insert(1.0, self.current_project_config.get('music_prompt_content', ''))
-            
+
+            if hasattr(self, 'music_lyrics'):
+                self.music_lyrics.delete(1.0, tk.END)
+                self.music_lyrics.insert(1.0, self.current_project_config.get('music_lyrics_content', ''))
+
             # 加载NotebookLM配置
             if hasattr(self, 'notebooklm_style') and hasattr(self, 'notebooklm_topic') and hasattr(self, 'notebooklm_prompt_content'):
                 
@@ -708,42 +716,45 @@ class MagicToolGUI:
         self.project_language = ttk.Label(row1, text=self.current_language, 
                                          relief="sunken", width=5, background="white")
         self.project_language.pack(side=tk.LEFT, padx=(5, 15))
-        
-        # 项目选择按钮
-        ttk.Button(row1, text="选择项目", command=self.change_project).pack(side=tk.RIGHT, padx=5)
-        
+
+        ttk.Separator(row1, orient='vertical').pack(padx=5)
+
         # 项目标题 (使用Combobox)
-        ttk.Label(row2, text="项目标题:").pack(side=tk.LEFT)
-        self.video_title = ttk.Combobox(row2, width=70)
+        ttk.Label(row1, text="项目标题:").pack(side=tk.LEFT)
+        self.video_title = ttk.Combobox(row1, width=70)
         self.video_title.pack(side=tk.LEFT, padx=(5, 15))
         self.video_title.bind('<FocusOut>', self.on_project_config_change)
         self.video_title.bind('<<ComboboxSelected>>', self.on_project_config_change)
         self.video_title.set(self.current_project_config.get('video_title', ''))
 
+        ttk.Separator(row1, orient='vertical').pack(padx=5)
+
         # 项目标签 (使用Combobox)
-        ttk.Label(row3, text="项目标签:").pack(side=tk.LEFT)
-        self.video_tags = ttk.Combobox(row3, width=35)
+        ttk.Label(row1, text="项目标签:").pack(side=tk.LEFT)
+        self.video_tags = ttk.Combobox(row1, width=35)
         self.video_tags.pack(side=tk.LEFT, padx=(5, 15))
         self.video_tags.bind('<FocusOut>', self.on_project_config_change)
         self.video_tags.bind('<<ComboboxSelected>>', self.on_project_config_change)
         self.video_tags.set(self.current_project_config.get('video_tags', ''))
         
         # 关键字
-        ttk.Label(row3, text="关键字:").pack(side=tk.LEFT)
-        self.project_keywords = ttk.Entry(row3, width=25)
+        ttk.Label(row1, text="关键字:").pack(side=tk.LEFT)
+        self.project_keywords = ttk.Entry(row1, width=25)
         self.project_keywords.insert(0, self.current_project_config.get('program_keywords', ''))
         self.project_keywords.pack(side=tk.LEFT, padx=(5, 15))
         self.project_keywords.bind('<FocusOut>', self.on_project_config_change)
         
         # 故事场地
-        ttk.Label(row3, text="故事场地:").pack(side=tk.LEFT)
-        self.story_site_entry = ttk.Entry(row3, width=20)
+        ttk.Label(row1, text="故事场地:").pack(side=tk.LEFT)
+        self.story_site_entry = ttk.Entry(row1, width=20)
         self.story_site_entry.insert(0, self.current_project_config.get('story_site', ''))
         self.story_site_entry.pack(side=tk.LEFT, padx=(5, 15))
         self.story_site_entry.bind('<FocusOut>', self.on_project_config_change)
         
-        # 保存按钮
-        ttk.Button(row3, text="保存配置", command=self.save_project_config).pack(side=tk.RIGHT, padx=5)
+        ttk.Separator(row1, orient='vertical').pack(padx=5)
+
+        ttk.Button(row1, text="选择项目", command=self.change_project).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(row1, text="保存配置", command=self.save_project_config).pack(side=tk.RIGHT, padx=5)
     
     def change_project(self):
         """更改项目"""
@@ -831,6 +842,9 @@ class MagicToolGUI:
 
             self.music_content.delete(1.0, tk.END)
             self.music_content.insert(1.0, self.current_project_config.get('music_json_content', ''))
+            
+            self.music_lyrics.delete(1.0, tk.END)
+            self.music_lyrics.insert(1.0, self.current_project_config.get('music_lyrics_content', ''))
             
             self.music_prompt.delete(1.0, tk.END)
             self.music_prompt.insert(1.0, self.current_project_config.get('music_prompt_content', ''))
@@ -1837,9 +1851,28 @@ class MagicToolGUI:
         music_frame = ttk.LabelFrame(tab, text="SUNO音乐提示词配置", padding="10")
         music_frame.pack(fill=tk.X, padx=10, pady=5)
         
+        # Container frame for text area and input fields
+        inputs_container = ttk.Frame(music_frame)
+        inputs_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Text area for music_style on the left
+        text_area_frame = ttk.LabelFrame(inputs_container, text="音乐风格", padding="5")
+        text_area_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
+        
+        # Scrollbar for text area (pack first to ensure it's on the right)
+        text_scrollbar = ttk.Scrollbar(text_area_frame, orient=tk.VERTICAL)
+        text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.music_style = tk.Text(text_area_frame, width=80, height=10, wrap=tk.WORD,
+                                   yscrollcommand=text_scrollbar.set)
+        self.music_style.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Configure scrollbar command
+        text_scrollbar.config(command=self.music_style.yview)
+        
         # Input fields frame - organized in rows
-        inputs_frame = ttk.Frame(music_frame)
-        inputs_frame.pack(fill=tk.X, padx=5, pady=5)
+        inputs_frame = ttk.Frame(inputs_container)
+        inputs_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Row 1: Target and Topic
         row1_frame = ttk.Frame(inputs_frame)
@@ -1942,6 +1975,25 @@ class MagicToolGUI:
         self.suno_rhythm.bind('<FocusOut>', self.on_project_config_change)
         self.suno_rhythm.bind('<<ComboboxSelected>>', self.on_project_config_change)
         
+        # Button frame - placed below comboboxes in inputs_frame
+        button_frame = ttk.Frame(inputs_frame)
+        button_frame.pack(fill=tk.X, padx=5, pady=10)
+        
+        ttk.Button(button_frame, text="生成SUNO提示词222", 
+                  command=lambda: self.generate_music_prompt(False)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="保存音乐风格", 
+                  command=self.save_music_style).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="清空内容", 
+                  command=self.clear_music_prompts).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(button_frame, text="Refine", 
+                  command=self.refine_music_prompt).pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Button(button_frame, text="生成SUNO歌词", 
+                  command=self.concise_music_lyrics).pack(side=tk.LEFT, padx=(0, 5))
+        
+
+        
         # Initialize the style comboboxes with the first category's values
         self.on_structure_category_change()
         self.on_melody_category_change()
@@ -1951,26 +2003,41 @@ class MagicToolGUI:
         # Content areas frame - side by side layout
         content_areas_frame = ttk.Frame(music_frame)
         content_areas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        content_areas_frame.grid_columnconfigure(0, weight=1)  # left_frame weight
+        content_areas_frame.grid_columnconfigure(1, weight=1)  # prompt_frame weight
+        content_areas_frame.grid_columnconfigure(2, weight=2)  # lyrics_frame weight (wider, 2x)
         
         # Left side - Original content area
         left_frame = ttk.LabelFrame(content_areas_frame, text="音乐内容", padding="5")
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
         
-        # Content explanation
-        content_info = ttk.Entry(left_frame, font=('TkDefaultFont', 9))
-        content_info.insert(0, "对(YOUTUBE链接/上传mp3)的音乐, 详细分析其音乐/歌曲的特性(风格,情绪,气氛,地域,时代,节奏,乐器,人声特质,人声伴唱,内容类型等等), 以此生成提示词(PROMPT), 用在SUNO-AI来生成类似的音乐/歌曲")
-        content_info.config(state='normal')
-        content_info.pack(anchor=tk.W, pady=(0, 5), fill=tk.X)
+        # Content explanation - Combobox and button in same row
+        content_info_frame = ttk.Frame(left_frame)
+        content_info_frame.pack(fill=tk.X, pady=(0, 5))
         
-        # Copy button
-        def copy_to_clipboard():
-            text = content_info.get()
-            left_frame.clipboard_clear()
-            left_frame.clipboard_append(text)
-            left_frame.update()  # Required for clipboard to work
+        content_info_var = tk.StringVar()
+        content_info = ttk.Combobox(content_info_frame, textvariable=content_info_var, 
+                                    font=('TkDefaultFont', 9), state="readonly", width=50)
+        
+        # Set options from config_prompt.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT
+        enhance_options = [f"选项 {i+1}: {example[:50]}..." if len(example) > 50 
+                                                else f"示例 {i+1}: {example}" 
+                                                for i, example in enumerate(config_prompt.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT)]
+        content_info['values'] = enhance_options
+        content_info.set("选择内容增强提示词...")
+        content_info.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        # Insert button - append selected content to self.music_content, placed right after combobox
+        def insert_to_music_content():
+            selected_index = content_info.current()
+            if selected_index >= 0 and selected_index < len(config_prompt.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT):
+                selected_content = config_prompt.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT[selected_index] + "\n>>>>\n"
+                # Append to music_content
+                cursor_pos = self.music_content.index(tk.INSERT)
+                self.music_content.insert(cursor_pos, selected_content)
             
-        copy_btn = ttk.Button(left_frame, text="复制", command=copy_to_clipboard)
-        copy_btn.pack(anchor=tk.W, pady=(0, 5))
+        copy_btn = ttk.Button(content_info_frame, text="插入", command=insert_to_music_content)
+        copy_btn.pack(side=tk.LEFT, padx=(0, 0))
 
 
         # Example selection frame
@@ -1993,37 +2060,32 @@ class MagicToolGUI:
         self.music_example_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.music_example_combobox.bind('<<ComboboxSelected>>', self.on_music_example_selected)
         
-        # Insert button
+        # Insert button - placed right after combobox
         ttk.Button(example_frame, text="插入", 
-                  command=self.insert_selected_music_example).pack(side=tk.RIGHT)
+                  command=self.insert_selected_music_example).pack(side=tk.LEFT, padx=(0, 0))
         
+
         self.music_content = scrolledtext.ScrolledText(left_frame, height=12, wrap=tk.WORD)
         self.music_content.pack(fill=tk.BOTH, expand=True)
         self.music_content.bind('<FocusOut>', self.on_project_config_change)
         
-        # Right side - Generated prompts area
-        right_frame = ttk.LabelFrame(content_areas_frame, text="生成的SUNO音乐提示词", padding="5")
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(2, 0))
+        # Music prompt - directly child of content_areas_frame
+        prompt_frame = ttk.LabelFrame(content_areas_frame, text="提示词", padding="5")
+        prompt_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 2))
+        prompt_frame.grid_rowconfigure(1, weight=1)
         
-        # Prompt explanation
-        prompt_info = ttk.Label(right_frame, text="生成的SUNO音乐提示词将显示在此处，可以编辑和保存", 
-                               foreground="gray", font=('TkDefaultFont', 9))
-        prompt_info.pack(anchor=tk.W, pady=(0, 5))
-        
-        self.music_prompt = scrolledtext.ScrolledText(right_frame, height=12, wrap=tk.WORD)
-        self.music_prompt.pack(fill=tk.BOTH, expand=True)
+        self.music_prompt = scrolledtext.ScrolledText(prompt_frame, height=12, wrap=tk.WORD)
+        self.music_prompt.grid(row=1, column=0, sticky="nsew")
         self.music_prompt.bind('<FocusOut>', self.on_project_config_change)
+
+        # Music lyrics - directly child of content_areas_frame
+        lyrics_frame = ttk.LabelFrame(content_areas_frame, text="歌词", padding="5")
+        lyrics_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 0))
+        lyrics_frame.grid_rowconfigure(1, weight=1)
         
-        # Button frame
-        button_frame = ttk.Frame(music_frame)
-        button_frame.pack(fill=tk.X, padx=5, pady=10)
-        
-        ttk.Button(button_frame, text="生成SUNO音乐提示词222", 
-                  command=self.generate_music_prompts).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="保存JSON333", 
-                  command=self.save_music_prompts).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="清空内容", 
-                  command=self.clear_music_prompts).pack(side=tk.LEFT, padx=5)
+        self.music_lyrics = scrolledtext.ScrolledText(lyrics_frame, height=12, wrap=tk.WORD)
+        self.music_lyrics.grid(row=1, column=0, sticky="nsew")
+        self.music_lyrics.bind('<FocusOut>', self.on_project_config_change)
         
         # Output area
         output_frame = ttk.LabelFrame(tab, text="输出日志", padding="10")
@@ -2133,26 +2195,9 @@ class MagicToolGUI:
         except (ValueError, IndexError) as e:
             self.log_to_output(self.music_output, f"❌ 插入示例内容时出错: {str(e)}")
     
-    def generate_music_prompts(self):
+
+    def generate_music_prompt(self, is_lyrics=False):
         """Generate music prompts for the project"""
-        language = self.suno_language.get() 
-        expression = self.suno_expression.get()
-        # Get new parameters
-        atmosphere = self.suno_atmosphere.get()
-        structure = self.suno_structure.get()
-        leading_melody = self.suno_leading_melody.get()
-        instruments = self.suno_instruments.get()
-        rhythm_groove = self.suno_rhythm.get()
-        
-        # Confirm generation
-        instruments_category = self.suno_instruments_category.get()
-        confirm_msg = f"确定要生成SUNO音乐提示词吗？\n\n音乐类型: {language}"
-        if instruments_category and instruments:
-            confirm_msg += f"\n乐器类别: {instruments_category}\n具体乐器: {instruments}"
-        elif instruments:
-            confirm_msg += f"\n乐器: {instruments}"
-        if not messagebox.askyesno("确认生成", confirm_msg):
-            return
         
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -2163,34 +2208,13 @@ class MagicToolGUI:
         
         def run_task():
             try:
-                self.status_var.set("生成SUNO音乐提示词中...")
-                self.log_to_output(self.music_output, f"🎵 开始生成SUNO音乐提示词...")
-                self.log_to_output(self.music_output, f"音乐类型: {language}")
-                if instruments_category and instruments:
-                    self.log_to_output(self.music_output, f"乐器类别: {instruments_category}")
-                    self.log_to_output(self.music_output, f"具体乐器: {instruments}")
-                elif instruments:
-                    self.log_to_output(self.music_output, f"乐器: {instruments}")
-                
                 # Generate music prompts using workflow
                 content = self.music_content.get(1.0, tk.END).strip()
 
-                result = self.workflow.prepare_suno_music(
-                    suno_lang=language, 
-                    content=content,
-                    atmosphere=atmosphere,
-                    expression=expression,
-                    structure=structure,
-                    leading_melody=leading_melody,
-                    instruments=instruments,
-                    rhythm_groove=rhythm_groove
-                )
-                
-                # Update GUI in main thread - insert result into the music_prompt widget
+                music_prompt = self.prepare_suno_music( content=content )
                 self.root.after(0, lambda: self.music_prompt.delete(1.0, tk.END))
-                self.root.after(0, lambda: self.music_prompt.insert(1.0, result))
-                
-                self.log_to_output(self.music_output, f"✅ SUNO音乐提示词生成完成！")
+                self.root.after(0, lambda: self.music_prompt.insert(1.0, music_prompt))
+
                 self.status_var.set("就绪")
                 self.tasks[task_id]["status"] = "完成"
                 
@@ -2215,16 +2239,140 @@ class MagicToolGUI:
         thread.daemon = True
         thread.start()
     
-    def save_music_prompts(self):
+
+    def save_music_style(self):
+        language = self.suno_language.get() 
+        expression = self.suno_expression.get()
+        # Get new parameters
+        atmosphere = self.suno_atmosphere.get()
+        structure = self.suno_structure.get()
+        leading_melody = self.suno_leading_melody.get()
+        instruments = self.suno_instruments.get()
+        rhythm_groove = self.suno_rhythm.get()
+        
+        # Confirm generation
+        instruments_category = self.suno_instruments_category.get()
+        confirm_msg = f"确定要生成SUNO音乐提示词吗？\n\n音乐类型: {language}"
+        if instruments_category and instruments:
+            confirm_msg += f"\n乐器类别: {instruments_category}\n具体乐器: {instruments}"
+        elif instruments:
+            confirm_msg += f"\n乐器: {instruments}"
+        if not messagebox.askyesno("确认生成", confirm_msg):
+            return
+
         """Save music prompts configuration"""
-        try:
-            self.save_project_config()
-            messagebox.showinfo("成功", "SUNO音乐提示词配置已保存")
-            self.log_to_output(self.music_output, f"✅ SUNO音乐提示词配置已保存")
-        except Exception as e:
-            messagebox.showerror("错误", f"保存失败: {str(e)}")
-            self.log_to_output(self.music_output, f"❌ 保存失败: {str(e)}")
+        suno_style_prompt = config_prompt.SUNO_STYLE_PROMPT.format(
+            target=language,
+            atmosphere=atmosphere,
+            expression=expression+" ("+config_prompt.SUNO_CONTENT[expression]+")",
+            structure=structure,
+            melody=leading_melody,
+            instruments=instruments,
+            rhythm=rhythm_groove
+        )
+        self.root.after(0, lambda: self.music_style.delete(1.0, tk.END))
+        self.root.after(0, lambda: self.music_style.insert(1.0, suno_style_prompt))
     
+
+
+    def prepare_suno_music(self, content):
+        system_prompt = "You are a professional to make SUNO-AI prompt for music creation according to the content of 'user-prompt' (in English, try add more details with richer musical guidance)"
+        content = self.llm_api.generate_text(system_prompt, content)
+        return content
+
+
+
+    def prepare_suno_lyrics(self, suno_lang, styles, content):
+        system_prompt = f"""
+You are a professional to make SUNO-AI prompt for song lyrics to cover the content in 'user-prompt' (in English, make it transcend/distill/elevated realm of resonance that moves and inspires).
+**FYI: music-style details are in the 'music-style' section of the user-prompt**
+"""
+        return self.llm_api.generate_text(system_prompt, content + "\n\n\n***music-style***\n" + styles)
+    
+    def refine_music_prompt(self):
+        """Refine and reorganize the music prompt content using LLM"""
+        current_content = self.music_prompt.get(1.0, tk.END).strip()
+        if not current_content:
+            messagebox.showwarning("警告", "提示词内容为空，无法优化")
+            return
+        
+        def run_refine():
+            try:
+                self.status_var.set("优化提示词中...")
+                self.log_to_output(self.music_output, "🔄 开始优化提示词...")
+                
+                system_prompt = """You are a professional music prompt organizer. Your task is to make the music prompt more concise (try to keep it less than 1000 characters) and impactful while preserving the core meaning and emotional essence. 
+Remove redundant words and phrases, but keep all important information and maintain the music prompt flow. 
+Output the concise version of the music prompt."""
+
+                refined_content = self.llm_api.generate_text(system_prompt, current_content)
+                
+                if refined_content:
+                    self.root.after(0, lambda: self.music_prompt.delete(1.0, tk.END))
+                    self.root.after(0, lambda: self.music_prompt.insert(1.0, refined_content.strip()))
+                    self.root.after(0, lambda: self.on_project_config_change())
+                    self.status_var.set("就绪")
+                    self.log_to_output(self.music_output, "✅ 提示词优化完成")
+                    self.root.after(0, lambda: messagebox.showinfo("成功", "提示词优化完成！"))
+                else:
+                    self.status_var.set("发生错误")
+                    self.log_to_output(self.music_output, "❌ 提示词优化失败：未获得有效响应")
+                    self.root.after(0, lambda: messagebox.showerror("错误", "提示词优化失败：未获得有效响应"))
+                    
+            except Exception as e:
+                error_msg = str(e)
+                self.log_to_output(self.music_output, f"❌ 提示词优化失败: {error_msg}")
+                self.status_var.set("发生错误")
+                self.root.after(0, lambda: messagebox.showerror("错误", f"提示词优化失败: {error_msg}"))
+        
+        thread = threading.Thread(target=run_refine)
+        thread.daemon = True
+        thread.start()
+    
+    
+    def concise_music_lyrics(self):
+        """Make the music lyrics content more concise using LLM"""
+        current_lyrics = self.music_lyrics.get(1.0, tk.END).strip()
+        if not current_lyrics:
+            messagebox.showwarning("警告", "歌词起始内容为空，无法进行生成")
+            return
+        
+        def run_concise():
+            try:
+                language = self.suno_language.get()
+                music_styles = self.music_style.get(1.0, tk.END).strip()
+                music_prompt = self.music_prompt.get(1.0, tk.END).strip()
+
+                lyrics_prompt = self.prepare_suno_lyrics(
+                    suno_lang=language,
+                    styles=music_prompt + "\n\n\n***music-style***\n" + music_styles,
+                    content=current_lyrics
+                )
+                
+                if lyrics_prompt:
+                    self.root.after(0, lambda: self.music_lyrics.delete(1.0, tk.END))
+                    self.root.after(0, lambda: self.music_lyrics.insert(1.0, lyrics_prompt.strip()))
+                    self.root.after(0, lambda: self.on_project_config_change())
+                    self.status_var.set("就绪")
+                    self.log_to_output(self.music_output, "✅ 歌词精简完成")
+                    self.root.after(0, lambda: messagebox.showinfo("成功", "歌词精简完成！"))
+                else:
+                    self.status_var.set("发生错误")
+                    self.log_to_output(self.music_output, "❌ 歌词精简失败：未获得有效响应")
+                    self.root.after(0, lambda: messagebox.showerror("错误", "歌词精简失败：未获得有效响应"))
+                    
+            except Exception as e:
+                error_msg = str(e)
+                self.log_to_output(self.music_output, f"❌ 歌词精简失败: {error_msg}")
+                self.status_var.set("发生错误")
+                self.root.after(0, lambda: messagebox.showerror("错误", f"歌词精简失败: {error_msg}"))
+        
+        thread = threading.Thread(target=run_concise)
+        thread.daemon = True
+        thread.start()
+
+
+
     def clear_music_prompts(self):
         """Clear music prompts configuration"""
         self.suno_language.set(config_prompt.SUNO_LANGUAGE[0])
@@ -2253,6 +2401,7 @@ class MagicToolGUI:
         
         self.music_content.delete(1.0, tk.END)
         self.music_prompt.delete(1.0, tk.END)
+        self.music_lyrics.delete(1.0, tk.END)
         self.on_project_config_change()
         self.log_to_output(self.music_output, f"🗑️ SUNO音乐提示词配置已清空")
 

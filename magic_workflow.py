@@ -449,33 +449,6 @@ class MagicWorkflow:
         return self.llm_api.generate_json_summary(system_prompt, user_prompt, title_json_path)
 
 
-    def prepare_suno_music(self, suno_lang, content, atmosphere, expression, structure, 
-                                leading_melody, instruments, rhythm_groove):
-        
-        content = self.llm_api.generate_text(config_prompt.SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT, content)
-        suno_style_prompt = config_prompt.SUNO_STYLE_PROMPT.format(
-            target=suno_lang,
-            atmosphere=atmosphere,
-            expression=expression+" ("+config.SUNO_CONTENT[expression]+")",
-            structure=structure,
-            melody=leading_melody,
-            instruments=instruments,
-            rhythm=rhythm_groove
-        )
-        # Build enhanced system prompt with new parameters
-        music_prompt = self.llm_api.generate_json_summary(config_prompt.SUNO_MUSIC_SYSTEM_PROMPT.format(language_style=suno_lang), content)
-
-        if music_prompt and len(music_prompt) > 0:
-            content += "\n*** " + music_prompt[0]["music_expression"]
-            content += "\n\n\n***" + suno_style_prompt
-            content += "\n\n\n[LYRICS]\n" + music_prompt[0]["lyrics_suggestion"]
-
-        suno_prompt_path = config.get_project_path(self.pid) + "/suno_prompt.txt"
-        with open(suno_prompt_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return content
-
-
     def find_clip_duration(self, current_scene):
         clip_audio = get_file_path(current_scene, "clip_audio")
         duration = None
