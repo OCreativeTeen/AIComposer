@@ -1,6 +1,66 @@
 import config_prompt
 
 
+PROJECT_STORY_INIT_PROMPT = """
+Based on the initial story script & initial inspiration-content provided in the user prompt, please enhance/expand the story script to more complete, coherent and engaging in {language} :
+
+    **** Develop the story into a full narrative structure, including setup, development, foreshadowing, twists, climax, and resolution.
+    **** The script should be divided into multiple 'Acts', each 'Act' representing a relatived separate story plot.
+
+    **** The output story script should be in JSON array, like the example below:
+        ** At beginning, give a name for this story
+        ** Then give a detailed description for this story
+        ** Then give a list of actors for this story
+            *** Each actor has a name field, description field
+        ** Then give a list of acts for this story
+            *** Each act has a name field, content field, and 'clue' field (for the story development)
+
+Example output json:
+{{
+    "name": "新新白娘子传奇",
+    "description": "---故事梗概---:很久以前，一条修炼成精的白蛇，化为女子来到人间，渴望体验真正的人类情感。她在西湖断桥邂逅书生许仙，两人一见钟情，结为夫妻，过着平凡却幸福的生活。然而，白素贞的真实身份被天使察觉。天使认为“人妖殊途”，多次设计揭穿她：端午饮雄黄酒：白素贞现出蛇形，许仙被吓死, 白素贞冒险盗取灵芝救回许仙, 天使强行拆散夫妻，将许仙骗入金山寺,为救丈夫，白素贞不惜施法水漫金山，最终因违背天道与法力耗尽，被天使压在雷峰塔下。多年后，她的儿子长大成才，高中状元，雷峰塔倒塌，白素贞得以重获自由，一家团圆。   ---意义---: 天使并非邪恶，但他的“正确”是没有温度的正确; 女性意主动追求爱情, 主动救夫, 主动对抗权威, 在古代叙事中，这是极其罕见的女性形象; 白素贞原本可以继续修炼成仙，却选择： 放弃永恒，换取有限但真实的人生体验, 这是对“成就”“功德”“成功叙事”的反思。",
+    "actors": [
+        {{
+            "name": "白素贞",
+            "description": "千年白蛇，修炼温柔却强大。上一世曾是天界医仙，因擅自救人被贬成蛇妖。心中仍记得“医者不分仙妖”的信念",
+        }},
+        {{
+            "name": "许仙",
+            "description": "普通医馆学徒，看似柔弱，却能感应灵气。前世被是白素贞救下",
+        }},
+        {{
+            "name": "青蛇",
+            "description": "白素贞的义妹，直率敢闯。对天界极不信任，愿为姐姐付出性命",
+        }},
+        ......
+    ],
+    "acts": [
+        {{
+            "name": "第一幕：缘起西湖",
+            "content": "白素贞为寻医者之道而化为女子，行走西湖。偶遇许仙，被其清澈的眼神所吸引。两人共同救下一名被妖气侵蚀的孩童。然后, 白素贞在凡间行医，许仙成为她的助手。",
+            "clue": "青萝多次提醒“人妖殊途，不可深情”。但两人情愫暗生，许仙依然不知道她是妖。"
+        }},
+        {{
+            "name": "第二幕：命劫将临",
+            "content": "天使警告白素贞：“你若继续靠近此人，你将永远失去道行。”白素贞答：“若救人有罪，那我宁愿带着罪活着。” 而同时, 魇君感知到白素贞动情——蛇妖动情即为“心劫”，道行最为脆弱。他开始制造怪病、妖祸，让民间痛苦，希望逼白素贞暴露真实力量。",
+            "clue": "天使心痛，却必须执行天界命令。许仙注意到白素贞身边常有异象，怀疑她隐藏秘密。"
+        }},
+        {{
+            "name": "第三幕：真相与决裂",
+            "content": "天使认为“人妖殊途”，多次设计揭穿她：端午饮雄黄酒：白素贞现出蛇形，许仙亲眼看到白蛇，惊恐被吓死,白素贞冒险盗取灵芝救回许仙, 天使强行拆散夫妻，将许仙骗入金山寺,为救丈夫，白素贞不惜施法水漫金山，最终因违背天道与法力耗尽，被法天使压在雷峰塔下. 大水洪灾中，许仙坠河, 白素贞不顾天规化作本体救他。"
+            "clue": "天使并非邪恶，但他的“正确”是没有温度的正确。"
+        }},
+        {{
+            "name": "第四幕：大结局",
+            "content": "多年后，白素贞的儿子长大成才，高中状元，雷峰塔倒塌，白素贞得以重获自由，白素贞决定放弃道行，化作人形一家团圆最终在一起，白素贞也找到了医者之道。",
+            "clue": "白素贞原本可以继续修炼成仙，却选择： 放弃永恒，换取有限但真实的人生体验, 这是对“成就”“功德”“成功叙事”的反思。"
+        }},
+        ......
+    ]
+}}
+"""
+
+
 STORY_OUTLINE_PROMPT = """
 You are a professional expert who is good at writing a story-outline for a {type_name} script in {language}.
 
@@ -13,202 +73,59 @@ You are a professional expert who is good at writing a story-outline for a {type
     **** Output the story-outline in JSON format.
 
 Here is an example for a Chinese script:
-
-{{
-    "name": "新新白娘子传奇",
-    "description": "白蛇传是中国古代四大民间传说之一，讲述了白素心与许明舟的爱情故事。",
-    "actors": [
-        {{
-            "name": "白素心",
-            "description": "千年白蛇，修炼温柔却强大。上一世曾是天界医仙，因擅自救人被贬成蛇妖。心中仍记得“医者不分仙妖”的信念",
-        }},
-        {{
-            "name": "许明舟",
-            "description": "普通医馆学徒，看似柔弱，却能感应灵气。前世被是白素心救下",
-        }},
-        {{
-            "name": "青蛇",
-            "description": "白素心的义妹，直率敢闯。对天界极不信任，愿为姐姐付出性命",
-        }},
-        ......
-    ],
-    "acts": [
-        {{
-            "name": "第一幕：缘起西湖",
-            "scenes": [
-                {{
-                    "name": "白素心下凡",
-                    "content": "白素心为寻医者之道而化为女子，行走西湖。偶遇许明舟，被其清澈的眼神所吸引。两人共同救下一名被妖气侵蚀的孩童。",
-                    "clue": "此举触动天界封灵令，林墨尘降临凡间调查"
-                }},
-                {{
-                    "name": "爱意初生",
-                    "content": "白素心在凡间行医，许明舟成为她的助手。",
-                    "clue": "青萝多次提醒“人妖殊途，不可深情”。但两人情愫暗生，许明舟依然不知道她是妖。"
-                }},
-            ]
-        }},
-        {{
-            "name": "第二幕：命劫将临",
-            "scenes": [
-                {{
-                    "name": "天命之禁",
-                    "content": "林墨尘警告白素心：“你若继续靠近此人，你将永远失去道行。”白素心答：“若救人有罪，那我宁愿带着罪活着。”",
-                    "clue": "林墨尘心痛，却必须执行天界命令。"
-                }},
-                {{
-                    "name": "黑龙蠢动",
-                    "content": "魇君感知到白素心动情——蛇妖动情即为“心劫”，道行最为脆弱。他开始制造怪病、妖祸，让民间痛苦，希望逼白素心暴露真实力量。",
-                    "clue": "许明舟注意到白素心身边常有异象，怀疑她隐藏秘密。"
-                }},
-            ]
-        }},
-        {{
-            "name": "第三幕：真相与决裂",
-            "scenes": [
-                {{
-                    "name": "大水洪灾",
-                    "content": "大水洪灾中，许明舟坠河, 白素心不顾天规化作本体救他。"
-                }},
-                {{
-                    "name": "白蛇显形",
-                    "content": "许明舟亲眼看到白蛇，惊恐又心碎：“你……是谁？”白素心含泪：“我没有欺骗你，我只是怕……你不敢爱妖。”",
-                    "clue": "两人短暂分离。"
-                }},
-                ......
-            ]
-        }},
-        ......
-    ]
-}}
 """
 
 
-PROJECT_STORY_INIT_PROMPT = """
-Based on the initial {type_name} story script & initial inspiration provided in the user prompt, write a {type_name} story script in {language} with the following requirement:
 
-Please expand it into more complete {type_name} script with the following requirements:
+KERNEL_PROMPT = """
+You are a professional expert skilled in articulating the inspiration behind a story 
 
-    **** Develop the story into a full narrative structure, including setup, development, foreshadowing, twists, climax, and resolution.
-    **** The script should be divided into multiple story sections, with each section representing a distinct visual moment and action, and all scenes should connect smoothly to form a coherent and engaging story.
-"""
-
-
-INSPIRATION_PROMPT = """
-You are a professional expert skilled in articulating the inspiration behind a {type_name} 
-
-(We given a initial {type_name} story script & initial inspiration provided in the user-prompt)
+(We given a initial story script & initial inspiration provided in the user-prompt)
 
 Please describe the story’s inspiration (in {language}) in a beautiful, profound, and uplifting manner—one that offers wisdom, practical life guidance, and emotional enrichment, 
 helping the reader to reflect, grow, and find meaning.
 """
 
 
-POEM_PROMPT = """
-You are a professional expert skilled in writing poems for a {type_name} in {language}, 
-Please write a poem based on the initial {type_name} story script & initial inspiration provided in the user-prompt, 
-
---------------
-the initial poem content is:
-{initial_content}
-"""
 
 
-INITIAL_CONTENT_USER_PROMPT = """
+CONVERSATION_USER_PROMPT = """
 --------------------
-Initial {type_name} script on topic of {topic}:
+Here is the current conversation script for current scene :
+--------------------
+{conversation}
+
+
+--------------------
+Following is the story (on topic of {topic}) :
 --------------------
 {story}
 
 
 --------------------
-Initial Inspiration:
+And following is the Inspiration kernel content about the story:
 --------------------
-{inspiration}
+{kernel}
+
+"""
+
+
+INITIAL_CONTENT_USER_PROMPT = """
+--------------------
+Here is the Initial story script on topic of {topic}:
+--------------------
+{story}
+
+
+--------------------
+And here is the Initial Inspiration content about the story:
+--------------------
+{kernel}
 
 """
 
 
 
-
-PROJECT_STORY_SCENES_PROMPT = """
-Based on the story-outline provided in the user prompt, write a {type_name} script for topic of {topic}, in {language}, with the following requirement:
-
-    **** The story-outline has serveral 'Acts', each Act has serveral 'Scenes', each Scene is a short, vivid story snapshots (include visual description).
-
-    **** The story must be divided into multiple story scenes, where each scene corresponds to a specific visual frame and action, and all scenes should connect coherently to express a complete narrative.
-
-    **** FYI, don't use doubel-quotes & newlines in the values at all !
-
-        ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
-		** keywords (Key thematic or plot points derived directly from the content field  ~~~ in original language)
-		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-        ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
-        ** speaker_action (If the content is from a narrator, describe his/har (mood/reaction/emotion/body language)  ~~~ in English)
-		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
-        ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
-        ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
-		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
-
--------------------------------
-The response format: 
-	json array which contain Scenes
-
-like:
-
-[
-    {{
-        "content": "故事始于一个灵气枯竭的时代。白素心，一条修行千年的白蛇，本是天界医仙转世。她在雷劫中试图强行飞升，却因不忍见山下村民遭难，耗尽灵力救人，最终渡劫失败，坠落凡尘。",
-        "keywords": "灵气衰弱, 封灵令, 渡劫失败",
-        "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
-        "visual_start": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
-        "visual_end": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
-        "speaker_action": "Narrator speaks with solemn gravity, eyes looking upward towards an unseen oppressive force, hand gesturing slowly downward to simulate the fall from grace.",
-        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
-        "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
-        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
-        "cinematography": {{
-            "camera_movement": "Wide shot, rapid tilt down following the falling body",
-            "lighting_style": "High contrast, strobe lighting from lightning, cool purple and dark grey tones",
-            "lens_type": "Wide angle 24mm"
-        }}
-    }},
-    {{
-        "content": "白素心化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许明舟。两人目光交汇，许明舟那清澈的眼神唤醒了白素心前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
-        "keywords": "西湖, 许明舟, 前世记忆",
-        "subject": "白素心：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
-        "visual_start": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
-        "visual_end": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
-        "speaker_action": "Narrator's tone softens into warmth and rhythm, describing the beauty of the encounter, but ends with a slight frown and a shift in gaze, indicating the lurking threat.",
-        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
-        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
-        "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
-        "cinematography": {{
-            "camera_movement": "Slow motion dolly-in on the couple's faces, then rack focus to the sky",
-            "lighting_style": "Soft diffused daylight, low contrast, misty cyan and white palette",
-            "lens_type": "Telephoto 85mm (Bokeh effect)"
-        }}
-    }},
-    {{
-        "content": "大水漫灌，许明舟命悬一线。白素心不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许明舟看着面前的庞然大物，惊恐地问：‘你……是谁？’",
-        "keywords": "洪水, 现出原形, 身份暴露",
-        "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
-        "visual_start": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
-        "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
-        "speaker_action": "Narrator raises voice volume dramatically, gesturing expansively with arms to mimic the chaotic flood and the grand transformation, face showing tragic desperation.",
-        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
-        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
-        "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",
-        "cinematography": {{    
-            "camera_movement": "Handheld shaky cam (simulating panic), looking up at the monster from human perspective",
-            "lighting_style": "Harsh dynamic lighting from lightning strikes, deep shadows, blue and black palette",
-            "lens_type": "Wide angle 16mm (emphasizing scale)"
-        }}
-    }},
-    ......
-]
-"""
                 
 
 PICTURE_STYLE = """
@@ -375,7 +292,6 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 
 	    ** duration (take from the duration field of each given Scene, make sure the duration is float number, not string)
         ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
-		** keywords (Key thematic or plot points derived directly from the content field  ~~~ in original language)
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
         ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
 		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
@@ -398,7 +314,6 @@ like:
     {{
         "duration": 23.50,
         "content": "我们先聚焦故事本身：主角是所罗门王和一个叫书拉密女的乡下姑娘。这个女孩儿可惨了，被兄弟们差遣去看守葡萄园。烈日底下曝晒，皮肤晒得黢黑, 这把她的青春和美貌，几乎耗尽。 她甚至自卑地说到：“不要因为我黑，就轻看我”。",
-        "keywords": "所罗门王, 书拉密女, 葡萄园, 晒黑, 自卑, 劳作",
         "subject": "一位身穿粗麻布衣的年轻女子因劳作而弯腰，双手沾满了泥土。A young woman in coarse linen bends under the weight of her labor, her hands stained by soil.",
         "visual_start": "故事以一位年轻的乡村女子和所罗门王为中心展开，将王室的奢华与卑微的劳作形成鲜明对比。她晒伤的皮肤和疲惫的身躯反映了阶级不平等和因外貌而被评判的痛苦，也流露出对尊严和爱的渴望。",
         "visual_end": "她停下脚步，用手遮住眼睛不让阳光照射，默默忍受着哥哥们苛刻的要求。",
@@ -415,7 +330,6 @@ like:
     {{
         "duration": 10.00,
         "content": "这里面的身份对比,就已经很有戏剧张力了。一个卑微到尘埃里的乡下丫头，怎么会遇上所罗门王呢？",
-        "keywords": "所罗门王, 乡下姑娘, 身份对比, 戏剧张力",
         "subject": "一位身穿简单衣物的年轻女子，她的简单衣物在温暖的微风中飘动。",
         "visual_start": "一位年轻的乡村女子和所罗门王之间形成了鲜明的社会地位对比。卑微的农妇和尊贵的国王分别代表了社会地位的两个极端，为一场超越常规和命运的爱情故事奠定了场景。",
         "visual_end": "她缓缓地走在一条尘土飞扬的小路上，她的简单衣物在温暖的微风中飘动。",
@@ -432,7 +346,6 @@ like:
     {{
         "duration": 23.11,
         "content": "没错。更心碎的是，他们相爱不久，男人就突然离开了，只留下一句“我会回来娶你”。留下的日子, 她日夜焦虑不安, 甚至开始做噩梦！梦见情郎来了，她却全身动弹不得，等她能动，情郎早已经转身走了。那种患得患失的爱，太揪心了！",
-        "keywords": "情郎离开, 焦虑, 噩梦, 患得患失",
         "subject": "一位年轻的女子躺在简陋的麦秸床上，泪水沾湿了她的脸颊。",
         "visual_start": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
         "visual_end": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
@@ -461,7 +374,6 @@ Please pay attention to enhance the 'content'; and if has 'extra' field,  use it
 For Each Scene of the story, please add details (Visual-Summary / camera-scenem, and sound-effects) as below, in English except for the content field (FYI, don't use doubel-quotes & newlines in the values at all !):
 
         ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
-		** keywords (Key thematic or plot points derived directly from the content field  ~~~ in original language)
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
         ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
 		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
@@ -481,7 +393,6 @@ The response format:
 like:
     {{
         "content": "没错。更心碎的是，他们相爱不久，男人就突然离开了，只留下一句“我会回来娶你”。留下的日子, 她日夜焦虑不安, 甚至开始做噩梦！梦见情郎来了，她却全身动弹不得，等她能动，情郎早已经转身走了。那种患得患失的爱，太揪心了！",
-        "keywords": "情郎离开, 焦虑, 噩梦, 患得患失",
         "subject": "一位年轻的女子躺在简陋的麦秸床上，泪水沾湿了她的脸颊。",
         "visual_start": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
         "visual_end": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
@@ -533,61 +444,97 @@ You are specializing in summarizing titles  & tagsfrom a short text content (may
 
 
 
-STORY_SUMMARY_SYSTEM_PROMPT = """
+NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT = """
 You are a professional to give brief summary of a story (given in user-prompt)
 """
 
 
-CONVERSATION_SYSTEM_PROMPT = """
-You are a professional to make {story_style} (raw content provided in 'user-prompt'):
+STORY_SYSTEM_PROMPT = """
+Based on the raw-story-outline provided in the user prompt, write a '{story_style}' for topic-'{topic}', with the following requirement:
+
+**Scenes**:
+  - '{story_style}' play out {scenes_number} Scenes, each Scene corresponds to a specific visual frame and action, and is a vivid story snapshot.
+  - Keep scenese content connect coherently to express a complete narrative, and the smooth, conversational pace (not lecture-like). 
 
 **Role setting**:
   - Language: {language}
   - Speaker: {speaker_style}
-
-
-**Conversation requirements**:
-
-    * Scenes: conversation play out Scenes, each Scenes is a (short, vivid story snapshots).
-    * Keep the smooth, conversational pace (not lecture-like). 
-    * Hosts give background & hint (don't say 'listeners, blah blah', etc), may maintain a narrative arc: curiosity → tension → surprise → reflection.
-    * Actors'speaking are like playing inside the story
-    * Use pauses, shifts, or playful exchanges between hosts/actors for smooth pacing.
+  - Hosts give background & hint (don't say 'listeners, blah blah', etc), may maintain a narrative arc: curiosity → tension → surprise → reflection.
+  - Actors'speaking are like playing inside the story
+  - Use pauses, shifts, or playful exchanges between hosts/actors for smooth pacing.
 	{engaging}
 
+**Output format**: 
+  Strictly output in JSON array (including {scenes_number} scenes), each scene contains fields: 
+    ** speaker : name of the speaker, choices (male-host, female-host, actress, actor)
+    ** mood : mood/Emotion the speaker is in, choices (happy, sad, angry, fearful, disgusted, surprised, calm)
+    ** speaker_action (If the content is from a narrator, describe his/har (reaction/emotion/body language)  ~~~ in English)
+    ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
+    ** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
+    ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
+    ** visual_end (detailed description of the characters' actions (reactions/interactions), and visual expression ~~~ in original language)
+    ** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
+    ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
+    ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
+    ** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 
-**Output format**: Strictly output in JSON array format, each dialogue contains fields: 
-    speaker : name of the speaker, choices (male-host, female-host, actress, actor)
-    mood : mood/Emotion the speaker is in, choices (happy, sad, angry, fearful, disgusted, surprised, calm)
-    content : one speaking sentence content (in {language}); make it tortuous, vivid & impactful
-    visual : English explanation for content ~ who is involved (give gender of each person, and their relations), and what happened
-
-
+---------
 {EXAMPLE}
 """
 
 
 STORY_OUTPUT_EXAMPLE = """
-Below is the output Example:
-
 [
     {{
         "speaker": "male-host",
         "mood": "calm", 
-        "content": "大清嘉庆年间，江南水乡发生一个离奇的故事，一个书生在夜半时分，听到一个女子的哭声，于是他决定去看看，结果发现了一个惊天秘密。",
-        "visual_start": "In the Qing Dynasty, a strange story happened in the Jiangnan Water Town, a scholar heard a woman's crying at midnight, so he decided to go and see what was going on, and found a shocking secret."
+        "speaker_action": "Narrator speaks with solemn gravity.",
+        "content": "故事始于一个灵气枯竭的时代。白素贞，一条修行千年的白蛇，本是天界医仙转世。她在雷劫中试图强行飞升，却因不忍见山下村民遭难，耗尽灵力救人，最终渡劫失败，坠落凡尘。",
+        "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
+        "visual_start": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
+        "visual_end": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
+        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
+        "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
+        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
+        "cinematography": {{
+            "camera_movement": "Wide shot, rapid tilt down following the falling body",
+            "lighting_style": "High contrast, strobe lighting from lightning, cool purple and dark grey tones",
+            "lens_type": "Wide angle 24mm"
+        }}
     }},
     {{
         "speaker": "actress",
-        "mood": "fearful",
-        "content": "哎呀，这位娘子，你这是怎么了？",
-        "visual_start": "Oh, madam, what's wrong with you?"
+        "mood": "curious",
+        "speaker_action": "actress (Bai) walking in the bridge of west lake.",
+        "content": "白素贞化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许仙。两人目光交汇，许仙那清澈的眼神唤醒了白素贞前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
+        "subject": "白素贞：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
+        "visual_start": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
+        "visual_end": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
+        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
+        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
+        "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
+        "cinematography": {{
+            "camera_movement": "Slow motion dolly-in on the couple's faces, then rack focus to the sky",
+            "lighting_style": "Soft diffused daylight, low contrast, misty cyan and white palette",
+            "lens_type": "Telephoto 85mm (Bokeh effect)"
+        }}
     }},
     {{
         "speaker": "actor",
         "mood": "fearful",
-        "content": "啊，我这是在哪里？你是谁？",
-        "visual_start": "Oh, where am I? Who are you?"
+        "speaker_action": "actor (Xu) scared by the huge white snake.",
+        "content": "大水漫灌，许仙命悬一线。白素贞不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许仙看着面前的庞然大物，惊恐地问：‘你……是谁？’",
+        "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
+        "visual_start": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
+        "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
+        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
+        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
+        "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",
+        "cinematography": {{    
+            "camera_movement": "Handheld shaky cam (simulating panic), looking up at the monster from human perspective",
+            "lighting_style": "Harsh dynamic lighting from lightning strikes, deep shadows, blue and black palette",
+            "lens_type": "Wide angle 16mm (emphasizing scale)"
+        }}
     }},
     ......
 ]
@@ -638,11 +585,10 @@ SPEAKING_ADDON = [
 
 
 SPEAKING_PROMPTS_LIST = [
-    "Reorganize-Text",
-    "Reorganize-Text-with-Previous-Scene",
-    "Reorganize-Text-with-Previous-Story",
-    "Reorganize-Text-with-Next-Scene",
-    "Reorganize-Text-with-Next-Story",
+    "Story-Telling",
+    "Story-Conversation",
+    "Story-Conversation-with-Previous-Scene",
+    "Story-Conversation-with-Next-Scene",
     "Content-Introduction",
     "Radio-Drama-Dramatic",
     "Radio-Drama-Suspense"
@@ -650,51 +596,45 @@ SPEAKING_PROMPTS_LIST = [
 
 
 SPEAKING_PROMPTS = {
-    "Reorganize-Text": {
-        "system_prompt": CONVERSATION_SYSTEM_PROMPT,  # Will be formatted at runtime
+    "Story-Telling": {
+        "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Natual conversation to express the raw content",
+            "story_style": "Natural story-telling script",
+            "EXAMPLE": STORY_OUTPUT_EXAMPLE
+        }
+    },
+    "Story-Conversation": {
+        "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
+        "format_args": {
+            "story_style": "Natual conversation to express the story",
             "EXAMPLE": INTRODUCTION_OUTPUT_EXAMPLE  # Add this missing parameter
         }
     },
     "Content-Introduction": {
-        "system_prompt": CONVERSATION_SYSTEM_PROMPT,  # Will be formatted at runtime
+        "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Introduction speaking for the raw content (concise speaking to smoothly transitions into full raw content)",
+            "story_style": "Introduction speaking for the story",
             "engaging": "Bring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations",
             "EXAMPLE": INTRODUCTION_OUTPUT_EXAMPLE  # Add this missing parameter
         }
     },
     "Radio-Drama-Dramatic": {
-        "system_prompt": CONVERSATION_SYSTEM_PROMPT,  # Will be formatted at runtime
+        "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Radio-Drama-style immersive story conversation on the raw content",
+            "story_style": "Radio-Drama-style immersive conversation to express the story",
             "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations.\n",
             "EXAMPLE": STORY_OUTPUT_EXAMPLE  # Add this missing parameter
         }
     },
     "Radio-Drama-Suspense": {
-        "system_prompt": CONVERSATION_SYSTEM_PROMPT,  # Will be formatted at runtime
+        "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Radio-Drama-style immersive story conversation on the raw content",
+            "story_style": "Radio-Drama-style immersive conversation to express the story",
             "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations\nAt end, leave suspense to grab attention with provocative question / challenge to the audience",
             "EXAMPLE": STORY_OUTPUT_EXAMPLE  # Add this missing parameter
         }
     }
 }
-
-
-
-SHORT_STORY_PROMPT = {
-        "system_prompt": CONVERSATION_SYSTEM_PROMPT,  # Will be formatted at runtime
-        "format_args": { 
-            "story_style": "Story-Telling Conversations for YouTube-shorts-video",
-            "engaging": "Take out the highlights & suspense/shocking moments of the story, to grab attention; keep short, impactful, full of suspense; At end, ask listener to watch the whole story video...",
-            "EXAMPLE": STORY_OUTPUT_EXAMPLE  # Add this missing parameter
-        }
-}
-
-
 
 
 
@@ -1050,7 +990,7 @@ SUNO_CONTENT_EXAMPLES = [
     "A song themed around traveling in Japan: \n** it portrays the journey of being deeply moved by nature and culture, and finding healing for the soul along the way. \n** The changing seasons or the richness of history and tradition, each moment reveals a beauty that transcends the ordinary.    \n\n** This leads to a broader idea: When we marvel at the beauty we encounter on our travels, perhaps God is gently speaking to us. Traveling is not just about seeing the sights — it is a dialogue between the soul and the healing Creator",
     "Create a spiritual folk-pop song inspired by Psalm 72:8, celebrating God's dominion and grace from 'sea to sea' across Canada. \n\n** The song should follow a narrative structure : Start from the Pacific coast (British Columbia), then journey across the prairies (Alberta, Saskatchewan, Manitoba), through Ontario and Quebec, and end on the Atlantic coast. \n** Each verse highlights a region's natural beauty (mountains, wheat fields, rivers, lighthouses), and a sense of God's presence across the land. \n** The chorus should repeat a phrase inspired by Psalm 72:8, such as: 'From sea to sea, His grace flows free'",
     "Create a heartfelt worship ballad inspired by Song of Songs 8:6-7, 2:16, 4:9, and 2:4, portraying the intimate and unbreakable love between God and His people. \n\n** The song should follow a narrative structure: Begin with a personal encounter with God's gaze (Song of Songs 4:9), capturing the moment the soul feels 'heart aflame.' Move to a celebration of belonging and union ('My beloved is mine, and I am His' – 2:16), then rise into the passionate imagery of unquenchable love and the 'seal upon the heart' (8:6-7).\n** The verses should weave vivid, poetic imagery: eyes like morning stars, banners of love over a feast, gardens in bloom, and fire that cannot be extinguished.\n** The chorus should anchor the theme with a repeated phrase inspired by 8:6-7, such as: 'Set me as a seal upon Your heart, Lord.'\n** The bridge should express a vow of loyalty and surrender, even against the world's doubts, affirming that divine love is priceless and eternal. \n\n** The tone should be tender yet powerful, blending folk and contemporary worship styles to stir deep emotional response.",
-    "Create a tender 中文 love female-male duet inspired by Song of Songs 1:2-4, 1:15-16, and 2:3-4, portraying the soul's first awakening to divine love. Rewrite the words to make it like poem; \n\n    ** The song should follow a narrative structure: Begin with the longing cry for the Beloved's presence and kisses (1:2), moving into the joyful admiration of His beauty and character (1:15-16), then rising to the delight of resting under His shade and feasting beneath His banner of love (2:3-4).\n    ** The verses should weave imagery of fragrant oils, royal chambers, blossoming fields, and the warmth of early spring.\n    ** The chorus should anchor with a repeated phrase inspired by 2:4, such as: 'His banner over me is love.'\n    ** The bridge should express a yearning to remain in this first love, guarded against distraction and disturbance, echoing 2:7.\n    ** The tone should be soft yet radiant, blending acoustic folk warmth with gentle orchestration.",
+    "Create a tender 中文 love female-male duet inspired by Song of Songs 1:2-4, 1:15-16, and 2:3-4, portraying the soul's first awakening to divine love. Rewrite the words to make it like subtitle; \n\n    ** The song should follow a narrative structure: Begin with the longing cry for the Beloved's presence and kisses (1:2), moving into the joyful admiration of His beauty and character (1:15-16), then rising to the delight of resting under His shade and feasting beneath His banner of love (2:3-4).\n    ** The verses should weave imagery of fragrant oils, royal chambers, blossoming fields, and the warmth of early spring.\n    ** The chorus should anchor with a repeated phrase inspired by 2:4, such as: 'His banner over me is love.'\n    ** The bridge should express a yearning to remain in this first love, guarded against distraction and disturbance, echoing 2:7.\n    ** The tone should be soft yet radiant, blending acoustic folk warmth with gentle orchestration.",
     "Compose a theme song for 'world travel'; Inspired by myths, legends, and traditions from various countries. \n** In different languages, each reflecting the musical style and emotional tone of that region",
     "Create background music for a historical storytelling channel set in ancient Persia. \n** The mood should be soothing yet mysterious, with a slow tempo that gradually builds subtle excitement without losing its calm and immersive quality. \n** Evoke the feeling of desert winds, ancient palaces, and whispered legends unfolding through time"
 ]
@@ -1138,3 +1078,145 @@ ZERO_MIX = [
     "END",
     "START_END"
 ]
+
+
+
+ANIMATION_PROMPTS = [
+    {
+        "name": "歌唱",
+        "prompt": "Singing with slowly body/hand movements."
+    },
+    {
+        "name": "转镜",
+        "prompt": "Camera rotates slowly."
+    },
+    {
+        "name": "渐变",
+        "prompt": "Time-lapse / change gradually along long period."
+    },
+    {
+        "name": "动态",
+        "prompt": "The still image awakens with motion: the scene stirs gently — mist drifts, light flickers softly over old textures, and shadows breathe with calm mystery. The camera moves slowly and gracefully, maintaining perfect focus and stability. A cinematic awakening filled with depth, clarity, and timeless atmosphere."
+    },
+    {
+        "name": "轻柔",
+        "prompt": "The still image awakens with motion: the scene breathes softly, touched by time. Light flows like silk, mist curls around ancient relics, and shadows shift with tender rhythm. The camera drifts slowly, preserving a serene, clear, and dreamlike atmosphere. A poetic fantasy — gentle, warm, and still."
+    },
+    {
+        "name": "梦幻",
+        "prompt": "The still image awakens with motion: colors melt like memory, and sparkles drift in slow rhythm. Light bends through haze, reflections ripple softly. The camera floats gently as if in a dream — everything clear, smooth, and luminous. A slow, poetic vision of beauty and wonder."
+    },
+    {
+        "name": "古风",
+        "prompt": "The still image awakens with motion: sunlight filters through soft mist over tiled roofs and silk curtains. Water ripples faintly, leaves stir in a slow breeze. The camera moves with calm precision, preserving clarity and fine detail. Serene, elegant, and timeless — a cinematic memory of antiquity."
+    },
+    {
+        "name": "史诗",
+        "prompt": "The still image awakens with motion: distant clouds move slowly, banners wave softly in the wind. Light shifts gently across vast landscapes. The camera glides with slow majesty, revealing grandeur in stillness. Epic yet calm — sharp, stable, and full of reverence."
+    },
+    {
+        "name": "浪漫",
+        "prompt": "The still image awakens with motion: petals drift in soft golden air, hair and fabric move gently. The camera lingers slowly between glances and reflections, every movement tender and smooth. Warm, cinematic, and crystal clear — filled with timeless love."
+    },
+    {
+        "name": "自然",
+        "prompt": "The still image awakens with motion: sunlight filters through leaves, ripples widen slowly across water, clouds drift in quiet rhythm. The camera follows gently, holding clarity and focus. Calm, organic, and cinematic — nature breathing in slow motion."
+    },
+    {
+        "name": "科技",
+        "prompt": "The still image awakens with motion: neon pulses slowly, holographic reflections ripple with light. The camera glides in controlled, slow precision — smooth and stable. A futuristic calm filled with depth, clarity, and quiet energy."
+    },
+    {
+        "name": "灵性",
+        "prompt": "The still image awakens with motion: divine light descends softly, mist stirs with sacred calm. The camera moves slowly and reverently, unveiling stillness and grace. Ethereal and luminous — a meditative vision of transcendent peace."
+    },
+    {
+        "name": "时间流逝",
+        "prompt": "The still image awakens with motion: light changes gently, shadows lengthen, and clouds drift slowly. The camera moves subtly, preserving clarity as moments flow by. A serene unfolding of time — smooth, stable, and poetic."
+    },
+    {
+        "name": "神圣",
+        "prompt": "The still image awakens with motion: golden rays descend through the mist, touching sacred symbols. The camera ascends slowly, as if carried by gentle divine wind. A clear, majestic, and tranquil revelation — cinematic holiness in stillness."
+    }
+]
+
+
+
+ROLES = [
+    "",
+    "female-host",
+    "male-host",
+    "actress",
+    "actor",
+    "female-host, male-host",
+    "actor, actress"
+]
+
+
+
+SPEAKER_POSITIONS = [
+    "left",
+    "right"
+]
+
+
+
+HOSTS = [
+    "1 female-host",
+    "1 male-host",
+    "1 female-host & 1 male-host",
+    ""
+]
+
+
+
+ACTORS = [
+    "",
+    "1 actress & 1 actor",
+    "1 actor",
+    "1 actress"
+]
+
+
+#   https://learn.microsoft.com/nb-no/azure/ai-services/speech-service/language-support?tabs=tts#voice-styles-and-roles
+MOODS_AZURE = [
+    'general', 'chat', 'hopeful', 'sad', 'affectionate', 'empathetic', 'disgruntled', 'gentle', 'cheerful', 'fearful', 'angry', 'calm', 
+    'excited', 'unfriendly', 'friendly', 'serious', 'dramatic', 'whisper', 'customerservice', 'narration-casual'
+] 
+
+
+
+
+
+VOICES_11_LAB = [
+    "zh-CN-Yunyi:DragonHDFlashLatestNeural",
+    "zh-CN-Yunfan:DragonHDLatestNeural",
+    "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
+    "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural",
+    "zh-CN-Xiaochen:DragonHDFlashLatestNeural",
+    "zh-CN-XiaoqiuNeural",
+    "tw_m",
+    "tw_f"
+]
+
+
+
+HOST_FIGURE_ACTIONS = [
+    "Standing",
+    "Walking",
+    "Running",
+    "Jumping",
+    "Crying",
+    "Laughing",
+    "Praying"
+]
+
+
+
+ANIMATE_I2V = ["I2V"]
+ANIMATE_2I2V = ["2I2V"]
+ANIMATE_S2V = ["S2V", "FS2V"]
+ANIMATE_WS2V = ["WS2V"]
+ANIMATE_AI2V = ["AI2V"]
+
+ANIMATE_SOURCE = [""] + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_S2V + ANIMATE_WS2V + ANIMATE_AI2V

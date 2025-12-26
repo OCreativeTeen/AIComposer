@@ -450,6 +450,14 @@ class LLMApi:
         selected_model.trace('w', lambda *args: update_response_visibility())
         update_response_visibility()  # 初始更新（默认选择 GPT_MINI，所以响应区域会被隐藏）
         
+
+        def on_copy():
+            content = system_text.get('1.0', tk.END).strip() + " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
+            dialog.clipboard_clear()
+            dialog.clipboard_append(content)
+            dialog.update()
+        
+
         def on_ok():
             model = selected_model.get()
             result_model[0] = model
@@ -473,6 +481,7 @@ class LLMApi:
             
             dialog.destroy()
         
+
         def on_cancel():
             # 取消时返回 MANUAL 和 None
             result_model[0] = MANUAL
@@ -483,6 +492,7 @@ class LLMApi:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
         
+        ttk.Button(button_frame, text="拷贝", command=on_copy).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
         

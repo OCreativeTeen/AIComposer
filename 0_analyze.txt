@@ -236,6 +236,8 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
 
+
+
     def _process_single_files(self, scene, found_files):
         """处理 S2V 模式的单个视频文件"""
         try:
@@ -382,10 +384,10 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
         
         try:
             if clip_animation == "WS2V":
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_LWS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_WS2VL_*-audio.mp4")
                 left_files = glob.glob(pattern)
 
-                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_RWS2V_*-audio.mp4")
+                pattern = os.path.join(output_folder, f"{self.get_pid()}_{scene_id}_WS2VR_*-audio.mp4")
                 right_files = glob.glob(pattern)
                 
                 # 过滤掉已处理的文件
@@ -496,8 +498,6 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
             #background_image = self.find_default_background_media("jpeg")
             #background_music = self.find_default_background_music("mp3")
             #background_video = self.ffmpeg_processor.image_audio_to_video(background_image, background_music, 1)
-            #self.add_root_scene(0, self.story_site, background_image, background_music, background_video, False)
-            #self.save_scenes_to_json()
             return
             
 

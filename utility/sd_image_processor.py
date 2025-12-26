@@ -6,10 +6,12 @@ from io import BytesIO
 from rembg import remove
 import os
 import config
+from pathlib import Path
 # VIDEO_WIDTH and VIDEO_HEIGHT are now obtained from project config via ffmpeg_processor
 from typing import Dict, Any
 import config_prompt
 from . import llm_api
+from .file_util import get_file_path, build_scene_media_prefix, safe_copy_overwrite
 
 
 GEN_CONFIG = {
@@ -26,7 +28,8 @@ GEN_CONFIG = {
         "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
         "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":468, "image_height":480},
         #"FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
-        "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480}
+        "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},
+        "INTP":   {"url": "http://10.0.0.235:9001/interpolate",        "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":60, "max_frames":121, "image_width":853, "image_height":480}
 }
 
 
@@ -434,8 +437,8 @@ class SDProcessor:
             return None
 
 
-    def two_image_to_video(self, prompt, file_prefix, first_frame, last_frame, sound_path, animate_mode) :
-        server_config = GEN_CONFIG[animate_mode]
+    def two_image_to_video(self, prompt, file_prefix, first_frame, last_frame, sound_path) :
+        server_config = GEN_CONFIG["2I2V"]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
@@ -448,7 +451,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_2I2V_",
+            'filename_prefix': file_prefix,
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -474,7 +477,7 @@ class SDProcessor:
         self.wan_vidoe_count += 1
 
 
-    def action_transfer_video(self, prompt, file_prefix, image_path, sound_path, action_path, animate_mode) :
+    def action_transfer_video(self, prompt, file_prefix, image_path, sound_path, action_path) :
         duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
         if duration <= 0.0:
             print(f"🔴 音频时长为0")
@@ -484,10 +487,10 @@ class SDProcessor:
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
 
-        server_config = GEN_CONFIG[animate_mode]
+        server_config = GEN_CONFIG["AI2V"]
         fps = server_config["frame_rate"]
 
-        action_path = self.workflow.ffmpeg_processor.refps_video(action_path, str(fps))
+        action_path = self.workflow.ffmpeg_processor.refps_video(action_path, fps)
 
         num_frames = int(duration * fps)
         max_frames = server_config["max_frames"]
@@ -497,7 +500,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_AI2V_",
+            'filename_prefix': file_prefix,
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -523,23 +526,20 @@ class SDProcessor:
         self.infinite_vidoe_count += 1
 
 
-    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, animate_mode, silence=False) :
+    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, is_w, silence=False) :
         # 如果 prompt 是字典，转换为 JSON 字符串
         if isinstance(prompt, dict):
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
 
-        server_config = GEN_CONFIG[animate_mode]
+        server_config = GEN_CONFIG["WS2V" if is_w else "S2V"]
 
         if not silence:
             fps = server_config["frame_rate"]
             max_frames = server_config["max_frames"]
             duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
-            if int(duration*fps)+1 <= max_frames:
-                max_frames = int(duration*fps)+1
-                if max_frames % fps == 0:
-                    max_frames += 1
-            elif next_sound_path:
+
+            if next_sound_path:
                 batch_sec = (max_frames-1.0)/fps
                 batches = int(duration/batch_sec)
                 remind_sec = duration - batches*batch_sec
@@ -548,6 +548,10 @@ class SDProcessor:
                     next_sound_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound_path, 0, add_sec)
                     sound_path = self.workflow.ffmpeg_audio_processor.concat_audios([sound_path, next_sound_path])
                     duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
+            # if int(duration*fps)+1 <= max_frames:
+            #    max_frames = int(duration*fps)+1
+            #    if max_frames % fps == 0:
+            #        max_frames += 1
         else:    
             fps = server_config["frame_rate"]//2
             max_frames = int(server_config["max_frames"]//2)
@@ -562,15 +566,10 @@ class SDProcessor:
         #if num_frames > max_frames:
         #    num_frames = max_frames
 
-        if animate_mode in config.ANIMATE_WS2V:
-            amode = "_WS2V"
-        else:
-            amode = "_S2V"
-
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + amode + "_",
+            'filename_prefix': file_prefix,
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -596,8 +595,8 @@ class SDProcessor:
         self.infinite_vidoe_count += 1
 
 
-    def image_to_video(self, prompt, file_prefix, image_path, sound_path, animate_mode) :
-        server_config = GEN_CONFIG[animate_mode]
+    def image_to_video(self, prompt, file_prefix, image_path, sound_path) :
+        server_config = GEN_CONFIG["I2V"]
         num_frames = server_config["frame_rate"] * self.workflow.ffmpeg_audio_processor.get_duration(sound_path) + 1
         if num_frames > server_config["max_frames"]:
             num_frames = server_config["max_frames"]
@@ -610,7 +609,7 @@ class SDProcessor:
         data = {
             'prompt': prompt,
             "negative_prompt": "",
-            'filename_prefix': file_prefix + "_I2V_",
+            'filename_prefix': file_prefix,
 
             'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
             'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
@@ -633,6 +632,103 @@ class SDProcessor:
             full_url=server_config["url"]
         )
         self.wan_vidoe_count += 1
+
+
+
+    ENHANCE_SERVERS = ["http://10.0.0.210:5000/process"]
+    current_enhance_server = 0
+
+    def enhance_clip(self, pid, scene, av_type, level:str, fps_enhace:bool):
+        fps = scene.get(av_type + "_fps", "15")
+        animate_mode = scene.get(av_type + "_animation", "")
+
+        if animate_mode in config_prompt.ANIMATE_WS2V:
+            left_input = get_file_path(scene, av_type + "_left")
+            right_input = get_file_path(scene, av_type + "_right")
+            if left_input and right_input:
+                left_input = self.workflow.ffmpeg_processor.refps_video(left_input, fps)
+                right_input = self.workflow.ffmpeg_processor.refps_video(right_input, fps)
+                enhance_left_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_left_input = config.get_temp_file(self.pid, "mp4", enhance_left_input + "_" + level + "_")
+                safe_copy_overwrite(left_input, enhance_left_input)
+                if fps_enhace:
+                    self._interpolate_video(enhance_left_input)
+                else:
+                    self._enhance_video(enhance_left_input)
+
+                enhance_right_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
+                safe_copy_overwrite(right_input, enhance_right_input)
+                if fps_enhace:
+                    self._interpolate_video(enhance_right_input)
+                else:
+                    self._enhance_video(enhance_right_input)
+        else:
+            input = get_file_path(scene, av_type)
+            if input:
+                input = self.workflow.ffmpeg_processor.refps_video(input, fps)
+                enhance_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_input = config.get_temp_file(pid, "mp4", enhance_input+"_"+level+"_")
+                safe_copy_overwrite(input, enhance_input)
+                if fps_enhace:
+                    self._interpolate_video(enhance_input)
+                else:
+                    self._enhance_video(enhance_input)
+
+ 
+    def _enhance_video(self, video_path):
+        """调用 REST API 增强单个视频"""
+        self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
+
+        try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
+            url = self.ENHANCE_SERVERS[self.current_enhance_server]
+            with open(video_path, 'rb') as video_file:
+                files = {'video': video_file}
+                
+                print(f"🚀 正在调用视频增强API: {url}")
+                response = requests.post(url, files=files, timeout=300)
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    print("✅ 单视频增强成功")
+                    print(f"📄 响应: {response.text}")
+                else:
+                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
+                    print(f"📄 错误信息: {response.text}")
+                    
+        except requests.exceptions.RequestException as e:
+            print(f"❌ REST API 调用失败: {str(e)}")
+        except Exception as e:
+            print(f"❌ 增强单视频时出错: {str(e)}")
+
+
+    def _interpolate_video(self, video_path) :
+        server_config = GEN_CONFIG["INTP"]
+            
+        data = {
+            'prompt': "",
+            "negative_prompt": "",
+            'filename_prefix': Path(video_path).stem,
+
+            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
+            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
+            
+            "cfg_scale": server_config["cfg"],
+            "steps": server_config["steps"],
+            "seed": server_config["seed"],
+            
+            'motion_frame': server_config["motion_frame"],
+            'frame_rate': server_config["frame_rate"],
+            'num_frames': server_config["max_frames"]
+        }
+        files = {
+            'video': video_path
+        }
+
+        self.post_multipart(
+            data=data,
+            files=files,
+            full_url=server_config["url"]
+        )
 
 
     def post_multipart(self, 

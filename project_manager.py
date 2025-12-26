@@ -15,19 +15,8 @@ import glob
 from datetime import datetime
 import config
 import config_prompt
+import config_channel
 from utility.llm_api import LLMApi
-
-PROJECT_TYPE_STORY = "story"
-PROJECT_TYPE_TALK = "talk"
-PROJECT_TYPE_SONG = "song"
-PROJECT_TYPE_MUSIC = "music"
-
-PROJECT_TYPE_LIST = [
-    PROJECT_TYPE_STORY,
-    PROJECT_TYPE_SONG,
-    PROJECT_TYPE_MUSIC,
-    PROJECT_TYPE_TALK
-]
 
 PROJECT_CONFIG = None
 
@@ -55,7 +44,6 @@ class ProjectConfigManager:
                 pid = config_data.get('pid', '')
                 title = config_data.get('video_title', config_data.get('title', ''))
                 language = config_data.get('language', 'zh')
-                project_type = config_data.get('project_type', PROJECT_TYPE_STORY)  # 默认值
                 channel = config_data.get('channel', '')
                 video_size = f"{config_data.get('video_width', '1920')}x{config_data.get('video_height', '1080')}"
                 
@@ -67,7 +55,6 @@ class ProjectConfigManager:
                     'pid': pid,
                     'title': title,
                     'language': language,
-                    'project_type': project_type,
                     'channel': channel,
                     'video_size': video_size,
                     'last_modified': last_modified,
@@ -158,43 +145,28 @@ class ProjectConfigManager:
 
 
 class ContentEditorDialog:
-    """内容编辑器对话框 - 统一编辑 Story, Inspiration, Poem 三个字段"""
+    """内容编辑器对话框 - 统一编辑 Story, kernel, PROMO 三个字段"""
     
-    def __init__(self, parent, project_type, language, channel,
-                 initial_story="", initial_inspiration="", initial_poem=""):
-        """
-        初始化内容编辑器
-        
-        Args:
-            parent: 父窗口
-            project_type: 项目类型
-            language: 语言
-            initial_story: 初始故事内容
-            initial_inspiration: 初始灵感内容
-            initial_poem: 初始诗歌内容
-        """
+    def __init__(self, parent, language, channel, initial_story="", initial_kernel="", initial_promo=""):
         self.parent = parent
-        self.project_type = project_type
         self.language = language
         self.channel = channel
         # 保存三个字段的内容
         self.result_story = initial_story
 
-        #if self.result_story == "" or self.result_story is None:
-        #    self.result_story = config_prompt.STORY_OUTLINE_PROMPT.format(type_name=self.project_type, language=config.LANGUAGES[self.language])
-            
-        self.result_inspiration = initial_inspiration
-        self.result_poem = initial_poem
+        self.result_kernel = initial_kernel
+        self.result_promo = initial_promo
         
         # 初始化LLM API
         self.llm_api = LLMApi()
         
         self.create_dialog()
     
+
     def create_dialog(self):
         """创建编辑器对话框"""
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("内容编辑器 - Story / Inspiration / Poem")
+        self.dialog.title("内容编辑器 - Story / kernel / PROMO")
         self.dialog.geometry("1000x800")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
@@ -220,21 +192,21 @@ class ContentEditorDialog:
         self.story_editor.pack(fill=tk.BOTH, expand=True)
         self.story_editor.insert('1.0', self.result_story)
         
-        # Inspiration 标签页
-        inspiration_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(inspiration_frame, text="Inspiration (灵感)")
-        ttk.Label(inspiration_frame, text="灵感 (Inspiration):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        self.inspiration_editor = scrolledtext.ScrolledText(inspiration_frame, wrap=tk.WORD, width=90, height=15)
-        self.inspiration_editor.pack(fill=tk.BOTH, expand=True)
-        self.inspiration_editor.insert('1.0', self.result_inspiration)
+        # kernel 标签页
+        kernel_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(kernel_frame, text="kernel (灵感)")
+        ttk.Label(kernel_frame, text="灵感 (kernel):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        self.kernel_editor = scrolledtext.ScrolledText(kernel_frame, wrap=tk.WORD, width=90, height=15)
+        self.kernel_editor.pack(fill=tk.BOTH, expand=True)
+        self.kernel_editor.insert('1.0', self.result_kernel)
         
-        # Poem 标签页
-        poem_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(poem_frame, text="Poem (诗歌)")
-        ttk.Label(poem_frame, text="诗歌 (Poem):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        self.poem_editor = scrolledtext.ScrolledText(poem_frame, wrap=tk.WORD, width=90, height=15)
-        self.poem_editor.pack(fill=tk.BOTH, expand=True)
-        self.poem_editor.insert('1.0', self.result_poem)
+        # PROMO 标签页
+        promo_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(promo_frame, text="PROMO (推广)")
+        ttk.Label(promo_frame, text="推广 (PROMO):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        self.promo_editor = scrolledtext.ScrolledText(promo_frame, wrap=tk.WORD, width=90, height=15)
+        self.promo_editor.pack(fill=tk.BOTH, expand=True)
+        self.promo_editor.insert('1.0', self.result_promo)
         
         # 按钮框架
         button_frame = ttk.Frame(main_frame)
@@ -245,8 +217,7 @@ class ContentEditorDialog:
         left_buttons.pack(side=tk.LEFT)
         
         ttk.Button(left_buttons, text="Remix Story (AI生成故事)", command=lambda: self.remix_content("story")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(left_buttons, text="Remix Inspiration (AI生成灵感)", command=lambda: self.remix_content("inspiration")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(left_buttons, text="Remix Poem (AI生成诗歌)", command=lambda: self.remix_content("poem")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(left_buttons, text="Remix Kernel (AI生成灵感)", command=lambda: self.remix_content("kernel")).pack(side=tk.LEFT, padx=(0, 5))
         
         # 右侧按钮
         right_buttons = ttk.Frame(button_frame)
@@ -262,8 +233,6 @@ class ContentEditorDialog:
             messagebox.showerror("错误", "LLM API未初始化，无法生成内容")
             return
         
-        type_name = self.project_type
-        
         # 初始化变量，避免在异常处理时出现未定义错误
         editor = None
         original_content = ""
@@ -276,55 +245,31 @@ class ContentEditorDialog:
             if content_type == "story":
                 # 生成故事
                 current_story = self.story_editor.get('1.0', tk.END).strip()
-                current_inspiration = self.inspiration_editor.get('1.0', tk.END).strip()
+                current_kernel = self.kernel_editor.get('1.0', tk.END).strip()
 
-                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(type_name=type_name, topic=config.channel_config[self.channel]["topic"], story=current_story, inspiration=current_inspiration)
+                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"], story=current_story, kernel=current_kernel)
 
-                system_prompt = config_prompt.PROJECT_STORY_INIT_PROMPT.format(type_name=type_name, language=language)
+                system_prompt = config_prompt.PROJECT_STORY_INIT_PROMPT.format(language=language)
                 # 保存原始内容
                 original_content = current_story
                 editor = self.story_editor
             
-            elif content_type == "inspiration":
+            elif content_type == "kernel":
                 # 检查依赖：必须先有 story
                 current_story = self.story_editor.get('1.0', tk.END).strip()
                 if not current_story:
                     messagebox.showwarning("警告", "请先填写故事大纲(Story Outline)内容，才能生成灵感")
                     return
 
-                current_inspiration = self.inspiration_editor.get('1.0', tk.END).strip()
+                current_kernel = self.kernel_editor.get('1.0', tk.END).strip()
 
-                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(type_name=type_name, topic=config.channel_config[self.channel]["topic"], story=current_story, inspiration=current_inspiration)
+                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"], story=current_story, kernel=current_kernel)
 
-                system_prompt = config_prompt.INSPIRATION_PROMPT.format(type_name=type_name, language=language)
+                system_prompt = config_prompt.KERNEL_PROMPT.format(language=language)
                 
                 # 保存原始内容
-                original_content = current_inspiration
-                editor = self.inspiration_editor
-            
-            elif content_type == "poem":
-                # 检查依赖：必须先有 story 和 inspiration
-                story_content = self.story_editor.get('1.0', tk.END).strip()
-                inspiration_content = self.inspiration_editor.get('1.0', tk.END).strip()
-                
-                if not story_content:
-                    messagebox.showwarning("警告", "请先填写故事大纲(Story Outline)内容，才能生成诗歌")
-                    return
-                if not inspiration_content:
-                    messagebox.showwarning("警告", "请先填写灵感(Inspiration)内容，才能生成诗歌")
-                    return
-                
-                current_poem = self.poem_editor.get('1.0', tk.END).strip()
-                system_prompt = config_prompt.POEM_PROMPT.format(
-                    type_name=type_name, 
-                    language=language,
-                    initial_content=current_poem
-                )
-                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(type_name=type_name, topic=config.channel_config[self.channel]["topic"], story=story_content, inspiration=inspiration_content)
-                
-                # 保存原始内容
-                original_content = current_poem
-                editor = self.poem_editor
+                original_content = current_kernel
+                editor = self.kernel_editor
             
             else:
                 messagebox.showerror("错误", f"未知的内容类型: {content_type}")
@@ -363,8 +308,8 @@ class ContentEditorDialog:
     def on_ok(self):
         """确定按钮 - 保存三个字段的内容"""
         self.result_story = self.story_editor.get('1.0', tk.END).strip()
-        self.result_inspiration = self.inspiration_editor.get('1.0', tk.END).strip()
-        self.result_poem = self.poem_editor.get('1.0', tk.END).strip()
+        self.result_kernel = self.kernel_editor.get('1.0', tk.END).strip()
+        self.result_promo = self.promo_editor.get('1.0', tk.END).strip()
 
         self.dialog.destroy()
 
@@ -379,8 +324,8 @@ class ContentEditorDialog:
         self.dialog.wait_window()
         return {
             'story': self.result_story,
-            'inspiration': self.result_inspiration,
-            'poem': self.result_poem
+            'kernel': self.result_kernel,
+            'promo': self.result_promo
         }
 
 
@@ -403,7 +348,7 @@ class ProjectSelectionDialog:
         
         # 默认项目配置选项
         # 从config.py获取可用的频道列表
-        available_channels = list(config.channel_config.keys())
+        available_channels = list(config_channel.CHANNEL_CONFIG.keys())
         default_channel = available_channels[0] if available_channels else 'default'
         
         self.default_project_config = {
@@ -413,10 +358,7 @@ class ProjectSelectionDialog:
             'default_channel': default_channel,
             'default_title': '新项目',
             'default_video_width': '1920',
-            'default_video_height': '1080',
-            'additional_fields': {},  # 额外的配置字段
-            'default_program_keywords': '', # 新增的默认项目关键词
-            'default_story_site': '' # 新增的默认故事场景
+            'default_video_height': '1080'
         }
         
         self.create_dialog()
@@ -518,7 +460,6 @@ class ProjectSelectionDialog:
             self.project_tree.insert('', tk.END, values=(
                 project['pid'],
                 project['title'],
-                project['project_type'],
                 project['language'],
                 project['channel'],
                 project['video_size'],
@@ -582,13 +523,6 @@ class ProjectSelectionDialog:
         language_combo.set(self.default_project_config['default_language'])
         row += 1
         
-        # 项目类型选择
-        ttk.Label(main_frame, text="项目类型:").grid(row=row, column=0, sticky='w', pady=5)
-        project_type_combo = ttk.Combobox(main_frame, values=PROJECT_TYPE_LIST, state="readonly", width=22)
-        project_type_combo.grid(row=row, column=1, padx=(10, 0), pady=5)
-        project_type_combo.set(PROJECT_TYPE_STORY)  # 默认设置为 story
-        row += 1
-        
         # 频道选择
         ttk.Label(main_frame, text="频道:").grid(row=row, column=0, sticky='w', pady=5)
         channel_combo = ttk.Combobox(main_frame, values=self.default_project_config['channels'], state="readonly", width=22)
@@ -601,20 +535,6 @@ class ProjectSelectionDialog:
         title_entry = ttk.Entry(main_frame, width=25)
         title_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
         title_entry.insert(0, self.default_project_config['default_title'])
-        row += 1
-        
-        # 项目关键词
-        ttk.Label(main_frame, text="项目关键词:").grid(row=row, column=0, sticky='w', pady=5)
-        keywords_entry = ttk.Entry(main_frame, width=25)
-        keywords_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
-        keywords_entry.insert(0, self.default_project_config.get('default_program_keywords', ''))
-        row += 1
-
-        # 故事场景
-        ttk.Label(main_frame, text="故事场景:").grid(row=row, column=0, sticky='w', pady=5)
-        story_site_entry = ttk.Entry(main_frame, width=25)
-        story_site_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
-        story_site_entry.insert(0, self.default_project_config.get('default_story_site', ''))
         row += 1
         
         # 视频分辨率选择
@@ -634,8 +554,8 @@ class ProjectSelectionDialog:
         
         # 使用变量存储三个字段的内容
         story_var = tk.StringVar(value="")
-        inspiration_var = tk.StringVar(value="")
-        poem_var = tk.StringVar(value="")
+        kernel_var = tk.StringVar(value="")
+        promo_var = tk.StringVar(value="")
         
         # 显示当前内容的预览
         preview_frame = ttk.Frame(content_label_frame)
@@ -644,17 +564,17 @@ class ProjectSelectionDialog:
         story_preview = ttk.Label(preview_frame, text="Story: (未编辑)", foreground="gray")
         story_preview.pack(anchor='w', pady=2)
         
-        inspiration_preview = ttk.Label(preview_frame, text="Inspiration: (未编辑)", foreground="gray")
-        inspiration_preview.pack(anchor='w', pady=2)
+        kernel_preview = ttk.Label(preview_frame, text="kernel: (未编辑)", foreground="gray")
+        kernel_preview.pack(anchor='w', pady=2)
         
-        poem_preview = ttk.Label(preview_frame, text="Poem: (未编辑)", foreground="gray")
-        poem_preview.pack(anchor='w', pady=2)
+        promo_preview = ttk.Label(preview_frame, text="PROMO: (未编辑)", foreground="gray")
+        promo_preview.pack(anchor='w', pady=2)
         
         # 更新预览显示的函数
         def update_previews():
             story_val = story_var.get()
-            inspiration_val = inspiration_var.get()
-            poem_val = poem_var.get()
+            kernel_val = kernel_var.get()
+            promo_val = promo_var.get()
             
             if story_val:
                 preview_text = story_val[:50] + "..." if len(story_val) > 50 else story_val
@@ -662,41 +582,40 @@ class ProjectSelectionDialog:
             else:
                 story_preview.config(text="Story: (未编辑)", foreground="gray")
             
-            if inspiration_val:
-                preview_text = inspiration_val[:50] + "..." if len(inspiration_val) > 50 else inspiration_val
-                inspiration_preview.config(text=f"Inspiration: {preview_text}", foreground="black")
+            if kernel_val:
+                preview_text = kernel_val[:50] + "..." if len(kernel_val) > 50 else kernel_val
+                kernel_preview.config(text=f"kernel: {preview_text}", foreground="black")
             else:
-                inspiration_preview.config(text="Inspiration: (未编辑)", foreground="gray")
+                kernel_preview.config(text="kernel: (未编辑)", foreground="gray")
             
-            if poem_val:
-                preview_text = poem_val[:50] + "..." if len(poem_val) > 50 else poem_val
-                poem_preview.config(text=f"Poem: {preview_text}", foreground="black")
+            if promo_val:
+                preview_text = promo_val[:50] + "..." if len(promo_val) > 50 else promo_val
+                promo_preview.config(text=f"PROMO: {preview_text}", foreground="black")
             else:
-                poem_preview.config(text="Poem: (未编辑)", foreground="gray")
+                promo_preview.config(text="PROMO: (未编辑)", foreground="gray")
         
         # 绑定变量更新到预览显示
         story_var.trace_add('write', lambda *args: update_previews())
-        inspiration_var.trace_add('write', lambda *args: update_previews())
-        poem_var.trace_add('write', lambda *args: update_previews())
+        kernel_var.trace_add('write', lambda *args: update_previews())
+        promo_var.trace_add('write', lambda *args: update_previews())
         
         # 统一的编辑按钮
         def open_unified_editor():
             editor = ContentEditorDialog(
                 new_project_dialog,
-                project_type_combo.get(),
                 language_combo.get(),
                 channel_combo.get(),
                 story_var.get(),
-                inspiration_var.get(),
-                poem_var.get()
+                kernel_var.get(),
+                promo_var.get()
             )
             result = editor.show()
             if result:
                 story_var.set(result.get('story', ''))
-                inspiration_var.set(result.get('inspiration', ''))
-                poem_var.set(result.get('poem', ''))
+                kernel_var.set(result.get('kernel', ''))
+                promo_var.set(result.get('promo', ''))
         
-        ttk.Button(content_label_frame, text="编辑 Story / Inspiration / Poem", command=open_unified_editor).pack(pady=5)
+        ttk.Button(content_label_frame, text="编辑 Story / kernel / PROMO", command=open_unified_editor).pack(pady=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -705,11 +624,8 @@ class ProjectSelectionDialog:
         def on_create():
             pid = pid_entry.get().strip()
             language = language_combo.get()
-            project_type = project_type_combo.get()
             channel = channel_combo.get()
             title = title_entry.get().strip()
-            program_keywords = keywords_entry.get().strip()
-            story_site = story_site_entry.get().strip()
             resolution = resolution_var.get()
             
             if not pid:
@@ -719,16 +635,16 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            # 检查 story 和 inspiration 是否已生成
+            # 检查 story 和 kernel 是否已生成
             story_content = story_var.get().strip()
-            inspiration_content = inspiration_var.get().strip()
+            kernel_content = kernel_var.get().strip()
             
             if not story_content:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
             
-            if not inspiration_content:
-                messagebox.showerror("错误", "请先生成灵感(Inspiration)内容，才能创建项目")
+            if not kernel_content:
+                messagebox.showerror("错误", "请先生成灵感(kernel)内容，才能创建项目")
                 return
             
             # 解析分辨率
@@ -747,16 +663,13 @@ class ProjectSelectionDialog:
             self.selected_config = {
                 'pid': pid,
                 'language': language,
-                'project_type': project_type,
                 'channel': channel,
                 'video_title': title,
-                'program_keywords': program_keywords,
                 'video_width': video_width,
                 'video_height': video_height,
                 **self.default_project_config.get('additional_fields', {}),
-                'story_site': story_site,
-                'inspiration': inspiration_var.get(),
-                'poem': poem_var.get(),
+                'kernel': kernel_var.get(),
+                'promo': promo_var.get(),
                 'story': story_var.get()
             }
             

@@ -120,6 +120,7 @@ def build_scene_media_prefix(pid, scene_id, media_type, animate_type, with_times
         return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type
 
 
+
 def clean_memory(cuda=True, verbose=True):
     import gc, sys, os, ctypes
     

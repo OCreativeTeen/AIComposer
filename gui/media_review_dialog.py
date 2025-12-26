@@ -6,7 +6,7 @@ from utility.file_util import get_file_path, safe_remove, safe_file, refresh_sce
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.audio_transcriber import AudioTranscriber
-import config
+import config, config_channel
 from utility.llm_api import LLMApi
 import json
 from utility.file_util import is_audio_file, is_video_file, is_image_file
@@ -51,6 +51,20 @@ except ImportError:
     print("警告: pygame 不可用，音频播放功能将被禁用")
 
 
+PROJECT_TYPE_STORY = "story"
+PROJECT_TYPE_TALK = "talk"
+PROJECT_TYPE_SONG = "song"
+PROJECT_TYPE_MUSIC = "music"
+
+PROJECT_TYPE_LIST = [
+    PROJECT_TYPE_STORY,
+    PROJECT_TYPE_SONG,
+    PROJECT_TYPE_MUSIC,
+    PROJECT_TYPE_TALK
+]
+
+
+
 class AVReviewDialog:
     """Dialog for reviewing and configuring audio replacement with drag-and-drop support"""
     
@@ -59,7 +73,6 @@ class AVReviewDialog:
         self.current_scene = current_scene
         self.previous_scene = previous_scene
         self.next_scene = next_scene
-        self.language = parent.workflow.language
         self.workflow = parent.workflow
         # Get video dimensions from workflow's ffmpeg_processor
         video_width = self.workflow.ffmpeg_processor.width
@@ -105,10 +118,8 @@ class AVReviewDialog:
         # 新增拖放媒体
         self.animation_choice = 1
 
-        # only keep "content", "speaker", "visual_start", "subject", "visual_end", "era_time", "environment", "cinematography", "sound_effect" fields of each element
-        #self.audio_json = [{"content": item["content"], "speaker": item["speaker"], "visual_start": item["visual_start"], "subject": item["subject"], "visual_end": item["visual_end"], "era_time": item["era_time"], "environment": item["environment"], "cinematography": item["cinematography"], "sound_effect": item["sound_effect"]} for item in [self.current_scene]]
         self.audio_json = [self.current_scene]
-        self.audio_regenerated = False
+        self.transcribed = False
 
         self.current_playback_time = 0.0
         self.av_playing = False
@@ -403,13 +414,13 @@ class AVReviewDialog:
 
         # 旁白语音组
         ttk.Label(fresh_buttons_frame, text="主持").pack(side=tk.LEFT, padx=(0, 5))
-        self.narrators = ttk.Combobox(fresh_buttons_frame, values=config.HOSTS, state="normal", width=30)
+        self.narrators = ttk.Combobox(fresh_buttons_frame, values=config_prompt.HOSTS, state="normal", width=30)
         self.narrators.pack(side=tk.LEFT, padx=(0, 10))
         self.narrators.current(0)
 
         # 旁白语音组
         ttk.Label(fresh_buttons_frame, text="演员").pack(side=tk.LEFT, padx=(0, 5))
-        self.actors = ttk.Combobox(fresh_buttons_frame, values=config.ACTORS, state="normal", width=30)
+        self.actors = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
         self.actors.pack(side=tk.LEFT, padx=(0, 10))
         self.actors.current(0)
 
@@ -418,7 +429,8 @@ class AVReviewDialog:
         self.speaking_addon.pack(side=tk.LEFT, padx=(0, 10))
         self.speaking_addon.current(0)
 
-        ttk.Button(fresh_buttons_frame, text="REMIX JSON", command=self.remix_json).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(fresh_buttons_frame, text="REMIX TRANS", command=lambda: self.remix_conversation_json("multiple", True)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(fresh_buttons_frame, text="REMIX ONLY",  command=lambda: self.remix_conversation_json("multiple", False)).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
         
         # Editor 2: Audio JSON (right side)
@@ -448,7 +460,6 @@ class AVReviewDialog:
         ttk.Button(audio_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="多转录合并", command=lambda: self.transcribe_audio("multiple_merge")).pack(side=tk.LEFT)
         
         # Audio transcription options section
         transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
@@ -589,8 +600,6 @@ class AVReviewDialog:
 
 
     def trim_video(self, audio_unchange):
-        self.update_dialog_title("none")
-
         video_path = safe_file(self.source_video_path)
         audio_path = safe_file(self.source_audio_path)
         if not audio_path or not video_path:
@@ -639,11 +648,13 @@ class AVReviewDialog:
 
 
 
+
     def transcribe_audio(self, mode):
         #self.trim_media()
         self.update_dialog_title(mode)
-        if not self.audio_regenerated and self.media_type=="clip":
+        if not self.transcribed and self.media_type=="clip":
             self._transcribe_recorded_audio()
+            self.transcribed = True
 
 
 
@@ -657,7 +668,7 @@ class AVReviewDialog:
         # 使用音频转录器转录
         self.audio_json = self.transcriber.transcribe_with_whisper(
             self.source_audio_path, 
-            self.language, 
+            self.workflow.language, 
             10,  # min_sentence_duration
             28   # max_sentence_duration
         )
@@ -769,52 +780,75 @@ class AVReviewDialog:
         
         # Update play time display to show 0.00 / total_duration
         self.update_play_time_display()
-    
 
-    def remix_json(self):
-        refresh_content = self.fresh_json_text.get(1.0, tk.END).strip()
-        if not refresh_content or refresh_content.strip() == "":
-            project_type = project_manager.PROJECT_CONFIG.get('project_type', 'story')
-            refresh_content = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(type_name=project_type, story=project_manager.PROJECT_CONFIG.get('story', ''), inspiration=project_manager.PROJECT_CONFIG.get('inspiration', ''))
 
+
+    def remix_conversation_json(self, mode, transcribe_first):
+        if self.media_type!="clip":
+            return
+
+        self.update_dialog_title(mode)
+
+        topic = config_channel.CHANNEL_CONFIG[project_manager.PROJECT_CONFIG.get('channel', 'default')]["topic"]
+        story = self.current_scene["story"]
+        kernel = self.current_scene["kernel"]
+        promo = self.current_scene["promotion"]
+
+        refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
+        if not refresh_conversation or refresh_conversation.strip() == "":
+            refresh_conversation = config_prompt.CONVERSATION_USER_PROMPT.format(   conversation=refresh_conversation,
+                                                                                    topic=topic, 
+                                                                                    story=story, 
+                                                                                    kernel=kernel
+                                                                                )
         # try to format formatted_user_prompt as json , if success, take 'content' field of each elemet, concat together as whole content
-        try:
-            refresh_json = json.loads(refresh_content)
-            refresh_content = " ".join([item["content"] for item in refresh_json])
-        except:
-            print(f"⚠️ 刷新内容格式化失败")
-
+        else:
+            try:
+                refresh_json = json.loads(refresh_conversation)
+                refresh_conversation = " ".join([item["content"] for item in refresh_json])
+            except:
+                print(f"⚠️ 刷新内容格式化失败")
 
         previous_scene_content = self.previous_scene["content"] if self.previous_scene and hasattr(self.previous_scene, "content") else ""
-        previous_story_content = self.previous_scene["story_summary"] if self.previous_scene and hasattr(self.previous_scene, "story_summary") else ""
-
         next_scene_content = self.next_scene["content"] if self.next_scene and hasattr(self.next_scene, "content") else ""
-        next_story_content = self.next_scene["story_summary"] if self.next_scene and hasattr(self.next_scene, "story_summary")  else ""
 
         prompt_name = self.prompt_selector.get()
-        if prompt_name == "Reorganize-Text":
+        if prompt_name == "Story-Telling":
             engaging = ""
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Previous-Scene":
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Telling"]
+        elif prompt_name == "Story-Conversation":
+            engaging = ""
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
+        elif prompt_name == "Story-Conversation-with-Previous-Scene":
             engaging = "[the conversation is following the previous speaking like: " + previous_scene_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Previous-Story":
-            engaging = "[the conversation is following the previous story : " + previous_story_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Next-Scene":
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
+        elif prompt_name == "Story-Conversation-with-Next-Scene":
             engaging = "[the conversation will be followed by the next speaking like: " + next_scene_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
-        elif prompt_name == "Reorganize-Text-with-Next-Story":
-            engaging = "[the conversation will be followed by the next story : " + next_story_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Reorganize-Text"]
+            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
         else:
-            selected_prompt = config_prompt .SPEAKING_PROMPTS[prompt_name]
+            selected_prompt = config_prompt.SPEAKING_PROMPTS[prompt_name]
             engaging = ""
+
+        if transcribe_first and not self.transcribed and self.audio_duration > 45.0:
+            self._transcribe_recorded_audio()
+            self.transcribed = True
+       
+        scenes_number = ""
+        if self.transcribed and self.audio_json:
+            if len(self.audio_json) > 1:
+                has_durations = True
+                for scene in self.audio_json:
+                    if "duration" not in scene:
+                        has_durations = False
+                        break
+                scenes_number = str(len(self.audio_json)) if has_durations else ""
 
         format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
         format_args.update({
             "speaker_style": f"with {self.narrators.get()} and {self.actors.get()}",
-            "language": "Chinese" if self.language == "zh" or self.language == "tw" else "English",
+            "language": "Chinese" if self.workflow.language == "zh" or self.workflow.language == "tw" else "English",
+            "topic": config_channel.CHANNEL_CONFIG[self.workflow.channel]["topic"], 
+            "scenes_number": scenes_number,
             "engaging": engaging
         })
 
@@ -864,16 +898,32 @@ class AVReviewDialog:
 
         new_scenes = self.llm_api.generate_json_summary(
             system_prompt=formatted_system_prompt,
-            user_prompt=refresh_content,
+            user_prompt=refresh_conversation,
             expect_list=True
         )
 
+
+        if scenes_number and scenes_number.strip() != "":
+            if len(new_scenes) != int(scenes_number):
+                messagebox.showerror("错误", "生成的新场景数量与转录的音频数量不一致")
+                scenes_number = ""
+
+        if not scenes_number or scenes_number.strip() == "":
+            section_duration = self.audio_duration / len(new_scenes)
+            for scene in new_scenes:
+                scene["duration"] = section_duration
+        else:
+            for i, scene in enumerate(new_scenes):
+                scene["duration"] = self.audio_json[i]["duration"]
+                scene["caption"] = self.audio_json[i]["caption"]
+
         formatted_json = json.dumps(new_scenes, indent=2, ensure_ascii=False)
+        
         # clean self.fresh_json_text, then insert formatted_json
         self.fresh_json_text.delete(1.0, tk.END)
         self.fresh_json_text.insert(1.0, formatted_json)
-        self.audio_regenerated = False
          
+
 
     def copy_fresh_to_audio_json(self, event=None):
         fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
@@ -898,7 +948,7 @@ class AVReviewDialog:
             messagebox.showerror("错误", "Fresh JSON格式不正确")
             return
 
-        fresh_json, self.source_audio_path = self.parent.workflow.regenerate_audio(fresh_json, self.language)
+        fresh_json, self.source_audio_path = self.parent.workflow.regenerate_audio(fresh_json, self.workflow.language)
         if self.source_video_path:
             duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
             self.source_video_path = self.workflow.ffmpeg_processor.adjust_video_to_duration( self.source_video_path, duration )
@@ -911,9 +961,6 @@ class AVReviewDialog:
 
         self.fresh_json_text.delete(1.0, tk.END)
         self.fresh_json_text.insert(1.0, audio_text)
-
-        self.audio_regenerated = True
-        self.update_dialog_title("multiple")
 
 
     def record_audio(self):
@@ -1071,7 +1118,7 @@ class AVReviewDialog:
             self._transcribe_recorded_audio()
             
             # 设置音频重新生成标志
-            self.audio_regenerated = False
+            self.transcribed = False
             
             messagebox.showinfo("成功", f"录音完成！\n文件保存到: {os.path.basename(recorded_file_path)}\n时长: {duration:.2f} 秒")
             
@@ -1583,7 +1630,6 @@ class AVReviewDialog:
         file_path = event.data.strip('{}').strip('"')
         if is_video_file(file_path):
             self.handle_new_media(file_path)
-            self.update_dialog_title("none")
 
 
     def on_image_dnd_drop(self, event):
@@ -1591,7 +1637,6 @@ class AVReviewDialog:
         file_path = event.data.strip('{}').strip('"')
         if is_image_file(file_path):
             self.handle_new_media(file_path)
-            self.update_dialog_title("none")
 
     
     def on_audio_dnd_drop(self, event):
@@ -1599,7 +1644,6 @@ class AVReviewDialog:
         file_path = event.data.strip('{}').strip('"')
         if is_audio_file(file_path):
             self.handle_new_media(file_path)
-            self.update_dialog_title("none")
 
 
     def process_new_media(self, av_path):

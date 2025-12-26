@@ -119,8 +119,6 @@ class ImagePromptsReviewDialog:
         self.dialog.transient(parent.root if hasattr(parent, 'root') else parent)
         self.dialog.grab_set()
         
-        self.extra_description = scene.get("extra", "")
-        
         self._create_ui()
         self._center_dialog()
 
@@ -237,7 +235,7 @@ class ImagePromptsReviewDialog:
 
     def _on_style_change(self, event):
         """图像样式改变时的处理"""
-        extra = self.extra_description
+        extra = ""
 
         selected = self.positive_preset_combo.get()
         if selected:

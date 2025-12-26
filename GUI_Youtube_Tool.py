@@ -426,7 +426,6 @@ class MagicToolGUI:
             pid = self.get_pid()
             language = self.get_language()
             channel = self.get_channel()
-            story_site = self.get_story_site()
             if pid and language and channel:
                 # Get video dimensions from project config
                 video_width = None
@@ -434,7 +433,7 @@ class MagicToolGUI:
                 if self.current_project_config:
                     video_width = self.current_project_config.get('video_width')
                     video_height = self.current_project_config.get('video_height')
-                self.workflow = MagicWorkflow(pid, "story", language, channel, story_site, video_width, video_height)
+                self.workflow = MagicWorkflow(pid, language, channel, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")
@@ -449,7 +448,6 @@ class MagicToolGUI:
             config_data['language'] = self.current_language
             config_data['video_title'] = self.video_title.get() or config_data.get('video_title', '')
             config_data['video_tags'] = self.video_tags.get() or config_data.get('video_tags', '')
-            config_data['program_keywords'] = self.project_keywords.get() or config_data.get('program_keywords', '')
             # video_width and video_height are read-only from project config, not saved
             # Keep existing values from project config
             if 'video_width' not in config_data:
@@ -461,9 +459,6 @@ class MagicToolGUI:
             if hasattr(self, 'mv_name') and hasattr(self, 'mv_json_content'):
                 config_data['mv_name'] = self.mv_name.get() or config_data.get('mv_name', '')
                 config_data['mv_json_content'] = self.mv_json_content.get(1.0, tk.END).strip() or config_data.get('mv_json_content', '')
-            
-            # 保存故事场地配置
-            config_data['story_site'] = self.story_site_entry.get() or config_data.get('story_site', '')
             
             # 保存Veo提示词配置
             if hasattr(self, 'veo_scene_number') and hasattr(self, 'veo_ending_words') and hasattr(self, 'veo_json_content') and hasattr(self, 'host_choice'):
@@ -737,20 +732,6 @@ class MagicToolGUI:
         self.video_tags.bind('<<ComboboxSelected>>', self.on_project_config_change)
         self.video_tags.set(self.current_project_config.get('video_tags', ''))
         
-        # 关键字
-        ttk.Label(row1, text="关键字:").pack(side=tk.LEFT)
-        self.project_keywords = ttk.Entry(row1, width=25)
-        self.project_keywords.insert(0, self.current_project_config.get('program_keywords', ''))
-        self.project_keywords.pack(side=tk.LEFT, padx=(5, 15))
-        self.project_keywords.bind('<FocusOut>', self.on_project_config_change)
-        
-        # 故事场地
-        ttk.Label(row1, text="故事场地:").pack(side=tk.LEFT)
-        self.story_site_entry = ttk.Entry(row1, width=20)
-        self.story_site_entry.insert(0, self.current_project_config.get('story_site', ''))
-        self.story_site_entry.pack(side=tk.LEFT, padx=(5, 15))
-        self.story_site_entry.bind('<FocusOut>', self.on_project_config_change)
-        
         ttk.Separator(row1, orient='vertical').pack(padx=5)
 
         ttk.Button(row1, text="选择项目", command=self.change_project).pack(side=tk.RIGHT, padx=5)
@@ -770,12 +751,6 @@ class MagicToolGUI:
 
             self.video_tags.delete(0, tk.END)
             self.video_tags.insert(0, self.current_project_config.get('video_tags', ''))
-
-            self.project_keywords.delete(0, tk.END)
-            self.project_keywords.insert(0, self.current_project_config.get('program_keywords', ''))
-
-            self.story_site_entry.delete(0, tk.END)
-            self.story_site_entry.insert(0, self.current_project_config.get('story_site', ''))
             
             # 更新音乐视频配置
             if hasattr(self, 'mv_name') and hasattr(self, 'mv_json_content'):
@@ -1161,18 +1136,18 @@ class MagicToolGUI:
                 messagebox.showwarning("警告", "JSON内容为空")
                 return
             
-            keywords_list = json.loads(json_content)
-            if not isinstance(keywords_list, list):
+            kernel_list = json.loads(json_content)
+            if not isinstance(kernel_list, list):
                 messagebox.showerror("错误", "JSON内容必须是一个列表")
                 return
             
-            if not all(isinstance(item, str) for item in keywords_list):
+            if not all(isinstance(item, str) for item in kernel_list):
                 messagebox.showerror("错误", "JSON列表中的所有项目必须是字符串")
                 return
             
-            messagebox.showinfo("成功", f"JSON验证通过！\n包含 {len(keywords_list)} 个关键词:\n" + 
-                               "\n".join(f"- {keyword}" for keyword in keywords_list[:10]) + 
-                               (f"\n... 还有 {len(keywords_list) - 10} 个" if len(keywords_list) > 10 else ""))
+            messagebox.showinfo("成功", f"JSON验证通过！\n包含 {len(kernel_list)} 个关键词:\n" + 
+                               "\n".join(f"- {keyword}" for keyword in kernel_list[:10]) + 
+                               (f"\n... 还有 {len(kernel_list) - 10} 个" if len(kernel_list) > 10 else ""))
             
         except json.JSONDecodeError as e:
             messagebox.showerror("JSON错误", f"JSON格式错误: {str(e)}")
@@ -1256,8 +1231,8 @@ class MagicToolGUI:
         
         # Validate JSON
         try:
-            keywords_list = json.loads(json_content)
-            if not isinstance(keywords_list, list):
+            kernel_list = json.loads(json_content)
+            if not isinstance(kernel_list, list):
                 messagebox.showerror("错误", "JSON内容必须是一个列表")
                 return
                  
@@ -1269,7 +1244,7 @@ class MagicToolGUI:
         full_process_enabled = self.full_mv_checkbox_var.get()
         
         # Confirm build
-        confirm_msg = f"确定要制作完整音乐视频吗？\n\nMV名称: {mv_name}\n关键词数量: {len(keywords_list)}\n启用完整流程: {'是' if full_process_enabled else '否'}\n\n注意：这将调用完整的MV制作流程"
+        confirm_msg = f"确定要制作完整音乐视频吗？\n\nMV名称: {mv_name}\n关键词数量: {len(kernel_list)}\n启用完整流程: {'是' if full_process_enabled else '否'}\n\n注意：这将调用完整的MV制作流程"
         if not messagebox.askyesno("确认制作", confirm_msg):
             return
         
@@ -1285,11 +1260,11 @@ class MagicToolGUI:
                 self.status_var.set("制作完整音乐视频中...")
                 self.log_to_output(self.mv_output, f"🎵 开始制作完整音乐视频...")
                 self.log_to_output(self.mv_output, f"MV名称: {mv_name}")
-                self.log_to_output(self.mv_output, f"关键词数量: {len(keywords_list)}")
+                self.log_to_output(self.mv_output, f"关键词数量: {len(kernel_list)}")
                 self.log_to_output(self.mv_output, f"启用完整流程: {'是' if full_process_enabled else '否'}")
                 
                 # Build full music video using workflow
-                result = self.workflow.build_full_music_video(mv_name, keywords_list, full_process_enabled)
+                result = self.workflow.build_full_music_video(mv_name, kernel_list, full_process_enabled)
                 
                 self.log_to_output(self.mv_output, f"✅ 完整音乐视频制作完成！")
                 self.log_to_output(self.mv_output, f"结果: {result}")
@@ -1325,10 +1300,6 @@ class MagicToolGUI:
     def get_channel(self):
         """Get current channel"""
         return self.current_project_config.get('channel', '') if self.current_project_config else ''
-    
-    def get_story_site(self):
-        """获取当前场地"""
-        return self.current_project_config.get('story_site', '') if self.current_project_config else ''
     
     def on_language_change(self, event=None):
         """Handle language change"""
@@ -2711,7 +2682,6 @@ Output the concise version of the music prompt."""
         avoid_content = self.notebooklm_avoid.get().strip()
         location = self.notebooklm_location.get().strip()
         introduction_type = self.notebooklm_introduction_type.get().strip()
-        large_site_name = self.story_site_entry.get().strip()  # Get from existing field
         
         # Validate required inputs
         if not topic:
@@ -2723,7 +2693,7 @@ Output the concise version of the music prompt."""
         introduction_story = self.notebooklm_introduction_file
         
         # Confirm generation
-        confirm_msg = f"确定要生成NotebookLM提示词吗？\n\n对话风格: {style}\n主题: {topic}\n地点: {location or '未指定'}\n前置类型: {introduction_type}\n大型场地: {large_site_name or '未指定'}"
+        confirm_msg = f"确定要生成NotebookLM提示词吗？\n\n对话风格: {style}\n主题: {topic}\n地点: {location or '未指定'}\n前置类型: {introduction_type}"
         if not messagebox.askyesno("确认生成", confirm_msg):
             return
         
@@ -2742,7 +2712,6 @@ Output the concise version of the music prompt."""
                 self.log_to_output(self.notebooklm_output, f"主题: {topic}")
                 self.log_to_output(self.notebooklm_output, f"地点: {location or '未指定'}")
                 self.log_to_output(self.notebooklm_output, f"前置类型: {introduction_type}")
-                self.log_to_output(self.notebooklm_output, f"大型场地: {large_site_name or '未指定'}")
                 self.log_to_output(self.notebooklm_output, f"前置对话: {'已提供' if previous_dialogue else '未提供'}")
                 self.log_to_output(self.notebooklm_output, f"介绍故事: {'已提供' if introduction_story else '未提供'}")
                 
@@ -2752,7 +2721,6 @@ Output the concise version of the music prompt."""
                     topic=topic,
                     avoid_content=avoid_content,
                     location=location,
-                    large_site_name=large_site_name,
                     previous_dialogue=previous_dialogue,
                     introduction_story=introduction_story,
                     introduction_type=introduction_type

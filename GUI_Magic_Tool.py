@@ -415,7 +415,6 @@ class MagicToolGUI:
             pid = self.get_pid()
             language = self.get_language()
             channel = self.get_channel()
-            story_site = self.get_story_site()
             if pid and language and channel:
                 # Get video dimensions from project config
                 video_width = None
@@ -423,7 +422,7 @@ class MagicToolGUI:
                 if self.current_project_manager.PROJECT_CONFIG:
                     video_width = self.current_project_manager.PROJECT_CONFIG.get('video_width')
                     video_height = self.current_project_manager.PROJECT_CONFIG.get('video_height')
-                self.workflow = MagicWorkflow(pid, "story", language, channel, story_site, video_width, video_height)
+                self.workflow = MagicWorkflow(pid, language, channel, video_width, video_height)
                 print(f"✅ Workflow已创建: PID={pid}, Language={language}, Channel={channel}")
             else:
                 print(f"⚠️ 无法创建Workflow: PID={pid}, Language={language}, Channel={channel}")
@@ -431,56 +430,6 @@ class MagicToolGUI:
             print(f"❌ 创建Workflow失败: {str(e)}")
             self.workflow = None
     
-    def save_project_manager.PROJECT_CONFIG(self):
-        try:
-            # 更新当前配置
-            config_data = self.current_project_manager.PROJECT_CONFIG.copy()
-            config_data['language'] = self.current_language
-            config_data['video_title'] = self.video_title.get() or config_data.get('video_title', '')
-            config_data['video_tags'] = self.video_tags.get() or config_data.get('video_tags', '')
-            config_data['program_keywords'] = self.project_keywords.get() or config_data.get('program_keywords', '')
-            config_data['story_site'] = self.story_site_entry.get() or config_data.get('story_site', '')
-            # video_width and video_height are read-only from project config, not saved
-            # Keep existing values from project config
-            if 'video_width' not in config_data:
-                config_data['video_width'] = self.current_project_manager.PROJECT_CONFIG.get('video_width', '1920') if self.current_project_manager.PROJECT_CONFIG else '1920'
-            if 'video_height' not in config_data:
-                config_data['video_height'] = self.current_project_manager.PROJECT_CONFIG.get('video_height', '1080') if self.current_project_manager.PROJECT_CONFIG else '1080'
-            
-            # 保存 WAN 视频参数
-            if hasattr(self, 'camear_style_var'):
-                config_data['camear_style'] = self.camear_style_var.get()
-            if hasattr(self, 'camera_shot_var'):
-                config_data['camera_shot'] = self.camera_shot_var.get()
-            if hasattr(self, 'camera_angle_var'):
-                config_data['camera_angle'] = self.camera_angle_var.get()
-            if hasattr(self, 'camera_color_var'):
-                config_data['camera_color'] = self.camera_color_var.get()
-            
-            # Save thumbnail font color if available
-            if hasattr(self, 'thumbnail_font_color'):
-                config_data['thumbnail_font_color'] = self.thumbnail_font_color.get()
-            
-            # Preserve generated titles and tags if they exist
-            if 'generated_titles' in self.current_project_manager.PROJECT_CONFIG:
-                config_data['generated_titles'] = self.current_project_manager.PROJECT_CONFIG['generated_titles']
-            if 'generated_tags' in self.current_project_manager.PROJECT_CONFIG:
-                config_data['generated_tags'] = self.current_project_manager.PROJECT_CONFIG['generated_tags']
-            
-            # Preserve video_id if it exists
-            if 'video_id' in self.current_project_manager.PROJECT_CONFIG:
-                config_data['video_id'] = self.current_project_manager.PROJECT_CONFIG['video_id']
-            
-            # 保存到文件
-            pid = config_data['pid']
-            if pid:
-                config_manager = ProjectConfigManager(pid)
-                config_manager.save_project_manager.PROJECT_CONFIG(config_data)
-                self.current_project_manager.PROJECT_CONFIG = config_data
-                print(f"✅ Magic Tool项目配置已保存: {pid}")
-                
-        except Exception as e:
-            print(f"❌ 保存Magic Tool项目配置失败: {e}")
     
     def on_closing(self):
         """窗口关闭时的处理"""
@@ -520,118 +469,6 @@ class MagicToolGUI:
         # 恢复缩略图字体颜色设置
         self.root.after(300, self.restore_thumbnail_font_color)
     
-    def create_project_manager.PROJECT_CONFIG_area(self, parent):
-        """创建项目配置区域"""
-        project_frame = ttk.LabelFrame(parent, text="项目配置", padding="10")
-        project_frame.pack(fill=tk.X, padx=5, pady=(0, 10))
-        
-        # 第一行：基本项目信息
-        row1 = ttk.Frame(project_frame)
-        row1.pack(fill=tk.X, pady=2)
-        #
-        row2 = ttk.Frame(project_frame)
-        row2.pack(fill=tk.X, pady=2)
-        #
-        row3 = ttk.Frame(project_frame)
-        row3.pack(fill=tk.X, pady=2)
-        
-        # PID (只读)
-        ttk.Label(row1, text="项目ID:").pack(side=tk.LEFT)
-        self.project_pid = ttk.Label(row1, text=self.current_project_manager.PROJECT_CONFIG.get('pid', ''), 
-                                    relief="sunken", width=25, background="white")
-        self.project_pid.pack(side=tk.LEFT, padx=(5, 15))
-        
-        # 频道 (只读)
-        ttk.Label(row1, text="频道:").pack(side=tk.LEFT)
-        self.project_channel = ttk.Label(row1, text=self.current_project_manager.PROJECT_CONFIG.get('channel', ''), 
-                                        relief="sunken", width=12, background="white")
-        self.project_channel.pack(side=tk.LEFT, padx=(5, 15))
-        
-        # 语言 (只读，从语言选择器更新)
-        ttk.Label(row1, text="语言:").pack(side=tk.LEFT)
-        self.project_language = ttk.Label(row1, text=self.current_language, 
-                                         relief="sunken", width=5, background="white")
-        self.project_language.pack(side=tk.LEFT, padx=(5, 15))
-        
-        # 项目选择按钮
-        ttk.Button(row1, text="选择项目", command=self.change_project).pack(side=tk.RIGHT, padx=5)
-        
-        # 项目标题 (使用Combobox)
-        ttk.Label(row2, text="项目标题:").pack(side=tk.LEFT)
-        self.video_title = ttk.Combobox(row2, width=70)
-        self.video_title.pack(side=tk.LEFT, padx=(5, 15))
-        self.video_title.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
-        self.video_title.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
-        self.video_title.set(self.current_project_manager.PROJECT_CONFIG.get('video_title', ''))
-
-        # 项目标签 (使用Combobox)
-        ttk.Label(row3, text="项目标签:").pack(side=tk.LEFT)
-        self.video_tags = ttk.Combobox(row3, width=35)
-        self.video_tags.pack(side=tk.LEFT, padx=(5, 15))
-        self.video_tags.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
-        self.video_tags.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
-        self.video_tags.set(self.current_project_manager.PROJECT_CONFIG.get('video_tags', ''))
-        
-        # 关键字
-        ttk.Label(row3, text="关键字:").pack(side=tk.LEFT)
-        self.project_keywords = ttk.Entry(row3, width=25)
-        self.project_keywords.insert(0, self.current_project_manager.PROJECT_CONFIG.get('program_keywords', ''))
-        self.project_keywords.pack(side=tk.LEFT, padx=(5, 15))
-        self.project_keywords.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
-        
-        # 故事场地
-        ttk.Label(row3, text="故事场地:").pack(side=tk.LEFT)
-        self.story_site_entry = ttk.Entry(row3, width=20)
-        self.story_site_entry.insert(0, self.current_project_manager.PROJECT_CONFIG.get('story_site', ''))
-        self.story_site_entry.pack(side=tk.LEFT, padx=(5, 15))
-        self.story_site_entry.bind('<FocusOut>', self.on_project_manager.PROJECT_CONFIG_change)
-        
-        # 保存按钮
-        ttk.Button(row3, text="保存配置", command=self.save_project_manager.PROJECT_CONFIG).pack(side=tk.RIGHT, padx=5)
-        
-        # 第四行：WAN 视频生成选项（风格/镜头/角度/色彩）
-        row4 = ttk.Frame(project_frame)
-        row4.pack(fill=tk.X, pady=2)
-        
-        # 视频风格
-        camear_style_frame = ttk.Frame(row4)
-        camear_style_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(camear_style_frame, text="视频风格:").pack(side=tk.LEFT)
-        self.camear_style_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camear_style', config.WAN_VIDEO_STYLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_STYLE[0])
-        self.camear_style_combo = ttk.Combobox(camear_style_frame, textvariable=self.camear_style_var,
-                                            values=config.WAN_VIDEO_STYLE, state="readonly", width=20)
-        self.camear_style_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.camear_style_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
-        
-        # 镜头类型
-        camera_shot_frame = ttk.Frame(row4)
-        camera_shot_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(camera_shot_frame, text="镜头类型:").pack(side=tk.LEFT)
-        self.camera_shot_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_shot', config.WAN_VIDEO_SHOT[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_SHOT[0])
-        self.camera_shot_combo = ttk.Combobox(camera_shot_frame, textvariable=self.camera_shot_var,
-                                           values=config.WAN_VIDEO_SHOT, state="readonly", width=20)
-        self.camera_shot_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.camera_shot_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
-        
-        # 拍摄角度
-        camera_angle_frame = ttk.Frame(row4)
-        camera_angle_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(camera_angle_frame, text="拍摄角度:").pack(side=tk.LEFT)
-        self.camera_angle_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_angle', config.WAN_VIDEO_ANGLE[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_ANGLE[0])
-        self.camera_angle_combo = ttk.Combobox(camera_angle_frame, textvariable=self.camera_angle_var,
-                                            values=config.WAN_VIDEO_ANGLE, state="readonly", width=20)
-        self.camera_angle_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.camera_angle_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
-        
-        # 色彩风格
-        camera_color_frame = ttk.Frame(row4)
-        camera_color_frame.pack(side=tk.LEFT)
-        ttk.Label(camera_color_frame, text="色彩风格:").pack(side=tk.LEFT)
-        self.camera_color_var = tk.StringVar(value=self.current_project_manager.PROJECT_CONFIG.get('camera_color', config.WAN_VIDEO_COLOR[0]) if hasattr(self, 'current_project_manager.PROJECT_CONFIG') and self.current_project_manager.PROJECT_CONFIG else config.WAN_VIDEO_COLOR[0])
-        self.camera_color_combo = ttk.Combobox(camera_color_frame, textvariable=self.camera_color_var,
-                                            values=config.WAN_VIDEO_COLOR, state="readonly", width=20)
-        self.camera_color_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.camera_color_combo.bind('<<ComboboxSelected>>', self.on_project_manager.PROJECT_CONFIG_change)
     
     def change_project(self):
         """更改项目"""
@@ -648,12 +485,6 @@ class MagicToolGUI:
             self.video_tags.delete(0, tk.END)
             self.video_tags.insert(0, self.current_project_manager.PROJECT_CONFIG.get('video_tags', ''))
 
-            self.project_keywords.delete(0, tk.END)
-            self.project_keywords.insert(0, self.current_project_manager.PROJECT_CONFIG.get('program_keywords', ''))
-
-            self.story_site_entry.delete(0, tk.END)
-            self.story_site_entry.insert(0, self.current_project_manager.PROJECT_CONFIG.get('story_site', ''))
-            
             # 更新 WAN 视频参数
             self.camear_style_var.set(self.current_project_manager.PROJECT_CONFIG.get('camear_style', config.WAN_VIDEO_STYLE[0]))
             self.camera_shot_var.set(self.current_project_manager.PROJECT_CONFIG.get('camera_shot', config.WAN_VIDEO_SHOT[0]))
@@ -1649,8 +1480,6 @@ class MagicToolGUI:
         # Extract filename from audio path and set as project title
         new_title = self.video_title.get().strip()
 
-        program_keywords = self.project_keywords.get().strip() if hasattr(self, 'project_keywords') else ""
-            
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
             "type": "create_script",
@@ -1676,8 +1505,7 @@ class MagicToolGUI:
                 camera_shot = getattr(self, 'camera_shot_var', None) and self.camera_shot_var.get() or config.WAN_VIDEO_SHOT[0]
                 camera_angle = getattr(self, 'camera_angle_var', None) and self.camera_angle_var.get() or config.WAN_VIDEO_ANGLE[0]
                 camera_color = getattr(self, 'camera_color_var', None) and self.camera_color_var.get() or config.WAN_VIDEO_COLOR[0]
-                large_site_name = self.story_site_entry.get().strip() if hasattr(self, 'story_site_entry') else ''
-                result = workflow.prepare_project( starting_mode, self.enable_ending.get(), 26.0, new_title, None, program_keywords, large_site_name, camear_style, camera_shot, camera_angle, camera_color )
+                result = workflow.prepare_project( starting_mode, self.enable_ending.get(), 26.0, new_title, None, "", "", camear_style, camera_shot, camera_angle, camera_color )
                 
                 message = f"生成了 {len(result)} 个段落"
                 self.log_to_output(self.script_output, f"✅ 项目脚本生成成功！{message}")
@@ -1710,10 +1538,6 @@ class MagicToolGUI:
     def get_channel(self):
         """获取当前频道"""
         return self.current_project_manager.PROJECT_CONFIG.get('channel', 'strange_zh') if self.current_project_manager.PROJECT_CONFIG else 'strange_zh'
-    
-    def get_story_site(self):
-        """获取当前场地"""
-        return self.current_project_manager.PROJECT_CONFIG.get('story_site', '') if self.current_project_manager.PROJECT_CONFIG else ''
     
     def get_current_workflow(self):
         """获取当前工作流实例"""
@@ -2731,7 +2555,7 @@ class MagicToolGUI:
                 title = self.video_title.get().strip()
                 
                 # 调用工作流的方法
-                result_video_path = self.get_current_workflow().create_channel_promote_video(audio_file, title, self.project_keywords.get().strip(), config.get_promote_srt_path(self.get_pid()), start_duration, image_duration)
+                result_video_path = self.get_current_workflow().create_channel_promote_video(audio_file, title, "", config.get_promote_srt_path(self.get_pid()), start_duration, image_duration)
                 print(f"✅ 频道宣传视频生成完成: {result_video_path}")
                 
                 # 更新任务状态

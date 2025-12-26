@@ -140,12 +140,11 @@ class WorkflowGUI:
         self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
         
         # 添加当前效果和图像类型选择变量
-        self.current_effect_var = tk.StringVar(value=config.SPECIAL_EFFECTS[0])
-        self.scene_second_animation = tk.StringVar(value=config.ANIMATE_SOURCE[0])
+        self.scene_second_animation = tk.StringVar(value=config_prompt.ANIMATE_SOURCE[0])
         
         # 创建动画名称到提示语的映射字典（双向）
-        self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config.ANIMATION_PROMPTS}
-        self.animation_prompt_to_name = {item["prompt"]: item["name"] for item in config.ANIMATION_PROMPTS}
+        self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config_prompt.ANIMATION_PROMPTS}
+        self.animation_prompt_to_name = {item["prompt"]: item["name"] for item in config_prompt.ANIMATION_PROMPTS}
         self.animation_names = [""] + list(self.animation_name_to_prompt.keys())
         
         # 添加第二轨道音量控制变量
@@ -164,7 +163,6 @@ class WorkflowGUI:
         
         # 创建各个标签页
         self.create_video_tab()
-        self.create_promo_video_tab()
         
         self.setup_drag_and_drop()
         
@@ -184,8 +182,12 @@ class WorkflowGUI:
         # 启动单例后台视频检查线程
         self.start_video_check_thread()
         
-        self.media_scanner = MediaScanner(self.workflow.ffmpeg_processor, 10)
+        self.media_scanner = MediaScanner(self.workflow, 10)
         # 绑定窗口关闭事件
+
+        self.workflow.load_scenes()
+        self.on_tab_changed(None)
+
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
 
@@ -207,17 +209,12 @@ class WorkflowGUI:
             video_height = project_manager.PROJECT_CONFIG.get('video_height')
             language = project_manager.PROJECT_CONFIG.get('language')
             channel = project_manager.PROJECT_CONFIG.get('channel')
-            story_site = project_manager.PROJECT_CONFIG.get('story_site')
-            keywords = project_manager.PROJECT_CONFIG.get('program_keywords')
-            project_type = project_manager.PROJECT_CONFIG.get('project_type')
 
-            self.workflow = MagicWorkflow(self.get_pid(), project_type, language, channel, story_site, video_width, video_height)
+            self.workflow = MagicWorkflow(self.get_pid(), language, channel, video_width, video_height)
             self.speech_service = MinimaxSpeechService(self.get_pid())
             
             current_gui_title = self.video_title.get().strip()
-            self.workflow.post_init(current_gui_title, keywords)
-
-            self.on_tab_changed(None)
+            self.workflow.post_init(current_gui_title)
             
             print("✅ 工作流实例创建完成")
             
@@ -291,20 +288,6 @@ class WorkflowGUI:
         return False
 
    
-    def create_default_config(self):
-        """创建默认配置"""
-        return {
-            'pid': '',
-            'language': 'tw',
-            'channel': 'strange_zh',
-            'video_title': '默认标题',
-
-            'program_keywords': '',
-            'story_site': '',
-            'video_width': '1920',  # Default, should be set when creating project
-            'video_height': '1080'   # Default, should be set when creating project
-        }
-        
     def create_shared_info_area(self, parent):
         """创建共享信息区域"""
         shared_frame = ttk.LabelFrame(parent, text="共享配置", padding=10)
@@ -362,12 +345,6 @@ class WorkflowGUI:
         ttk.Label(title_frame, text="频道").pack(side=tk.LEFT)
         self.shared_channel = ttk.Label(title_frame, width=15, relief="sunken", background="white")
         self.shared_channel.pack(side=tk.LEFT)
-        ttk.Label(title_frame, text="场地").pack(side=tk.LEFT)
-        self.story_site_entry = ttk.Entry(title_frame, width=15)
-        self.story_site_entry.pack(side=tk.LEFT)
-        ttk.Label(title_frame, text="KEY").pack(side=tk.LEFT)
-        self.project_keywords = ttk.Entry(title_frame, width=15)
-        self.project_keywords.pack(side=tk.LEFT)
         
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
@@ -715,63 +692,6 @@ class WorkflowGUI:
         
 
 
-    def open_promo_video_gen_dialog(self):
-        audio_file = config.get_media_path(self.get_pid()) + "/short.wav"
-        if not os.path.exists(audio_file):
-            messagebox.showerror("错误", f"音频文件不存在: {audio_file}")
-            return
-
-        # read short.json, for each json item, read the 'content' field, concat them by \n, as srt_content
-        srt_content = None
-        if os.path.exists(config.get_project_path(self.get_pid()) + "/short.json"):
-            # read short.json as text
-            with open(config.get_project_path(self.get_pid()) + "/short.json", 'r', encoding='utf-8') as f:
-                srt_content = f.read()
-
-        start_duration=10
-        image_duration=5
-        
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "open_promo_video_gen_dialog",
-            "status": "运行中",
-            "start_time": datetime.now(),
-            "pid": self.workflow.pid
-        }
-        
-        def run_task():
-            try:
-                print(f"🎬 开始生成频道宣传视频...")
-                title = self.video_title.get().strip()
-                
-                # 调用工作流的方法
-                result_video_path = self.workflow.create_channel_promote_video(audio_file, title, self.project_keywords.get().strip(), srt_content, start_duration, image_duration)
-
-                print(f"✅ 频道宣传视频生成完成: {result_video_path}")
-                
-                # 更新任务状态
-                self.tasks[task_id]["status"] = "完成"
-                self.tasks[task_id]["result"] = f"宣传视频已生成: {os.path.basename(result_video_path)}"
-                
-            except Exception as e:
-                error_msg = f"频道宣传视频生成失败: {str(e)}"
-                print(f"❌ {error_msg}")
-                
-                # 更新状态为失败
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = str(e)
-                
-                # 通知错误
-                self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-        
-        # 启动后台任务
-        thread = threading.Thread(target=run_task, daemon=True)
-        thread.start()
-        
-        print(f"🚀 频道宣传视频生成任务已启动，任务ID: {task_id}")
-
-
-
     def create_video_tab(self):
         """创建视频生成标签页"""
         tab = ttk.Frame(self.notebook)
@@ -1081,7 +1001,7 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         # 存储按钮引用以便后续控制状态
-        self.insert_scene_button = ttk.Button(video_control_frame, text="前插", command=self.insert_scene, width=6)
+        self.insert_scene_button = ttk.Button(video_control_frame, text="前插", command=self.insert_story_scene, width=6)
         self.insert_scene_button.pack(side=tk.LEFT, padx=1)
 
         self.append_scene_button = ttk.Button(video_control_frame, text="后插", command=self.append_scene, width=6)
@@ -1142,7 +1062,7 @@ class WorkflowGUI:
         ttk.Label(duration_promo_frame, text="主动画:").pack(side=tk.LEFT, padx=(5, 5))
         self.scene_main_animate = tk.StringVar(value="")
         self.main_animate_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_main_animate, 
-                                               values=config.ANIMATE_SOURCE, 
+                                               values=config_prompt.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.main_animate_combobox.pack(side=tk.LEFT)
         self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
@@ -1150,7 +1070,7 @@ class WorkflowGUI:
 
         ttk.Label(duration_promo_frame, text="次动画:").pack(side=tk.LEFT, padx=(0, 5))
         self.second_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_second_animation,
-                                               values=config.ANIMATE_SOURCE, 
+                                               values=config_prompt.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
         self.second_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
         self.second_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
@@ -1160,6 +1080,10 @@ class WorkflowGUI:
         type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
+        #ttk.Button(type_mood_action_frame, text="生主图",   width=10, command=lambda: self.recreate_clip_image("zh", True)).pack(side=tk.LEFT)
+        #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
         ttk.Button(type_mood_action_frame, text="重生场面", width=10,  command=self.refresh_scene_visual).pack(side=tk.LEFT)
         ttk.Button(type_mood_action_frame, text="生场音频", width=10,  command=self.regenerate_audio).pack(side=tk.LEFT)
         ttk.Button(type_mood_action_frame, text="生主动画", width=10,  command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
@@ -1170,28 +1094,37 @@ class WorkflowGUI:
         action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
-        ttk.Button(action_frame, text="生主图-中", width=10, command=lambda: self.recreate_clip_image("zh", True)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(action_frame, text="增強-主軌", width=10, command=lambda: self.enhance_clip(True)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(action_frame, text="增強-次軌", width=10, command=lambda: self.enhance_clip(False)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="增主轨", width=10, command=lambda: self.enhance_clip(True, False)).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="增次轨", width=10, command=lambda: self.enhance_clip(False, False)).pack(side=tk.LEFT)
 
         # add a choice list to choose the enhance level, values are from config.FACE_ENHANCE, default value to "0"
-        self.enhance_level = ttk.Combobox(action_frame, width=5, values=config.FACE_ENHANCE)
+        FACE_ENHANCE = ["0", "15", "30", "60"]
+        self.enhance_level = ttk.Combobox(action_frame, width=5, values=FACE_ENHANCE)
         self.enhance_level.pack(side=tk.LEFT, padx=2)
-        self.enhance_level.set(config.FACE_ENHANCE[2])
+        self.enhance_level.set("30")
 
-       
+        ttk.Button(action_frame, text="插主轨", width=10, command=lambda: self.enhance_clip(True, True)).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="插次轨", width=10, command=lambda: self.enhance_clip(False, True)).pack(side=tk.LEFT)
+        #RIFE_EXP = ["0", "1", "2"]
+        #self.rife_exp = ttk.Combobox(action_frame, width=5, values=RIFE_EXP)
+        #self.rife_exp.pack(side=tk.LEFT, padx=2)
+        #self.rife_exp.set("0")
+
         ttk.Label(self.video_edit_frame, text="内容:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_story_content = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_story_content.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        # add the text field to show the keywords
-        ttk.Label(self.video_edit_frame, text="关键词:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_keywords = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_keywords.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        # add the text field to show the kernel
+        ttk.Label(self.video_edit_frame, text="核心:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_kernel = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_kernel.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        # add the text field to show the kernel
+        ttk.Label(self.video_edit_frame, text="故事:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_story = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_story.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1199,12 +1132,12 @@ class WorkflowGUI:
         self.scene_subject.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(self.video_edit_frame, text="开场画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="开场:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_visual_start = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_visual_start.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="结束画面:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="结束:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_visual_end = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_visual_end.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
@@ -1219,7 +1152,7 @@ class WorkflowGUI:
         self.scene_environment.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         
-        ttk.Label(self.video_edit_frame, text="电影摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_cinematography = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_cinematography.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
@@ -1234,7 +1167,7 @@ class WorkflowGUI:
         self.scene_extra.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="讲员动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_speaker_action = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
         self.scene_speaker_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
@@ -1246,26 +1179,26 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config.ROLES)
+        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ROLES)
         self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="左右:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker_position = ttk.Combobox(self.video_edit_frame, width=32, values=config.SPEAKER_POSITIONS)
+        self.scene_speaker_position = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.SPEAKER_POSITIONS)
         self.scene_speaker_position.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add a choice list to choose font of the title, values are from config.FONT_LIST(choose from all languages, show language name in choice, keep value), default value to self.workflow.font_video
-        ttk.Label(self.video_edit_frame, text="标题字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_language = ttk.Combobox(self.video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
         self.scene_language.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         self.scene_language.set(self.shared_language.cget('text'))
 
-        # add a text field "promotion info" here, default empty, if enter text, then need to save to current scene["promotion_info"] 
-        ttk.Label(self.video_edit_frame, text="宣传信息:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_promotion_info = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_promotion_info.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        # add a text field "promotion info" here, default empty, if enter text, then need to save to current scene["promotion"] 
+        ttk.Label(self.video_edit_frame, text="信息:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_promotion = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_promotion.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # 第二轨道播放状态
@@ -1310,430 +1243,6 @@ class WorkflowGUI:
         # 绑定编辑事件
         self.bind_edit_events()
         self.bind_config_change_events()
-
-        
-    def create_promo_video_tab(self):
-        """Create promo video tab with drag & drop for MP3 files"""
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="宣传视频制作333")
-
-        # Instructions
-        instruction_frame = ttk.Frame(tab)
-        instruction_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
-        
-        instruction_text = "将MP3音频文件拖拽到左侧区域以制作宣传视频\n• 系统将自动生成带有音频的宣传视频\n• 在右侧输入字幕脚本（每行一句）\n• 结果文件保存在项目的输出目录中"
-        ttk.Label(instruction_frame, text=instruction_text, font=('TkDefaultFont', 10), foreground='gray').pack()
-
-        # Main content frame with three columns: drag area, story editor, and script area
-        content_frame = ttk.Frame(tab)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        # Middle: Story JSON Editor
-        story_frame = ttk.LabelFrame(content_frame, text="故事JSON编辑器", padding="10")
-        story_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 5))
-
-        # Story JSON editor with undo/redo functionality
-        self.promo_story_json_widget = scrolledtext.ScrolledText(story_frame, wrap=tk.WORD, font=('Consolas', 11), 
-                                                               undo=True, maxundo=-1)
-        self.promo_story_json_widget.pack(fill=tk.BOTH, expand=True)
-
-        # Add undo/redo keyboard shortcuts for story editor
-        self.promo_story_json_widget.bind('<Control-z>', self.promo_undo_action)
-        self.promo_story_json_widget.bind('<Control-y>', self.promo_redo_action)
-        self.promo_story_json_widget.bind('<Control-Shift-Z>', self.promo_redo_action)
-
-        self.promo_load_story_content()
-
-        # Right side: Script input area
-        script_frame = ttk.LabelFrame(content_frame, text="字幕脚本", padding="10")
-        script_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 5))
-
-        # Script text area
-        self.promo_script_text = scrolledtext.ScrolledText(script_frame, height=20, wrap=tk.WORD, font=('TkDefaultFont', 10))
-        self.promo_script_text.pack(fill=tk.BOTH, expand=True)
-
-        # Left side: Drop zone with wave image (reduced width)
-        drop_frame = ttk.LabelFrame(content_frame, text="拖拽区域", padding="10")
-        drop_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(5, 5))
-        drop_frame.config(width=250)  # Fixed reduced width
-
-        # Canvas for the wave image and drop zone
-        self.promo_canvas = tk.Canvas(drop_frame, height=300, width=200, bg='white', relief=tk.RAISED, bd=2)
-        self.promo_canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Load and display wave image
-        self.load_promo_wave_image()
-
-        # Setup drag and drop if available
-        self.setup_promo_drag_drop()
-
-
-        # Settings frame
-        settings_frame = ttk.LabelFrame(tab, text="宣传视频设置", padding="10")
-        settings_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        # Settings display
-        settings_info_frame = ttk.Frame(settings_frame)
-        settings_info_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(settings_info_frame, text="开始持续时间: 10秒").pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Label(settings_info_frame, text="图像持续时间: 5秒").pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Label(settings_info_frame, text="字幕: 自动生成SRT").pack(side=tk.LEFT)
-
-        # Voice and duration controls
-        controls_frame = ttk.Frame(settings_frame)
-        controls_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # 旁白语音组
-        narrator_frame = ttk.Frame(controls_frame)
-        narrator_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(narrator_frame, text="旁白语音").pack(side=tk.LEFT)
-        narrator_controls = ttk.Frame(narrator_frame)
-        narrator_controls.pack(side=tk.LEFT, padx=(5, 0))
-        self.promo_actor_narrator = ttk.Combobox(narrator_controls, values=config.HOSTS, state="readonly", width=15)
-        self.promo_actor_narrator.set(config.HOSTS[0])  # Default to voice1
-        self.promo_actor_narrator.pack(side=tk.TOP)
-        
-        # add a text fields to keep the story scenes duration, default to config.VIDEO_DURATION_DEFAULT
-        duration_frame = ttk.Frame(controls_frame)
-        duration_frame.pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Label(duration_frame, text="片段时长").pack(side=tk.LEFT)
-        duration_controls = ttk.Frame(duration_frame)
-        duration_controls.pack(side=tk.LEFT, padx=(5, 0))
-        self.promo_duration_entry = ttk.Entry(duration_controls, width=15)
-        self.promo_duration_entry.insert(0, str(config.VIDEO_DURATION_DEFAULT))
-        self.promo_duration_entry.pack(side=tk.TOP)
-
-        # Action buttons frame
-        action_frame = ttk.Frame(settings_frame)
-        action_frame.pack(fill=tk.X, padx=5, pady=10)
-
-        ttk.Button(action_frame, text="加载故事", 
-                  command=self.promo_load_story_content).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(action_frame, text="重新生成对话", 
-                  command=self.promo_on_regenerate_dialog).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(action_frame, text="保存JSON", 
-                  command=self.promo_save_story_json_content).pack(side=tk.LEFT, padx=(0, 30))
-
-        ttk.Button(action_frame, text="生成音频", 
-                  command=self.promo_on_generate_audio).pack(side=tk.LEFT, padx=(0, 30))
-
-        ttk.Button(action_frame, text="🎬 宣传短片生成", 
-                  command=self.open_promo_video_gen_dialog, 
-                  style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 10))
-
-        ttk.Button(action_frame, text="🎬 上传宣传短片", 
-                  command=self.upload_promo_video, 
-                  style="Accent.TButton").pack(side=tk.LEFT)
-
-        # Output area
-        output_frame = ttk.LabelFrame(tab, text="输出日志", padding="10")
-        output_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        self.promo_output = scrolledtext.ScrolledText(output_frame, height=10)
-        self.promo_output.pack(fill=tk.BOTH, expand=True)
-
-    def load_promo_wave_image(self):
-        """Load and display the wave image in the promo canvas"""
-        try:
-            image_path = os.path.join(os.path.dirname(__file__), "media", "wave_sound.png")
-            if os.path.exists(image_path):
-                # Load and resize image to fit canvas
-                pil_image = Image.open(image_path)
-                # Calculate size to fit canvas while maintaining aspect ratio
-                canvas_width = 400
-                canvas_height = 250
-                pil_image.thumbnail((canvas_width, canvas_height), Image.Resampling.LANCZOS)
-                
-                self.promo_wave_image = ImageTk.PhotoImage(pil_image)
-                
-                # Center image in canvas
-                canvas_width_actual = self.promo_canvas.winfo_reqwidth() or 400
-                canvas_height_actual = self.promo_canvas.winfo_reqheight() or 300
-                x = canvas_width_actual // 2
-                y = canvas_height_actual // 2
-                
-                self.promo_canvas.create_image(x, y, image=self.promo_wave_image, anchor=tk.CENTER)
-                self.promo_canvas.create_text(x, y + 140, text="拖拽 MP3 音频文件到此处", 
-                                            font=('TkDefaultFont', 12, 'bold'), fill='gray')
-            else:
-                # Fallback if image not found
-                self.promo_canvas.create_text(200, 150, text="拖拽 MP3 音频文件到此处", 
-                                            font=('TkDefaultFont', 14, 'bold'), fill='gray')
-                self.promo_canvas.create_rectangle(50, 50, 350, 250, outline='gray', dash=(5, 5))
-                
-        except Exception as e:
-            print(f"加载波形图片失败: {e}")
-            # Fallback to text only
-            self.promo_canvas.create_text(200, 150, text="拖拽 MP3 音频文件到此处", 
-                                        font=('TkDefaultFont', 14, 'bold'), fill='gray')
-            self.promo_canvas.create_rectangle(50, 50, 350, 250, outline='gray', dash=(5, 5))
-
-    def setup_promo_drag_drop(self):
-        """Setup drag and drop functionality for the promo canvas and script text"""
-        # Setup canvas drag & drop for audio files
-        self.promo_canvas.drop_target_register(DND_FILES)
-        self.promo_canvas.dnd_bind('<<Drop>>', self.on_promo_drop)
-        self.promo_canvas.dnd_bind('<<DragEnter>>', self.on_promo_drag_enter)
-        self.promo_canvas.dnd_bind('<<DragLeave>>', self.on_promo_drag_leave)
-        
-        # Setup script text drag & drop for text files
-        self.promo_script_text.drop_target_register(DND_FILES)
-        self.promo_script_text.dnd_bind('<<Drop>>', self.on_promo_script_drop)
-        self.promo_script_text.dnd_bind('<<DragEnter>>', self.on_promo_script_drag_enter)
-        self.promo_script_text.dnd_bind('<<DragLeave>>', self.on_promo_script_drag_leave)
-
-    def on_promo_drag_enter(self, event):
-        """Visual feedback when dragging enters promo canvas"""
-        self.promo_canvas.configure(relief=tk.SUNKEN, bd=3)
-
-    def on_promo_drag_leave(self, event):
-        """Visual feedback when dragging leaves promo canvas"""
-        self.promo_canvas.configure(relief=tk.RAISED, bd=2)
-
-    def on_promo_click(self, event):
-        """Fallback file selection when drag & drop not available"""
-        file_path = filedialog.askopenfilename(
-            title="选择MP3音频文件",
-            filetypes=(
-                ("MP3音频文件", "*.mp3"),
-                ("音频文件", "*.mp3 *.wav *.m4a *.flac *.aac"),
-                ("所有文件", "*.*")
-            )
-        )
-        if file_path:
-            self.process_promo_audio_file(file_path)
-
-    def on_promo_script_drag_enter(self, event):
-        """Visual feedback when dragging enters script text area"""
-        self.promo_script_text.configure(relief=tk.SUNKEN, bd=2)
-
-    def on_promo_script_drag_leave(self, event):
-        """Visual feedback when dragging leaves script text area"""
-        self.promo_script_text.configure(relief=tk.FLAT, bd=1)
-
-    def on_promo_script_drop(self, event):
-        """Handle text file drop event for script area"""
-        files = event.data.split()
-        if files:
-            file_path = files[0]
-            # Remove quotes if present
-            if file_path.startswith('"') and file_path.endswith('"'):
-                file_path = file_path[1:-1]
-            self.process_promo_script_file(file_path)
-        
-        # Reset visual feedback
-        self.promo_script_text.configure(relief=tk.FLAT, bd=1)
-
-
-    def process_promo_script_file(self, file_path):
-        """Process the dropped text file for script content"""
-        if not os.path.exists(file_path):
-            messagebox.showerror("错误", f"文件不存在: {file_path}")
-            return
-
-        # Check file extension for text files
-        file_ext = os.path.splitext(file_path)[1].lower()
-        
-        if file_ext not in ['.json', '.txt', '.srt', '.vtt', '.text', '.log']:
-            messagebox.showerror("错误", f"不支持的文本格式: {file_ext}\n支持的格式: JSON, TXT, SRT, VTT, TEXT, LOG")
-            return
-
-        try:
-            # Try different encodings
-            encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb2312', 'latin1']
-            content = None
-            
-            for encoding in encodings:
-                try:
-                    with open(file_path, 'r', encoding=encoding) as f:
-                        content = f.read()
-                    break
-                except UnicodeDecodeError:
-                    continue
-            
-            if content is None:
-                messagebox.showerror("错误", "无法读取文件，不支持的编码格式")
-                return
-                
-            # Ask user if they want to replace or append
-            if self.promo_script_text.get(1.0, tk.END).strip():
-                choice = messagebox.askyesnocancel("脚本内容", "当前已有脚本内容\n\n是：替换现有内容\n否：追加到末尾\n取消：取消操作")
-                if choice is None:  # Cancel
-                    return
-                elif choice:  # Yes - Replace
-                    self.promo_script_text.delete(1.0, tk.END)
-                    self.promo_script_text.insert(1.0, content)
-                else:  # No - Append
-                    self.promo_script_text.insert(tk.END, "\n" + content)
-            else:
-                # Empty text area, just insert
-                self.promo_script_text.insert(1.0, content)
-                
-            self.log_to_output(self.promo_output, f"📝 已加载脚本文件: {os.path.basename(file_path)}")
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"读取文件失败: {str(e)}")
-
-    def load_promo_script_content(self):
-        """自动加载宣传视频脚本内容从promote SRT文件"""
-        try:
-            # 获取promote SRT文件路径
-            promote_srt_path = config.get_promote_srt_path(self.get_pid())
-            
-            # 检查文件是否存在
-            if not os.path.exists(promote_srt_path):
-                return
-                
-            # 检查promo_script_text是否已有内容
-            if self.promo_script_text.get(1.0, tk.END).strip():
-                return  # 如果已有内容，不自动覆盖
-                
-            # 读取SRT文件内容
-            try:
-                encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb2312']
-                content = None
-                
-                for encoding in encodings:
-                    try:
-                        with open(promote_srt_path, 'r', encoding=encoding) as f:
-                            content = f.read()
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                
-                if content is None:
-                    return
-                    
-                # 从SRT内容中提取纯文本（去除时间戳和序号）
-                script_lines = []
-                lines = content.split('\n')
-                i = 0
-                while i < len(lines):
-                    line = lines[i].strip()
-                    # 跳过空行
-                    if not line:
-                        i += 1
-                        continue
-                    # 跳过数字序号行
-                    if line.isdigit():
-                        i += 1
-                        continue
-                    # 跳过时间戳行
-                    if '-->' in line and ':' in line:
-                        i += 1
-                        continue
-                    # 这是字幕文本行
-                    if line:
-                        script_lines.append(line)
-                    i += 1
-                
-                if script_lines:
-                    script_content = '\n'.join(script_lines)
-                    self.promo_script_text.insert(1.0, script_content)
-                    print(f"✅ 已自动加载宣传视频脚本内容: {len(script_lines)} 行")
-                    
-            except Exception as e:
-                print(f"⚠️ 读取promote SRT文件失败: {e}")
-                
-        except Exception as e:
-            print(f"⚠️ 加载宣传视频脚本内容失败: {e}")
-
-    def on_promo_drop(self, event):
-        """Handle file drop event for promo video"""
-        files = event.data.split()
-        if files:
-            file_path = files[0]
-            # Remove quotes if present
-            if file_path.startswith('"') and file_path.endswith('"'):
-                file_path = file_path[1:-1]
-            self.process_promo_audio_file(file_path)
-        
-        # Reset visual feedback
-        self.promo_canvas.configure(relief=tk.RAISED, bd=2)
-
-    def process_promo_audio_file(self, file_path):
-        """Process the dropped/selected audio file for promo video creation"""
-        if not os.path.exists(file_path):
-            messagebox.showerror("错误", f"文件不存在: {file_path}")
-            return
-
-        # Check file extension
-        file_ext = os.path.splitext(file_path)[1].lower()
-        
-        if file_ext not in ['.mp3', '.wav', '.m4a', '.flac', '.aac']:
-            messagebox.showerror("错误", f"不支持的音频格式: {file_ext}\n支持的格式: MP3, WAV, M4A, FLAC, AAC")
-            return
-
-        # Get script text
-        script_text = self.promo_script_text.get(1.0, tk.END).strip()
-        has_subtitles = bool(script_text)
-
-        # Confirm processing
-        confirm_msg = f"确定要制作宣传视频吗？\n\n音频文件: {os.path.basename(file_path)}\n开始持续时间: 10秒\n图像持续时间: 5秒\n字幕: {'是' if has_subtitles else '无'}"
-        if script_text!="":
-            # save script_text to config.get_promote_srt_path(self.get_pid())
-            with open(config.get_promote_srt_path(self.get_pid()), 'w', encoding='utf-8') as f:
-                f.write(script_text)
-
-        if not messagebox.askyesno("确认制作", confirm_msg):
-            return
-
-        promo_duration = self.promo_duration_entry.get().strip()
-        if promo_duration == "":
-            promo_duration = None
-        else:
-            promo_duration = float(promo_duration)
-
-
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "create_promo_video",
-            "status": "运行中",
-            "pid": self.get_pid(),
-            "start_time": datetime.now()
-        }
-
-        def run_task():
-            try:
-                self.log_to_output(self.promo_output, f"🎬 开始制作宣传视频...")
-                self.log_to_output(self.promo_output, f"音频文件: {file_path}")
-                self.log_to_output(self.promo_output, f"开始持续时间: 10秒")
-                self.log_to_output(self.promo_output, f"图像持续时间: 5秒")
-                
-
-                # Create promo video using workflow
-                result = self.workflow.create_channel_promote_video(
-                    promo_audio_path=file_path,
-                    title=self.workflow.title,
-                    program_keywords=self.project_keywords.get().strip(),
-                    subtitle=script_text,
-                    start_duration=10,
-                    image_duration=5,
-                    promo_duration=promo_duration
-                )
-
-                self.log_to_output(self.promo_output, f"✅ 宣传视频制作完成！")
-                self.log_to_output(self.promo_output, f"输出文件: {result}")
-                self.tasks[task_id]["status"] = "完成"
-
-                # Show success message
-                success_msg = f"宣传视频制作完成！\n\n输出文件: {result}"
-                self.root.after(0, lambda: messagebox.showinfo("成功", success_msg))
-
-            except Exception as e:
-                error_msg = str(e)
-                self.log_to_output(self.promo_output, f"❌ 宣传视频制作失败: {error_msg}")
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = error_msg
-                self.root.after(0, lambda: messagebox.showerror("错误", f"宣传视频制作失败: {error_msg}"))
-
-        # Run in separate thread
-        thread = threading.Thread(target=run_task)
-        thread.daemon = True
-        thread.start()
 
 
     def log_to_output(self, output_widget, message):
@@ -1845,28 +1354,26 @@ class WorkflowGUI:
         """执行视频检查任务（由单例线程调用）"""
         animate_gen_list = []
         for scene_index, scene in enumerate(self.workflow.scenes):
-            clip_animation = scene.get("clip_animation", "")
-            if clip_animation in config.ANIMATE_SOURCE and clip_animation != "":
-                scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
-                animate_gen_list.append((scene_name, "clip", scene))
-
-            second_animation = scene.get("second_animation", "")
-            if second_animation in config.ANIMATE_SOURCE and second_animation != "":
-                scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "second", "", False)
-                animate_gen_list.append((scene_name, "second", scene))
+            #clip_animation = scene.get("clip_animation", "")
+            #if clip_animation in config_prompt.ANIMATE_SOURCE and clip_animation != "":
+            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
+            animate_gen_list.append((scene_name, "clip", scene))
+            #second_animation = scene.get("second_animation", "")
+            #if second_animation in config_prompt.ANIMATE_SOURCE and second_animation != "":
+            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "second", "", False)
+            animate_gen_list.append((scene_name, "second", scene))
 
         if animate_gen_list == []:
             return
         
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
-            self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
-            #self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
+            self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4", True)                      # clip_p202512231259_10005_S2V__00003-audio.mp4
+            self.media_scanner.scanning("Z:\\output", config.BASE_MEDIA_PATH+"\\input_mp4", False)                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
+            self.media_scanner.scanning("W:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4", False)      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
 
-            # 2. 检查 /wan_video/output_mp4 中已增强的视频
-            self.media_scanner.check_gen_video(config.BASE_MEDIA_PATH+"\\input_mp4", animate_gen_list) # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
-            self.media_scanner.check_gen_video("Z:\\wan_video\\output_mp4", animate_gen_list)          # clip_project_20251208_1710_10708_S2V_13231028_0_.mp4
-            self.media_scanner.check_gen_video("W:\\wan_video\\output_mp4", animate_gen_list)
+            self.media_scanner.check_gen_video(config.BASE_MEDIA_PATH+"\\input_mp4", animate_gen_list)                 # clip_p202512231259_10005_S2V_23155421.mp4
+            #self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
 
             self.workflow.save_scenes_to_json()
 
@@ -1895,7 +1402,7 @@ class WorkflowGUI:
         }
         def run_task():
             try:
-                self.workflow.promotion_video(self.video_title.get().strip(), "") #self.program_keywords.get().strip())
+                self.workflow.promotion_video(self.video_title.get().strip())
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -1918,7 +1425,7 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(self.video_title.get().strip(), "") #self.program_keywords.get().strip())
+                self.workflow.finalize_video(self.video_title.get().strip(), False)
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -2492,12 +1999,8 @@ class WorkflowGUI:
         clip_animation = scene_data.get("clip_animation", "")
         self.scene_main_animate.set(clip_animation)
         
-        # 加载当前场景的效果设置 - 直接从scenes JSON中读取
-        current_effect = scene_data.get("effect", config.SPECIAL_EFFECTS[0])
-        self.current_effect_var.set(current_effect)
-        
         # 加载当前场景的图像类型设置
-        current_image_type = scene_data.get("second_animation", config.ANIMATE_SOURCE[0])
+        current_image_type = scene_data.get("second_animation", config_prompt.ANIMATE_SOURCE[0])
         self.scene_second_animation.set(current_image_type)
         
         self.scene_visual_start.delete("1.0", tk.END)
@@ -2526,11 +2029,15 @@ class WorkflowGUI:
         self.scene_sound_effect.delete("1.0", tk.END)
         self.scene_sound_effect.insert("1.0", scene_data.get("sound_effect", ""))
         
-        self.scene_keywords.delete("1.0", tk.END)
-        self.scene_keywords.insert("1.0", scene_data.get("keywords", ""))
+        self.scene_kernel.delete("1.0", tk.END)
+        self.scene_kernel.insert("1.0", scene_data.get("kernel", ""))
+
+        self.scene_story.delete("1.0", tk.END)
+        self.scene_story.insert("1.0", scene_data.get("story", ""))
+
         
         self.scene_extra.delete("1.0", tk.END)   
-        self.scene_extra.insert("1.0", scene_data.get("extra", ""))
+        self.scene_extra.insert("1.0", scene_data.get("caption", ""))
 
         self.scene_speaker_action.delete("1.0", tk.END)
         self.scene_speaker_action.insert("1.0", scene_data.get("speaker_action", ""))
@@ -2548,8 +2055,8 @@ class WorkflowGUI:
         self.scene_story_content.insert("1.0", scene_data.get("content", ""))
         
         # 加载宣传信息
-        self.scene_promotion_info.delete("1.0", tk.END)
-        self.scene_promotion_info.insert("1.0", scene_data.get("promotion_info", ""))
+        self.scene_promotion.delete("1.0", tk.END)
+        self.scene_promotion.insert("1.0", scene_data.get("promotion", ""))
 
         input_media_path = get_file_path(scene_data, "clip_input")
         if input_media_path:
@@ -2749,12 +2256,13 @@ class WorkflowGUI:
         self.scene_speaker.delete("1.0", tk.END)
         self.scene_speaker_action.delete("1.0", tk.END)
         self.scene_extra.delete("1.0", tk.END)
+        self.scene_story.delete("1.0", tk.END)
         self.scene_speaker_position.set("")
         self.scene_mood.set("calm")
         self.scene_story_content.delete("1.0", tk.END)
-        self.scene_keywords.delete("1.0", tk.END)
+        self.scene_kernel.delete("1.0", tk.END)
         self.scene_cinematography.delete("1.0", tk.END)
-        self.scene_promotion_info.delete("1.0", tk.END)
+        self.scene_promotion.delete("1.0", tk.END)
 
 
 
@@ -2800,7 +2308,7 @@ class WorkflowGUI:
         """分离当前场景"""
         current_scene = self.get_current_scene()
         animate_mode = current_scene.get("clip_animation", "")
-        if animate_mode not in config.ANIMATE_SOURCE or animate_mode.strip() == "":
+        if animate_mode not in config_prompt.ANIMATE_SOURCE or animate_mode.strip() == "":
             messagebox.showerror("错误", "当前场景没有动画模式")
             return
 
@@ -2882,15 +2390,16 @@ class WorkflowGUI:
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
 
 
-    def insert_scene(self):
+    def insert_story_scene(self):
         self.update_scene_buttons_state()
         current_scene = self.get_current_scene()
         if current_scene and not self.workflow.first_scene_of_story(current_scene):
             return
 
-        self.workflow.add_default_root_scene(
+        self.workflow.add_story_scene(
             self.current_scene_index,
-            self.story_site_entry.get(),
+            "",
+            True,
             False,
         )
 
@@ -2904,9 +2413,10 @@ class WorkflowGUI:
         if current_scene and not self.workflow.last_scene_of_story(current_scene):
             return
 
-        self.workflow.add_default_root_scene(
+        self.workflow.add_story_scene(
             self.current_scene_index,
-            self.story_site_entry.get(),
+            "",
+            True,
             True,
         )
 
@@ -3815,6 +3325,9 @@ class WorkflowGUI:
 
     def shift_scene(self, forward=True):
         position = pygame.mixer.music.get_pos() / 1000.0
+        if position <= 0.001:
+            position = 0.0
+
         if position == 0.0 and forward and self.playing_delta < 0.0 and self.current_scene_index > 0:
                 current_index = self.current_scene_index - 1
                 next_index = self.current_scene_index
@@ -3940,11 +3453,11 @@ class WorkflowGUI:
             self.refresh_gui_scenes()
 
 
-    def enhance_clip(self, clip_or_second:bool):
+    def enhance_clip(self, clip_or_second:bool, fps_enhace:bool):
         """增强主图或次图"""
         scene = self.get_current_scene()
         level = self.enhance_level.get()
-        self.media_scanner.enhance_clip(self.get_pid(), scene, "clip" if clip_or_second else "second", level)
+        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip" if clip_or_second else "second", level, fps_enhace)
         self.refresh_gui_scenes()
 
 
@@ -3987,7 +3500,8 @@ class WorkflowGUI:
         
         scene.update({
             "content": self.scene_story_content.get("1.0", tk.END).strip(),
-            "keywords": self.scene_keywords.get("1.0", tk.END).strip(),
+            "kernel": self.scene_kernel.get("1.0", tk.END).strip(),
+            "story": self.scene_story.get("1.0", tk.END).strip(),
             "subject": self.scene_subject.get("1.0", tk.END).strip(),
             "visual_start": self.scene_visual_start.get("1.0", tk.END).strip(),
             "visual_end": self.scene_visual_end.get("1.0", tk.END).strip(),
@@ -3995,13 +3509,13 @@ class WorkflowGUI:
             "environment": self.scene_environment.get(),
             "cinematography": cinematography_value,
             "sound_effect": self.scene_sound_effect.get("1.0", tk.END).strip(),
-            "extra": self.scene_extra.get("1.0", tk.END).strip(),
+            "caption": self.scene_extra.get("1.0", tk.END).strip(),
             "speaker_action": self.scene_speaker_action.get("1.0", tk.END).strip(),
             "speaker": self.scene_speaker.get(),
             "speaker_position": self.scene_speaker_position.get(),  # 添加讲员位置字段
             "mood": self.scene_mood.get(),         # 语音合成情绪
             "clip_animation": self.scene_main_animate.get(),
-            "promotion_info": self.scene_promotion_info.get("1.0", tk.END).strip()
+            "promotion": self.scene_promotion.get("1.0", tk.END).strip()
         })
         self.workflow.save_scenes_to_json()
         return scene
@@ -4067,24 +3581,9 @@ class WorkflowGUI:
                 self.video_title.delete(0, tk.END)
                 self.video_title.insert(0, video_title)
                 
-            # 加载关键字
-            program_keywords = config_data.get('program_keywords', '')
-            if hasattr(self, 'project_keywords'):
-                self.project_keywords.delete(0, tk.END)
-                self.project_keywords.insert(0, program_keywords)
-                
-            # 故事场地组
-            story_site_entry = config_data.get('story_site', '')
-            if hasattr(self, 'story_site_entry'):
-                self.story_site_entry.delete(0, tk.END)
-                self.story_site_entry.insert(0, story_site_entry)
-                
             # 加载宣传视频滚动持续时间
             promo_scroll_duration = config_data.get('promo_scroll_duration', 7.0)
             self.promo_scroll_duration = promo_scroll_duration
-            
-            # 自动加载宣传视频脚本内容
-            self.load_promo_script_content()
             
             print(f"✅ 已将配置应用到GUI: 频道={channel}, 语言={language}, PID={pid}")
             
@@ -4165,15 +3664,12 @@ class WorkflowGUI:
             'language': self.shared_language.cget('text'), 
             'channel': self.shared_channel.cget('text'),
             'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '默认视频标题',
-            'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
-            'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
             # video_width and video_height are read-only from project config, not saved
             'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
             'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-            'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
-            'conversation_content': getattr(self, 'conversation_content', None) or '',
-            # project_type is read-only from project config
-            'project_type': project_manager.PROJECT_CONFIG.get('project_type', 'story') if project_manager.PROJECT_CONFIG else 'story'
+            'kernel': project_manager.PROJECT_CONFIG.get('kernel', ''),
+            'promo': project_manager.PROJECT_CONFIG.get('promo', ''),
+            'story': project_manager.PROJECT_CONFIG.get('story', '')
         }
 
         # Add audio_prepares data if available
@@ -4208,14 +3704,12 @@ class WorkflowGUI:
                 'language': self.shared_language.cget('text'),
                 'channel': self.shared_channel.cget('text'),
                 'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '视频标题',
-
-                'program_keywords': getattr(self, 'program_keywords', None) and self.program_keywords.get() or '',
-                'story_site': getattr(self, 'story_site_entry', None) and self.story_site_entry.get() or '',
                 # video_width and video_height are read-only from project config, not saved
                 'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
                 'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-                'promo_scroll_duration': getattr(self, 'promo_scroll_duration', None) or 7.0,
-                'conversation_content': getattr(self, 'conversation_content', None) or ''
+                'kernel': project_manager.PROJECT_CONFIG.get('kernel', ''),
+                'promo': project_manager.PROJECT_CONFIG.get('promo', ''),
+                'story': project_manager.PROJECT_CONFIG.get('story', '')
             }
 
             # Save audio_prepares data if available
@@ -4223,21 +3717,18 @@ class WorkflowGUI:
                 config_data['audio_prepares'] = workflow.video_prepares
             
             # Preserve video_id and other important fields from existing config
-            if hasattr(self, 'current_project_config') and project_manager.PROJECT_CONFIG:
+            if project_manager.PROJECT_CONFIG:
                 if 'video_id' in project_manager.PROJECT_CONFIG:
                     config_data['video_id'] = project_manager.PROJECT_CONFIG['video_id']
                 if 'generated_titles' in project_manager.PROJECT_CONFIG:
                     config_data['generated_titles'] = project_manager.PROJECT_CONFIG['generated_titles']
                 if 'generated_tags' in project_manager.PROJECT_CONFIG:
                     config_data['generated_tags'] = project_manager.PROJECT_CONFIG['generated_tags']
-                # Preserve project_type from existing config
-                if 'project_type' in project_manager.PROJECT_CONFIG:
-                    config_data['project_type'] = project_manager.PROJECT_CONFIG['project_type']
-                # Preserve inspiration, poem, and story from existing config
-                if 'inspiration' in project_manager.PROJECT_CONFIG:
-                    config_data['inspiration'] = project_manager.PROJECT_CONFIG['inspiration']
-                if 'poem' in project_manager.PROJECT_CONFIG:
-                    config_data['poem'] = project_manager.PROJECT_CONFIG['poem']
+                # Preserve kernel, story from existing config
+                if 'kernel' in project_manager.PROJECT_CONFIG:
+                    config_data['kernel'] = project_manager.PROJECT_CONFIG['kernel']
+                if 'promo' in project_manager.PROJECT_CONFIG:
+                    config_data['promo'] = project_manager.PROJECT_CONFIG['promo']
                 if 'story' in project_manager.PROJECT_CONFIG:
                     config_data['story'] = project_manager.PROJECT_CONFIG['story']
             
@@ -4258,17 +3749,18 @@ class WorkflowGUI:
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_fields = [
             self.scene_visual_start,
+            self.scene_story,
             self.scene_era_time,
             self.scene_environment,
             self.scene_speaker,
             self.scene_speaker_action,
             self.scene_extra,
-            self.scene_keywords,
+            self.scene_kernel,
             self.scene_cinematography,
             self.scene_subject,
             self.scene_visual_end,
             self.scene_story_content,
-            self.scene_promotion_info
+            self.scene_promotion
         ]
         
         for field in scene_fields:
@@ -4301,16 +3793,6 @@ class WorkflowGUI:
             self.video_title.bind('<KeyRelease>', self.on_video_title_change)
             self.video_title.bind('<FocusOut>', self.on_video_title_change)
         
-        # 绑定program_keywords变化事件
-        if hasattr(self, 'program_keywords'):
-            self.program_keywords.bind('<KeyRelease>', self.on_config_change)
-            self.program_keywords.bind('<FocusOut>', self.on_config_change)
-            
-        # 绑定story_site变化事件
-        if hasattr(self, 'story_site_entry'):
-            self.story_site_entry.bind('<KeyRelease>', self.on_config_change)
-            self.story_site_entry.bind('<FocusOut>', self.on_config_change)
-            
 
     def on_video_title_change(self, event=None):
         """当视频标题发生变化时的回调函数"""
@@ -4386,6 +3868,11 @@ class WorkflowGUI:
     def handle_av_replacement(self, av_path, replace_media_audio, media_type):
         """处理音频替换"""
         try:
+            current_scene = self.get_current_scene()
+            previous_scene = self.get_previous_scene()
+            next_scene = self.get_next_scene()
+            scenes_same_story = self.workflow.scenes_in_story(current_scene)
+
             if not av_path:
                 if media_type == 'clip':
                     av_path = get_file_path(current_scene, "clip")
@@ -4395,11 +3882,9 @@ class WorkflowGUI:
                     av_path = get_file_path(current_scene, "one")
                 else:
                     av_path = get_file_path(current_scene, "second")
-
-            current_scene = self.get_current_scene()
-            previous_scene = self.get_previous_scene()
-            next_scene = self.get_next_scene()
-            scenes_same_story = self.workflow.scenes_in_story(current_scene)
+            else:
+                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
+                av_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
             if media_type != "clip":
@@ -4445,7 +3930,7 @@ class WorkflowGUI:
                 self.workflow.refresh_scene_visual(current_scene)
             elif transcribe_way == "multiple":
                 self.workflow.prepare_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
-                self.replace_scene_with_others(self.current_scene_index, audio_json)
+                self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
             else: # transcribe_way == "multiple_merge":
                 self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
 
@@ -4524,18 +4009,39 @@ class WorkflowGUI:
         if is_image_file(dropped_file):
             self.handle_image_replacement(dropped_file)
         elif is_audio_file(dropped_file):
-            # ask user if want to replace audio for just current scene or all scenes
-            dialog = messagebox.askyesnocancel("确认替换音频", "确定要替换当前场景的音频吗？\n或者替换所有场景的音频？")
-            if dialog == tk.YES:
-                self.workflow.replace_scene_audio(self.get_current_scene(), dropped_file, 0)
-            elif dialog == tk.NO:
+            # ask user if want to replace audio for just current scene, all scenes, or extend to all scenes
+            choice = askchoice("确认替换音频", [
+                "替换当前场景音频",
+                "替换所有场景音频",
+                "缩放所有场景音频"
+            ])
+            if not choice:
+                return  # 用户取消
+
+
+            if choice == "替换当前场景音频":
+                clip_duration = self.workflow.ffmpeg_processor.get_duration(self.get_current_scene()["clip_audio"])
+                self.workflow.replace_scene_audio(self.get_current_scene(), dropped_file, 0, clip_duration)
+
+            elif choice == "替换所有场景音频":
                 start_time = 0.0
                 for scene in self.workflow.scenes:
-                    self.workflow.replace_scene_audio(scene, dropped_file, start_time)
-                    start_time += self.workflow.ffmpeg_processor.get_duration(scene["clip_audio"])
+                    clip_duration = self.workflow.ffmpeg_processor.get_duration(scene["clip_audio"])
+                    self.workflow.replace_scene_audio(scene, dropped_file, start_time, clip_duration)
+                    start_time += clip_duration
+
+            elif choice == "缩放所有场景音频":
+                total_duration = self.workflow.ffmpeg_processor.get_duration(dropped_file)
+                clip_duration = total_duration / len(self.workflow.scenes)
+                # Extend audio to total duration and assign to each scene
+                start_time = 0.0
+                for scene in self.workflow.scenes:
+                    self.workflow.replace_scene_audio(scene, dropped_file, start_time, clip_duration)
+                    start_time += clip_duration
+
         elif is_video_file(dropped_file):
-            from gui.enhanced_media_editor import MediaTypeSelector
-            selector = MediaTypeSelector(self.root, dropped_file, self.get_current_scene())
+            from gui.media_type_selector import MediaTypeSelector
+            selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.get_current_scene())
             replace_media_audio, media_type = selector.show()
             if not media_type:
                 return  # 用户取消
@@ -4557,8 +4063,8 @@ class WorkflowGUI:
 
     def on_video_canvas_double_click(self, event):
         current_scene = self.get_current_scene()
-        from gui.enhanced_media_editor import MediaTypeSelector
-        selector = MediaTypeSelector(self.root, None, current_scene)
+        from gui.media_type_selector import MediaTypeSelector
+        selector = MediaTypeSelector(self.root, None, True, current_scene)
         replace_media_audio, media_type = selector.show()
         if not media_type:
             return  # 用户取消
@@ -4662,7 +4168,7 @@ class WorkflowGUI:
         image_last_path = get_file_path(scene, track+"_image_last")
 
         animate_mode = scene.get(track+"_animation", "")
-        if animate_mode not in config.ANIMATE_SOURCE or animate_mode.strip() == "":
+        if animate_mode not in config_prompt.ANIMATE_SOURCE or animate_mode.strip() == "":
             return
 
         wan_prompt = scene.get(track+"_prompt", "")
@@ -4730,189 +4236,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def promo_load_story_content(self):
-        """加载沉浸故事内容到文本框"""
-        try:
-            file_path = config.get_project_path(self.get_pid()) + "/short.json"
-
-            if os.path.exists(file_path):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                self.promo_story_json_widget.delete(1.0, tk.END)
-                self.promo_story_json_widget.insert(1.0, content)
-                print(f"✅ 已加载故事内容: {file_path}")
-            else:
-                self.promo_story_json_widget.delete(1.0, tk.END)
-                self.promo_story_json_widget.insert(1.0, "[]")  # 空的JSON数组
-                print(f"ℹ️ 未找到故事文件，已加载空JSON: {file_path}")
-        except Exception as e:
-            self.promo_story_json_widget.delete(1.0, tk.END)
-            self.promo_story_json_widget.insert(1.0, f"加载失败: {str(e)}")
-            print(f"❌ 加载故事内容失败: {str(e)}")
-
-
-    def promo_on_regenerate_dialog(self):
-        """重新生成沉浸故事对话JSON"""
-        # 在后台线程中重新生成
-        def regenerate_task():
-            try:
-                male_actor = self.promo_actor_male_number.get()
-                if male_actor == "0":
-                    male_actor = ""
-                else:
-                    male_actor = f"There are {self.promo_actor_male_number.get()} male-actors in the story conversation"
-
-                female_actor = self.promo_actor_female_number.get()
-                if female_actor == "0":
-                    female_actor = ""
-                else:
-                    female_actor = f"There are {self.promo_actor_female_number.get()} female-actors in the story conversation"
-
-                format_args = config_prompt.SHORT_STORY_PROMPT.get("format_args", {}).copy()  # 复制预设参数
-                format_args.update({  # 添加运行时变量
-                    "narrator": f"Narrator is {self.promo_actor_narrator.get()}",
-                    "actor_male": male_actor,
-                    "actor_female": female_actor,
-                    "language": self.shared_language.cget('text')
-                })
-                
-                # 使用合并后的参数格式化system_prompt
-                formatted_system_prompt = config_prompt.SHORT_STORY_PROMPT["system_prompt"].format(**format_args)
-                print("🤖 系统提示:")
-                print(formatted_system_prompt)
-
-                formatted_user_prompt = self.workflow.transcriber.fetch_text_from_json(config.get_project_path(self.get_pid()) + "/main.srt.json")
-                print("🤖 用户提示:")
-                print(formatted_user_prompt)
-
-                # 调用generate_immersive_story，使用用户输入的故事内容和格式化后的prompt
-                result = self.workflow.llm_api.generate_json_summary(
-                    system_prompt = formatted_system_prompt,
-                    user_prompt = formatted_user_prompt,
-                    output_path = config.get_project_path(self.get_pid()) + "/short.json"
-                )
-                    
-                if result:
-                    self.root.after(0, lambda: self.promo_load_story_content())
-                    self.root.after(0, lambda: messagebox.showinfo("成功", "重新生成完成！"))
-
-            except Exception as e:
-                error_msg = f"重新生成失败: {str(e)}"
-                self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-        
-        import threading
-        thread = threading.Thread(target=regenerate_task)
-        thread.daemon = True
-        thread.start()
-
-
-    def promo_on_generate_audio(self):
-        """生成沉浸故事音频"""
-        try:
-            # 保存当前编辑的内容
-            content = self.promo_story_json_widget.get(1.0, tk.END).strip()
-            if not content:
-                messagebox.showerror("错误", "沉浸故事内容不能为空")
-                return
-
-            # Use current project path or create temp path
-            story_path = config.get_project_path(self.get_pid()) + "/short.json"
-            audio_path = config.get_media_path(self.get_pid()) + "/short.wav"
-
-            with open(story_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-            # 验证JSON格式
-            try:
-                import json
-                json.loads(content)
-            except json.JSONDecodeError as e:
-                messagebox.showerror("错误", f"JSON格式错误: {str(e)}")
-                return
-            
-            # Log the audio generation task
-            self.log_to_output(self.promo_output, f"🎵 开始生成故事音频...")
-            self.log_to_output(self.promo_output, f"📁 故事文件: {story_path}")
-            self.log_to_output(self.promo_output, f"🎧 音频文件: {audio_path}")
-
-            # 在后台线程中生成音频
-            def generate_audio_task():
-                try:
-                    duration = float(self.promo_duration_entry.get().strip())
-                    result = self.workflow.create_story_audio(story_path, audio_path, duration)
-                    if result:
-                        self.root.after(0, lambda: messagebox.showinfo("成功", f"宣传故事音频生成完成！\n文件: {result}"))
-                    else:
-                        self.root.after(0, lambda: messagebox.showerror("错误", "音频生成失败"))
-                except Exception as e:
-                    error_msg = f"生成音频失败: {str(e)}"
-                    self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-            
-            import threading
-            thread = threading.Thread(target=generate_audio_task)
-            thread.daemon = True
-            thread.start()
-                
-        except Exception as e:
-            error_msg = f"生成音频失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            self.log_to_output(self.promo_output, f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
-
-    def promo_save_story_json_content(self):
-        """保存story_json_widget的内容到对应的文件"""
-        try:
-            # 获取JSON内容
-            json_content = self.promo_story_json_widget.get(1.0, tk.END).strip()
-            
-            if not json_content:
-                messagebox.showwarning("警告", "JSON内容为空，无法保存")
-                return
-            
-            # 验证JSON格式
-            try:
-                import json
-                json.loads(json_content)
-            except json.JSONDecodeError as e:
-                messagebox.showerror("错误", f"JSON格式错误: {str(e)}")
-                return
-            
-            # 构建文件路径
-            file_path = config.get_project_path(self.get_pid()) + "/short.json"
-            
-            # 确保目录存在
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            # 保存文件
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(json_content)
-            
-            print(f"✅ 已保存JSON内容到: {file_path}")
-            self.log_to_output(self.promo_output, f"✅ JSON内容已保存到: {os.path.basename(file_path)}")
-            messagebox.showinfo("成功", f"JSON内容已保存到:\n{os.path.basename(file_path)}")
-            
-        except Exception as e:
-            error_msg = f"保存JSON内容失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            self.log_to_output(self.promo_output, f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
-
-    def promo_undo_action(self, event=None):
-        """Perform undo operation on promo story editor"""
-        try:
-            self.promo_story_json_widget.edit_undo()
-        except tk.TclError:
-            pass  # No more undo operations available
-        return "break"  # Prevent default handling
-
-    def promo_redo_action(self, event=None):
-        """Perform redo operation on promo story editor"""
-        try:
-            self.promo_story_json_widget.edit_redo()
-        except tk.TclError:
-            pass  # No more redo operations available
-        return "break"  # Prevent default handling
-
 
     def update_scene_buttons_state(self):
         """更新场景插入按钮的状态"""
@@ -4929,9 +4252,6 @@ class WorkflowGUI:
             self.append_scene_button.config(state="normal")
         else:
             self.append_scene_button.config(state="disabled")
-
-
-
 
 
 

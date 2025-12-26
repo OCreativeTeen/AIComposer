@@ -89,9 +89,6 @@ class WanPromptEditorDialog:
         self.track = track
         self.generate_video_callback = generate_video_callback
         
-        # 获取或初始化 WAN 参数
-        self.extra_description = scene.get("extra", "")
-        
         # 创建对话框
         self.dialog = tk.Toplevel(parent.root if hasattr(parent, 'root') else parent)
         self.dialog.title("编辑 WAN 视频提示词")
@@ -201,7 +198,7 @@ class WanPromptEditorDialog:
         combo_frame.pack(fill=tk.X)
         
         self.animation_combo = ttk.Combobox(combo_frame,
-                                           values=[p["name"] for p in config.ANIMATION_PROMPTS],
+                                           values=[p["name"] for p in config_prompt.ANIMATION_PROMPTS],
                                            state="readonly",
                                            width=40)
         self.animation_combo.pack(side=tk.LEFT, padx=(0, 10))
@@ -258,7 +255,7 @@ class WanPromptEditorDialog:
     def _on_params_change(self, event):
         """WAN 参数改变时重新构建提示词"""
         # 构建额外描述
-        extra = self.extra_description
+        extra = ""
         
         # 添加 WAN 参数
         style = self.camear_style_var.get()
@@ -300,7 +297,7 @@ class WanPromptEditorDialog:
         """追加动画预设到提示词"""
         selection = self.animation_combo.current()
         if selection >= 0:
-            preset = config.ANIMATION_PROMPTS[selection]
+            preset = config_prompt.ANIMATION_PROMPTS[selection]
             current_text = self.prompt_text.get(1.0, tk.END).strip()
             
             # 追加动画提示词

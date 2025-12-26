@@ -1,18 +1,29 @@
 
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+from typing import Optional, List
 from collections import defaultdict
-import shutil
 import re
 import os
 import time
-from utility.ffmpeg_processor import FfmpegProcessor
 from utility.file_util import refresh_scene_media, safe_copy_overwrite, get_file_path, build_scene_media_prefix
-import config
-import requests
-import tkinter.messagebox as messagebox
+
+
+
+ANIMATE_TYPE_PATTERNS = [
+    (r"_I2V(_\d{8})?\.mp4$", "_I2V"),
+    (r"_2I2V(_\d{8})?\.mp4$", "_2I2V"),
+    (r"_WS2VL(_\d{8})?\.mp4$", "_WS2VL"),
+    (r"_WS2VR(_\d{8})?\.mp4$", "_WS2VR"),
+    (r"_S2V(_\d{8})?\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
+    (r"_INT(_\d{8})?\.mp4$", "_INT"),
+    (r"_ENH(_\d{8})?\.mp4$", "_ENH"),
+    (r"_FS2V(_\d{8})?\.mp4$", "_FS2V"),
+    (r"_AI2V(_\d{8})?\.mp4$", "_AI2V")
+]
+
+
+ANIMATE_WITH_AUDIO = ["_WS2VL", "_WS2VR", "_S2V", "_FS2V"]
 
 
 
@@ -24,7 +35,6 @@ class VideoFileInfo:
     video_type: str  # 'clip', 'second', 'zero'
     pid: str
     scenario_id: str
-    model: str
     video_mode: str
     side: Optional[str] = None  # 'L' or 'R' for WS2V
     timestamp: float = 0.0
@@ -90,16 +100,14 @@ class VideoPairManager:
 
 class MediaScanner:
 
-    ENHANCE_SERVERS = ["http://10.0.0.210:5000/process", "http://10.0.0.235:5000/process"]
-    current_enhance_server = 0
 
-
-    def __init__(self, ffmpeg_processor: FfmpegProcessor, stability_duration: int):
-        self.ffmpeg_processor = ffmpeg_processor
+    def __init__(self, workflow, stability_duration: int):
+        self.workflow = workflow
+        self.ffmpeg_processor = workflow.ffmpeg_processor
         self.stability_duration = stability_duration
 
 
-    def scanning(self, watch_path: str, gen_folder: str):
+    def scanning(self, watch_path: str, gen_folder: str, is_original:bool):
         pair_manager = VideoPairManager()
         mp4_files = sorted(Path(watch_path).glob("*.mp4"))
         if not mp4_files:
@@ -107,7 +115,7 @@ class MediaScanner:
             
         # Try to find a valid video to process
         for file_path in mp4_files:
-            video_info = self.parse_video_filename(file_path.name)
+            video_info = self.parse_video_filename(self.workflow.pid, file_path.name)
             if not video_info:
                 continue
             
@@ -118,18 +126,30 @@ class MediaScanner:
             video_info.file_path = str(file_path)
             
             # Handle WS2V pairing
-            if video_info.video_mode == "WS2V": # deprecated !!!!
-                pair_result = pair_manager.add_video(video_info)
-                if pair_result:
-                    # Found a complete pair
-                    left_video, right_video = pair_result
-                    print(f"Found WS2V pair: {left_video.filename} + {right_video.filename}")
-                    self._process_video_pair(left_video, right_video, gen_folder)
-            else:
-                # Single video mode - process immediately
-                print(f"Found video to process: {video_info.filename} (mode: {video_info.video_mode})")
-                self._process_single_video(video_info, gen_folder)
-        
+            #if video_info.video_mode == "WS2V": # deprecated !!!!
+            #    pair_result = pair_manager.add_video(video_info)
+            #    if pair_result:
+            #        # Found a complete pair
+            #        left_video, right_video = pair_result
+            #        print(f"Found WS2V pair: {left_video.filename} + {right_video.filename}")
+            #        self._process_video_pair(left_video, right_video, gen_folder)
+
+            # Single video mode - process immediately
+            print(f"Found video to process: {video_info.filename} (mode: {video_info.video_mode})")
+            # self._process_single_video(video_info, gen_folder)
+            copy_to = gen_folder + "/" + video_info.get_output_name()
+            safe_copy_overwrite(video_info.file_path, copy_to)
+            bak_path = str(Path(video_info.file_path).with_suffix('.bak.mp4'))
+            os.rename(video_info.file_path, bak_path)
+            print(f"Processing completed successfully: {video_info.filename}")
+
+            if is_original:
+                for scene in self.workflow.scenes:
+                    if scene["id"] == video_info.scenario_id:
+                        fps = self.ffmpeg_processor.get_video_fps(copy_to)
+                        scene[video_info.video_type + "_fps"] = fps
+                        break
+
         
     
     def _wait_for_file_stability(self, file_path: Path) -> bool:
@@ -180,141 +200,36 @@ class MediaScanner:
     
 
 
-    def parse_video_filename(self, filename: str) -> Optional[VideoFileInfo]:
-        f"""
-        Parse video filename to extract video type, project ID, scenario ID, and video mode
-        """
-        # L_WS2V pattern - handle different video types
-        l_ws2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_LWS2V__(.+?).*-audio(\.mp4)?$'
-        ]
-        for pattern in l_ws2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="L_WS2V"
-                )
+    def parse_video_filename(self, pid: str, filename: str) -> Optional[VideoFileInfo]:
+        # Skip backup files
+        if filename.endswith('.bak.mp4'):
+            return None
+        
+        # Unified pattern for I2V, 2I2V, INT, ENH - handle all video types
+        unified_pattern = r'^(clip|second|zero)_(.+)_([^_]+)_(I2V|2I2V|INT|ENH)_(.*?)\.mp4$'
+        match = re.match(unified_pattern, filename)
+        if match and match.group(2) == pid:
+            return VideoFileInfo(
+                file_path="",
+                filename=filename,
+                video_type=match.group(1),
+                pid=pid,
+                scenario_id=match.group(3),
+                video_mode=match.group(4)
+            )
 
-        # R_WS2V pattern - handle different video types
-        r_ws2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_RWS2V__(.+?).*-audio(\.mp4)?$'
-        ]
-        for pattern in r_ws2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="R_WS2V"
-                )
-        
-        # I2V pattern - handle different video types
-        i2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_I2V__(.+?).*\.mp4$',
-            r'^(second)_(.+)_([^_]+)_I2V__(.+?).*\.mp4$',
-            r'^(zero)_(.+)_([^_]+)_I2V__(.+?).*\.mp4$'
-        ]
-        for pattern in i2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="I2V"
-                )
-        
-        # 2I2V pattern - handle different video types
-        i2v2_patterns = [
-            r'^(clip)_(.+)_([^_]+)_2I2V__(.+?).*\.mp4$',
-            r'^(second)_(.+)_([^_]+)_2I2V__(.+?).*\.mp4$',
-            r'^(zero)_(.+)_([^_]+)_2I2V__(.+?).*\.mp4$'
-        ]
-        for pattern in i2v2_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="2I2V"
-                )
-        
-        # S2V pattern - handle different video types
-        s2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_S2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_S2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_S2V__(.+?).*-audio(\.mp4)?$'
-        ]
-        for pattern in s2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="S2V"
-                )
-        
-        # FS2V pattern - handle different video types
-        fs2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_FS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_FS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_FS2V__(.+?).*-audio(\.mp4)?$'
-        ]
-        for pattern in fs2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="FS2V"
-                )
-
-        ps2v_patterns = [
-            r'^(clip)_(.+)_([^_]+)_PS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(second)_(.+)_([^_]+)_PS2V__(.+?).*-audio(\.mp4)?$',
-            r'^(zero)_(.+)_([^_]+)_PS2V__(.+?).*-audio(\.mp4)?$'
-        ]
-        for pattern in ps2v_patterns:
-            match = re.match(pattern, filename)
-            if match:
-                return VideoFileInfo(
-                    file_path="",
-                    filename=filename,
-                    video_type=match.group(1),
-                    pid=match.group(2),
-                    scenario_id=match.group(3),
-                    model=match.group(4),
-                    video_mode="PS2V"
-                )
+        # Unified pattern for WS2VL, WS2VR, S2V, FS2V, PS2V - handle all video types
+        unified_pattern = r'^(clip|second|zero)_(.+)_([^_]+)_(WS2VL|WS2VR|S2V|FS2V|PS2V)_(.*?).*-audio(\.mp4)?$'
+        match = re.match(unified_pattern, filename)
+        if match and match.group(2) == pid:
+            return VideoFileInfo(
+                file_path="",
+                filename=filename,
+                video_type=match.group(1),
+                pid=pid,
+                scenario_id=match.group(3),
+                video_mode=match.group(4)
+            )
 
         return None
     
@@ -341,15 +256,6 @@ class MediaScanner:
 
 
 
-    def _process_single_video(self, video_info: VideoFileInfo, gen_folder: str):
-        safe_copy_overwrite(video_info.file_path, gen_folder + "/" + video_info.get_output_name())
-        # Rename file with .bak.mp4 extension (replace .mp4 with .bak.mp4)
-        bak_path = str(Path(video_info.file_path).with_suffix('.bak.mp4'))
-        os.rename(video_info.file_path, bak_path)
-        print(f"Processing completed successfully: {video_info.filename}")
-
-
-
     def check_gen_video(self, gen_mp4_folder, animate_gen_list):
         # 定义文件类型模式列表，匹配格式: base_name + type_suffix + _timestamp.mp4
         # timestamp格式为 %d%H%M%S (8位数字: 日期+小时+分钟+秒)
@@ -358,23 +264,22 @@ class MediaScanner:
             for base_name, av_type, scene in animate_gen_list:
                 if file.startswith(base_name):
                     # 检查是否匹配任何一个类型模式
-                    for pattern, type_suffix in config.ANIMATE_TYPE_PATTERNS:
+                    for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
                         if re.search(pattern, file):
                             self.take_gen_video(gen_mp4_folder + "/" + file, av_type, type_suffix, scene)
-
 
 
 
     def take_gen_video(self, gen_video, av_type, type_suffix, scene):
         gen_video_stem = Path(gen_video).stem
         folder_path = str(Path(gen_video).parent)
-        new_video_has_no_audio = not any(item in gen_video_stem for item in config.ANIMATE_WITH_AUDIO)
+        new_video_has_no_audio = not any(item in gen_video_stem for item in ANIMATE_WITH_AUDIO)
 
         if not os.path.exists(gen_video):
             print(f"⚠️ 文件已经处理过，跳过: {gen_video}")
             return
 
-        original_gen_video = folder_path + "/" + gen_video_stem + "_bak.mp4"
+        original_gen_video = folder_path + "/" + gen_video_stem + "_processed.mp4"
         os.replace(gen_video, original_gen_video)
 
         gen_video = self.ffmpeg_processor.resize_video(original_gen_video, width=None, height=self.ffmpeg_processor.height)
@@ -386,80 +291,14 @@ class MediaScanner:
         #    audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
         #    olda, audio = refresh_scene_media(scene, av_type + "_audio", ".wav", audio)
 
-        if "_LWS2V" == type_suffix:
+        if "_WS2VL" == type_suffix:
             #scene[av_type+"_left_input"] = original_gen_video
             refresh_scene_media(scene, av_type+"_left", ".mp4", gen_video, True)
-        elif "_RWS2V" == type_suffix:
+        elif "_WS2VR" == type_suffix:
             #scene[av_type+"_right_input"] = original_gen_video
             refresh_scene_media(scene, av_type+"_right", ".mp4", gen_video, True)
         else:
             #scene[av_type+"_input"] = original_gen_video
             oldv, gen_video = refresh_scene_media(scene, av_type, ".mp4", gen_video, True)
-
-
-
-    def enhance_clip(self, pid, scene, av_type, level:str):
-        animate_mode = scene.get(av_type + "_animation", "")
-        if animate_mode.strip() == "":
-            return
-
-        processed = False    
-        if animate_mode in config.ANIMATE_WS2V:
-            left_input = get_file_path(scene, av_type + "_left")
-            right_input = get_file_path(scene, av_type + "_right")
-            if left_input and right_input:
-                result = messagebox.askyesno("警告", f"⚠️ 增强处理{av_type}左右视频：\n是: 继续\n否: 撤消")
-                if result is True:
-                    enhance_left_input = build_scene_media_prefix(pid, scene["id"], av_type, "LWS2V", True)
-                    enhance_left_input = config.get_temp_file(self.pid, "mp4", enhance_left_input + "_" + level + "_")
-                    safe_copy_overwrite(left_input, enhance_left_input)
-                    self._enhance_single_video(enhance_left_input)
-
-                    enhance_right_input = build_scene_media_prefix(pid, scene["id"], av_type, "RWS2V", True)
-                    enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
-                    safe_copy_overwrite(right_input, enhance_right_input)
-                    self._enhance_single_video(enhance_right_input)
-
-                    processed = True
-        else:
-            input = get_file_path(scene, av_type)
-            if input:
-                result = messagebox.askyesno("警告", f"⚠️ 增强处理{av_type}视频：\n是: 继续\n否: 撤消")
-                if result is True:
-                    enhance_input = build_scene_media_prefix(pid, scene["id"], av_type, animate_mode, True)
-                    enhance_input = config.get_temp_file(pid, "mp4", enhance_input+"_"+level+"_")
-                    safe_copy_overwrite(input, enhance_input)
-                    self._enhance_single_video(enhance_input)
-
-                    processed = True
-
-        if not processed:
-            messagebox.showerror("视频增强失败", f"视频尺寸不正确，无法增强:\n{input}")
- 
-
-    def _enhance_single_video(self, video_path):
-        """调用 REST API 增强单个视频"""
-        self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
-
-        try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
-            url = self.ENHANCE_SERVERS[self.current_enhance_server]
-            with open(video_path, 'rb') as video_file:
-                files = {'video': video_file}
-                
-                print(f"🚀 正在调用视频增强API: {url}")
-                response = requests.post(url, files=files, timeout=300)
-                
-                if response.status_code >= 200 and response.status_code < 300:
-                    print("✅ 单视频增强成功")
-                    print(f"📄 响应: {response.text}")
-                else:
-                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
-                    print(f"📄 错误信息: {response.text}")
-                    
-        except requests.exceptions.RequestException as e:
-            print(f"❌ REST API 调用失败: {str(e)}")
-        except Exception as e:
-            print(f"❌ 增强单视频时出错: {str(e)}")
-
 
 

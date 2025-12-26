@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 from mpmath import rational
-from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_2, FONT_4, FONT_6, FONT_7, FONT_8
+from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
 import config
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.file_util import safe_copy_overwrite
@@ -45,7 +45,7 @@ class FfmpegProcessor:
             
         self.language = language
         if language == "tw":
-            self.font_video = FONT_2
+            self.font_video = FONT_7
             self.font_size = 16
             self.font_title = FONT_8
         else:
@@ -282,14 +282,14 @@ class FfmpegProcessor:
 
 
 
-    def refps_video(self, video_path, fps):
+    def refps_video(self, video_path:str, fps:int) -> str:
         try:
             output_path = config.get_temp_file(self.pid, "mp4")
 
             cmd = [
                 self.ffmpeg_path,
                 "-i", video_path,
-                "-vf", "fps="+fps,
+                "-vf", "fps="+str(fps),
                 "-c:v", "libx264",
                 "-crf", "18",
                 "-preset", "medium",
@@ -830,6 +830,37 @@ class FfmpegProcessor:
         except Exception as e:
             print(f"音频检测异常 - 文件: {video_path}, 错误: {e}")
             return False
+
+
+    def get_video_fps(self, video_path: str) -> int:
+        """Get the FPS of a video"""
+        try:
+            result = self.run_ffmpeg_command([
+                self.ffprobe_path,
+                "-v", "quiet",
+                "-select_streams", "v",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_path
+            ])
+
+            fps_str = result.stdout.strip()
+            
+            # Handle fractional FPS like "30000/1001"  
+            # '24/1\n90000/1'
+            if '\n' in fps_str:
+                fps_str = fps_str.split('\n')[0]
+            if '/' in fps_str:
+                numerator, denominator = fps_str.split('/')
+                fps = float(numerator) / float(denominator)
+            else:
+                fps = float(fps_str)
+            
+            return int(round(fps))
+        except Exception as e:
+            print(f"Error getting video FPS: {e}")
+            return None
+
 
     # to fade the video with fade_in_length and fade_out_length, without aLpha channel
     def fade_video(self, video_path, fade_in_length, fade_out_length):

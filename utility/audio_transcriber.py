@@ -215,7 +215,7 @@ class AudioTranscriber:
                 "end": float(segment["end"]),
                 "duration": float(segment["end"]) - float(segment["start"]),
                 "speaker": "SPEAKER_00",
-                "content": segment["content"]
+                "caption": segment["content"]
             })
 
         return output
