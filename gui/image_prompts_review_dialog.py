@@ -93,7 +93,7 @@ NEGATIVE_PROMPT_OPTIONS = [
 class ImagePromptsReviewDialog:
     """提示词审查对话框 - 用于在创建图像前预览和编辑提示词"""
     
-    def __init__(self, parent, workflow, create_image_callback, scene, track, start:bool, language:str):
+    def __init__(self, parent, workflow, create_image_callback, scene, track, language:str):
         """
         初始化提示词审查对话框
         
@@ -108,7 +108,6 @@ class ImagePromptsReviewDialog:
         self.workflow = workflow
         self.scene = scene
         self.track = track
-        self.start = start
         self.language = language
         self.create_image_callback = create_image_callback
         
@@ -235,18 +234,11 @@ class ImagePromptsReviewDialog:
 
     def _on_style_change(self, event):
         """图像样式改变时的处理"""
-        extra = ""
-
         selected = self.positive_preset_combo.get()
-        if selected:
-            extra = self.image_style_var.get()+ "; " + extra
-
         new_style = self.image_style_var.get()
-        if new_style:
-            extra = "(Image-style:"+new_style+ ")  :  " + extra
 
         # 重新构建正面提示词
-        new_positive = self.workflow.build_prompt(self.scene, new_style, extra, self.track, "IMAGE_GENERATION", self.start, self.language)
+        new_positive = self.workflow.build_prompt(self.scene, new_style, selected, self.track, "IMAGE_GENERATION", self.language)
         
         # 更新文本框（如果是字典，转换为字符串显示）
         self.positive_text.delete(1.0, tk.END)

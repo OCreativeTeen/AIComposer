@@ -140,8 +140,8 @@ You are a professional expert who is good at analyzing & describing the image (a
 Please give details (Visual-Summary / camera-scene, and sound-effects) as below (FYI, don't use doubel-quotes & newlines in the values at all !):
 
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-        ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
+        ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
+		** person_action (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
@@ -155,8 +155,8 @@ like:
 
     {{
         "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
-        "visual_start": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
-        "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
+        "visual_image": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
+        "person_action": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
         "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
         "environment": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
         "sound_effect": "crickets-chirping, gentle breeze through vines",
@@ -293,8 +293,8 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 	    ** duration (take from the duration field of each given Scene, make sure the duration is float number, not string)
         ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-        ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
+        ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
+		** person_action (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
         ** speaker_action (If the content is from a narrator, describe his/har (mood/reaction/emotion/body language)  ~~~ in English)
 		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
@@ -315,8 +315,8 @@ like:
         "duration": 23.50,
         "content": "我们先聚焦故事本身：主角是所罗门王和一个叫书拉密女的乡下姑娘。这个女孩儿可惨了，被兄弟们差遣去看守葡萄园。烈日底下曝晒，皮肤晒得黢黑, 这把她的青春和美貌，几乎耗尽。 她甚至自卑地说到：“不要因为我黑，就轻看我”。",
         "subject": "一位身穿粗麻布衣的年轻女子因劳作而弯腰，双手沾满了泥土。A young woman in coarse linen bends under the weight of her labor, her hands stained by soil.",
-        "visual_start": "故事以一位年轻的乡村女子和所罗门王为中心展开，将王室的奢华与卑微的劳作形成鲜明对比。她晒伤的皮肤和疲惫的身躯反映了阶级不平等和因外貌而被评判的痛苦，也流露出对尊严和爱的渴望。",
-        "visual_end": "她停下脚步，用手遮住眼睛不让阳光照射，默默忍受着哥哥们苛刻的要求。",
+        "visual_image": "故事以一位年轻的乡村女子和所罗门王为中心展开，将王室的奢华与卑微的劳作形成鲜明对比。她晒伤的皮肤和疲惫的身躯反映了阶级不平等和因外貌而被评判的痛苦，也流露出对尊严和爱的渴望。",
+        "person_action": "她停下脚步，用手遮住眼睛不让阳光照射，默默忍受着哥哥们苛刻的要求。",
         "speaker_action": "The speaker's tone is gentle yet heavy with empathy, as if retelling a painful memory. The body leans slightly forward, brows knitted, hands loosely clasped as the words linger with compassion and sorrow.",
         "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
         "environment": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
@@ -331,8 +331,8 @@ like:
         "duration": 10.00,
         "content": "这里面的身份对比,就已经很有戏剧张力了。一个卑微到尘埃里的乡下丫头，怎么会遇上所罗门王呢？",
         "subject": "一位身穿简单衣物的年轻女子，她的简单衣物在温暖的微风中飘动。",
-        "visual_start": "一位年轻的乡村女子和所罗门王之间形成了鲜明的社会地位对比。卑微的农妇和尊贵的国王分别代表了社会地位的两个极端，为一场超越常规和命运的爱情故事奠定了场景。",
-        "visual_end": "她缓缓地走在一条尘土飞扬的小路上，她的简单衣物在温暖的微风中飘动。",
+        "visual_image": "一位年轻的乡村女子和所罗门王之间形成了鲜明的社会地位对比。卑微的农妇和尊贵的国王分别代表了社会地位的两个极端，为一场超越常规和命运的爱情故事奠定了场景。",
+        "person_action": "她缓缓地走在一条尘土飞扬的小路上，她的简单衣物在温暖的微风中飘动。",
         "speaker_action": "The speaker's mood is contemplative yet curious, eyes slightly widened in wonder, a soft half-smile suggesting anticipation as fingers tap lightly on the table, reflecting on fate’s irony.",
         "era_time": "1000 BC, ancient time; early evening; calm, golden dusk",
         "environment": "Dusty path outside Jerusalem; a narrow trail leading from vineyards toward the city walls where shepherds pass and distant bells echo softly.",
@@ -347,8 +347,8 @@ like:
         "duration": 23.11,
         "content": "没错。更心碎的是，他们相爱不久，男人就突然离开了，只留下一句“我会回来娶你”。留下的日子, 她日夜焦虑不安, 甚至开始做噩梦！梦见情郎来了，她却全身动弹不得，等她能动，情郎早已经转身走了。那种患得患失的爱，太揪心了！",
         "subject": "一位年轻的女子躺在简陋的麦秸床上，泪水沾湿了她的脸颊。",
-        "visual_start": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
-        "visual_end": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
+        "visual_image": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
+        "person_action": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
         "speaker_action": "The speaker's tone trembles between sorrow and intensity, the eyes glisten, breath slows before each line, shoulders slightly trembling as if reliving the anguish of separation.",
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "environment": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
@@ -375,8 +375,8 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 
         ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
 		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-        ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** visual_end (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
+        ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
+		** person_action (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
         ** speaker_action (If the content is from a narrator, describe his/har (mood/reaction/emotion/body language)  ~~~ in English)
 		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
@@ -394,8 +394,8 @@ like:
     {{
         "content": "没错。更心碎的是，他们相爱不久，男人就突然离开了，只留下一句“我会回来娶你”。留下的日子, 她日夜焦虑不安, 甚至开始做噩梦！梦见情郎来了，她却全身动弹不得，等她能动，情郎早已经转身走了。那种患得患失的爱，太揪心了！",
         "subject": "一位年轻的女子躺在简陋的麦秸床上，泪水沾湿了她的脸颊。",
-        "visual_start": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
-        "visual_end": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
+        "visual_image": "一位年轻的女子和她的爱人之间的爱情故事在短暂的甜蜜后突然破裂。男子突然离开，留下一句承诺，女子陷入无尽的等待和噩梦。她的无助和恐惧在梦中显现，现实中的爱情甜蜜与痛苦交织。",
+        "person_action": "她看到爱人的身影在雾中渐渐消失，她的双手颤抖着试图抓住他，但只能眼睁睁地看着他离去。",
         "speaker_action": "The speaker's tone trembles between sorrow and intensity, the eyes glisten, breath slows before each line, shoulders slightly trembling as if reliving the anguish of separation.",
         "era_time": "1000 BC, ancient time; moonlit night; cool breeze under clear sky",
         "environment": "Small stone cottage near the vineyard hills; moonlight spills through the narrow window, casting silver light over clay walls and woven mats.",
@@ -471,8 +471,8 @@ Based on the raw-story-outline provided in the user prompt, write a '{story_styl
     ** speaker_action (If the content is from a narrator, describe his/har (reaction/emotion/body language)  ~~~ in English)
     ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
     ** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-    ** visual_start (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-    ** visual_end (detailed description of the characters' actions (reactions/interactions), and visual expression ~~~ in original language)
+    ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
+    ** person_action (detailed description of the characters' actions (reactions/interactions), and visual expression ~~~ in original language)
     ** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
     ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
     ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
@@ -491,8 +491,8 @@ STORY_OUTPUT_EXAMPLE = """
         "speaker_action": "Narrator speaks with solemn gravity.",
         "content": "故事始于一个灵气枯竭的时代。白素贞，一条修行千年的白蛇，本是天界医仙转世。她在雷劫中试图强行飞升，却因不忍见山下村民遭难，耗尽灵力救人，最终渡劫失败，坠落凡尘。",
         "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
-        "visual_start": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
-        "visual_end": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
+        "visual_image": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
+        "person_action": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
         "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
         "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
         "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
@@ -508,8 +508,8 @@ STORY_OUTPUT_EXAMPLE = """
         "speaker_action": "actress (Bai) walking in the bridge of west lake.",
         "content": "白素贞化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许仙。两人目光交汇，许仙那清澈的眼神唤醒了白素贞前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
         "subject": "白素贞：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
-        "visual_start": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
-        "visual_end": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
+        "visual_image": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
+        "person_action": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
         "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
         "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
         "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
@@ -525,8 +525,8 @@ STORY_OUTPUT_EXAMPLE = """
         "speaker_action": "actor (Xu) scared by the huge white snake.",
         "content": "大水漫灌，许仙命悬一线。白素贞不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许仙看着面前的庞然大物，惊恐地问：‘你……是谁？’",
         "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
-        "visual_start": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
-        "visual_end": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
+        "visual_image": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
+        "person_action": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
         "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
         "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
         "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",

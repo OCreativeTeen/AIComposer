@@ -526,13 +526,13 @@ class SDProcessor:
         self.infinite_vidoe_count += 1
 
 
-    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, is_w, silence=False) :
+    def sound_to_video(self, prompt, file_prefix, image_path, sound_path, next_sound_path, animate_mode, silence=False) :
         # 如果 prompt 是字典，转换为 JSON 字符串
         if isinstance(prompt, dict):
             import json
             prompt = json.dumps(prompt, ensure_ascii=False)
 
-        server_config = GEN_CONFIG["WS2V" if is_w else "S2V"]
+        server_config = GEN_CONFIG[animate_mode]
 
         if not silence:
             fps = server_config["frame_rate"]
@@ -540,10 +540,10 @@ class SDProcessor:
             duration = self.workflow.ffmpeg_audio_processor.get_duration(sound_path)
 
             if next_sound_path:
-                batch_sec = (max_frames-1.0)/fps
+                batch_sec = (max_frames-3.0)/fps
                 batches = int(duration/batch_sec)
                 remind_sec = duration - batches*batch_sec
-                add_sec = batch_sec - remind_sec - 0.06
+                add_sec = batch_sec - remind_sec - 0.15
                 if add_sec > 0.0:
                     next_sound_path = self.workflow.ffmpeg_audio_processor.audio_cut_fade(next_sound_path, 0, add_sec)
                     sound_path = self.workflow.ffmpeg_audio_processor.concat_audios([sound_path, next_sound_path])
@@ -635,11 +635,11 @@ class SDProcessor:
 
 
 
-    ENHANCE_SERVERS = ["http://10.0.0.210:5000/process"]
-    current_enhance_server = 0
-
     def enhance_clip(self, pid, scene, av_type, level:str, fps_enhace:bool):
         fps = scene.get(av_type + "_fps", "15")
+        if fps > 24:
+            fps = 15
+
         animate_mode = scene.get(av_type + "_animation", "")
 
         if animate_mode in config_prompt.ANIMATE_WS2V:
@@ -653,8 +653,10 @@ class SDProcessor:
                 safe_copy_overwrite(left_input, enhance_left_input)
                 if fps_enhace:
                     self._interpolate_video(enhance_left_input)
+                    scene[av_type + "_status"] = "IN1"
                 else:
                     self._enhance_video(enhance_left_input)
+                    scene[av_type + "_status"] = "EN1"
 
                 enhance_right_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
                 enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
@@ -678,10 +680,8 @@ class SDProcessor:
  
     def _enhance_video(self, video_path):
         """调用 REST API 增强单个视频"""
-        self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
-
         try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
-            url = self.ENHANCE_SERVERS[self.current_enhance_server]
+            url = "http://10.0.0.235:5000/enhance"
             with open(video_path, 'rb') as video_file:
                 files = {'video': video_file}
                 
@@ -701,7 +701,32 @@ class SDProcessor:
             print(f"❌ 增强单视频时出错: {str(e)}")
 
 
+
     def _interpolate_video(self, video_path) :
+        """调用 REST API 增强单个视频"""
+        try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
+            url = "http://10.0.0.210:5000/interpolate"
+            with open(video_path, 'rb') as video_file:
+                files = {'video': video_file}
+                
+                print(f"🚀 正在调用视频增强API: {url}")
+                response = requests.post(url, files=files, timeout=300)
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    print("✅ 单视频增强成功")
+                    print(f"📄 响应: {response.text}")
+                else:
+                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
+                    print(f"📄 错误信息: {response.text}")
+                    
+        except requests.exceptions.RequestException as e:
+            print(f"❌ REST API 调用失败: {str(e)}")
+        except Exception as e:
+            print(f"❌ 增强单视频时出错: {str(e)}")
+
+
+
+    def _interpolate_video_2(self, video_path) :
         server_config = GEN_CONFIG["INTP"]
             
         data = {

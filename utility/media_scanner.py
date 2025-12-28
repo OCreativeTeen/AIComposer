@@ -107,7 +107,7 @@ class MediaScanner:
         self.stability_duration = stability_duration
 
 
-    def scanning(self, watch_path: str, gen_folder: str, is_original:bool):
+    def scanning(self, watch_path: str, gen_folder: str):
         pair_manager = VideoPairManager()
         mp4_files = sorted(Path(watch_path).glob("*.mp4"))
         if not mp4_files:
@@ -140,15 +140,22 @@ class MediaScanner:
             copy_to = gen_folder + "/" + video_info.get_output_name()
             safe_copy_overwrite(video_info.file_path, copy_to)
             bak_path = str(Path(video_info.file_path).with_suffix('.bak.mp4'))
-            os.rename(video_info.file_path, bak_path)
+            os.replace(video_info.file_path, bak_path)
             print(f"Processing completed successfully: {video_info.filename}")
 
-            if is_original:
-                for scene in self.workflow.scenes:
-                    if scene["id"] == video_info.scenario_id:
+            for scene in self.workflow.scenes:
+                if scene["id"] == video_info.scenario_id:
+                    if "_ENH" in copy_to:
+                        status = "EN2"
+                    elif "_INT" in copy_to:
+                        status = "IN2"
+                    else:
+                        status = "ORI"
+                    scene[video_info.video_type + "_status"] = status
+                    if status=="ORI":
                         fps = self.ffmpeg_processor.get_video_fps(copy_to)
                         scene[video_info.video_type + "_fps"] = fps
-                        break
+                    break
 
         
     
@@ -245,8 +252,8 @@ class MediaScanner:
         # Rename files with .bak.mp4 extension (replace .mp4 with .bak.mp4)
         left_bak_path = str(Path(left_video.file_path).with_suffix('.bak.mp4'))
         right_bak_path = str(Path(right_video.file_path).with_suffix('.bak.mp4'))
-        os.rename(left_video.file_path, left_bak_path)
-        os.rename(right_video.file_path, right_bak_path)
+        os.replace(left_video.file_path, left_bak_path)
+        os.replace(right_video.file_path, right_bak_path)
 
         print(f"Pair processing completed : {left_video.get_pair_key()}")
 

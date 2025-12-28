@@ -219,7 +219,7 @@ class MagicWorkflow:
                 safe_remove(file)
 
 
-    def build_prompt(self, scene_data, style, extra, track, av_type, start, language):
+    def build_prompt(self, scene_data, style, extra, track, av_type, language):
         prompt_dict = {}
 
         # 提取当前场景的关键信息
@@ -227,26 +227,25 @@ class MagicWorkflow:
         speaker_position = scene_data.get("speaker_position", "")
         person_mood = scene_data.get("mood", "calm")
 
-        if ("clip" in track or "zero" in track) and "IMAGE" in av_type:
-            if style:
-                prompt_dict["IMAGE_STYLE"] = style
-
-        if "second" in track or "zero" in track:
+        if "second" in track:
             if "content" in scene_data:
                 content = scene_data['content']
                 if speaker:
                     if speaker_position and speaker_position == "left":
-                        prompt_dict["SPEAKING"] = f"the person on left-side is in {person_mood} mood to say ({content}),  while acting like ({scene_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the left-side person says: ({content}),  while acting like ({scene_data['speaker_action']})"
                         if av_type == "WS2V":
-                            prompt_dict["LISTENING"] = f"the person on right-side is listening this content : {content}, while engaging with lots of reactions, expressions, and hand movements."
+                            prompt_dict["LISTENING"] = f"the right-side person is listening, while engaging face &  hands reactions."
                     elif speaker_position and speaker_position == "right":
-                        prompt_dict["SPEAKING"] = f"the person on right-side is in {person_mood} mood to say ({content}),  while acting like ({scene_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the right-side person says: ({content}),  while acting like ({scene_data['speaker_action']})"
                         if av_type == "WS2V":
-                            prompt_dict["LISTENING"] = f"the person on left-side is listening this content : ({content}), while engaging with lots of reactions, expressions, and hand movements."
+                            prompt_dict["LISTENING"] = f"the left-side person is listening, while engaging face & hands reactions."
                     else:
-                        prompt_dict["SPEAKING"] = f"the person is in {person_mood} mood to say ({content}),  while acting like ({scene_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the person say: ({content}),  while acting like ({scene_data['speaker_action']})"
                 else:
                     prompt_dict["SPEAKING"] = content
+
+                if person_mood and person_mood != "":
+                    prompt_dict["SPEAKING"] = prompt_dict["SPEAKING"] + "\nIn " + person_mood + " mood."
 
         if "clip" in track or "zero" in track:
             person_lower = scene_data['subject'].lower()
@@ -258,28 +257,32 @@ class MagicWorkflow:
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["PERSON"] = ""
-                    if av_type in config_prompt.ANIMATE_S2V:
-                        prompt_dict["PERSON"] = prompt_dict["PERSON"]+"Singing or talking with body/hand movements.\n"
+                    prompt_dict["subject"] = ""
                     if person_mood and person_mood != "":
-                        prompt_dict["PERSON"] = prompt_dict["PERSON"]+f"The person is in {person_mood} mood.\n"
+                        prompt_dict["subject"] = prompt_dict["subject"]+f"The person is in {person_mood} mood.\n"
+                    if av_type in config_prompt.ANIMATE_S2V:
+                        prompt_dict["subject"] = prompt_dict["subject"]+"Singing or talking with body/hand movements.\n"
 
-        if language == "en":
-            prompt_dict["subject"] = self.transcriber.translate_text(scene_data['subject'], self.language, "en")
-        else:
-            prompt_dict["subject"] = scene_data['subject']
+                    #if language == "en":
+                    #    prompt_dict["subject"] = self.transcriber.translate_text(scene_data['subject'], self.language, "en")
+                    #else:
+                    prompt_dict["subject"] = prompt_dict["subject"] + "\n" + scene_data['subject']
 
-        if language == "en":
-            visual_start = self.transcriber.translate_text(scene_data['visual_start'], self.language, "en")
-            visual_end = self.transcriber.translate_text(scene_data['visual_end'], self.language, "en")
-        else:
-            visual_start = scene_data['visual_start']
-            visual_end = scene_data['visual_end']
 
-        if start:
-            prompt_dict["VISUAL"] = visual_start
-        else:
-            prompt_dict["VISUAL"] = visual_end + "\n this image is following with the image like: " + visual_start
+        prompt_dict["VISUAL"] = ""
+        if style and style.strip() != "":
+            prompt_dict["VISUAL"] = "The Image style is like :" + style
+
+        #if language == "en":
+        #    visual_image = self.transcriber.translate_text(scene_data['visual_image'], self.language, "en")
+        #    person_action = self.transcriber.translate_text(scene_data['person_action'], self.language, "en")
+        #else:
+        if av_type == "IMAGE_GENERATION":
+            visual_image = scene_data['visual_image']
+            prompt_dict["VISUAL"] = prompt_dict["VISUAL"] + "\n" + visual_image
+        else: # VIDEO_GENERATION
+            person_action = scene_data['person_action']
+            prompt_dict["VISUAL"] = prompt_dict["VISUAL"] + "\n" + person_action
 
         if "era_time" in scene_data:
             prompt_dict["ERA_TIME"] = scene_data['era_time']
@@ -529,7 +532,7 @@ class MagicWorkflow:
 
 
 
-    def split_smart_scene(self, current_scene, section_duration):
+    def split_smart_scene(self, current_scene, sections):
         """将场景按照指定时长分割成多个部分"""
         # 找到当前场景的索引
         current_index = None
@@ -538,23 +541,8 @@ class MagicWorkflow:
                 current_index = i
                 break
         
-        if current_index is None:
-            return False
-        
         original_duration = self.find_clip_duration(current_scene)
-        if original_duration <= 0:
-            return False
         
-        # 计算需要分割成几个部分
-        sections = int(original_duration / section_duration)
-        if original_duration / section_duration > sections:
-            sections += 1
-        
-        # 如果只需要一个部分，不需要分割
-        if sections <= 1:
-            return False
-        
-        original_content = current_scene.get("content", "")
         original_audio_clip = get_file_path(current_scene, "clip_audio")
         original_video_clip = get_file_path(current_scene, "clip")
         
@@ -568,15 +556,8 @@ class MagicWorkflow:
         # 创建所有新场景的列表
         new_scenes = []
         start_time = 0.0
-        
+        part_duration = original_duration / sections
         for i in range(sections):
-            # 计算当前部分的时长
-            if i == sections - 1:
-                # 最后一个部分的时长是 original_duration - start_time
-                part_duration = original_duration - start_time
-            else:
-                part_duration = section_duration
-            
             # 创建新场景
             if i == 0:
                 # 第一个场景使用原场景
@@ -599,7 +580,6 @@ class MagicWorkflow:
                 refresh_scene_media(new_scene, "clip", ".mp4", trimmed_video)
             
             # 更新场景ID和内容
-            new_scene["content"] = original_content
             new_scene["id"] = max_section_id + i + 1
             
             new_scenes.append(new_scene)
@@ -1268,7 +1248,7 @@ class MagicWorkflow:
         
         while i < len(self.scenes):
             current_scene = self.scenes[i]
-            current_story = current_scene.get("visual_start", "")
+            current_story = current_scene.get("visual_image", "")
             
             # Find all consecutive scenes with the same story content
             start_index = i
@@ -1279,7 +1259,7 @@ class MagicWorkflow:
             base_seconds += scene_duration
             # Look ahead to find consecutive scenes with same story
             while (end_index + 1 < len(self.scenes) and 
-                   self.scenes[end_index + 1].get("visual_start", "") == current_story and
+                   self.scenes[end_index + 1].get("visual_image", "") == current_story and
                    current_story.strip() != ""):  # Only combine non-empty content
                 end_index += 1
                 current_scene = self.scenes[end_index]
@@ -1390,7 +1370,7 @@ class MagicWorkflow:
 
         elif animate_mode in config_prompt.ANIMATE_S2V:
             file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "S2V", False)
-            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, next_sound_path=next_sound_path, is_w=False, silence=False)
+            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, next_sound_path=next_sound_path, animate_mode=animate_mode, silence=False)
 
         elif animate_mode in config_prompt.ANIMATE_AI2V:
             if not action_path:
@@ -1419,13 +1399,13 @@ class MagicWorkflow:
             if speaker_position == "left":
                 left_prompt.pop("LISTENING", None)
                 right_prompt.pop("SPEAKING", None)
-                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, is_w=True, silence=False)
-                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, is_w=True, silence=True)
+                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
+                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
             elif speaker_position == "right":
                 left_prompt.pop("SPEAKING", None)
                 right_prompt.pop("LISTENING", None)
-                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, is_w=True, silence=True)
-                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, is_w=True, silence=False)
+                self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
+                self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
     def replace_scene_audio(self, scene, audio_path, audio_start_time, audio_duration):
@@ -1606,7 +1586,7 @@ class MagicWorkflow:
             }
             audio_scene.update(update_fields)
 
-            self.refresh_scene_visual(audio_scene)
+            # self.refresh_scene_visual(audio_scene)
 
             clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, start_time, audio_scene["duration"])
             olda, clip_audio = refresh_scene_media(audio_scene, "clip_audio", ".wav", clip_wav)
@@ -1731,15 +1711,15 @@ class MagicWorkflow:
         content = scene_data.get("content", "")
         if content:
             current_scene["content"] = content
-        story = scene_data.get("visual_start", "")
+        story = scene_data.get("visual_image", "")
         subject = scene_data.get("subject", "")
         if subject:
             current_scene["subject"] = subject
         if story:
-            current_scene["visual_start"] = story
-        visual_end = scene_data.get("visual_end", "")
-        if visual_end:
-            current_scene["visual_end"] = visual_end
+            current_scene["visual_image"] = story
+        person_action = scene_data.get("person_action", "")
+        if person_action:
+            current_scene["person_action"] = person_action
         era = scene_data.get("era_time", "")
         if era:
             current_scene["era_time"] = era
@@ -1779,8 +1759,8 @@ class MagicWorkflow:
         field_labels = {
             "content": "内容",
             "subject": "主体",
-            "visual_start": "开场画面",
-            "visual_end": "结束画面",
+            "visual_image": "开场画面",
+            "person_action": "人物动作",
             "era_time": "时代",
             "environment": "环境",
             "cinematography": "电影摄影",

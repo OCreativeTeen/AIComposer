@@ -356,7 +356,7 @@ class WorkflowGUI:
         ttk.Button(tool_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
 
    
-    def open_image_prompt_dialog(self, create_image_callback, scene, image_mode, start:bool, language:str):
+    def open_image_prompt_dialog(self, create_image_callback, scene, image_mode, language:str):
         """打开提示词审查对话框，用于在创建图像前预览和编辑提示词"""
         from gui.image_prompts_review_dialog import ImagePromptsReviewDialog
         
@@ -366,7 +366,6 @@ class WorkflowGUI:
             create_image_callback=create_image_callback,
             scene=scene,
             track=image_mode,
-            start=start,
             language=language
         )
         dialog.show()
@@ -1080,14 +1079,14 @@ class WorkflowGUI:
         type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
-        #ttk.Button(type_mood_action_frame, text="生主图",   width=10, command=lambda: self.recreate_clip_image("zh", True)).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image("en")).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生视觉化", width=10, command=lambda: self.refresh_scene_visual()).pack(side=tk.LEFT)
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(type_mood_action_frame, text="重生场面", width=10,  command=self.refresh_scene_visual).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="生场音频", width=10,  command=self.regenerate_audio).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="生主动画", width=10,  command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="生次动画", width=10,  command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生场音频", width=10, command=lambda: self.regenerate_audio()).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生主动画", width=10, command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生次动画", width=10, command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
 
 
         action_frame = ttk.Frame(self.video_edit_frame)
@@ -1133,13 +1132,13 @@ class WorkflowGUI:
         row_number += 1
         
         ttk.Label(self.video_edit_frame, text="开场:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_visual_start = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_visual_start.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_visual_image = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_visual_image.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="结束:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_visual_end = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_visual_end.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_person_action = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_person_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="时代:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1368,9 +1367,9 @@ class WorkflowGUI:
         
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
-            self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4", True)                      # clip_p202512231259_10005_S2V__00003-audio.mp4
-            self.media_scanner.scanning("Z:\\output", config.BASE_MEDIA_PATH+"\\input_mp4", False)                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
-            self.media_scanner.scanning("W:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4", False)      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
+            self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")                      # clip_p202512231259_10005_S2V__00003-audio.mp4
+            self.media_scanner.scanning("Z:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
+            self.media_scanner.scanning("W:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4")      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
 
             self.media_scanner.check_gen_video(config.BASE_MEDIA_PATH+"\\input_mp4", animate_gen_list)                 # clip_p202512231259_10005_S2V_23155421.mp4
             #self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
@@ -2003,14 +2002,14 @@ class WorkflowGUI:
         current_image_type = scene_data.get("second_animation", config_prompt.ANIMATE_SOURCE[0])
         self.scene_second_animation.set(current_image_type)
         
-        self.scene_visual_start.delete("1.0", tk.END)
-        self.scene_visual_start.insert("1.0", scene_data.get("visual_start", ""))
+        self.scene_visual_image.delete("1.0", tk.END)
+        self.scene_visual_image.insert("1.0", scene_data.get("visual_image", ""))
         
         self.scene_subject.delete("1.0", tk.END)
         self.scene_subject.insert("1.0", scene_data.get("subject", ""))
         
-        self.scene_visual_end.delete("1.0", tk.END)
-        self.scene_visual_end.insert("1.0", scene_data.get("visual_end", ""))
+        self.scene_person_action.delete("1.0", tk.END)
+        self.scene_person_action.insert("1.0", scene_data.get("person_action", ""))
         
         self.scene_era_time.delete("1.0", tk.END)
         self.scene_era_time.insert("1.0", scene_data.get("era_time", ""))
@@ -2058,12 +2057,11 @@ class WorkflowGUI:
         self.scene_promotion.delete("1.0", tk.END)
         self.scene_promotion.insert("1.0", scene_data.get("promotion", ""))
 
-        input_media_path = get_file_path(scene_data, "clip_input")
-        if input_media_path:
-            video_width, video_height = self.workflow.ffmpeg_processor.check_video_size(input_media_path)
+        status = scene_data.get("clip_status", "")
+        self.video_edit_frame.config(text=f"视频尺寸: {status}")
+        self.video_edit_frame.update()
+        # video_width, video_height = self.workflow.ffmpeg_processor.check_video_size(input_media_path)
             # set self.video_edit_frame text tobe "视频尺寸: width x height"
-            self.video_edit_frame.config(text=f"视频尺寸: {video_width} x {video_height}")
-            self.video_edit_frame.update()
 
 
 
@@ -2250,7 +2248,7 @@ class WorkflowGUI:
         
         self.scene_main_animate.set("")
         
-        self.scene_visual_start.delete("1.0", tk.END)
+        self.scene_visual_image.delete("1.0", tk.END)
         self.scene_era_time.delete("1.0", tk.END)
         self.scene_environment.delete(0, tk.END)
         self.scene_speaker.delete("1.0", tk.END)
@@ -2307,16 +2305,46 @@ class WorkflowGUI:
     def split_smart_scene(self):
         """分离当前场景"""
         current_scene = self.get_current_scene()
-        animate_mode = current_scene.get("clip_animation", "")
-        if animate_mode not in config_prompt.ANIMATE_SOURCE or animate_mode.strip() == "":
-            messagebox.showerror("错误", "当前场景没有动画模式")
-            return
+        original_duration = self.workflow.find_clip_duration(current_scene)
+        if original_duration <= 0:
+            return False
 
-        server_config = sd_image_processor.GEN_CONFIG[animate_mode]
-        fps = server_config["frame_rate"]
-        max_frames = server_config["max_frames"]
-        section_duration = (max_frames-1) * 1.0 / fps
-        self.workflow.split_smart_scene(current_scene, section_duration)
+        gen_config = [
+            sd_image_processor.GEN_CONFIG["S2V"].copy(),
+            sd_image_processor.GEN_CONFIG["FS2V"].copy()
+        ]
+
+        for server_config in gen_config:
+            section_duration = (server_config["max_frames"]-4) * 1.0 / server_config["frame_rate"]
+            server_config["section_duration"] = section_duration
+            sections = int(original_duration / section_duration)
+            if original_duration / section_duration > sections:
+                sections += 1
+            server_config["sections"] = sections
+
+        min_sections = 1000000
+        best_config = None
+        for server_config in gen_config:
+            if server_config["sections"] < min_sections:
+                min_sections = server_config["sections"]
+                best_config = server_config
+
+        if best_config is None:
+            gen_config = gen_config[0]
+
+        if gen_config[0]["sections"] == gen_config[1]["sections"]:
+            best_config = gen_config[0]
+
+        if best_config["sections"] == 1:
+            return False
+
+        if best_config == gen_config[0]:
+            animate_mode = "S2V"
+        else:
+            animate_mode = "FS2V"
+        current_scene["clip_animation"] = animate_mode
+
+        self.workflow.split_smart_scene(current_scene, best_config["sections"])
 
         self.playing_delta = 0.0
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
@@ -2477,7 +2505,7 @@ class WorkflowGUI:
     def print_title(self):
         """打印标题"""
         current_scene = self.update_current_scene()
-        content = current_scene['content']
+        content = current_scene['caption']
         if not content or content.strip() == "":
             messagebox.showinfo("标题", "标题为空")
             return
@@ -3461,27 +3489,28 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def recreate_clip_image(self, language:str, start:bool):
+    def recreate_clip_image(self, language:str):
         """重新创建主图，先打开对话框让用户审查和编辑提示词"""
         scene = self.get_current_scene()
         
         # 定义创建图像的回调函数
         def create_clip_image(edited_positive, edited_negative):
-            oldi, newi = refresh_scene_media(scene, "clip_image", ".webp")
-            self.workflow._create_image(self.workflow.sd_processor.gen_config["Story"], 
-                                        newi,
-                                        None,
-                                        newi,
-                                        edited_positive,
-                                        edited_negative,
-                                        int(time.time())
-                                    )
-            self.workflow.save_scenes_to_json()
-            self.refresh_gui_scenes()
-            print("✅ 主图已重新创建")
+            pass
+            #oldi, newi = refresh_scene_media(scene, "clip_image", ".webp")
+            #self.workflow._create_image(self.workflow.sd_processor.gen_config["Story"], 
+            #                                    newi,
+            #                                    None,
+            #                                    newi,
+            #                                    edited_positive,
+            #                                    edited_negative,
+            #                                    int(time.time())
+            #                                )
+            #self.workflow.save_scenes_to_json()
+            #self.refresh_gui_scenes()
+            #print("✅ 主图已重新创建")
         
         # 构建正面提示词预览
-        self.open_image_prompt_dialog(create_clip_image, scene, "clip", start, language)
+        self.open_image_prompt_dialog(create_clip_image, scene, "clip", language)
 
 
     def update_current_scene(self):
@@ -3503,8 +3532,8 @@ class WorkflowGUI:
             "kernel": self.scene_kernel.get("1.0", tk.END).strip(),
             "story": self.scene_story.get("1.0", tk.END).strip(),
             "subject": self.scene_subject.get("1.0", tk.END).strip(),
-            "visual_start": self.scene_visual_start.get("1.0", tk.END).strip(),
-            "visual_end": self.scene_visual_end.get("1.0", tk.END).strip(),
+            "visual_image": self.scene_visual_image.get("1.0", tk.END).strip(),
+            "person_action": self.scene_person_action.get("1.0", tk.END).strip(),
             "era_time": self.scene_era_time.get("1.0", tk.END).strip(),
             "environment": self.scene_environment.get(),
             "cinematography": cinematography_value,
@@ -3748,7 +3777,7 @@ class WorkflowGUI:
         """绑定编辑事件"""
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_fields = [
-            self.scene_visual_start,
+            self.scene_visual_image,
             self.scene_story,
             self.scene_era_time,
             self.scene_environment,
@@ -3758,7 +3787,7 @@ class WorkflowGUI:
             self.scene_kernel,
             self.scene_cinematography,
             self.scene_subject,
-            self.scene_visual_end,
+            self.scene_person_action,
             self.scene_story_content,
             self.scene_promotion
         ]
@@ -3884,6 +3913,7 @@ class WorkflowGUI:
                     av_path = get_file_path(current_scene, "second")
             else:
                 current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
+                current_scene[media_type + "_status"] = "DND"
                 av_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
