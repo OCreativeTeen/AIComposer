@@ -677,11 +677,18 @@ class SDProcessor:
                 else:
                     self._enhance_video(enhance_input)
 
+
  
+    ENHANCE_SERVERS = ["http://10.0.0.210:5000", "http://10.0.0.235:5000"]
+    current_enhance_server = 0
+
+
     def _enhance_video(self, video_path):
         """调用 REST API 增强单个视频"""
         try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
-            url = "http://10.0.0.235:5000/enhance"
+            url = self.ENHANCE_SERVERS[self.current_enhance_server] + "/enhance"
+            self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
+            
             with open(video_path, 'rb') as video_file:
                 files = {'video': video_file}
                 
@@ -705,7 +712,9 @@ class SDProcessor:
     def _interpolate_video(self, video_path) :
         """调用 REST API 增强单个视频"""
         try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
-            url = "http://10.0.0.210:5000/interpolate"
+            url = self.ENHANCE_SERVERS[self.current_enhance_server] + "/interpolate"
+            self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
+
             with open(video_path, 'rb') as video_file:
                 files = {'video': video_file}
                 

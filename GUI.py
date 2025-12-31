@@ -2344,11 +2344,13 @@ class WorkflowGUI:
             animate_mode = "FS2V"
         current_scene["clip_animation"] = animate_mode
 
-        self.workflow.split_smart_scene(current_scene, best_config["sections"])
+        new_scenes = self.workflow.split_smart_scene(current_scene, best_config["sections"])
 
         self.playing_delta = 0.0
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
         self.refresh_gui_scenes()
+
+        return new_scenes
 
 
 
@@ -3926,7 +3928,7 @@ class WorkflowGUI:
 
             if media_type != "clip" :
                 transcribe_way = "" if ('transcribe_way' not in review_dialog.result) else review_dialog.result['transcribe_way']
-                if transcribe_way == "multiple":
+                if transcribe_way == "multiple" or media_type == "zero":
                     for sss in scenes_same_story:
                         sss[media_type] = current_scene[media_type]
                         sss[media_type+"_audio"]  = current_scene[media_type+"_audio"]

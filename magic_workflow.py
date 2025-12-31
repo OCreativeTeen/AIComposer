@@ -532,7 +532,7 @@ class MagicWorkflow:
 
 
 
-    def split_smart_scene(self, current_scene, sections):
+    def split_smart_scene(self, current_scene, sections) -> list:
         """将场景按照指定时长分割成多个部分"""
         # 找到当前场景的索引
         current_index = None
@@ -586,7 +586,8 @@ class MagicWorkflow:
             start_time += part_duration
         
         # 使用 replace_scene_with_others 一次性替换原场景
-        return self.replace_scene_with_others(current_index, new_scenes)
+        self.replace_scene_with_others(current_index, new_scenes)
+        return new_scenes
 
 
 
@@ -1448,7 +1449,7 @@ class MagicWorkflow:
             clip_temp = self.ffmpeg_processor.add_script_to_video(clip, promotion, font)
             video_segments.append({"path":clip_temp, "transition":"fade", "duration":1.0})
 
-        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, keep_audio_if_has=True)
+        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
         if zero_audio is not None and zero_offset is not None:
             audio_zero = self.ffmpeg_audio_processor.audio_cut_fade(zero_audio, zero_offset, self.ffmpeg_processor.get_duration(video_temp))
             video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_zero)
@@ -1473,22 +1474,22 @@ class MagicWorkflow:
         #    start = start + self.ffmpeg_processor.get_duration(self.video_prepares["pre_video"]["video_path"])
 
         video_segments = []
-        audio_segments = []
         for s in self.scenes:
             clip= s["clip"]
             video_segments.append({"path":clip, "transition":"fade", "duration":1.0})
-            audio_segments.append(s["clip_audio"])
+            #audio_segments.append(s["clip_audio"])
 
-        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, keep_audio_if_has=True)
+        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
-        #current_zero = None
-        #for s in self.scenes:
-        #    if not current_zero or current_zero != s["zero"]:
-        #        current_zero = s["zero"]
-        #        audio_segments.append(current_zero)
-        #if audio_segments and len(audio_segments) > 0:
-        audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
-        video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
+        current_zero = None
+        audio_segments = []
+        for s in self.scenes:
+            if not current_zero or current_zero != s["zero_audio"]:
+                current_zero = s["zero_audio"]
+                audio_segments.append(current_zero)
+        if audio_segments and len(audio_segments) > 0:
+            audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
+            video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
 
         final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
         os.replace(video_temp, final_video_path)

@@ -59,8 +59,8 @@ class FfmpegProcessor:
 
 
     def run_ffmpeg_command(self, cmd):
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         print(f"------------\n{' '.join(cmd)}\n------------")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return result
 
 
@@ -796,7 +796,9 @@ class FfmpegProcessor:
             cmd.extend(self._get_video_output_args(keyframe_interval=False))
             cmd.extend(self._get_output_optimization_args())
             cmd.extend([
-                "-t", str(video_duration),  # 明确指定输出时长等于音频时长
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-t", str(audio_duration),  # 明确指定输出时长等于音频时长
                 temp_file
             ])
             self.run_ffmpeg_command(cmd)
@@ -1098,10 +1100,44 @@ class FfmpegProcessor:
         return audio_analysis
 
 
-    def _concat_videos_with_transitions(self, video_segments, keep_audio_if_has):
+    def _align_time_to_frame(self, time_seconds, fps=STANDARD_FPS):
+        """
+        Align a time value to exact frame boundary to avoid floating point precision issues.
+        This ensures xfade offsets are frame-accurate.
+        """
+        # Convert to frame count (round to nearest frame)
+        frame_count = round(time_seconds * fps)
+        # Convert back to seconds with exact precision
+        aligned_time = frame_count / fps
+        return aligned_time
+
+
+    def _concat_videos_with_transitions(self, video_segments, frames_deduct, keep_audio_if_has):
         video_out_path = config.get_temp_file(self.pid, "mp4")
 
         n_videos = len(video_segments)
+        
+        # Smart frame deduction: handle fractional frames
+        # Integer part: frames deducted for every transition
+        # Fractional part: determines extra frame deduction interval
+        # Example: 6.2 means 6 frames base + extra frames distributed across transitions
+        frames_deduct_base = int(frames_deduct)  # Base frames to deduct
+        frames_deduct_fraction = frames_deduct - frames_deduct_base  # Fractional part
+        
+        # For N transitions, fractional part means: add extra_frames over N transitions
+        # Example: 26 transitions × 0.2 = 5.2 extra frames → 5 extra frames
+        total_transitions = n_videos - 1
+        extra_frames_total = int(round(frames_deduct_fraction * total_transitions))  # Total extra frames to distribute
+        
+        if extra_frames_total > 0:
+            extra_frame_interval = total_transitions / extra_frames_total  # Spacing between extra frames
+            print(f"   ⏱️  Smart frame deduction: {frames_deduct_base} base frames + {extra_frames_total} extra frames distributed across {total_transitions} transitions")
+            print(f"      Average: {frames_deduct:.3f} frames per transition")
+            print(f"      Total: base={frames_deduct_base * total_transitions} + extra={extra_frames_total} = {frames_deduct_base * total_transitions + extra_frames_total} frames")
+        else:
+            extra_frame_interval = 0
+            print(f"   ⏱️  Frame deduction: {frames_deduct_base} frames per transition")
+            print(f"      For {total_transitions} transitions: total {frames_deduct_base * total_transitions} frames")
         
         # NEW APPROACH: Extend videos AND standardize in one step using filter
         extended_video_paths = []
@@ -1131,10 +1167,10 @@ class FfmpegProcessor:
                     
                     # Extend AND standardize in one ffmpeg command
                     if extension_needed > 0:
-                        # Need to extend video for transition
+                        # Need to extend video for transition (full extension, no deduction here)
                         success = self._extend_and_standardize_video(
                             video_seg["path"], 
-                            extension_needed-0.03334, 
+                            extension_needed, 
                             temp_extended_path
                         )
                         
@@ -1259,18 +1295,45 @@ class FfmpegProcessor:
             
             xfade_count = 0
             # Calculate offset - for xfade, offset is in the first input stream's timeline
-            current_offset = 0.0
+            # Use frame-accurate calculation to avoid floating point errors
+            current_offset_frames = 0  # Track offset in frames for precision
+            extra_frames_used = 0  # Track how many extra frames have been used
             
             for i in range(1, n_videos):
                 video_seg = video_segments[i]
                 transition_duration = video_seg["duration"]
                 transition_effect = video_seg["transition"]
                 
-                # For xfade: offset is where transition starts in the current output timeline
-                # After previous transitions, we're at current_offset
-                # The previous EXTENDED video contributes (extended_duration - transition_duration) to output
-                # So next transition starts at: current_offset + (extended_durations[i-1] - transition_duration)
-                current_offset += extended_durations[i-1] - transition_duration
+                # Calculate contribution in frames for precision
+                prev_video_frames = round(extended_durations[i-1] * STANDARD_FPS)
+                transition_frames = round(transition_duration * STANDARD_FPS)
+                
+                # Smart frame deduction: base frames + conditional extra frame
+                transition_index = i - 1  # 0-based transition index (0, 1, 2, ...)
+                frames_to_deduct = frames_deduct_base
+                
+                # Distribute extra frames evenly: use Bresenham-like algorithm
+                # Determine if this transition should get an extra frame
+                if extra_frames_total > 0:
+                    # Ideal position for next extra frame: (extra_frames_used + 1) * interval
+                    # Current position: transition_index + 1
+                    next_extra_position = (extra_frames_used + 1) * extra_frame_interval
+                    
+                    # If we've reached or passed the position for the next extra frame
+                    if (transition_index + 1) >= next_extra_position and extra_frames_used < extra_frames_total:
+                        frames_to_deduct += 1
+                        extra_frames_used += 1
+                        extra_marker = " (+1 extra)"
+                    else:
+                        extra_marker = ""
+                else:
+                    extra_marker = ""
+                
+                # Current offset in frames = previous offset + (prev_video - transition - deduction)
+                current_offset_frames += prev_video_frames - transition_frames - frames_to_deduct
+                
+                # Convert to seconds with exact frame precision
+                current_offset = current_offset_frames / STANDARD_FPS
                 
                 if transition_effect == "random":
                     effect_name = random.choice(config.TRANSITION_EFFECTS)
@@ -1278,19 +1341,26 @@ class FfmpegProcessor:
                     effect_name = transition_effect
 
                 next_video_label = f"vx{i}"
-                xfade_filter = f"[{current_video_label}][v{i}]xfade=transition={effect_name}:duration={transition_duration}:offset={current_offset}[{next_video_label}]"
+                # Format offset with enough precision but frame-aligned
+                offset_str = f"{current_offset:.10f}"  # High precision for FFmpeg
+                xfade_filter = f"[{current_video_label}][v{i}]xfade=transition={effect_name}:duration={transition_duration}:offset={offset_str}[{next_video_label}]"
                 video_filters.append(xfade_filter)
                 xfade_count += 1
                 
                 # Show ALL transitions for debugging
-                print(f"      🔗 Transition {i}: {effect_name} at offset={current_offset:.2f}s (dur={transition_duration:.2f}s)")
+                print(f"      🔗 Transition {transition_index}: {effect_name} at offset={current_offset:.6f}s (frame {current_offset_frames}, dur={transition_duration:.2f}s, deducted={frames_to_deduct}{extra_marker} frames)")
                 print(f"         Mixing video {i-1} (ext={extended_durations[i-1]:.2f}s) with video {i} (ext={extended_durations[i]:.2f}s)")
                 
                 current_video_label = next_video_label
             
-            expected_final_duration = current_offset + extended_durations[-1]
+            print(f"      📊 Total extra frames used: {extra_frames_used}/{extra_frames_total}")
+            
+            # Calculate expected final duration using frame-accurate method
+            last_video_frames = round(extended_durations[-1] * STANDARD_FPS)
+            expected_final_frames = current_offset_frames + last_video_frames
+            expected_final_duration = expected_final_frames / STANDARD_FPS
             print(f"      ✅ Created {xfade_count} xfade transitions")
-            print(f"      📐 Expected video duration from xfade chain: {expected_final_duration:.2f}s")
+            print(f"      📐 Expected video duration from xfade chain: {expected_final_duration:.6f}s ({expected_final_frames} frames)")
             
             # Verify audio and video durations match
             if keep_audio_if_has:
@@ -1401,13 +1471,34 @@ class FfmpegProcessor:
             if final_duration <= 0:
                 raise RuntimeError(f"Output video has invalid duration: {final_duration}")
             
-            # Calculate expected duration (sum of all original durations - transitions overlap)
+            # Calculate expected duration using smart frame deduction
             total_original_duration = sum([self.get_duration(video_seg["path"]) for video_seg in video_segments])
             total_transition_duration = sum([video_seg["duration"] for video_seg in video_segments[1:]])  # Exclude first video
-            expected_duration = total_original_duration - total_transition_duration
+            
+            # Calculate total frames deducted using smart deduction logic
+            # Recalculate to ensure consistency
+            total_transitions = n_videos - 1
+            base_frames_deducted = frames_deduct_base * total_transitions
+            extra_frames_deducted = int(round(frames_deduct_fraction * total_transitions))
+            total_frames_deducted = base_frames_deducted + extra_frames_deducted
+            total_frames_deduction_seconds = total_frames_deducted / STANDARD_FPS
+            
+            expected_duration = total_original_duration - total_transition_duration - total_frames_deduction_seconds
+            
+            # Calculate frame difference for accuracy check
+            final_duration_frames = round(final_duration * STANDARD_FPS)
+            expected_duration_frames = round(expected_duration * STANDARD_FPS)
+            frame_diff = abs(final_duration_frames - expected_duration_frames)
             
             # Check if duration is significantly shorter than expected
             duration_diff = abs(final_duration - expected_duration)
+            print(f"   📊 Duration comparison:")
+            print(f"      Original total: {total_original_duration:.2f}s")
+            print(f"      Transitions: -{total_transition_duration:.2f}s")
+            print(f"      Frames deduction: {base_frames_deducted} base + {extra_frames_deducted} extra = {total_frames_deducted} frames ({total_frames_deduction_seconds:.6f}s)")
+            print(f"      Expected: {expected_duration:.6f}s ({expected_duration_frames} frames)")
+            print(f"      Actual: {final_duration:.6f}s ({final_duration_frames} frames)")
+            print(f"      Difference: {duration_diff:.6f}s ({frame_diff} frames)")
             if duration_diff > 10.0:  # More than 10 seconds difference
                 print(f"   ⚠️  WARNING: Output duration differs from expected by {duration_diff:.2f}s!")
                 print(f"      This suggests only partial videos were concatenated.")
