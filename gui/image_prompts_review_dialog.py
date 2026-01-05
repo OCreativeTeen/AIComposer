@@ -187,6 +187,10 @@ class ImagePromptsReviewDialog:
         
         positive_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         positive_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # set the text to the clipboard
+        self.dialog.clipboard_clear()
+        self.dialog.clipboard_append(positive_text.get(1.0, tk.END).strip())
+        self.dialog.update()  # 确保剪贴板操作完成
         
         return positive_text
     
@@ -238,7 +242,7 @@ class ImagePromptsReviewDialog:
         new_style = self.image_style_var.get()
 
         # 重新构建正面提示词
-        new_positive = self.workflow.build_prompt(self.scene, new_style, selected, self.track, "IMAGE_GENERATION", self.language)
+        new_positive = self.workflow.build_prompt(self.scene, new_style+". "+selected, self.track, "IMAGE_GENERATION")
         
         # 更新文本框（如果是字典，转换为字符串显示）
         self.positive_text.delete(1.0, tk.END)

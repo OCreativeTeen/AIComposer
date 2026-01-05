@@ -972,39 +972,28 @@ ANIMATION_PROMPTS = [
 
 
 
-ROLES = [
-    "",
-    "female-host",
-    "male-host",
-    "actress",
-    "actor",
-    "female-host, male-host",
-    "actor, actress"
-]
-
-
-
-SPEAKER_POSITIONS = [
-    "left",
-    "right"
-]
-
-
-
-HOSTS = [
-    "1 female-host",
-    "1 male-host",
-    "1 female-host & 1 male-host",
-    ""
-]
-
-
-
 ACTORS = [
     "",
-    "1 actress & 1 actor",
-    "1 actor",
-    "1 actress"
+    "mature_man",
+    "mature_woman", 
+    "mature_man left",
+    "mature_man right",
+    "mature_woman left", 
+    "mature_woman right", 
+
+    "young_man",
+    "young_woman",
+    "young_man left",
+    "young_man right",
+    "young_woman left",
+    "young_woman right",
+
+    "senior_man",
+    "senior_woman",
+    "teen_boy",
+    "teen_girl",
+    "boy",
+    "girl"
 ]
 
 

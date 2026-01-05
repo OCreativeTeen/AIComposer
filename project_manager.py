@@ -212,22 +212,19 @@ class ContentEditorDialog:
             messagebox.showerror("错误", "LLM API未初始化，无法生成内容")
             return
         
-        try:
-            topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
-            story=self.story_editor.get('1.0', tk.END).strip()
-            user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
-            system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_system_prompt"]["program"].format(language=config.LANGUAGES[self.language])
-            # 调用LLM生成内容
-            generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
-            if generated_content:
-                self.story_editor.config(state=tk.NORMAL)
-                self.story_editor.delete('1.0', tk.END)
-                self.story_editor.insert('1.0', generated_content.strip())
-                messagebox.showinfo("成功", "内容生成完成！")
-        
-        except Exception as e:
-            messagebox.showerror("错误", f"生成内容时发生错误: {str(e)}")
-            print(f"❌ Remix错误: {e}")
+        topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
+        story=self.story_editor.get('1.0', tk.END).strip()
+        user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
+        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_system_prompt"]["program"].format(language=config.LANGUAGES[self.language])
+        # 调用LLM生成内容
+        generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
+        if generated_content:
+            self.story_editor.config(state=tk.NORMAL)
+            self.story_editor.delete('1.0', tk.END)
+            self.story_editor.insert('1.0', generated_content.strip())
+            messagebox.showinfo("成功", "内容生成完成！")
+        else:
+            messagebox.showerror("错误", "内容生成失败")
 
     
     def on_ok(self):

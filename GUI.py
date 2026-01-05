@@ -368,6 +368,13 @@ class WorkflowGUI:
             track=image_mode,
             language=language
         )
+        
+        # 设置6秒后自动关闭（取消）
+        def auto_close():
+            if dialog.dialog.winfo_exists():
+                dialog._on_cancel()
+        
+        dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
         dialog.show()
 
 
@@ -1108,15 +1115,39 @@ class WorkflowGUI:
         #self.rife_exp.pack(side=tk.LEFT, padx=2)
         #self.rife_exp.set("0")
 
-        ttk.Label(self.video_edit_frame, text="内容:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_story_content = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_story_content.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(self.video_edit_frame, text="讲话:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaking = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        # add the text field to show the kernel
-        ttk.Label(self.video_edit_frame, text="核心:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_implicit = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_implicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_character = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_character.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(self.video_edit_frame, text="动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_actions = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_actions.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(self.video_edit_frame, text="视觉:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_visual = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_visual.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ACTORS)
+        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(self.video_edit_frame, text="旁白:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_voiceover = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
+        ttk.Label(self.video_edit_frame, text="字幕:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_caption = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_caption.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add the text field to show the kernel
@@ -1125,68 +1156,17 @@ class WorkflowGUI:
         self.scene_explicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_subject = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_subject.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-        
-        ttk.Label(self.video_edit_frame, text="开场:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_visual_image = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_visual_image.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        # add the text field to show the kernel
+        ttk.Label(self.video_edit_frame, text="核心:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.scene_implicit = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_implicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="结束:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_person_action = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_person_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
+        #ttk.Label(self.video_edit_frame, text="摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        #self.scene_cinematography = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        #self.scene_cinematography.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        #row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="时代:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_era_time = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=1)
-        self.scene_era_time.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-        
-        ttk.Label(self.video_edit_frame, text="环境:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_environment = ttk.Entry(self.video_edit_frame, width=35)
-        self.scene_environment.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-        
-        ttk.Label(self.video_edit_frame, text="摄影:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_cinematography = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_cinematography.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-        
-        ttk.Label(self.video_edit_frame, text="音效:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_sound_effect = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_sound_effect.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        ttk.Label(self.video_edit_frame, text="FYI:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_extra =  scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_extra.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker_action = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_speaker_action.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        ttk.Label(self.video_edit_frame, text="情绪:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_mood = ttk.Combobox(self.video_edit_frame, width=35, values=EXPRESSION_STYLES, state="readonly")
-        self.scene_mood.set("calm")  # 设置默认值
-        self.scene_mood.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ROLES)
-        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        ttk.Label(self.video_edit_frame, text="左右:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker_position = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.SPEAKER_POSITIONS)
-        self.scene_speaker_position.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
-        # add a choice list to choose font of the title, values are from config.FONT_LIST(choose from all languages, show language name in choice, keep value), default value to self.workflow.font_video
         ttk.Label(self.video_edit_frame, text="字体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_language = ttk.Combobox(self.video_edit_frame, width=32, values=list(config.FONT_LIST.keys()))
         self.scene_language.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
@@ -2000,32 +1980,34 @@ class WorkflowGUI:
         # 加载当前场景的图像类型设置
         current_image_type = scene_data.get("second_animation", config_prompt.ANIMATE_SOURCE[0])
         self.scene_second_animation.set(current_image_type)
-        
-        self.scene_visual_image.delete("1.0", tk.END)
-        self.scene_visual_image.insert("1.0", scene_data.get("visual_image", ""))
-        
-        self.scene_subject.delete("1.0", tk.END)
-        self.scene_subject.insert("1.0", scene_data.get("subject", ""))
-        
-        self.scene_person_action.delete("1.0", tk.END)
-        self.scene_person_action.insert("1.0", scene_data.get("person_action", ""))
-        
-        self.scene_era_time.delete("1.0", tk.END)
-        self.scene_era_time.insert("1.0", scene_data.get("era_time", ""))
-        
-        self.scene_environment.delete(0, tk.END)
-        self.scene_environment.insert(0, scene_data.get("environment", ""))
 
-        self.scene_cinematography.delete("1.0", tk.END)
-        # 如果 cinematography 是字典，格式化显示；如果是字符串，直接显示
-        cinematography_value = scene_data.get("cinematography", "")
-        if isinstance(cinematography_value, dict):
-            self.scene_cinematography.insert("1.0", json.dumps(cinematography_value, ensure_ascii=False, indent=2))
-        else:
-            self.scene_cinematography.insert("1.0", cinematography_value)
+        self.scene_speaking.delete("1.0", tk.END)
+        self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
         
-        self.scene_sound_effect.delete("1.0", tk.END)
-        self.scene_sound_effect.insert("1.0", scene_data.get("sound_effect", ""))
+        self.scene_character.delete("1.0", tk.END)
+        self.scene_character.insert("1.0", scene_data.get("character", ""))
+
+        self.scene_actions.delete("1.0", tk.END)
+        self.scene_actions.insert("1.0", scene_data.get("actions", ""))
+
+        self.scene_visual.delete("1.0", tk.END)
+        self.scene_visual.insert("1.0", scene_data.get("visual", ""))
+
+        self.scene_speaker.set(scene_data.get("speaker", ""))
+
+        self.scene_voiceover.delete("1.0", tk.END)
+        self.scene_voiceover.insert("1.0", scene_data.get("voiceover", ""))
+
+        self.scene_caption.delete("1.0", tk.END)
+        self.scene_caption.insert("1.0", scene_data.get("caption", ""))
+
+        #self.scene_cinematography.delete("1.0", tk.END)
+        # 如果 cinematography 是字典，格式化显示；如果是字符串，直接显示
+        #cinematography_value = scene_data.get("cinematography", "")
+        #if isinstance(cinematography_value, dict):
+        #    self.scene_cinematography.insert("1.0", json.dumps(cinematography_value, ensure_ascii=False, indent=2))
+        #else:
+        #    self.scene_cinematography.insert("1.0", cinematography_value)
         
         self.scene_implicit.delete("1.0", tk.END)
         self.scene_implicit.insert("1.0", scene_data.get("implicit", ""))
@@ -2033,25 +2015,6 @@ class WorkflowGUI:
         self.scene_explicit.delete("1.0", tk.END)
         self.scene_explicit.insert("1.0", scene_data.get("explicit", ""))
 
-        
-        self.scene_extra.delete("1.0", tk.END)   
-        self.scene_extra.insert("1.0", scene_data.get("caption", ""))
-
-        self.scene_speaker_action.delete("1.0", tk.END)
-        self.scene_speaker_action.insert("1.0", scene_data.get("speaker_action", ""))
-
-        # scene_mood字段用于语音合成情绪
-        self.scene_speaker.set(scene_data.get("speaker", ""))
-        self.scene_speaker_position.set(scene_data.get("speaker_position", ""))
-        voice_synthesis_mood = scene_data.get("mood", "calm")
-        if voice_synthesis_mood in EXPRESSION_STYLES:
-            self.scene_mood.set(voice_synthesis_mood)
-        else:
-            self.scene_mood.set("calm")
-        
-        self.scene_story_content.delete("1.0", tk.END)
-        self.scene_story_content.insert("1.0", scene_data.get("speaking", ""))
-        
         # 加载宣传信息
         self.scene_promotion.delete("1.0", tk.END)
         self.scene_promotion.insert("1.0", scene_data.get("promotion", ""))
@@ -2059,8 +2022,6 @@ class WorkflowGUI:
         status = scene_data.get("clip_status", "")
         self.video_edit_frame.config(text=f"视频尺寸: {status}")
         self.video_edit_frame.update()
-        # video_width, video_height = self.workflow.ffmpeg_processor.check_video_size(input_media_path)
-            # set self.video_edit_frame text tobe "视频尺寸: width x height"
 
 
 
@@ -2247,18 +2208,16 @@ class WorkflowGUI:
         
         self.scene_main_animate.set("")
         
-        self.scene_visual_image.delete("1.0", tk.END)
-        self.scene_era_time.delete("1.0", tk.END)
-        self.scene_environment.delete(0, tk.END)
+        self.scene_speaking.delete("1.0", tk.END)
+        self.scene_character.delete("1.0", tk.END)
+        self.scene_actions.delete("1.0", tk.END)
+        self.scene_visual.delete("1.0", tk.END)
         self.scene_speaker.delete("1.0", tk.END)
-        self.scene_speaker_action.delete("1.0", tk.END)
-        self.scene_extra.delete("1.0", tk.END)
+        self.scene_voiceover.delete("1.0", tk.END)
+        self.scene_caption.delete("1.0", tk.END)
         self.scene_explicit.delete("1.0", tk.END)
-        self.scene_speaker_position.set("")
-        self.scene_mood.set("calm")
-        self.scene_story_content.delete("1.0", tk.END)
         self.scene_implicit.delete("1.0", tk.END)
-        self.scene_cinematography.delete("1.0", tk.END)
+        #self.scene_cinematography.delete("1.0", tk.END)
         self.scene_promotion.delete("1.0", tk.END)
 
 
@@ -3513,32 +3472,28 @@ class WorkflowGUI:
         scene = self.get_current_scene()
         
         # 处理 cinematography 字段：尝试解析 JSON 字符串
-        cinematography_text = self.scene_cinematography.get("1.0", tk.END).strip()
-        cinematography_value = cinematography_text
-        if cinematography_text:
-            try:
+        #cinematography_text = self.scene_cinematography.get("1.0", tk.END).strip()
+        #cinematography_value = cinematography_text
+        #if cinematography_text:
+        #    try:
                 # 尝试解析为 JSON 对象
-                cinematography_value = json.loads(cinematography_text)
-            except json.JSONDecodeError:
-                # 如果不是有效 JSON，保持为字符串
-                cinematography_value = cinematography_text
+        #        cinematography_value = json.loads(cinematography_text)
+        #    except json.JSONDecodeError:
+        #        # 如果不是有效 JSON，保持为字符串
+        #        cinematography_value = cinematography_text
         
         scene.update({
-            "speaking": self.scene_story_content.get("1.0", tk.END).strip(),
+            "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
+            "character": self.scene_character.get("1.0", tk.END).strip(),
+            "actions": self.scene_actions.get("1.0", tk.END).strip(),
+            "visual": self.scene_visual.get("1.0", tk.END).strip(),
+            "speaker": self.scene_speaker.get(),
+            "voiceover": self.scene_voiceover.get("1.0", tk.END).strip(),
+            "caption": self.scene_caption.get("1.0", tk.END).strip(),
+
             "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
             "explicit": self.scene_explicit.get("1.0", tk.END).strip(),
-            "subject": self.scene_subject.get("1.0", tk.END).strip(),
-            "visual_image": self.scene_visual_image.get("1.0", tk.END).strip(),
-            "person_action": self.scene_person_action.get("1.0", tk.END).strip(),
-            "era_time": self.scene_era_time.get("1.0", tk.END).strip(),
-            "environment": self.scene_environment.get(),
-            "cinematography": cinematography_value,
-            "sound_effect": self.scene_sound_effect.get("1.0", tk.END).strip(),
-            "caption": self.scene_extra.get("1.0", tk.END).strip(),
-            "speaker_action": self.scene_speaker_action.get("1.0", tk.END).strip(),
-            "speaker": self.scene_speaker.get(),
-            "speaker_position": self.scene_speaker_position.get(),  # 添加讲员位置字段
-            "mood": self.scene_mood.get(),         # 语音合成情绪
+            #"cinematography": cinematography_value,
             "clip_animation": self.scene_main_animate.get(),
             "promotion": self.scene_promotion.get("1.0", tk.END).strip()
         })
@@ -3765,21 +3720,19 @@ class WorkflowGUI:
         """绑定编辑事件"""
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_fields = [
-            self.scene_visual_image,
-            self.scene_explicit,
-            self.scene_era_time,
-            self.scene_environment,
+            self.scene_speaking,
+            self.scene_character,
+            self.scene_actions,
+            self.scene_visual,
             self.scene_speaker,
-            self.scene_speaker_action,
-            self.scene_extra,
+            self.scene_voiceover,
+            self.scene_caption,
+
+            self.scene_explicit,
             self.scene_implicit,
-            self.scene_cinematography,
-            self.scene_subject,
-            self.scene_person_action,
-            self.scene_story_content,
+            #self.scene_cinematography,
             self.scene_promotion
         ]
-        
         for field in scene_fields:
             # 绑定Enter键事件（Ctrl+Enter在ScrolledText中触发保存）
             field.bind('<Control-Return>', self.on_scene_field_enter)
@@ -3789,17 +3742,15 @@ class WorkflowGUI:
         
         # 为Entry和Combobox字段单独绑定失去焦点事件
         entry_combobox_fields = [
-            self.scene_speaker,
-            self.scene_mood,
-            self.scene_speaker_position
+            self.scene_speaker
         ]
-        
         for field in entry_combobox_fields:
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
             field.bind('<<ComboboxSelected>>', self.on_scene_field_change)
         
         print("📝 已绑定场景编辑字段的自动保存事件 (Ctrl+Enter 或失去焦点时保存)")
     
+
 
     def bind_config_change_events(self):
         """绑定配置变化事件"""
@@ -3809,7 +3760,8 @@ class WorkflowGUI:
         if hasattr(self, 'video_title'):
             self.video_title.bind('<KeyRelease>', self.on_video_title_change)
             self.video_title.bind('<FocusOut>', self.on_video_title_change)
-        
+
+
 
     def on_video_title_change(self, event=None):
         """当视频标题发生变化时的回调函数"""
@@ -3857,9 +3809,7 @@ class WorkflowGUI:
 
     def on_scene_field_change(self, event=None):
         """当场景字段值发生变化时的回调（如Combobox选择变化）"""
-        # 立即保存当前场景信息
         self.update_current_scene()
-        print(f"✅ 场景 {self.current_scene_index + 1} 情绪已更新为: {self.scene_mood.get()}")
 
     def on_volume_change(self, *args):
         """当音量滑块值发生变化时的回调"""
@@ -3944,13 +3894,13 @@ class WorkflowGUI:
             current_scene["clip_animation"] = ""
 
             if transcribe_way == "single":
-                current_scene["speaking"] = "\n".join([segment["speaking"] for segment in audio_json])
+                self.workflow.copy_scene(current_scene, audio_json[0])
                 #self.workflow.refresh_scene_visual(current_scene)
-            elif transcribe_way == "multiple":
+            else: #transcribe_way == "multiple":
                 self.workflow.prepare_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
                 self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
-            else: # transcribe_way == "multiple_merge":
-                self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
+            #else: # transcribe_way == "multiple_merge":
+            #    self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
 
             messagebox.showinfo("成功", f"音频已成功替换！\n\n")
                 
@@ -4202,7 +4152,7 @@ class WorkflowGUI:
         
         # 检查 prompt 是否为空（支持字符串和字典两种格式）
         if not wan_prompt or (isinstance(wan_prompt, str) and wan_prompt.strip() == "") or (isinstance(wan_prompt, dict) and len(wan_prompt) == 0):
-            #wan_prompt = self.workflow.build_prompt(scene, "", "", track, animate_mode, False, self.workflow.language)
+            #wan_prompt = self.workflow.build_prompt(scene, "", track, animate_mode, False)
             wan_prompt = "..."
             scene[track+"_prompt"] = wan_prompt
 

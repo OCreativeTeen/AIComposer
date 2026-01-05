@@ -164,6 +164,8 @@ class AudioTranscriber:
 
         merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
         print(f"调试信息: merged数量={len(merged_segments)}")
+        if not merged_segments or len(merged_segments) == 0:
+            return None
 
         # clean_memory()
 
@@ -203,13 +205,12 @@ class AudioTranscriber:
     def merge_sentences(self, segments, language, min_sentence_duration, max_sentence_duration):
         system_prompt = config_prompt.MERGE_SENTENCES_SYSTEM_PROMPT.format(language=language, min_sentence_duration=min_sentence_duration, max_sentence_duration=max_sentence_duration)
         user_prompt = json.dumps(segments, ensure_ascii=False, indent=2)
-
         return self.llm_api.generate_json_summary(system_prompt, user_prompt, None, True)
 
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
         output = []
-        character = "middle_age_woman"
+        character = "mature_woman"
         for segment in segments:
             output.append({
                 "start": float(segment["start"]),
@@ -219,10 +220,6 @@ class AudioTranscriber:
                 "caption": segment["content"],
                 "speaking": segment["content"]
             })
-            if character == "middle_age_woman":
-                character = "middle_age_man"
-            else:
-                character = "middle_age_woman"
 
         return output
 
@@ -265,6 +262,8 @@ class AudioTranscriber:
         prompt = config_prompt.SRT_REORGANIZATION_USER_PROMPT.format(text=text)
         
         content = self.llm_api.generate_text(system_prompt, prompt)
+        if not content:
+            return []
 
         content = self.chinese_convert(content, language)
         # 去掉开头和结尾的空格, 换行符
@@ -505,24 +504,21 @@ class AudioTranscriber:
         if (source_language == "zh" or source_language == "tw") and (target_language == "zh" or target_language == "tw"):
             return self.chinese_convert(text, target_language)
         
-        try:
-            system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
-                source_language=config.LANGUAGES[source_language],
-                target_language=config.LANGUAGES[target_language]
-            )
-            prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
-                source_language=config.LANGUAGES[source_language],
-                target_language=config.LANGUAGES[target_language],
-                text=text
-            )
+        system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
+            source_language=config.LANGUAGES[source_language],
+            target_language=config.LANGUAGES[target_language]
+        )
+        prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
+            source_language=config.LANGUAGES[source_language],
+            target_language=config.LANGUAGES[target_language],
+            text=text
+        )
 
-            content = self.llm_api.generate_text(system_prompt, prompt)
-            if not content:
-                raise Exception("翻译API返回了空内容")
-            return content.strip()
-                
-        except Exception as e:
-            raise Exception(f"Translation failed: {e}")
+        content = self.llm_api.generate_text(system_prompt, prompt)
+        if content:
+            content.strip()
+        else:
+            return text
 
 
 

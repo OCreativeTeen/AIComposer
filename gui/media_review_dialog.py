@@ -172,18 +172,9 @@ class AVReviewDialog:
 
 
     def init_load(self):
-        try:
-            self.audio_json_text.delete(1.0, tk.END)
-            self.audio_json_text.insert(1.0, json.dumps(self.current_scene, indent=2, ensure_ascii=False))
-
-            # Draw simple waveform representation
-            self.draw_waveform_placeholder()
-            
-            self.display_image_on_canvas()
-            # 加载当前场景的图片
-            self.load_video_first_frame()
-        except:
-            print("error: audio_json is not valid json")
+        self.draw_waveform_placeholder()
+        self.display_image_on_canvas()
+        self.load_video_first_frame()
 
 
     def update_dialog_title(self, transcribe_audio):
@@ -386,7 +377,7 @@ class AVReviewDialog:
         fresh_frame = ttk.Frame(editors_container)
         fresh_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
-        self.fresh_label = ttk.Label(fresh_frame, text="Fresh JSON")
+        self.fresh_label = ttk.Label(fresh_frame, text="Converation Script")
         self.fresh_label.pack(anchor="w", pady=(0, 5))
         
         # Fresh JSON text editor with scrollbar
@@ -401,59 +392,42 @@ class AVReviewDialog:
         fresh_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 绑定 Alt+Enter 快捷键到 fresh_json_text
-        self.fresh_json_text.bind('<Alt-Return>', self.copy_fresh_to_audio_json)
+        self.fresh_json_text.bind('<Alt-Return>', self.align_audio_json)
+        
+        # 标志位，防止循环更新
+        self._updating_from_json = False
         
         # Buttons for fresh JSON editor
         fresh_buttons_frame = ttk.Frame(fresh_frame)
         fresh_buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
         # 旁白语音组
-        ttk.Label(fresh_buttons_frame, text="主持").pack(side=tk.LEFT, padx=(0, 5))
-        self.narrators = ttk.Combobox(fresh_buttons_frame, values=config_prompt.HOSTS, state="normal", width=30)
-        self.narrators.pack(side=tk.LEFT, padx=(0, 10))
-        self.narrators.current(0)
+        ttk.Label(fresh_buttons_frame, text="讲员").pack(side=tk.LEFT, padx=(0, 5))
+        self.speaker = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
+        self.speaker.pack(side=tk.LEFT, padx=(0, 10))
+        self.speaker.current(0)
+        # 绑定 speaker 值改变事件
+        self.speaker.bind("<<ComboboxSelected>>", self.on_speaker_changed)
+        # 也绑定失去焦点事件，处理用户直接输入文本的情况
+        self.speaker.bind("<FocusOut>", self.on_speaker_changed)
 
         # 旁白语音组
         ttk.Label(fresh_buttons_frame, text="演员").pack(side=tk.LEFT, padx=(0, 5))
-        self.actors = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
-        self.actors.pack(side=tk.LEFT, padx=(0, 10))
-        self.actors.current(0)
-
-        ttk.Label(fresh_buttons_frame, text="补充").pack(side=tk.LEFT, padx=(0, 5))
-        self.speaking_addon = ttk.Combobox(fresh_buttons_frame, values=config_prompt.SPEAKING_ADDON, state="readonly", width=15)
-        self.speaking_addon.pack(side=tk.LEFT, padx=(0, 10))
-        self.speaking_addon.current(0)
+        self.character = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
+        self.character.pack(side=tk.LEFT, padx=(0, 10))
+        self.character.current(0)
+        # 绑定 character 值改变事件
+        self.character.bind("<<ComboboxSelected>>", self.on_character_changed)
+        # 也绑定失去焦点事件，处理用户直接输入文本的情况
+        self.character.bind("<FocusOut>", self.on_character_changed)
 
         ttk.Button(fresh_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="REMIX",  command=lambda: self.remix_conversation_json()).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
-        
-        # Editor 2: Audio JSON (right side)
-        audio_frame = ttk.Frame(editors_container)
-        audio_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
-        
-        audio_label = ttk.Label(audio_frame, text="Audio JSON")
-        audio_label.pack(anchor="w", pady=(0, 5))
-        
-        # Audio JSON text editor with scrollbar
-        audio_text_frame = ttk.Frame(audio_frame)
-        audio_text_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.audio_json_text = tk.Text(audio_text_frame, wrap=tk.WORD, width=40, height=15)
-        audio_scrollbar = ttk.Scrollbar(audio_text_frame, orient="vertical", command=self.audio_json_text.yview)
-        self.audio_json_text.configure(yscrollcommand=audio_scrollbar.set)
-        
-        self.audio_json_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        audio_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Button for audio JSON editor
-        audio_buttons_frame = ttk.Frame(audio_frame)
-        audio_buttons_frame.pack(fill=tk.X, pady=(5, 0))
-        
-        ttk.Button(audio_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
         
         # Audio transcription options section
         transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
@@ -679,11 +653,8 @@ class AVReviewDialog:
                 item["explicit"] = self.current_scene["explicit"]
                 item["implicit"] = self.current_scene["implicit"]
 
-            formatted_json = json.dumps(self.audio_json, indent=2, ensure_ascii=False)
-            self.fresh_json_text.delete(1.0, tk.END)
-            self.fresh_json_text.insert(1.0, formatted_json)
-            self.audio_json_text.delete(1.0, tk.END)
-            self.audio_json_text.insert(1.0, formatted_json)
+            self.audio_json = json.dumps(self.audio_json, indent=2, ensure_ascii=False)
+            self._update_fresh_json_text(self.audio_json)
         else:
             print("⚠️ 录音转录失败")
 
@@ -797,7 +768,7 @@ class AVReviewDialog:
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
         if not refresh_conversation or refresh_conversation.strip() == "":
             refresh_conversation = explicit_implicit
-        else:  # try to format formatted_user_prompt as json , if success, take 'content' field of each elemet, concat together as whole content
+        else:  # try to format formatted_user_prompt as json , if success, take 'speaking' field of each elemet, concat together as whole speaking
             try:
                 refresh_json = json.loads(refresh_conversation)
                 refresh_json_copy = copy.deepcopy(refresh_json)
@@ -828,50 +799,13 @@ class AVReviewDialog:
             selected_prompt = selected_prompt.format(json="a single json item describing a scene", example=selected_prompt_example)
         #format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
 
-        system_prompt_dialog = tk.Toplevel(self.dialog)
-        system_prompt_dialog.title("系统提示")
-        system_prompt_dialog.geometry("600x400")
-        system_prompt_dialog.resizable(True, True)
-        system_prompt_dialog.transient(self.dialog)
-        system_prompt_dialog.grab_set()
-
-        # 添加标签说明
-        instruction_label = tk.Label(system_prompt_dialog, text="请编辑系统提示（可修改后点击确认）：")
-        instruction_label.pack(pady=(10, 5))
-
-        # 使用Text小部件代替Label，以便用户可以编辑
-        system_prompt_text = tk.Text(system_prompt_dialog, wrap=tk.WORD, height=15, width=70)
-        system_prompt_text.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
-        
-        # 插入当前的系统提示文本
-        system_prompt_text.insert(1.0, selected_prompt)
-
-        # 添加滚动条
-        scrollbar = tk.Scrollbar(system_prompt_dialog, command=system_prompt_text.yview)
-        system_prompt_text.config(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # 用于存储用户编辑后的提示
-        edited_prompt = [selected_prompt]  # 使用列表以便在闭包中修改
-
-        def confirm_and_close():
-            # 获取编辑后的文本
-            edited_prompt[0] = system_prompt_text.get(1.0, tk.END).strip()
-            system_prompt_dialog.destroy()
-
-        confirm_button = tk.Button(system_prompt_dialog, text="确认", command=confirm_and_close)
-        confirm_button.pack(pady=10)
-
-        system_prompt_dialog.wait_window()
-
-        # 使用编辑后的系统提示
-        selected_prompt = edited_prompt[0]
-
         new_scenes = self.llm_api.generate_json_summary(
             system_prompt=selected_prompt,
             user_prompt=refresh_conversation,
             expect_list=True
         )
+        if not new_scenes or len(new_scenes) == 0:
+            return
 
         if not refresh_json or len(refresh_json) != len(new_scenes):
             for scene in new_scenes:
@@ -884,19 +818,42 @@ class AVReviewDialog:
         formatted_json = json.dumps(new_scenes, indent=2, ensure_ascii=False)
         
         # clean self.fresh_json_text, then insert formatted_json
-        self.fresh_json_text.delete(1.0, tk.END)
-        self.fresh_json_text.insert(1.0, formatted_json)
+        self._update_fresh_json_text(formatted_json)
          
 
 
-    def copy_fresh_to_audio_json(self, event=None):
+    def align_audio_json(self, event=None):
         fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
         # 验证JSON格式
         try:
-            self.audio_json = json.loads(fresh_text)
-            # JSON格式有效，清空audio_json_text并复制内容
-            self.audio_json_text.delete(1.0, tk.END)
-            self.audio_json_text.insert(1.0, fresh_text)
+            json_data = json.loads(fresh_text)
+            if self.transcribe_way == "single" and len(json_data) > 1:
+                json_data_single = json_data[0].copy()
+                json_data_single["speaking"] = "\n".join([item["speaking"] for item in json_data])
+                json_data_single["caption"] = "\n".join([item["caption"] for item in json_data])
+                json_data_single["voiceover"] = "\n".join([item["voiceover"] for item in json_data])
+                json_data = [json_data_single]
+            elif self.transcribe_way == "multiple" and len(json_data) > 1 and len(json_data) != len(self.audio_json):
+                if len(json_data) > len(self.audio_json):
+                    for i in range(len(self.audio_json)):
+                        preserved_fields = {field: self.audio_json[i][field] for field in ["start", "end", "duration", "speaker", "speaking", "character", "actions", "visual", "caption", "voiceover"] if field in self.audio_json[i]}
+                        json_data[i].update(preserved_fields)
+
+                        json_data[i]["speaking"] = json_data[i]["speaking"] + "\n" + self.audio_json[i]["speaking"]
+                        json_data[i]["caption"] = json_data[i]["caption"] + "\n" + self.audio_json[i]["caption"]
+                        json_data[i]["voiceover"] = json_data[i]["voiceover"] + "\n" + self.audio_json[i]["voiceover"]
+
+
+                        if i < len(self.audio_json):
+                            json_data[i]["speaking"] = self.audio_json[i]["speaking"]
+                            json_data[i]["caption"] = self.audio_json[i]["caption"]
+                            json_data[i]["voiceover"] = self.audio_json[i]["voiceover"]
+                        else:
+                            json_data[i]["speaking"] = ""
+                            json_data[i]["caption"] = ""
+
+            self._update_fresh_json_text(json.dumps(json_data, indent=2, ensure_ascii=False))
+            self.audio_json = json_data
         except Exception as e:
             # 其他错误
             messagebox.showerror("错误", f"复制过程中发生错误: {str(e)}")
@@ -919,12 +876,7 @@ class AVReviewDialog:
 
         self.audio_json = fresh_json
         audio_text = json.dumps(fresh_json, indent=2, ensure_ascii=False)
-
-        self.audio_json_text.delete(1.0, tk.END)
-        self.audio_json_text.insert(1.0, audio_text)
-
-        self.fresh_json_text.delete(1.0, tk.END)
-        self.fresh_json_text.insert(1.0, audio_text)
+        self._update_fresh_json_text(audio_text)
 
 
     def record_audio(self):
@@ -1121,6 +1073,8 @@ class AVReviewDialog:
             if i != self.source_image_path:
                 refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
+            # final merge audio_json
+            self.align_audio_json()
             self.result = {
                 'audio_json': self.audio_json,
                 'transcribe_way': self.transcribe_way
@@ -1249,31 +1203,6 @@ class AVReviewDialog:
         if self.av_playing:
             threading.Thread(target=update_time, daemon=True).start()
 
-    def get_fresh_json_from_editor(self):
-        """Get JSON data from fresh JSON editor"""
-        import json
-        try:
-            content = self.fresh_json_text.get(1.0, tk.END).strip()
-            if content:
-                return json.loads(content)
-            return None
-        except json.JSONDecodeError as e:
-            messagebox.showerror("错误", f"Fresh JSON格式无效: {str(e)}")
-            return None
-
-
-    def get_audio_json_from_editor(self):
-        """Get JSON data from audio JSON editor"""
-        import json
-        try:
-            content = self.audio_json_text.get(1.0, tk.END).strip()
-            if content:
-                return json.loads(content)
-            return None
-        except json.JSONDecodeError as e:
-            messagebox.showerror("错误", f"Audio JSON格式无效: {str(e)}")
-            return None
-        
     
     def load_video_first_frame(self):
         """Load and display the first frame of the video in preview canvas"""
@@ -1530,6 +1459,262 @@ class AVReviewDialog:
             
         except Exception as e:
             print(f"显示图片失败: {e}")
+
+
+    def _parse_json_from_text(self, text):
+        """从文本中解析 JSON，处理可能的引号包裹问题"""
+        if not text:
+            return None
+        
+        text = text.strip()
+        if not text:
+            return None
+        
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        
+        # 处理被引号包裹的情况：去除外层引号（可能是单引号或双引号）
+        # 处理类似 "'[ ..." 或 '"[...' 的情况
+        cleaned_text = text
+        
+        # 去除外层单引号
+        if cleaned_text.startswith("'") and cleaned_text.endswith("'"):
+            cleaned_text = cleaned_text[1:-1].strip()
+            try:
+                return json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                pass
+        
+        # 去除外层双引号
+        if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
+            cleaned_text = cleaned_text[1:-1].strip()
+            try:
+                return json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                pass
+        
+        # 处理双重引号包裹的情况（如 "'[...'" 或 '"\'[...\'"')
+        # 先去除外层单引号，再去除内层双引号
+        if text.startswith("'\"") and text.endswith("\"'"):
+            cleaned_text = text[2:-2].strip()
+            try:
+                return json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                pass
+        
+        # 处理转义字符的情况
+        # 尝试使用 ast.literal_eval 作为备选方案（仅当字符串看起来像 Python 字面量时）
+        try:
+            import ast
+            # 如果字符串看起来像 Python 字符串字面量，尝试解析
+            if (text.startswith('"') or text.startswith("'")) and (text.endswith('"') or text.endswith("'")):
+                evaluated = ast.literal_eval(text)
+                if isinstance(evaluated, str):
+                    return json.loads(evaluated)
+                elif isinstance(evaluated, (list, dict)):
+                    return evaluated
+        except (ValueError, SyntaxError):
+            pass
+        
+        return None
+
+
+    def _extract_speaker_character_from_json(self):
+        """从 fresh_json_text 中提取 speaker 和 character 的值，并设置到下拉框"""
+        if self._updating_from_json:
+            return
+        
+        try:
+            # 获取 fresh_json_text 的内容
+            fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
+            if not fresh_text:
+                return
+            
+            # 尝试解析为 JSON
+            fresh_json = self._parse_json_from_text(fresh_text)
+            if fresh_json is None:
+                return
+            
+            # 检查是否是数组
+            if not isinstance(fresh_json, list) or len(fresh_json) == 0:
+                return
+            
+            # 设置标志，防止循环更新
+            self._updating_from_json = True
+            
+            # 提取 speaker 值（从第一个项）
+            speaker_found = False
+            character_found = False
+            
+            for item in fresh_json:
+                if not isinstance(item, dict):
+                    continue
+                
+                # 提取 speaker
+                if not speaker_found and "speaker" in item:
+                    speaker_value = str(item["speaker"]).strip()
+                    if speaker_value:
+                        # 检查是否以 config_prompt.ACTORS 中的某个值开头
+                        for actor in config_prompt.ACTORS:
+                            if actor and speaker_value.startswith(actor):
+                                # 设置下拉框的值
+                                try:
+                                    self.speaker.set(actor)
+                                    speaker_found = True
+                                    break
+                                except:
+                                    pass
+                
+                # 提取 character
+                if not character_found and "character" in item:
+                    character_value = str(item["character"]).strip()
+                    if character_value:
+                        # 检查是否以 config_prompt.ACTORS 中的某个值开头
+                        for actor in config_prompt.ACTORS:
+                            if actor and character_value.startswith(actor):
+                                # 设置下拉框的值
+                                try:
+                                    self.character.set(actor)
+                                    character_found = True
+                                    break
+                                except:
+                                    pass
+                
+                # 如果都找到了，可以提前退出
+                if speaker_found and character_found:
+                    break
+            
+        except Exception as e:
+            print(f"⚠️ 从 JSON 提取 speaker/character 失败: {e}")
+        finally:
+            # 重置标志
+            self._updating_from_json = False
+
+
+    def _update_fresh_json_text(self, content):
+        """更新 fresh_json_text 的内容并触发提取 speaker 和 character 值"""
+        self.fresh_json_text.delete(1.0, tk.END)
+        self.fresh_json_text.insert(1.0, content)
+        # 触发提取 speaker 和 character 值
+        self._extract_speaker_character_from_json()
+
+
+    def on_speaker_changed(self, event=None):
+        """处理 speaker 下拉框值改变事件"""
+        # 如果正在从 JSON 更新，跳过
+        if self._updating_from_json:
+            return
+        
+        try:
+            # 获取当前选择的 speaker 值
+            speaker_value = self.speaker.get()
+            if not speaker_value:
+                return
+            
+            # 获取 fresh_json_text 的内容
+            fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
+            if not fresh_text:
+                return
+            
+            # 尝试解析为 JSON
+            fresh_json = self._parse_json_from_text(fresh_text)
+            if fresh_json is None:
+                # 不是有效的 JSON，忽略
+                return
+            
+            # 检查是否是数组
+            if not isinstance(fresh_json, list):
+                return
+            
+            # 设置标志，避免触发文本改变事件
+            self._updating_from_json = True
+            
+            # 更新数组中每个项的 speaker 字段
+            updated = False
+            for item in fresh_json:
+                if isinstance(item, dict):
+                    if "speaker" in item:
+                        speaker = item["speaker"]
+                        for actor in config_prompt.ACTORS:
+                            speaker = speaker.replace(actor, "")
+                    else:
+                        speaker = ""
+                    item["speaker"] = speaker_value + speaker
+                    updated = True
+            
+            # 如果有更新，更新 fresh_json_text
+            if updated:
+                formatted_json = json.dumps(fresh_json, indent=2, ensure_ascii=False)
+                # 注意：由于 _updating_from_json 标志为 True，不会触发提取
+                self._update_fresh_json_text(formatted_json)
+                print(f"✓ 已更新 JSON 数组中的所有 speaker 字段为: {speaker_value}")
+        
+        except Exception as e:
+            print(f"⚠️ 更新 speaker 字段失败: {e}")
+        finally:
+            # 重置标志
+            self._updating_from_json = False
+
+
+    def on_character_changed(self, event=None):
+        """处理 character 下拉框值改变事件"""
+        # 如果正在从 JSON 更新，跳过
+        if self._updating_from_json:
+            return
+        
+        try:
+            # 获取当前选择的 character 值
+            character_value = self.character.get()
+            if not character_value:
+                return
+            
+            # 获取 fresh_json_text 的内容
+            fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
+            if not fresh_text:
+                return
+            
+            # 尝试解析为 JSON
+            fresh_json = self._parse_json_from_text(fresh_text)
+            if fresh_json is None:
+                # 不是有效的 JSON，忽略
+                return
+            
+            # 检查是否是数组
+            if not isinstance(fresh_json, list):
+                return
+            
+            # 设置标志，避免触发文本改变事件
+            self._updating_from_json = True
+            
+            # 更新数组中每个项的 character 字段
+            updated = False
+            for item in fresh_json:
+                if isinstance(item, dict):
+                    if "character" in item:
+                        character = item["character"]
+                        for actor in config_prompt.ACTORS:
+                            character = character.replace(actor, "")
+                    else:
+                        character = ""
+                    # remove all words inside config_prompt.ACTORS
+                    item["character"] = character_value + character
+                    updated = True
+            
+            # 如果有更新，更新 fresh_json_text
+            if updated:
+                formatted_json = json.dumps(fresh_json, indent=2, ensure_ascii=False)
+                # 注意：由于 _updating_from_json 标志为 True，不会触发提取
+                self._update_fresh_json_text(formatted_json)
+                print(f"✓ 已更新 JSON 数组中的所有 character 字段为: {character_value}")
+        
+        except Exception as e:
+            print(f"⚠️ 更新 character 字段失败: {e}")
+        finally:
+            # 重置标志
+            self._updating_from_json = False
 
 
     def on_animation_changed(self, *args):
@@ -1860,6 +2045,7 @@ class AVReviewDialog:
             print(f"⚠️ 获取图像边界失败: {e}")
             return None
     
+
     def canvas_to_video_coords(self, canvas_x, canvas_y):
         """Convert canvas coordinates to video coordinates"""
         if not self.source_video_path or not self.video_original_width or not self.video_original_height:
@@ -2101,40 +2287,28 @@ class AVReviewDialog:
         content = scene_data.get("speaking", "")
         if content:
             current_scene["speaking"] = content
-        story = scene_data.get("visual_image", "")
-        subject = scene_data.get("subject", "")
-        if subject:
-            current_scene["subject"] = subject
+        story = scene_data.get("visual", "")
+        character = scene_data.get("character", "")
+        if character:
+            current_scene["character"] = character
         if story:
-            current_scene["visual_image"] = story
-        person_action = scene_data.get("person_action", "")
-        if person_action:
-            current_scene["person_action"] = person_action
-        era = scene_data.get("era_time", "")
-        if era:
-            current_scene["era_time"] = era
-        environment = scene_data.get("environment", "")
-        if environment:
-            current_scene["environment"] = environment
-        cinematography = scene_data.get("cinematography", "")
-        if cinematography:
-            # 规范化 cinematography 字段，确保正确处理 JSON 字符串
-            current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
-        sound = scene_data.get("sound_effect", "")
-        if sound:
-            current_scene["sound_effect"] = sound
+            current_scene["visual"] = story
+        actions = scene_data.get("actions", "")
+        if actions:
+            current_scene["actions"] = actions
+        #cinematography = scene_data.get("cinematography", "")
+        #if cinematography:
+        #    # 规范化 cinematography 字段，确保正确处理 JSON 字符串
+        #    current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
         speaker = scene_data.get("speaker", "")
         if speaker:
             current_scene["speaker"] = speaker
-        speaker_action = scene_data.get("speaker_action", "")
-        if speaker_action:
-            current_scene["speaker_action"] = speaker_action
+        actions = scene_data.get("actions", "")
+        if actions:
+            current_scene["actions"] = actions
         kernel = scene_data.get("kernel", "")
         if kernel:
             current_scene["kernel"] = kernel
-        mood = scene_data.get("mood", "")
-        if mood:
-            current_scene["mood"] = mood
 
         self.save_scenes_to_json()
 

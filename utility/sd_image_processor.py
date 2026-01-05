@@ -430,8 +430,8 @@ class SDProcessor:
                     }
                 }
             ]
-            scene_data = self.llm_api.generate_json_summary(system_prompt, user_prompt, "describe_image_response.txt", False)
-            return scene_data
+            return self.llm_api.generate_json_summary(system_prompt, user_prompt, "describe_image_response.txt", False)
+
         except Exception as e:
             print(f"❌ 图片描述失败: {str(e)}")
             return None

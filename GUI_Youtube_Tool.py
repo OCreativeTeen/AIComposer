@@ -2248,8 +2248,7 @@ class MagicToolGUI:
 
     def prepare_suno_music(self, content):
         system_prompt = "You are a professional to make SUNO-AI prompt for music creation according to the content of 'user-prompt' (in English, try add more details with richer musical guidance)"
-        content = self.llm_api.generate_text(system_prompt, content)
-        return content
+        return self.llm_api.generate_text(system_prompt, content)
 
 
 

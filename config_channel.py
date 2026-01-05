@@ -75,7 +75,7 @@ You are expert to extend & split the story (on Psychological-counseling/self-hea
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * character : gender_age (choices (boy_under_10/girl_under_10/teen_boy/teen_girl/young_man/young_woman/middle_age_man/middle_age_woman/mature_man/mature_woman/senior_man/senior_woman)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
+        * character : gender_age (choices (mature_man/mature_woman/young_man/young_woman/senior_man/senior_woman/teen_boy/teen_girl/boy/girl)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
         * speaking: 1st person dialogue ~~~ all scenes' speaking should connect coherently like a smooth conversation / natural complete narrative, if need, add transition info (to introduce time/age/location change etc) between content of adjacent scenes ~~~ in original language)
         * actions: mood of character (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the character in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -89,14 +89,14 @@ You are expert to extend & split the story (on Psychological-counseling/self-hea
 
 COUNSELING_STORY_EXAMPLE = [
         {
-            "character": "girl_under_10 / Su Qing / thin, quiet, habitually hiding in corners, the overlooked middle child",
+            "character": "girl / Su Qing / thin, quiet, habitually hiding in corners, the overlooked middle child",
             "speaking": "我小时候很少说话。那时爸爸常常酗酒,喝醉了会打妈妈和我们，妈妈却只是躲在角落里哭。有一天晚上，妈妈不在家，爸爸又开始喝酒，姐姐就悄悄把一块旧海绵塞进我裤子里面, 说这样打到屁股也就不疼了。我什么也没说，只是点头，但其实我更怕的是, 他会不会注意到我。",
             "actions": "fearful; shoulders hunched, hands pressing against chest, eyes darting toward the door as if measuring escape routes",
             "visual": "Late 1990s, winter evening, cold, indoor yellowish light; A cramped, dim apartment living room; peeling walls, a flickering ceiling light, empty bottles on a low table; a narrow hallway leading to bedrooms",
             "voiceover": "童年的苏青生活在一个随时可能爆炸的家里。她在昏暗的客厅里学会了一件事：保护自己，意味着不被注意。海绵成了她的盔甲，沉默成了她的语言。"
         },
         {
-            "character": "girl_under_10/Su Qing/hyper-vigilant, sensitive to sounds, quick to flee",
+            "character": "girl / Su Qing/hyper-vigilant, sensitive to sounds, quick to flee",
             "speaking": "后来我发现，只要听到酒瓶碰桌子的声音，我的胸口都会炸开。我们都会自动散开,没有人喊我们，可是脚已经先动了。我总是跑得最快的那个。",
             "actions": "fearful; sudden freeze followed by quick movement, bare feet running down a narrow hallway",
             "visual": "Early 2000s, summer, late evening, humid air; A narrow apartment corridor with doors on both sides. A bottle cap twists open off-screen. Lights flicker on as doors close quickly.",
@@ -162,7 +162,7 @@ You are expert to extend & split the analysis (on Psychological-counseling/self-
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * character : gender_age (choices (young_man/young_woman/mature_man/mature_woman)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
+        * character : gender_age (choices (mature_man/mature_woman/young_man/young_woman/senior_man/senior_woman/teen_boy/teen_girl/boy/girl)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
         * speaking: As professional counselor, host to speak about the psychological symptom / cause / response to viewers, on the basis of the analysis content, and try to engage the audience ~~~ all scenes' speaking content should connect coherently like a smooth conversation / natural complete narrative ~~~ in original language)
         * actions: mood of character (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the character in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -249,7 +249,7 @@ You are expert to create introduction scenes for story & analysis (on Psychologi
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * character : gender_age (choices (young_man/young_woman/mature_man/mature_woman)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
+        * character : gender_age (choices (mature_man/mature_woman/young_man/young_woman/senior_man/senior_woman/teen_boy/teen_girl/boy/girl)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
         * speaking: As professional counselor, introduce the story (on Psychological-counseling/self-healing topic), and give open questions / suspensive clues to the audience  ~~~ in original language)
         * actions: mood of character (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the character in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -381,7 +381,7 @@ You are an expert to split feedback content (provide in user-prompt) into scense
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * character : gender_age (choices (young_man/young_woman/mature_man/mature_woman)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
+        * character : gender_age (choices (mature_man/mature_woman/young_man/young_woman/senior_man/senior_woman/teen_boy/teen_girl/boy/girl)) /key-features (like: mature_woman/Professional counselor) ~~~ in English language) 
         * speaking: As professional counselor, host to speak about the psychological symptom / cause / response to viewers, on the basis of the analysis content, and try to engage the audience ~~~ all scenes' speaking content should connect coherently like a smooth conversation / natural complete narrative ~~~ in original language)
         * actions: mood of character (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the character in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -477,7 +477,7 @@ You are expert to extend & split the story (in a song) into scenes:
           The explicit storyline & implicit storyline:
             [
                 {{
-                    "name": "music-video",
+                    "name": "musicvideo",
                     "explicit": "视觉开启于一个被雨水打湿的都市深夜，霓虹灯光在积水中扭曲成斑斓的色块。男主角独自坐在路边的一辆旧巴士内，车窗玻璃上的水滴映射着他模糊的面孔。女主角出现在街道对面的旧书摊前，身披一件半透明的雨衣，她在翻找一张泛黄的海报，动作迟缓而犹豫。两人目光在雾气昭昭的空气中短暂交汇，却又迅速像陌生人一样错开。随后的副歌部分，画面切换至一个废弃且昏暗的剧院舞台，舞台中央堆满了散乱的胶片拷贝。男主角在空荡的观众席中机械地鼓掌，而女主角在舞台上跳着一段没有音乐的独舞，光影在他们之间撕裂，光圈不断缩小。进入桥段（Bridge）时，画面色彩由冷调转为极度饱和的暖调，他们并肩走在光影错落的长廊，却始终保持着一个拳头的距离。结尾处，女主角消失在尽头的强光中，只留下男主角站在原地，手中紧握着那张在雨中湿透的海报，海报上的画像已被水迹模糊得无法辨认，镜头缓缓拉远，只剩下一盏明灭不定的路灯。",
                     "implicit": "这不仅仅是一场错过的爱恋，而是一个关于‘受虐式依恋’与‘自我解构’的心理隐喻。霓虹与雨滴代表了记忆的不可靠性与流动性，暗示主人公沉溺于一种被美化了的痛苦中。剧院与舞台的意象揭示了两人关系的本质：一场明知是虚假的表演，一方甘愿作为‘观众’去配合另一方的‘剧本’，以此来确认自己依然存在。‘撕裂的勇敢’与‘圆满的碎裂’通过光影的剧烈反差得以具象化，表达了人在面对注定失败的感情时，通过主动拥抱痛苦来获得某种病态的圣洁感。最后的模糊海报象征着执念的最终消解——我们所爱上的往往不是那个人，而是自己笔下那个被粉饰过的幻影。这种‘浪漫的灾难’是灵魂在荒原中唯一能感受到的剧烈波动，哪怕它是毁灭性的。"
                 }}
@@ -497,7 +497,7 @@ You are expert to extend & split the story (in a song) into scenes:
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * character : gender_age (choices (boy_under_10/girl_under_10/teen_boy/teen_girl/young_man/young_woman/middle_age_man/middle_age_woman/mature_man/mature_woman/senior_man/senior_woman)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
+        * character : gender_age (choices (mature_man/mature_woman/young_man/young_woman/senior_man/senior_woman/teen_boy/teen_girl/boy/girl)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
         * speaking: 1st person dialogue ~~~ all scenes' speaking should connect coherently like a smooth conversation / natural complete narrative, if need, add transition info (to introduce time/age/location change etc) between content of adjacent scenes ~~~ in original language)
         * actions: mood of character (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the character in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -510,43 +510,43 @@ You are expert to extend & split the story (in a song) into scenes:
 
 MV_STORY_EXAMPLE =  [
         {
-            "character": "young_man/Lin/lonely, tired eyes, wearing a damp oversized coat",
+            "character": "young_man / Lin / lonely, tired eyes, wearing a damp oversized coat",
             "speaking": "（自言自语）窗外的霓虹灯总是被雨水打湿，糊成一片。我坐在末班车的最后一排，看着你在街角那个旧书摊旁停下。你没带伞，对吗？",
             "actions": "sad; He leans his forehead against the cold, vibrating bus window, tracing the path of a raindrop with a trembling finger.",
             "visual": "Modern era, late autumn night, heavy rain. Inside a dimly lit, near-empty city bus. Through the blurred, rain-streaked windows, a flickering neon-lit street reveals a cluttered vintage bookstore on a narrow urban sidewalk."
         },
         {
-            "character": "young_woman/Ye/ethereal, melancholic, wearing a translucent raincoat that shimmers like fish scales",
+            "character": "young_woman / Ye / ethereal, melancholic, wearing a translucent raincoat that shimmers like fish scales",
             "speaking": "（轻声低喃）我只是想找回那张画卷，哪怕它已经泛黄得看不清轮廓。我感觉到有人在看我，那目光像极了某种未落的句点，但我没有抬头。",
             "actions": "calm; She meticulously flips through a stack of old, damp posters under a dim yellow streetlamp, her movements slow and rhythmic, almost ritualistic.",
             "visual": "Outdoor, same night. A cramped sidewalk filled with wooden crates of old books and scrolls. The air is misty, and the light from a single overhead bulb creates a dramatic cone of yellow light amidst the surrounding blue-black shadows."
         },
         {
-            "character": "young_man/Lin/determined yet fragile, gripping a tattered theater program",
+            "character": "young_man / Lin / determined yet fragile, gripping a tattered theater program",
             "speaking": "（独白）欢迎来到这场褪色的舞台。我知道这只是一场同样的遗憾循环。如果你注定要跳完这出苦涩的戏，那我宁愿坐在台下，做你唯一的、永久的旁观者。",
             "actions": "sad; He sits perfectly still in a red velvet theater seat, his hands tightly interlaced, eyes fixed intensely on the empty stage as if seeing something invisible.",
             "visual": "Interior of an abandoned, grand 1920s theater. Dust motes dance in a single, sharp spotlight. The floor is covered in tangled heaps of celluloid film strips that look like black snakes."
         },
         {
-            "character": "young_woman/Ye/graceful, distant, movements echoing a sense of brokenness",
+            "character": "young_woman / Ye / graceful, distant, movements echoing a sense of brokenness",
             "speaking": "（对着虚空说）请再次敲碎我仅剩的圆满吧。在这段没有音乐的舞步里，我不需要观众，可你偏偏就在那里，守着那些早已作废的誓言。",
             "actions": "disgusted; She performs a disjointed contemporary dance on the stage, her limbs snapping and extending in ways that suggest a struggle against invisible threads.",
             "visual": "A theater stage under a flickering, cold white spotlight. The background is a cavernous darkness. Piles of old film reels reflect the strobe-like light as she moves through the shadows."
         },
         {
-            "character": "young_man/Lin/longing, reach out but hesitating",
+            "character": "young_man / Lin / longing, reach out but hesitating",
             "speaking": "（温柔地）我们走在了一起，在这段长廊里。影子重叠又分开，我闻到了你身上湿润的秋意。只要结尾还有你的一丝呢喃，这种卑微的陪伴也算是一种救赎吧？",
             "actions": "calm; He walks slowly, keeping his hands behind his back, maintaining a precise, painful distance of exactly one fist's width from her shoulder.",
             "visual": "Transition: A surreal, infinite corridor with high ceilings and arched windows. The lighting shifts to an oversaturated, glowing amber. The walls are lined with blurred photographs of the same two people."
         },
         {
-            "character": "young_woman/Ye/fading, looking toward a blinding light",
+            "character": "young_woman / Ye / fading, looking toward a blinding light",
             "speaking": "（渐弱的声音）这灾难般的浪漫该结束了。让你一次又一次拆穿我的心，也是我最后能给你的勇敢。再见，或者……再也不见。",
             "actions": "surprised; She stops walking and turns slightly, her face partially dissolved by a blinding white light coming from the end of the hallway. She steps into the glow without looking back.",
             "visual": "The end of the amber corridor. A massive, overexposed white void. Her silhouette becomes thinner and more transparent as she merges with the light."
         },
         {
-            "character": "young_man/Lin/shattered, holding a ruined object",
+            "character": "young_man / Lin / shattered, holding a ruined object",
             "speaking": "（苦笑）心碎了……也没关系。只要你还没走远，哪怕只存在于这张糊掉的画卷里。我依然会守在这里，守着这最后的一秒钟。",
             "actions": "sad; He stands alone under a flickering streetlamp, staring down at a soaked, pulpy mess of paper in his hands. He tries to smooth it out, but it disintegrates further under his touch.",
             "visual": "Back to the rain-soaked street. Empty. A single, malfunctioning streetlamp hums and flickers. The man is a small, isolated figure against the vast, dark cityscape as the camera slowly rises into the rainy sky."

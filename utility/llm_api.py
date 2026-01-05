@@ -60,27 +60,11 @@ class LLMApi:
         )
     
 
-    def parse_response(self, response: Any, stream: bool = False) -> Union[str, Generator]:
-        if stream:
-            return self._parse_stream_response(response)
-        else:
-            return self._parse_normal_response(response)
-    
-
-    def _parse_normal_response(self, response: Any) -> str:
+    def parse_response(self, response: Any) -> str:
         try:
             return response.choices[0].message.content
         except (AttributeError, IndexError) as e:
-            raise Exception(f"解析响应时发生错误: {str(e)}")
-    
-
-    def _parse_stream_response(self, response: Any) -> Generator[str, None, None]:
-        try:
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-        except (AttributeError, IndexError) as e:
-            raise Exception(f"解析流式响应时发生错误: {str(e)}")
+            return None
     
 
     def get_json_element(self, json_data: Union[Dict, List], 
@@ -124,7 +108,9 @@ class LLMApi:
         for attempt in range(max_retries):
             try:
                 content = self.generate_text(system_prompt, user_prompt)
-                
+                if not content:
+                    return [] if expect_list else {}
+
                 if content and content.strip():
                     # Step 1: Clean the response content
                     content_string = content.strip()
@@ -154,7 +140,7 @@ class LLMApi:
 
             if attempt < max_retries - 1:  # 不是最后一次尝试
                 print(f"等待 7 秒后重试...")
-                time.sleep(7)
+                time.sleep(2)
             else:
                 print("所有重试尝试已用尽")
                 return [] if expect_list else {}
@@ -303,9 +289,10 @@ class LLMApi:
             # popup dialog to ask user choose from GPT_MINI, GEMINI_2_0_FLASH, or MANUAL, return choice as model
             if self.model == MANUAL or self.model is None:
                 model, manual_response = self._show_model_dialog(system_prompt, user_prompt)
+                if model == MANUAL:
+                    return manual_response
             else:
                 model = self.model
-                manual_response = None
 
             # 准备请求参数（在确定模型后设置）
             if model == GPT_MINI:
@@ -317,8 +304,10 @@ class LLMApi:
                     "stream": False
                 }
                 response = self.openai_client.chat.completions.create(**request_params)
-                description = self.parse_response(response)
+                return self.parse_response(response)
+
             elif model == GEMINI_2_0_FLASH:
+
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
@@ -328,8 +317,10 @@ class LLMApi:
                     "stream": False
                 }
                 response = self.google_client.chat.completions.create(**request_params)
-                description = self.parse_response(response)
-            elif model == OLLAMA or model == "gemma3:27b-it-qat":
+                return self.parse_response(response)
+
+            else: # model == OLLAMA or model == "gemma3:27b-it-qat":
+
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
@@ -339,28 +330,13 @@ class LLMApi:
                 # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
                 with open("ollama_request_params.json", "w", encoding="utf-8") as f:
                     json.dump(request_params, f, ensure_ascii=False, indent=2)
-                try:
-                    print(f"🔄 使用 OLLAMA 模型 ({model}) 生成文本...")
-                    response = self.ollama_client.chat.completions.create(**request_params)
-                    description = self.parse_response(response)
-                    print(f"✅ OLLAMA 模型响应成功")
-                except Exception as ollama_error:
-                    print(f"❌ OLLAMA 模型调用失败: {str(ollama_error)}")
-                    print(f"   请求参数: model={request_params.get('model')}, messages数量={len(messages)}")
-                    raise ollama_error
-            else:
-                # Manual 模式：使用对话框中输入的响应
-                description = manual_response if manual_response else ""
 
-            if description:
-                return description
+                print(f"🔄 使用 OLLAMA 模型 ({model}) 生成文本...")
+                response = self.ollama_client.chat.completions.create(**request_params)
+                return self.parse_response(response)
+
         except Exception as e:
-            print(f"生成文本失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
-        print(f"生成文本失败, EMPTY")
-        return ""
+            return None
 
 
     def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
@@ -438,7 +414,7 @@ class LLMApi:
         # 用于存储结果
         result_model = [None]
         result_response = [None]
-        
+
         def update_response_visibility():
             """根据选择的模型显示/隐藏响应区域"""
             if selected_model.get() == MANUAL:
@@ -449,13 +425,6 @@ class LLMApi:
         # 绑定模型选择变化事件
         selected_model.trace('w', lambda *args: update_response_visibility())
         update_response_visibility()  # 初始更新（默认选择 GPT_MINI，所以响应区域会被隐藏）
-        
-
-        def on_copy():
-            content = system_text.get('1.0', tk.END).strip() + " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
-            dialog.clipboard_clear()
-            dialog.clipboard_append(content)
-            dialog.update()
         
 
         def on_ok():
@@ -487,15 +456,24 @@ class LLMApi:
             result_model[0] = MANUAL
             result_response[0] = None
             dialog.destroy()
-        
+
+
+        def on_copy():
+            content = system_text.get('1.0', tk.END).strip() + " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
+            dialog.clipboard_clear()
+            dialog.clipboard_append(content)
+            dialog.update()
+
+
         # 按钮框架
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
         
-        ttk.Button(button_frame, text="拷贝", command=on_copy).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
-        
+
+        on_copy()
+
         # 等待对话框关闭
         dialog.wait_window()
         

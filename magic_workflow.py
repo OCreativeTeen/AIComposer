@@ -219,36 +219,37 @@ class MagicWorkflow:
                 safe_remove(file)
 
 
-    def build_prompt(self, scene_data, style, extra, track, av_type, language):
+
+    def build_prompt(self, scene_data, extra, track, av_type):
         prompt_dict = {}
 
         # 提取当前场景的关键信息
+        character = scene_data.get("character", "")
+        speaking = scene_data.get("speaking", "")
+        actions = scene_data.get("actions", "")
+        visual = scene_data.get("visual", "")
+
         speaker = scene_data.get("speaker", "")
-        speaker_position = scene_data.get("speaker_position", "")
-        person_mood = scene_data.get("mood", "calm")
+        voiceover = scene_data.get("voiceover", "")
 
         if "second" in track:
             if "speaking" in scene_data:
-                content = scene_data['content']
                 if speaker:
-                    if speaker_position and speaker_position == "left":
-                        prompt_dict["SPEAKING"] = f"the left-side person says: ({content}),  while acting like ({scene_data['speaker_action']})"
+                    if speaker.endswith("left"):
+                        prompt_dict["SPEAKING"] = f"the left-side person says: ({speaking}), while {actions}."
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the right-side person is listening, while engaging face &  hands reactions."
-                    elif speaker_position and speaker_position == "right":
-                        prompt_dict["SPEAKING"] = f"the right-side person says: ({content}),  while acting like ({scene_data['speaker_action']})"
+                    elif speaker.endswith("right"):
+                        prompt_dict["SPEAKING"] = f"the right-side person says: ({speaking}),  while {actions}."
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the left-side person is listening, while engaging face & hands reactions."
                     else:
-                        prompt_dict["SPEAKING"] = f"the person say: ({content}),  while acting like ({scene_data['speaker_action']})"
+                        prompt_dict["SPEAKING"] = f"the person say: ({speaking}),  while {actions}."
                 else:
-                    prompt_dict["SPEAKING"] = content
-
-                if person_mood and person_mood != "":
-                    prompt_dict["SPEAKING"] = prompt_dict["SPEAKING"] + "\nIn " + person_mood + " mood."
+                    prompt_dict["SPEAKING"] = f"{speaking}, while {actions}."
 
         if "clip" in track or "zero" in track:
-            person_lower = scene_data['subject'].lower()
+            person_lower = character
             if person_lower:
                 has_negative_pattern = (
                     re.search(r'\bno\b.*\bpersons?\b', person_lower) or  # matches "no person", "no persons", "no specific person"
@@ -257,42 +258,15 @@ class MagicWorkflow:
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["subject"] = ""
-                    if person_mood and person_mood != "":
-                        prompt_dict["subject"] = prompt_dict["subject"]+f"The person is in {person_mood} mood.\n"
-                    if av_type in config_prompt.ANIMATE_S2V:
-                        prompt_dict["subject"] = prompt_dict["subject"]+"Singing or talking with body/hand movements.\n"
-
-                    #if language == "en":
-                    #    prompt_dict["subject"] = self.transcriber.translate_text(scene_data['subject'], self.language, "en")
-                    #else:
-                    prompt_dict["subject"] = prompt_dict["subject"] + "\n" + scene_data['subject']
+                    prompt_dict["character"] = character + ", while " + actions + "."
 
 
-        prompt_dict["VISUAL"] = ""
-        if style and style.strip() != "":
-            prompt_dict["VISUAL"] = "The Image style is like :" + style
+        prompt_dict["visual"] = visual
 
-        #if language == "en":
-        #    visual_image = self.transcriber.translate_text(scene_data['visual_image'], self.language, "en")
-        #    person_action = self.transcriber.translate_text(scene_data['person_action'], self.language, "en")
-        #else:
-        if av_type == "IMAGE_GENERATION":
-            visual_image = scene_data['visual_image']
-            prompt_dict["VISUAL"] = prompt_dict["VISUAL"] + "\n" + visual_image
-        else: # VIDEO_GENERATION
-            person_action = scene_data['person_action']
-            prompt_dict["VISUAL"] = prompt_dict["VISUAL"] + "\n" + person_action
-
-        if "era_time" in scene_data:
-            prompt_dict["ERA_TIME"] = scene_data['era_time']
-        if "environment" in scene_data:
-            prompt_dict["ENVIRONMENT"] = scene_data['environment']
-        if "cinematography" in scene_data:
-            prompt_dict["CINEMATOGRAPHY"] = scene_data['cinematography']
-        #if "sound_effect" in scene_data:
-        #    prompt_dict["SOUND_EFFECT"] = scene_data['sound_effect']
-
+        prompt_dict["content"] = speaking
+        prompt_dict["voiceover"] = voiceover
+        #if "cinematography" in scene_data:
+        #    prompt_dict["CINEMATOGRAPHY"] = scene_data['cinematography']
         if extra:
             prompt_dict["FYI"] = extra
 
@@ -365,6 +339,8 @@ class MagicWorkflow:
             user_prompt = self.transcriber.fetch_text_from_json(introduction_story)
             
             introduction_story = self.llm_api.generate_text(config_prompt.NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT, user_prompt)
+            if not introduction_story:
+                return None
 
             introduction_story = f"""
             "Introducation_story" : "The hosts start the dialogue just after they {introduction_type}, that talks about : '{introduction_story}'.     (the dialogue is carried out immediately after this talk)",
@@ -381,6 +357,8 @@ class MagicWorkflow:
             user_prompt = self.transcriber.fetch_text_from_json(previous_dialogue)
 
             previous_dialogue = self.llm_api.generate_text(config_prompt.NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT, user_prompt)
+            if not previous_dialogue:
+                return None
 
             previous_dialogue = f"""
                 "Previous_Dialogue" : "This dialogue follows the previous story-telling-dialogue, talking about : '{previous_dialogue}'.    !!! This dialogue may mention the previous content quickly, but DO NOT talking the details again !!!",
@@ -742,10 +720,6 @@ class MagicWorkflow:
         if os.path.exists(scenes_file):
             with open(scenes_file, "r", encoding="utf-8") as f:
                 self.scenes = json.load(f)
-            # 规范化加载的场景数据，清理可能的转义累积
-            for scene in self.scenes:
-                if "cinematography" in scene:
-                    scene["cinematography"] = self._normalize_json_string_field(scene["cinematography"])
             return
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
@@ -826,7 +800,7 @@ class MagicWorkflow:
 
 
     def prepare_srt(self, subtitle, start_duration, audio_duration):
-        #if subtitle is json file, load it, then for each json item, get the 'content' field, concat them by \n, as srt_content
+        #if subtitle is json file, load it, then for each json item, get the 'speaking' field, concat them by \n, as srt_content
         script_lines = []
 
         try:
@@ -967,7 +941,7 @@ class MagicWorkflow:
         try:
             # 在保存之前规范化可能包含JSON字符串的字段
             normalized_scenes = []
-            json_string_fields = ['cinematography']  # 可能需要规范化的字段列表
+            json_string_fields = []  # 可能需要规范化的字段列表
             
             for scene in self.scenes:
                 normalized_scene = scene.copy()
@@ -1058,7 +1032,6 @@ class MagicWorkflow:
         
         print(f"🔄 正在分析图像: {image_path}")
         scene_data = self.sd_processor.describe_image(image_path)
-        
         if not scene_data:
             messagebox.showerror("错误", "图像分析失败，无法获取场景数据")
             return
@@ -1223,7 +1196,7 @@ class MagicWorkflow:
         
         while i < len(self.scenes):
             current_scene = self.scenes[i]
-            current_story = current_scene.get("visual_image", "")
+            current_story = current_scene.get("visual", "")
             
             # Find all consecutive scenes with the same story content
             start_index = i
@@ -1234,7 +1207,7 @@ class MagicWorkflow:
             base_seconds += scene_duration
             # Look ahead to find consecutive scenes with same story
             while (end_index + 1 < len(self.scenes) and 
-                   self.scenes[end_index + 1].get("visual_image", "") == current_story and
+                   self.scenes[end_index + 1].get("visual", "") == current_story and
                    current_story.strip() != ""):  # Only combine non-empty content
                 end_index += 1
                 current_scene = self.scenes[end_index]
@@ -1512,31 +1485,11 @@ class MagicWorkflow:
         return audio_temp
 
 
-    def merge_scenes_from_json(self, raw_scene, audio_json):
-        scene_size = len(self.scenes)
-        audio_size = len(audio_json)
-
-        merge_size = min(scene_size, audio_size)
-        audio = self.ffmpeg_audio_processor.to_wav(raw_scene["clip_audio"])
-        video = self.ffmpeg_processor.resize_video(raw_scene["clip"], None, None) 
-  
-        for i in range(merge_size):
-            audio_scene = audio_json[i]
-            preserved_fields = {field: audio_scene[field] for field in ["start", "end", "duration", "speaker"] if field in audio_scene}
-            self.scenes[i].update(preserved_fields)
-            
-            update_fields = {
-                "clip_animation": ""
-            }
-            audio_scene.update(update_fields)
-
-            clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, audio_scene["start"], audio_scene["duration"])
-            olda, clip_audio = refresh_scene_media(self.scenes[i], "clip_audio", ".wav", clip_wav)
-
-            v = self.ffmpeg_processor.trim_video(video, audio_scene["start"], audio_scene["end"])
-            v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
-            # v = self.ffmpeg_processor.image_audio_to_video(self.scenes[i]["clip_image"], clip_audio)
-            refresh_scene_media(self.scenes[i], "clip", ".mp4", v)
+    def copy_scene(self, scene, audio_scene):
+        preserved_fields = {field: audio_scene[field] for field in ["start", "end", "duration", "speaker", "speaking", "character", "actions", "visual", "caption", "voiceover"] if field in audio_scene}
+        scene.update(preserved_fields)
+        return scene
+ 
 
 
     def prepare_scenes_from_json(self, raw_scene, audio_json):
@@ -1547,10 +1500,6 @@ class MagicWorkflow:
 
         start_time = 0.0
         for audio_scene in audio_json:
-            preserved_fields = {field: audio_scene[field] for field in ["duration", "speaker", "speaking"] if field in audio_scene}
-            audio_scene.update(raw_scene.copy())
-            audio_scene.update(preserved_fields)
-            
             raw_id += 100
             update_fields = {
                 "id": raw_id,
@@ -1559,7 +1508,6 @@ class MagicWorkflow:
             audio_scene.update(update_fields)
 
             # self.refresh_scene_visual(audio_scene)
-
             clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, start_time, audio_scene["duration"])
             olda, clip_audio = refresh_scene_media(audio_scene, "clip_audio", ".wav", clip_wav)
             end_time = start_time + audio_scene["duration"]

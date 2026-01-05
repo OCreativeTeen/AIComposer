@@ -278,7 +278,7 @@ class WanPromptEditorDialog:
             extra = wan_desc + "  :  " + extra if extra else wan_desc
         
         animate_mode = self.scene.get(self.track+"_animation", "")
-        new_prompt = self.workflow.build_prompt(self.scene, "", extra, self.track, animate_mode, self.workflow.language)
+        new_prompt = self.workflow.build_prompt(self.scene, extra, self.track, animate_mode)
 
         # 更新文本框（如果是字典，转换为字符串显示）
         self.prompt_text.delete(1.0, tk.END)
