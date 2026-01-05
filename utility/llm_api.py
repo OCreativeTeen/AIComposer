@@ -398,7 +398,7 @@ class LLMApi:
         model_frame.pack(fill=tk.X, pady=(0, 10))
         
         # 用于存储选择的变量
-        selected_model = tk.StringVar(value=GPT_MINI)  # 默认选择 GPT_MINI
+        selected_model = tk.StringVar(value=MANUAL)  # 默认选择 GPT_MINI
         
         # 创建单选按钮
         ttk.Radiobutton(model_frame, text=f"GPT Mini ({GPT_MINI})", variable=selected_model, value=GPT_MINI).pack(anchor='w', pady=2)

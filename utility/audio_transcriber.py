@@ -208,15 +208,21 @@ class AudioTranscriber:
 
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
-        output = [] 
+        output = []
+        character = "middle_age_woman"
         for segment in segments:
             output.append({
                 "start": float(segment["start"]),
                 "end": float(segment["end"]),
                 "duration": float(segment["end"]) - float(segment["start"]),
-                "speaker": "SPEAKER_00",
-                "caption": segment["content"]
+                "character": character,
+                "caption": segment["content"],
+                "speaking": segment["content"]
             })
+            if character == "middle_age_woman":
+                character = "middle_age_man"
+            else:
+                character = "middle_age_woman"
 
         return output
 
@@ -248,7 +254,7 @@ class AudioTranscriber:
                 "end": float(seg["end"]),
                 "duration": float(seg["end"]) - float(seg["start"]),
                 "speaker": speaker,
-                "content": seg["content"]
+                "speaking": seg["speaking"]
             })
 
         return output

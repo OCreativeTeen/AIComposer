@@ -228,7 +228,7 @@ class MagicWorkflow:
         person_mood = scene_data.get("mood", "calm")
 
         if "second" in track:
-            if "content" in scene_data:
+            if "speaking" in scene_data:
                 content = scene_data['content']
                 if speaker:
                     if speaker_position and speaker_position == "left":
@@ -464,7 +464,7 @@ class MagicWorkflow:
         to_scene = self.scenes[to_index]
 
         if not keep_current:
-            from_scene["content"] = to_scene["content"]
+            from_scene["speaking"] = to_scene["speaking"]
         # merged_duration = self.find_duration(from_scene) + self.find_duration(to_scene)
         if from_index > to_index:
             audio_list = [get_file_path(to_scene, "clip_audio"), get_file_path(from_scene, "clip_audio")]
@@ -602,7 +602,7 @@ class MagicWorkflow:
         if position<=0 or position >= original_duration:
             return False
 
-        original_content = current_scene.get("content", "")
+        original_content = current_scene.get("speaking", "")
         original_audio_clip = get_file_path(current_scene, "clip_audio")
         original_video_clip = get_file_path(current_scene, "clip")
 
@@ -632,9 +632,9 @@ class MagicWorkflow:
             if s["id"] > max_section_id:
                 max_section_id = s["id"]
 
-        current_scene["content"] = original_content  #original_content[:int(len(original_content)*current_ratio)]
+        current_scene["speaking"] = original_content  #original_content[:int(len(original_content)*current_ratio)]
         current_scene["id"] = max_section_id + 1
-        next_scene["content"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
+        next_scene["speaking"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
 
         #self._generate_video_from_image(current_scene)
@@ -751,47 +751,21 @@ class MagicWorkflow:
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
         channel_topic = config_channel.CHANNEL_CONFIG[channel]["topic"]
         story_script = project_manager.PROJECT_CONFIG.get('story', "{}")
-        story_kernel = project_manager.PROJECT_CONFIG.get('kernel', "")
-        story_promo = project_manager.PROJECT_CONFIG.get('promo', "")
         stories_json = json.loads(story_script)
         stories_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
 
-        # replace the story element (name='story') in the story_template with the story_json (a json array as well)
-        # the json element is like this:
-        # {
-        #     "name": "open",
-        #     "content": "opening video",
-        #     "clue": "less than 8 seconds of opening video"
-        # }
-        # Find the index of the element with name='story' and replace it with story_json array
-        answer = tk.messagebox.askyesno("Single Story", "Do you want to create single scence for all story?")
-        if answer:
-            for i, element in enumerate(stories_template):
-                if element.get("name") == "story":
-                    element["story"] = story_script
-                    element["promotion"] = story_promo
-                    element["kernel"] = story_kernel
-                    break
+        for i, element in enumerate(stories_template):
+            if element.get("name") == "program":
+                stories_template[i:i+1] = stories_json
+                break
+
+        # popup dialog to select the story level
+        story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")
+        if story_level:
+            story_level = True
+        else:
             story_level = False
 
-        else:
-            for act in stories_json["acts"]:
-                act["story"] = story_script
-                act["promotion"] = story_promo
-                act["kernel"] = story_kernel
-
-            for i, element in enumerate(stories_template):
-                if element.get("name") == "story":
-                    stories_template[i:i+1] = stories_json["acts"]
-                    break
-
-            # popup dialog to select the story level
-            story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")
-            if story_level:
-                story_level = True
-            else:
-                story_level = False
-            
         for story_index, story in enumerate(stories_template):
             self.add_story_scene(story_index, story, story_level, is_append=False)
 
@@ -859,7 +833,7 @@ class MagicWorkflow:
             json_content = json.loads(subtitle)
             srt_content = ""
             for item in json_content:
-                script_lines.append(item["content"])
+                script_lines.append(item["speaking"])
         except Exception as e: 
             for line in subtitle.split('\n'):
                 line = line.strip()
@@ -1314,6 +1288,7 @@ class MagicWorkflow:
         lang = "chinese" if language == "zh" or language == "tw" else "english"
         for json_item in fresh_json:
             self.regenerate_audio_item(json_item, language)
+            json_item["caption"] = json_item["speaking"]
 
         return fresh_json, self.ffmpeg_audio_processor.concat_audios([json_item["speak_audio"] for json_item in fresh_json])
 
@@ -1321,32 +1296,28 @@ class MagicWorkflow:
     def regenerate_audio_item(self, json_item, language):
         lang = "chinese" if language == "zh" or language == "tw" else "english"
 
-        speaker = json_item["speaker"]
-        content = json_item["content"]
+        speaker = json_item["character"]
+        content = json_item["speaking"]
         mood = json_item["mood"]
 
-        ss = speaker.split(",")
+        ss = speaker.split("/")
         if len(ss) > 1:
-            print(f"🎤 检测到多说话人模式: {len(ss)} 个说话人 - {', '.join([s.strip() for s in ss if s.strip()])}")
+            speaker = ss[0]
 
-        voices = []
-        for s in ss:
-            s = s.strip()  # 去除可能的空格
-            if not s:  # 跳过空字符串
-                continue
-            try:
-                voice = self.speech_service.get_voice(s, lang)
-                ssml = self.speech_service.create_ssml(text=content, voice=voice, mood=mood)
-                audio_file = self.speech_service.synthesize_speech(ssml)
-                if audio_file:  # 只添加成功生成的音频文件
-                    voices.append(audio_file)
-                else:
-                    print(f"⚠️ 说话人 '{s}' 的语音合成失败")
-            except Exception as e:
-                print(f"❌ 说话人 '{s}' 的语音合成错误: {str(e)}")
+        try:
+            voice = self.speech_service.get_voice(speaker, lang)
+            ssml = self.speech_service.create_ssml(text=content, voice=voice, mood=mood)
+            audio_file = self.speech_service.synthesize_speech(ssml)
+            if audio_file:  # 只添加成功生成的音频文件
+                json_item["speak_audio"] = audio_file
+                json_item["duration"] = self.ffmpeg_audio_processor.get_duration(json_item["speak_audio"])
+            else:
+                json_item["speak_audio"] = None
+                json_item["duration"] = 0.0
+                print(f"⚠️ 说话人 '{s}' 的语音合成失败")
+        except Exception as e:
+            print(f"❌ 说话人 '{s}' 的语音合成错误: {str(e)}")
 
-        json_item["speak_audio"] = self.ffmpeg_audio_processor.audio_list_mix(voices)
-        json_item["duration"] = self.ffmpeg_audio_processor.get_duration(json_item["speak_audio"])
         return json_item["duration"], json_item["speak_audio"]
 
 
@@ -1576,7 +1547,7 @@ class MagicWorkflow:
 
         start_time = 0.0
         for audio_scene in audio_json:
-            preserved_fields = {field: audio_scene[field] for field in ["duration", "speaker", "content"] if field in audio_scene}
+            preserved_fields = {field: audio_scene[field] for field in ["duration", "speaker", "speaking"] if field in audio_scene}
             audio_scene.update(raw_scene.copy())
             audio_scene.update(preserved_fields)
             
@@ -1612,28 +1583,6 @@ class MagicWorkflow:
         self.save_scenes_to_json()
         return True
 
-
-    def refresh_scene_visual(self, scene):
-        script_content = json.dumps(scene, ensure_ascii=False, indent=2)
- 
-        if not script_content or script_content == "":
-            return
-
-        system_prompt = config_prompt.SCENE_REFRESH_SYSTEM_PROMPT
-        camear_style = scene.get("camear_style", None)
-        camera_color = scene.get("camera_color", None)
-        camera_shot = scene.get("camera_shot", None)
-        camera_angle = scene.get("camera_angle", None)
-        if camear_style and camera_color and camera_shot and camera_angle:
-            system_prompt = system_prompt + f'\n***FYI*** Generally, video/image is in \'{camear_style}\' style &  \'{camera_color}\' colors; the camera using \'{camera_shot}\' shot, in \'{camera_angle}\' angle.'
-
-        new_scene = self.llm_api.generate_json_summary(system_prompt, script_content, None, False)
-        if isinstance(new_scene, list):
-            if len(new_scene) == 0:
-                return
-            new_scene = new_scene[0]
-
-        self.try_update_scene_visual_fields(scene, new_scene)
 
 
     def max_id(self, current_scene):
@@ -1700,206 +1649,5 @@ class MagicWorkflow:
                 self.scenes.insert(story_index+1, story)
             else:
                 self.scenes.insert(story_index, story) 
-
-
-
-    def try_update_scene_visual_fields(self, current_scene, scene_data):
-        # 显示对比对话框，让用户比较和编辑
-        updated_data = self._show_scene_comparison_dialog(current_scene, scene_data)
-        if updated_data is None:
-            return  # 用户取消
-
-        content = scene_data.get("content", "")
-        if content:
-            current_scene["content"] = content
-        story = scene_data.get("visual_image", "")
-        subject = scene_data.get("subject", "")
-        if subject:
-            current_scene["subject"] = subject
-        if story:
-            current_scene["visual_image"] = story
-        person_action = scene_data.get("person_action", "")
-        if person_action:
-            current_scene["person_action"] = person_action
-        era = scene_data.get("era_time", "")
-        if era:
-            current_scene["era_time"] = era
-        environment = scene_data.get("environment", "")
-        if environment:
-            current_scene["environment"] = environment
-        cinematography = scene_data.get("cinematography", "")
-        if cinematography:
-            # 规范化 cinematography 字段，确保正确处理 JSON 字符串
-            current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
-        sound = scene_data.get("sound_effect", "")
-        if sound:
-            current_scene["sound_effect"] = sound
-        speaker = scene_data.get("speaker", "")
-        if speaker:
-            current_scene["speaker"] = speaker
-        speaker_action = scene_data.get("speaker_action", "")
-        if speaker_action:
-            current_scene["speaker_action"] = speaker_action
-        kernel = scene_data.get("kernel", "")
-        if kernel:
-            current_scene["kernel"] = kernel
-        mood = scene_data.get("mood", "")
-        if mood:
-            current_scene["mood"] = mood
-
-        self.save_scenes_to_json()
-
-
-    def _show_scene_comparison_dialog(self, current_scene, new_scene_data):
-        """显示场景数据对比对话框，让用户比较和编辑字段值"""
-        import tkinter as tk
-        import tkinter.ttk as ttk
-        import tkinter.scrolledtext as scrolledtext
-        
-        # 字段名称映射
-        field_labels = {
-            "content": "内容",
-            "subject": "主体",
-            "visual_image": "开场画面",
-            "person_action": "人物动作",
-            "era_time": "时代",
-            "environment": "环境",
-            "cinematography": "电影摄影",
-            "sound_effect": "音效",
-            "speaker": "讲员",
-            "speaker_action": "讲员动作",
-            "kernel": "关键词",
-            "mood": "情绪"
-        }
-        
-        # 需要对比的字段列表
-        fields_to_compare = list(field_labels.keys())
-        
-        # 创建对话框
-        try:
-            root = tk._default_root
-            if root is None:
-                root = tk.Tk()
-                root.withdraw()
-        except:
-            root = tk.Tk()
-            root.withdraw()
-        
-        dialog = tk.Toplevel(root)
-        dialog.title("对比和编辑场景数据")
-        dialog.geometry("1200x800")
-        dialog.transient(root)
-        dialog.grab_set()
-        
-        # 居中显示
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 1200) // 2
-        y = (dialog.winfo_screenheight() - 800) // 2
-        dialog.geometry(f"1200x800+{x}+{y}")
-        
-        # 主框架
-        main_frame = ttk.Frame(dialog, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 标题
-        title_label = ttk.Label(main_frame, text=f"新旧场景数据对比",  font=('TkDefaultFont', 11, 'bold'))
-        title_label.pack(pady=(0, 10))
-        
-        # 创建滚动框架
-        canvas = tk.Canvas(main_frame)
-        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # 存储编辑控件和复选框
-        comparison_widgets = {}
-        
-        # 为每个字段创建对比行
-        for field in fields_to_compare:
-            field_frame = ttk.LabelFrame(scrollable_frame, text=field_labels[field], padding=5)
-            field_frame.pack(fill=tk.X, pady=5, padx=5)
-            
-            # 复选框：是否更新此字段
-            checkbox_frame = ttk.Frame(field_frame)
-            checkbox_frame.pack(fill=tk.X, pady=(0, 5))
-            
-            update_var = tk.BooleanVar(value=False)
-            checkbox = ttk.Checkbutton(checkbox_frame, text="更新此字段", variable=update_var)
-            checkbox.pack(side=tk.LEFT)
-            
-            # 两列布局：当前值 vs 新值
-            comparison_frame = ttk.Frame(field_frame)
-            comparison_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # 当前值列
-            current_frame = ttk.Frame(comparison_frame)
-            current_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-            ttk.Label(current_frame, text="当前值:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w')
-            current_text = scrolledtext.ScrolledText(current_frame, wrap=tk.WORD, height=3, width=50)
-            current_text.pack(fill=tk.BOTH, expand=True)
-            current_value = str(current_scene.get(field, ""))
-            current_text.insert('1.0', current_value)
-            current_text.config(state=tk.DISABLED)  # 当前值只读
-            
-            # 新值列（可编辑）
-            new_frame = ttk.Frame(comparison_frame)
-            new_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
-            ttk.Label(new_frame, text="新值（可编辑）:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w')
-            new_text = scrolledtext.ScrolledText(new_frame, wrap=tk.WORD, height=3, width=50)
-            new_text.pack(fill=tk.BOTH, expand=True)
-            new_value = str(new_scene_data.get(field, ""))
-            new_text.insert('1.0', new_value)
-            
-            if not current_value or current_value.strip() == "":
-                update_var.set(True)
-            else:
-                update_var.set(False)
-            # 保存控件引用
-            comparison_widgets[field] = {
-                'update_var': update_var,
-                'new_text': new_text
-            }
-
-            
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # 按钮框架
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        result = [None]  # 使用列表以便在闭包中修改
-        
-        def on_ok():
-            # 收集用户选择的数据
-            updated_data = {}
-            for field, widgets in comparison_widgets.items():
-                if widgets['update_var'].get():
-                    # 用户选择了更新此字段
-                    new_value = widgets['new_text'].get('1.0', tk.END).strip()
-                    if new_value:  # 只添加非空值
-                        updated_data[field] = new_value
-            result[0] = updated_data if updated_data else None
-            dialog.destroy()
-        
-        def on_cancel():
-            result[0] = None
-            dialog.destroy()
-        
-        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
-        
-        # 等待对话框关闭
-        dialog.wait_window()
-        
-        return result[0]
 
 

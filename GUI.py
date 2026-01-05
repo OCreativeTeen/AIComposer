@@ -1080,7 +1080,6 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Button(type_mood_action_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image("en")).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="生视觉化", width=10, command=lambda: self.refresh_scene_visual()).pack(side=tk.LEFT)
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
@@ -1116,14 +1115,14 @@ class WorkflowGUI:
 
         # add the text field to show the kernel
         ttk.Label(self.video_edit_frame, text="核心:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_kernel = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_kernel.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_implicit = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_implicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add the text field to show the kernel
         ttk.Label(self.video_edit_frame, text="故事:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_story = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_story.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_explicit = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_explicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="主体:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -2028,11 +2027,11 @@ class WorkflowGUI:
         self.scene_sound_effect.delete("1.0", tk.END)
         self.scene_sound_effect.insert("1.0", scene_data.get("sound_effect", ""))
         
-        self.scene_kernel.delete("1.0", tk.END)
-        self.scene_kernel.insert("1.0", scene_data.get("kernel", ""))
+        self.scene_implicit.delete("1.0", tk.END)
+        self.scene_implicit.insert("1.0", scene_data.get("implicit", ""))
 
-        self.scene_story.delete("1.0", tk.END)
-        self.scene_story.insert("1.0", scene_data.get("story", ""))
+        self.scene_explicit.delete("1.0", tk.END)
+        self.scene_explicit.insert("1.0", scene_data.get("explicit", ""))
 
         
         self.scene_extra.delete("1.0", tk.END)   
@@ -2051,7 +2050,7 @@ class WorkflowGUI:
             self.scene_mood.set("calm")
         
         self.scene_story_content.delete("1.0", tk.END)
-        self.scene_story_content.insert("1.0", scene_data.get("content", ""))
+        self.scene_story_content.insert("1.0", scene_data.get("speaking", ""))
         
         # 加载宣传信息
         self.scene_promotion.delete("1.0", tk.END)
@@ -2254,11 +2253,11 @@ class WorkflowGUI:
         self.scene_speaker.delete("1.0", tk.END)
         self.scene_speaker_action.delete("1.0", tk.END)
         self.scene_extra.delete("1.0", tk.END)
-        self.scene_story.delete("1.0", tk.END)
+        self.scene_explicit.delete("1.0", tk.END)
         self.scene_speaker_position.set("")
         self.scene_mood.set("calm")
         self.scene_story_content.delete("1.0", tk.END)
-        self.scene_kernel.delete("1.0", tk.END)
+        self.scene_implicit.delete("1.0", tk.END)
         self.scene_cinematography.delete("1.0", tk.END)
         self.scene_promotion.delete("1.0", tk.END)
 
@@ -3448,11 +3447,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def refresh_scene_visual(self):
-        self.workflow.refresh_scene_visual( self.get_current_scene() )
-        self.refresh_gui_scenes()
-
-
     def copy_images_to_next(self):
         current_scene = self.get_current_scene()
         next_scene = self.workflow.next_scene_of_story(current_scene)
@@ -3530,9 +3524,9 @@ class WorkflowGUI:
                 cinematography_value = cinematography_text
         
         scene.update({
-            "content": self.scene_story_content.get("1.0", tk.END).strip(),
-            "kernel": self.scene_kernel.get("1.0", tk.END).strip(),
-            "story": self.scene_story.get("1.0", tk.END).strip(),
+            "speaking": self.scene_story_content.get("1.0", tk.END).strip(),
+            "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
+            "explicit": self.scene_explicit.get("1.0", tk.END).strip(),
             "subject": self.scene_subject.get("1.0", tk.END).strip(),
             "visual_image": self.scene_visual_image.get("1.0", tk.END).strip(),
             "person_action": self.scene_person_action.get("1.0", tk.END).strip(),
@@ -3698,8 +3692,6 @@ class WorkflowGUI:
             # video_width and video_height are read-only from project config, not saved
             'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
             'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-            'kernel': project_manager.PROJECT_CONFIG.get('kernel', ''),
-            'promo': project_manager.PROJECT_CONFIG.get('promo', ''),
             'story': project_manager.PROJECT_CONFIG.get('story', '')
         }
 
@@ -3738,8 +3730,6 @@ class WorkflowGUI:
                 # video_width and video_height are read-only from project config, not saved
                 'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
                 'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-                'kernel': project_manager.PROJECT_CONFIG.get('kernel', ''),
-                'promo': project_manager.PROJECT_CONFIG.get('promo', ''),
                 'story': project_manager.PROJECT_CONFIG.get('story', '')
             }
 
@@ -3756,10 +3746,6 @@ class WorkflowGUI:
                 if 'generated_tags' in project_manager.PROJECT_CONFIG:
                     config_data['generated_tags'] = project_manager.PROJECT_CONFIG['generated_tags']
                 # Preserve kernel, story from existing config
-                if 'kernel' in project_manager.PROJECT_CONFIG:
-                    config_data['kernel'] = project_manager.PROJECT_CONFIG['kernel']
-                if 'promo' in project_manager.PROJECT_CONFIG:
-                    config_data['promo'] = project_manager.PROJECT_CONFIG['promo']
                 if 'story' in project_manager.PROJECT_CONFIG:
                     config_data['story'] = project_manager.PROJECT_CONFIG['story']
             
@@ -3780,13 +3766,13 @@ class WorkflowGUI:
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_fields = [
             self.scene_visual_image,
-            self.scene_story,
+            self.scene_explicit,
             self.scene_era_time,
             self.scene_environment,
             self.scene_speaker,
             self.scene_speaker_action,
             self.scene_extra,
-            self.scene_kernel,
+            self.scene_implicit,
             self.scene_cinematography,
             self.scene_subject,
             self.scene_person_action,
@@ -3958,8 +3944,8 @@ class WorkflowGUI:
             current_scene["clip_animation"] = ""
 
             if transcribe_way == "single":
-                current_scene["content"] = "\n".join([segment["content"] for segment in audio_json])
-                self.workflow.refresh_scene_visual(current_scene)
+                current_scene["speaking"] = "\n".join([segment["speaking"] for segment in audio_json])
+                #self.workflow.refresh_scene_visual(current_scene)
             elif transcribe_way == "multiple":
                 self.workflow.prepare_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
                 self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)

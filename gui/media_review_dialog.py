@@ -9,6 +9,7 @@ from utility.audio_transcriber import AudioTranscriber
 import config, config_channel
 from utility.llm_api import LLMApi
 import json
+import copy
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
 import project_manager
@@ -118,7 +119,7 @@ class AVReviewDialog:
         # 新增拖放媒体
         self.animation_choice = 1
 
-        self.audio_json = [self.current_scene]
+        self.audio_json = None
         self.transcribed = False
 
         self.current_playback_time = 0.0
@@ -173,7 +174,7 @@ class AVReviewDialog:
     def init_load(self):
         try:
             self.audio_json_text.delete(1.0, tk.END)
-            self.audio_json_text.insert(1.0, json.dumps(self.audio_json, indent=2, ensure_ascii=False))
+            self.audio_json_text.insert(1.0, json.dumps(self.current_scene, indent=2, ensure_ascii=False))
 
             # Draw simple waveform representation
             self.draw_waveform_placeholder()
@@ -385,8 +386,8 @@ class AVReviewDialog:
         fresh_frame = ttk.Frame(editors_container)
         fresh_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
-        fresh_label = ttk.Label(fresh_frame, text="Fresh JSON")
-        fresh_label.pack(anchor="w", pady=(0, 5))
+        self.fresh_label = ttk.Label(fresh_frame, text="Fresh JSON")
+        self.fresh_label.pack(anchor="w", pady=(0, 5))
         
         # Fresh JSON text editor with scrollbar
         fresh_text_frame = ttk.Frame(fresh_frame)
@@ -406,12 +407,6 @@ class AVReviewDialog:
         fresh_buttons_frame = ttk.Frame(fresh_frame)
         fresh_buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
-        # 提示词模板组
-        ttk.Label(fresh_buttons_frame, text="模板:").pack(side=tk.LEFT, padx=(0, 5))
-        self.prompt_selector = ttk.Combobox(fresh_buttons_frame, values=config_prompt.SPEAKING_PROMPTS_LIST, state="readonly", width=25)
-        self.prompt_selector.pack(side=tk.LEFT, padx=(0, 10))
-        self.prompt_selector.current(0)  # 默认选择第一个
-
         # 旁白语音组
         ttk.Label(fresh_buttons_frame, text="主持").pack(side=tk.LEFT, padx=(0, 5))
         self.narrators = ttk.Combobox(fresh_buttons_frame, values=config_prompt.HOSTS, state="normal", width=30)
@@ -429,8 +424,9 @@ class AVReviewDialog:
         self.speaking_addon.pack(side=tk.LEFT, padx=(0, 10))
         self.speaking_addon.current(0)
 
-        ttk.Button(fresh_buttons_frame, text="REMIX TRANS", command=lambda: self.remix_conversation_json("multiple", True)).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(fresh_buttons_frame, text="REMIX ONLY",  command=lambda: self.remix_conversation_json("multiple", False)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(fresh_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="REMIX",  command=lambda: self.remix_conversation_json()).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
         
         # Editor 2: Audio JSON (right side)
@@ -458,8 +454,6 @@ class AVReviewDialog:
         ttk.Button(audio_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
         ttk.Button(audio_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
-        ttk.Button(audio_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
         
         # Audio transcription options section
         transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
@@ -648,17 +642,15 @@ class AVReviewDialog:
 
 
 
-
     def transcribe_audio(self, mode):
-        #self.trim_media()
         self.update_dialog_title(mode)
         if not self.transcribed and self.media_type=="clip":
-            self._transcribe_recorded_audio()
+            self._transcribe_recorded_audio(mode)
             self.transcribed = True
 
 
 
-    def _transcribe_recorded_audio(self):
+    def _transcribe_recorded_audio(self, mode):
         """转录录制的音频"""
         if not self.source_audio_path:
             return
@@ -672,16 +664,26 @@ class AVReviewDialog:
             10,  # min_sentence_duration
             28   # max_sentence_duration
         )
-        
+        if mode == "single" and len(self.audio_json) > 1:
+            audio_json_single = self.audio_json[0].copy()
+            audio_json_single["end"] = self.audio_duration
+            audio_json_single["duration"] = self.audio_duration
+            audio_json_single["caption"] = " ".join([json_item["caption"] for json_item in self.audio_json])
+            audio_json_single["speaking"] =audio_json_single["caption"]
+            audio_json_single["speak_audio"] = self.ffmpeg_audio_processor.concat_audios([json_item["speak_audio"] for json_item in self.audio_json])            
+            self.audio_json = [audio_json_single]
+
         if self.audio_json:
-            try:
-                formatted_json = json.dumps(self.audio_json, indent=2, ensure_ascii=False)
-                self.fresh_json_text.delete(1.0, tk.END)
-                self.fresh_json_text.insert(1.0, formatted_json)
-                self.audio_json_text.delete(1.0, tk.END)
-                self.audio_json_text.insert(1.0, formatted_json)
-            except Exception as e:
-                print(f"JSON格式错误: {str(e)}")
+            for item in self.audio_json:
+                item["name"] = self.current_scene["name"]
+                item["explicit"] = self.current_scene["explicit"]
+                item["implicit"] = self.current_scene["implicit"]
+
+            formatted_json = json.dumps(self.audio_json, indent=2, ensure_ascii=False)
+            self.fresh_json_text.delete(1.0, tk.END)
+            self.fresh_json_text.insert(1.0, formatted_json)
+            self.audio_json_text.delete(1.0, tk.END)
+            self.audio_json_text.insert(1.0, formatted_json)
         else:
             print("⚠️ 录音转录失败")
 
@@ -783,80 +785,49 @@ class AVReviewDialog:
 
 
 
-    def remix_conversation_json(self, mode, transcribe_first):
-        if self.media_type!="clip":
+    def remix_conversation_json(self):
+        if self.media_type!="clip" or not self.transcribed:
             return
 
-        self.update_dialog_title(mode)
-
         topic = config_channel.CHANNEL_CONFIG[project_manager.PROJECT_CONFIG.get('channel', 'default')]["topic"]
-        story = self.current_scene["story"]
-        kernel = self.current_scene["kernel"]
-        promo = self.current_scene["promotion"]
+        explicit_implicit = f"""The explicit & implicit content of current scene : \n{{ "explicit": "{self.current_scene["explicit"]}", "implicit": "{self.current_scene["implicit"]}" }}"""
 
+        refresh_json = None
+        existing_conversation_length = 0
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
         if not refresh_conversation or refresh_conversation.strip() == "":
-            refresh_conversation = config_prompt.CONVERSATION_USER_PROMPT.format(   conversation=refresh_conversation,
-                                                                                    topic=topic, 
-                                                                                    story=story, 
-                                                                                    kernel=kernel
-                                                                                )
-        # try to format formatted_user_prompt as json , if success, take 'content' field of each elemet, concat together as whole content
-        else:
+            refresh_conversation = explicit_implicit
+        else:  # try to format formatted_user_prompt as json , if success, take 'content' field of each elemet, concat together as whole content
             try:
                 refresh_json = json.loads(refresh_conversation)
-                refresh_conversation = " ".join([item["content"] for item in refresh_json])
+                refresh_json_copy = copy.deepcopy(refresh_json)
+                for item in refresh_json_copy:
+                    item.pop("explicit", None)
+                    item.pop("implicit", None)
+                    item.pop("duration", None)
+                    item.pop("caption", None)
+                    item.pop("name", None)
+                    item.pop("start", None)
+                    item.pop("end", None)
+                refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
+                existing_conversation_length = len(refresh_json_copy)
+                refresh_conversation = explicit_implicit + "\n\nExisting conversation (content in 'speaking' field): \n" + refresh_conversation
             except:
+                refresh_conversation = explicit_implicit
                 print(f"⚠️ 刷新内容格式化失败")
 
-        previous_scene_content = self.previous_scene["content"] if self.previous_scene and hasattr(self.previous_scene, "content") else ""
-        next_scene_content = self.next_scene["content"] if self.next_scene and hasattr(self.next_scene, "content") else ""
-
-        prompt_name = self.prompt_selector.get()
-        if prompt_name == "Story-Telling":
-            engaging = ""
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Telling"]
-        elif prompt_name == "Story-Conversation":
-            engaging = ""
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
-        elif prompt_name == "Story-Conversation-with-Previous-Scene":
-            engaging = "[the conversation is following the previous speaking like: " + previous_scene_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
-        elif prompt_name == "Story-Conversation-with-Next-Scene":
-            engaging = "[the conversation will be followed by the next speaking like: " + next_scene_content + "]"
-            selected_prompt = config_prompt.SPEAKING_PROMPTS["Story-Conversation"]
+        selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_system_prompt"][self.current_scene["name"]]
+        selected_prompt_example = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_system_prompt"][self.current_scene["name"] + "_example"]
+        if self.transcribe_way == "multiple":
+            if existing_conversation_length > 1:
+                selected_prompt = selected_prompt.format(json=f"json array holding {existing_conversation_length} scenes", example=selected_prompt_example)
+            else:
+                selected_prompt = selected_prompt.format(json="json array holding scenes", example=selected_prompt_example)
         else:
-            selected_prompt = config_prompt.SPEAKING_PROMPTS[prompt_name]
-            engaging = ""
+            selected_prompt_example = selected_prompt_example[0]
+            selected_prompt = selected_prompt.format(json="a single json item describing a scene", example=selected_prompt_example)
+        #format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
 
-        if transcribe_first and not self.transcribed and self.audio_duration > 45.0:
-            self._transcribe_recorded_audio()
-            self.transcribed = True
-       
-        scenes_number = ""
-        if self.transcribed and self.audio_json:
-            if len(self.audio_json) > 1:
-                has_durations = True
-                for scene in self.audio_json:
-                    if "duration" not in scene:
-                        has_durations = False
-                        break
-                scenes_number = str(len(self.audio_json)) if has_durations else ""
-
-        format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
-        format_args.update({
-            "speaker_style": f"with {self.narrators.get()} and {self.actors.get()}",
-            "language": "Chinese" if self.workflow.language == "zh" or self.workflow.language == "tw" else "English",
-            "topic": config_channel.CHANNEL_CONFIG[self.workflow.channel]["topic"], 
-            "scenes_number": scenes_number,
-            "engaging": engaging
-        })
-
-        formatted_system_prompt = selected_prompt["system_prompt"].format(**format_args)
-        print("🤖 系统提示:")
-        print(formatted_system_prompt)
-        
-        # pop up a dialog to show the system prompt, user can edit the system prompt, then click confirm to continue  to self.summarizer.generate_json_summary ..
         system_prompt_dialog = tk.Toplevel(self.dialog)
         system_prompt_dialog.title("系统提示")
         system_prompt_dialog.geometry("600x400")
@@ -873,7 +844,7 @@ class AVReviewDialog:
         system_prompt_text.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
         
         # 插入当前的系统提示文本
-        system_prompt_text.insert(1.0, formatted_system_prompt)
+        system_prompt_text.insert(1.0, selected_prompt)
 
         # 添加滚动条
         scrollbar = tk.Scrollbar(system_prompt_dialog, command=system_prompt_text.yview)
@@ -881,7 +852,7 @@ class AVReviewDialog:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 用于存储用户编辑后的提示
-        edited_prompt = [formatted_system_prompt]  # 使用列表以便在闭包中修改
+        edited_prompt = [selected_prompt]  # 使用列表以便在闭包中修改
 
         def confirm_and_close():
             # 获取编辑后的文本
@@ -894,28 +865,21 @@ class AVReviewDialog:
         system_prompt_dialog.wait_window()
 
         # 使用编辑后的系统提示
-        formatted_system_prompt = edited_prompt[0]
+        selected_prompt = edited_prompt[0]
 
         new_scenes = self.llm_api.generate_json_summary(
-            system_prompt=formatted_system_prompt,
+            system_prompt=selected_prompt,
             user_prompt=refresh_conversation,
             expect_list=True
         )
 
-
-        if scenes_number and scenes_number.strip() != "":
-            if len(new_scenes) != int(scenes_number):
-                messagebox.showerror("错误", "生成的新场景数量与转录的音频数量不一致")
-                scenes_number = ""
-
-        if not scenes_number or scenes_number.strip() == "":
-            section_duration = self.audio_duration / len(new_scenes)
+        if not refresh_json or len(refresh_json) != len(new_scenes):
             for scene in new_scenes:
-                scene["duration"] = section_duration
+                scene["duration"] = self.audio_duration / len(new_scenes)
         else:
             for i, scene in enumerate(new_scenes):
-                scene["duration"] = self.audio_json[i]["duration"]
-                scene["caption"] = self.audio_json[i]["caption"]
+                scene["duration"] = refresh_json[i]["duration"]
+                scene["caption"] = refresh_json[i]["caption"]
 
         formatted_json = json.dumps(new_scenes, indent=2, ensure_ascii=False)
         
@@ -1110,12 +1074,8 @@ class AVReviewDialog:
                                 child.configure(to=duration)
                             except:
                                 pass
-            
             # 重新绘制波形
             self.draw_waveform_placeholder()
-            
-            # 自动转录录音
-            self._transcribe_recorded_audio()
             
             # 设置音频重新生成标志
             self.transcribed = False
@@ -2129,3 +2089,200 @@ class AVReviewDialog:
                 update_widget(widget)
         except Exception as e:
             print(f"⚠️ 更新裁剪控件最大值失败: {e}")
+
+
+
+    def try_update_scene_visual_fields(self, current_scene, scene_data):
+        # 显示对比对话框，让用户比较和编辑
+        updated_data = self._show_scene_comparison_dialog(current_scene, scene_data)
+        if updated_data is None:
+            return  # 用户取消
+
+        content = scene_data.get("speaking", "")
+        if content:
+            current_scene["speaking"] = content
+        story = scene_data.get("visual_image", "")
+        subject = scene_data.get("subject", "")
+        if subject:
+            current_scene["subject"] = subject
+        if story:
+            current_scene["visual_image"] = story
+        person_action = scene_data.get("person_action", "")
+        if person_action:
+            current_scene["person_action"] = person_action
+        era = scene_data.get("era_time", "")
+        if era:
+            current_scene["era_time"] = era
+        environment = scene_data.get("environment", "")
+        if environment:
+            current_scene["environment"] = environment
+        cinematography = scene_data.get("cinematography", "")
+        if cinematography:
+            # 规范化 cinematography 字段，确保正确处理 JSON 字符串
+            current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
+        sound = scene_data.get("sound_effect", "")
+        if sound:
+            current_scene["sound_effect"] = sound
+        speaker = scene_data.get("speaker", "")
+        if speaker:
+            current_scene["speaker"] = speaker
+        speaker_action = scene_data.get("speaker_action", "")
+        if speaker_action:
+            current_scene["speaker_action"] = speaker_action
+        kernel = scene_data.get("kernel", "")
+        if kernel:
+            current_scene["kernel"] = kernel
+        mood = scene_data.get("mood", "")
+        if mood:
+            current_scene["mood"] = mood
+
+        self.save_scenes_to_json()
+
+
+    def _show_scene_comparison_dialog(self, current_scene, new_scene_data):
+        """显示场景数据对比对话框，让用户比较和编辑字段值"""
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        import tkinter.scrolledtext as scrolledtext
+        
+        # 字段名称映射
+        field_labels = {
+            "speaking": "内容",
+            "character": "主体",
+            "visual": "画面",
+            "action": "动作",
+            "voiceover": "旁白"
+            #"cinematography": "电影摄影",
+        }
+        
+        # 需要对比的字段列表
+        fields_to_compare = list(field_labels.keys())
+        
+        # 创建对话框
+        try:
+            root = tk._default_root
+            if root is None:
+                root = tk.Tk()
+                root.withdraw()
+        except:
+            root = tk.Tk()
+            root.withdraw()
+        
+        dialog = tk.Toplevel(root)
+        dialog.title("对比和编辑场景数据")
+        dialog.geometry("1200x800")
+        dialog.transient(root)
+        dialog.grab_set()
+        
+        # 居中显示
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 1200) // 2
+        y = (dialog.winfo_screenheight() - 800) // 2
+        dialog.geometry(f"1200x800+{x}+{y}")
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 标题
+        title_label = ttk.Label(main_frame, text=f"新旧场景数据对比",  font=('TkDefaultFont', 11, 'bold'))
+        title_label.pack(pady=(0, 10))
+        
+        # 创建滚动框架
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # 存储编辑控件和复选框
+        comparison_widgets = {}
+        
+        # 为每个字段创建对比行
+        for field in fields_to_compare:
+            field_frame = ttk.LabelFrame(scrollable_frame, text=field_labels[field], padding=5)
+            field_frame.pack(fill=tk.X, pady=5, padx=5)
+            
+            # 复选框：是否更新此字段
+            checkbox_frame = ttk.Frame(field_frame)
+            checkbox_frame.pack(fill=tk.X, pady=(0, 5))
+            
+            update_var = tk.BooleanVar(value=False)
+            checkbox = ttk.Checkbutton(checkbox_frame, text="更新此字段", variable=update_var)
+            checkbox.pack(side=tk.LEFT)
+            
+            # 两列布局：当前值 vs 新值
+            comparison_frame = ttk.Frame(field_frame)
+            comparison_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # 当前值列
+            current_frame = ttk.Frame(comparison_frame)
+            current_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+            ttk.Label(current_frame, text="当前值:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w')
+            current_text = scrolledtext.ScrolledText(current_frame, wrap=tk.WORD, height=3, width=50)
+            current_text.pack(fill=tk.BOTH, expand=True)
+            current_value = str(current_scene.get(field, ""))
+            current_text.insert('1.0', current_value)
+            current_text.config(state=tk.DISABLED)  # 当前值只读
+            
+            # 新值列（可编辑）
+            new_frame = ttk.Frame(comparison_frame)
+            new_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+            ttk.Label(new_frame, text="新值（可编辑）:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w')
+            new_text = scrolledtext.ScrolledText(new_frame, wrap=tk.WORD, height=3, width=50)
+            new_text.pack(fill=tk.BOTH, expand=True)
+            new_value = str(new_scene_data.get(field, ""))
+            new_text.insert('1.0', new_value)
+            
+            if not current_value or current_value.strip() == "":
+                update_var.set(True)
+            else:
+                update_var.set(False)
+            # 保存控件引用
+            comparison_widgets[field] = {
+                'update_var': update_var,
+                'new_text': new_text
+            }
+
+            
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        result = [None]  # 使用列表以便在闭包中修改
+        
+        def on_ok():
+            # 收集用户选择的数据
+            updated_data = {}
+            for field, widgets in comparison_widgets.items():
+                if widgets['update_var'].get():
+                    # 用户选择了更新此字段
+                    new_value = widgets['new_text'].get('1.0', tk.END).strip()
+                    if new_value:  # 只添加非空值
+                        updated_data[field] = new_value
+            result[0] = updated_data if updated_data else None
+            dialog.destroy()
+        
+        def on_cancel():
+            result[0] = None
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
+        
+        # 等待对话框关闭
+        dialog.wait_window()
+        
+        return result[0]
+
+

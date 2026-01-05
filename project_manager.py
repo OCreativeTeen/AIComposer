@@ -145,18 +145,14 @@ class ProjectConfigManager:
 
 
 class ContentEditorDialog:
-    """内容编辑器对话框 - 统一编辑 Story, kernel, PROMO 三个字段"""
+    """内容编辑器对话框 - 统一编辑 Story字段"""
     
-    def __init__(self, parent, language, channel, initial_story="", initial_kernel="", initial_promo=""):
+    def __init__(self, parent, language, channel, initial_story=""):
         self.parent = parent
         self.language = language
         self.channel = channel
-        # 保存三个字段的内容
-        self.result_story = initial_story
 
-        self.result_kernel = initial_kernel
-        self.result_promo = initial_promo
-        
+        self.result_story = initial_story
         # 初始化LLM API
         self.llm_api = LLMApi()
         
@@ -166,7 +162,7 @@ class ContentEditorDialog:
     def create_dialog(self):
         """创建编辑器对话框"""
         self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("内容编辑器 - Story / kernel / PROMO")
+        self.dialog.title("内容编辑器 - Story")
         self.dialog.geometry("1000x800")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
@@ -192,22 +188,6 @@ class ContentEditorDialog:
         self.story_editor.pack(fill=tk.BOTH, expand=True)
         self.story_editor.insert('1.0', self.result_story)
         
-        # kernel 标签页
-        kernel_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(kernel_frame, text="kernel (灵感)")
-        ttk.Label(kernel_frame, text="灵感 (kernel):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        self.kernel_editor = scrolledtext.ScrolledText(kernel_frame, wrap=tk.WORD, width=90, height=15)
-        self.kernel_editor.pack(fill=tk.BOTH, expand=True)
-        self.kernel_editor.insert('1.0', self.result_kernel)
-        
-        # PROMO 标签页
-        promo_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(promo_frame, text="PROMO (推广)")
-        ttk.Label(promo_frame, text="推广 (PROMO):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        self.promo_editor = scrolledtext.ScrolledText(promo_frame, wrap=tk.WORD, width=90, height=15)
-        self.promo_editor.pack(fill=tk.BOTH, expand=True)
-        self.promo_editor.insert('1.0', self.result_promo)
-        
         # 按钮框架
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(10, 0))
@@ -216,8 +196,7 @@ class ContentEditorDialog:
         left_buttons = ttk.Frame(button_frame)
         left_buttons.pack(side=tk.LEFT)
         
-        ttk.Button(left_buttons, text="Remix Story (AI生成故事)", command=lambda: self.remix_content("story")).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(left_buttons, text="Remix Kernel (AI生成灵感)", command=lambda: self.remix_content("kernel")).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(left_buttons, text="Remix Story (AI生成故事)", command=lambda: self.remix_content()).pack(side=tk.LEFT, padx=(0, 5))
         
         # 右侧按钮
         right_buttons = ttk.Frame(button_frame)
@@ -227,80 +206,26 @@ class ContentEditorDialog:
         ttk.Button(right_buttons, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
     
 
-    def remix_content(self, content_type):
+    def remix_content(self):
         """使用LLM生成内容"""
         if not self.llm_api:
             messagebox.showerror("错误", "LLM API未初始化，无法生成内容")
             return
         
-        # 初始化变量，避免在异常处理时出现未定义错误
-        editor = None
-        original_content = ""
-        prompt = ""
-        system_prompt = ""
-
-        language = config.LANGUAGES[self.language]
-
         try:
-            if content_type == "story":
-                # 生成故事
-                current_story = self.story_editor.get('1.0', tk.END).strip()
-                current_kernel = self.kernel_editor.get('1.0', tk.END).strip()
-
-                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"], story=current_story, kernel=current_kernel)
-
-                system_prompt = config_prompt.PROJECT_STORY_INIT_PROMPT.format(language=language)
-                # 保存原始内容
-                original_content = current_story
-                editor = self.story_editor
-            
-            elif content_type == "kernel":
-                # 检查依赖：必须先有 story
-                current_story = self.story_editor.get('1.0', tk.END).strip()
-                if not current_story:
-                    messagebox.showwarning("警告", "请先填写故事大纲(Story Outline)内容，才能生成灵感")
-                    return
-
-                current_kernel = self.kernel_editor.get('1.0', tk.END).strip()
-
-                prompt = config_prompt.INITIAL_CONTENT_USER_PROMPT.format(topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"], story=current_story, kernel=current_kernel)
-
-                system_prompt = config_prompt.KERNEL_PROMPT.format(language=language)
-                
-                # 保存原始内容
-                original_content = current_kernel
-                editor = self.kernel_editor
-            
-            else:
-                messagebox.showerror("错误", f"未知的内容类型: {content_type}")
-                return
-            
-            # 显示生成中提示
-            editor.config(state=tk.DISABLED)
-            editor.delete('1.0', tk.END)
-            editor.insert('1.0', "正在生成内容，请稍候...")
-            self.dialog.update()
-            
+            topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
+            story=self.story_editor.get('1.0', tk.END).strip()
+            user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
+            system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_system_prompt"]["program"].format(language=config.LANGUAGES[self.language])
             # 调用LLM生成内容
-            generated_content = self.llm_api.generate_text(system_prompt, prompt)
-
+            generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
             if generated_content:
-                editor.config(state=tk.NORMAL)
-                editor.delete('1.0', tk.END)
-                editor.insert('1.0', generated_content.strip())
+                self.story_editor.config(state=tk.NORMAL)
+                self.story_editor.delete('1.0', tk.END)
+                self.story_editor.insert('1.0', generated_content.strip())
                 messagebox.showinfo("成功", "内容生成完成！")
-            else:
-                editor.config(state=tk.NORMAL)
-                editor.delete('1.0', tk.END)
-                editor.insert('1.0', original_content)
-                messagebox.showerror("错误", "LLM返回了空内容")
         
         except Exception as e:
-            if editor is not None:
-                editor.config(state=tk.NORMAL)
-                # 如果出错，恢复原始内容
-                editor.delete('1.0', tk.END)
-                editor.insert('1.0', original_content)
             messagebox.showerror("错误", f"生成内容时发生错误: {str(e)}")
             print(f"❌ Remix错误: {e}")
 
@@ -308,8 +233,6 @@ class ContentEditorDialog:
     def on_ok(self):
         """确定按钮 - 保存三个字段的内容"""
         self.result_story = self.story_editor.get('1.0', tk.END).strip()
-        self.result_kernel = self.kernel_editor.get('1.0', tk.END).strip()
-        self.result_promo = self.promo_editor.get('1.0', tk.END).strip()
 
         self.dialog.destroy()
 
@@ -323,9 +246,7 @@ class ContentEditorDialog:
         """显示对话框并返回结果"""
         self.dialog.wait_window()
         return {
-            'story': self.result_story,
-            'kernel': self.result_kernel,
-            'promo': self.result_promo
+            'story': self.result_story
         }
 
 
@@ -554,8 +475,6 @@ class ProjectSelectionDialog:
         
         # 使用变量存储三个字段的内容
         story_var = tk.StringVar(value="")
-        kernel_var = tk.StringVar(value="")
-        promo_var = tk.StringVar(value="")
         
         # 显示当前内容的预览
         preview_frame = ttk.Frame(content_label_frame)
@@ -564,17 +483,9 @@ class ProjectSelectionDialog:
         story_preview = ttk.Label(preview_frame, text="Story: (未编辑)", foreground="gray")
         story_preview.pack(anchor='w', pady=2)
         
-        kernel_preview = ttk.Label(preview_frame, text="kernel: (未编辑)", foreground="gray")
-        kernel_preview.pack(anchor='w', pady=2)
-        
-        promo_preview = ttk.Label(preview_frame, text="PROMO: (未编辑)", foreground="gray")
-        promo_preview.pack(anchor='w', pady=2)
-        
         # 更新预览显示的函数
         def update_previews():
             story_val = story_var.get()
-            kernel_val = kernel_var.get()
-            promo_val = promo_var.get()
             
             if story_val:
                 preview_text = story_val[:50] + "..." if len(story_val) > 50 else story_val
@@ -582,22 +493,7 @@ class ProjectSelectionDialog:
             else:
                 story_preview.config(text="Story: (未编辑)", foreground="gray")
             
-            if kernel_val:
-                preview_text = kernel_val[:50] + "..." if len(kernel_val) > 50 else kernel_val
-                kernel_preview.config(text=f"kernel: {preview_text}", foreground="black")
-            else:
-                kernel_preview.config(text="kernel: (未编辑)", foreground="gray")
-            
-            if promo_val:
-                preview_text = promo_val[:50] + "..." if len(promo_val) > 50 else promo_val
-                promo_preview.config(text=f"PROMO: {preview_text}", foreground="black")
-            else:
-                promo_preview.config(text="PROMO: (未编辑)", foreground="gray")
-        
-        # 绑定变量更新到预览显示
         story_var.trace_add('write', lambda *args: update_previews())
-        kernel_var.trace_add('write', lambda *args: update_previews())
-        promo_var.trace_add('write', lambda *args: update_previews())
         
         # 统一的编辑按钮
         def open_unified_editor():
@@ -605,17 +501,13 @@ class ProjectSelectionDialog:
                 new_project_dialog,
                 language_combo.get(),
                 channel_combo.get(),
-                story_var.get(),
-                kernel_var.get(),
-                promo_var.get()
+                story_var.get()
             )
             result = editor.show()
             if result:
                 story_var.set(result.get('story', ''))
-                kernel_var.set(result.get('kernel', ''))
-                promo_var.set(result.get('promo', ''))
         
-        ttk.Button(content_label_frame, text="编辑 Story / kernel / PROMO", command=open_unified_editor).pack(pady=5)
+        ttk.Button(content_label_frame, text="编辑 Story", command=open_unified_editor).pack(pady=5)
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -637,14 +529,9 @@ class ProjectSelectionDialog:
             
             # 检查 story 和 kernel 是否已生成
             story_content = story_var.get().strip()
-            kernel_content = kernel_var.get().strip()
             
             if not story_content:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
-                return
-            
-            if not kernel_content:
-                messagebox.showerror("错误", "请先生成灵感(kernel)内容，才能创建项目")
                 return
             
             # 解析分辨率
@@ -668,8 +555,6 @@ class ProjectSelectionDialog:
                 'video_width': video_width,
                 'video_height': video_height,
                 **self.default_project_config.get('additional_fields', {}),
-                'kernel': kernel_var.get(),
-                'promo': promo_var.get(),
                 'story': story_var.get()
             }
             

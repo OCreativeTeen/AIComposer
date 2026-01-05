@@ -636,9 +636,9 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
         text_summary = self.llm_api.generate_text_summary(
                             system_prompt, 
-                            "\n".join([segment["content"] for segment in audio_json])
+                            "\n".join([segment["speaking"] for segment in audio_json])
                         )
-        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
+        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["speaking"]
 
         raw_json_path = f"{config.get_project_path(self.pid)}/{Path(audio_path).stem}.json"
 
@@ -676,9 +676,9 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
         )
         text_summary = self.llm_api.generate_text(
                             system_prompt, 
-                            "\n".join([segment["content"] for segment in audio_json])
+                            "\n".join([segment["speaking"] for segment in audio_json])
                         )
-        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["content"]
+        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["speaking"]
 
 
 
