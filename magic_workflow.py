@@ -254,6 +254,7 @@ class MagicWorkflow:
                 has_negative_pattern = (
                     re.search(r'\bno\b.*\bpersons?\b', person_lower) or  # matches "no person", "no persons", "no specific person"
                     re.search(r'\bno\b.*\bspeakers?\b', person_lower) or  # matches "no speaker", "no speakers", "no other speaker"
+                    re.search(r'\bno\b.*\bcharacters?\b', person_lower) or  # matches "no character", "no characters", "no other character"                    
                     re.search(r'\bn/a\b', person_lower) or  # matches "n/a"
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )

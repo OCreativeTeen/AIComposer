@@ -411,6 +411,31 @@ class LLMApi:
         response_text.pack(fill=tk.BOTH, expand=True)
         response_text.insert('1.0', '')
         
+        # 绑定双击事件：双击时自动从剪贴板粘贴内容
+        def on_double_click_paste(event):
+            """双击时从剪贴板粘贴内容到当前光标位置"""
+            try:
+                # 获取剪贴板内容
+                clipboard_content = dialog.clipboard_get()
+                if clipboard_content:
+                    # 检查是否有选中的文本，如果有则先删除
+                    try:
+                        sel_start = response_text.index(tk.SEL_FIRST)
+                        sel_end = response_text.index(tk.SEL_LAST)
+                        # 删除选中的文本
+                        response_text.delete(sel_start, sel_end)
+                        # 在删除位置插入剪贴板内容
+                        response_text.insert(sel_start, clipboard_content)
+                    except tk.TclError:
+                        # 没有选中文本，在光标位置插入
+                        cursor_pos = response_text.index(tk.INSERT)
+                        response_text.insert(cursor_pos, clipboard_content)
+            except tk.TclError:
+                # 剪贴板为空或无法访问时忽略错误
+                pass
+        
+        response_text.bind('<Double-Button-1>', on_double_click_paste)
+        
         # 用于存储结果
         result_model = [None]
         result_response = [None]

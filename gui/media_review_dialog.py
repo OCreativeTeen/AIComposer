@@ -114,8 +114,10 @@ class AVReviewDialog:
         self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
         self.source_image_path = get_file_path(self.current_scene, self.image_field)
         
-        self.transcribe_way = "single"
-        
+        self.audio_duration = 0.0
+        self.start_time_var = tk.DoubleVar(value=0.0)
+        self.end_time_var = tk.DoubleVar(value=0.0)
+
         # 新增拖放媒体
         self.animation_choice = 1
 
@@ -181,12 +183,15 @@ class AVReviewDialog:
         self.draw_waveform_placeholder()
         self.display_image_on_canvas()
         self.load_video_first_frame()
+        # 初始化时间轴
+        self._draw_progress_bar()
+        self._draw_edit_timeline()
 
 
 
     def create_dialog(self):
         """Create the review dialog window"""
-        self.transcribe_way = "NONE"
+        self.transcribe_way = "single"
 
         self.dialog = tk.Toplevel(self.parent.root)
         self.dialog.geometry("1800x1000")
@@ -298,6 +303,65 @@ class AVReviewDialog:
             self.waveform_canvas.drop_target_register(DND_FILES)
             self.waveform_canvas.dnd_bind('<<Drop>>', self.on_audio_dnd_drop)
         
+        # ========== 时间轴区域 (Timeline Section) ==========
+        timeline_container = ttk.LabelFrame(main_frame, text="时间轴控制", padding=5)
+        timeline_container.pack(fill=tk.X, pady=(5, 5))
+        
+        # --- Progress Bar (播放进度条) ---
+        progress_frame = ttk.Frame(timeline_container)
+        progress_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(progress_frame, text="播放位置:", width=10).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Progress bar canvas for playback position
+        self.progress_canvas = tk.Canvas(progress_frame, height=30, bg='#2d2d2d', highlightthickness=1, highlightbackground='#555')
+        self.progress_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        
+        # Progress bar 内部元素（稍后初始化）
+        self.progress_bar_bg = None
+        self.progress_playhead = None
+        self.progress_dragging = False
+        
+        # 绑定 Progress Bar 事件
+        self.progress_canvas.bind('<Configure>', self._on_progress_canvas_configure)
+        self.progress_canvas.bind('<Button-1>', self._on_progress_click)
+        self.progress_canvas.bind('<B1-Motion>', self._on_progress_drag)
+        self.progress_canvas.bind('<ButtonRelease-1>', self._on_progress_release)
+        
+        # 当前播放时间显示
+        self.progress_time_label = ttk.Label(progress_frame, text="0.00", width=8)
+        self.progress_time_label.pack(side=tk.LEFT)
+        
+        # --- Edit Timeline (剪辑时间轴) ---
+        edit_timeline_frame = ttk.Frame(timeline_container)
+        edit_timeline_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        ttk.Label(edit_timeline_frame, text="剪辑区间:", width=10).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Edit timeline canvas for scene boundaries
+        self.edit_timeline_canvas = tk.Canvas(edit_timeline_frame, height=40, bg='#1a1a2e', highlightthickness=1, highlightbackground='#555')
+        self.edit_timeline_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        
+        # Edit Timeline 内部元素
+        self.edit_timeline_bg = None
+        self.edit_handles = []  # 存储所有可拖动节点
+        self.edit_handle_dragging = None  # 当前正在拖动的节点索引
+        self.edit_regions = []  # 存储场景区域显示
+        self._pending_boundaries = None  # 存储待确认的边界变化（拖动过程中的临时状态）
+        self._original_audio_json = None  # 存储原始 audio_json（用于恢复）
+        self._original_start_time = None  # 存储原始起始时间
+        self._original_end_time = None  # 存储原始结束时间
+        
+        # 绑定 Edit Timeline 事件
+        self.edit_timeline_canvas.bind('<Configure>', self._on_edit_timeline_configure)
+        self.edit_timeline_canvas.bind('<Button-1>', self._on_edit_timeline_click)
+        self.edit_timeline_canvas.bind('<B1-Motion>', self._on_edit_timeline_drag)
+        self.edit_timeline_canvas.bind('<ButtonRelease-1>', self._on_edit_timeline_release)
+        
+        # 场景数量显示
+        self.scene_count_label = ttk.Label(edit_timeline_frame, text="1 场景", width=10)
+        self.scene_count_label.pack(side=tk.LEFT)
+        
         # Media controls (placed below the media visualization)
         control_container = ttk.Frame(main_frame)
         control_container.pack(fill=tk.X, pady=(0, 10))
@@ -309,50 +373,20 @@ class AVReviewDialog:
         self.play_button = ttk.Button(control_frame, text="▶ 播放", command=self.toggle_playback)
         self.play_button.pack(side=tk.LEFT, padx=15)
         
-        self.stop_button = ttk.Button(control_frame, text="⏹ 停止", command=self.stop_playback)
-        self.stop_button.pack(side=tk.LEFT, padx=15)
-
-        separator = ttk.Separator(control_frame, orient='vertical')
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=15)
-
-        ttk.Button(control_frame, text="跳转开始", command=self.jump_to_start).pack(side=tk.LEFT, padx=15)
-        ttk.Button(control_frame, text="播放选定", command=self.play_selected_range).pack(side=tk.LEFT, padx=15)
-        
-        separator = ttk.Separator(control_frame, orient='vertical')
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=15)
-
         self.play_time_label = ttk.Label(control_frame, text="0.00 / 0.00", foreground="blue")
         self.play_time_label.pack(side=tk.LEFT, padx=15)
 
+        max_duration = self.workflow.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+
         separator = ttk.Separator(control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=15)
 
-        ttk.Label(control_frame, text="开始(秒):").pack(side=tk.LEFT, padx=(0, 5))
-        self.start_time_var = tk.DoubleVar(value=0.0)
-        max_duration = self.workflow.ffmpeg_processor.get_duration(self.source_video_path) if self.source_video_path else self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
-        start_spinbox = ttk.Spinbox(control_frame, from_=0, to=max_duration, 
-                                   textvariable=self.start_time_var, increment=0.1, width=8)
-        start_spinbox.pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(control_frame, text="设为当前", command=self.set_start_to_current).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(control_frame, text="恢复剪辑变动", command=self.restore_edit_timeline_change).pack(side=tk.LEFT, padx=15)
+        ttk.Button(control_frame, text="确认剪辑变动", command=self.confirm_edit_timeline_change).pack(side=tk.LEFT, padx=15)
         
         # 分隔符
         ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
         
-        # 结束时间组
-        ttk.Label(control_frame, text="结束时间 (秒):").pack(side=tk.LEFT, padx=(5, 5))
-        self.end_time_var = tk.DoubleVar(value=self.audio_duration)
-        end_spinbox = ttk.Spinbox(control_frame, from_=0, to=max_duration, textvariable=self.end_time_var, increment=0.1, width=8)
-        end_spinbox.pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(control_frame, text="设为当前", command=self.set_end_to_current).pack(side=tk.LEFT)
-        
-        # 分隔符
-        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
-
-        self.selected_duration_label = ttk.Label(control_frame, text="", foreground="blue")
-        self.selected_duration_label.pack(side=tk.LEFT)
-
-        # 分隔符
-        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=20)
         
         # add a button to let user record the audio from microphone, then put it as source_audio_path, then transcribe it, set self.regenerate_audio to True
         ttk.Button(control_frame, text="录音", command=self.record_audio).pack(side=tk.LEFT, padx=(0, 10))
@@ -428,20 +462,11 @@ class AVReviewDialog:
         ttk.Button(fresh_buttons_frame, text="多场重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
         
         ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="渐进", command=self.audio_fade).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
+        # ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
+        # ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
         
-        # Audio transcription options section
-        transcribe_frame = ttk.LabelFrame(main_frame, text="音频转录选项", padding=10)
-        transcribe_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        ttk.Button(button_frame, text="确认替换", command=self.confirm_replacement).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(button_frame, text="取消", command=self.cancel).pack(side=tk.RIGHT)
+        ttk.Button(fresh_buttons_frame, text="确认替换", command=self.confirm_replacement).pack(side=tk.RIGHT)
+        ttk.Button(fresh_buttons_frame, text="取消", command=self.cancel).pack(side=tk.RIGHT)
         
         if not pygame.mixer.get_init():
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
@@ -485,9 +510,6 @@ class AVReviewDialog:
             start = self.start_time_var.get()
             end = self.end_time_var.get()
             if end > start:
-                duration = end - start
-                self.selected_duration_label.config(text=f"{duration:.2f}秒")
-
                 # Update waveform selection visualization
                 self.waveform_canvas.delete("selection")
                 # Draw selection overlay
@@ -503,11 +525,8 @@ class AVReviewDialog:
                 # Draw selection rectangle
                 self.waveform_canvas.create_rectangle(start_x, 0, end_x, height, 
                                                     fill="yellow", stipple="gray50", tags="selection")
-
-            else:
-                self.selected_duration_label.config(text="无效时间段")
         except:
-            self.selected_duration_label.config(text="--")
+            pass
     
 
     def update_play_time_display(self):
@@ -534,29 +553,477 @@ class AVReviewDialog:
             
             self.play_time_label.config(text=f"{current_str} / {total_str}")
             
+            # 同时更新 Progress Bar 播放头位置
+            self._update_progress_playhead()
+            
         except Exception as e:
             print(f"⚠️ 更新时间显示失败: {e}")
             self.play_time_label.config(text="0.00 / 0.00")
     
 
-    def set_start_to_current(self):
-        """Set start time to current playback position"""
-        self.start_time_var.set(self.current_playback_time)
-        self.update_play_time_display()
+    # ========== Progress Bar (播放进度条) 方法 ==========
     
-
-    def set_end_to_current(self):
-        """Set end time to current playback position"""
-        self.end_time_var.set(self.current_playback_time)
-        self.update_play_time_display()
+    def _on_progress_canvas_configure(self, event=None):
+        """Progress Bar canvas 大小变化时重绘"""
+        self._draw_progress_bar()
     
+    def _draw_progress_bar(self):
+        """绘制 Progress Bar 背景和播放头"""
+        canvas = self.progress_canvas
+        canvas.delete('all')
+        
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+        
+        padding = 10
+        bar_height = 8
+        bar_y = (height - bar_height) // 2
+        
+        # 绘制进度条背景
+        canvas.create_rectangle(padding, bar_y, width - padding, bar_y + bar_height,
+                               fill='#404040', outline='#606060', tags='progress_bg')
+        
+        # 绘制已播放部分
+        if self.audio_duration > 0:
+            progress_ratio = min(1.0, self.current_playback_time / self.audio_duration)
+            progress_x = padding + (width - 2 * padding) * progress_ratio
+            canvas.create_rectangle(padding, bar_y, progress_x, bar_y + bar_height,
+                                   fill='#4CAF50', outline='', tags='progress_fill')
+        
+        # 绘制播放头（可拖动的圆形按钮）
+        self._draw_playhead()
+    
+    def _draw_playhead(self):
+        """绘制播放头"""
+        canvas = self.progress_canvas
+        canvas.delete('playhead')
+        
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1 or self.audio_duration <= 0:
+            return
+        
+        padding = 10
+        progress_ratio = min(1.0, max(0, self.current_playback_time / self.audio_duration))
+        playhead_x = padding + (width - 2 * padding) * progress_ratio
+        playhead_y = height // 2
+        playhead_radius = 8
+        
+        # 绘制播放头圆形
+        canvas.create_oval(playhead_x - playhead_radius, playhead_y - playhead_radius,
+                          playhead_x + playhead_radius, playhead_y + playhead_radius,
+                          fill='#FF5722', outline='white', width=2, tags='playhead')
+        
+        # 更新时间显示
+        self.progress_time_label.config(text=f"{self.current_playback_time:.2f}")
+    
+    def _update_progress_playhead(self):
+        """更新播放头位置（播放时调用）"""
+        self._draw_progress_bar()
+    
+    def _on_progress_click(self, event):
+        """Progress Bar 点击事件"""
+        self.progress_dragging = True
+        self._seek_to_position(event.x)
+    
+    def _on_progress_drag(self, event):
+        """Progress Bar 拖动事件"""
+        if self.progress_dragging:
+            self._seek_to_position(event.x)
+    
+    def _on_progress_release(self, event):
+        """Progress Bar 释放事件"""
+        if self.progress_dragging:
+            self._seek_to_position(event.x)
+            self.progress_dragging = False
+    
+    def _seek_to_position(self, x):
+        """跳转到指定位置"""
+        canvas = self.progress_canvas
+        width = canvas.winfo_width()
+        padding = 10
+        
+        # 计算时间
+        bar_width = width - 2 * padding
+        if bar_width <= 0:
+            return
+        
+        ratio = max(0, min(1, (x - padding) / bar_width))
+        new_time = ratio * self.audio_duration
+        
+        # 更新播放位置
+        self.current_playback_time = new_time
+        self.pause_accumulated_time = new_time
+        
+        # 如果正在播放，需要重新设置播放位置
+        if self.av_playing:
+            self.playback_start_time = time.time()
+            
+            # 更新视频位置
+            if self.source_video_path and self.video_cap:
+                fps = self.video_cap.get(cv2.CAP_PROP_FPS) or 30
+                frame_num = int(new_time * fps)
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+            
+            # 更新音频位置
+            if self.source_audio_path:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.play(start=new_time)
+        
+        # 更新显示
+        self.update_play_time_display()
+        self._draw_progress_bar()
+    
+    # ========== Edit Timeline (剪辑时间轴) 方法 ==========
+    
+    def _on_edit_timeline_configure(self, event=None):
+        """Edit Timeline canvas 大小变化时重绘"""
+        self._draw_edit_timeline()
+    
+    def _draw_edit_timeline(self):
+        """绘制剪辑时间轴"""
+        canvas = self.edit_timeline_canvas
+        canvas.delete('all')
+        
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+        
+        padding = 10
+        bar_y = height // 2
+        bar_height = 16
+        
+        # 获取场景边界时间点
+        boundaries = self._get_scene_boundaries()
+        num_scenes = len(boundaries) - 1 if len(boundaries) > 1 else 1
+        
+        # 调试：打印边界信息
+        if len(boundaries) >= 2:
+            print(f"🎨 绘制时间轴 - 边界: start={boundaries[0]:.2f}, end={boundaries[-1]:.2f}, 场景数={num_scenes}")
+        
+        # 更新场景数量显示
+        self.scene_count_label.config(text=f"{num_scenes} 场景")
+        
+        # 定义颜色列表（用于区分不同场景）
+        colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#34495e']
+        
+        # 绘制时间轴背景
+        canvas.create_rectangle(padding, bar_y - bar_height // 2, width - padding, bar_y + bar_height // 2,
+                               fill='#2c3e50', outline='#7f8c8d', tags='timeline_bg')
+        
+        # 绘制场景区域
+        self.edit_regions = []
+        for i in range(len(boundaries) - 1):
+            start_time = boundaries[i]
+            end_time = boundaries[i + 1]
+            
+            if self.audio_duration > 0:
+                start_x = padding + (width - 2 * padding) * (start_time / self.audio_duration)
+                end_x = padding + (width - 2 * padding) * (end_time / self.audio_duration)
+            else:
+                start_x = padding
+                end_x = width - padding
+            
+            color = colors[i % len(colors)]
+            region_id = canvas.create_rectangle(start_x, bar_y - bar_height // 2 + 2,
+                                               end_x, bar_y + bar_height // 2 - 2,
+                                               fill=color, outline='', tags=f'region_{i}')
+            self.edit_regions.append(region_id)
+            
+            # 在区域中央显示场景编号
+            center_x = (start_x + end_x) / 2
+            if end_x - start_x > 20:  # 只有空间足够时才显示文字
+                canvas.create_text(center_x, bar_y, text=str(i + 1), fill='white',
+                                  font=('Arial', 8, 'bold'), tags=f'region_text_{i}')
+        
+        # 绘制可拖动的边界节点
+        self._draw_edit_handles(boundaries)
+    
+    def _draw_edit_handles(self, boundaries):
+        """绘制可拖动的边界节点"""
+        canvas = self.edit_timeline_canvas
+        canvas.delete('handle')
+        
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        padding = 10
+        handle_radius = 6
+        bar_y = height // 2
+        
+        self.edit_handles = []
+        
+        for i, boundary_time in enumerate(boundaries):
+            if self.audio_duration > 0:
+                x = padding + (width - 2 * padding) * (boundary_time / self.audio_duration)
+            else:
+                x = padding if i == 0 else width - padding
+            
+            # 绘制节点（三角形 + 线条）
+            # 垂直线
+            canvas.create_line(x, bar_y - 12, x, bar_y + 12, fill='white', width=2, tags=('handle', f'handle_line_{i}'))
+            
+            # 顶部三角形
+            canvas.create_polygon(x - 5, bar_y - 12, x + 5, bar_y - 12, x, bar_y - 6,
+                                 fill='#FFD700', outline='white', tags=('handle', f'handle_top_{i}'))
+            
+            # 底部三角形
+            canvas.create_polygon(x - 5, bar_y + 12, x + 5, bar_y + 12, x, bar_y + 6,
+                                 fill='#FFD700', outline='white', tags=('handle', f'handle_bottom_{i}'))
+            
+            self.edit_handles.append({
+                'index': i,
+                'time': boundary_time,
+                'x': x
+            })
+    
+    def _get_scene_boundaries(self):
+        """获取场景边界时间点列表"""
+        # 如果有待确认的边界，使用它
+        if self._pending_boundaries is not None:
+            return self._pending_boundaries.copy()
+        
+        # 从 start_time_var 获取起点
+        try:
+            start_time = self.start_time_var.get()
+        except:
+            start_time = 0.0
+        
+        boundaries = [start_time]
+        
+        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 0:
+            current_time = start_time
+            for i, scene in enumerate(self.audio_json):
+                duration = scene.get('duration', 0)
+                if duration > 0:
+                    current_time += duration
+                    boundaries.append(current_time)
+            
+            # 使用 end_time_var 作为终点
+            try:
+                end_time = self.end_time_var.get()
+                boundaries[-1] = end_time
+            except:
+                pass
+        else:
+            try:
+                end_time = self.end_time_var.get()
+            except:
+                end_time = self.audio_duration
+            boundaries.append(end_time)
+        
+        return boundaries
+    
+    def _on_edit_timeline_click(self, event):
+        """Edit Timeline 点击事件"""
+        # 检查是否点击了某个节点
+        handle_index = self._find_handle_at(event.x, event.y)
+        if handle_index is not None:
+            self.edit_handle_dragging = handle_index
+    
+    def _on_edit_timeline_drag(self, event):
+        """Edit Timeline 拖动事件"""
+        if self.edit_handle_dragging is not None:
+            self._drag_handle_to(self.edit_handle_dragging, event.x)
+    
+    def _on_edit_timeline_release(self, event):
+        """Edit Timeline 释放事件"""
+        if self.edit_handle_dragging is not None:
+            self._drag_handle_to(self.edit_handle_dragging, event.x)
+            self.edit_handle_dragging = None
+            # 注意：不再立即更新 audio_json，保持 pending 状态
+            # 用户需要点击"确认剪辑区间变动"来应用更改
+    
+    def _find_handle_at(self, x, y):
+        """查找指定位置的节点索引"""
+        for handle in self.edit_handles:
+            if abs(x - handle['x']) < 15:  # 15 像素容差
+                return handle['index']
+        return None
+    
+    def _drag_handle_to(self, handle_index, x):
+        """拖动节点到指定位置"""
+        canvas = self.edit_timeline_canvas
+        width = canvas.winfo_width()
+        padding = 10
+        
+        # 计算新时间
+        bar_width = width - 2 * padding
+        if bar_width <= 0:
+            return
+        
+        ratio = max(0, min(1, (x - padding) / bar_width))
+        new_time = ratio * self.audio_duration
+        
+        # 获取当前边界（如果是首次拖动，从 audio_json 计算）
+        if self._pending_boundaries is None:
+            original_boundaries = self._get_boundaries_from_audio_json()
+            self._pending_boundaries = original_boundaries.copy()
+            # 保存原始 audio_json 和时间变量用于恢复
+            if self._original_audio_json is None:
+                self._original_audio_json = copy.deepcopy(self.audio_json)
+                # 从计算出的边界保存原始起止时间（而不是从 var 读取）
+                if len(original_boundaries) >= 2:
+                    self._original_start_time = original_boundaries[0]
+                    self._original_end_time = original_boundaries[-1]
+                else:
+                    self._original_start_time = 0.0
+                    self._original_end_time = self.audio_duration
+                print(f"📍 保存原始边界: start={self._original_start_time:.2f}, end={self._original_end_time:.2f}")
+        
+        boundaries = self._pending_boundaries
+        
+        # 确保不越界（保持顺序）
+        # 第一个 handle 可以移动，但不能超过第二个
+        # 最后一个 handle 可以移动，但不能小于倒数第二个
+        if handle_index == 0:
+            min_time = 0.0
+            max_time = boundaries[1] - 0.1 if len(boundaries) > 1 else self.audio_duration
+        elif handle_index == len(boundaries) - 1:
+            min_time = boundaries[handle_index - 1] + 0.1
+            max_time = self.audio_duration
+        else:
+            min_time = boundaries[handle_index - 1] + 0.1
+            max_time = boundaries[handle_index + 1] - 0.1
+        
+        new_time = max(min_time, min(max_time, new_time))
+        
+        # 更新边界
+        boundaries[handle_index] = new_time
+        self._pending_boundaries = boundaries
+        
+        # 更新 start_time_var 和 end_time_var
+        if handle_index == 0:
+            self.start_time_var.set(new_time)
+        elif handle_index == len(boundaries) - 1:
+            self.end_time_var.set(new_time)
+        
+        # 重绘时间轴
+        self._draw_edit_timeline()
+    
+    def _get_boundaries_from_audio_json(self):
+        """从 audio_json 计算边界（不使用 _pending_boundaries，不使用 var）"""
+        # 总是从 0.0 开始计算
+        start_time = 0.0
+        boundaries = [start_time]
+        
+        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 0:
+            current_time = start_time
+            for scene in self.audio_json:
+                duration = scene.get('duration', 0)
+                if duration > 0:
+                    current_time += duration
+                    boundaries.append(current_time)
+        else:
+            boundaries.append(self.audio_duration)
+        
+        return boundaries
+    
+    def _update_scene_durations_from_boundaries(self, boundaries):
+        """根据边界时间更新 audio_json 中的 duration"""
+        if not hasattr(self, 'audio_json') or not self.audio_json:
+            return
+        
+        for i in range(len(self.audio_json)):
+            if i < len(boundaries) - 1:
+                start_time = boundaries[i]
+                end_time = boundaries[i + 1]
+                self.audio_json[i]['duration'] = end_time - start_time
+    
+    def _update_audio_json_from_timeline(self):
+        """从时间轴更新 audio_json"""
+        # duration 已经在拖动过程中更新了
+        pass
+    
+    def refresh_edit_timeline(self):
+        """刷新剪辑时间轴（当 audio_json 变化时调用）"""
+        # 清除待确认状态
+        self._pending_boundaries = None
+        self._original_audio_json = None
+        self._original_start_time = None
+        self._original_end_time = None
+        
+        self._draw_edit_timeline()
+        
+        # 同时更新 start_time_var 和 end_time_var
+        boundaries = self._get_scene_boundaries()
+        if len(boundaries) >= 2:
+            self.start_time_var.set(boundaries[0])
+            self.end_time_var.set(boundaries[-1])
 
-    def audio_fade(self):
-        """Audio fade"""
-        if self.source_audio_path:
-            self.source_audio_path = self.workflow.ffmpeg_audio_processor.to_wav(self.source_audio_path, 1.5, 1.5, 1.0, 0.0)
-        if self.source_video_path:
-            self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path)
+
+    def restore_edit_timeline_change(self):
+        """恢复剪辑区间变动 - 用 audio_json 的原始值覆盖变更"""
+        self.stop_playback()
+        
+        # 保存原始时间值（因为 _update_fresh_json_text 会清除它们）
+        saved_start_time = self._original_start_time
+        saved_end_time = self._original_end_time
+        
+        if self._original_audio_json is not None:
+            # 恢复原始 audio_json
+            self.audio_json = copy.deepcopy(self._original_audio_json)
+            
+            # 直接更新文本框，不触发 refresh_edit_timeline
+            self.fresh_json_text.delete(1.0, tk.END)
+            self.fresh_json_text.insert(1.0, json.dumps(self.audio_json, indent=2, ensure_ascii=False))
+            # 手动触发提取 narrator 和 speaker 值
+            self._extract_narrator_speaker_from_json()
+            print("✓ 已恢复剪辑区间到原始状态")
+        
+        # 清除待确认状态（必须在恢复时间变量之前）
+        self._pending_boundaries = None
+        self._original_audio_json = None
+        self._original_start_time = None
+        self._original_end_time = None
+        
+        # 恢复原始起止时间（使用保存的值）
+        if saved_start_time is not None:
+            self.start_time_var.set(saved_start_time)
+            print(f"📍 恢复起始时间: {saved_start_time:.2f}")
+        else:
+            print("⚠️ 没有保存的原始起始时间")
+            
+        if saved_end_time is not None:
+            self.end_time_var.set(saved_end_time)
+            print(f"📍 恢复结束时间: {saved_end_time:.2f}")
+        else:
+            print("⚠️ 没有保存的原始结束时间")
+        
+        # 重绘时间轴
+        self._draw_edit_timeline()
+
+
+    def confirm_edit_timeline_change(self):
+        """确认剪辑区间变动 - 将时间轴的值保存到 audio_json"""
+        self.stop_playback()
+        
+        if self._pending_boundaries is not None:
+            boundaries = self._pending_boundaries
+            
+            # 更新 audio_json 中每个场景的 duration
+            if hasattr(self, 'audio_json') and self.audio_json:
+                for i in range(len(self.audio_json)):
+                    if i < len(boundaries) - 1:
+                        start_time = boundaries[i]
+                        end_time = boundaries[i + 1]
+                        self.audio_json[i]['duration'] = end_time - start_time
+                
+                # 更新显示
+                self._update_fresh_json_text(self.audio_json)
+                print(f"✓ 已确认剪辑区间变动，共 {len(self.audio_json)} 个场景")
+        
+        # 清除待确认状态
+        self._pending_boundaries = None
+        self._original_audio_json = None
+        self._original_start_time = None
+        self._original_end_time = None
+        
+        # 重绘时间轴
+        self._draw_edit_timeline()
+
 
 
     def trim_video(self, audio_unchange):
@@ -608,7 +1075,7 @@ class AVReviewDialog:
 
 
 
-    def _transcribe_recorded_audio(self, real):
+    def _transcribe_recorded_audio(self):
         """转录录制的音频"""
         default_json = {
             "duration": self.audio_duration,
@@ -619,7 +1086,7 @@ class AVReviewDialog:
             "implicit": self.current_scene.get("implicit", "implicit")
         }
 
-        if self.audio_duration <= 30 or not real:
+        if self.audio_duration <= 30:
             return [default_json]
 
         print("🔄 开始转录录音...")
@@ -777,7 +1244,7 @@ class AVReviewDialog:
         self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
 
         if transcribe:
-            self.audio_json = self._transcribe_recorded_audio(transcribe)
+            self.audio_json = self._transcribe_recorded_audio()
             self.audio_json = self.align_json_to_current_scene(self.audio_json)
             self._update_fresh_json_text(self.audio_json)
 
@@ -1128,58 +1595,6 @@ class AVReviewDialog:
         # Close dialog
         self.dialog.destroy()
     
-
-    def jump_to_start(self):
-        """Jump to the start of selected time range"""
-        try:
-            start_time = self.start_time_var.get()
-            
-            if self.source_video_path:
-                # Video mode: jump video and stop audio
-                if self.video_cap:
-                    fps = self.video_cap.get(cv2.CAP_PROP_FPS)
-                    start_frame = int(start_time * fps) if fps > 0 else 0
-                    self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-                    
-            # Stop video audio and reset state
-            if self.source_audio_path:
-                if self.pygame_initialized:
-                    pygame.mixer.music.stop()
-                
-            # Reset time tracking
-            self.pause_accumulated_time = start_time
-            self.playback_start_time = None
-            self.av_paused = False
-            
-            self.current_playback_time = start_time
-            print(f"✓ 跳转到开始位置: {start_time:.2f}秒")
-            
-            # Update play time display
-            self.update_play_time_display()
-            
-        except Exception as e:
-            print(f"⚠️ 跳转失败: {e}")
-   
-    
-    def play_selected_range(self):
-        """Play only the selected time range"""
-        try:
-            # Jump to start first
-            self.jump_to_start()
-            
-            # Start playback based on mode
-            if self.source_video_path:
-                if not self.av_playing:
-                    self.start_video_playback()
-            else:
-                if not self.av_playing:
-                    self.start_playback()
-            
-            print(f"▶ 开始播放选定范围")
-            
-        except Exception as e:
-            print(f"⚠️ 播放选定范围失败: {e}")
-
 
     def start_time_update_thread(self):
         """Start a thread to update playback time"""
@@ -1609,6 +2024,8 @@ class AVReviewDialog:
             self.fresh_json_text.insert(1.0, json.dumps(content, indent=2, ensure_ascii=False))
         # 触发提取 narrator 和 speaker 值
         self._extract_narrator_speaker_from_json()
+        # 刷新剪辑时间轴
+        self.refresh_edit_timeline()
 
 
 
@@ -1726,7 +2143,8 @@ class AVReviewDialog:
                 
         except Exception as e:
             print(f"❌ 处理动画变化失败: {e}")
-    
+
+
 
     def on_video_dnd_drop(self, event):
         """处理视频拖放"""
@@ -1735,18 +2153,21 @@ class AVReviewDialog:
             self.handle_new_media(file_path)
 
 
+
     def on_image_dnd_drop(self, event):
         """处理图片拖放"""
         file_path = event.data.strip('{}').strip('"')
         if is_image_file(file_path):
             self.handle_new_media(file_path)
 
-    
+
+
     def on_audio_dnd_drop(self, event):
         """处理音频拖放"""
         file_path = event.data.strip('{}').strip('"')
         if is_audio_file(file_path):
             self.handle_new_media(file_path)
+
 
 
     def process_new_media(self, av_path):
@@ -1764,6 +2185,9 @@ class AVReviewDialog:
                 self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True, True)
 
         self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+        self.end_time_var.set(self.audio_duration)
+        self.start_time_var.set(0.0)
+
 
 
     def handle_new_media(self, av_path):
