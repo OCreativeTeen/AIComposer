@@ -1121,8 +1121,8 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_character = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_character.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_speaker = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1136,8 +1136,8 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ACTORS)
-        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_narrator = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ACTORS)
+        self.scene_narrator.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="旁白:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1984,8 +1984,8 @@ class WorkflowGUI:
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
         
-        self.scene_character.delete("1.0", tk.END)
-        self.scene_character.insert("1.0", scene_data.get("character", ""))
+        self.scene_speaker.delete("1.0", tk.END)
+        self.scene_speaker.insert("1.0", scene_data.get("speaker", ""))
 
         self.scene_actions.delete("1.0", tk.END)
         self.scene_actions.insert("1.0", scene_data.get("actions", ""))
@@ -1993,7 +1993,7 @@ class WorkflowGUI:
         self.scene_visual.delete("1.0", tk.END)
         self.scene_visual.insert("1.0", scene_data.get("visual", ""))
 
-        self.scene_speaker.set(scene_data.get("speaker", ""))
+        self.scene_narrator.set(scene_data.get("narrator", ""))
 
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_voiceover.insert("1.0", scene_data.get("voiceover", ""))
@@ -2209,10 +2209,10 @@ class WorkflowGUI:
         self.scene_main_animate.set("")
         
         self.scene_speaking.delete("1.0", tk.END)
-        self.scene_character.delete("1.0", tk.END)
+        self.scene_speaker.delete("1.0", tk.END)
         self.scene_actions.delete("1.0", tk.END)
         self.scene_visual.delete("1.0", tk.END)
-        self.scene_speaker.delete("1.0", tk.END)
+        self.scene_narrator.delete("1.0", tk.END)
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_caption.delete("1.0", tk.END)
         self.scene_explicit.delete("1.0", tk.END)
@@ -3484,10 +3484,10 @@ class WorkflowGUI:
         
         scene.update({
             "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
-            "character": self.scene_character.get("1.0", tk.END).strip(),
+            "speaker": self.scene_speaker.get("1.0", tk.END).strip(),
             "actions": self.scene_actions.get("1.0", tk.END).strip(),
             "visual": self.scene_visual.get("1.0", tk.END).strip(),
-            "speaker": self.scene_speaker.get(),
+            "narrator": self.scene_narrator.get(),
             "voiceover": self.scene_voiceover.get("1.0", tk.END).strip(),
             "caption": self.scene_caption.get("1.0", tk.END).strip(),
 
@@ -3721,10 +3721,10 @@ class WorkflowGUI:
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_fields = [
             self.scene_speaking,
-            self.scene_character,
+            self.scene_speaker,
             self.scene_actions,
             self.scene_visual,
-            self.scene_speaker,
+            self.scene_narrator,
             self.scene_voiceover,
             self.scene_caption,
 
@@ -3742,7 +3742,7 @@ class WorkflowGUI:
         
         # 为Entry和Combobox字段单独绑定失去焦点事件
         entry_combobox_fields = [
-            self.scene_speaker
+            self.scene_narrator
         ]
         for field in entry_combobox_fields:
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
@@ -3893,12 +3893,7 @@ class WorkflowGUI:
 
             current_scene["clip_animation"] = ""
 
-            if transcribe_way == "single":
-                self.workflow.copy_scene(current_scene, audio_json[0])
-                #self.workflow.refresh_scene_visual(current_scene)
-            else: #transcribe_way == "multiple":
-                self.workflow.prepare_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
-                self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
+            self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
             #else: # transcribe_way == "multiple_merge":
             #    self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
 

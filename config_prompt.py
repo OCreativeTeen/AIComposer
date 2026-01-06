@@ -13,9 +13,9 @@ You are a professional expert who is good at analyzing & describing the image (a
 
 Please give details (Visual-Summary / camera-scene, and sound-effects) as below (FYI, don't use doubel-quotes & newlines in the values at all !):
 
-		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
+		** subject (detailed description of all speakers (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
         ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** person_action (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
+		** person_action (detailed description of the speakers' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
         ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
         ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
@@ -51,44 +51,37 @@ from the audio-text segments (in json format) given in 'user-prompt', like below
         {{
             "start": 0.0,
             "end": 10.96,
-            "speaker": "SPEAKER_01",
-            "speaking": "欸，聽完剛剛那些喔，感覺這個AI啊，呃，不只是改變我們怎麼做事，好像是更深層的，在搖撼我們對自己的看法。"
+            "caption": "欸，聽完剛剛那些喔，感覺這個AI啊，呃，不只是改變我們怎麼做事，好像是更深層的，在搖撼我們對自己的看法。"
         }},
         {{
             "start": 10.96,
             "end": 12.72,
-            "speaker": "SPEAKER_01",
-            "speaking": "就是那個我是誰？"
+            "caption": "就是那個我是誰？"
         }},
         {{
             "start": 12.72,
             "end": 13.96,
-            "speaker": "SPEAKER_01",
-            "speaking": "我為什麼在這？"
+            "caption": "我為什麼在這？"
         }},
         {{
             "start": 13.96,
             "end": 15.44,
-            "speaker": "SPEAKER_01",
-            "speaking": "這種根本的問題。"
+            "caption": "這種根本的問題。"
         }},
         {{
             "start": 15.44,
             "end": 16.64,
-            "speaker": "SPEAKER_01",
-            "speaking": "嗯，沒錯！"
+            "caption": "嗯，沒錯！"
         }},
         {{
             "start": 16.64,
             "end": 24.32,
-            "speaker": "SPEAKER_00",
-            "speaking": "這真的已經不是單純的技術問題了，比較像，嗯，一場心理跟價值觀的大地震。"
+            "caption": "這真的已經不是單純的技術問題了，比較像，嗯，一場心理跟價值觀的大地震。"
         }},
         {{
             "start": 24.32,
             "end": 35.28,
-            "speaker": "SPEAKER_00",
-            "speaking": "AI有點像一面鏡子，而且是放大鏡，把我們、我們社會本來就有的那些壓力啊、焦慮啊，甚至是更裡面的，比如說我的價值到底是什麼？"
+            "caption": "AI有點像一面鏡子，而且是放大鏡，把我們、我們社會本來就有的那些壓力啊、焦慮啊，甚至是更裡面的，比如說我的價值到底是什麼？"
         }},
         ......
     ]
@@ -107,20 +100,17 @@ the merged sentences should be like
         {{
             "start": 0.0,
             "end": 15.44,
-            "speaker": "SPEAKER_01",
-            "speaking": "欸，聽完剛剛那些喔，感覺這個AI啊，呃，不只是改變我們怎麼做事，好像是更深層的，在搖撼我們對自己的看法。就是那個我是誰？我為什麼在這？這種根本的問題。"
+            "caption": "欸，聽完剛剛那些喔，感覺這個AI啊，呃，不只是改變我們怎麼做事，好像是更深層的，在搖撼我們對自己的看法。就是那個我是誰？我為什麼在這？這種根本的問題。"
         }},
         {{
             "start": 15.44,
             "end": 24.32,
-            "speaker": "SPEAKER_00",
-            "speaking": "嗯，沒錯！這真的已經不是單純的技術問題了，比較像，嗯，一場心理跟價值觀的大地震。"
+            "caption": "嗯，沒錯！這真的已經不是單純的技術問題了，比較像，嗯，一場心理跟價值觀的大地震。"
         }},
         {{
             "start": 24.32,
             "end": 35.28,
-            "speaker": "SPEAKER_00",
-            "speaking": "AI有點像一面鏡子，而且是放大鏡，把我們、我們社會本來就有的那些壓力啊、焦慮啊，甚至是更裡面的，比如說我的價值到底是什麼？"
+            "caption": "AI有點像一面鏡子，而且是放大鏡，把我們、我們社會本來就有的那些壓力啊、焦慮啊，甚至是更裡面的，比如說我的價值到底是什麼？"
         }},
         ......
     ]
@@ -166,9 +156,9 @@ For Each Scene of the story, please add details (Visual-Summary / camera-scenem,
 
 	    ** duration (take from the duration field of each given Scene, make sure the duration is float number, not string)
         ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
-		** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
+		** subject (detailed description of all speakers (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
         ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** person_action (detailed description of the characters' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
+		** person_action (detailed description of the speakers' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
         ** speaker_action (If the content is from a narrator, describe his/har (mood/reaction/emotion/body language)  ~~~ in English)
 		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
 		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
@@ -299,9 +289,9 @@ Based on the raw-story-outline provided in the user prompt, write a '{story_styl
     ** mood : mood/Emotion the speaker is in, choices (happy, sad, angry, fearful, disgusted, surprised, calm)
     ** speaker_action (If the content is from a narrator, describe his/har (reaction/emotion/body language)  ~~~ in English)
     ** content (the source text (dialogue, narration, or scene summary) of the Scene  ~~~ in original language)
-    ** subject (detailed description of all characters (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
+    ** subject (detailed description of all speakers (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
     ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-    ** person_action (detailed description of the characters' actions (reactions/interactions), and visual expression ~~~ in original language)
+    ** person_action (detailed description of the speakers' actions (reactions/interactions), and visual expression ~~~ in original language)
     ** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
     ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
     ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
@@ -476,7 +466,7 @@ SPEAKING_PROMPTS = {
 SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT = [
 "Following below as example of a music style/genre, make prompt to create similar music (in English): * (add more details with richer musical direction and mood guidanc) * (transcend from the orginal content, to distill/extract deeper profound, elevated emotions and higher realm of resonance that moves and inspires)",
 "对(YOUTUBE链接)的音乐, 详细分析其音乐/歌曲的特性(风格,情绪,气氛,地域,时代,节奏,乐器,人声特质,人声伴唱,内容类型等等), 以此生成提示词(PROMPT), 用在SUNO-AI来生成类似的音乐/歌曲",
-"Conduct an in-depth analysis of the music from the specified YouTube link, identifying key attributes including style, mood, emotion, atmosphere, regional and historical context, tempo, instrumentation, vocal characteristics, backing vocals, and lyrical themes. Use these attributes to create effective prompts for SUNO AI to generate similar music or songs."
+"Conduct an in-depth analysis of the music from the specified YouTube link, identifying key attributes including style, mood, emotion, atmosphere, regional and historical context, tempo, instrumentation, vocal speakeristics, backing vocals, and lyrical themes. Use these attributes to create effective prompts for SUNO AI to generate similar music or songs."
 ]
 
 SUNO_LANGUAGE = [
@@ -515,7 +505,7 @@ From the content inside the 'user-prommpt', you are a professional to:
     *** to express the content generally, and give out the music-themes development path.
 
 2. Give a suggestion for the lyrics, that express the content in {language_style} 
-    *** NOT lyrics diretly (only instruction to generate lyrics), summerized to less than 200 characters strictly
+    *** NOT lyrics diretly (only instruction to generate lyrics), summerized to less than 200 speakers strictly
 
 output as json format, like the example:
 
@@ -820,7 +810,7 @@ SUNO_CONTENT_EXAMPLES = [
     "A song themed around traveling in Japan: \n** it portrays the journey of being deeply moved by nature and culture, and finding healing for the soul along the way. \n** The changing seasons or the richness of history and tradition, each moment reveals a beauty that transcends the ordinary.    \n\n** This leads to a broader idea: When we marvel at the beauty we encounter on our travels, perhaps God is gently speaking to us. Traveling is not just about seeing the sights — it is a dialogue between the soul and the healing Creator",
     "Create a spiritual folk-pop song inspired by Psalm 72:8, celebrating God's dominion and grace from 'sea to sea' across Canada. \n\n** The song should follow a narrative structure : Start from the Pacific coast (British Columbia), then journey across the prairies (Alberta, Saskatchewan, Manitoba), through Ontario and Quebec, and end on the Atlantic coast. \n** Each verse highlights a region's natural beauty (mountains, wheat fields, rivers, lighthouses), and a sense of God's presence across the land. \n** The chorus should repeat a phrase inspired by Psalm 72:8, such as: 'From sea to sea, His grace flows free'",
     "Create a heartfelt worship ballad inspired by Song of Songs 8:6-7, 2:16, 4:9, and 2:4, portraying the intimate and unbreakable love between God and His people. \n\n** The song should follow a narrative structure: Begin with a personal encounter with God's gaze (Song of Songs 4:9), capturing the moment the soul feels 'heart aflame.' Move to a celebration of belonging and union ('My beloved is mine, and I am His' – 2:16), then rise into the passionate imagery of unquenchable love and the 'seal upon the heart' (8:6-7).\n** The verses should weave vivid, poetic imagery: eyes like morning stars, banners of love over a feast, gardens in bloom, and fire that cannot be extinguished.\n** The chorus should anchor the theme with a repeated phrase inspired by 8:6-7, such as: 'Set me as a seal upon Your heart, Lord.'\n** The bridge should express a vow of loyalty and surrender, even against the world's doubts, affirming that divine love is priceless and eternal. \n\n** The tone should be tender yet powerful, blending folk and contemporary worship styles to stir deep emotional response.",
-    "Create a tender 中文 love female-male duet inspired by Song of Songs 1:2-4, 1:15-16, and 2:3-4, portraying the soul's first awakening to divine love. Rewrite the words to make it like subtitle; \n\n    ** The song should follow a narrative structure: Begin with the longing cry for the Beloved's presence and kisses (1:2), moving into the joyful admiration of His beauty and character (1:15-16), then rising to the delight of resting under His shade and feasting beneath His banner of love (2:3-4).\n    ** The verses should weave imagery of fragrant oils, royal chambers, blossoming fields, and the warmth of early spring.\n    ** The chorus should anchor with a repeated phrase inspired by 2:4, such as: 'His banner over me is love.'\n    ** The bridge should express a yearning to remain in this first love, guarded against distraction and disturbance, echoing 2:7.\n    ** The tone should be soft yet radiant, blending acoustic folk warmth with gentle orchestration.",
+    "Create a tender 中文 love female-male duet inspired by Song of Songs 1:2-4, 1:15-16, and 2:3-4, portraying the soul's first awakening to divine love. Rewrite the words to make it like subtitle; \n\n    ** The song should follow a narrative structure: Begin with the longing cry for the Beloved's presence and kisses (1:2), moving into the joyful admiration of His beauty and speaker (1:15-16), then rising to the delight of resting under His shade and feasting beneath His banner of love (2:3-4).\n    ** The verses should weave imagery of fragrant oils, royal chambers, blossoming fields, and the warmth of early spring.\n    ** The chorus should anchor with a repeated phrase inspired by 2:4, such as: 'His banner over me is love.'\n    ** The bridge should express a yearning to remain in this first love, guarded against distraction and disturbance, echoing 2:7.\n    ** The tone should be soft yet radiant, blending acoustic folk warmth with gentle orchestration.",
     "Compose a theme song for 'world travel'; Inspired by myths, legends, and traditions from various countries. \n** In different languages, each reflecting the musical style and emotional tone of that region",
     "Create background music for a historical storytelling channel set in ancient Persia. \n** The mood should be soothing yet mysterious, with a slow tempo that gradually builds subtle excitement without losing its calm and immersive quality. \n** Evoke the feeling of desert winds, ancient palaces, and whispered legends unfolding through time"
 ]
@@ -896,9 +886,6 @@ The text content (given in 'user-prompt') in {language} does not have any punctu
 Please help me add the correct periods, commas, question marks, and exclamation marks to make it a natural sentence.
 """
 
-SRT_REORGANIZATION_USER_PROMPT = """
-{text}
-"""
 
 
 ZERO_MIX = [

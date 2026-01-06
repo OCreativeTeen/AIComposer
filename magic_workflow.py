@@ -224,22 +224,22 @@ class MagicWorkflow:
         prompt_dict = {}
 
         # 提取当前场景的关键信息
-        character = scene_data.get("character", "")
+        speaker = scene_data.get("speaker", "")
         speaking = scene_data.get("speaking", "")
         actions = scene_data.get("actions", "")
         visual = scene_data.get("visual", "")
 
-        speaker = scene_data.get("speaker", "")
+        narrator = scene_data.get("narrator", "")
         voiceover = scene_data.get("voiceover", "")
 
         if "second" in track:
             if "speaking" in scene_data:
-                if speaker:
-                    if speaker.endswith("left"):
+                if narrator:
+                    if narrator.endswith("left"):
                         prompt_dict["SPEAKING"] = f"the left-side person says: ({speaking}), while {actions}."
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the right-side person is listening, while engaging face &  hands reactions."
-                    elif speaker.endswith("right"):
+                    elif narrator.endswith("right"):
                         prompt_dict["SPEAKING"] = f"the right-side person says: ({speaking}),  while {actions}."
                         if av_type == "WS2V":
                             prompt_dict["LISTENING"] = f"the left-side person is listening, while engaging face & hands reactions."
@@ -249,16 +249,16 @@ class MagicWorkflow:
                     prompt_dict["SPEAKING"] = f"{speaking}, while {actions}."
 
         if "clip" in track or "zero" in track:
-            person_lower = character
+            person_lower = speaker
             if person_lower:
                 has_negative_pattern = (
                     re.search(r'\bno\b.*\bpersons?\b', person_lower) or  # matches "no person", "no persons", "no specific person"
-                    re.search(r'\bno\b.*\bcharacters?\b', person_lower) or  # matches "no character", "no characters", "no other character"
+                    re.search(r'\bno\b.*\bspeakers?\b', person_lower) or  # matches "no speaker", "no speakers", "no other speaker"
                     re.search(r'\bn/a\b', person_lower) or  # matches "n/a"
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["character"] = character + ", while " + actions + "."
+                    prompt_dict["speaker"] = speaker + ", while " + actions + "."
 
 
         prompt_dict["visual"] = visual
@@ -817,7 +817,7 @@ class MagicWorkflow:
                 # Skip lines starting with [ or (
                 if line.startswith('[') or line.startswith('('):
                     continue
-                # Skip lines with very few characters (under 5)
+                # Skip lines with very few speakers (under 5)
                 if len(line) < 5:
                     continue
                 # Skip timestamp lines (format: HH:MM:SS.mmm --> HH:MM:SS.mmm)
@@ -1266,16 +1266,17 @@ class MagicWorkflow:
         return fresh_json, self.ffmpeg_audio_processor.concat_audios([json_item["speak_audio"] for json_item in fresh_json])
 
 
+
     def regenerate_audio_item(self, json_item, language):
         lang = "chinese" if language == "zh" or language == "tw" else "english"
 
-        speaker = json_item["character"]
+        speaker = json_item["speaker"]
         content = json_item["speaking"]
         mood = json_item["mood"]
 
-        ss = speaker.split("/")
+        ss = narrator.split("/")
         if len(ss) > 1:
-            speaker = ss[0]
+            narrator = ss[0]
 
         try:
             voice = self.speech_service.get_voice(speaker, lang)
@@ -1285,11 +1286,10 @@ class MagicWorkflow:
                 json_item["speak_audio"] = audio_file
                 json_item["duration"] = self.ffmpeg_audio_processor.get_duration(json_item["speak_audio"])
             else:
-                json_item["speak_audio"] = None
+                json_item.pop("speak_audio", None)
                 json_item["duration"] = 0.0
-                print(f"⚠️ 说话人 '{s}' 的语音合成失败")
         except Exception as e:
-            print(f"❌ 说话人 '{s}' 的语音合成错误: {str(e)}")
+            print(f"❌ 说话人 '{speaker}' 的语音合成错误: {str(e)}")
 
         return json_item["duration"], json_item["speak_audio"]
 
@@ -1328,9 +1328,9 @@ class MagicWorkflow:
             if vertical_line_position == 0:
                 return
 
-            speaker = scene.get("speaker", "")
-            speaker_position = scene.get("speaker_position", "")
-            if not speaker or not speaker_position:
+            narrator = scene.get("narrator", "")
+            narrator_position = scene.get("narrator_position", "")
+            if not narrator or not narrator_position:
                 return
 
             left_image, right_image = self.ffmpeg_processor.split_image(image_path, vertical_line_position)
@@ -1341,12 +1341,12 @@ class MagicWorkflow:
             left_file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "WS2VL", False)
             right_file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "WS2VR", False)
 
-            if speaker_position == "left":
+            if narrator_position == "left":
                 left_prompt.pop("LISTENING", None)
                 right_prompt.pop("SPEAKING", None)
                 self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
-            elif speaker_position == "right":
+            elif narrator_position == "right":
                 left_prompt.pop("SPEAKING", None)
                 right_prompt.pop("LISTENING", None)
                 self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
@@ -1484,39 +1484,6 @@ class MagicWorkflow:
         audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
         return audio_temp
 
-
-    def copy_scene(self, scene, audio_scene):
-        preserved_fields = {field: audio_scene[field] for field in ["start", "end", "duration", "speaker", "speaking", "character", "actions", "visual", "caption", "voiceover"] if field in audio_scene}
-        scene.update(preserved_fields)
-        return scene
- 
-
-
-    def prepare_scenes_from_json(self, raw_scene, audio_json):
-        # keep raw_id as integer    
-        raw_id = int((raw_scene["id"]/100)*100)
-        audio = self.ffmpeg_audio_processor.to_wav(raw_scene["clip_audio"])
-        video = self.ffmpeg_processor.resize_video(raw_scene["clip"], None, None) 
-
-        start_time = 0.0
-        for audio_scene in audio_json:
-            raw_id += 100
-            update_fields = {
-                "id": raw_id,
-                "clip_animation": ""
-            }
-            audio_scene.update(update_fields)
-
-            # self.refresh_scene_visual(audio_scene)
-            clip_wav = self.ffmpeg_audio_processor.audio_cut_fade(audio, start_time, audio_scene["duration"])
-            olda, clip_audio = refresh_scene_media(audio_scene, "clip_audio", ".wav", clip_wav)
-            end_time = start_time + audio_scene["duration"]
-            v = self.ffmpeg_processor.trim_video(video, start_time, end_time)
-            v = self.ffmpeg_processor.add_audio_to_video(v, clip_audio)
-            refresh_scene_media(audio_scene, "clip", ".mp4", v)
-            start_time = end_time
-
-        return audio_json
 
 
     def swap_scene(self, current_index, next_index):

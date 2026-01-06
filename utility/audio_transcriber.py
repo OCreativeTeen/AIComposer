@@ -15,7 +15,7 @@ from pyannote.audio import Pipeline
 import warnings
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
-from utility.file_util import safe_file, read_json, write_json, clean_memory
+from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove
 
 # 抑制 torchcodec 警告（如果功能正常，这个警告可以忽略）
 warnings.filterwarnings('ignore', message='.*torchcodec.*', category=UserWarning)
@@ -92,7 +92,7 @@ class AudioTranscriber:
             segment_time = segment['end'] - segment['start']
             segment_text = self.chinese_convert(segment['text'], language)
             normalize_text = self.normalize_text(segment_text)
-            # Distribute time evenly across characters
+            # Distribute time evenly across speakers
             if len(normalize_text) > 0:
                 time_per_char = segment_time / len(normalize_text)
                 for i, char in enumerate(normalize_text):
@@ -111,6 +111,7 @@ class AudioTranscriber:
         sentences = self.reorganize_text_content(text_content, language)
         print(f"调试信息: 重组后句子数量={len(sentences)}")
         if len(sentences) == 0:
+            safe_remove(script_path)
             return None
 
         # clean_memory()
@@ -148,7 +149,7 @@ class AudioTranscriber:
             reorganized_segment = {
                 'start': sentence_start_time,
                 'end': sentence_end_time,
-                'content': sentence
+                'caption': sentence
             }
             reorganized.append(reorganized_segment)
             # Update search position for next sentence
@@ -165,6 +166,7 @@ class AudioTranscriber:
         merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
         print(f"调试信息: merged数量={len(merged_segments)}")
         if not merged_segments or len(merged_segments) == 0:
+            safe_remove(script_path)
             return None
 
         # clean_memory()
@@ -198,6 +200,14 @@ class AudioTranscriber:
                 segment['duration'] = segment['end'] - segment['start']
                 end_time = segment['end']
              
+        if len(merged_segments) == 0:
+            safe_remove(script_path)
+            return None
+        
+        for segment in merged_segments:
+            segment.pop("start", None)
+            segment.pop("end", None)
+
         write_json(script_path, merged_segments)  
         return merged_segments
 
@@ -210,15 +220,15 @@ class AudioTranscriber:
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
         output = []
-        character = "mature_woman"
+        speaker = "mature_woman"
         for segment in segments:
             output.append({
                 "start": float(segment["start"]),
                 "end": float(segment["end"]),
                 "duration": float(segment["end"]) - float(segment["start"]),
-                "character": character,
-                "caption": segment["content"],
-                "speaking": segment["content"]
+                "speaker": speaker,
+                "caption": segment["caption"],
+                "speaking": segment["caption"]
             })
 
         return output
@@ -259,9 +269,8 @@ class AudioTranscriber:
 
     def reorganize_text_content(self, text, language):
         system_prompt = config_prompt.SRT_REORGANIZATION_SYSTEM_PROMPT.format(language=language)
-        prompt = config_prompt.SRT_REORGANIZATION_USER_PROMPT.format(text=text)
         
-        content = self.llm_api.generate_text(system_prompt, prompt)
+        content = self.llm_api.generate_text(system_prompt, text)
         if not content:
             return []
 
