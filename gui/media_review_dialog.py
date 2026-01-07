@@ -115,8 +115,9 @@ class AVReviewDialog:
         self.source_image_path = get_file_path(self.current_scene, self.image_field)
         
         self.audio_duration = 0.0
-        self.start_time_var = tk.DoubleVar(value=0.0)
-        self.end_time_var = tk.DoubleVar(value=0.0)
+        # 使用 _pending_boundaries 统一管理时间边界，移除重复的 start_time_var 和 end_time_var
+        self._pending_boundaries = None
+        self._boundaries_initialized = False
 
         # 新增拖放媒体
         self.animation_choice = 1
@@ -158,6 +159,8 @@ class AVReviewDialog:
         self.create_dialog()
 
         self.audio_json = [{
+            "start": 0.0,
+            "end": self.audio_duration,
             "duration": self.audio_duration,
             "speaker": self.current_scene.get("speaker", ""), 
             "caption": self.current_scene.get("caption", ""),
@@ -347,10 +350,7 @@ class AVReviewDialog:
         self.edit_handles = []  # 存储所有可拖动节点
         self.edit_handle_dragging = None  # 当前正在拖动的节点索引
         self.edit_regions = []  # 存储场景区域显示
-        self._pending_boundaries = None  # 存储待确认的边界变化（拖动过程中的临时状态）
-        self._original_audio_json = None  # 存储原始 audio_json（用于恢复）
-        self._original_start_time = None  # 存储原始起始时间
-        self._original_end_time = None  # 存储原始结束时间
+        # _pending_boundaries 和 _boundaries_initialized 已在 __init__ 中初始化
         
         # 绑定 Edit Timeline 事件
         self.edit_timeline_canvas.bind('<Configure>', self._on_edit_timeline_configure)
@@ -394,9 +394,7 @@ class AVReviewDialog:
         # Initialize play time display
         self.update_play_time_display()
         
-        # Bind changes to update duration display
-        self.start_time_var.trace('w', self.update_duration_display)
-        self.end_time_var.trace('w', self.update_duration_display)
+        # 不再需要 trace 回调，因为已移除 start_time_var 和 end_time_var
         self.update_duration_display()
         
         # Text editors section for JSON data
@@ -507,8 +505,8 @@ class AVReviewDialog:
         if not self.source_audio_path:
             return
         try:
-            start = self.start_time_var.get()
-            end = self.end_time_var.get()
+            start = self._get_start_time()
+            end = self._get_end_time()
             if end > start:
                 # Update waveform selection visualization
                 self.waveform_canvas.delete("selection")
@@ -657,8 +655,12 @@ class AVReviewDialog:
         self.current_playback_time = new_time
         self.pause_accumulated_time = new_time
         
+        # 拖动进度条会导致需要重新加载音频，所以清除暂停状态
+        was_playing = self.av_playing
+        self.av_paused = False
+        
         # 如果正在播放，需要重新设置播放位置
-        if self.av_playing:
+        if was_playing:
             self.playback_start_time = time.time()
             
             # 更新视频位置
@@ -667,10 +669,12 @@ class AVReviewDialog:
                 frame_num = int(new_time * fps)
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
             
-            # 更新音频位置
+            # 更新音频位置（需要重新加载）
             if self.source_audio_path:
                 pygame.mixer.music.stop()
+                pygame.mixer.music.load(self.source_audio_path)
                 pygame.mixer.music.play(start=new_time)
+                print(f"🔍 进度条拖动: 跳转到 {new_time:.2f}s")
         
         # 更新显示
         self.update_play_time_display()
@@ -779,42 +783,55 @@ class AVReviewDialog:
                 'x': x
             })
     
+    def _ensure_boundaries_initialized(self):
+        """确保边界已初始化"""
+        if not self._boundaries_initialized or self._pending_boundaries is None:
+            self._pending_boundaries = self._get_boundaries_from_audio_json()
+            if not self._pending_boundaries or len(self._pending_boundaries) < 2:
+                self._pending_boundaries = [0.0, self.audio_duration]
+            self._boundaries_initialized = True
+    
+    def _get_start_time(self):
+        """获取开始时间：从 _pending_boundaries[0] 获取"""
+        self._ensure_boundaries_initialized()
+        if self._pending_boundaries and len(self._pending_boundaries) > 0:
+            return self._pending_boundaries[0]
+        return 0.0
+    
+    def _get_end_time(self):
+        """获取结束时间：从 _pending_boundaries[-1] 获取"""
+        self._ensure_boundaries_initialized()
+        if self._pending_boundaries and len(self._pending_boundaries) > 1:
+            return self._pending_boundaries[-1]
+        return self.audio_duration
+    
+    def _set_start_time(self, value):
+        """设置开始时间：更新 _pending_boundaries[0]"""
+        self._ensure_boundaries_initialized()
+        if self._pending_boundaries:
+            self._pending_boundaries[0] = value
+            self._boundaries_initialized = True
+        self.update_duration_display()
+    
+    def _set_end_time(self, value):
+        """设置结束时间：更新 _pending_boundaries[-1]"""
+        self._ensure_boundaries_initialized()
+        if self._pending_boundaries:
+            self._pending_boundaries[-1] = value
+            self._boundaries_initialized = True
+        self.update_duration_display()
+    
     def _get_scene_boundaries(self):
         """获取场景边界时间点列表"""
-        # 如果有待确认的边界，使用它
-        if self._pending_boundaries is not None:
+        # 确保边界已初始化
+        self._ensure_boundaries_initialized()
+        
+        # 返回当前边界的副本
+        if self._pending_boundaries and len(self._pending_boundaries) >= 2:
             return self._pending_boundaries.copy()
         
-        # 从 start_time_var 获取起点
-        try:
-            start_time = self.start_time_var.get()
-        except:
-            start_time = 0.0
-        
-        boundaries = [start_time]
-        
-        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 0:
-            current_time = start_time
-            for i, scene in enumerate(self.audio_json):
-                duration = scene.get('duration', 0)
-                if duration > 0:
-                    current_time += duration
-                    boundaries.append(current_time)
-            
-            # 使用 end_time_var 作为终点
-            try:
-                end_time = self.end_time_var.get()
-                boundaries[-1] = end_time
-            except:
-                pass
-        else:
-            try:
-                end_time = self.end_time_var.get()
-            except:
-                end_time = self.audio_duration
-            boundaries.append(end_time)
-        
-        return boundaries
+        # 如果仍然没有有效边界，返回默认值
+        return [0.0, self.audio_duration]
     
     def _on_edit_timeline_click(self, event):
         """Edit Timeline 点击事件"""
@@ -857,22 +874,10 @@ class AVReviewDialog:
         ratio = max(0, min(1, (x - padding) / bar_width))
         new_time = ratio * self.audio_duration
         
-        # 获取当前边界（如果是首次拖动，从 audio_json 计算）
-        if self._pending_boundaries is None:
-            original_boundaries = self._get_boundaries_from_audio_json()
-            self._pending_boundaries = original_boundaries.copy()
-            # 保存原始 audio_json 和时间变量用于恢复
-            if self._original_audio_json is None:
-                self._original_audio_json = copy.deepcopy(self.audio_json)
-                # 从计算出的边界保存原始起止时间（而不是从 var 读取）
-                if len(original_boundaries) >= 2:
-                    self._original_start_time = original_boundaries[0]
-                    self._original_end_time = original_boundaries[-1]
-                else:
-                    self._original_start_time = 0.0
-                    self._original_end_time = self.audio_duration
-                print(f"📍 保存原始边界: start={self._original_start_time:.2f}, end={self._original_end_time:.2f}")
+        # 确保边界已初始化
+        self._ensure_boundaries_initialized()
         
+        # 拖动时只更新 _pending_boundaries，audio_json 的 start/end 在确认时才更新
         boundaries = self._pending_boundaries
         
         # 确保不越界（保持顺序）
@@ -894,35 +899,41 @@ class AVReviewDialog:
         boundaries[handle_index] = new_time
         self._pending_boundaries = boundaries
         
-        # 更新 start_time_var 和 end_time_var
-        if handle_index == 0:
-            self.start_time_var.set(new_time)
-        elif handle_index == len(boundaries) - 1:
-            self.end_time_var.set(new_time)
+        # 当开始或结束时间改变时，触发更新显示
+        if handle_index == 0 or handle_index == len(boundaries) - 1:
+            self.update_duration_display()
         
         # 重绘时间轴
         self._draw_edit_timeline()
     
     def _get_boundaries_from_audio_json(self):
-        """从 audio_json 计算边界（不使用 _pending_boundaries，不使用 var）"""
-        # 总是从 0.0 开始计算
-        start_time = 0.0
-        boundaries = [start_time]
+        """从 audio_json 的 start/end 字段生成边界列表"""
+        if not hasattr(self, 'audio_json') or not self.audio_json:
+            return [0.0, self.audio_duration]
         
-        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 0:
-            current_time = start_time
-            for scene in self.audio_json:
+        boundaries = []
+        current_time = 0.0
+        
+        for i, scene in enumerate(self.audio_json):
+            # 确保每个场景都有 start/end 字段
+            if 'start' not in scene or 'end' not in scene:
+                # 如果没有，从 duration 计算并添加
                 duration = scene.get('duration', 0)
-                if duration > 0:
-                    current_time += duration
-                    boundaries.append(current_time)
-        else:
-            boundaries.append(self.audio_duration)
+                scene['start'] = current_time
+                scene['end'] = current_time + duration
+            
+            # 添加起始边界（只在第一个场景时）
+            if i == 0:
+                boundaries.append(scene['start'])
+            
+            # 添加结束边界
+            boundaries.append(scene['end'])
+            current_time = scene['end']
         
-        return boundaries
+        return boundaries if len(boundaries) >= 2 else [0.0, self.audio_duration]
     
     def _update_scene_durations_from_boundaries(self, boundaries):
-        """根据边界时间更新 audio_json 中的 duration"""
+        """根据边界时间更新 audio_json 中的 start/end/duration 字段"""
         if not hasattr(self, 'audio_json') or not self.audio_json:
             return
         
@@ -930,6 +941,8 @@ class AVReviewDialog:
             if i < len(boundaries) - 1:
                 start_time = boundaries[i]
                 end_time = boundaries[i + 1]
+                self.audio_json[i]['start'] = start_time
+                self.audio_json[i]['end'] = end_time
                 self.audio_json[i]['duration'] = end_time - start_time
     
     def _update_audio_json_from_timeline(self):
@@ -939,64 +952,36 @@ class AVReviewDialog:
     
     def refresh_edit_timeline(self):
         """刷新剪辑时间轴（当 audio_json 变化时调用）"""
-        # 清除待确认状态
+        # 清除待确认状态和边界，强制重新计算
         self._pending_boundaries = None
-        self._original_audio_json = None
-        self._original_start_time = None
-        self._original_end_time = None
+        self._boundaries_initialized = False
+        
+        # 重新初始化边界（从 audio_json 的 start/end 字段读取）
+        self._ensure_boundaries_initialized()
         
         self._draw_edit_timeline()
-        
-        # 同时更新 start_time_var 和 end_time_var
-        boundaries = self._get_scene_boundaries()
-        if len(boundaries) >= 2:
-            self.start_time_var.set(boundaries[0])
-            self.end_time_var.set(boundaries[-1])
+        self.update_duration_display()
 
 
     def restore_edit_timeline_change(self):
         if self.media_type != "clip":
             return
         
-        """恢复剪辑区间变动 - 用 audio_json 的原始值覆盖变更"""
+        """恢复剪辑区间变动 - 从 audio_json 的 start/end 字段重新读取边界"""
         self.stop_playback()
         
-        # 保存原始时间值（因为 _update_fresh_json_text 会清除它们）
-        saved_start_time = self._original_start_time
-        saved_end_time = self._original_end_time
-        
-        if self._original_audio_json is not None:
-            # 恢复原始 audio_json
-            self.audio_json = copy.deepcopy(self._original_audio_json)
-            
-            # 直接更新文本框，不触发 refresh_edit_timeline
-            self.fresh_json_text.delete(1.0, tk.END)
-            self.fresh_json_text.insert(1.0, json.dumps(self.audio_json, indent=2, ensure_ascii=False))
-            # 手动触发提取 narrator 和 speaker 值
-            self._extract_narrator_speaker_from_json()
-            print("✓ 已恢复剪辑区间到原始状态")
-        
-        # 清除待确认状态（必须在恢复时间变量之前）
+        # 清除待确认的边界变化，强制从 audio_json 重新读取
         self._pending_boundaries = None
-        self._original_audio_json = None
-        self._original_start_time = None
-        self._original_end_time = None
+        self._boundaries_initialized = False
         
-        # 恢复原始起止时间（使用保存的值）
-        if saved_start_time is not None:
-            self.start_time_var.set(saved_start_time)
-            print(f"📍 恢复起始时间: {saved_start_time:.2f}")
-        else:
-            print("⚠️ 没有保存的原始起始时间")
-            
-        if saved_end_time is not None:
-            self.end_time_var.set(saved_end_time)
-            print(f"📍 恢复结束时间: {saved_end_time:.2f}")
-        else:
-            print("⚠️ 没有保存的原始结束时间")
+        # 从 audio_json 的 start/end 字段重新初始化边界
+        self._ensure_boundaries_initialized()
+        
+        print("✓ 已恢复剪辑区间到原始状态（从 audio_json 读取）")
         
         # 重绘时间轴
         self._draw_edit_timeline()
+        self.update_duration_display()
 
 
     def confirm_edit_timeline_change(self):
@@ -1015,46 +1000,27 @@ class AVReviewDialog:
             boundaries = self._get_boundaries_from_audio_json()
             print(f"📍 从 audio_json 计算边界: {len(boundaries)} 个边界点")
         
-        # 更新 audio_json 中每个场景的 duration（仅当有 pending 变更时）
-        if self._pending_boundaries is not None and hasattr(self, 'audio_json') and self.audio_json:
+        # 更新 audio_json 中每个场景的 start/end/duration（仅当有 pending 变更时）
+        if self._pending_boundaries is not None and self.audio_json:
             for i in range(len(self.audio_json)):
                 if i < len(boundaries) - 1:
                     start_time = boundaries[i]
                     end_time = boundaries[i + 1]
+                    self.audio_json[i]['start'] = start_time
+                    self.audio_json[i]['end'] = end_time
                     self.audio_json[i]['duration'] = end_time - start_time
             
             # 更新显示
             self._update_fresh_json_text(self.audio_json)
         
-        # 执行音视频切割（只要有多个场景就执行）
-        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 1:
-            print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
-            start_time = 0.0
-            for i, item in enumerate(self.audio_json):
-                duration = item.get("duration", 0)
-                if duration <= 0:
-                    print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
-                    continue
-                    
-                print(f"  切割场景 {i+1}/{len(self.audio_json)}: start={start_time:.2f}s, duration={duration:.2f}s")
-                clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, start_time, duration)
-                olda, item["speak_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
-                end_time = start_time + duration
-                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start_time, end_time)
-                refresh_scene_media(item, "clip", ".mp4", v)
-                start_time = end_time
-            print(f"✓ 音视频切割完成")
-        else:
-            print(f"ℹ️ 只有 {len(self.audio_json) if self.audio_json else 0} 个场景，无需切割")
-        
-        # 清除待确认状态
+        # 从 audio_json 重新计算边界（start/end 字段已在上面更新）
         self._pending_boundaries = None
-        self._original_audio_json = None
-        self._original_start_time = None
-        self._original_end_time = None
+        self._boundaries_initialized = False
+        self._ensure_boundaries_initialized()
         
         # 重绘时间轴
         self._draw_edit_timeline()
+        self.update_duration_display()
 
 
 
@@ -1064,8 +1030,8 @@ class AVReviewDialog:
         if not audio_path or not video_path:
             return
 
-        start_time = float(self.start_time_var.get())
-        end_time = float(self.end_time_var.get())
+        start_time = float(self._get_start_time())
+        end_time = float(self._get_end_time())
         duration = self.workflow.ffmpeg_processor.get_duration(video_path)
         
         if end_time <= start_time:
@@ -1111,6 +1077,8 @@ class AVReviewDialog:
         """转录录制的音频"""
         default_json = {
             "duration": self.audio_duration,
+            "start": 0.0,
+            "end": self.audio_duration,
             "caption": "",
             "speaking": "",
             "speak_audio": self.source_audio_path,
@@ -1171,12 +1139,22 @@ class AVReviewDialog:
 
     def start_playback(self):
         self.av_playing = True
+        was_paused = self.av_paused  # 记录是否是从暂停状态恢复
         self.av_paused = False
         self.play_button.config(text="⏸ 暂停")
         
+        # 设置累计时间为当前播放位置，这样线程中的计算才正确
+        # current_playback_time = pause_accumulated_time + elapsed_since_start
+        self.pause_accumulated_time = self.current_playback_time
+        
+        # *** 关键修复：在启动视频和线程之前先设置计时基准 ***
+        # 这样 update_video_frame 和更新线程从一开始就使用正确的时间
+        self.playback_start_time = time.time()
+        print(f"▶ 开始播放: current_time={self.current_playback_time:.2f}s, pause_accumulated={self.pause_accumulated_time:.2f}s, was_paused={was_paused}, playback_start_time={self.playback_start_time:.3f}")
+        
         if self.source_video_path:
-            # 如果视频捕获对象不存在，或者需要从头开始播放，就重新创建
-            if self.video_cap is None or self.current_playback_time == 0.0:
+            # 如果视频捕获对象不存在，或者不是从暂停恢复，就重新创建
+            if self.video_cap is None or (not was_paused and self.current_playback_time < 0.1):
                 # 释放旧的视频捕获对象（如果存在）
                 if self.video_cap:
                     self.video_cap.release()
@@ -1189,53 +1167,88 @@ class AVReviewDialog:
                     return
                 print(f"✓ 已加载视频: {os.path.basename(self.source_video_path)}")
             
-            # 如果需要从指定位置开始播放，设置视频位置
-            if self.current_playback_time > 0:
+            # 如果需要从指定位置开始播放（非暂停恢复），设置视频位置
+            if not was_paused and self.current_playback_time > 0:
                 fps = self.video_cap.get(cv2.CAP_PROP_FPS) or 30
                 start_frame = int(self.current_playback_time * fps)
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            elif was_paused:
+                # 从暂停恢复，确保视频位置正确
+                fps = self.video_cap.get(cv2.CAP_PROP_FPS) or 30
+                current_frame = int(self.current_playback_time * fps)
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+                print(f"🎬 视频从暂停位置恢复: {self.current_playback_time:.2f}s, 帧: {current_frame}")
             
             # Start video frame updates
             self.update_video_frame()
             
         if self.source_audio_path:
-            pygame.mixer.music.stop()
-            pygame.mixer.music.load(self.source_audio_path)
-            pygame.mixer.music.play(start=self.current_playback_time)
+            # 只有在真正超过结束位置时才重置（不是接近）
+            if self.current_playback_time >= self.audio_duration:
+                print(f"⚠️ 播放位置 {self.current_playback_time:.2f}s 已超过音频时长 {self.audio_duration:.2f}s，重置到开始")
+                self.current_playback_time = 0.0
+                self.pause_accumulated_time = 0.0
+                self.playback_start_time = time.time()  # 重置后更新时间基准
+                was_paused = False
             
-        # Record the start time for tracking
-        self.playback_start_time = time.time()
+            if was_paused and self.current_playback_time > 0:
+                # 从暂停状态恢复，使用 unpause
+                pygame.mixer.music.unpause()
+                print(f"🎵 音频从暂停位置恢复播放: {self.current_playback_time:.2f}s")
+            else:
+                # 首次播放或从指定位置开始
+                pygame.mixer.music.stop()
+                pygame.mixer.music.load(self.source_audio_path)
+                pygame.mixer.music.play(start=self.current_playback_time)
+                print(f"🎵 音频从 {self.current_playback_time:.2f}s 开始播放")
     
         self.start_time_update_thread()
 
 
     def pause_playback(self):
         """Pause audio-only playback"""
+        # 立即设置状态，防止更新线程继续运行
+        self.av_playing = False
+        self.av_paused = True
+        
+        # 先计算当前播放位置
         if self.playback_start_time is not None:
             elapsed_since_start = time.time() - self.playback_start_time
-            self.pause_accumulated_time += elapsed_since_start
-            self.current_playback_time = self.pause_accumulated_time
-
-        self.av_playing = False
+            self.current_playback_time = self.pause_accumulated_time + elapsed_since_start
+            print(f"⏸ 暂停播放: current_time={self.current_playback_time:.2f}s, pause_accumulated={self.pause_accumulated_time:.2f}s, elapsed={elapsed_since_start:.2f}s")
+        else:
+            print(f"⚠️ 暂停时 playback_start_time 为 None")
+        
+        # 更新按钮
         self.play_button.config(text="▶ 播放")
         
         # Cancel video frame updates
         if self.video_after_id:
             self.dialog.after_cancel(self.video_after_id)
             
-        # Pause audio BEFORE changing the state
+        # Pause audio (使用 pause 而不是 stop，这样可以保留播放位置)
         if self.source_audio_path:
-            print("🔄 正在停止音频播放...")
-            pygame.mixer.music.stop()
-            self.av_paused = True
+            print(f"⏸ 正在暂停音频播放，位置: {self.current_playback_time:.2f}s")
+            pygame.mixer.music.pause()
+        
+        print(f"⏸ 暂停完成，最终位置: {self.current_playback_time:.2f}s")
+        # 更新线程会在下一次迭代（100ms内）检测到状态变化并退出
 
 
     def stop_playback(self):
         """Stop media playback (audio or video+audio)"""
+        print(f"⏹ stop_playback 被调用: av_playing={self.av_playing}, av_paused={self.av_paused}, current_time={self.current_playback_time:.2f}s")
+        
+        # 如果已经暂停，这是一个错误调用（可能是竞态条件），直接返回
+        if self.av_paused:
+            print(f"⚠️ stop_playback 在暂停状态下被调用，忽略（竞态条件）")
+            return
+        
         self.av_playing = False
         self.av_paused = False
         self.play_button.config(text="▶ 播放")
         self.current_playback_time = 0.0
+        self.pause_accumulated_time = 0.0
         
         # Cancel video frame updates
         if self.source_video_path:
@@ -1329,6 +1342,9 @@ class AVReviewDialog:
         if self.transcribe_way == "single":
             single_scene = new_scenes[0].copy()
             single_scene["speaker"] = new_scenes[0].get("speaker", "")
+            single_scene["narrator"] = new_scenes[0].get("narrator", "")
+            single_scene["start"] = 0.0
+            single_scene["end"] = self.audio_duration
             single_scene["duration"] = self.audio_duration
             single_scene["speaking_audio"] = self.source_audio_path
             single_scene["caption"] = ". ".join([item.get("caption", "") for item in new_scenes])
@@ -1337,11 +1353,15 @@ class AVReviewDialog:
             self.audio_json = [single_scene]
 
         else:
+            current_time = 0.0
             for i, scene in enumerate(new_scenes):
                 fresh_scene = refresh_json[i] if i < len(refresh_json) else refresh_json[-1]
+                scene["caption"] = fresh_scene["caption"]
                 duration = fresh_scene.get("duration", self.audio_duration)
                 scene["duration"] = duration if len(refresh_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
-                scene["caption"] = fresh_scene["caption"]
+                scene["start"] = current_time
+                scene["end"] = current_time + scene["duration"]
+                current_time = scene["end"]
                 if hasattr(fresh_scene, "speaking_audio"):
                     scene["speaking_audio"] = fresh_scene["speaking_audio"]
             self.audio_json = new_scenes
@@ -1360,8 +1380,14 @@ class AVReviewDialog:
 
             if "speaker" in item:
                 new_item["speaker"] = item["speaker"]
+            if "narrator" in item:
+                new_item["narrator"] = item["narrator"]
             if "duration" in item:
                 new_item["duration"] = item["duration"]
+            if "start" in item:
+                new_item["start"] = item["start"]
+            if "end" in item:
+                new_item["end"] = item["end"]
             if "speaking_audio" in item:
                 new_item["speaking_audio"] = item["speaking_audio"]
             if "caption" in item:
@@ -1527,8 +1553,8 @@ class AVReviewDialog:
             
             # 更新音频时长和时间选择器
             self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
-            self.start_time_var.set(0.0)
-            self.end_time_var.set(self.audio_duration)
+            self._set_start_time(0.0)
+            self._set_end_time(self.audio_duration)
             
             # 更新时间选择器的最大值
             for widget in self.dialog.winfo_children():
@@ -1550,36 +1576,43 @@ class AVReviewDialog:
 
 
     def confirm_replacement(self):
-        if self.media_type == "clip":
-            self.confirm_edit_timeline_change()
+        self.confirm_edit_timeline_change()
+        video_path = self.source_video_path
+        
+        v = self.current_scene.get(self.video_field, None)
+        a = self.current_scene.get(self.audio_field, None)
+        i = self.current_scene.get(self.image_field, None)
+        if v != self.source_video_path:
+            refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
+        if a != self.source_audio_path:
+            refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
+        if i != self.source_image_path:
+            refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
-        """Confirm the media replacement with selected parameters"""
-        try:
-            # Validate source paths
-            audio_path = self.source_audio_path
-            video_path = self.source_video_path
-            
-            v = self.current_scene.get(self.video_field, None)
-            a = self.current_scene.get(self.audio_field, None)
-            i = self.current_scene.get(self.image_field, None)
+        # 执行音视频切割（只要有多个场景就执行）
+        if self.audio_json and len(self.audio_json) > 1:
+            print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
+            for i, item in enumerate(self.audio_json):
+                duration = item.get("duration", 0)
+                if duration <= 0:
+                    print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
+                    continue
+                clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, item["start"], item["duration"])
+                olda, item["speak_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
+                refresh_scene_media(item, "clip", ".mp4", v)
+            print(f"✓ 音视频切割完成")
+        else:
+            print(f"ℹ️ 只有 {len(self.audio_json) if self.audio_json else 0} 个场景，无需切割")
+        
+        self.result = {
+            'audio_json': self.audio_json,
+            'transcribe_way': self.transcribe_way
+        }
+        
+        self.close_dialog()
 
-            if v != video_path:
-                refresh_scene_media(self.current_scene, self.video_field, ".mp4", video_path, True)
-            if a != audio_path:
-                refresh_scene_media(self.current_scene, self.audio_field, ".wav", audio_path, True)
-            if i != self.source_image_path:
-                refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
-            self.result = {
-                'audio_json': self.audio_json,
-                'transcribe_way': self.transcribe_way
-            }
-            
-            self.close_dialog()
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"参数验证失败: {str(e)}")
-    
 
     def cancel(self):
         """Cancel the operation"""
@@ -1624,26 +1657,82 @@ class AVReviewDialog:
     def start_time_update_thread(self):
         """Start a thread to update playback time"""
         def update_time():
+            iteration = 0
+            # 第一次迭代时等待音频稳定，然后重置时间基准
+            first_iteration = True
+            
             while self.av_playing and not self.av_paused:
                 try:
+                    # 再次检查状态，防止暂停后仍然更新时间
+                    if not self.av_playing or self.av_paused:
+                        print(f"DEBUG: 更新线程在迭代 {iteration} 时检测到状态改变，退出")
+                        break
+                    
+                    # 第一次迭代：等待音频稳定后重置基准
+                    if first_iteration:
+                        print(f"DEBUG: 首次迭代，等待音频稳定...")
+                        time.sleep(0.15)  # 等待150ms
+                        # 同步更新基准时间，避免累积误差
+                        self.pause_accumulated_time = self.current_playback_time
+                        self.playback_start_time = time.time()
+                        first_iteration = False
+                        print(f"DEBUG: 时间基准已同步: pause_acc={self.pause_accumulated_time:.2f}s, start_time={self.playback_start_time:.3f}")
+                        iteration += 1
+                        continue
+                        
                     if self.playback_start_time is not None:
                         elapsed_since_start = time.time() - self.playback_start_time
-                        self.current_playback_time = self.pause_accumulated_time + elapsed_since_start
                         
-                        # Update display in main thread
-                        self.dialog.after(0, self.update_play_time_display)
-                        
-                        # Check if we've reached the end of audio
-                        if self.current_playback_time >= self.audio_duration:
-                            self.dialog.after(0, self.stop_playback)
+                        # 只在播放状态下更新时间
+                        if self.av_playing and not self.av_paused:
+                            calculated_time = self.pause_accumulated_time + elapsed_since_start
+                            
+                            # 防止时间异常跳跃
+                            time_diff = calculated_time - self.current_playback_time
+                            if time_diff < -0.2:
+                                # 时间向后跳超过200ms，可能是bug，重置基准
+                                print(f"⚠️ 时间向后跳跃: {self.current_playback_time:.2f}s -> {calculated_time:.2f}s，重置基准")
+                                self.pause_accumulated_time = self.current_playback_time
+                                self.playback_start_time = time.time()
+                            elif time_diff > 0.3:
+                                # 时间向前跳超过300ms，可能是音频延迟，重置基准
+                                print(f"⚠️ 时间向前跳跃: {self.current_playback_time:.2f}s -> {calculated_time:.2f}s，重置基准")
+                                self.pause_accumulated_time = self.current_playback_time
+                                self.playback_start_time = time.time()
+                            else:
+                                # 正常更新
+                                self.current_playback_time = calculated_time
+                            
+                            # 每秒打印一次调试信息
+                            if iteration % 10 == 0:
+                                print(f"DEBUG: 更新 {iteration}: pause_acc={self.pause_accumulated_time:.2f}s + elapsed={elapsed_since_start:.2f}s = {self.current_playback_time:.2f}s")
+                            
+                            # Update display in main thread
+                            self.dialog.after(0, self.update_play_time_display)
+                            
+                            # Check if we've reached the end
+                            if self.current_playback_time >= self.audio_duration + 0.5:
+                                print(f"⏹ 到达结束: {self.current_playback_time:.2f}s >= {self.audio_duration:.2f}s")
+                                if self.av_playing and not self.av_paused:
+                                    self.dialog.after(0, self.stop_playback)
+                                break
+                        else:
+                            print(f"DEBUG: 更新线程检测到状态改变，退出")
                             break
                     
+                    iteration += 1
                     time.sleep(0.1)  # Update every 100ms
-                except:
+                except Exception as e:
+                    print(f"ERROR: 更新线程异常: {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
+            
+            print(f"DEBUG: 更新线程已退出，迭代: {iteration}")
         
         # Start the update thread
         if self.av_playing:
+            print(f"DEBUG: 启动更新线程，pause_acc={self.pause_accumulated_time:.2f}s, current={self.current_playback_time:.2f}s")
             threading.Thread(target=update_time, daemon=True).start()
 
     
@@ -1761,6 +1850,11 @@ class AVReviewDialog:
             if self.playback_start_time is not None:
                 elapsed_since_start = time.time() - self.playback_start_time
                 target_time = self.pause_accumulated_time + elapsed_since_start
+                
+                # 安全检查：如果计算的时间明显不合理，使用当前时间
+                if target_time < 0 or target_time > self.audio_duration + 1.0:
+                    print(f"⚠️ 视频目标时间异常: {target_time:.2f}s (pause_acc={self.pause_accumulated_time:.2f}s, elapsed={elapsed_since_start:.2f}s)")
+                    target_time = self.current_playback_time
             else:
                 target_time = self.current_playback_time
             
@@ -1786,18 +1880,21 @@ class AVReviewDialog:
                 ret, frame = self.video_cap.read()
             
             if ret:
-                # Update current playback time based on actual video position
+                # 不要在这里更新 current_playback_time，因为更新线程已经在处理
+                # 这里只负责显示正确的视频帧
                 current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES)
-                self.current_playback_time = current_frame / fps if fps > 0 else target_time
+                # self.current_playback_time 由更新线程维护，这里不修改
                 
-                # Update play time display
-                self.update_play_time_display()
+                # 不需要在这里更新显示，更新线程会处理
+                # self.update_play_time_display()
                 
                 # Check if we're still in the selected time range
                 try:
-                    end_time = self.end_time_var.get()
-                    if self.current_playback_time >= end_time:
+                    end_time = self._get_end_time()
+                    # 添加 0.5 秒容差，避免在接近结束时误判
+                    if self.current_playback_time >= end_time + 0.5:
                         # Reached end of selected range
+                        print(f"⏹ 视频播放到达结束位置: {self.current_playback_time:.2f}s >= {end_time:.2f}s")
                         self.stop_playback()
                         return
                 except:
@@ -2210,8 +2307,8 @@ class AVReviewDialog:
                 self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True, True)
 
         self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
-        self.end_time_var.set(self.audio_duration)
-        self.start_time_var.set(0.0)
+        self._set_end_time(self.audio_duration)
+        self._set_start_time(0.0)
 
 
 

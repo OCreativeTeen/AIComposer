@@ -369,10 +369,6 @@ class AudioTranscriber:
             safe_remove(script_path)
             return None
         
-        for segment in merged_segments:
-            segment.pop("start", None)
-            segment.pop("end", None)
-
         write_json(script_path, merged_segments)
         
         # 最终清理

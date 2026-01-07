@@ -59,7 +59,7 @@ class FfmpegProcessor:
 
 
     def run_ffmpeg_command(self, cmd):
-        print(f"------------\n{' '.join(cmd)}\n------------")
+        #print(f"------------\n{' '.join(cmd)}\n------------")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return result
 
