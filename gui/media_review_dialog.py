@@ -955,6 +955,9 @@ class AVReviewDialog:
 
 
     def restore_edit_timeline_change(self):
+        if self.media_type != "clip":
+            return
+        
         """恢复剪辑区间变动 - 用 audio_json 的原始值覆盖变更"""
         self.stop_playback()
         
@@ -997,23 +1000,52 @@ class AVReviewDialog:
 
 
     def confirm_edit_timeline_change(self):
+        if self.media_type != "clip":
+            return
+        
         """确认剪辑区间变动 - 将时间轴的值保存到 audio_json"""
         self.stop_playback()
         
+        # 获取边界：优先使用 _pending_boundaries，否则从 audio_json 计算
         if self._pending_boundaries is not None:
             boundaries = self._pending_boundaries
+            print(f"📍 使用 pending_boundaries: {len(boundaries)} 个边界点")
+        else:
+            # 没有 pending 状态时，从当前 audio_json 计算边界
+            boundaries = self._get_boundaries_from_audio_json()
+            print(f"📍 从 audio_json 计算边界: {len(boundaries)} 个边界点")
+        
+        # 更新 audio_json 中每个场景的 duration（仅当有 pending 变更时）
+        if self._pending_boundaries is not None and hasattr(self, 'audio_json') and self.audio_json:
+            for i in range(len(self.audio_json)):
+                if i < len(boundaries) - 1:
+                    start_time = boundaries[i]
+                    end_time = boundaries[i + 1]
+                    self.audio_json[i]['duration'] = end_time - start_time
             
-            # 更新 audio_json 中每个场景的 duration
-            if hasattr(self, 'audio_json') and self.audio_json:
-                for i in range(len(self.audio_json)):
-                    if i < len(boundaries) - 1:
-                        start_time = boundaries[i]
-                        end_time = boundaries[i + 1]
-                        self.audio_json[i]['duration'] = end_time - start_time
-                
-                # 更新显示
-                self._update_fresh_json_text(self.audio_json)
-                print(f"✓ 已确认剪辑区间变动，共 {len(self.audio_json)} 个场景")
+            # 更新显示
+            self._update_fresh_json_text(self.audio_json)
+        
+        # 执行音视频切割（只要有多个场景就执行）
+        if hasattr(self, 'audio_json') and self.audio_json and len(self.audio_json) > 1:
+            print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
+            start_time = 0.0
+            for i, item in enumerate(self.audio_json):
+                duration = item.get("duration", 0)
+                if duration <= 0:
+                    print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
+                    continue
+                    
+                print(f"  切割场景 {i+1}/{len(self.audio_json)}: start={start_time:.2f}s, duration={duration:.2f}s")
+                clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, start_time, duration)
+                olda, item["speak_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                end_time = start_time + duration
+                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start_time, end_time)
+                refresh_scene_media(item, "clip", ".mp4", v)
+                start_time = end_time
+            print(f"✓ 音视频切割完成")
+        else:
+            print(f"ℹ️ 只有 {len(self.audio_json) if self.audio_json else 0} 个场景，无需切割")
         
         # 清除待确认状态
         self._pending_boundaries = None
@@ -1081,6 +1113,7 @@ class AVReviewDialog:
             "duration": self.audio_duration,
             "caption": "",
             "speaking": "",
+            "speak_audio": self.source_audio_path,
             "name": self.current_scene.get("name", "story"),
             "explicit": self.current_scene.get("explicit", "explicit"),
             "implicit": self.current_scene.get("implicit", "implicit")
@@ -1103,9 +1136,6 @@ class AVReviewDialog:
             print("⚠️ 录音转录失败")
             return [default_json]
 
-        # success transcribed, set speak_audio to source_audio_path
-        default_json["speak_audio"] = self.source_audio_path 
-
         if  len(audio_json) == 1:
             default_json["caption"] = audio_json[0]["caption"]
             default_json["speaking"] = audio_json[0]["speaking"]
@@ -1119,7 +1149,6 @@ class AVReviewDialog:
 
         else:
             raw_id = int((self.current_scene["id"]/100)*100)
-            start_time = 0.0
             for item in audio_json:
                 raw_id += 100
                 item["id"] = raw_id
@@ -1127,13 +1156,6 @@ class AVReviewDialog:
                 item["name"] = self.current_scene.get("name", "story")
                 item["explicit"] = self.current_scene.get("explicit", "explicit")
                 item["implicit"] = self.current_scene.get("implicit", "implicit")
-                #
-                clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, start_time, item["duration"])
-                olda, item["speak_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
-                end_time = start_time + item["duration"]
-                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start_time, end_time)
-                refresh_scene_media(item, "clip", ".mp4", v)
-                start_time = end_time
 
             return audio_json
 
@@ -1528,6 +1550,9 @@ class AVReviewDialog:
 
 
     def confirm_replacement(self):
+        if self.media_type == "clip":
+            self.confirm_edit_timeline_change()
+
         """Confirm the media replacement with selected parameters"""
         try:
             # Validate source paths

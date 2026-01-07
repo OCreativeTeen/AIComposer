@@ -146,40 +146,68 @@ def clean_memory(cuda=True, verbose=True):
     if verbose:
         print("\n=== Aggressive Memory Cleanup ===")
 
-    # 1. Python GC
-    if verbose: print("[1/4] Forcing Python GC…")
+    # 1. Python GC - 多次调用确保回收循环引用
+    if verbose: print("[1/5] Forcing Python GC…")
     gc.collect(); gc.collect(); gc.collect()
 
-    # 2. CUDA cleanup
+    # 2. CUDA cleanup - 更彻底的 CUDA 内存清理
     if has_cuda:
-        if verbose: print("[2/4] Clearing CUDA VRAM…")
+        if verbose: print("[2/5] Clearing CUDA VRAM…")
         try:
+            # 同步所有 CUDA 操作
+            torch.cuda.synchronize()
+            # 清空 CUDA 缓存
             torch.cuda.empty_cache()
+            # 清理进程间通信内存
             torch.cuda.ipc_collect()
+            # 重置 CUDA 内存统计（如果需要调试）
+            if hasattr(torch.cuda, 'reset_peak_memory_stats'):
+                torch.cuda.reset_peak_memory_stats()
+            # 再次同步确保清理完成
+            torch.cuda.synchronize()
+            if verbose:
+                allocated = torch.cuda.memory_allocated() / 1024**2
+                reserved = torch.cuda.memory_reserved() / 1024**2
+                print(f"    CUDA: allocated={allocated:.1f}MB, reserved={reserved:.1f}MB")
         except Exception as e:
-            print("CUDA cleanup error:", e)
+            if verbose:
+                print(f"    CUDA cleanup error: {e}")
 
-    # 3. OS memory trim
-    if verbose: print("[3/4] Releasing process memory to OS…")
+    # 3. 再次 GC（CUDA 清理后可能释放了更多 Python 对象）
+    if verbose: print("[3/5] Post-CUDA GC…")
+    gc.collect()
+
+    # 4. OS memory trim
+    if verbose: print("[4/5] Releasing process memory to OS…")
 
     if sys.platform == "win32":
-        # Windows working set trim
+        # Windows working set trim - 更激进的内存释放
         try:
-            ctypes.windll.kernel32.SetProcessWorkingSetSize(
-                -1, ctypes.c_size_t(-1), ctypes.c_size_t(-1)
-            )
+            kernel32 = ctypes.windll.kernel32
+            # 获取当前进程句柄
+            handle = kernel32.GetCurrentProcess()
+            # 清空工作集
+            kernel32.SetProcessWorkingSetSize(handle, ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+            # 尝试使用 EmptyWorkingSet（如果可用）
+            try:
+                psapi = ctypes.windll.psapi
+                psapi.EmptyWorkingSet(handle)
+            except:
+                pass
         except Exception as e:
-            print("Windows trim error:", e)
+            if verbose:
+                print(f"    Windows trim error: {e}")
 
     elif sys.platform == "linux":
         try:
             libc = ctypes.CDLL("libc.so.6")
             libc.malloc_trim(0)
         except Exception as e:
-            print("Linux trim error:", e)
+            if verbose:
+                print(f"    Linux trim error: {e}")
 
-    # 4. Final GC
-    if verbose: print("[4/4] Final GC…")
+    # 5. Final GC
+    if verbose: print("[5/5] Final GC…")
     gc.collect()
 
     # Summary

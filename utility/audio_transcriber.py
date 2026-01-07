@@ -16,9 +16,51 @@ import warnings
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
 from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove
+import gc
 
 # 抑制 torchcodec 警告（如果功能正常，这个警告可以忽略）
 warnings.filterwarnings('ignore', message='.*torchcodec.*', category=UserWarning)
+
+
+def unload_whisper_model(model):
+    """
+    彻底卸载 Whisper 模型并释放 GPU 内存。
+    faster_whisper 使用 CTranslate2，需要特殊处理才能完全释放内存。
+    """
+    if model is None:
+        return
+    
+    try:
+        # 尝试卸载模型的内部组件
+        if hasattr(model, 'model'):
+            if hasattr(model.model, 'unload'):
+                model.model.unload()
+            del model.model
+        
+        if hasattr(model, 'feature_extractor'):
+            del model.feature_extractor
+        
+        if hasattr(model, 'hf_tokenizer'):
+            del model.hf_tokenizer
+            
+    except Exception as e:
+        print(f"⚠️ 卸载模型组件时出错: {e}")
+    
+    # 删除模型引用
+    del model
+    
+    # 强制垃圾回收
+    gc.collect()
+    
+    # CUDA 清理
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception as e:
+        print(f"⚠️ CUDA 清理时出错: {e}")
 
 
 class AudioTranscriber:
@@ -63,6 +105,98 @@ class AudioTranscriber:
         return script_path
 
 
+    def _transcribe_with_retry(self, audio_path, language) -> List[Dict[str, Any]]:
+        """
+        尝试使用 CUDA 转录，如果失败则回退到 CPU。
+        包含详细的错误处理和内存清理。
+        """
+        import sys
+        
+        lang = language
+        if lang == "zh-CN" or lang == "tw":
+            lang = "zh"
+        
+        # 尝试的设备列表：先 CUDA，后 CPU
+        devices_to_try = []
+        if self.device == "cuda":
+            devices_to_try = [("cuda", "int8"), ("cuda", "float16"), ("cpu", "int8")]
+        else:
+            devices_to_try = [("cpu", "int8")]
+        
+        last_error = None
+        
+        for device, compute_type in devices_to_try:
+            model = None
+            try:
+                print(f"📝 尝试加载模型 (device={device}, compute_type={compute_type})...")
+                sys.stdout.flush()  # 确保日志立即输出
+                
+                model = WhisperModel(
+                    self.model_size, 
+                    device=device, 
+                    compute_type=compute_type,
+                    cpu_threads=4 if device == "cpu" else 1,
+                    num_workers=1
+                )
+                print(f"✅ 模型加载成功 (device={device})")
+                sys.stdout.flush()
+                
+                print(f"📝 开始转录 (language={lang})...")
+                sys.stdout.flush()
+                
+                # 使用低内存设置转录
+                segments_gen, info = model.transcribe(
+                    audio_path, 
+                    beam_size=1,  # 最小 beam_size
+                    language=lang,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=500),
+                    condition_on_previous_text=False,
+                    word_timestamps=False,  # 禁用词级时间戳，节省内存
+                )
+                print(f"📝 音频信息: language={info.language}, duration={info.duration:.1f}s")
+                sys.stdout.flush()
+                
+                # 迭代生成器
+                srt_segments = []
+                seg_count = 0
+                for seg in segments_gen:
+                    seg_count += 1
+                    if seg_count % 10 == 0:
+                        print(f"   处理片段 {seg_count}...")
+                        sys.stdout.flush()
+                    srt_segments.append({
+                        'start': seg.start,
+                        'end': seg.end,
+                        'text': seg.text
+                    })
+                
+                print(f"✅ 转录完成，共 {len(srt_segments)} 个片段")
+                sys.stdout.flush()
+                return srt_segments
+                
+            except Exception as e:
+                last_error = e
+                print(f"❌ 使用 {device}/{compute_type} 失败: {type(e).__name__}: {e}")
+                sys.stdout.flush()
+                import traceback
+                traceback.print_exc()
+                sys.stdout.flush()
+                
+            finally:
+                # 每次尝试后都清理模型
+                if model is not None:
+                    print(f"🧹 正在卸载模型...")
+                    sys.stdout.flush()
+                    unload_whisper_model(model)
+                    model = None
+                gc.collect()
+                clean_memory(cuda=True, verbose=False)
+        
+        # 所有尝试都失败
+        raise RuntimeError(f"所有转录尝试都失败了。最后的错误: {last_error}")
+
+
     def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
         script_path = f"{config.get_temp_path(self.workflow.pid)}/{self.workflow.pid}.srt.json"
         if safe_file(script_path):
@@ -72,17 +206,37 @@ class AudioTranscriber:
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
         audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
 
-        #model = whisper.load_model(self.model_size, device="cuda") 
-        #result = model.transcribe(mp3_path)
-        model = WhisperModel(self.model_size, device=self.device, compute_type="int8_float16")
-        lang = language
-        if lang=="zh-CN" or lang=="tw":
-            lang ="zh"
-        srt_segments, _ = model.transcribe(audio_path, beam_size=5, language=lang)
-        srt_segments = [obj.__dict__ for obj in srt_segments]  # ← 修复：生成器转列表，支持 len() 和索引、重复遍历
+        # ========== Step 1: 加载 Whisper 模型并转录 ==========
+        # 先清理内存，为模型加载腾出空间
+        print(f"🧹 Step 1a: 预清理内存...")
+        gc.collect()
+        clean_memory(cuda=True, verbose=False)
+        
+        # 检查可用内存
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            print(f"📊 系统内存: 总计={mem.total/1024**3:.1f}GB, 可用={mem.available/1024**3:.1f}GB, 使用率={mem.percent}%")
+        except:
+            pass
+        
+        # 检查 CUDA 内存
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu_mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                gpu_mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                print(f"📊 GPU 内存: 总计={gpu_mem_total:.1f}GB, 已分配={gpu_mem_allocated:.1f}GB, 已保留={gpu_mem_reserved:.1f}GB")
+        except Exception as e:
+            print(f"⚠️ 无法获取 GPU 信息: {e}")
+        
+        srt_segments = self._transcribe_with_retry(audio_path, language)
+        
+        print(f"✅ Step 1 完成: 转录得到 {len(srt_segments)} 个片段")
 
-        # clean_memory()
-
+        # ========== Step 2: 构建 char_time_pair ==========
+        print(f"📝 Step 2: 构建字符时间对...")
         char_time_pair = []
         text_content = ""
         end_time = 0.0
@@ -100,22 +254,35 @@ class AudioTranscriber:
             text_content += segment_text + " "
             end_time = segment['end']
 
+        # 保存调试信息后立即清理 srt_segments
         json_path = f"{config.get_project_path(self.workflow.pid)}/transcriber.debug.1.json"
         with open(json_path, 'w') as f:
             json.dump(srt_segments, f, indent=4)
+        
+        # 释放 srt_segments，不再需要
+        del srt_segments
+        gc.collect()
 
-        print(f"调试信息: char_time_pair数量={len(char_time_pair)}")
+        print(f"✅ Step 2 完成: char_time_pair数量={len(char_time_pair)}")
 
-        #clean_memory()
-
+        # ========== Step 3: 重组文本内容 ==========
+        print(f"📝 Step 3: 重组文本内容...")
         sentences = self.reorganize_text_content(text_content, language)
-        print(f"调试信息: 重组后句子数量={len(sentences)}")
+        
+        # 释放 text_content，不再需要
+        del text_content
+        gc.collect()
+        
+        print(f"✅ Step 3 完成: 重组后句子数量={len(sentences)}")
         if len(sentences) == 0:
+            del char_time_pair
+            gc.collect()
+            clean_memory(cuda=False, verbose=False)
             safe_remove(script_path)
             return None
 
-        # clean_memory()
-
+        # ========== Step 4: 匹配句子时间 ==========
+        print(f"📝 Step 4: 匹配句子时间...")
         reorganized = []
         current_char_index = 0
         
@@ -159,34 +326,31 @@ class AudioTranscriber:
         with open(f"{config.get_temp_path(self.workflow.pid)}/transcribe_{Path(audio_path).stem}.txt", "w", encoding="utf-8") as f:
             f.write(content)
 
-        print(f"调试信息: reorganized数量={len(reorganized)}")
+        # 释放不再需要的数据
+        del sentences
+        del char_time_pair
+        del content
+        gc.collect()
 
-        # clean_memory()
+        print(f"✅ Step 4 完成: reorganized数量={len(reorganized)}")
 
+        # ========== Step 5: 合并句子 ==========
+        print(f"📝 Step 5: 合并句子...")
         merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
-        print(f"调试信息: merged数量={len(merged_segments)}")
+        
+        # 释放 reorganized
+        del reorganized
+        gc.collect()
+        
+        print(f"✅ Step 5 完成: merged数量={len(merged_segments) if merged_segments else 0}")
         if not merged_segments or len(merged_segments) == 0:
+            clean_memory(cuda=False, verbose=False)
             safe_remove(script_path)
             return None
 
-        # clean_memory()
-
-        # 4. Run diarization
-        # 使用预加载的音频数据避免 torchcodec 依赖问题
-        #try:
-        #    # 先尝试使用预加载的音频数据（推荐方法，避免 torchcodec 依赖）
-        #    audio_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_path)
-        #    waveform, sample_rate = torchaudio.load(audio_wav)  # waveform: (channels, time)
-        #    audio_data = {"waveform": waveform, "sample_rate": sample_rate}
-        #    diarization = self.pipeline(audio_data)
-        #except Exception as e:
-        #    # 如果预加载失败，回退到直接使用文件路径（可能会触发警告）
-        #    print(f"警告: 预加载音频失败，使用文件路径: {e}")
-        #    diarization = self.pipeline(audio_path)
-        
+        # ========== Step 6: 分配说话者 ==========
+        print(f"📝 Step 6: 分配说话者...")
         merged_segments = self.assign_speakers(merged_segments, None)
-
-        #clean_memory()
 
         if len(merged_segments) > 0:
             if merged_segments[0]['start'] != 0.0:
@@ -201,6 +365,7 @@ class AudioTranscriber:
                 end_time = segment['end']
              
         if len(merged_segments) == 0:
+            clean_memory(cuda=False, verbose=False)
             safe_remove(script_path)
             return None
         
@@ -208,7 +373,13 @@ class AudioTranscriber:
             segment.pop("start", None)
             segment.pop("end", None)
 
-        write_json(script_path, merged_segments)  
+        write_json(script_path, merged_segments)
+        
+        # 最终清理
+        gc.collect()
+        clean_memory(cuda=False, verbose=False)
+        print(f"✅ 转录完成，返回 {len(merged_segments)} 个片段")
+        
         return merged_segments
 
 
