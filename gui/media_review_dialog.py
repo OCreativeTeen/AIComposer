@@ -2,18 +2,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import os, time, threading
 from PIL import Image, ImageTk
-from utility.file_util import get_file_path, safe_remove, safe_file, refresh_scene_media
-from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.ffmpeg_processor import FfmpegProcessor
+from utility.file_util import get_file_path, safe_remove, safe_file
 from utility.audio_transcriber import AudioTranscriber
+from project_manager import refresh_scene_media
 import config, config_channel
 from utility.llm_api import LLMApi
 import json
-import copy
+from config import parse_json_from_text
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
-import project_manager
-from pathlib import Path
 
 
 # 尝试导入拖放支持
@@ -84,23 +81,33 @@ class AVReviewDialog:
         self.media_type_names = {
             "clip": "场景媒体 (clip)",
             "one": "第一轨道 (one)",
-            "second": "第二轨道 (second)",
+            "narration": "旁白轨道 (narration)",
             "zero": "背景轨道 (zero)"
         }
 
-        # 媒体类型选择 ("clip", "second", "zero")
+        self.transcribe_way = "single"
+
         self.media_type = media_type
         self.replace_media_audio = replace_media_audio
+
+        if self.media_type == "clip":
+            self.SPEAKER_KEY = "speaker"
+            self.SPEAKING_KEY = "speaking"
+            self.ACTORS = config_prompt.SPEAKER
+        elif self.media_type == "narration":
+            self.SPEAKER_KEY = "narrator"
+            self.SPEAKING_KEY = "voiceover"
+            self.ACTORS = config_prompt.NARRATOR
         
         # 媒体字段名映射
         if media_type == "clip":
             self.video_field = "clip"
             self.audio_field = "clip_audio"
             self.image_field = "clip_image"
-        elif media_type == "second":
-            self.video_field = "second"
-            self.audio_field = "second_audio"
-            self.image_field = "second_image"
+        elif media_type == "narration":
+            self.video_field = "narration"
+            self.audio_field = "narration_audio"
+            self.image_field = "narration_image"
         elif media_type == "zero":
             self.video_field = "zero"
             self.audio_field = "zero_audio"
@@ -111,8 +118,14 @@ class AVReviewDialog:
             self.image_field = "one_image"
         # Initialize source paths
         self.source_video_path = get_file_path(self.current_scene, self.video_field)
+        if not self.source_video_path:
+            refresh_scene_media(self.current_scene, self.video_field, ".mp4", get_file_path(self.current_scene, "clip"), True)
         self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
+        if not self.source_audio_path:
+            refresh_scene_media(self.current_scene, self.audio_field, ".wav", get_file_path(self.current_scene, "clip_audio"), True)
         self.source_image_path = get_file_path(self.current_scene, self.image_field)
+        if not self.source_image_path:
+            refresh_scene_media(self.current_scene, self.image_field, ".webp", get_file_path(self.current_scene, "clip_image"), True)
         
         self.audio_duration = 0.0
         # 使用 _pending_boundaries 统一管理时间边界，移除重复的 start_time_var 和 end_time_var
@@ -171,7 +184,7 @@ class AVReviewDialog:
             "implicit": self.current_scene.get("implicit", "implicit")
         }]
         if self.audio_json[0]["caption"]:
-            self.audio_json[0]["speaking_audio"] = self.source_audio_path
+            self.audio_json[0][self.SPEAKER_KEY+"_audio"] = self.source_audio_path
 
         self.audio_json = self.align_json_to_current_scene(self.audio_json)
         self._update_fresh_json_text(self.audio_json)
@@ -194,8 +207,6 @@ class AVReviewDialog:
 
     def create_dialog(self):
         """Create the review dialog window"""
-        self.transcribe_way = "single"
-
         self.dialog = tk.Toplevel(self.parent.root)
         self.dialog.geometry("1800x1000")
         self.dialog.resizable(True, True)
@@ -431,35 +442,38 @@ class AVReviewDialog:
         fresh_buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
         # 旁白语音组
-        ttk.Label(fresh_buttons_frame, text="讲员").pack(side=tk.LEFT, padx=(0, 5))
-        self.narrator = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
-        self.narrator.pack(side=tk.LEFT, padx=(0, 10))
-        self.narrator.current(0)
-        # 绑定 narrator 值改变事件
-        self.narrator.bind("<<ComboboxSelected>>", lambda e: self.on_person_changed("narrator", e))
-        # 也绑定失去焦点事件，处理用户直接输入文本的情况
-        self.narrator.bind("<FocusOut>", lambda e: self.on_person_changed("narrator", e))
-
-        # 旁白语音组
-        ttk.Label(fresh_buttons_frame, text="演员").pack(side=tk.LEFT, padx=(0, 5))
-        self.speaker = ttk.Combobox(fresh_buttons_frame, values=config_prompt.ACTORS, state="normal", width=30)
+        ttk.Label(fresh_buttons_frame, text="角色").pack(side=tk.LEFT, padx=(0, 5))
+        self.speaker = ttk.Combobox(fresh_buttons_frame, values=self.ACTORS, state="normal", width=30)
         self.speaker.pack(side=tk.LEFT, padx=(0, 10))
         self.speaker.current(0)
-        # 绑定 speaker 值改变事件（使用 lambda 传递 person_type 参数）
-        self.speaker.bind("<<ComboboxSelected>>", lambda e: self.on_person_changed("speaker", e))
-        # 也绑定失去焦点事件，处理用户直接输入文本的情况
-        self.speaker.bind("<FocusOut>", lambda e: self.on_person_changed("speaker", e))
+        self.speaker.bind("<<ComboboxSelected>>", lambda e: self.on_speaker_changed(e))
+        self.speaker.bind("<FocusOut>", lambda e: self.on_speaker_changed(e))
 
-        # transcribe exsiting conversation (if >>30 seconds), then remix single conversation
-        ttk.Button(fresh_buttons_frame, text="场景转录", command=lambda: self.remix_conversation("single", True)).pack(side=tk.LEFT)
+        # transcribe exsiting conversation (if >>30 sec), then remix single conversation
+        self.btn_scene_transcribe = ttk.Button(fresh_buttons_frame, text="场景转录", command=lambda: self.remix_conversation("single", True))
+        self.btn_scene_transcribe.pack(side=tk.LEFT)
         # directly, then remix single conversation with current speaking content (if exisitng)
-        ttk.Button(fresh_buttons_frame, text="场景重建", command=lambda: self.remix_conversation("single", False)).pack(side=tk.LEFT)
-        # transcribe exsiting conversation (if >>30 seconds), then remix multiple conversation
-        ttk.Button(fresh_buttons_frame, text="多场转录", command=lambda: self.remix_conversation("multiple", True)).pack(side=tk.LEFT)
+        self.btn_scene_rebuild = ttk.Button(fresh_buttons_frame, text="场景重建", command=lambda: self.remix_conversation("single", False))
+        self.btn_scene_rebuild.pack(side=tk.LEFT)
+        # transcribe exsiting conversation (if >>30 sec), then remix multiple conversation
+        self.btn_multi_transcribe = ttk.Button(fresh_buttons_frame, text="多场转录", command=lambda: self.remix_conversation("multiple", True))
+        self.btn_multi_transcribe.pack(side=tk.LEFT)
         # directly, then remix multiple conversation with current speaking content (if exisitng)
-        ttk.Button(fresh_buttons_frame, text="多场重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
+        self.btn_multi_rebuild = ttk.Button(fresh_buttons_frame, text="多场重建", command=lambda: self.remix_conversation("multiple", False))
+        self.btn_multi_rebuild.pack(side=tk.LEFT)
         
-        ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
+        # 只在 media_type == 'clip' 时启用这些按钮
+        if self.media_type != 'clip':
+            self.btn_scene_transcribe.config(state=tk.DISABLED)
+            self.btn_scene_rebuild.config(state=tk.DISABLED)
+            self.btn_multi_transcribe.config(state=tk.DISABLED)
+            self.btn_multi_rebuild.config(state=tk.DISABLED)
+        
+        self.btn_regenerate_audio = ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio)
+        self.btn_regenerate_audio.pack(side=tk.LEFT)
+        if self.media_type != 'clip' and self.media_type != 'narration':
+            self.btn_regenerate_audio.config(state=tk.DISABLED)
+        
         # ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
         # ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
         
@@ -1081,7 +1095,7 @@ class AVReviewDialog:
             "end": self.audio_duration,
             "caption": "",
             "speaking": "",
-            "speak_audio": self.source_audio_path,
+            self.SPEAKER_KEY+"_audio": self.source_audio_path,
             "name": self.current_scene.get("name", "story"),
             "explicit": self.current_scene.get("explicit", "explicit"),
             "implicit": self.current_scene.get("implicit", "implicit")
@@ -1106,16 +1120,15 @@ class AVReviewDialog:
 
         if  len(audio_json) == 1:
             default_json["caption"] = audio_json[0]["caption"]
-            default_json["speaking"] = audio_json[0]["speaking"]
+            default_json[self.SPEAKING_KEY] = audio_json[0]["speaking"]
             return [default_json]
 
         if self.transcribe_way == "single":
             all_captions = ". ".join([json_item["caption"] for json_item in audio_json])
             default_json["caption"] = all_captions
-            default_json["speaking"] = all_captions
+            default_json[self.SPEAKING_KEY] = all_captions
             return [default_json]
-
-        else:
+        else: # multiple ~ only for self.media_type == "clip"
             raw_id = int((self.current_scene["id"]/100)*100)
             for item in audio_json:
                 raw_id += 100
@@ -1272,9 +1285,6 @@ class AVReviewDialog:
 
 
     def remix_conversation(self, mode, transcribe):
-        if self.media_type!="clip":
-            return
-
         self.transcribe_way = mode
         self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
 
@@ -1295,30 +1305,37 @@ class AVReviewDialog:
                         "name": self.current_scene.get("name", "story"),
                         "explicit": self.current_scene.get("explicit", "explicit"),
                         "implicit": self.current_scene.get("implicit", "implicit"),
+                        "story_details": self.current_scene.get("story_details", ""),
                         "speaking": item.get("speaking", ""),
-                        "speaker": item.get("speaker", "")
+                        "speaker": item.get("speaker", ""),
+                        "voiceover": item.get("voiceover", "")
                     }
                     refresh_json_copy.append(new_item)
                 refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
             except:
-                refresh_conversation = ""
                 refresh_json = None
-                print(f"⚠️ 刷新内容格式化失败")
 
-        if not refresh_conversation or not refresh_json:
+        if not refresh_json:
             refresh_json = [
                 {
                     "name": self.current_scene.get("name", "story"),
                     "explicit": self.current_scene.get("explicit", "explicit"),
                     "implicit": self.current_scene.get("implicit", "implicit"),
+                    "story_details": self.current_scene.get("story_details", ""),
                     "speaking": self.current_scene.get("speaking", ""),
-                    "speaker": self.current_scene.get("speaker", "")
+                    "speaker": self.current_scene.get("speaker", ""),
+                    "voiceover": self.current_scene.get("voiceover", "")
                 }
             ]
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
-        selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_system_prompt"][self.current_scene["name"]]
-        selected_prompt_example = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_system_prompt"][self.current_scene["name"] + "_example"]
+        selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"][self.current_scene["name"]]
+        selected_prompt_example = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
+        # read file from media folder
+        example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example)
+        with open(example_file, "r", encoding="utf-8") as f:
+            selected_prompt_example = f.read()
+
         if self.transcribe_way == "multiple":
             if len(refresh_json) > 1:
                 selected_prompt = selected_prompt.format(json=f"json array holding {len(refresh_json)} scenes", example=selected_prompt_example)
@@ -1329,7 +1346,7 @@ class AVReviewDialog:
             selected_prompt = selected_prompt.format(json="a single json item describing a scene", example=selected_prompt_example)
         #format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
 
-        new_scenes = self.llm_api.generate_json_summary(
+        new_scenes = self.llm_api.generate_json(
             system_prompt=selected_prompt,
             user_prompt=refresh_conversation,
             expect_list=True
@@ -1343,6 +1360,8 @@ class AVReviewDialog:
             single_scene = new_scenes[0].copy()
             single_scene["speaker"] = new_scenes[0].get("speaker", "")
             single_scene["narrator"] = new_scenes[0].get("narrator", "")
+            single_scene["actions"] = new_scenes[0].get("actions", "")
+            single_scene["visual"] = new_scenes[0].get("visual", "")
             single_scene["start"] = 0.0
             single_scene["end"] = self.audio_duration
             single_scene["duration"] = self.audio_duration
@@ -1353,17 +1372,22 @@ class AVReviewDialog:
             self.audio_json = [single_scene]
 
         else:
-            current_time = 0.0
+            start_id = self.current_scene.get("id", 0)
+            start_time = 0.0
             for i, scene in enumerate(new_scenes):
                 fresh_scene = refresh_json[i] if i < len(refresh_json) else refresh_json[-1]
                 scene["caption"] = fresh_scene["caption"]
                 duration = fresh_scene.get("duration", self.audio_duration)
                 scene["duration"] = duration if len(refresh_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
-                scene["start"] = current_time
-                scene["end"] = current_time + scene["duration"]
-                current_time = scene["end"]
+                scene["start"] = start_time
+                start_time = start_time + scene["duration"]
+                scene["end"] = start_time
+                scene["id"] = start_id + 1
+                start_id = scene["id"]
+
                 if hasattr(fresh_scene, "speaking_audio"):
                     scene["speaking_audio"] = fresh_scene["speaking_audio"]
+
             self.audio_json = new_scenes
 
         self._update_fresh_json_text(self.audio_json)
@@ -1378,18 +1402,26 @@ class AVReviewDialog:
             new_item["explicit"] = self.current_scene.get("explicit", "explicit")
             new_item["implicit"] = self.current_scene.get("implicit", "implicit")
 
+            if "id" in item:
+                new_item["id"] = item["id"]
             if "speaker" in item:
                 new_item["speaker"] = item["speaker"]
             if "narrator" in item:
                 new_item["narrator"] = item["narrator"]
             if "duration" in item:
                 new_item["duration"] = item["duration"]
+            if "visual" in item:
+                new_item["visual"] = item["visual"]
+            if "actions" in item:
+                new_item["actions"] = item["actions"]
             if "start" in item:
                 new_item["start"] = item["start"]
             if "end" in item:
                 new_item["end"] = item["end"]
-            if "speaking_audio" in item:
-                new_item["speaking_audio"] = item["speaking_audio"]
+            if "speaker_audio" in item:
+                new_item["speaker_audio"] = item["speaker_audio"]
+            if "narrator_audio" in item:
+                new_item["narrator_audio"] = item["narrator_audio"]
             if "caption" in item:
                 new_item["caption"] = item["caption"]
             if "speaking" in item:
@@ -1399,11 +1431,9 @@ class AVReviewDialog:
             new_json_array.append(new_item)
         return new_json_array
 
- 
 
     def regenerate_audio(self):
         fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
-        # check if fresh_json_text is valid json
         try:
             fresh_json = json.loads(fresh_text)
             self.audio_json = self.align_json_to_current_scene(fresh_json)
@@ -1411,12 +1441,48 @@ class AVReviewDialog:
             messagebox.showerror("错误", "Fresh JSON格式不正确")
             return
 
-        self.audio_json, self.source_audio_path = self.parent.workflow.regenerate_audio(self.audio_json, self.workflow.language)
-        if self.source_video_path:
-            duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
-            self.source_video_path = self.workflow.ffmpeg_processor.adjust_video_to_duration( self.source_video_path, duration )
+        #self.audio_json, self.source_audio_path = self.parent.workflow.regenerate_audio(self.audio_json, self.workflow.language)
+        lang = "chinese" if self.workflow.language == "zh" or self.workflow.language == "tw" else "english"
+        start_time = 0.0
+        for json_item in self.audio_json:
+            speaker = json_item[self.SPEAKER_KEY]
+            content = json_item[self.SPEAKING_KEY]
+            actions = json_item["actions"]
+            tts_wav = self.workflow.regenerate_audio_item(speaker, content, actions, lang)
+            if tts_wav:
+                olda, a = refresh_scene_media(json_item, self.SPEAKER_KEY+"_audio", ".wav", tts_wav, True)
+                refresh_scene_media(json_item, self.media_type+"_audio", ".wav", a, True)
+                v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, json_item[self.media_type+"_audio"])
+                refresh_scene_media(json_item, self.media_type, ".mp4", v)
+                if self.media_type == "clip":
+                    json_item["duration"] = self.workflow.ffmpeg_audio_processor.get_duration(json_item[self.media_type+"_audio"])
+                    json_item["start"] = start_time
+                    start_time = start_time + json_item["duration"]
+                    json_item["end"] = start_time
+                    json_item["caption"] = json_item["speaking"]
+            else:
+                json_item[self.media_type+"_audio"] = None
+                json_item[self.SPEAKER_KEY+"_audio"] = None
+                json_item[self.media_type] = None
+                if self.media_type == "clip":
+                    json_item["duration"] = 0.0
+                    json_item["start"] = 0.0
+                    json_item["end"] = 0.0
+                    json_item["caption"] = None
+
+        # filter out json_item with clip_audio is None
+        temp_json = [json_item for json_item in self.audio_json if json_item[self.SPEAKER_KEY+"_audio"] is not None]
+        self.source_audio_path = self.workflow.ffmpeg_audio_processor.concat_audios([json_item[self.SPEAKER_KEY+"_audio"] for json_item in temp_json])
+        self.audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(self.source_audio_path)
+        self._set_start_time(0.0)
+        self._set_end_time(self.audio_duration)
+
+        self.source_video_path = self.workflow.ffmpeg_processor.adjust_video_to_duration( self.source_video_path, self.audio_duration )
 
         self._update_fresh_json_text(self.audio_json)
+
+        self.refresh_edit_timeline()
+        self.draw_waveform_placeholder()
 
 
     def record_audio(self):
@@ -1480,6 +1546,7 @@ class AVReviewDialog:
             self.recording = False
 
 
+
     def _recording_worker(self):
         """录音工作线程"""
         try:
@@ -1489,7 +1556,6 @@ class AVReviewDialog:
                     print(f"录音状态: {status}")
                 if self.recording:
                     self.recorded_audio.append(indata.copy())
-            
             # 开始音频流
             with sd.InputStream(samplerate=self.sample_rate, 
                               channels=self.channels, 
@@ -1505,17 +1571,18 @@ class AVReviewDialog:
             self.dialog.after(0, lambda: messagebox.showerror("错误", f"录音失败: {str(e)}"))
 
 
+
     def _update_recording_time(self):
         """更新录音时间显示"""
         if self.recording and hasattr(self, 'recording_dialog') and self.recording_dialog.winfo_exists():
             elapsed = time.time() - self.recording_start_time
             minutes = int(elapsed // 60)
-            seconds = int(elapsed % 60)
-            time_str = f"{minutes:02d}:{seconds:02d}"
+            sec = int(elapsed % 60)
+            time_str = f"{minutes:02d}:{sec:02d}"
             self.recording_time_label.config(text=time_str)
-            
             # 每100ms更新一次
             self.recording_dialog.after(100, self._update_recording_time)
+
 
 
     def stop_recording(self):
@@ -1575,6 +1642,7 @@ class AVReviewDialog:
             print(f"保存录音错误: {e}")
 
 
+
     def confirm_replacement(self):
         self.confirm_edit_timeline_change()
         video_path = self.source_video_path
@@ -1589,8 +1657,11 @@ class AVReviewDialog:
         if i != self.source_image_path:
             refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
 
-        # 执行音视频切割（只要有多个场景就执行）
-        if self.audio_json and len(self.audio_json) > 1:
+        # 执行音视频切割（只有在边界被手动调整后才执行）
+        # 判断是否需要切割：
+        # 1. 有多个场景
+        # 2. 场景的边界不是默认的（即被手动编辑过）
+        if self._should_split_scenes():  # only for self.media_type == "clip"
             print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
             for i, item in enumerate(self.audio_json):
                 duration = item.get("duration", 0)
@@ -1598,12 +1669,12 @@ class AVReviewDialog:
                     print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
                     continue
                 clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, item["start"], item["duration"])
-                olda, item["speak_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                olda, item["speaker_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
                 v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
                 refresh_scene_media(item, "clip", ".mp4", v)
             print(f"✓ 音视频切割完成")
         else:
-            print(f"ℹ️ 只有 {len(self.audio_json) if self.audio_json else 0} 个场景，无需切割")
+            print(f"ℹ️ 边界未被手动调整或只有单个场景，无需切割")
         
         self.result = {
             'audio_json': self.audio_json,
@@ -1613,12 +1684,59 @@ class AVReviewDialog:
         self.close_dialog()
 
 
+    def _should_split_scenes(self):
+        """判断是否需要切割音视频场景
+        
+        返回 True 的条件：
+        1. 有多个场景（len > 1）
+        2. 至少有一个场景没有独立的音频文件（需要切割）
+        3. 场景的边界看起来是被手动编辑过的（不是完整的单个音频）
+        
+        返回 False 的情况：
+        - 只有单个场景
+        - 所有场景都已经有独立的音频文件（已经切割过了）
+        - 场景是完整的音频（start=0, end=audio_duration）
+        """
+        if not self.audio_json or len(self.audio_json) <= 1 or self.transcribe_way == "single" or self.media_type != "clip":
+            return False
+        
+        # 检查是否是完整音频（未分段）
+        if len(self.audio_json) == 1:
+            scene = self.audio_json[0]
+            start = scene.get('start', 0)
+            end = scene.get('end', self.audio_duration)
+            # 如果是完整音频（从0到结束），不需要切割
+            if abs(start) < 0.1 and abs(end - self.audio_duration) < 0.1:
+                return False
+        
+        # 检查场景是否已经有独立的音频文件
+        scenes_need_cutting = 0
+        for i, scene in enumerate(self.audio_json):
+            # 检查是否有 speaking_audio 或 speak_audio 字段
+            scene_audio = scene.get("speaker_audio")
+            if not scene_audio or not os.path.exists(scene_audio):
+                # 没有音频文件或文件不存在，需要切割
+                scenes_need_cutting += 1
+            elif scene_audio == self.source_audio_path:
+                # 音频文件就是源文件，说明没有被切割过，需要切割
+                scenes_need_cutting += 1
+        
+        # 如果至少有一个场景需要切割，就返回 True
+        if scenes_need_cutting > 0:
+            print(f"📊 检测到 {scenes_need_cutting}/{len(self.audio_json)} 个场景需要切割")
+            return True
+        
+        print(f"📊 所有 {len(self.audio_json)} 个场景都已有独立音频，无需切割")
+        return False
+
+
 
     def cancel(self):
         """Cancel the operation"""
         self.result = {'confirmed': False}
         self.close_dialog()
     
+
 
     def close_dialog(self):
         """Close the dialog and cleanup"""
@@ -1653,6 +1771,7 @@ class AVReviewDialog:
         # Close dialog
         self.dialog.destroy()
     
+
 
     def start_time_update_thread(self):
         """Start a thread to update playback time"""
@@ -1736,6 +1855,7 @@ class AVReviewDialog:
             threading.Thread(target=update_time, daemon=True).start()
 
     
+
     def load_video_first_frame(self):
         """Load and display the first frame of the video in preview canvas"""
         if not self.source_video_path:
@@ -1838,6 +1958,7 @@ class AVReviewDialog:
                 self.preview_canvas.winfo_height()//2,
                 text=f"加载视频失败: {str(e)}", fill="red", font=("Arial", 10)
             )
+
 
 
     def update_video_frame(self):
@@ -1951,6 +2072,7 @@ class AVReviewDialog:
             self.stop_playback()
 
 
+
     def display_image_on_canvas(self):
         """在canvas上显示图片"""
         try:
@@ -2001,68 +2123,7 @@ class AVReviewDialog:
             print(f"显示图片失败: {e}")
 
 
-    def _parse_json_from_text(self, text):
-        """从文本中解析 JSON，处理可能的引号包裹问题"""
-        if not text:
-            return None
-        
-        text = text.strip()
-        if not text:
-            return None
-        
-        # 尝试直接解析
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        
-        # 处理被引号包裹的情况：去除外层引号（可能是单引号或双引号）
-        # 处理类似 "'[ ..." 或 '"[...' 的情况
-        cleaned_text = text
-        
-        # 去除外层单引号
-        if cleaned_text.startswith("'") and cleaned_text.endswith("'"):
-            cleaned_text = cleaned_text[1:-1].strip()
-            try:
-                return json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                pass
-        
-        # 去除外层双引号
-        if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
-            cleaned_text = cleaned_text[1:-1].strip()
-            try:
-                return json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                pass
-        
-        # 处理双重引号包裹的情况（如 "'[...'" 或 '"\'[...\'"')
-        # 先去除外层单引号，再去除内层双引号
-        if text.startswith("'\"") and text.endswith("\"'"):
-            cleaned_text = text[2:-2].strip()
-            try:
-                return json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                pass
-        
-        # 处理转义字符的情况
-        # 尝试使用 ast.literal_eval 作为备选方案（仅当字符串看起来像 Python 字面量时）
-        try:
-            import ast
-            # 如果字符串看起来像 Python 字符串字面量，尝试解析
-            if (text.startswith('"') or text.startswith("'")) and (text.endswith('"') or text.endswith("'")):
-                evaluated = ast.literal_eval(text)
-                if isinstance(evaluated, str):
-                    return json.loads(evaluated)
-                elif isinstance(evaluated, (list, dict)):
-                    return evaluated
-        except (ValueError, SyntaxError):
-            pass
-        
-        return None
-
-
-    def _extract_narrator_speaker_from_json(self):
+    def _extract_speaker_from_json(self):
         """从 fresh_json_text 中提取 narrator 和 speaker 的值，并设置到下拉框"""
         if self._updating_from_json:
             return
@@ -2074,57 +2135,29 @@ class AVReviewDialog:
                 return
             
             # 尝试解析为 JSON
-            fresh_json = self._parse_json_from_text(fresh_text)
-            if fresh_json is None:
-                return
-            
-            # 检查是否是数组
-            if not isinstance(fresh_json, list) or len(fresh_json) == 0:
+            fresh_json = parse_json_from_text(fresh_text)
+            if fresh_json is None or not isinstance(fresh_json, list) or len(fresh_json) == 0:
                 return
             
             # 设置标志，防止循环更新
             self._updating_from_json = True
             
-            # 提取 narrator 值（从第一个项）
-            narrator_found = False
             speaker_found = False
-            
             for item in fresh_json:
                 if not isinstance(item, dict):
                     continue
-                
-                # 提取 narrator
-                if not narrator_found and "narrator" in item:
-                    narrator_value = str(item["narrator"]).strip()
-                    if narrator_value:
-                        # 检查是否以 config_prompt.ACTORS 中的某个值开头
-                        for actor in config_prompt.ACTORS:
-                            if actor and narrator_value.startswith(actor):
-                                # 设置下拉框的值
-                                try:
-                                    self.narrator.set(actor)
-                                    narrator_found = True
-                                    break
-                                except:
-                                    pass
-                
-                # 提取 speaker
-                if not speaker_found and "speaker" in item:
-                    speaker_value = str(item["speaker"]).strip()
+                if not speaker_found and self.SPEAKER_KEY in item:
+                    speaker_value = str(item[self.SPEAKER_KEY]).strip()
                     if speaker_value:
-                        # 检查是否以 config_prompt.ACTORS 中的某个值开头
-                        for actor in config_prompt.ACTORS:
+                        for actor in self.ACTORS:
                             if actor and speaker_value.startswith(actor):
-                                # 设置下拉框的值
                                 try:
                                     self.speaker.set(actor)
                                     speaker_found = True
                                     break
                                 except:
                                     pass
-                
-                # 如果都找到了，可以提前退出
-                if narrator_found and speaker_found:
+                if speaker_found:
                     break
             
         except Exception as e:
@@ -2145,72 +2178,48 @@ class AVReviewDialog:
         else:
             self.fresh_json_text.insert(1.0, json.dumps(content, indent=2, ensure_ascii=False))
         # 触发提取 narrator 和 speaker 值
-        self._extract_narrator_speaker_from_json()
+        self._extract_speaker_from_json()
         # 刷新剪辑时间轴
         self.refresh_edit_timeline()
 
 
-
-    def on_person_changed(self, person_type, event=None):
-        """处理 person 下拉框值改变事件"""
-        # 如果正在从 JSON 更新，跳过
+    def on_speaker_changed(self, event=None):
         if self._updating_from_json:
             return
         
         try:
-            # 根据 person_type 获取对应的控件值
-            if person_type == "speaker":
-                person_value = self.speaker.get()
-            elif person_type == "narrator":
-                person_value = self.narrator.get()
-            else:
-                return
-            
+            person_value = self.speaker.get()
             if not person_value:
                 return
             
-            # 获取 fresh_json_text 的内容
             fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
             if not fresh_text:
                 return
             
-            # 尝试解析为 JSON
-            fresh_json = self._parse_json_from_text(fresh_text)
-            if fresh_json is None:
-                # 不是有效的 JSON，忽略
-                return
-            
-            # 检查是否是数组
-            if not isinstance(fresh_json, list):
+            fresh_json = parse_json_from_text(fresh_text)
+            if fresh_json is None or not isinstance(fresh_json, list) or len(fresh_json) == 0:
                 return
             
             # 设置标志，避免触发文本改变事件
             self._updating_from_json = True
             
-            # 更新数组中每个项的 person_type 字段
             updated = False
             for item in fresh_json:
                 if isinstance(item, dict):
-                    if person_type in item:
-                        person = item[person_type]
-                        for actor in config_prompt.ACTORS:
-                            person = person.replace(actor, "")
-                    else:
-                        person = ""
-                    # remove all words inside config_prompt.ACTORS
-                    item[person_type] = person_value + person
+                    person = item.get(self.SPEAKER_KEY, "")
+                    for actor in self.ACTORS:
+                        person = person.replace(actor, "")
+                    item[self.SPEAKER_KEY] = person_value + person
                     updated = True
-            
-            # 如果有更新，更新 fresh_json_text
+
             if updated:
                 self.audio_json = fresh_json
                 self._update_fresh_json_text(self.audio_json)
-                print(f"✓ 已更新 JSON 数组中的所有 {person_type} 字段为: {person_value}")
+                print(f"✓ 已更新 JSON 数组中的所有 speaker 字段为: {person_value}")
         
         except Exception as e:
-            print(f"⚠️ 更新 {person_type} 字段失败: {e}")
+            print(f"⚠️ 更新 speaker 字段失败: {e}")
         finally:
-            # 重置标志
             self._updating_from_json = False
 
 
@@ -2347,6 +2356,7 @@ class AVReviewDialog:
         # 刷新视频显示（延迟加载确保视频资源准备就绪）
         self.dialog.after(100, self.load_video_first_frame)
     
+
     
     def on_canvas_click(self, event):
         """Handle mouse click on preview canvas to start crop selection"""
@@ -2370,6 +2380,7 @@ class AVReviewDialog:
                 self.preview_canvas.delete(self.selection_rect)
             self.selection_rect = None
     
+
     
     def on_canvas_drag(self, event):
         """Handle mouse drag on preview canvas to update crop selection"""
@@ -2395,6 +2406,7 @@ class AVReviewDialog:
             outline='yellow', width=2, dash=(5, 5)
         )
     
+
     
     def on_canvas_release(self, event):
         """Handle mouse release on preview canvas to finalize crop selection"""
@@ -2493,6 +2505,7 @@ class AVReviewDialog:
         
         print(f"✓ 选择裁剪区域: ({self.crop_start_x}, {self.crop_start_y}), 尺寸: {crop_w}x{crop_h}")
     
+
     
     def get_image_bounds(self):
         """Get the actual image bounds on canvas"""
@@ -2537,6 +2550,7 @@ class AVReviewDialog:
             print(f"⚠️ 获取图像边界失败: {e}")
             return None
     
+
 
     def canvas_to_video_coords(self, canvas_x, canvas_y):
         """Convert canvas coordinates to video coordinates"""
@@ -2599,6 +2613,7 @@ class AVReviewDialog:
             print(f"⚠️ 坐标转换失败: {e}")
             return None, None
     
+
     
     def on_crop_params_changed(self, *args):
         """Handle changes to crop parameter controls"""
@@ -2621,6 +2636,7 @@ class AVReviewDialog:
         except Exception as e:
             print(f"⚠️ 更新裁剪参数失败: {e}")
     
+
     
     def update_crop_selection_display(self):
         """Update the visual selection rectangle on canvas"""
@@ -2661,6 +2677,7 @@ class AVReviewDialog:
         except Exception as e:
             print(f"⚠️ 更新选择显示失败: {e}")
     
+
     
     def video_to_canvas_coords(self, video_x1, video_y1, video_x2, video_y2):
         """Convert video coordinates to canvas coordinates"""
@@ -2721,6 +2738,7 @@ class AVReviewDialog:
             print(f"⚠️ 坐标转换失败: {e}")
             return None
     
+
     
     def clear_crop_selection(self):
         """Clear the crop selection"""
@@ -2739,6 +2757,7 @@ class AVReviewDialog:
         
         print("✓ 已清除裁剪选择")
     
+
     
     def _update_crop_spinbox_max(self):
         """Update max values for crop spinboxes based on video dimensions"""
@@ -2803,6 +2822,7 @@ class AVReviewDialog:
             current_scene["kernel"] = kernel
 
         self.save_scenes_to_json()
+
 
 
     def _show_scene_comparison_dialog(self, current_scene, new_scene_data):
@@ -2915,8 +2935,6 @@ class AVReviewDialog:
                 'update_var': update_var,
                 'new_text': new_text
             }
-
-            
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -2950,5 +2968,3 @@ class AVReviewDialog:
         dialog.wait_window()
         
         return result[0]
-
-

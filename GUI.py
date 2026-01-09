@@ -18,12 +18,12 @@ import config
 import config_prompt
 import utility.sd_image_processor as sd_image_processor
 from PIL import Image, ImageTk
-from project_manager import ProjectConfigManager, create_project_dialog
+from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media
 import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
 import os
-from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, refresh_scene_media, build_scene_media_prefix
+from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, build_scene_media_prefix
 from gui.media_review_dialog import AVReviewDialog
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
@@ -112,7 +112,7 @@ class WorkflowGUI:
             self.pygame_mixer_available = False
         
         self.playing_delta = 0.0
-        self.second_delta = 0.0
+        self.sec_delta = 0.0
 
         # 初始化配置加载标志
         self._loading_config = False
@@ -140,14 +140,14 @@ class WorkflowGUI:
         self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
         
         # 添加当前效果和图像类型选择变量
-        self.scene_second_animation = tk.StringVar(value=config_prompt.ANIMATE_SOURCE[0])
+        self.scene_narration_animation = tk.StringVar(value=config_prompt.ANIMATE_SOURCE[0])
         
         # 创建动画名称到提示语的映射字典（双向）
         self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config_prompt.ANIMATION_PROMPTS}
         self.animation_prompt_to_name = {item["prompt"]: item["name"] for item in config_prompt.ANIMATION_PROMPTS}
         self.animation_names = [""] + list(self.animation_name_to_prompt.keys())
         
-        # 添加第二轨道音量控制变量
+        # 添加旁白轨道音量控制变量
         self.track_volume_var = tk.DoubleVar(value=0.2)
         
         # 创建主框架
@@ -297,32 +297,29 @@ class WorkflowGUI:
         row1_frame = ttk.Frame(shared_frame)
         row1_frame.pack(fill=tk.X, pady=(0, 5))
         
-        scene_nav_row = ttk.Frame(row1_frame)
-        scene_nav_row.pack(side=tk.LEFT, padx=(0, 10))
-
-        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(scene_nav_row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Label(scene_nav_row, text="场景:").pack(side=tk.LEFT)
-        ttk.Button(scene_nav_row, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
-        self.scene_label = ttk.Label(scene_nav_row, text="0 / 0", width=7)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Button(row1_frame, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Label(row1_frame, text="场景:").pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
+        self.scene_label = ttk.Label(row1_frame, text="0 / 0", width=7)
         self.scene_label.pack(side=tk.LEFT, padx=2)
-        ttk.Button(scene_nav_row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(scene_nav_row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(scene_nav_row, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Button(row1_frame, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Button(row1_frame, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
         ttk.Button(row1_frame, text="拷贝图",   command=self.copy_images_to_next).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="推广合成", command=lambda:self.run_promotion_video()).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="上传视频", command=self.run_upload_video).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
         pid_frame = ttk.Frame(row1_frame)
         pid_frame.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(pid_frame, text="PID").pack(side=tk.LEFT)
@@ -347,13 +344,28 @@ class WorkflowGUI:
         self.shared_channel.pack(side=tk.LEFT)
         
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        tool_frame = ttk.Frame(row1_frame)
-        tool_frame.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(tool_frame, text="Video生成", command=self.start_video_gen_batch).pack(side=tk.LEFT) 
-        ttk.Button(tool_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
-        ttk.Button(tool_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
-        ttk.Button(tool_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
+        #ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(row1_frame, text="推广合成", command=lambda:self.run_promotion_video()).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(row1_frame, text="上传视频", command=self.run_upload_video).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
+
+
+        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video(self.quiet_audio_var.get(),False)).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="Video生成+", command=lambda:self.run_finalize_video(self.quiet_audio_var.get(),True)).pack(side=tk.LEFT)
+        # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
+        self.quiet_audio_var = tk.DoubleVar(value=0.67)
+        self.quiet_audio_combobox = ttk.Combobox(row1_frame, textvariable=self.quiet_audio_var, values=[0.0, 0.33, 0.67, 1.0, 1.33, 1.67, 2.0])
+        self.quiet_audio_combobox.pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
+        ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
 
    
     def open_image_prompt_dialog(self, create_image_callback, scene, image_mode, language:str):
@@ -378,26 +390,26 @@ class WorkflowGUI:
         dialog.show()
 
 
-    def swap_second(self):
-        """交换第一轨道与第二轨道"""
+    def swap_narration(self):
+        """交换第一轨道与旁白轨道"""
         current_scene = self.get_current_scene()
         clip_video_path = get_file_path(current_scene, 'clip')
         clip_audio_path = get_file_path(current_scene, 'clip_audio')
-        track_path = get_file_path(current_scene, "second")
+        track_path = get_file_path(current_scene, "narration")
         if not track_path:
-            messagebox.showwarning("警告", "second 轨道视频文件不存在")
+            messagebox.showwarning("警告", "narration 轨道视频文件不存在")
             return
         temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(track_path, clip_audio_path)
 
-        refresh_scene_media(current_scene, "second", '.mp4', clip_video_path)
-        refresh_scene_media(current_scene, "second_audio", '.wav', clip_audio_path, True)
+        refresh_scene_media(current_scene, "narration", '.mp4', clip_video_path)
+        refresh_scene_media(current_scene, "narration_audio", '.wav', clip_audio_path, True)
 
         refresh_scene_media(current_scene, 'clip', '.mp4', temp_track)
         self.refresh_gui_scenes()
 
 
     def swap_zero(self):
-        """交换第一轨道与第二轨道"""
+        """交换第一轨道与旁白轨道"""
         current_scene = self.get_current_scene()
         clip_video_path = get_file_path(current_scene, 'clip')
         clip_audio_path = get_file_path(current_scene, 'clip_audio')
@@ -449,72 +461,38 @@ class WorkflowGUI:
 
 
     def reset_track_offset(self):
-        """重置第二轨道播放偏移量到当前场景的起始位置"""
+        """重置旁白轨道播放偏移量到当前场景的起始位置"""
         current_scene = self.get_current_scene()
         if not current_scene:
-            self.second_track_offset = 0
-            self.second_track_paused_time = None
+            self.secondary_track_offset = 0
+            self.secondary_track_paused_time = None
             return
             
-        self.second_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
-        self.second_track_paused_time = None
-        print(f"🔄 重置第二轨道偏移量: {self.second_track_offset:.2f}s")
-        self.update_second_track_time_display()
+        self.secondary_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
+        self.secondary_track_paused_time = None
+        print(f"🔄 重置旁白轨道偏移量: {self.secondary_track_offset:.2f}s")
+        self.update_secondary_track_time()
 
 
-    def fetch_second_clip(self, to_end, volume):
-        current_scene = self.get_current_scene()
-        second_track_path = get_file_path(current_scene, 'second')
-        second_audio_path = get_file_path(current_scene, 'second_audio')
-        if not second_track_path:
-            messagebox.showwarning("警告", "第二轨道视频文件不存在")
-            return
-        
-        second_track_duration = self.workflow.ffmpeg_processor.get_duration(second_track_path)
-
-        if not self.second_track_cap:
-            second_time = 0
-        else:
-            second_pos = self.second_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
-            second_time = second_pos / STANDARD_FPS
-
-        if second_time <= 0:
-            second_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
-
-        if second_track_duration < second_time:
-            second_time = 0
-
-        if to_end:
-            second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, None, volume)
-            second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, None, 1.0, 1.0,volume)
-        else:
-            clip_duration = self.workflow.find_clip_duration(current_scene)
-            second_v = self.workflow.ffmpeg_processor.trim_video(second_track_path, second_time, second_time+clip_duration, volume)
-            second_a = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio_path, second_time, clip_duration, 1.0, 1.0, volume)
-
-        return second_v, second_a
-
-
-    def choose_second_track(self, track_id):
-        """选择第二轨道并重置播放状态"""
-        self.selected_second_track = track_id
+    def choose_secondary_track(self, track_id):
+        """选择旁白轨道并重置播放状态"""
+        self.selected_secondary_track = track_id
         # 重置播放偏移量到当前场景的起始位置
         self.reset_track_offset()
         # 切换 tab 并加载第一帧
-        self.on_second_track_tab_changed()
+        self.on_secondary_track_tab_changed()
 
 
-
-    def pip_second_track(self, from_zero):
-        """将第二轨道作为画中画叠加到主轨道视频上"""
+    def pip_secondary_track(self, from_zero):
+        """将旁白轨道作为画中画叠加到主轨道视频上"""
         try:
             current_scene = self.get_current_scene()
-            second_path = get_file_path(current_scene, self.selected_second_track)
-            second_audio = get_file_path(current_scene, self.selected_second_track+'_audio')
-            second_left = get_file_path(current_scene, self.selected_second_track+'_left')
-            second_right = get_file_path(current_scene, self.selected_second_track+'_right')
-            if not second_path or not second_audio:
-                messagebox.showwarning("警告", "第二轨道视频文件不存在")
+            narration_path = get_file_path(current_scene, self.selected_secondary_track)
+            narration_audio = get_file_path(current_scene, self.selected_secondary_track+'_audio')
+            narration_left = get_file_path(current_scene, self.selected_secondary_track+'_left')
+            narration_right = get_file_path(current_scene, self.selected_secondary_track+'_right')
+            if not narration_path or not narration_audio:
+                messagebox.showwarning("警告", "旁白轨道视频文件不存在")
                 return
 
             clip_video = get_file_path(current_scene, "clip")
@@ -523,18 +501,18 @@ class WorkflowGUI:
             if from_zero:
                 start_time = 0
 
-            start_time = start_time + self.second_delta
+            start_time = start_time + self.sec_delta
 
             if is_story_last_clip: 
-                second_track_copy = self.workflow.ffmpeg_processor.trim_video(second_path, start_time)
-                second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, None, 0, 0, 1.0)
+                secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(narration_path, start_time)
+                narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(narration_audio, start_time, None, 0, 0, 1.0)
             else:    
-                second_track_copy = self.workflow.ffmpeg_processor.trim_video(second_path, start_time, start_time+clip_duration)
-                second_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(second_audio, start_time, clip_duration, 0, 0, 1.0)
+                secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(narration_path, start_time, start_time+clip_duration)
+                narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(narration_audio, start_time, clip_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             
             # 创建画中画设置对话框
-            pip_dialog = PictureInPictureDialog(self.root, clip_video, second_track_copy, second_left, second_right)
+            pip_dialog = PictureInPictureDialog(self.root, clip_video, secondary_track_copy, narration_left, narration_right)
             
             # 等待对话框关闭
             self.root.wait_window(pip_dialog.dialog)
@@ -548,20 +526,20 @@ class WorkflowGUI:
                 current_scene['back'] = clip_video + "," + back
 
                 if settings['position'] == "full":
-                    v = self.workflow.ffmpeg_processor.add_audio_to_video(second_track_copy, clip_audio)
+                    v = self.workflow.ffmpeg_processor.add_audio_to_video(secondary_track_copy, clip_audio)
                     refresh_scene_media(current_scene, 'clip', '.mp4', v)
                 elif settings['position'] == "av":
-                    refresh_scene_media(current_scene, 'clip', '.mp4', second_track_copy)
-                    refresh_scene_media(current_scene, 'clip_audio', '.wav', second_audio_copy)
+                    refresh_scene_media(current_scene, 'clip', '.mp4', secondary_track_copy)
+                    refresh_scene_media(current_scene, 'clip_audio', '.wav', narration_audio_copy)
                 else:
                     # 处理画中画
                     self.process_picture_in_picture(
                         background_audio=clip_audio,
                         background_video=clip_video,
-                        overlay_video=second_track_copy,
-                        overlay_audio=second_audio_copy,
-                        overlay_left=second_left,
-                        overlay_right=second_right,
+                        overlay_video=secondary_track_copy,
+                        overlay_audio=narration_audio_copy,
+                        overlay_left=narration_left,
+                        overlay_right=narration_right,
                         settings=settings
                     )
 
@@ -718,7 +696,7 @@ class WorkflowGUI:
         preview_frame = ttk.Frame(video_frame)
         preview_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 左侧区域：背景轨道和第二轨道（减少宽度给video_canvas更多空间）
+        # 左侧区域：背景轨道和旁白轨道（减少宽度给video_canvas更多空间）
         left_frame = ttk.Frame(preview_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
         # 设置左侧框架的宽度，为video_canvas留出更多空间
@@ -733,7 +711,7 @@ class WorkflowGUI:
         images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (支持拖放)", padding=5)
         images_preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # 创建3个图片预览canvas (clip_image, second_image, zero_image)
+        # 创建3个图片预览canvas (clip_image, narration_image, zero_image)
         images_container = ttk.Frame(images_preview_frame)
         images_container.pack(fill=tk.BOTH, expand=True)
         
@@ -823,58 +801,58 @@ class WorkflowGUI:
         self.one_image_last_canvas.drop_target_register(DND_FILES)
         self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
 
-        # === Second Image Canvas (second_image + second_image_last) ===
-        second_img_frame = ttk.Frame(images_container)
-        second_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
-        ttk.Label(second_img_frame, text="Second", anchor=tk.CENTER).pack()
+        # === narration Image Canvas (narration_image + narration_image_last) ===
+        narration_img_frame = ttk.Frame(images_container)
+        narration_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
+        ttk.Label(narration_img_frame, text="narration", anchor=tk.CENTER).pack()
 
-        second_canvas_container = ttk.Frame(second_img_frame)
-        second_canvas_container.pack(fill=tk.BOTH, expand=True)
+        narration_canvas_container = ttk.Frame(narration_img_frame)
+        narration_canvas_container.pack(fill=tk.BOTH, expand=True)
 
-        # Top: second_image
-        self.second_image_canvas = tk.Canvas(second_canvas_container, bg='gray20', width=150, height=75, 
+        # Top: narration_image
+        self.narration_image_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, 
                                             highlightthickness=2, highlightbackground='green')
-        self.second_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.second_image_canvas.create_text(75, 37, text="Second\nImage", fill="gray", font=("Arial", 8), 
+        self.narration_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
+        self.narration_image_canvas.create_text(75, 37, text="narration\nImage", fill="gray", font=("Arial", 8), 
                                             justify=tk.CENTER, tags="hint")
 
-        self.second_image_canvas.drop_target_register(DND_FILES)
-        self.second_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image'))
+        self.narration_image_canvas.drop_target_register(DND_FILES)
+        self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
 
-        # Bottom: second_image_last
-        self.second_image_last_canvas = tk.Canvas(second_canvas_container, bg='gray20', width=150, height=75, 
+        # Bottom: narration_image_last
+        self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, 
                                                 highlightthickness=2, highlightbackground='green')
-        self.second_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.second_image_last_canvas.create_text(75, 37, text="Second\nLast", fill="gray", font=("Arial", 8), 
+        self.narration_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
+        self.narration_image_last_canvas.create_text(75, 37, text="narration\nLast", fill="gray", font=("Arial", 8), 
                                                 justify=tk.CENTER, tags="hint")
 
-        self.second_image_last_canvas.drop_target_register(DND_FILES)
-        self.second_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'second_image_last'))
+        self.narration_image_last_canvas.drop_target_register(DND_FILES)
+        self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
         
 
-        # 视频轨道预览区域 - 使用Tab控件（包含second和zero）
+        # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
         track_video_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # 创建Notebook (Tab控件)
-        self.second_notebook = ttk.Notebook(track_video_frame)
-        self.second_notebook.pack(fill=tk.BOTH, expand=True)
+        self.narration_notebook = ttk.Notebook(track_video_frame)
+        self.narration_notebook.pack(fill=tk.BOTH, expand=True)
         
-        # === Tab 1: 完整第二轨道 ===
-        tab_full_second = ttk.Frame(self.second_notebook)
-        self.second_notebook.add(tab_full_second, text="完整视频")
+        # === Tab 1: 完整旁白轨道 ===
+        tab_full_narration = ttk.Frame(self.narration_notebook)
+        self.narration_notebook.add(tab_full_narration, text="完整视频")
         
-        # 第二轨道视频画布
-        self.second_track_canvas = tk.Canvas(tab_full_second, bg='black', width=360, height=180)
-        self.second_track_canvas.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        # 旁白轨道视频画布
+        self.secondary_track_canvas = tk.Canvas(tab_full_narration, bg='black', width=360, height=180)
+        self.secondary_track_canvas.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         
-        # 第二轨道提示文本
-        self.second_track_canvas.create_text(160, 90, text="第二轨道视频预览\n选择视频后播放显示", 
+        # 旁白轨道提示文本
+        self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示", 
                                             fill="gray", font=("Arial", 10), justify=tk.CENTER, tags="hint")
         
         # === Tab 2: 画中画 Left & Right ===
-        tab_pip_lr = ttk.Frame(self.second_notebook)
-        self.second_notebook.add(tab_pip_lr, text="画中画L/R")
+        tab_pip_lr = ttk.Frame(self.narration_notebook)
+        self.narration_notebook.add(tab_pip_lr, text="画中画L/R")
         
         # 创建左右并排的画布框架
         pip_lr_frame = ttk.Frame(tab_pip_lr)
@@ -900,25 +878,25 @@ class WorkflowGUI:
         self.track_frame = ttk.Frame(left_frame)
         self.track_frame.pack(fill=tk.X, pady=5)
         
-        # 第二轨道播放按钮
+        # 旁白轨道播放按钮
         self.track_play_button = ttk.Button(self.track_frame, text="▶", command=self.toggle_track_playback,width=3)
         self.track_play_button.pack(side=tk.LEFT, padx=2)
 
-        # add field to display current playing time / duration of second track, and 2 buttons to move forward and backward seconds
+        # add field to display current playing time / duration of narration track, and 2 buttons to move forward and backward sec
         self.track_time_label = ttk.Label(self.track_frame, text="00:00 / 00:00")
         self.track_time_label.pack(side=tk.LEFT, padx=2)
         
-        #ttk.Button(self.second_track_frame, text="◀", command=self.move_second_track_backward, width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.second_track_frame, text="▶", command=self.move_second_track_forward, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(False), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_second_track(True), width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.secondary_track_frame, text="◀", command=self.move_secondary_track_backward, width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.secondary_track_frame, text="▶", command=self.move_secondary_track_forward, width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_secondary_track(False), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_secondary_track(True), width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('one'), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_second_track('second'), width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="💫", command=self.swap_second, width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track("narration"), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track('one'), width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.track_frame, text="💫", command=self.swap_narration, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="🔊", command=self.pip_second_sound, width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.track_frame, text="🔊", command=self.pip_narration_sound, width=3).pack(side=tk.LEFT, padx=2)
         ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=2)
         
         # 添加音量控制滑块（共用，根据当前tab自动选择）
@@ -929,10 +907,10 @@ class WorkflowGUI:
         self.volume_label = ttk.Label(self.track_frame, text="0.2")
         self.volume_label.pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(self.track_frame, text="《《", command=lambda: self.adjust_second_delta(-0.5), width=3).pack(side=tk.LEFT, padx=1)
-        self.second_delta_label = ttk.Label(self.track_frame, text="0.0s", width=4)
-        self.second_delta_label.pack(side=tk.LEFT, padx=1)
-        ttk.Button(self.track_frame, text="》》", command=lambda: self.adjust_second_delta(0.25), width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="《《", command=lambda: self.adjust_sec_delta(-0.5), width=3).pack(side=tk.LEFT, padx=1)
+        self.sec_delta_label = ttk.Label(self.track_frame, text="0.0s", width=4)
+        self.sec_delta_label.pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="》》", command=lambda: self.adjust_sec_delta(0.25), width=3).pack(side=tk.LEFT, padx=1)
 
         
         # 绑定音量变化事件来更新标签
@@ -941,11 +919,11 @@ class WorkflowGUI:
         # 初始化所有轨道播放相关变量
         # 图片预览引用（防止垃圾回收）
         self._clip_image_photo = None
-        self._second_image_photo = None
+        self._narration_image_photo = None
         self._zero_image_photo = None
         
         # 绑定tab切换事件
-        self.second_notebook.bind("<<NotebookTabChanged>>", self.on_second_track_tab_changed)
+        self.narration_notebook.bind("<<NotebookTabChanged>>", self.on_secondary_track_tab_changed)
 
         # 右侧区域：视频画布和控制按钮
         right_frame = ttk.Frame(preview_frame)
@@ -1013,7 +991,7 @@ class WorkflowGUI:
         self.append_scene_button = ttk.Button(video_control_frame, text="后插", command=self.append_scene, width=6)
         self.append_scene_button.pack(side=tk.LEFT, padx=1)
 
-        # add 2 marks, to mark the current video progress seconds，　then add a button 'make_silence'　to make the audio  period between mark1 mark2 be silient
+        # add 2 marks, to mark the current video progress sec，　then add a button 'make_silence'　to make the audio  period between mark1 mark2 be silient
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
         
@@ -1075,11 +1053,11 @@ class WorkflowGUI:
 
 
         ttk.Label(duration_promo_frame, text="次动画:").pack(side=tk.LEFT, padx=(0, 5))
-        self.second_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_second_animation,
+        self.narration_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_narration_animation,
                                                values=config_prompt.ANIMATE_SOURCE, 
                                                state="readonly", width=10)
-        self.second_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
-        self.second_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
+        self.narration_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
+        self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
 
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(self.video_edit_frame)
@@ -1090,7 +1068,6 @@ class WorkflowGUI:
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(type_mood_action_frame, text="生场音频", width=10, command=lambda: self.regenerate_audio()).pack(side=tk.LEFT)
         ttk.Button(type_mood_action_frame, text="生主动画", width=10, command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
         ttk.Button(type_mood_action_frame, text="生次动画", width=10, command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
 
@@ -1136,7 +1113,7 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="讲员:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_narrator = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.ACTORS)
+        self.scene_narrator = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.NARRATOR)
         self.scene_narrator.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
@@ -1179,26 +1156,26 @@ class WorkflowGUI:
         self.scene_promotion.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        # 第二轨道播放状态
-        self.second_track_playing = False
-        self.second_track_cap = None
-        self.second_track_after_id = None
+        # 旁白轨道播放状态
+        self.secondary_track_playing = False
+        self.secondary_track_cap = None
+        self.secondary_track_after_id = None
         
-        # 第二轨道音频播放状态
-        self.second_track_audio_playing = False
-        self.second_track_audio_start_time = None
+        # 旁白轨道音频播放状态
+        self.secondary_track_audio_playing = False
+        self.secondary_track_audio_start_time = None
         
-        # 第二轨道暂停位置
-        self.second_track_paused_time = None
-        self.second_track_paused_audio_time = None
-        self.second_track_cap = None
-        self.second_track_after_id = None
-        self.second_track_start_time = None
+        # 旁白轨道暂停位置
+        self.secondary_track_paused_time = None
+        self.secondary_track_paused_audio_time = None
+        self.secondary_track_cap = None
+        self.secondary_track_after_id = None
+        self.secondary_track_start_time = None
 
-        self.second_track_playing = False
-        self.second_track_offset = 0.0
-        self.second_track_end_time = 0.0
-        self.selected_second_track = "second"
+        self.secondary_track_playing = False
+        self.secondary_track_offset = 0.0
+        self.secondary_track_end_time = 0.0
+        self.selected_secondary_track = "narration"
         
         # PIP L/R (画中画左右)
         self.pip_lr_playing = False
@@ -1336,10 +1313,10 @@ class WorkflowGUI:
             #if clip_animation in config_prompt.ANIMATE_SOURCE and clip_animation != "":
             scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
             animate_gen_list.append((scene_name, "clip", scene))
-            #second_animation = scene.get("second_animation", "")
-            #if second_animation in config_prompt.ANIMATE_SOURCE and second_animation != "":
-            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "second", "", False)
-            animate_gen_list.append((scene_name, "second", scene))
+            #narration_animation = scene.get("narration_animation", "")
+            #if narration_animation in config_prompt.ANIMATE_SOURCE and narration_animation != "":
+            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "narration", "", False)
+            animate_gen_list.append((scene_name, "narration", scene))
 
         if animate_gen_list == []:
             return
@@ -1369,29 +1346,7 @@ class WorkflowGUI:
             self.start_video_check_thread()
     
     
-    def run_promotion_video(self):
-        pid = self.get_pid()
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "promotion_video",
-            "status": "运行中",
-            "start_time": datetime.now(),
-            "pid": pid
-        }
-        def run_task():
-            try:
-                self.workflow.promotion_video(self.video_title.get().strip())
-                self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
-                self.tasks[task_id]["status"] = "完成"
-            except Exception as e:
-                self.log_to_output(self.video_output, f"❌ 最终视频生成失败: {str(e)}")
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = str(e)
-
-        threading.Thread(target=run_task, daemon=True).start()
-
-
-    def run_finalize_video(self):
+    def run_finalize_video(self, quiet_audio_add, add_narration):
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -1403,7 +1358,7 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(self.video_title.get().strip(), False)
+                self.workflow.finalize_video(self.video_title.get().strip(), quiet_audio_add, add_narration)
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -1768,9 +1723,9 @@ class WorkflowGUI:
             
             current_time, total_time = self.get_current_video_time()
             
-            # Format time with 0.01 second precision
-            current_time_str = self.format_time_with_centiseconds(current_time)
-            total_time_str = self.format_time_with_centiseconds(total_time)
+            # Format time with 0.01 narration precision
+            current_time_str = self.format_time_with_centisec(current_time)
+            total_time_str = self.format_time_with_centisec(total_time)
             
             self.video_progress_label.config(text=f"{current_time_str} / {total_time_str}")
             
@@ -1816,22 +1771,22 @@ class WorkflowGUI:
 
     
     def cleanup_track_video_captures(self):
-        if hasattr(self, 'second_track_cap') and self.second_track_cap:
+        if hasattr(self, 'secondary_track_cap') and self.secondary_track_cap:
             try:
-                self.second_track_cap.release()
+                self.secondary_track_cap.release()
             except:
                 pass
-            self.second_track_cap = None
+            self.secondary_track_cap = None
         
-        # 重置第二轨道的播放状态
-        if hasattr(self, 'second_track_playing'):
-            self.second_track_playing = False
-        if hasattr(self, 'second_track_after_id') and self.second_track_after_id:
+        # 重置旁白轨道的播放状态
+        if hasattr(self, 'secondary_track_playing'):
+            self.secondary_track_playing = False
+        if hasattr(self, 'secondary_track_after_id') and self.secondary_track_after_id:
             try:
-                self.root.after_cancel(self.second_track_after_id)
+                self.root.after_cancel(self.secondary_track_after_id)
             except:
                 pass
-            self.second_track_after_id = None
+            self.secondary_track_after_id = None
         
         # 清理 PIP 左右轨道
         if hasattr(self, 'pip_left_cap') and self.pip_left_cap:
@@ -1868,27 +1823,27 @@ class WorkflowGUI:
             self.load_all_images_preview()
         
         # 根据当前选中的tab加载轨道视频预览
-        current_tab_index = self.second_notebook.index(self.second_notebook.select())
+        current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
         if current_tab_index == 0:
-            self.load_second_track_first_frame()
+            self.load_secondary_track_first_frame()
         elif current_tab_index == 1:
             self.load_pip_lr_first_frame()
 
 
-    def load_second_track_first_frame(self):
-        """加载第二轨道视频的第一帧到画布（从当前偏移位置）"""
+    def load_secondary_track_first_frame(self):
+        """加载旁白轨道视频的第一帧到画布（从当前偏移位置）"""
         current_scene = self.get_current_scene()
         if not current_scene:
             return
             
-        track_path = get_file_path(current_scene, self.selected_second_track)
+        track_path = get_file_path(current_scene, self.selected_secondary_track)
 
         try:
-            self.second_track_canvas.delete("all")
+            self.secondary_track_canvas.delete("all")
 
             if not track_path:
                 # 清除画布显示提示信息
-                self.second_track_canvas.create_text(160, 90, text="第二轨道视频预览\n选择视频后播放显示",
+                self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示",
                                                    fill='white', font=('Arial', 12), 
                                                    justify=tk.CENTER, tags="hint")
                 self.track_time_label.config(text="00:00 / 00:00")
@@ -1897,11 +1852,15 @@ class WorkflowGUI:
             # 打开视频文件
             temp_cap = cv2.VideoCapture(track_path)
             if not temp_cap.isOpened():
-                print(f"❌ 无法打开第二轨道视频文件: {track_path}")
+                print(f"❌ 无法打开旁白轨道视频文件: {track_path}")
                 return
             
             # 计算应该显示的帧位置（基于 offset + delta）
-            start_position = self.second_track_offset + self.second_delta
+            if self.selected_secondary_track == "narration":
+                start_position = self.sec_delta
+            else:    
+                start_position = self.secondary_track_offset + self.sec_delta
+
             if start_position < 0:
                 start_position = 0
             
@@ -1916,8 +1875,8 @@ class WorkflowGUI:
                 pil_image = Image.fromarray(frame_rgb)
                 
                 # 调整图像大小适应Canvas
-                canvas_width = self.second_track_canvas.winfo_width()
-                canvas_height = self.second_track_canvas.winfo_height()
+                canvas_width = self.secondary_track_canvas.winfo_width()
+                canvas_height = self.secondary_track_canvas.winfo_height()
                 
                 if canvas_width > 1 and canvas_height > 1:
                     pil_image.thumbnail((canvas_width - 10, canvas_height - 10), Image.Resampling.LANCZOS)
@@ -1925,13 +1884,13 @@ class WorkflowGUI:
                     pil_image.thumbnail((310, 170), Image.Resampling.LANCZOS)
                 
                 # 更新画布显示第一帧
-                self.current_second_track_frame = ImageTk.PhotoImage(pil_image)
+                self.current_secondary_track_frame = ImageTk.PhotoImage(pil_image)
                 
                 canvas_width = canvas_width or 320
                 canvas_height = canvas_height or 180
                 x = canvas_width // 2
                 y = canvas_height // 2
-                self.second_track_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_second_track_frame)
+                self.secondary_track_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_secondary_track_frame)
                 
             # 更新时间显示
             total_frames = temp_cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -1943,12 +1902,12 @@ class WorkflowGUI:
             self.track_time_label.config(text=f"{current_str} / {total_str}")
             
             temp_cap.release()
-            print(f"✅ 已加载第二轨道视频帧 (位置: {start_position:.2f}s): {os.path.basename(track_path)}")
+            print(f"✅ 已加载旁白轨道视频帧 (位置: {start_position:.2f}s): {os.path.basename(track_path)}")
 
         except Exception as e:
-            print(f"❌ 加载第二轨道视频第一帧失败: {e}")
-            self.second_track_canvas.delete("all")
-            self.second_track_canvas.create_text(160, 90, text="第二轨道视频预览\n选择视频后播放显示",
+            print(f"❌ 加载旁白轨道视频第一帧失败: {e}")
+            self.secondary_track_canvas.delete("all")
+            self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示",
                                                fill='white', font=('Arial', 12), 
                                                justify=tk.CENTER, tags="hint")
 
@@ -1978,8 +1937,8 @@ class WorkflowGUI:
         self.scene_main_animate.set(clip_animation)
         
         # 加载当前场景的图像类型设置
-        current_image_type = scene_data.get("second_animation", config_prompt.ANIMATE_SOURCE[0])
-        self.scene_second_animation.set(current_image_type)
+        current_image_type = scene_data.get("narration_animation", config_prompt.ANIMATE_SOURCE[0])
+        self.scene_narration_animation.set(current_image_type)
 
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
@@ -2025,21 +1984,21 @@ class WorkflowGUI:
 
 
 
-    def format_time_with_centiseconds(self, seconds):
-        """Format time as MM:SS.CC (minutes:seconds.centiseconds)"""
-        if seconds is None or seconds < 0:
+    def format_time_with_centisec(self, sec):
+        """Format time as MM:SS.CC (minutes:sec.centisec)"""
+        if sec is None or sec < 0:
             return "00:00.00"
         
-        minutes = int(seconds // 60)
-        remaining_seconds = seconds % 60
-        secs = int(remaining_seconds)
-        centiseconds = int((remaining_seconds - secs) * 100)
+        minutes = int(sec // 60)
+        remaining_sec = sec % 60
+        secs = int(remaining_sec)
+        centisec = int((remaining_sec - secs) * 100)
         
-        return f"{minutes:02d}:{secs:02d}.{centiseconds:02d}"
+        return f"{minutes:02d}:{secs:02d}.{centisec:02d}"
 
 
     def get_current_video_time(self):
-        """Get current video playback time in seconds"""
+        """Get current video playback time in sec"""
         #if self.video_start_time:
         #    elapsed_time = time.time() - self.video_start_time
         #    current_time = elapsed_time + (self.video_pause_time or 0)
@@ -2060,7 +2019,7 @@ class WorkflowGUI:
         current_time, total_time = self.get_current_video_time()
         current_time = current_time + self.playing_delta
         self.mark1_time = current_time
-        time_str = self.format_time_with_centiseconds(current_time)
+        time_str = self.format_time_with_centisec(current_time)
         self.mark1_label.config(text=time_str)
         print(f"✓ 设置标记1: {time_str}")
     
@@ -2070,7 +2029,7 @@ class WorkflowGUI:
         current_time, total_time = self.get_current_video_time()
         current_time = current_time + self.playing_delta
         self.mark2_time = current_time
-        time_str = self.format_time_with_centiseconds(current_time)
+        time_str = self.format_time_with_centisec(current_time)
         self.mark2_label.config(text=time_str)
         print(f"✓ 设置标记2: {time_str}")
     
@@ -2191,7 +2150,7 @@ class WorkflowGUI:
                 if self.video_playing:
                     pass
                 else:
-                    total_time_str = self.format_time_with_centiseconds(total_duration)
+                    total_time_str = self.format_time_with_centisec(total_duration)
                     self.video_progress_label.config(text=f"00:00.00 / {total_time_str}")
             else:
                 self.video_progress_label.config(text="00:00.00 / 00:00.00")
@@ -2339,7 +2298,7 @@ class WorkflowGUI:
         ss = self.workflow.scenes_in_story(current_scene)
         for scene in ss:
             self.generate_video(scene, previous_scene, next_scene, "clip")
-            self.generate_video(scene, previous_scene, next_scene, "second")
+            self.generate_video(scene, previous_scene, next_scene, "narration")
 
         self.refresh_gui_scenes()
         messagebox.showinfo("成功", "WAN视频批量生成成功！")
@@ -2358,14 +2317,14 @@ class WorkflowGUI:
         messagebox.showinfo("成功", "媒体清理成功！")
 
 
-    def adjust_second_delta(self, delta):
-        self.second_delta = self.second_delta + delta
-        if self.second_delta < -10:
-            self.second_delta = -10
-        if self.second_delta > 10:
-            self.second_delta = 10
+    def adjust_sec_delta(self, delta):
+        self.sec_delta = self.sec_delta + delta
+        if self.sec_delta < -10:
+            self.sec_delta = -10
+        if self.sec_delta > 10:
+            self.sec_delta = 10
         
-        self.second_delta_label.config(text=f"{self.second_delta:.1f}s")
+        self.sec_delta_label.config(text=f"{self.sec_delta:.1f}s")
 
 
     def move_video(self, delta):
@@ -2494,7 +2453,7 @@ class WorkflowGUI:
 
     def toggle_track_playback(self):
         # 检查当前选中的tab
-        current_tab_index = self.second_notebook.index(self.second_notebook.select())
+        current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
 
         if current_tab_index == 1:
             if self.pip_lr_playing:
@@ -2502,76 +2461,82 @@ class WorkflowGUI:
             else:
                 self.play_pip_lr()
         else:
-            if self.second_track_playing:
-                self.pause_second_track()
+            if self.secondary_track_playing:
+                self.pause_secondary_track()
             else:
-                self.play_second_track()
+                self.play_secondary_track()
 
 
-    def play_second_track(self):
-        """播放第二轨道视频的当前场景时间段（支持从暂停状态和偏移位置恢复）"""
-        second_video_path = get_file_path(self.get_current_scene(), self.selected_second_track)
-        second_audio_path = get_file_path(self.get_current_scene(), self.selected_second_track+'_audio')
+    def play_secondary_track(self):
+        """播放旁白轨道视频的当前场景时间段（支持从暂停状态和偏移位置恢复）"""
+        narration_video_path = get_file_path(self.get_current_scene(), self.selected_secondary_track)
+        narration_audio_path = get_file_path(self.get_current_scene(), self.selected_secondary_track+'_audio')
         try:
             # 检查是否是从暂停状态恢复
-            is_resuming = (self.second_track_cap and self.second_track_paused_time)
+            is_resuming = (self.secondary_track_cap and self.secondary_track_paused_time)
 
-            #elif self.second_track_paused_time:
-            #    play_start_time = self.second_track_paused_time
-            #    print(f"▶️ 从暂停位置 {self.second_track_paused_time:.1f}s 恢复播放")
+            #elif self.secondary_track_paused_time:
+            #    play_start_time = self.secondary_track_paused_time
+            #    print(f"▶️ 从暂停位置 {self.secondary_track_paused_time:.1f}s 恢复播放")
             #else:
-            #    print(f"▶️ 从头开始播放第二轨道")
+            #    print(f"▶️ 从头开始播放旁白轨道")
             
             if is_resuming:
-                play_start_time = self.second_track_paused_time
+                play_start_time = self.secondary_track_paused_time
                 # === 从暂停状态恢复（但没有设置偏移） ===
-                self.second_track_start_time = time.time()
-                self.second_track_playing = True
+                self.secondary_track_start_time = time.time()
+                self.secondary_track_playing = True
                 self.track_play_button.config(text="⏸")
-                if self.second_track_cap:
-                    self.second_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.second_track_paused_time * STANDARD_FPS))
+                if self.secondary_track_cap:
+                    self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.secondary_track_paused_time * STANDARD_FPS))
                 try:
                     pygame.mixer.music.unpause()
-                    print("▶️ 第二轨道音频已恢复")
+                    print("▶️ 旁白轨道音频已恢复")
                 except Exception as e:
-                    print(f"❌ 恢复第二轨道音频失败: {e}")
-                    self.play_second_track_audio(second_audio_path)
+                    print(f"❌ 恢复旁白轨道音频失败: {e}")
+                    self.play_secondary_track_audio(narration_audio_path)
                 
             else:
-                play_start_time = self.second_track_offset + self.second_delta
+                if self.selected_secondary_track == "narration":
+                    play_start_time = self.sec_delta
+                else:    
+                    play_start_time = self.secondary_track_offset + self.sec_delta
+                if play_start_time < 0:
+                    play_start_time = 0
+
                 # === 全新开始播放或从偏移位置播放 ===
-                if self.second_track_cap:
-                    self.second_track_cap.release()
-                self.second_track_cap = cv2.VideoCapture(second_video_path)
-                if not self.second_track_cap.isOpened():
+                if self.secondary_track_cap:
+                    self.secondary_track_cap.release()
+                self.secondary_track_cap = cv2.VideoCapture(narration_video_path)
+                if not self.secondary_track_cap.isOpened():
                     return
 
-                self.second_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(play_start_time * STANDARD_FPS))
+                self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(play_start_time * STANDARD_FPS))
                 
-                self.second_track_end_time = self.workflow.ffmpeg_audio_processor.get_duration(second_video_path)
+                self.secondary_track_end_time = self.workflow.ffmpeg_audio_processor.get_duration(narration_video_path)
                 
-                self.second_track_playing = True
+                self.secondary_track_playing = True
                 self.track_play_button.config(text="⏸")
                 
-                self.second_track_start_time = time.time()
-                self.second_track_paused_time = None
+                self.secondary_track_start_time = time.time()
+                self.secondary_track_paused_time = None
                 
-                self.play_second_track_audio(second_audio_path)
+                self.play_secondary_track_audio(narration_audio_path)
                 
-                print(f"▶ 开始播放第二轨道视频片段: {play_start_time:.1f}s - {self.second_track_end_time:.1f}s")
+                print(f"▶ 开始播放旁白轨道视频片段: {play_start_time:.1f}s - {self.secondary_track_end_time:.1f}s")
             
             # === 通用处理 - 开始播放循环
-            self.play_second_track_frame()
+            self.play_secondary_track_frame()
             
             # 更新时间显示
-            self.update_second_track_time_display()
+            self.update_secondary_track_time()
             
         except Exception as e:
-            print(f"❌ 播放第二轨道视频失败: {e}")
+            print(f"❌ 播放旁白轨道视频失败: {e}")
 
 
-    def play_second_track_audio(self, audio_path):
-        """播放第二轨道音频（支持从偏移位置开始）"""
+    def play_secondary_track_audio(self, audio_path):
+        """播放旁白轨道音频（支持从偏移位置开始）"""
         try:
             # 初始化pygame mixer（如果还没有初始化）
             if not pygame.mixer.get_init():
@@ -2584,9 +2549,15 @@ class WorkflowGUI:
             pygame.mixer.music.load(audio_path)
             
             # 确定音频开始播放的偏移时间
-            audio_start_offset = self.second_track_offset + self.second_delta
-            if self.second_track_paused_time:
-                audio_start_offset = self.second_track_paused_time
+            if self.secondary_track_paused_time:
+                audio_start_offset = self.secondary_track_paused_time
+            else:
+                if self.selected_secondary_track == "narration":
+                    audio_start_offset = self.sec_delta
+                else:    
+                    audio_start_offset = self.secondary_track_offset + self.sec_delta
+                if audio_start_offset < 0:
+                    audio_start_offset = 0
             
             try:
                 if audio_start_offset > 0:
@@ -2598,27 +2569,27 @@ class WorkflowGUI:
                 pygame.mixer.music.play()
             
             # 设置音频播放状态
-            self.second_track_audio_playing = True
+            self.secondary_track_audio_playing = True
             
         except Exception as e:
-            print(f"❌ 播放第二轨道音频失败: {e}")
+            print(f"❌ 播放旁白轨道音频失败: {e}")
 
 
-    def stop_second_track_audio(self):
-        """停止第二轨道音频播放"""
+    def stop_secondary_track_audio(self):
+        """停止旁白轨道音频播放"""
         try:
-            if self.second_track_audio_playing:
+            if self.secondary_track_audio_playing:
                 pygame.mixer.music.stop()
-                self.second_track_audio_playing = False
-                self.second_track_audio_start_time = None
-                print(f"⏹ 第二轨道音频播放停止")
+                self.secondary_track_audio_playing = False
+                self.secondary_track_audio_start_time = None
+                print(f"⏹ 旁白轨道音频播放停止")
         except Exception as e:
-            print(f"❌ 停止第二轨道音频失败: {e}")
+            print(f"❌ 停止旁白轨道音频失败: {e}")
 
 
-    def play_second_track_frame(self):
-        """播放第二轨道视频的下一帧（带同步机制）"""
-        if not self.second_track_playing or not self.second_track_cap:
+    def play_secondary_track_frame(self):
+        """播放旁白轨道视频的下一帧（带同步机制）"""
+        if not self.secondary_track_playing or not self.secondary_track_cap:
             return
             
         try:
@@ -2626,31 +2597,34 @@ class WorkflowGUI:
             audio_is_playing = pygame.mixer.music.get_busy()
             if not audio_is_playing:
                 # 音频播放完毕，停止视频
-                self.stop_second_track()
-                print("✅ 第二轨道音频播放完毕，视频同步停止")
+                self.stop_secondary_track()
+                print("✅ 旁白轨道音频播放完毕，视频同步停止")
                 return
             
-            if self.second_track_start_time:
+            if self.secondary_track_start_time:
                 # 计算实际经过的时间
-                current_time = (time.time() - self.second_track_start_time) + self.second_track_offset + self.second_delta
+                if self.selected_secondary_track == "narration":
+                    current_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+                else:    
+                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
                 
                 # 计算应该在第几帧
                 target_frame = int(current_time * STANDARD_FPS)
-                current_frame = int(self.second_track_cap.get(cv2.CAP_PROP_POS_FRAMES))
+                current_frame = int(self.secondary_track_cap.get(cv2.CAP_PROP_POS_FRAMES))
                 
                 # 如果视频帧落后于音频进度，跳帧追赶
                 if target_frame > current_frame + 2:  # 允许2帧的容错
-                    self.second_track_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 
                 # 检查是否超过了视频结束时间
-                if current_time >= self.second_track_end_time:
-                    self.stop_second_track()
+                if current_time >= self.secondary_track_end_time:
+                    self.stop_secondary_track()
                     return
             
-            ret, frame = self.second_track_cap.read()
+            ret, frame = self.secondary_track_cap.read()
             if not ret:
                 # 视频结束，停止播放
-                self.stop_second_track()
+                self.stop_secondary_track()
                 return
             
             # 显示视频帧到Canvas
@@ -2659,8 +2633,8 @@ class WorkflowGUI:
             pil_image = Image.fromarray(frame_rgb)
             
             # 调整图像大小适应Canvas
-            canvas_width = self.second_track_canvas.winfo_width()
-            canvas_height = self.second_track_canvas.winfo_height()
+            canvas_width = self.secondary_track_canvas.winfo_width()
+            canvas_height = self.secondary_track_canvas.winfo_height()
             
             if canvas_width > 1 and canvas_height > 1:
                 pil_image.thumbnail((canvas_width - 10, canvas_height - 10), Image.Resampling.LANCZOS)
@@ -2668,106 +2642,105 @@ class WorkflowGUI:
                 pil_image.thumbnail((310, 170), Image.Resampling.LANCZOS)
             
             # 更新画布
-            self.current_second_track_frame = ImageTk.PhotoImage(pil_image)
-            self.second_track_canvas.delete("all")
+            self.current_secondary_track_frame = ImageTk.PhotoImage(pil_image)
+            self.secondary_track_canvas.delete("all")
             
             canvas_width = canvas_width or 320
             canvas_height = canvas_height or 180
             x = canvas_width // 2
             y = canvas_height // 2
-            self.second_track_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_second_track_frame)
+            self.secondary_track_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_secondary_track_frame)
             
             # 更新时间显示
-            self.update_second_track_time_display()
+            self.update_secondary_track_time()
             
             # 安排下一帧播放
             delay = max(1, int(1000 / STANDARD_FPS))  # 毫秒
-            self.second_track_after_id = self.root.after(delay, self.play_second_track_frame)
+            self.secondary_track_after_id = self.root.after(delay, self.play_secondary_track_frame)
             
         except Exception as e:
-            print(f"❌ 播放第二轨道视频帧失败: {e}")
-            self.stop_second_track()
+            print(f"❌ 播放旁白轨道视频帧失败: {e}")
+            self.stop_secondary_track()
 
 
-    def pause_second_track(self):
-        if not self.second_track_playing:
+    def pause_secondary_track(self):
+        if not self.secondary_track_playing:
             return
 
-        """暂停第二轨道视频播放"""
-        self.second_track_playing = False
+        """暂停旁白轨道视频播放"""
+        self.secondary_track_playing = False
         self.track_play_button.config(text="▶")
         
         # 计算并保存当前播放偏移时间（关键！与新的同步机制兼容）
-        if self.second_track_start_time:
-            try:
-                self.second_track_paused_time = (time.time() - self.second_track_start_time) + self.second_track_offset + self.second_delta
-                print(f"⏸ 保存第二轨道暂停位置: {self.second_track_paused_time:.1f}s")
-            except Exception as e:
-                print(f"❌ 保存暂停位置失败: {e}")
+        if self.secondary_track_start_time:
+            if self.selected_secondary_track == "narration":
+                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+            else:    
+                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
         
         # 暂停音频播放
         try:
             pygame.mixer.music.pause()
-            print("⏸ 第二轨道音频已暂停")
+            print("⏸ 旁白轨道音频已暂停")
         except Exception as e:
-            print(f"❌ 暂停第二轨道音频失败: {e}")
+            print(f"❌ 暂停旁白轨道音频失败: {e}")
         
-        if self.second_track_after_id:
-            self.root.after_cancel(self.second_track_after_id)
-            self.second_track_after_id = None
+        if self.secondary_track_after_id:
+            self.root.after_cancel(self.secondary_track_after_id)
+            self.secondary_track_after_id = None
             
         # 更新时间显示
-        self.update_second_track_time_display()
+        self.update_secondary_track_time()
     
 
-    def stop_second_track(self):
-        """停止第二轨道视频播放"""
-        self.second_track_playing = False
+    def stop_secondary_track(self):
+        """停止旁白轨道视频播放"""
+        self.secondary_track_playing = False
         self.track_play_button.config(text="▶")
         
         # 停止音频播放
-        self.stop_second_track_audio()
+        self.stop_secondary_track_audio()
         
-        if self.second_track_after_id:
-            self.root.after_cancel(self.second_track_after_id)
-            self.second_track_after_id = None
+        if self.secondary_track_after_id:
+            self.root.after_cancel(self.secondary_track_after_id)
+            self.secondary_track_after_id = None
             
-        if self.second_track_cap:
-            self.second_track_cap.release()
-            self.second_track_cap = None
+        if self.secondary_track_cap:
+            self.secondary_track_cap.release()
+            self.secondary_track_cap = None
             
         # 清除所有状态变量
-        self.second_track_paused_time = None
-        self.second_track_paused_audio_time = None
-        self.second_track_start_time = None
-        self.reset_track_offset() # self.second_track_pause_offset
+        self.secondary_track_paused_time = None
+        self.secondary_track_paused_audio_time = None
+        self.secondary_track_start_time = None
+        self.reset_track_offset() # self.secondary_track_pause_offset
         
-        print("⏹ 清除第二轨道所有状态")
+        print("⏹ 清除旁白轨道所有状态")
             
-        self.second_track_canvas.delete("all")
-        self.second_track_canvas.create_text(160, 90, text="第二轨道视频预览\n选择视频后播放显示", 
+        self.secondary_track_canvas.delete("all")
+        self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示", 
                                             fill="gray", font=("Arial", 10), justify=tk.CENTER, tags="hint")
         
         # 更新时间显示
-        self.update_second_track_time_display()
+        self.update_secondary_track_time()
 
 
     # ========== PIP L/R 播放控制函数 ==========
     
     def play_pip_lr(self):
-        """同步播放 second_left 和 second_right 视频（支持从暂停恢复）"""
+        """同步播放 narration_left 和 narration_right 视频（支持从暂停恢复）"""
         try:
             current_scene = self.get_current_scene()
             if not current_scene:
                 return
             
             # 获取视频路径
-            left_path = current_scene.get('second_left')
-            right_path = current_scene.get('second_right')
+            left_path = current_scene.get('narration_left')
+            right_path = current_scene.get('narration_right')
             audio_path = current_scene.get('clip_audio')
             
             if not left_path or not right_path:
-                messagebox.showwarning("提示", "当前场景没有 second_left 或 second_right 视频")
+                messagebox.showwarning("提示", "当前场景没有 narration_left 或 narration_right 视频")
                 return
             
             if not os.path.exists(left_path) or not os.path.exists(right_path):
@@ -3009,17 +2982,17 @@ class WorkflowGUI:
         print("⏹ 停止 PIP L/R 播放")
 
     
-    def on_second_track_tab_changed(self, event=None):
+    def on_secondary_track_tab_changed(self, event=None):
         """tab切换时停止正在播放的视频并加载预览帧"""
         # 先停止所有播放
-        self.pause_second_track()
+        self.pause_secondary_track()
         self.pause_pip_lr()
         
         # 根据当前 tab 加载相应的预览帧
-        current_tab_index = self.second_notebook.index(self.second_notebook.select())
+        current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
         if current_tab_index == 0:
-            # 第二轨道 tab：从当前偏移位置加载第一帧
-            self.load_second_track_first_frame()
+            # 旁白轨道 tab：从当前偏移位置加载第一帧
+            self.load_secondary_track_first_frame()
         elif current_tab_index == 1:
             # PIP L/R tab：从起始位置加载第一帧
             self.load_pip_lr_first_frame()
@@ -3032,8 +3005,8 @@ class WorkflowGUI:
             if not current_scene:
                 return
             
-            left_path = current_scene.get(self.selected_second_track+'_left')
-            right_path = current_scene.get(self.selected_second_track+'_right')
+            left_path = current_scene.get(self.selected_secondary_track+'_left')
+            right_path = current_scene.get(self.selected_secondary_track+'_right')
             
             if not left_path or not right_path:
                 # 清空画布显示提示
@@ -3084,7 +3057,7 @@ class WorkflowGUI:
         
         Args:
             event: 拖放事件
-            image_type: 'clip_image', 'second_image', 或 'zero_image'
+            image_type: 'clip_image', "narration_image", 或 'zero_image'
         """
         file_path = event.data.strip('{}').strip('"')
         
@@ -3137,8 +3110,8 @@ class WorkflowGUI:
             canvas_mapping = {
                 'clip_image': (self.clip_image_canvas, "Clip\nImage", '_clip_image_photo'),
                 'clip_image_last': (self.clip_image_last_canvas, "Clip\nLast", '_clip_image_last_photo'),
-                'second_image': (self.second_image_canvas, "Second\nImage", '_second_image_photo'),
-                'second_image_last': (self.second_image_last_canvas, "Second\nLast", '_second_image_last_photo'),
+                "narration_image": (self.narration_image_canvas, "narration\nImage", '_narration_image_photo'),
+                "narration_image_last": (self.narration_image_last_canvas, "narration\nLast", '_narration_image_last_photo'),
                 'zero_image': (self.zero_image_canvas, "Zero\nImage", '_zero_image_photo'),
                 'zero_image_last': (self.zero_image_last_canvas, "Zero\nLast", '_zero_image_last_photo'),
                 'one_image': (self.one_image_canvas, "One\nImage", '_one_image_photo'),
@@ -3196,8 +3169,8 @@ class WorkflowGUI:
         """加载所有图片预览"""
         self.display_image_on_canvas_for_track('clip_image')
         self.display_image_on_canvas_for_track('clip_image_last')
-        self.display_image_on_canvas_for_track('second_image')
-        self.display_image_on_canvas_for_track('second_image_last')
+        self.display_image_on_canvas_for_track("narration_image")
+        self.display_image_on_canvas_for_track("narration_image_last")
         self.display_image_on_canvas_for_track('zero_image')
         self.display_image_on_canvas_for_track('zero_image_last')
         self.display_image_on_canvas_for_track('one_image')
@@ -3213,31 +3186,30 @@ class WorkflowGUI:
             pygame.mixer.music.set_volume(volume)
 
     
-    def update_second_track_time_display(self):
-        """更新第二轨道播放时间显示"""
+    def update_secondary_track_time(self):
+        """更新旁白轨道播放时间显示"""
         try:
-            if not hasattr(self, 'second_track_cap') or not self.second_track_cap:
+            if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
                 self.track_time_label.config(text="00:00 / 00:00")
                 return
             
             # 获取视频总时长
-            total_frames = self.second_track_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            total_frames = self.secondary_track_cap.get(cv2.CAP_PROP_FRAME_COUNT)
             total_duration = total_frames / STANDARD_FPS
             
             # 确定当前播放时间
             current_time = 0.0
-            if self.second_track_playing and self.second_track_start_time:
-                # 播放状态：根据实际经过时间计算
-                current_time = (time.time() - self.second_track_start_time) + self.second_track_offset + self.second_delta
-            elif self.second_track_paused_time:
+            if self.secondary_track_playing and self.secondary_track_start_time:
+                if self.selected_secondary_track == "narration":
+                    current_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+                else:
+                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
+            elif self.secondary_track_paused_time:
                 # 暂停状态：使用暂停时间
-                current_time = self.second_track_paused_time
-            elif self.second_track_offset:
-                # 使用偏移位置
-                current_time = self.second_track_offset + self.second_delta
+                current_time = self.secondary_track_paused_time
             else:
                 # 默认：从视频帧位置计算
-                current_pos = self.second_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
+                current_pos = self.secondary_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
                 current_time = current_pos / STANDARD_FPS
             
             # 确保时间在合理范围内
@@ -3250,25 +3222,25 @@ class WorkflowGUI:
             self.track_time_label.config(text=f"{current_str} / {total_str}")
             
         except Exception as e:
-            print(f"❌ 更新第二轨道时间显示失败: {e}")
+            print(f"❌ 更新旁白轨道时间显示失败: {e}")
             self.track_time_label.config(text="00:00 / 00:00")
 
 
-    def move_second_track_forward(self):
-        """第二轨道前进1秒"""
+    def move_secondary_track_forward(self):
+        """旁白轨道前进1秒"""
         try:
-            if not hasattr(self, 'second_track_cap') or not self.second_track_cap:
+            if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
                 return
                 
             # 获取当前播放位置
-            current_pos = self.second_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
+            current_pos = self.secondary_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
             current_time = current_pos / STANDARD_FPS
             
             # 前进1秒
             new_time = current_time + 1.0
             
             # 获取视频总时长
-            total_frames = self.second_track_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            total_frames = self.secondary_track_cap.get(cv2.CAP_PROP_FRAME_COUNT)
             total_duration = total_frames / STANDARD_FPS
             
             # 确保不超过视频总时长
@@ -3276,39 +3248,39 @@ class WorkflowGUI:
                 new_time = total_duration - 0.1
                 
             # 跳转到新位置
-            self.second_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(new_time * STANDARD_FPS))
+            self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(new_time * STANDARD_FPS))
             
             # 更新时间显示
-            self.update_second_track_time_display()
+            self.update_secondary_track_time()
             
-            print(f"⏩ 第二轨道前进1秒: {current_time:.1f}s -> {new_time:.1f}s")
+            print(f"⏩ 旁白轨道前进1秒: {current_time:.1f}s -> {new_time:.1f}s")
             
         except Exception as e:
-            print(f"❌ 第二轨道前进失败: {e}")
+            print(f"❌ 旁白轨道前进失败: {e}")
 
 
-    def move_second_track_backward(self):
-        """第二轨道后退1秒"""
+    def move_secondary_track_backward(self):
+        """旁白轨道后退1秒"""
         try:
-            if not hasattr(self, 'second_track_cap') or not self.second_track_cap:
+            if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
                 return
             # 获取当前播放位置
-            current_pos = self.second_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
+            current_pos = self.secondary_track_cap.get(cv2.CAP_PROP_POS_FRAMES)
             # 后退1秒
             new_time = current_pos / STANDARD_FPS - 1.0
             if new_time < 0:
                 new_time = 0
                 
             # 跳转到新位置
-            self.second_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(new_time * STANDARD_FPS))
+            self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(new_time * STANDARD_FPS))
             
             # 更新时间显示
-            self.update_second_track_time_display()
+            self.update_secondary_track_time()
             
-            print(f"⏪ 第二轨道后退1秒")
+            print(f"⏪ 旁白轨道后退1秒")
             
         except Exception as e:
-            print(f"❌ 第二轨道后退失败: {e}")
+            print(f"❌ 旁白轨道后退失败: {e}")
     
 
     def shift_scene(self, forward=True):
@@ -3412,11 +3384,11 @@ class WorkflowGUI:
         if current_scene and next_scene:
             clip_image_split = current_scene.get("clip_image_split", "")
             clip_animation = current_scene.get("clip_animation", "")
-            second_animation = current_scene.get("second_animation", "")
+            narration_animation = current_scene.get("narration_animation", "")
 
             next_scene["clip_image_split"] = clip_image_split
             next_scene["clip_animation"] =  clip_animation
-            next_scene["second_animation"] = second_animation
+            next_scene["narration_animation"] = narration_animation
 
             clip_image = current_scene.get("clip_image", "")
             clip_image_last = current_scene.get("clip_image_last", "")
@@ -3425,22 +3397,22 @@ class WorkflowGUI:
             if clip_image_last:
                 refresh_scene_media(next_scene, "clip_image_last", ".webp", clip_image_last, True)
 
-            second_image = current_scene.get("second_image", "")
-            second_image_last = current_scene.get("second_image_last", "")
-            if second_image:
-                refresh_scene_media(next_scene, "second_image", ".webp", second_image, True)
-            if second_image_last:
-                refresh_scene_media(next_scene, "second_image_last", ".webp", second_image_last, True)
+            narration_image = current_scene.get("narration_image", "")
+            narration_image_last = current_scene.get("narration_image_last", "")
+            if narration_image:
+                refresh_scene_media(next_scene, "narration_image", ".webp", narration_image, True)
+            if narration_image_last:
+                refresh_scene_media(next_scene, "narration_image_last", ".webp", narration_image_last, True)
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
 
 
-    def enhance_clip(self, clip_or_second:bool, fps_enhace:bool):
+    def enhance_clip(self, clip_or_narration:bool, fps_enhace:bool):
         """增强主图或次图"""
         scene = self.get_current_scene()
         level = self.enhance_level.get()
-        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip" if clip_or_second else "second", level, fps_enhace)
+        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip" if clip_or_narration else "narration", level, fps_enhace)
         self.refresh_gui_scenes()
 
 
@@ -3848,7 +3820,7 @@ class WorkflowGUI:
                 elif media_type == 'one':
                     av_path = get_file_path(current_scene, "one")
                 else:
-                    av_path = get_file_path(current_scene, "second")
+                    av_path = get_file_path(current_scene, "narration")
             else:
                 current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
                 current_scene[media_type + "_status"] = "DND"
@@ -3862,8 +3834,17 @@ class WorkflowGUI:
             # 等待对话框关闭
             self.root.wait_window(review_dialog.dialog)
 
-            if media_type != "clip" :
-                transcribe_way = "" if ('transcribe_way' not in review_dialog.result) else review_dialog.result['transcribe_way']
+            if (not review_dialog.result) or ('transcribe_way' not in review_dialog.result) or  ('audio_json' not in review_dialog.result):
+                print("场景内容无变化")
+                return
+
+            transcribe_way = review_dialog.result['transcribe_way']
+            audio_json = review_dialog.result['audio_json']
+            if not audio_json or (transcribe_way != "single" and transcribe_way != "multiple" and media_type == "clip"):
+                print("场景内容无变化 2")
+                return
+
+            if media_type != "clip" and media_type != "narration":
                 if transcribe_way == "multiple" or media_type == "zero":
                     for sss in scenes_same_story:
                         sss[media_type] = current_scene[media_type]
@@ -3884,19 +3865,9 @@ class WorkflowGUI:
             self.workflow.save_scenes_to_json()
 
             # media_type == clip
-            if (not review_dialog.result) or ('transcribe_way' not in review_dialog.result) or (review_dialog.result['transcribe_way'] == "none"):
-                print("场景内容无变化")
-                return
-
-            transcribe_way = review_dialog.result['transcribe_way']
-            audio_json = review_dialog.result['audio_json']
-
-            current_scene["clip_animation"] = ""
-
             self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
             #else: # transcribe_way == "multiple_merge":
             #    self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
-
             messagebox.showinfo("成功", f"音频已成功替换！\n\n")
                 
         except Exception as e:
@@ -4038,7 +4009,7 @@ class WorkflowGUI:
         elif media_type == 'one':
             dropped_file = get_file_path(current_scene, "one")
         else:
-            dropped_file = get_file_path(current_scene, "second")
+            dropped_file = get_file_path(current_scene, "narration")
 
         self.handle_av_replacement(dropped_file, replace_media_audio, media_type)
 
@@ -4061,11 +4032,11 @@ class WorkflowGUI:
 
     def on_image_type_change(self, event=None):
         """处理图像类型选择变化"""
-        selected_image_type = self.scene_second_animation.get()
+        selected_image_type = self.scene_narration_animation.get()
         print(f"✅ 场景 {self.current_scene_index + 1} 图像类型已设置为: {selected_image_type}")
         
         # 保存图像类型到scenes JSON文件
-        self.save_second_animation_to_scenes_json(self.current_scene_index, selected_image_type)
+        self.save_narration_animation_to_scenes_json(self.current_scene_index, selected_image_type)
         
         # 标记配置已更改
         self._config_changed = True
@@ -4121,9 +4092,9 @@ class WorkflowGUI:
             return False
 
         
-    def save_second_animation_to_scenes_json(self, scene_index, image_type):
+    def save_narration_animation_to_scenes_json(self, scene_index, image_type):
         """保存单个场景的图像类型到scenes JSON文件"""
-        return self.update_scene_field(scene_index, "second_animation", image_type)
+        return self.update_scene_field(scene_index, "narration_animation", image_type)
         
 
     def generate_video(self, scene, previous_scene, next_scene, track):
@@ -4151,7 +4122,7 @@ class WorkflowGUI:
             wan_prompt = "..."
             scene[track+"_prompt"] = wan_prompt
 
-        action_path = get_file_path(scene, self.selected_second_track)
+        action_path = get_file_path(scene, self.selected_secondary_track)
 
         sound_path = get_file_path(scene, "clip_audio")
         next_sound_path = get_file_path(next_scene, "clip_audio")
@@ -4163,7 +4134,7 @@ class WorkflowGUI:
     def regenerate_video(self, track):
         """打开 WAN 提示词编辑对话框并生成主轨道视频"""
         if track == None:
-            track = self.selected_second_track
+            track = self.selected_secondary_track
 
         scene = self.get_current_scene()
         previous_scene = self.get_previous_scene()
@@ -4184,38 +4155,19 @@ class WorkflowGUI:
         show_wan_prompt_editor(self, self.workflow, generate_callback, scene, track)
  
 
-    def regenerate_audio(self):
-        """音频重生"""
-        scene = self.get_current_scene()
-        t, mix_audio = self.workflow.regenerate_audio_item(scene, 0, self.workflow.language)
-
-        olda, clip_audio = refresh_scene_media(scene, "clip_audio", ".wav", mix_audio)
-
-        clip_video = get_file_path(scene, "clip")
-        if clip_video:
-            clip_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, clip_audio)
-            oldv, clip_video = refresh_scene_media(scene, "clip", ".mp4", clip_video)
-
-        self.refresh_gui_scenes()
-
-
-
     def update_scene_buttons_state(self):
         """更新场景插入按钮的状态"""
         current_scene = self.get_current_scene()
         
-        # 更新前插按钮状态
         if not current_scene or self.workflow.first_scene_of_story(current_scene):
             self.insert_scene_button.config(state="normal")
         else:
             self.insert_scene_button.config(state="disabled")
         
-        # 更新后插按钮状态
         if current_scene and self.workflow.last_scene_of_story(current_scene):
             self.append_scene_button.config(state="normal")
         else:
             self.append_scene_button.config(state="disabled")
-
 
 
 

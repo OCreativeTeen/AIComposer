@@ -6,7 +6,8 @@ from collections import defaultdict
 import re
 import os
 import time
-from utility.file_util import refresh_scene_media, safe_copy_overwrite, get_file_path, build_scene_media_prefix
+from utility.file_util import safe_copy_overwrite, get_file_path, build_scene_media_prefix
+from project_manager import refresh_scene_media
 
 
 
@@ -32,7 +33,7 @@ class VideoFileInfo:
     """Information extracted from video filename"""
     file_path: str
     filename: str
-    video_type: str  # 'clip', 'second', 'zero'
+    video_type: str  # 'clip', "narration", 'zero'
     pid: str
     scenario_id: str
     video_mode: str
@@ -165,8 +166,8 @@ class MediaScanner:
         
         Args:
             file_path: Path to the file to monitor
-            stability_duration: How long the file size must remain constant (seconds)
-            check_interval: How often to check file size (seconds)
+            stability_duration: How long the file size must remain constant (sec)
+            check_interval: How often to check file size (sec)
         
         Returns:
             True if file is stable, False if file disappeared or error occurred
@@ -213,7 +214,7 @@ class MediaScanner:
             return None
         
         # Unified pattern for I2V, 2I2V, INT, ENH - handle all video types
-        unified_pattern = r'^(clip|second|zero)_(.+)_([^_]+)_(I2V|2I2V|INT|ENH)_(.*?)\.mp4$'
+        unified_pattern = r'^(clip|narration|zero)_(.+)_([^_]+)_(I2V|2I2V|INT|ENH)_(.*?)\.mp4$'
         match = re.match(unified_pattern, filename)
         if match and match.group(2) == pid:
             return VideoFileInfo(
@@ -226,7 +227,7 @@ class MediaScanner:
             )
 
         # Unified pattern for WS2VL, WS2VR, S2V, FS2V, PS2V - handle all video types
-        unified_pattern = r'^(clip|second|zero)_(.+)_([^_]+)_(WS2VL|WS2VR|S2V|FS2V|PS2V)_(.*?).*-audio(\.mp4)?$'
+        unified_pattern = r'^(clip|narration|zero)_(.+)_([^_]+)_(WS2VL|WS2VR|S2V|FS2V|PS2V)_(.*?).*-audio(\.mp4)?$'
         match = re.match(unified_pattern, filename)
         if match and match.group(2) == pid:
             return VideoFileInfo(

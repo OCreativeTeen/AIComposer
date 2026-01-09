@@ -24,7 +24,7 @@ class MinimaxSpeechService:
         print(f"TTS URL: {self.tts_url}")
 
 
-    def create_ssml(self, text: str, voice: str, mood: str = "calm", speed: float = 1.0, pitch: int = 0, vol: float = 1.0) -> str:
+    def create_ssml(self, text: str, voice: str, actions: str, speed: float = 1.0, pitch: int = 0, vol: float = 1.0) -> str:
         # Escape special XML characters in text
         import html
         escaped_text = html.escape(text)
@@ -39,13 +39,18 @@ class MinimaxSpeechService:
         # 将剩余的空格替换为语音停顿标记
         escaped_text = escaped_text.replace(" ", "<#0.5#>")
 
-        mood = mood.lower()
-        if mood not in EXPRESSION_STYLES:
-            mood = "calm"
+        actions = actions.lower()
+        mood = None
+        for style in EXPRESSION_STYLES:
+            if style in actions:
+                mood = style
+                break
+        if not mood:
+            mood = "auto"
 
         ssml = f"""
 {{
-    "model":"speech-2.5-hd-preview",
+    "model":"speech-2.6-hd",
     "text":"{escaped_text}",
     "stream":false,
     "language_boost":"auto",
@@ -69,7 +74,7 @@ class MinimaxSpeechService:
     
 
     def synthesize_speech(self, ssml_text: str) :
-        audio_path = f"{config.get_project_path(self.pid)}/media/{self.string_to_code(ssml_text)}.mp3"
+        audio_path = f"{config.get_project_path(self.pid)}/temp/{self.string_to_code(ssml_text)}.mp3"
         if os.path.exists(audio_path):
             return audio_path
         # Clean and validate SSML
@@ -130,35 +135,70 @@ class MinimaxSpeechService:
         for voice in VOICES:
             if voice["language"] != language:
                 continue
-            if voice["name"] == speaker:
+            if voice["name"].lower() in speaker.lower():
                 return voice["voice"]
-            if voice["voice"] == speaker:
+            if voice["voice"].lower() in speaker.lower():
                 return voice["voice"]
         return "male-qn-qingse"
 
-
+# man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl
 # Common Chinese voices and moods
 VOICES = [
     {
-        'name': 'female-host',
+        'name': 'woman_mature',
         'language': 'chinese',
-        'voice': 'female-chengshu-jingpin' # female-yujie   female-chengshu   presenter_female
+        'voice': 'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
     },
     {
-        'name': 'male-host',
+        'name': 'man_mature',
         'language': 'chinese',
-        'voice': 'male-qn-badao-jingpin' #'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
+        'voice': 'moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a' #'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
-        'name': 'actress',
+        'name': 'woman_young',
         'language': 'chinese',
-        'voice': 'female-yujie-jingpin' # female-shaonv  female-tianmei-jingpin
+        'voice': 'Chinese (Mandarin)_Warm_Bestie' # female-shaonv  female-tianmei-jingpin
     },
     {
-        'name': 'actor',
+        'name': 'man_young',
         'language': 'chinese',
-        'voice': 'male-qn-daxuesheng-jingpin'
+        'voice': 'Chinese (Mandarin)_Stubborn_Friend'
     },
+
+    {
+        'name': 'girl',
+        'language': 'chinese',
+        'voice': 'Chinese (Mandarin)_Warm_Girl' #Chinese (Mandarin)_Cute_Spirit' 'BritishChild_female_1_v1'
+    },
+    {
+        'name': 'boy',
+        'language': 'chinese',
+        'voice': 'Chinese (Mandarin)_Straightforward_Boy'
+    },
+
+    {
+        'name': 'teen_boy',
+        'language': 'chinese',
+        'voice': 'Chinese (Mandarin)_Southern_man_young'  
+    },
+    {
+        'name': 'teen_girl',
+        'language': 'chinese',
+        'voice': 'moss_audio_ad5baf92-735f-11f0-8263-fe5a2fe98ec8'  #'Chinese (Mandarin)_Warm_Girl'
+    },
+
+    {
+        'name': 'man_old',
+        'language': 'chinese',
+        'voice': 'Chinese (Mandarin)_Humorous_Elder'
+    },
+    {
+        'name': 'woman_old',
+        'language': 'chinese',
+        'voice': 'Chinese (Mandarin)_Kind-hearted_Elder'
+    },
+
+
     {
         'name': 'trump',
         'language': 'english',
@@ -173,47 +213,35 @@ VOICES = [
         'name': 'qin',
         'language': 'chinese',
         'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54'
-    },
-    {
-        'name': 'male-qingse',
-        'language': 'chinese',
-        'voice': 'male-qn-qingse'
-    },
-    {
-        'name': 'male-jingying',
-        'language': 'chinese',
-        'voice': 'male-qn-jingying'
-    },
-    
-    {
-        'name': 'male-badao',
-        'language': 'chinese',
-        'voice': 'male-qn-badao'
-    },
-    {
-        'name': 'female-shaonv',
-        'language': 'chinese',
-        'voice': 'female-shaonv'
-    },
-    {
-        'name': 'female-tianmei',
-        'language': 'chinese',
-        'voice': 'female-tianmei'
-    },
-    {
-        'name': 'female-chengshu',
-        'language': 'chinese',
-        'voice': 'female-chengshu'
-    },
-    {
-        'name': 'female-yujie',
-        'language': 'chinese',
-        'voice': 'female-yujie'
-    },
-    
+    }
 ]
 
+
+
 EXPRESSION_STYLES = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm"]
+
+
+
+
+MOODS_AZURE = [
+    'general', 'chat', 'hopeful', 'sad', 'affectionate', 'empathetic', 'disgruntled', 'gentle', 'cheerful', 'fearful', 'angry', 'calm', 
+    'excited', 'unfriendly', 'friendly', 'serious', 'dramatic', 'whisper', 'customerservice', 'narration-casual'
+] 
+
+
+#   https://learn.microsoft.com/nb-no/azure/ai-services/speech-service/language-support?tabs=tts#voice-styles-and-roles
+VOICES_11_LAB = [
+    "zh-CN-Yunyi:DragonHDFlashLatestNeural",
+    "zh-CN-Yunfan:DragonHDLatestNeural",
+    "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
+    "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural",
+    "zh-CN-Xiaochen:DragonHDFlashLatestNeural",
+    "zh-CN-XiaoqiuNeural",
+    "tw_m",
+    "tw_f"
+]
+
+
 
 
 # template = {

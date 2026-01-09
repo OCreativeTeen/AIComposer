@@ -23,21 +23,21 @@ class FfmpegAudioProcessor:
 
 
     def split_audio(self, original_clip, position):
-        first = config.get_temp_file(self.pid, "wav")
-        second = config.get_temp_file(self.pid, "wav")
+        f1st = config.get_temp_file(self.pid, "wav")
+        s2nd = config.get_temp_file(self.pid, "wav")
         try:
-            # First part: from start (0) to position
+            # 1st part: from start (0) to position
             subprocess.run([
                 self.ffmpeg_path, "-y",
                 "-i", original_clip,
-                "-t", str(position),   # duration = position seconds
+                "-t", str(position),   # duration = position sec
                 "-c:a", "pcm_s16le",
                 "-ar", "44100",
                 "-ac", "2",
-                first
+                f1st
             ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
 
-            # Second part: from position to end
+            # 2nd part: from position to end
             subprocess.run([
                 self.ffmpeg_path, "-y",
                 "-i", original_clip,
@@ -45,10 +45,10 @@ class FfmpegAudioProcessor:
                 "-c:a", "pcm_s16le",
                 "-ar", "44100",
                 "-ac", "2",
-                second
+                s2nd
             ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
 
-            return first, second
+            return f1st, s2nd
 
         except Exception as e:
             print(f"❌ An error occurred in split_audio: {e}")
@@ -246,7 +246,7 @@ class FfmpegAudioProcessor:
                 print(f"无法获取混音文件时长: {mix_sound_path}")
                 return None
 
-            # Convert start_time from seconds to milliseconds for the adelay filter
+            # Convert start_time from sec to millisec for the adelay filter
             start_time_ms = int(float(start_time) * 1000)
 
             # Build filter complex based on whether mix sound needs to be trimmed

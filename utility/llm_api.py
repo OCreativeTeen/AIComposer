@@ -103,7 +103,7 @@ class LLMApi:
         return {"role": role, "content": content}
 
 
-    def generate_json_summary(self, system_prompt, user_prompt, output_path=None, expect_list=True) -> Union[Dict, List]:
+    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True) -> Union[Dict, List]:
         max_retries = 3
         for attempt in range(max_retries):
             try:

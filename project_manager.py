@@ -14,11 +14,36 @@ import json
 import glob
 from datetime import datetime
 import config
-import config_prompt
+from config import parse_json_from_text
 import config_channel
 from utility.llm_api import LLMApi
+from utility.file_util import safe_copy_overwrite, safe_remove
+
+
 
 PROJECT_CONFIG = None
+
+
+
+media_count = 0
+pid = None
+
+def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
+    global media_count, pid, PROJECT_CONFIG
+    new_media_stem = media_type + "_" + str(scene["id"]) + "_" + str(int(datetime.now().timestamp()*100 + media_count%100))
+    media_count = (media_count + 1) % 100
+
+    old_media_path = scene.get(media_type, None)
+    if pid is None:
+        pid = PROJECT_CONFIG.get('pid')
+    scene[media_type] = config.get_media_path(pid) + "/" + new_media_stem + media_postfix
+
+    if replacement:
+        safe_copy_overwrite(replacement, scene[media_type])
+        if not make_replacement_copy:
+            safe_remove(replacement)
+    return old_media_path, scene[media_type]
+
 
 
 class ProjectConfigManager:
@@ -187,6 +212,8 @@ class ContentEditorDialog:
         self.story_editor = scrolledtext.ScrolledText(story_frame, wrap=tk.WORD, width=90, height=15)
         self.story_editor.pack(fill=tk.BOTH, expand=True)
         self.story_editor.insert('1.0', self.result_story)
+        # 绑定双击事件：从剪贴板粘贴
+        self.story_editor.bind('<Double-1>', self.on_story_editor_double_click)
         
         # 按钮框架
         button_frame = ttk.Frame(main_frame)
@@ -196,8 +223,6 @@ class ContentEditorDialog:
         left_buttons = ttk.Frame(button_frame)
         left_buttons.pack(side=tk.LEFT)
         
-        ttk.Button(left_buttons, text="Remix Story (AI生成故事)", command=lambda: self.remix_content()).pack(side=tk.LEFT, padx=(0, 5))
-        
         # 右侧按钮
         right_buttons = ttk.Frame(button_frame)
         right_buttons.pack(side=tk.RIGHT)
@@ -206,7 +231,22 @@ class ContentEditorDialog:
         ttk.Button(right_buttons, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
     
 
-    def remix_content(self):
+    def on_story_editor_double_click(self, event):
+        """双击事件处理：从剪贴板粘贴内容"""
+        try:
+            # 获取剪贴板内容
+            clipboard_content = self.dialog.clipboard_get()
+            if clipboard_content:
+                # 在当前位置插入剪贴板内容
+                self.story_editor.insert(tk.INSERT, clipboard_content)
+        except tk.TclError:
+            # 剪贴板为空或无法访问时，静默处理
+            pass
+        except Exception as e:
+            # 其他错误时，可以显示提示（可选）
+            print(f"粘贴剪贴板内容时出错: {e}")
+
+    def on_ok(self):
         """使用LLM生成内容"""
         if not self.llm_api:
             messagebox.showerror("错误", "LLM API未初始化，无法生成内容")
@@ -215,22 +255,32 @@ class ContentEditorDialog:
         topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
         user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
-        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_system_prompt"]["program"].format(language=config.LANGUAGES[self.language])
+        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program"].format(language=config.LANGUAGES[self.language])
         # 调用LLM生成内容
-        generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
+        generated_content = self.llm_api.generate_json(system_prompt, user_prompt)
         if generated_content:
+            for item in generated_content:
+                item["story_details"] = story
+
             self.story_editor.config(state=tk.NORMAL)
             self.story_editor.delete('1.0', tk.END)
-            self.story_editor.insert('1.0', generated_content.strip())
+            self.story_editor.insert('1.0', json.dumps(generated_content, indent=2, ensure_ascii=False))
             messagebox.showinfo("成功", "内容生成完成！")
         else:
             messagebox.showerror("错误", "内容生成失败")
-
+            return
     
-    def on_ok(self):
-        """确定按钮 - 保存三个字段的内容"""
-        self.result_story = self.story_editor.get('1.0', tk.END).strip()
+        try:
+            story_content = self.story_editor.get('1.0', tk.END).strip()
+            story_content = parse_json_from_text(story_content)
+            if not story_content:
+                messagebox.showerror("错误", "故事内容为空")
+                return
+        except Exception as e:
+            messagebox.showerror("错误", "故事内容格式错误")
+            return
 
+        self.result_story = self.story_editor.get('1.0', tk.END).strip()
         self.dialog.destroy()
 
 
@@ -245,6 +295,7 @@ class ContentEditorDialog:
         return {
             'story': self.result_story
         }
+
 
 
 class ProjectSelectionDialog:

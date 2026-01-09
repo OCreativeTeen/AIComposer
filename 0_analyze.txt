@@ -550,21 +550,21 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                 oldv, clip_video = refresh_scene_media(scene, "clip", ".mp4", clip_video)
                 changed = True
 
-            second_audio = get_file_path(scene, "second_audio")
-            second_image = get_file_path(scene, "second_image")
-            second_video = get_file_path(scene, "second")
-            if not second_audio:
-                if second_video:
-                    olda, second_audio = refresh_scene_media(scene, "second_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(second_video))
+            narration_audio = get_file_path(scene, "narration_audio")
+            narration_image = get_file_path(scene, "narration_image")
+            narration_video = get_file_path(scene, "narration")
+            if not narration_audio:
+                if narration_video:
+                    olda, narration_audio = refresh_scene_media(scene, "narration_audio", ".wav", self.ffmpeg_audio_processor.extract_audio_from_video(narration_video))
                 else:
-                    olda, second_audio = refresh_scene_media(scene, "second_audio", ".wav", self.find_default_background_music("mp3"))
+                    olda, narration_audio = refresh_scene_media(scene, "narration_audio", ".wav", self.find_default_background_music("mp3"))
                 changed = True
-            if not second_image:
-                oldi, second_image = refresh_scene_media(scene, "second_image", ".webp", self.find_default_background_media("jpeg"))
+            if not narration_image:
+                oldi, narration_image = refresh_scene_media(scene, "narration_image", ".webp", self.find_default_background_media("jpeg"))
                 changed = True
-            if not second_video:
-                second_video = self.ffmpeg_processor.image_audio_to_video(second_image, second_audio, 1)
-                oldv, second_video = refresh_scene_media(scene, "second", ".mp4", second_video)
+            if not narration_video:
+                narration_video = self.ffmpeg_processor.image_audio_to_video(narration_image, narration_audio, 1)
+                oldv, narration_video = refresh_scene_media(scene, "narration", ".mp4", narration_video)
                 changed = True
 
         for scene in self.scenes:
@@ -589,7 +589,7 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
     def sync_scene_audio(self, scene, force=False):
         #clip_image = get_file_path(scene, "clip_image")
-        # second = scene.get("second")
+        # narration = scene.get("narration")
         zero = get_file_path(scene, "zero")
         if not zero:
             print(f"❌ 没有找到zero视频")
@@ -654,7 +654,7 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
                 # "effect": config.get_next_special_effect(),
                 # "raw_scene_index": f"{audio_stem}_raw_{i}",
                 "clip_animation": "",
-                "second_animation": "",
+                "narration_animation": "",
                 "main_audio": audio_path,
                 "story_summary": text_summary
             })

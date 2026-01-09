@@ -81,7 +81,7 @@ class WanPromptEditorDialog:
             workflow: 工作流实例
             generate_video_callback: 生成视频的回调函数
             scene: 场景数据
-            track: 轨道类型 ("clip", "second", "zero")
+            track: 轨道类型 ("clip", "narration", "zero")
         """
         self.parent = parent
         self.workflow = workflow

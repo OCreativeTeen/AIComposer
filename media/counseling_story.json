@@ -1,0 +1,44 @@
+[
+    {
+        "speaker": "girl / Su Qing / thin, quiet, habitually hiding in corners, the overlooked middle child",
+        "speaking": "我小时候很少说话。那时爸爸常常酗酒,喝醉了会打妈妈和我们，妈妈却只是躲在角落里哭。有一天晚上，妈妈不在家，爸爸又开始喝酒，姐姐就悄悄把一块旧海绵塞进我裤子里面, 说这样打到屁股也就不疼了。我什么也没说，只是点头，但其实我更怕的是, 他会不会注意到我。",
+        "actions": "fearful; shoulders hunched, hands pressing against chest, eyes darting toward the door as if measuring escape routes",
+        "visual": "Late 1990s, winter evening, cold, indoor yellowish light; A cramped, dim apartment living room; peeling walls, a flickering ceiling light, empty bottles on a low table; a narrow hallway leading to bedrooms",
+        "voiceover": "童年的苏青生活在一个随时可能爆炸的家里。她在昏暗的客厅里学会了一件事：保护自己，意味着不被注意。海绵成了她的盔甲，沉默成了她的语言。"
+    },
+    {
+        "speaker": "girl / Su Qing/hyper-vigilant, sensitive to sounds, quick to flee",
+        "speaking": "后来我发现，只要听到酒瓶碰桌子的声音，我的胸口都会炸开。我们都会自动散开,没有人喊我们，可是脚已经先动了。我总是跑得最快的那个。",
+        "actions": "fearful; sudden freeze followed by quick movement, bare feet running down a narrow hallway",
+        "visual": "Early 2000s, summer, late evening, humid air; A narrow apartment corridor with doors on both sides. A bottle cap twists open off-screen. Lights flicker on as doors close quickly.",
+        "voiceover": "这个家，对她而言更像一处需要随时撤离的战场。在这个家里，撤离比停留更安全，孩子们早已熟练掌握逃跑的路线"
+    },
+    {
+        "speaker": "teen_girl / Su Qing / skinny, withdrawn, prematurely independent, cautious eyes",
+        "speaking": "我十六岁那年开始打工。站在收银台后面的时候，我假装自己只是一个普通女孩，下班会回家吃饭。第一次拿到工资，我在便利店的玻璃前站了很久，觉得自己好像终于跟别人一样了。",
+        "actions": "calm; mechanically scanning items, lips pressed together, brief distant smile when holding her first paycheck",
+        "visual": "Early 2000s, autumn night, light rain; A small convenience store at night; fluorescent lights, shelves packed tightly, rain streaking down the glass door",
+        "voiceover": "青春期的苏青试图用劳动换取一种正常感。打工不仅是赚钱，更像一张通往安全世界的车票，哪怕她还不知道终点在哪里。"
+    },
+    {
+        "speaker": "woman_young / Su Qing / reserved, longing for closeness, guarded body language",
+        "speaking": "长大以后，我总是很快地靠近别人。每一段关系开始的时候，我都觉得这次也许不一样。可当对方靠近，我就开始紧张，怕他们看清我。于是我先离开，好像这样就不算被丢下。好像被看清，比分开还危险。",
+        "actions": "sad; sitting on the edge of a bed, arms wrapped around knees, phone screen glowing with unread messages",
+        "visual": "2010s, late night, clear weather, city glow; A small rented room; unmade bed, a single window showing city lights outside; clothes stacked neatly but sparsely",
+        "voiceover": "成年后的苏青在亲密与逃离之间来回摆动。她一次次进入关系，又一次次抽身而退，留下空荡的房间和更深的疑问。亲密像一根绳子，她一边抓紧，一边害怕被拉向未知的地方。"
+    },
+    {
+        "speaker": "woman_mature / Su Qing / fragile yet determined, scars faintly visible on wrists",
+        "speaking": "有些夜里，我真的不想再醒来了。但第二天，我还是走到了这里。我也不知道为什么，只是觉得，如果有人听我说完，也许我还能撑一下。",
+        "actions": "fearful; fingers tracing old scars, breathing shallow but steadying toward the end",
+        "visual": "Early morning, spring, cool and misty; Bathroom mirror reflection at dawn; pale light, condensation on the glass, city still quiet outside",
+        "voiceover": "生与死之间，苏青曾多次徘徊。那些无人知晓的夜晚，留下了痕迹，也留下了一个尚未放弃讲述自己的灵魂。"
+    },
+    {
+        "speaker": "woman_mature / Su Qing / tired but upright, eyes searching, tentative hope mixed with doubt",
+        "speaking": "如果有一天，我真的被看见了……我能留下来吗？如果是那样，我是不是就不用一直逃了。",
+        "actions": "calm; sitting in the counseling chair, hands resting on thighs, breathing slower, eyes fixed ahead",
+        "visual": "Late afternoon, early summer, warm sunlight; The counseling room again, now in warmer light; dust floating in the sunlight; the door slightly ajar",
+        "voiceover": "故事在这里暂时停下。苏青还坐在咨询室里，带着疲惫、恐惧，也带着尚未熄灭的求生意志。她的问题没有答案，但空气中多了一点尚未命名的可能。"
+    }
+]

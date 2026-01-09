@@ -1,0 +1,44 @@
+[
+    {
+        "speaker": "man_young / Lin / lonely, tired eyes, wearing a damp oversized coat",
+        "speaking": "（自言自语）窗外的霓虹灯总是被雨水打湿，糊成一片。我坐在末班车的最后一排，看着你在街角那个旧书摊旁停下。你没带伞，对吗？",
+        "actions": "sad; He leans his forehead against the cold, vibrating bus window, tracing the path of a raindrop with a trembling finger.",
+        "visual": "Modern era, late autumn night, heavy rain. Inside a dimly lit, near-empty city bus. Through the blurred, rain-streaked windows, a flickering neon-lit street reveals a cluttered vintage bookstore on a narrow urban sidewalk."
+    },
+    {
+        "speaker": "woman_young / Ye / ethereal, melancholic, wearing a translucent raincoat that shimmers like fish scales",
+        "speaking": "（轻声低喃）我只是想找回那张画卷，哪怕它已经泛黄得看不清轮廓。我感觉到有人在看我，那目光像极了某种未落的句点，但我没有抬头。",
+        "actions": "calm; She meticulously flips through a stack of old, damp posters under a dim yellow streetlamp, her movements slow and rhythmic, almost ritualistic.",
+        "visual": "Outdoor, same night. A cramped sidewalk filled with wooden crates of old books and scrolls. The air is misty, and the light from a single overhead bulb creates a dramatic cone of yellow light amidst the surrounding blue-black shadows."
+    },
+    {
+        "speaker": "man_young / Lin / determined yet fragile, gripping a tattered theater program",
+        "speaking": "（独白）欢迎来到这场褪色的舞台。我知道这只是一场同样的遗憾循环。如果你注定要跳完这出苦涩的戏，那我宁愿坐在台下，做你唯一的、永久的旁观者。",
+        "actions": "sad; He sits perfectly still in a red velvet theater seat, his hands tightly interlaced, eyes fixed intensely on the empty stage as if seeing something invisible.",
+        "visual": "Interior of an abandoned, grand 1920s theater. Dust motes dance in a single, sharp spotlight. The floor is covered in tangled heaps of celluloid film strips that look like black snakes."
+    },
+    {
+        "speaker": "woman_young / Ye / graceful, distant, movements echoing a sense of brokenness",
+        "speaking": "（对着虚空说）请再次敲碎我仅剩的圆满吧。在这段没有音乐的舞步里，我不需要观众，可你偏偏就在那里，守着那些早已作废的誓言。",
+        "actions": "disgusted; She performs a disjointed contemporary dance on the stage, her limbs snapping and extending in ways that suggest a struggle against invisible threads.",
+        "visual": "A theater stage under a flickering, cold white spotlight. The background is a cavernous darkness. Piles of old film reels reflect the strobe-like light as she moves through the shadows."
+    },
+    {
+        "speaker": "man_young / Lin / longing, reach out but hesitating",
+        "speaking": "（温柔地）我们走在了一起，在这段长廊里。影子重叠又分开，我闻到了你身上湿润的秋意。只要结尾还有你的一丝呢喃，这种卑微的陪伴也算是一种救赎吧？",
+        "actions": "calm; He walks slowly, keeping his hands behind his back, maintaining a precise, painful distance of exactly one fist's width from her shoulder.",
+        "visual": "Transition: A surreal, infinite corridor with high ceilings and arched windows. The lighting shifts to an oversaturated, glowing amber. The walls are lined with blurred photographs of the same two people."
+    },
+    {
+        "speaker": "woman_young / Ye / fading, looking toward a blinding light",
+        "speaking": "（渐弱的声音）这灾难般的浪漫该结束了。让你一次又一次拆穿我的心，也是我最后能给你的勇敢。再见，或者……再也不见。",
+        "actions": "surprised; She stops walking and turns slightly, her face partially dissolved by a blinding white light coming from the end of the hallway. She steps into the glow without looking back.",
+        "visual": "The end of the amber corridor. A massive, overexposed white void. Her silhouette becomes thinner and more transparent as she merges with the light."
+    },
+    {
+        "speaker": "man_young / Lin / shattered, holding a ruined object",
+        "speaking": "（苦笑）心碎了……也没关系。只要你还没走远，哪怕只存在于这张糊掉的画卷里。我依然会守在这里，守着这最后的一秒钟。",
+        "actions": "sad; He stands alone under a flickering streetlamp, staring down at a soaked, pulpy mess of paper in his hands. He tries to smooth it out, but it disintegrates further under his touch.",
+        "visual": "Back to the rain-soaked street. Empty. A single, malfunctioning streetlamp hums and flickers. The man is a small, isolated figure against the vast, dark cityscape as the camera slowly rises into the rainy sky."
+    }
+]

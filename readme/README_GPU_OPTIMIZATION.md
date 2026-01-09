@@ -243,7 +243,7 @@ watch -n 1 nvidia-smi
 
 ### For Maximum Performance:
 1. **Use 1920×1080 or lower** for best GPU acceleration
-2. **Keep videos under 60 seconds** for optimal memory usage  
+2. **Keep videos under 60 sec** for optimal memory usage  
 3. **Close other GPU applications** while processing
 4. **Use SSD storage** for temporary files
 

@@ -34,8 +34,8 @@ class MediaTypeSelector:
         ttk.Button(options_frame, text="第一轨道 (one/one_audio/one_image)", 
                   command=lambda: self.select("one")).pack(fill=tk.X, pady=5)
 
-        ttk.Button(options_frame, text="第二轨道 (second/second_audio/second_image)", 
-                  command=lambda: self.select("second")).pack(fill=tk.X, pady=5)
+        ttk.Button(options_frame, text="旁白轨道 (narration/narration_audio/narration_image)", 
+                  command=lambda: self.select("narration")).pack(fill=tk.X, pady=5)
         
         ttk.Button(options_frame, text="背景轨道 (zero/zero_audio/zero_image)", 
                   command=lambda: self.select("zero")).pack(fill=tk.X, pady=5)
@@ -67,7 +67,7 @@ class MediaTypeSelector:
 
             # 说明文字
             info_label = ttk.Label(audio_frame, 
-                                  text="💡 替换选项：将使用场景中对应的音频文件\n(clip_audio/second_audio/zero_audio)", 
+                                  text="💡 替换选项：将使用场景中对应的音频文件\n(clip_audio/narration_audio/zero_audio)", 
                                   foreground="gray", 
                                   font=('Arial', 8))
             info_label.pack(anchor=tk.W, pady=(5, 0))

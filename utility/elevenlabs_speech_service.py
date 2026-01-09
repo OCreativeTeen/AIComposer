@@ -276,7 +276,7 @@ class ElevenLabsSpeechService:
     
 
     def generate_voice_from_json(self, output_path: str, voice_data: List[Dict], delay: int = 0, wait: int = 0) -> str:
-        half_second_path = os.path.abspath(f"{config.BASE_MEDIA_PATH}/effect/half.wav")
+        half_narration_path = os.path.abspath(f"{config.BASE_MEDIA_PATH}/effect/half.wav")
         
         # 生成唯一标识符
         json_string = json.dumps(voice_data, ensure_ascii=False)
@@ -286,7 +286,7 @@ class ElevenLabsSpeechService:
         # 添加开始延迟
         if delay > 0:
             for i in range(delay):
-                audio_path_list.append(half_second_path)
+                audio_path_list.append(half_narration_path)
         
         # 处理每个语音片段
         for item in voice_data:
@@ -303,7 +303,7 @@ class ElevenLabsSpeechService:
         # 添加结束等待
         if wait > 0:
             for i in range(wait):
-                audio_path_list.append(half_second_path)
+                audio_path_list.append(half_narration_path)
         
         # 合并所有音频
         self.ffmpeg_audio_processor.concat_audios(output_path, audio_path_list)

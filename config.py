@@ -2,6 +2,68 @@ import os
 import uuid
 import random
 import glob
+import json
+
+
+def parse_json_from_text(text):
+    """从文本中解析 JSON，处理可能的引号包裹问题"""
+    if not text:
+        return None
+    
+    text = text.strip()
+    if not text:
+        return None
+    
+    # 尝试直接解析
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    
+    # 处理被引号包裹的情况：去除外层引号（可能是单引号或双引号）
+    # 处理类似 "'[ ..." 或 '"[...' 的情况
+    cleaned_text = text
+    
+    # 去除外层单引号
+    if cleaned_text.startswith("'") and cleaned_text.endswith("'"):
+        cleaned_text = cleaned_text[1:-1].strip()
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            pass
+    
+    # 去除外层双引号
+    if cleaned_text.startswith('"') and cleaned_text.endswith('"'):
+        cleaned_text = cleaned_text[1:-1].strip()
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            pass
+    
+    # 处理双重引号包裹的情况（如 "'[...'" 或 '"\'[...\'"')
+    # 先去除外层单引号，再去除内层双引号
+    if text.startswith("'\"") and text.endswith("\"'"):
+        cleaned_text = text[2:-2].strip()
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            pass
+    
+    # 处理转义字符的情况
+    # 尝试使用 ast.literal_eval 作为备选方案（仅当字符串看起来像 Python 字面量时）
+    try:
+        import ast
+        # 如果字符串看起来像 Python 字符串字面量，尝试解析
+        if (text.startswith('"') or text.startswith("'")) and (text.endswith('"') or text.endswith("'")):
+            evaluated = ast.literal_eval(text)
+            if isinstance(evaluated, str):
+                return json.loads(evaluated)
+            elif isinstance(evaluated, (list, dict)):
+                return evaluated
+    except (ValueError, SyntaxError):
+        pass
+    
+    return None
 
 
 

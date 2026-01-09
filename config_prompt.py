@@ -90,7 +90,7 @@ from the audio-text segments (in json format) given in 'user-prompt', like below
 
 Focus on the "speaking" field to merge out the complete thought in {language} (ignore the "speaker" field in merging consideration)
 Figure out the start & end time of each sentence, based on the "start" & "end" field of the audio-text segments, 
-    and try to make each sentence not less than {min_sentence_duration} seconds, but not more than {max_sentence_duration} seconds.
+    and try to make each sentence not less than {min_sentence_duration} sec, but not more than {max_sentence_duration} sec.
 Figure out the most possible speaker of each sentence, based on the "speaker" field of the audio-text segments.
 
 ---------------------------------
@@ -302,97 +302,7 @@ Based on the raw-story-outline provided in the user prompt, write a '{story_styl
 """
 
 
-STORY_OUTPUT_EXAMPLE = """
-[
-    {{
-        "speaker": "male-host",
-        "mood": "calm", 
-        "speaker_action": "Narrator speaks with solemn gravity.",
-        "speaking": "故事始于一个灵气枯竭的时代。白素贞，一条修行千年的白蛇，本是天界医仙转世。她在雷劫中试图强行飞升，却因不忍见山下村民遭难，耗尽灵力救人，最终渡劫失败，坠落凡尘。",
-        "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
-        "visual_image": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
-        "person_action": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
-        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
-        "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
-        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
-        "cinematography": {{
-            "camera_movement": "Wide shot, rapid tilt down following the falling body",
-            "lighting_style": "High contrast, strobe lighting from lightning, cool purple and dark grey tones",
-            "lens_type": "Wide angle 24mm"
-        }}
-    }},
-    {{
-        "speaker": "actress",
-        "mood": "curious",
-        "speaker_action": "actress (Bai) walking in the bridge of west lake.",
-        "speaking": "白素贞化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许仙。两人目光交汇，许仙那清澈的眼神唤醒了白素贞前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
-        "subject": "白素贞：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
-        "visual_image": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
-        "person_action": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
-        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
-        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
-        "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
-        "cinematography": {{
-            "camera_movement": "Slow motion dolly-in on the couple's faces, then rack focus to the sky",
-            "lighting_style": "Soft diffused daylight, low contrast, misty cyan and white palette",
-            "lens_type": "Telephoto 85mm (Bokeh effect)"
-        }}
-    }},
-    {{
-        "speaker": "actor",
-        "mood": "fearful",
-        "speaker_action": "actor (Xu) scared by the huge white snake.",
-        "speaking": "大水漫灌，许仙命悬一线。白素贞不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许仙看着面前的庞然大物，惊恐地问：‘你……是谁？’",
-        "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
-        "visual_image": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
-        "person_action": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
-        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
-        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
-        "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",
-        "cinematography": {{    
-            "camera_movement": "Handheld shaky cam (simulating panic), looking up at the monster from human perspective",
-            "lighting_style": "Harsh dynamic lighting from lightning strikes, deep shadows, blue and black palette",
-            "lens_type": "Wide angle 16mm (emphasizing scale)"
-        }}
-    }},
-    ......
-]
-"""
 
-
-
-INTRODUCTION_OUTPUT_EXAMPLE = """
-Below is the output Example:
-
-[
-    {{
-        "speaker": "male-host",
-        "mood": "calm", 
-        "speaking": "大家好，今天我们来聊聊一个正在发生的故事——AI，我们这里不是来谈技术参数，不是谈冷冰冰的代码，而是它正在怎样改变'人'的生活"
-    }},
-    {{
-        "speaker": "female-host",
-        "mood": "sad",
-        "speaking": "先给你讲个真实的例子。我认识一个杭州的年轻游戏插画师。过去，他会为了画一个角色立绘，熬夜几十个小时，一笔一笔打磨细节。可现在，公司直接用 AI 出图。客户输入几句提示词，几分钟就能生成十几张方案。他在社交媒体上写道：'不是我不努力，而是努力，被技术直接抹掉了' 这一句话，戳中了很多同行的心。"
-    }},
-    {{
-        "speaker": "male-host",
-        "mood": "surprised",
-        "speaking": "再看看香港。有些年轻人开始使用 AI 聊天伴侣。他们说，AI 聊天伴侣比朋友还懂自己：从不嫌弃，从不打断，随时陪伴。孤独的时候，那种温柔的回应，真的让人觉得舒服。可研究发现，长期依赖 AI 伴侣的人，反而在现实里更不敢面对人际关系。就像裹着一条温暖的毯子，暖是暖了，却越来越走不出去。"
-    }},
-    {{
-        "speaker": "actress",
-        "mood": "sad",
-        "speaking": "我好孤独，AI聊天伴侣真的帮到我的。"
-    }},
-    {{
-        "speaker": "actor",
-        "mood": "sad",
-        "speaking": "外面的人会嘲笑我，AI聊天伴侣从来不会。"
-    }},
-    ......
-]
-"""
 
 
 SPEAKING_ADDON = [
@@ -419,39 +329,34 @@ SPEAKING_PROMPTS = {
     "Story-Telling": {
         "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Natural story-telling script",
-            "EXAMPLE": STORY_OUTPUT_EXAMPLE
+            "story_style": "Natural story-telling script"
         }
     },
     "Story-Conversation": {
         "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
-            "story_style": "Natual conversation to express the story",
-            "EXAMPLE": INTRODUCTION_OUTPUT_EXAMPLE  # Add this missing parameter
+            "story_style": "Natual conversation to express the story"
         }
     },
     "Content-Introduction": {
         "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
             "story_style": "Introduction speaking for the story",
-            "engaging": "Bring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations",
-            "EXAMPLE": INTRODUCTION_OUTPUT_EXAMPLE  # Add this missing parameter
+            "engaging": "Bring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations"
         }
     },
     "Radio-Drama-Dramatic": {
         "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
             "story_style": "Radio-Drama-style immersive conversation to express the story",
-            "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations.\n",
-            "EXAMPLE": STORY_OUTPUT_EXAMPLE  # Add this missing parameter
+            "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations.\n"
         }
     },
     "Radio-Drama-Suspense": {
         "system_prompt": STORY_SYSTEM_PROMPT,  # Will be formatted at runtime
         "format_args": {
             "story_style": "Radio-Drama-style immersive conversation to express the story",
-            "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations\nAt end, leave suspense to grab attention with provocative question / challenge to the audience",
-            "EXAMPLE": STORY_OUTPUT_EXAMPLE  # Add this missing parameter
+            "engaging": "Start with a dramatic hook (suspense, conflict, or shocking event), like raise questions/challenges to directly involve the audience.\nBring out dramatic /suspense /conflict details of the story to catch people attention.\nWeave in real people's stories instead of abstract generalizations\nAt end, leave suspense to grab attention with provocative question / challenge to the audience"
         }
     }
 }
@@ -959,63 +864,50 @@ ANIMATION_PROMPTS = [
 
 
 
-ACTORS = [
+SPEAKER = [
     "",
-    "mature_man",
-    "mature_woman", 
-    "mature_man left",
-    "mature_man right",
-    "mature_woman left", 
-    "mature_woman right", 
+    "man_mature",
+    "woman_mature", 
 
-    "young_man",
-    "young_woman",
-    "young_man left",
-    "young_man right",
-    "young_woman left",
-    "young_woman right",
+    "man_young",
+    "woman_young",
 
-    "senior_man",
-    "senior_woman",
+    "man_old",
+    "woman_old",
+
     "teen_boy",
     "teen_girl",
+
     "boy",
     "girl"
 ]
 
 
-#   https://learn.microsoft.com/nb-no/azure/ai-services/speech-service/language-support?tabs=tts#voice-styles-and-roles
-MOODS_AZURE = [
-    'general', 'chat', 'hopeful', 'sad', 'affectionate', 'empathetic', 'disgruntled', 'gentle', 'cheerful', 'fearful', 'angry', 'calm', 
-    'excited', 'unfriendly', 'friendly', 'serious', 'dramatic', 'whisper', 'customerservice', 'narration-casual'
-] 
+NARRATOR = [
+    "",
+    "man_mature right",
+    "man_mature left",
+    "man_mature",
+    "woman_mature right",
+    "woman_mature left",
+    "woman_mature", 
 
+    "man_young right",
+    "man_young left",
+    "man_young",
+    "woman_young right",
+    "woman_young left",
+    "woman_young",
 
-
-
-
-VOICES_11_LAB = [
-    "zh-CN-Yunyi:DragonHDFlashLatestNeural",
-    "zh-CN-Yunfan:DragonHDLatestNeural",
-    "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
-    "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural",
-    "zh-CN-Xiaochen:DragonHDFlashLatestNeural",
-    "zh-CN-XiaoqiuNeural",
-    "tw_m",
-    "tw_f"
+    "man_old right",
+    "man_old left",
+    "man_old",
+    "woman_old right",
+    "woman_old left",
+    "woman_old"
 ]
 
 
-
-HOST_FIGURE_ACTIONS = [
-    "Standing",
-    "Walking",
-    "Running",
-    "Jumping",
-    "Crying",
-    "Laughing",
-    "Praying"
-]
 
 
 

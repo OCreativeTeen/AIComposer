@@ -1100,14 +1100,14 @@ class FfmpegProcessor:
         return audio_analysis
 
 
-    def _align_time_to_frame(self, time_seconds, fps=STANDARD_FPS):
+    def _align_time_to_frame(self, time_sec, fps=STANDARD_FPS):
         """
         Align a time value to exact frame boundary to avoid floating point precision issues.
         This ensures xfade offsets are frame-accurate.
         """
         # Convert to frame count (round to nearest frame)
-        frame_count = round(time_seconds * fps)
-        # Convert back to seconds with exact precision
+        frame_count = round(time_sec * fps)
+        # Convert back to sec with exact precision
         aligned_time = frame_count / fps
         return aligned_time
 
@@ -1155,15 +1155,14 @@ class FfmpegProcessor:
                     # But we need to extend for the transition FROM this video (to next)
                     if i < n_videos - 1:
                         # Not the last video - extend by next transition duration
-                        extension_needed = video_segments[i + 1]["duration"]
+                        extension_needed = video_segments[i + 1]["duration"] + video_segments[i + 1]["extend"]  # added
                     else:
                         # Last video - no extension needed (no next transition)
                         extension_needed = 0
                     
-                    target_duration = original_duration + extension_needed
                     temp_extended_path = os.path.join(self.temp_dir, f"ext_{i:03d}_{hash(video_seg['path']) % 10000}.mp4")
                     
-                    print(f"      📹 Video {i+1}/{n_videos}: {original_duration:.2f}s + {extension_needed:.2f}s → {target_duration:.2f}s")
+                    print(f"      📹 Video {i+1}/{n_videos}: {original_duration:.2f}s + {extension_needed:.2f}s")
                     
                     # Extend AND standardize in one ffmpeg command
                     if extension_needed > 0:
@@ -1204,13 +1203,6 @@ class FfmpegProcessor:
             
             print(f"✅ All videos extended and standardized!")
             print(f"   Total videos: {len(extended_video_paths)} (expected: {n_videos})")
-            print(f"   📊 Extension summary:")
-            for i in range(n_videos):
-                if i < n_videos - 1:
-                    next_trans = video_segments[i + 1]["duration"]
-                    print(f"      Video {i}: extended by {next_trans:.2f}s (for transition to Video {i+1})")
-                else:
-                    print(f"      Video {i}: no extension (last video)")
             
             # Verify we have all videos
             if len(extended_video_paths) != n_videos:
@@ -1332,7 +1324,7 @@ class FfmpegProcessor:
                 # Current offset in frames = previous offset + (prev_video - transition - deduction)
                 current_offset_frames += prev_video_frames - transition_frames - frames_to_deduct
                 
-                # Convert to seconds with exact frame precision
+                # Convert to sec with exact frame precision
                 current_offset = current_offset_frames / STANDARD_FPS
                 
                 if transition_effect == "random":
@@ -1481,9 +1473,9 @@ class FfmpegProcessor:
             base_frames_deducted = frames_deduct_base * total_transitions
             extra_frames_deducted = int(round(frames_deduct_fraction * total_transitions))
             total_frames_deducted = base_frames_deducted + extra_frames_deducted
-            total_frames_deduction_seconds = total_frames_deducted / STANDARD_FPS
+            total_frames_deduction_sec = total_frames_deducted / STANDARD_FPS
             
-            expected_duration = total_original_duration - total_transition_duration - total_frames_deduction_seconds
+            expected_duration = total_original_duration - total_transition_duration - total_frames_deduction_sec
             
             # Calculate frame difference for accuracy check
             final_duration_frames = round(final_duration * STANDARD_FPS)
@@ -1495,11 +1487,11 @@ class FfmpegProcessor:
             print(f"   📊 Duration comparison:")
             print(f"      Original total: {total_original_duration:.2f}s")
             print(f"      Transitions: -{total_transition_duration:.2f}s")
-            print(f"      Frames deduction: {base_frames_deducted} base + {extra_frames_deducted} extra = {total_frames_deducted} frames ({total_frames_deduction_seconds:.6f}s)")
+            print(f"      Frames deduction: {base_frames_deducted} base + {extra_frames_deducted} extra = {total_frames_deducted} frames ({total_frames_deduction_sec:.6f}s)")
             print(f"      Expected: {expected_duration:.6f}s ({expected_duration_frames} frames)")
             print(f"      Actual: {final_duration:.6f}s ({final_duration_frames} frames)")
             print(f"      Difference: {duration_diff:.6f}s ({frame_diff} frames)")
-            if duration_diff > 10.0:  # More than 10 seconds difference
+            if duration_diff > 10.0:  # More than 10 sec difference
                 print(f"   ⚠️  WARNING: Output duration differs from expected by {duration_diff:.2f}s!")
                 print(f"      This suggests only partial videos were concatenated.")
                 # Don't raise error, just warn for now
@@ -1920,8 +1912,8 @@ class FfmpegProcessor:
     def extend_video_to_duration(self, input_video_path, target_duration, output_video_path):
         """
         Extend video to target duration by:
-        1. Adding 1 second of the first frame at the beginning
-        2. If still need more duration, extend the end with the last frame (but 1 second less than before)
+        1. Adding 1 sec of the first frame at the beginning
+        2. If still need more duration, extend the end with the last frame (but 1 sec less than before)
         
         EFFECT-PRESERVING VERSION: Uses copy operations instead of filters
         """
@@ -2004,7 +1996,7 @@ class FfmpegProcessor:
             temp_extension_video = os.path.join(self.temp_dir, f"extension_{hash(input_video_path) % 100000}.mp4")
             temp_files.append(temp_extension_video)
             
-            # Ensure extension duration is valid (minimum 0.1 seconds)
+            # Ensure extension duration is valid (minimum 0.1 sec)
             actual_extension_duration = max(0.1, extension_needed)
             
             # Create extension video with same properties as input
@@ -2943,9 +2935,9 @@ class FfmpegProcessor:
 
     # ffmpeg -ss 00:00:01 -to 00:00:50 -i %1 -c:v libx264 -c:a aac %~n1_.mp4
     def split_video(self, original_clip, position):
-        first = self.trim_video( original_clip, start_time=0, end_time=position)
-        second = self.trim_video( original_clip, start_time=position)
-        return first, second
+        f1st = self.trim_video( original_clip, start_time=0, end_time=position)
+        s2nd = self.trim_video( original_clip, start_time=position)
+        return f1st, s2nd
 
 
 

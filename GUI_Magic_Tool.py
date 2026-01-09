@@ -1736,7 +1736,7 @@ class MagicToolGUI:
 
                     story_json_path = config.get_story_json_path(pid)
                     # 调用generate_immersive_story，使用用户输入的故事内容和格式化后的prompt
-                    result = self.get_current_workflow().llm_api.generate_json_summary(
+                    result = self.get_current_workflow().llm_api.generate_json(
                         system_prompt=formatted_system_prompt,
                         user_prompt=formatted_user_prompt,
                         output_path=story_json_path
@@ -2331,13 +2331,13 @@ class MagicToolGUI:
                 story_audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(story_audio)
                 simplified_content_lines = simplified_content.split("\n")
                 # make a srt file, show time split for each line from story_audio_duration
-                start_seconds = 0
+                start_time = 0
                 line_duration = story_audio_duration / len(simplified_content_lines)
                 srt_content = ""
                 for i, line in enumerate(simplified_content_lines):
-                    end_seconds = start_seconds + line_duration
-                    srt_content += f"{i+1}\n{start_seconds} --> {end_seconds}\n{line}\n\n"
-                    start_seconds = end_seconds
+                    end_time = start_time + line_duration
+                    srt_content += f"{i+1}\n{start_time} --> {end_time}\n{line}\n\n"
+                    start_time = end_time
                  
                 srt_content = self.workflow.transcriber.chinese_convert(srt_content, self.get_language())
                 with open(promote_srt_path, 'w', encoding='utf-8') as f:

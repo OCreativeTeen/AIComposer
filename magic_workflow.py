@@ -14,11 +14,12 @@ import config
 import config_prompt
 import config_channel
 from io import BytesIO
-from utility.file_util import get_file_path, safe_remove, refresh_scene_media, build_scene_media_prefix
+from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix
 from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
 import project_manager
+from project_manager import refresh_scene_media
 import tkinter as tk
 
 
@@ -130,12 +131,12 @@ class MagicWorkflow:
             if zero_audio:
                 valid_media_files.append(zero_audio)
 
-            second = get_file_path(scene, "second")
-            if second:
-                valid_media_files.append(second)
-            second_audio = get_file_path(scene, "second_audio")
-            if second_audio:
-                valid_media_files.append(second_audio)
+            one = get_file_path(scene, "one")
+            if one:
+                valid_media_files.append(one)
+            one_audio = get_file_path(scene, "one_audio")
+            if one_audio:
+                valid_media_files.append(one_audio)
 
             clip_audio = get_file_path(scene, "clip_audio")
             if clip_audio:
@@ -144,19 +145,13 @@ class MagicWorkflow:
             if clip_video:
                 valid_media_files.append(clip_video)
 
-            clip_left = get_file_path(scene, "clip_left")
-            if clip_left:
-                valid_media_files.append(clip_left)
-            clip_right = get_file_path(scene, "clip_right")
-            if clip_right:
-                valid_media_files.append(clip_right)
+            narration = get_file_path(scene, "narration")
+            if narration:
+                valid_media_files.append(narration)
+            narration_audio = get_file_path(scene, "narration_audio")
+            if narration_audio:
+                valid_media_files.append(narration_audio)
 
-            second_left = get_file_path(scene, "second_left")
-            if second_left:
-                valid_media_files.append(second_left)
-            second_right = get_file_path(scene, "second_right")
-            if second_right:
-                valid_media_files.append(second_right)
 
             zero_left = get_file_path(scene, "zero_left")
             if zero_left:
@@ -165,6 +160,28 @@ class MagicWorkflow:
             if zero_right:
                 valid_media_files.append(zero_right)
 
+            one_left = get_file_path(scene, "one_left")
+            if one_left:
+                valid_media_files.append(one_left)
+            one_right = get_file_path(scene, "one_right")
+            if one_right:
+                valid_media_files.append(one_right)
+
+            clip_left = get_file_path(scene, "clip_left")
+            if clip_left:
+                valid_media_files.append(clip_left)
+            clip_right = get_file_path(scene, "clip_right")
+            if clip_right:
+                valid_media_files.append(clip_right)
+
+            narration_left = get_file_path(scene, "narration_left")
+            if narration_left:
+                valid_media_files.append(narration_left)
+            narration_right = get_file_path(scene, "narration_right")
+            if narration_right:
+                valid_media_files.append(narration_right)
+
+
             back_video = get_file_path(scene, "back")
             if back_video:
                 backs = back_video.split(',')
@@ -172,19 +189,13 @@ class MagicWorkflow:
                     if back and os.path.exists(back):
                         valid_media_files.append(back)
 
-            clip_image = get_file_path(scene, "clip_image")
-            if clip_image:
-                valid_media_files.append(clip_image)
-            clip_image_last = get_file_path(scene, "clip_image_last")
-            if clip_image_last:
-                valid_media_files.append(clip_image_last)
+            speaker_audio = get_file_path(scene, "speaker_audio")
+            if speaker_audio:
+                valid_media_files.append(speaker_audio)
+            narrator_audio = get_file_path(scene, "narrator_audio")
+            if narrator_audio:
+                valid_media_files.append(narrator_audio)
 
-            second_image = get_file_path(scene, "second_image")
-            if second_image:
-                valid_media_files.append(second_image)
-            second_image_last = get_file_path(scene, "second_image_last")
-            if second_image_last:
-                valid_media_files.append(second_image_last)
 
             zero_image = get_file_path(scene, "zero_image")
             if zero_image:
@@ -193,15 +204,27 @@ class MagicWorkflow:
             if zero_image_last:
                 valid_media_files.append(zero_image_last)
 
-            speak_audio = get_file_path(scene, "speak_audio")
-            if speak_audio:
-                valid_media_files.append(speak_audio)
-            main_audio = get_file_path(scene, "main_audio")
-            if main_audio:
-                valid_media_files.append(main_audio)
-            main_video = get_file_path(scene, "main_video")
-            if main_video:
-                valid_media_files.append(main_video)
+            one_image = get_file_path(scene, "one_image")
+            if one_image:
+                valid_media_files.append(one_image)
+            one_image_last = get_file_path(scene, "one_image_last")
+            if one_image_last:
+                valid_media_files.append(one_image_last)
+
+            clip_image = get_file_path(scene, "clip_image")
+            if clip_image:
+                valid_media_files.append(clip_image)
+            clip_image_last = get_file_path(scene, "clip_image_last")
+            if clip_image_last:
+                valid_media_files.append(clip_image_last)
+
+            narration_image = get_file_path(scene, "narration_image")
+            if narration_image:
+                valid_media_files.append(narration_image)
+            narration_image_last = get_file_path(scene, "narration_image_last")
+            if narration_image_last:
+                valid_media_files.append(narration_image_last)
+
 
         # list all files inside the project_path/media folder
         all_media_files = []
@@ -232,7 +255,7 @@ class MagicWorkflow:
         narrator = scene_data.get("narrator", "")
         voiceover = scene_data.get("voiceover", "")
 
-        if "second" in track:
+        if "narration" in track:
             if "speaking" in scene_data:
                 if narrator:
                     if narrator.endswith("left"):
@@ -591,13 +614,13 @@ class MagicWorkflow:
 
         current_ratio = position / original_duration
 
-        first, second = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
-        refresh_scene_media(current_scene, "clip_audio", ".wav", first)
-        refresh_scene_media(next_scene, "clip_audio", ".wav", second)
+        f1st, s2nd = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
+        refresh_scene_media(current_scene, "clip_audio", ".wav", f1st)
+        refresh_scene_media(next_scene, "clip_audio", ".wav", s2nd)
 
-        first, second = self.ffmpeg_processor.split_video(original_video_clip, position)
-        refresh_scene_media(current_scene, "clip", ".mp4", first)
-        refresh_scene_media(next_scene, "clip", ".mp4", second)
+        f1st, s2nd = self.ffmpeg_processor.split_video(original_video_clip, position)
+        refresh_scene_media(current_scene, "clip", ".mp4", f1st)
+        refresh_scene_media(next_scene, "clip", ".mp4", s2nd)
 
         # max section id -->  raw_id = int((raw_scene["id"]/100)*100)
         # every 100 is a section of id, so we need to find the max section id out of same section
@@ -644,15 +667,15 @@ class MagicWorkflow:
         if position<=0 or position >= original_duration:
             return False
 
-        firsta, seconda = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
+        f1sta, s2nda = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
 
         if n < m: 
-            refresh_scene_media(current_scene, "clip_audio", ".wav", firsta)
-            mergeda = self.ffmpeg_audio_processor.concat_audios([seconda, get_file_path(next_scene, "clip_audio")])
+            refresh_scene_media(current_scene, "clip_audio", ".wav", f1sta)
+            mergeda = self.ffmpeg_audio_processor.concat_audios([s2nda, get_file_path(next_scene, "clip_audio")])
             refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
         else:
-            refresh_scene_media(current_scene, "clip_audio", ".wav", seconda)
-            mergeda = self.ffmpeg_audio_processor.concat_audios([get_file_path(next_scene, "clip_audio"), firsta])
+            refresh_scene_media(current_scene, "clip_audio", ".wav", s2nda)
+            mergeda = self.ffmpeg_audio_processor.concat_audios([get_file_path(next_scene, "clip_audio"), f1sta])
             refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
 
         current_video = get_file_path(current_scene, "clip")
@@ -834,16 +857,16 @@ class MagicWorkflow:
                 script_lines.append(line)
         
         # Create SRT content
-        start_seconds = start_duration
+        start_time = start_duration
         line_duration = audio_duration / len(script_lines) if script_lines else 0
         srt_content = ""
         
         for i, line in enumerate(script_lines):
-            end_seconds = start_seconds + line_duration
-            start_seconds_str = start_seconds
-            end_seconds_str = end_seconds
-            srt_content += f"{i+1}\n{start_seconds_str} --> {end_seconds_str}\n{line}\n\n"
-            start_seconds = end_seconds
+            end_time = start_time + line_duration
+            start_time_str = start_time
+            end_time_str = end_time
+            srt_content += f"{i+1}\n{start_time_str} --> {end_time_str}\n{line}\n\n"
+            start_time = end_time
         
         # Convert content using transcriber
         return self.transcriber.chinese_convert(srt_content, self.language)
@@ -1000,13 +1023,13 @@ class MagicWorkflow:
 
         
  
-    def replace_scene_second(self, current_scene, source_video_path, source_audio_path):
-        oldv, secondv = refresh_scene_media(current_scene, "second", ".mp4", source_video_path)
-        olda, seconda = refresh_scene_media(current_scene, "second_audio", ".wav", source_audio_path)
+    def replace_scene_narration(self, current_scene, source_video_path, source_audio_path):
+        oldv, narrationv = refresh_scene_media(current_scene, "narration", ".mp4", source_video_path)
+        olda, narrationa = refresh_scene_media(current_scene, "narration_audio", ".wav", source_audio_path)
 
         for s in self.scenes_in_story(current_scene):
-            s["second"] = secondv
-            s["second_audio"] = seconda
+            s["narration"] = narrationv
+            s["narration_audio"] = narrationa
 
         self.save_scenes_to_json()
 
@@ -1019,7 +1042,8 @@ class MagicWorkflow:
             return next_scene["main_audio"] != scene["main_audio"]
         except:
             return True
-        
+
+
     def ask_replace_scene_info_from_image(self, current_scene, image_path):
         """询问用户是否要分析图像并更新场景数据"""
         import tkinter.messagebox as messagebox
@@ -1190,7 +1214,7 @@ class MagicWorkflow:
 
 
 
-    def prepare_final_script(self, base_seconds, final_script_path):
+    def prepare_final_script(self, base_sec, final_script_path):
         content = []
         i = 0
         subtitle_index = 1
@@ -1203,18 +1227,18 @@ class MagicWorkflow:
             start_index = i
             end_index = i
             
-            start_formatted = base_seconds
+            start_formatted = base_sec
             scene_duration = self.get_scene_duration(current_scene)
-            base_seconds += scene_duration
+            base_sec += scene_duration
             # Look ahead to find consecutive scenes with same story
             while (end_index + 1 < len(self.scenes) and 
                    self.scenes[end_index + 1].get("visual", "") == current_story and
                    current_story.strip() != ""):  # Only combine non-empty content
                 end_index += 1
                 current_scene = self.scenes[end_index]
-                base_seconds += scene_duration
+                base_sec += scene_duration
 
-            end_formatted = base_seconds
+            end_formatted = base_sec
 
             # Add to content (only if story content is not empty)
             if current_story.strip():
@@ -1258,41 +1282,16 @@ class MagicWorkflow:
 
 
 
-    def regenerate_audio(self, fresh_json, language):
-        lang = "chinese" if language == "zh" or language == "tw" else "english"
-        for json_item in fresh_json:
-            self.regenerate_audio_item(json_item, language)
-            json_item["caption"] = json_item["speaking"]
+    def regenerate_audio_item(self, speaker, content, actions, lang):
+        voice = self.speech_service.get_voice(speaker, lang)
+        ssml = self.speech_service.create_ssml(text=content, voice=voice, actions=actions)
+        audio_file = self.speech_service.synthesize_speech(ssml)
+        if audio_file:  # 只添加成功生成的音频文件
+            wav = self.ffmpeg_audio_processor.to_wav(audio_file)
+        else:
+            wav = None
 
-        return fresh_json, self.ffmpeg_audio_processor.concat_audios([json_item["speak_audio"] for json_item in fresh_json])
-
-
-
-    def regenerate_audio_item(self, json_item, language):
-        lang = "chinese" if language == "zh" or language == "tw" else "english"
-
-        speaker = json_item["speaker"]
-        content = json_item["speaking"]
-        mood = json_item["mood"]
-
-        ss = narrator.split("/")
-        if len(ss) > 1:
-            narrator = ss[0]
-
-        try:
-            voice = self.speech_service.get_voice(speaker, lang)
-            ssml = self.speech_service.create_ssml(text=content, voice=voice, mood=mood)
-            audio_file = self.speech_service.synthesize_speech(ssml)
-            if audio_file:  # 只添加成功生成的音频文件
-                json_item["speak_audio"] = audio_file
-                json_item["duration"] = self.ffmpeg_audio_processor.get_duration(json_item["speak_audio"])
-            else:
-                json_item.pop("speak_audio", None)
-                json_item["duration"] = 0.0
-        except Exception as e:
-            print(f"❌ 说话人 '{speaker}' 的语音合成错误: {str(e)}")
-
-        return json_item["duration"], json_item["speak_audio"]
+        return wav
 
 
 
@@ -1312,7 +1311,7 @@ class MagicWorkflow:
 
         elif animate_mode in config_prompt.ANIMATE_2I2V:
             file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "2I2V", False)
-            self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, first_frame=image_path, last_frame=image_last_path, sound_path=sound_path )
+            self.sd_processor.two_image_to_video( prompt=wan_prompt, file_prefix=file_prefix, f1st_frame=image_path, last_frame=image_last_path, sound_path=sound_path )
 
         elif animate_mode in config_prompt.ANIMATE_S2V:
             file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "S2V", False)
@@ -1406,35 +1405,32 @@ class MagicWorkflow:
         print(f"✅ Promotion video created: {promotion_video_path}")
 
 
-    def finalize_video(self, title, zero_audio:bool):
+    def finalize_video(self, title, quiet_audio_add, add_narration):
         self.post_init(title)
-        
-        #start = 0.0
-        #if self.video_prepares["starting"]["video_path"] and os.path.exists(self.video_prepares["starting"]["video_path"]):
-        #    video_segments.append({"path":self.video_prepares["starting"]["video_path"], "transition":"fade", "duration":1.0})
-        #    start = start + self.ffmpeg_processor.get_duration(self.video_prepares["starting"]["video_path"])
-
-        #if self.video_prepares["pre_video"]["video_path"] and os.path.exists(self.video_prepares["pre_video"]["video_path"]):
-        #    video_segments.append({"path":self.video_prepares["pre_video"]["video_path"], "transition":"fade", "duration":1.0})
-        #    start = start + self.ffmpeg_processor.get_duration(self.video_prepares["pre_video"]["video_path"])
 
         video_segments = []
         for s in self.scenes:
-            clip= s["clip"]
-            video_segments.append({"path":clip, "transition":"fade", "duration":1.0})
-            #audio_segments.append(s["clip_audio"])
+            valid_narrator = None
+            if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
+                valid_narrator = s["narrator"]
+            if valid_narrator and (not "right" in valid_narrator):
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
+            video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
+            if valid_narrator and ("right" in valid_narrator):
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
 
         video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
-        current_zero = None
-        audio_segments = []
-        for s in self.scenes:
-            if not current_zero or current_zero != s["zero_audio"]:
-                current_zero = s["zero_audio"]
-                audio_segments.append(current_zero)
-        if audio_segments and len(audio_segments) > 0:
-            audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
-            video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
+        if not add_narration:
+            current_zero = None
+            audio_segments = []
+            for s in self.scenes:
+                if not current_zero or current_zero != s["zero_audio"]:
+                    current_zero = s["zero_audio"]
+                    audio_segments.append(current_zero)
+            if audio_segments and len(audio_segments) > 0:
+                audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
 
         final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
         os.replace(video_temp, final_video_path)
@@ -1502,7 +1498,11 @@ class MagicWorkflow:
 
 
     def max_id(self, current_scene):
-        same_story_scenes = self.scenes_in_story(current_scene)
+        if hasattr(current_scene, "id"):
+           same_story_scenes = self.scenes_in_story(current_scene)
+        else:
+            same_story_scenes = self.scenes
+
         if same_story_scenes is None or len(same_story_scenes) == 0:
             return 0
 

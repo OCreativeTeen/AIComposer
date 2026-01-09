@@ -1,0 +1,53 @@
+[
+    {
+        "speaker": "male-host",
+        "mood": "calm", 
+        "speaker_action": "Narrator speaks with solemn gravity.",
+        "speaking": "故事始于一个灵气枯竭的时代。白素贞，一条修行千年的白蛇，本是天界医仙转世。她在雷劫中试图强行飞升，却因不忍见山下村民遭难，耗尽灵力救人，最终渡劫失败，坠落凡尘。",
+        "subject": "白素馨：古代中国女神的形象，破旧的白色丝绸长袍，黑色长发随风飘扬，肤色苍白，散发着淡淡的光芒。",
+        "visual_image": "电影般的奇幻镜头，一位身着破旧白袍的孤身女子伫立于嶙峋的山峰之上，狂风暴雨肆虐，紫色闪电在她周围划破夜空，她周身散发着逐渐消逝的白色光芒。画面运用了体积雾，营造出戏剧性的氛围。",
+        "person_action": "但她随后倒下，向后跌落悬崖 的光芒消失了，坠入了深渊。",
+        "era_time": "Ancient fantasy era; catastrophic stormy night; atmosphere heavy with ozone and imminent destruction",
+        "environment": "Barren mountain peak, jagged obsidian rocks, chaotic dark sky, purple lightning, heavy rain",
+        "sound_effect": "Heavy thunder cracks, wind howling, sizzling energy, tragic orchestral swell",
+        "cinematography": {
+            "camera_movement": "Wide shot, rapid tilt down following the falling body",
+            "lighting_style": "High contrast, strobe lighting from lightning, cool purple and dark grey tones",
+            "lens_type": "Wide angle 24mm"
+        }
+    },
+    {
+        "speaker": "actress",
+        "mood": "curious",
+        "speaker_action": "actress (Bai) walking in the bridge of west lake.",
+        "speaking": "白素贞化作凡间女子，在西湖畔寻找医道，偶遇了医馆学徒许仙。两人目光交汇，许仙那清澈的眼神唤醒了白素贞前世的记忆。然而，云端之上，天界监察使林墨尘正冷冷注视。",
+        "subject": "白素贞：一身洁白的汉服，仪态万方。徐明舟：一身素雅的蓝色亚麻书生袍，面容清秀，眼神温柔。林墨尘：身着银色天铠，神情冷峻。",
+        "visual_image": "浪漫的中国古代绘画风格，实景拍摄，西湖断桥，雾雨滂沱，一位身着白衣的美丽女子与一位英俊的年轻书生在人群中对视，油纸伞，柔焦，梦幻般的氛围。",
+        "person_action": "时间仿佛在他们四目相对的那一刻静止，旁观者的身影渐渐模糊，徐明洲微微伸出手，似乎要为他们撑伞。空中，林墨尘手搭剑柄，注视着他们。",
+        "era_time": "Ancient fantasy era; late spring morning; misty, soft rain creating a watercolor atmosphere",
+        "sound_effect": "Gentle rain pattering, soft traditional flute melody, heartbeat sound, distant thunder rumble",
+        "environment": "Stone bridge over lake, weeping willows, misty rain, crowd of pedestrians, grey overcast sky",
+        "cinematography": {
+            "camera_movement": "Slow motion dolly-in on the couple's faces, then rack focus to the sky",
+            "lighting_style": "Soft diffused daylight, low contrast, misty cyan and white palette",
+            "lens_type": "Telephoto 85mm (Bokeh effect)"
+        }
+    },
+    {
+        "speaker": "actor",
+        "mood": "fearful",
+        "speaker_action": "actor (Xu) scared by the huge white snake.",
+        "speaking": "大水漫灌，许仙命悬一线。白素贞不顾天规，当众化作巨大的白蛇本体，潜入洪流救人。许仙看着面前的庞然大物，惊恐地问：‘你……是谁？’",
+        "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
+        "visual_image": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
+        "person_action": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
+        "era_time": "Ancient fantasy era; stormy twilight; torrential rain, howling wind, and flashes of lightning illuminated the chaos",
+        "sound_effect": "Roaring water, thunder, loud snake hiss, terrified gasping",
+        "environment": "Flooded ancient city street, floating timber, stormy night sky, rain splattering",
+        "cinematography": {    
+            "camera_movement": "Handheld shaky cam (simulating panic), looking up at the monster from human perspective",
+            "lighting_style": "Harsh dynamic lighting from lightning strikes, deep shadows, blue and black palette",
+            "lens_type": "Wide angle 16mm (emphasizing scale)"
+        }
+    }
+]

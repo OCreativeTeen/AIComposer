@@ -168,12 +168,12 @@ class VideoReviewDialog:
         ttk.Radiobutton(mode_row1, text="速度匹配", variable=self.mode_var, value=1).pack(side=tk.LEFT, padx=10)
         ttk.Radiobutton(mode_row1, text="剪切匹配", variable=self.mode_var, value=2).pack(side=tk.LEFT, padx=10)
 
-        self.second_track_radio = ttk.Radiobutton(mode_row1, text="第二轨道", variable=self.mode_var, value=3)
-        self.second_track_radio.pack(side=tk.LEFT, padx=10)
+        self.secondary_track_radio = ttk.Radiobutton(mode_row1, text="旁白轨道", variable=self.mode_var, value=3)
+        self.secondary_track_radio.pack(side=tk.LEFT, padx=10)
 
         # 如果主轨道被锁定，禁用主轨道选项
         if self.scenes_length==0:
-            self.second_track_radio.config(state=tk.DISABLED)
+            self.secondary_track_radio.config(state=tk.DISABLED)
 
         # Audio transcription frame
         transcribe_frame = ttk.LabelFrame(sections_container, text="音频转录选择", padding=10)
@@ -594,7 +594,7 @@ class VideoReviewDialog:
             
             # Optional: Log sync status occasionally without restarting
             current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES) if self.video_cap else 0
-            if int(current_frame) % 90 == 0 and self.audio_start_time > 0:  # Every 3 seconds
+            if int(current_frame) % 90 == 0 and self.audio_start_time > 0:  # Every 3 sec
                 audio_position = time.time() - self.audio_start_time
                 video_position = self.current_playback_time
                 time_diff = abs(audio_position - video_position)

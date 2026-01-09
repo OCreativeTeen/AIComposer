@@ -100,7 +100,7 @@ class ImageAreaSelectorDialog:
         # 创建单选按钮
         target_options = [
             ("clip_image", "主景图片"),
-            ("second_image", "次景图片"), 
+            ("narration_image", "次景图片"), 
             ("zero_image", "背景图片")
         ]
         

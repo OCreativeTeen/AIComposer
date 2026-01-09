@@ -311,7 +311,7 @@ class AudioTranscriber:
                 sentence_start_time = max(sentence_start_time, reorganized[-1]['end'])
             # Ensure end time is after start time
             if sentence_end_time <= sentence_start_time:
-                sentence_end_time = sentence_start_time + 1.0  # Add 1 second as minimum
+                sentence_end_time = sentence_start_time + 1.0  # Add 1 sec as minimum
             
             reorganized_segment = {
                 'start': sentence_start_time,
@@ -382,12 +382,12 @@ class AudioTranscriber:
     def merge_sentences(self, segments, language, min_sentence_duration, max_sentence_duration):
         system_prompt = config_prompt.MERGE_SENTENCES_SYSTEM_PROMPT.format(language=language, min_sentence_duration=min_sentence_duration, max_sentence_duration=max_sentence_duration)
         user_prompt = json.dumps(segments, ensure_ascii=False, indent=2)
-        return self.llm_api.generate_json_summary(system_prompt, user_prompt, None, True)
+        return self.llm_api.generate_json(system_prompt, user_prompt, None, True)
 
 
     def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
         output = []
-        speaker = "mature_woman"
+        speaker = "woman_mature"
         for segment in segments:
             output.append({
                 "start": float(segment["start"]),
