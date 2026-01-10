@@ -349,21 +349,7 @@ class AudioTranscriber:
             return None
 
         # ========== Step 6: 分配说话者 ==========
-        print(f"📝 Step 6: 分配说话者...")
-        merged_segments = self.assign_speakers(merged_segments, None)
-
-        if len(merged_segments) > 0:
-            if merged_segments[0]['start'] != 0.0:
-                merged_segments[0]['start'] = 0.0
-            if merged_segments[-1]['end'] != audio_duration:
-                merged_segments[-1]['end'] = audio_duration
-            end_time = 0.0
-            for segment in merged_segments:
-                if end_time > 0 and segment['start'] != end_time: # not the 1st item
-                    segment['start'] = end_time # fix start time (must == end of last item)
-                segment['duration'] = segment['end'] - segment['start']
-                end_time = segment['end']
-             
+        merged_segments = self.finalize_transcribe(merged_segments, audio_duration)
         if len(merged_segments) == 0:
             clean_memory(cuda=False, verbose=False)
             safe_remove(script_path)
@@ -385,20 +371,30 @@ class AudioTranscriber:
         return self.llm_api.generate_json(system_prompt, user_prompt, None, True)
 
 
-    def assign_speakers(self, segments, diarization) -> List[Dict[str, Any]]:
-        output = []
-        speaker = "woman_mature"
-        for segment in segments:
-            output.append({
-                "start": float(segment["start"]),
-                "end": float(segment["end"]),
-                "duration": float(segment["end"]) - float(segment["start"]),
-                "speaker": speaker,
-                "caption": segment["caption"],
-                "speaking": segment["caption"]
+    def finalize_transcribe(self, input_segments, audio_duration) -> List[Dict[str, Any]]:
+        segments = []
+        for seg in input_segments:
+            segments.append({
+                "start": float(seg["start"]),
+                "end": float(seg["end"]),
+                "duration": float(seg["end"]) - float(seg["start"]),
+                "caption": seg["caption"]
             })
 
-        return output
+        if len(segments) > 0:
+            if segments[0]['start'] != 0.0:
+                segments[0]['start'] = 0.0
+            if segments[-1]['end'] != audio_duration:
+                segments[-1]['end'] = audio_duration
+
+            end_time = 0.0
+            for seg in segments:
+                if end_time > 0 and seg['start'] != end_time: # not the 1st item
+                    seg['start'] = end_time # fix start time (must == end of last item)
+                seg['duration'] = seg['end'] - seg['start']
+                end_time = seg['end']
+
+        return segments
 
 
     def assign_speakers_old(self, segments, diarization) -> List[Dict[str, Any]]:

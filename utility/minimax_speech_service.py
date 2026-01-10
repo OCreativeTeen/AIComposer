@@ -147,7 +147,7 @@ VOICES = [
     {
         'name': 'woman_mature',
         'language': 'chinese',
-        'voice': 'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
+        'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54' #'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
     },
     {
         'name': 'man_mature',

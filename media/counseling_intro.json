@@ -1,32 +1,8 @@
 [
     {
-        "speaker": "woman_mature / Professional counselor",
-        "speaking": "在开始之前，我想先问你一个问题：如果一个人从小就知道，家不是休息的地方，而是需要随时撤离的战场，她会把“安全”放在生命的什么位置？今天的故事，从这样一个孩子开始。",
-        "actions": "calm; the counselor sits upright on a chair, voice gentle, hands resting loosely on her knees, making steady eye contact with the audience",
-        "visual": "Contemporary era, late autumn evening, cloudy weather. A quiet counseling office with warm lighting, wooden furniture, a soft rug on the floor. Outside the window, fallen leaves line a narrow city street."
-    },
-    {
-        "speaker": "woman_mature / Professional counselor",
-        "speaking": "她学会了很多生存技巧：提前听懂声音、默默退场、把自己缩到最不显眼的位置。这些策略在童年救过她，可你有没有想过——当一个孩子必须靠“消失”来活下去，长大后，她还能自然地被看见吗？",
-        "actions": "sad; the counselor slightly tilts her head, pauses briefly, fingers gently interlaced as if holding a fragile thought",
-        "visual": "Late 1990s, winter night, cold and dry. An old residential building with dim corridor lights. Inside, narrow hallways and closed doors; outside, a single streetlamp casts long shadows on the snow-dusted ground."
-    },
-    {
-        "speaker": "woman_mature / Professional counselor",
-        "speaking": "成年后的她，一次次走进关系，又一次次离开。表面看是感情反复，深处却像在不断确认同一个问题：这一次，我会被留下吗？而当靠近真的发生，她却又本能地后退。你是否也在某些关系里，体验过这种拉扯？",
-        "actions": "fearful; the counselor raises one hand slightly, then lets it fall back, mirroring approach and withdrawal",
-        "visual": "Modern era, early spring dusk, light drizzle. A small urban apartment balcony overlooking a busy intersection. Car headlights blur into reflections on wet asphalt below."
-    },
-    {
-        "speaker": "woman_mature / Professional counselor",
-        "speaking": "在咨询室里，她问的不是‘我怎么会这样’，而是‘我是不是没有价值’。这不是软弱，而是一种深层的羞耻在说话。如果一个人从未被真正保护过，她又如何相信，自己值得被温柔对待？",
-        "actions": "calm; the counselor leans forward slightly, voice lower and steadier, conveying containment and respect",
-        "visual": "Contemporary era, rainy afternoon. The counseling room feels enclosed and safe; a tissue box and two armchairs face each other. Rain taps softly against the window glass."
-    },
-    {
-        "speaker": "woman_mature / Professional counselor",
-        "speaking": "但这个故事，也不只是关于创伤。她一次次走进咨询室，本身就是一种答案。也许真正值得我们一起看的，是这些问题：你在什么时候选择了撤退？你曾穿过怎样的“盔甲”？而当有人真正听见你时，会不会有什么开始慢慢改变？接下来，让我们一起走进她的故事，也走进这些问题背后的可能性。",
-        "actions": "calm; the counselor offers a small, reassuring nod, hands open, posture relaxed but grounded",
-        "visual": "Contemporary era, early morning after rain, clear sky. Soft sunlight fills the counseling room. A cup of warm tea on a small wooden table releases gentle steam; outside, the city begins a new day."
+    "speaker": "woman_mature/Professional counselor",
+    "speaking": "在正式进入这个故事之前，我想邀请你先停下来，试着感受一下你的呼吸。你是否见过这样的人：他们在成年人的外壳下，却对周遭的细微声响有着近乎本能的警觉？每当亲密关系稍微靠近一点，他们的身体就会先于理智发出‘撤离’的信号。这种随时准备逃离的本能，究竟是某种性格缺陷，还是某种长达数十年的、顽强的求生策略？\n\n今天我们要走进的是苏青的世界。一个在酒精、暴怒与被忽视的阴影中，用海绵垫为自己缝制‘盔甲’的女孩。她为什么在渴望依靠的同时，又在反复推开那个可能看见她的人？那份深植于骨髓的无价值感，又是如何变成了一种活下去的动力？\n\n让我们一起去听，不是去评判一个‘出了问题’的人，而是去见证一个生命如何在废墟中寻找光亮。也许在她的撤退与坚持里，你也会看到那个曾经努力保护过自己的、小小的你。真正的疗愈，往往就始于那份‘被看见’的勇气，你准备好和她一起出发了吗？",
+    "actions": "calm; The speaker sits in a comfortable, modern consultation chair, leaning slightly forward with a warm, empathetic gaze. Her hands are relaxed on her lap, making gentle, open-palm gestures as she speaks. Her expression is soft, inviting trust and reflection.",
+    "visual": "A serene, high-end psychological counseling room during a quiet late autumn afternoon. Golden sunlight filters through sheer linen curtains, casting soft, elongated shadows on the warm wooden floor. In the background, a minimalist bookshelf and a small, vibrant green potted plant add a touch of life. The atmosphere is quiet, safe, and professional, isolated from the bustling city noise outside."
     }
 ]

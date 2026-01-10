@@ -885,26 +885,26 @@ SPEAKER = [
 
 NARRATOR = [
     "",
-    "man_mature right",
-    "man_mature left",
-    "man_mature",
-    "woman_mature right",
-    "woman_mature left",
+    "woman_mature_right",
+    "woman_mature_left",
     "woman_mature", 
+    "man_mature_right",
+    "man_mature_left",
+    "man_mature",
 
-    "man_young right",
-    "man_young left",
-    "man_young",
-    "woman_young right",
-    "woman_young left",
+    "woman_young_right",
+    "woman_young_left",
     "woman_young",
+    "man_young_right",
+    "man_young_left",
+    "man_young",
 
-    "man_old right",
-    "man_old left",
-    "man_old",
-    "woman_old right",
-    "woman_old left",
-    "woman_old"
+    "woman_old_right",
+    "woman_old_left",
+    "woman_old",
+    "man_old_right",
+    "man_old_left",
+    "man_old"
 ]
 
 

@@ -80,7 +80,7 @@ IMAGE_PROMPT_OPTIONS = [
 
 # 负面提示词预设选项
 NEGATIVE_PROMPT_OPTIONS = [
-    "low quality, distorted, overly cartoonish, text, watermark, deformed, ugly, duplicate faces",
+    "words explaination in the image, low quality, distorted, overly cartoonish, text, watermark, deformed, ugly, duplicate faces",
     "modern clothing/t-shirt, glasses/watches, guns/rifles/pistols/tactical-outfit, cars, phones, neon-lights",
     "drawing, painting, sketch, illustration",
     "nsfw, nude, sexual, adult content, violence, gore, blood",
@@ -130,18 +130,19 @@ class ImagePromptsReviewDialog:
         
         # 图像特效选择框架
         self._create_style_frame(main_frame)
-        
+
+        # 负面提示词框架
+        self.negative_text = self._create_negative_frame(main_frame)
+        self.negative_text.insert(tk.END, NEGATIVE_PROMPT_OPTIONS[0])
+
         # 正面提示词框架
         self.positive_text = self._create_positive_frame(main_frame)
         self.dialog.clipboard_clear()
-        self.dialog.clipboard_append(self.positive_text.get(1.0, tk.END).strip())
+        self.dialog.clipboard_append(self.positive_text.get(1.0, tk.END).strip() + "\n---negative prompt---\n" + self.negative_text.get(1.0, tk.END).strip())
         self.dialog.update()  # 确保剪贴板操作完成
 
         self._on_style_change(None)
         
-        # 负面提示词框架
-        self.negative_text = self._create_negative_frame(main_frame)
-        self.negative_text.insert(tk.END, NEGATIVE_PROMPT_OPTIONS[0])
         
         # 按钮框架
         self._create_button_frame(main_frame)

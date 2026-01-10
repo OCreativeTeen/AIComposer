@@ -122,7 +122,7 @@ You are expert to extend & split the analysis (on Psychological-counseling/self-
 
 
 COUNSELING_INTRO = """
-You are expert to create introduction scenes for story & analysis (on Psychological-counseling/self-healing topic):
+You are expert to create introduction scene for story & analysis (on Psychological-counseling/self-healing topic):
 
 *** Input:
     ** story & analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints (duplicated in all json elements), and may has 'story_details' content

@@ -353,12 +353,9 @@ class WorkflowGUI:
         #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
 
 
-        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video(self.quiet_audio_var.get(),False)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="Video生成+", command=lambda:self.run_finalize_video(self.quiet_audio_var.get(),True)).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video(False)).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="Video生成+", command=lambda:self.run_finalize_video(True)).pack(side=tk.LEFT)
         # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
-        self.quiet_audio_var = tk.DoubleVar(value=0.67)
-        self.quiet_audio_combobox = ttk.Combobox(row1_frame, textvariable=self.quiet_audio_var, values=[0.0, 0.33, 0.67, 1.0, 1.33, 1.67, 2.0])
-        self.quiet_audio_combobox.pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -1039,37 +1036,37 @@ class WorkflowGUI:
 
         # 持续时间（只读）
         ttk.Label(duration_promo_frame, text="持续:").pack(side=tk.LEFT)
-        self.scene_duration = ttk.Entry(duration_promo_frame, width=12, state="readonly")
-        self.scene_duration.pack(side=tk.LEFT, padx=(2, 10))
-        
-        # 宣传模式（可编辑）
-        ttk.Label(duration_promo_frame, text="主动画:").pack(side=tk.LEFT, padx=(5, 5))
-        self.scene_main_animate = tk.StringVar(value="")
-        self.main_animate_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_main_animate, 
-                                               values=config_prompt.ANIMATE_SOURCE, 
-                                               state="readonly", width=10)
-        self.main_animate_combobox.pack(side=tk.LEFT)
-        self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
+        self.scene_duration = ttk.Entry(duration_promo_frame, width=8, state="normal")
+        self.scene_duration.pack(side=tk.LEFT)
 
+        ttk.Label(duration_promo_frame, text="延长:").pack(side=tk.LEFT)
+        self.scene_extend_var = tk.StringVar(value="1.0")
+        ttk.Combobox(duration_promo_frame, textvariable=self.scene_extend_var, values=["0.0", "0.5", "1.0", "1.5", "2.0"], state="readonly", width=6).pack(side=tk.LEFT)
 
-        ttk.Label(duration_promo_frame, text="次动画:").pack(side=tk.LEFT, padx=(0, 5))
-        self.narration_animation_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.scene_narration_animation,
-                                               values=config_prompt.ANIMATE_SOURCE, 
-                                               state="readonly", width=10)
-        self.narration_animation_combobox.pack(side=tk.LEFT, padx=(0, 10))
-        self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
+        ttk.Button(duration_promo_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image("en")).pack(side=tk.LEFT, padx=(10, 10))
 
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(self.video_edit_frame)
         type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
-        ttk.Button(type_mood_action_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image("en")).pack(side=tk.LEFT)
+        # 宣传模式（可编辑）
+        ttk.Label(type_mood_action_frame, text="主动画:").pack(side=tk.LEFT)
+        self.scene_main_animate = tk.StringVar(value="")
+        self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_main_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
+        self.main_animate_combobox.pack(side=tk.LEFT)
+        self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
+
+        ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
+        self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
+        self.narration_animation_combobox.pack(side=tk.LEFT)
+        self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
+
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-英", width=8, command=lambda: self.recreate_clip_image("en", False)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(type_mood_action_frame, text="生主动画", width=10, command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="生次动画", width=10, command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
 
 
         action_frame = ttk.Frame(self.video_edit_frame)
@@ -1346,7 +1343,7 @@ class WorkflowGUI:
             self.start_video_check_thread()
     
     
-    def run_finalize_video(self, quiet_audio_add, add_narration):
+    def run_finalize_video(self, add_narration):
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -1358,7 +1355,7 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(self.video_title.get().strip(), quiet_audio_add, add_narration)
+                self.workflow.finalize_video(self.video_title.get().strip(), add_narration)
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -1440,14 +1437,6 @@ class WorkflowGUI:
         # 清理图片引用，防止内存泄漏
         if hasattr(self, 'current_video_frame'):
             self.current_video_frame = None
-
-
-    def clear_video_scene_fields(self):
-        self.scene_duration.config(state="normal")
-        self.scene_duration.delete(0, tk.END)
-        self.scene_duration.config(state="readonly")
-        
-        self.clear_video_preview()
 
 
     def load_video_first_frame(self):
@@ -1760,9 +1749,6 @@ class WorkflowGUI:
         # 更新视频进度显示
         self.update_video_progress_display()
 
-        # 更新按钮状态
-        self.update_scene_buttons_state()
-
         self.reset_track_offset()
 
         # 延迟加载第一帧，确保canvas已完全渲染
@@ -1917,7 +1903,7 @@ class WorkflowGUI:
         if len(self.workflow.scenes) == 0:
             self.scene_label.config(text="0 / 0")
             self.clear_scene_fields()
-            self.clear_video_scene_fields()
+            self.clear_video_preview()
             return
             
         self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
@@ -1925,13 +1911,18 @@ class WorkflowGUI:
         if not scene_data:
             return
         
-        # 显示持续时间
-        self.scene_duration.config(state="normal")
         self.scene_duration.delete(0, tk.END)
-        duration = self.workflow.find_clip_duration(scene_data)
-        self.scene_duration.insert(0, f"{duration:.2f} 秒")
-        self.scene_duration.config(state="readonly")
-        
+        self.scene_duration.insert(0, f"{self.workflow.find_clip_duration(scene_data):.2f}")
+
+        extend_value = scene_data.get("extend", 0.0)
+        if extend_value is None:
+            extend_value = 1.0
+        extend_str = str(float(extend_value))
+        if extend_str in ["0.0", "0.5", "1.0", "1.5", "2.0"]:
+            self.scene_extend_var.set(extend_str)
+        else:
+            self.scene_extend_var.set("0.0")
+
         # 设置宣传复选框状态
         clip_animation = scene_data.get("clip_animation", "")
         self.scene_main_animate.set(clip_animation)
@@ -2161,9 +2152,8 @@ class WorkflowGUI:
 
 
     def clear_scene_fields(self):
-        self.scene_duration.config(state="normal")
         self.scene_duration.delete(0, tk.END)
-        self.scene_duration.config(state="readonly")
+        self.scene_extend_var.set("0.0")
         
         self.scene_main_animate.set("")
         
@@ -2338,34 +2328,18 @@ class WorkflowGUI:
 
 
     def insert_story_scene(self):
-        self.update_scene_buttons_state()
-        current_scene = self.get_current_scene()
-        if current_scene and not self.workflow.first_scene_of_story(current_scene):
-            return
+        story_level = self.workflow.first_scene_of_story(self.get_current_scene())
 
-        self.workflow.add_story_scene(
-            self.current_scene_index,
-            "",
-            True,
-            False,
-        )
+        self.workflow.add_story_scene( self.current_scene_index, self.get_current_scene(), story_level, False )
 
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
 
 
     def append_scene(self):
-        self.update_scene_buttons_state()
-        current_scene = self.get_current_scene()
-        if current_scene and not self.workflow.last_scene_of_story(current_scene):
-            return
+        story_level = self.workflow.last_scene_of_story(self.get_current_scene())
 
-        self.workflow.add_story_scene(
-            self.current_scene_index,
-            "",
-            True,
-            True,
-        )
+        self.workflow.add_story_scene( self.current_scene_index, self.get_current_scene(), story_level, True )
 
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -3453,7 +3427,6 @@ class WorkflowGUI:
         #    except json.JSONDecodeError:
         #        # 如果不是有效 JSON，保持为字符串
         #        cinematography_value = cinematography_text
-        
         scene.update({
             "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
             "speaker": self.scene_speaker.get("1.0", tk.END).strip(),
@@ -3462,6 +3435,7 @@ class WorkflowGUI:
             "narrator": self.scene_narrator.get(),
             "voiceover": self.scene_voiceover.get("1.0", tk.END).strip(),
             "caption": self.scene_caption.get("1.0", tk.END).strip(),
+            "extend": float(self.scene_extend_var.get()) if self.scene_extend_var.get() != "0.0" else 0.0,
 
             "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
             "explicit": self.scene_explicit.get("1.0", tk.END).strip(),
@@ -3812,22 +3786,24 @@ class WorkflowGUI:
             next_scene = self.get_next_scene()
             scenes_same_story = self.workflow.scenes_in_story(current_scene)
 
+            if media_type == 'zero' or media_type == 'one' or media_type == 'narration':
+                v = get_file_path(current_scene, media_type)
+                if not v:
+                    oldv, v = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
+                    refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
+                    refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
+                    current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
+                    current_scene[media_type + "_status"] = "COPY"
+
             if not av_path:
-                if media_type == 'clip':
-                    av_path = get_file_path(current_scene, "clip")
-                elif media_type == 'zero':
-                    av_path = get_file_path(current_scene, "zero")
-                elif media_type == 'one':
-                    av_path = get_file_path(current_scene, "one")
-                else:
-                    av_path = get_file_path(current_scene, "narration")
+                av_path = get_file_path(current_scene, media_type)
             else:
                 current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
                 current_scene[media_type + "_status"] = "DND"
                 av_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
-            if media_type != "clip":
+            if media_type != "clip" and media_type != "narration":
                 replace_media_audio = "keep"
             review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
             
@@ -3840,32 +3816,32 @@ class WorkflowGUI:
 
             transcribe_way = review_dialog.result['transcribe_way']
             audio_json = review_dialog.result['audio_json']
-            if not audio_json or (transcribe_way != "single" and transcribe_way != "multiple" and media_type == "clip"):
+            if not audio_json or (transcribe_way != "single" and transcribe_way != "multiple"):
                 print("场景内容无变化 2")
                 return
 
             if media_type != "clip" and media_type != "narration":
-                if transcribe_way == "multiple" or media_type == "zero":
+                if transcribe_way == "multiple":
                     for sss in scenes_same_story:
                         sss[media_type] = current_scene[media_type]
                         sss[media_type+"_audio"]  = current_scene[media_type+"_audio"]
                         sss[media_type+"_image"]  = current_scene[media_type+"_image"]
-                        if "camear_style" in current_scene:
-                            sss["camear_style"] = current_scene["camear_style"]
-                        if "camera_shot" in current_scene:
-                            sss["camera_shot"] = current_scene["camera_shot"]
-                        if "camera_angle" in current_scene:
-                            sss["camera_angle"] = current_scene["camera_angle"]
-                        if "camera_color" in current_scene:
-                            sss["camera_color"] = current_scene["camera_color"]
-
+                        #if "camear_style" in current_scene:
+                        #    sss["camear_style"] = current_scene["camear_style"]
+                        #if "camera_shot" in current_scene:
+                        #    sss["camera_shot"] = current_scene["camera_shot"]
+                        #if "camera_angle" in current_scene:
+                        #    sss["camera_angle"] = current_scene["camera_angle"]
+                        #if "camera_color" in current_scene:
+                        #    sss["camera_color"] = current_scene["camera_color"]
                 self.workflow.save_scenes_to_json()
                 return
 
             self.workflow.save_scenes_to_json()
 
             # media_type == clip
-            self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
+            if len(audio_json) > 1:
+                self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
             #else: # transcribe_way == "multiple_merge":
             #    self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
             messagebox.showinfo("成功", f"音频已成功替换！\n\n")
@@ -4154,22 +4130,6 @@ class WorkflowGUI:
         # 显示编辑对话框
         show_wan_prompt_editor(self, self.workflow, generate_callback, scene, track)
  
-
-    def update_scene_buttons_state(self):
-        """更新场景插入按钮的状态"""
-        current_scene = self.get_current_scene()
-        
-        if not current_scene or self.workflow.first_scene_of_story(current_scene):
-            self.insert_scene_button.config(state="normal")
-        else:
-            self.insert_scene_button.config(state="disabled")
-        
-        if current_scene and self.workflow.last_scene_of_story(current_scene):
-            self.append_scene_button.config(state="normal")
-        else:
-            self.append_scene_button.config(state="disabled")
-
-
 
 def main():
     root = TkinterDnD.Tk()

@@ -566,7 +566,12 @@ class MagicWorkflow:
                 new_scene = current_scene
             else:
                 new_scene = current_scene.copy()
-            
+
+            if i == len(new_scenes) - 1:
+                new_scene["extend"] = 1.0
+            else:
+                new_scene["extend"] = 0.0
+
             # 分割音频：从 start_time 开始，提取 part_duration 长度
             if original_audio_clip:
                 trimmed_audio = self.ffmpeg_audio_processor.audio_cut_fade(
@@ -636,8 +641,10 @@ class MagicWorkflow:
 
         current_scene["speaking"] = original_content  #original_content[:int(len(original_content)*current_ratio)]
         current_scene["id"] = max_section_id + 1
+        current_scene["extend"] = 1.0
         next_scene["speaking"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
+        next_scene["extend"] = 1.0
 
         #self._generate_video_from_image(current_scene)
         #self._generate_video_from_image(next_scene)
@@ -752,10 +759,18 @@ class MagicWorkflow:
         stories_json = json.loads(story_script)
         stories_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
 
+        intro_json = {
+            "name": "intro",
+            "explicit": story_script["explicit"],
+            "implicit": story_script["implicit"],
+            "story_details": story_script["story_details"]
+        }
+
         for i, element in enumerate(stories_template):
             if element.get("name") == "program":
                 stories_template[i:i+1] = stories_json
-                break
+            elif element.get("name") == "intro":
+                stories_template[i:i+1] = intro_json
 
         # popup dialog to select the story level
         story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")
@@ -1073,20 +1088,7 @@ class MagicWorkflow:
         if not clip_image_last:
             current_scene[target_field + "_last"] = image_path
 
-        self.ask_replace_scene_info_from_image(current_scene, image_path)
-        #target_image = get_file_path(current_scene, target_field)
-        #target_image_last = get_file_path(current_scene, target_field + "_last")
-         
-        #ss = self.scenes_in_story(current_scene)
-        #for scene in ss:
-        #    if scene == current_scene:
-        #        continue
-        #    image = get_file_path(scene, target_field)
-        #    if not image and target_image:
-        #        refresh_scene_media(scene, target_field, ".webp", target_image, True)
-        #    image_last = get_file_path(scene, target_field + "_last")
-        #    if not image_last and target_image_last:
-        #        refresh_scene_media(scene, target_field + "_last", ".webp", target_image_last, True)
+        #self.ask_replace_scene_info_from_image(current_scene, image_path)
         self.save_scenes_to_json()
 
 
@@ -1405,7 +1407,7 @@ class MagicWorkflow:
         print(f"✅ Promotion video created: {promotion_video_path}")
 
 
-    def finalize_video(self, title, quiet_audio_add, add_narration):
+    def finalize_video(self, title, add_narration):
         self.post_init(title)
 
         video_segments = []
@@ -1414,10 +1416,10 @@ class MagicWorkflow:
             if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
                 valid_narrator = s["narrator"]
             if valid_narrator and (not "right" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
-            video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+            video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
             if valid_narrator and ("right" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":quiet_audio_add})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
         video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
@@ -1546,8 +1548,10 @@ class MagicWorkflow:
             if next_root_id < 10000:
                 next_root_id = 10000
 
+        story = story.copy()
         story["id"] = next_root_id
         story["environment"] = ""
+        story["extend"] = 1.0
 
         oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)
         olda, zero_audio = refresh_scene_media(story, "zero_audio", ".wav", self.background_music, True)
