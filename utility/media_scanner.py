@@ -8,7 +8,8 @@ import os
 import time
 from utility.file_util import safe_copy_overwrite, get_file_path, build_scene_media_prefix
 from project_manager import refresh_scene_media
-
+import threading
+import config
 
 
 ANIMATE_TYPE_PATTERNS = [
@@ -32,6 +33,7 @@ ANIMATE_WITH_AUDIO = ["_WS2VL", "_WS2VR", "_S2V", "_FS2V"]
 class VideoFileInfo:
     """Information extracted from video filename"""
     file_path: str
+    image_path: str
     filename: str
     video_type: str  # 'clip', "narration", 'zero'
     pid: str
@@ -108,7 +110,7 @@ class MediaScanner:
         self.stability_duration = stability_duration
 
 
-    def scanning(self, watch_path: str, gen_folder: str):
+    def scanning(self, watch_path: str):
         pair_manager = VideoPairManager()
         mp4_files = sorted(Path(watch_path).glob("*.mp4"))
         if not mp4_files:
@@ -125,7 +127,17 @@ class MediaScanner:
                 continue
             
             video_info.file_path = str(file_path)
-            
+            if "_ENH" in file_path.stem:
+                image_path_obj = file_path.parent / file_path.stem
+                if image_path_obj.exists() and image_path_obj.is_dir():
+                    png_files = sorted(image_path_obj.glob("*.png"))
+                    if png_files:
+                        video_info.image_path = str(png_files[-1])
+                    else:
+                        video_info.image_path = ""
+                else:
+                    video_info.image_path = ""
+
             # Handle WS2V pairing
             #if video_info.video_mode == "WS2V": # deprecated !!!!
             #    pair_result = pair_manager.add_video(video_info)
@@ -138,26 +150,36 @@ class MediaScanner:
             # Single video mode - process immediately
             print(f"Found video to process: {video_info.filename} (mode: {video_info.video_mode})")
             # self._process_single_video(video_info, gen_folder)
-            copy_to = gen_folder + "/" + video_info.get_output_name()
+            copy_to = config.BASE_MEDIA_PATH+"/input_mp4" + "/" + video_info.get_output_name()
             safe_copy_overwrite(video_info.file_path, copy_to)
             bak_path = str(Path(video_info.file_path).with_suffix('.bak.mp4'))
             os.replace(video_info.file_path, bak_path)
             print(f"Processing completed successfully: {video_info.filename}")
 
+            target_scene = None
             for scene in self.workflow.scenes:
                 if scene["id"] == video_info.scenario_id:
-                    if "_ENH" in copy_to:
-                        status = "EN2"
-                    elif "_INT" in copy_to:
-                        status = "IN2"
-                    else:
-                        status = "ORI"
-                    scene[video_info.video_type + "_status"] = status
-                    if status=="ORI":
-                        fps = self.ffmpeg_processor.get_video_fps(copy_to)
-                        scene[video_info.video_type + "_fps"] = fps
+                    target_scene = scene
                     break
+            if not target_scene:
+                return
 
+            if "_ENH" in copy_to:
+                status = "EN2"
+            elif "_INT" in copy_to:
+                status = "IN2"
+            else:
+                status = "ORI"
+            target_scene[video_info.video_type + "_status"] = status
+            if status=="ORI":
+                fps = self.ffmpeg_processor.get_video_fps(copy_to)
+                target_scene[video_info.video_type + "_fps"] = fps
+            if video_info.image_path:
+                target_scene[video_info.video_type + "_image_last"] = video_info.image_path
+
+            for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
+                if re.search(pattern, copy_to):
+                    self.take_gen_video(copy_to, video_info.video_type, type_suffix, target_scene)
         
     
     def _wait_for_file_stability(self, file_path: Path) -> bool:
@@ -219,6 +241,7 @@ class MediaScanner:
         if match and match.group(2) == pid:
             return VideoFileInfo(
                 file_path="",
+                image_path="",
                 filename=filename,
                 video_type=match.group(1),
                 pid=pid,
@@ -232,6 +255,7 @@ class MediaScanner:
         if match and match.group(2) == pid:
             return VideoFileInfo(
                 file_path="",
+                image_path="",
                 filename=filename,
                 video_type=match.group(1),
                 pid=pid,
@@ -263,50 +287,26 @@ class MediaScanner:
         os.remove(right_work_path)
 
 
+    def take_gen_video(self, gen_video, media_type, type_suffix, scene):
+        gen_video = self.ffmpeg_processor.resize_video(gen_video, width=None, height=self.ffmpeg_processor.height)
 
-    def check_gen_video(self, gen_mp4_folder, animate_gen_list):
-        # 定义文件类型模式列表，匹配格式: base_name + type_suffix + _timestamp.mp4
-        # timestamp格式为 %d%H%M%S (8位数字: 日期+小时+分钟+秒)
-        files = []
-        for file in os.listdir(gen_mp4_folder):
-            for base_name, av_type, scene in animate_gen_list:
-                if file.startswith(base_name):
-                    # 检查是否匹配任何一个类型模式
-                    for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
-                        if re.search(pattern, file):
-                            self.take_gen_video(gen_mp4_folder + "/" + file, av_type, type_suffix, scene)
-
-
-
-    def take_gen_video(self, gen_video, av_type, type_suffix, scene):
-        gen_video_stem = Path(gen_video).stem
-        folder_path = str(Path(gen_video).parent)
-        new_video_has_no_audio = not any(item in gen_video_stem for item in ANIMATE_WITH_AUDIO)
-
-        if not os.path.exists(gen_video):
-            print(f"⚠️ 文件已经处理过，跳过: {gen_video}")
-            return
-
-        original_gen_video = folder_path + "/" + gen_video_stem + "_processed.mp4"
-        os.replace(gen_video, original_gen_video)
-
-        gen_video = self.ffmpeg_processor.resize_video(original_gen_video, width=None, height=self.ffmpeg_processor.height)
-
-        audio = get_file_path(scene, av_type + "_audio")
+        audio = get_file_path(scene, media_type + "_audio")
         if audio: # always cut to the same duration as the audio
-            gen_video = self.ffmpeg_processor.add_audio_to_video(gen_video, audio, True, new_video_has_no_audio)
+            gen_video = self.ffmpeg_processor.add_audio_to_video(gen_video, audio, True)
         #else :
         #    audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
         #    olda, audio = refresh_scene_media(scene, av_type + "_audio", ".wav", audio)
 
         if "_WS2VL" == type_suffix:
             #scene[av_type+"_left_input"] = original_gen_video
-            refresh_scene_media(scene, av_type+"_left", ".mp4", gen_video, True)
+            refresh_scene_media(scene, media_type+"_left", ".mp4", gen_video, True)
         elif "_WS2VR" == type_suffix:
             #scene[av_type+"_right_input"] = original_gen_video
-            refresh_scene_media(scene, av_type+"_right", ".mp4", gen_video, True)
+            refresh_scene_media(scene, media_type+"_right", ".mp4", gen_video, True)
         else:
             #scene[av_type+"_input"] = original_gen_video
-            oldv, gen_video = refresh_scene_media(scene, av_type, ".mp4", gen_video, True)
-
-
+            oldv, gen_video = refresh_scene_media(scene, media_type, ".mp4", gen_video, True)
+            # refresh_scene_media(scene, "clip_image_last", ".webp", self.ffmpeg_processor.extract_last_frame(gen_video))
+            # thread = threading.Thread(target=self.workflow.sd_processor._improve_image_as_webp, args=(scene, media_type))
+            # thread.daemon = True
+            # thread.start()

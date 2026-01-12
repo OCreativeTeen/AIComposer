@@ -188,10 +188,6 @@ class ImagePromptsReviewDialog:
         
         positive_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         positive_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        # set the text to the clipboard
-        self.dialog.clipboard_clear()
-        self.dialog.clipboard_append(positive_text.get(1.0, tk.END).strip())
-        self.dialog.update()  # 确保剪贴板操作完成
         
         return positive_text
     
@@ -243,7 +239,7 @@ class ImagePromptsReviewDialog:
         new_style = self.image_style_var.get()
 
         # 重新构建正面提示词
-        new_positive = self.workflow.build_prompt(self.scene, new_style+". "+selected, self.track, "IMAGE_GENERATION")
+        new_positive = self.workflow.build_prompt(self.scene, {"style": new_style, "preset":selected}, self.track, "IMAGE_GENERATION")
         
         # 更新文本框（如果是字典，转换为字符串显示）
         self.positive_text.delete(1.0, tk.END)
@@ -254,7 +250,9 @@ class ImagePromptsReviewDialog:
         self.positive_text.insert(tk.END, new_positive)
         # 将内容复制到剪贴板，方便用户粘贴到其他应用/窗口
         self.dialog.clipboard_clear()
-        self.dialog.clipboard_append(new_positive)
+        self.dialog.clipboard_append(new_positive + "\n---negative prompt---\n" + self.negative_text.get(1.0, tk.END).strip())
+        self.dialog.update()
+
         self.dialog.update()  # 确保剪贴板操作完成
         print(f"🎨 特效已更新为: {new_style}")
 
@@ -303,4 +301,27 @@ class ImagePromptsReviewDialog:
     def show(self):
         """显示对话框（阻塞）"""
         self.dialog.wait_window()
+
+
+
+def open_image_prompt_dialog(parent, workflow, create_image_callback, scene, image_mode, language:str):
+    """打开提示词审查对话框，用于在创建图像前预览和编辑提示词"""
+    from gui.image_prompts_review_dialog import ImagePromptsReviewDialog
+    
+    dialog = ImagePromptsReviewDialog(
+        parent=parent,
+        workflow=workflow,
+        create_image_callback=create_image_callback,
+        scene=scene,
+        track=image_mode,
+        language=language
+    )
+    
+    # 设置6秒后自动关闭（取消）
+    def auto_close():
+        if dialog.dialog.winfo_exists():
+            dialog._on_cancel()
+    
+    dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
+    dialog.show()
 

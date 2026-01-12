@@ -245,7 +245,6 @@ class MagicWorkflow:
 
     def build_prompt(self, scene_data, extra, track, av_type):
         prompt_dict = {}
-
         # 提取当前场景的关键信息
         speaker = scene_data.get("speaker", "")
         speaking = scene_data.get("speaking", "")
@@ -256,20 +255,22 @@ class MagicWorkflow:
         voiceover = scene_data.get("voiceover", "")
 
         if "narration" in track:
-            if "speaking" in scene_data:
+            if voiceover:
                 if narrator:
+                    prompt_dict["NARRATION"] = voiceover
                     if narrator.endswith("left"):
-                        prompt_dict["SPEAKING"] = f"the left-side person says: ({speaking}), while {actions}."
+                        prompt_dict["NARRATOR"] = f"the left-side person ({narrator}), {actions}."
                         if av_type == "WS2V":
-                            prompt_dict["LISTENING"] = f"the right-side person is listening, while engaging face &  hands reactions."
+                            prompt_dict["NARRATOR"] = prompt_dict["NARRATOR"] + "... while the right-side person is listening."
                     elif narrator.endswith("right"):
-                        prompt_dict["SPEAKING"] = f"the right-side person says: ({speaking}),  while {actions}."
+                        prompt_dict["NARRATOR"] = f"the right-side person ({narrator}), {actions}."
                         if av_type == "WS2V":
-                            prompt_dict["LISTENING"] = f"the left-side person is listening, while engaging face & hands reactions."
+                            prompt_dict["NARRATOR"] = prompt_dict["NARRATOR"] + "... while the left-side person is listening."
                     else:
-                        prompt_dict["SPEAKING"] = f"the person say: ({speaking}),  while {actions}."
-                else:
-                    prompt_dict["SPEAKING"] = f"{speaking}, while {actions}."
+                        prompt_dict["NARRATION"] = f"the person ({narrator}), {actions}."
+                elif speaking:
+                    prompt_dict["SPEAKER"] = f"the person ({speaker}), {actions}."
+                    prompt_dict["SPEAKING"] = speaking
 
         if "clip" in track or "zero" in track:
             person_lower = speaker
@@ -282,17 +283,15 @@ class MagicWorkflow:
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["speaker"] = speaker + ", while " + actions + "."
-
+                    prompt_dict["SPEAKER"] = f"the speaker ({speaker}), {actions}."
+                    prompt_dict["SPEAKING"] = speaking
 
         prompt_dict["visual"] = visual
 
-        prompt_dict["content"] = speaking
-        prompt_dict["voiceover"] = voiceover
         #if "cinematography" in scene_data:
         #    prompt_dict["CINEMATOGRAPHY"] = scene_data['cinematography']
         if extra:
-            prompt_dict["FYI"] = extra
+            prompt_dict["CINEMATOGRAPHY"] = extra
 
         return prompt_dict
 

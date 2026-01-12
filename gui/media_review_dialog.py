@@ -66,7 +66,7 @@ PROJECT_TYPE_LIST = [
 class AVReviewDialog:
     """Dialog for reviewing and configuring audio replacement with drag-and-drop support"""
     
-    def __init__(self, parent, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio):
+    def __init__(self, parent, video_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio):
         self.parent = parent
         self.current_scene = current_scene
         self.previous_scene = previous_scene
@@ -161,7 +161,7 @@ class AVReviewDialog:
         self.video_original_width = None
         self.video_original_height = None
         
-        self.process_new_media(av_path)
+        self.process_new_media(video_path)
 
         self.create_dialog()
 

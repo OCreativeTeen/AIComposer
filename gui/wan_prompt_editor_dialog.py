@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-import config
+import json
 import config_prompt
 
 
@@ -96,11 +96,11 @@ class WanPromptEditorDialog:
         self.dialog.transient(parent.root if hasattr(parent, 'root') else parent)
         self.dialog.grab_set()
         
-        # 构建界面
         self._create_ui()
-        
-        # 居中显示
         self._center_dialog()
+
+        self._on_params_change(None)
+
     
     def _create_ui(self):
         """创建用户界面"""
@@ -182,6 +182,7 @@ class WanPromptEditorDialog:
         color_combo.pack(side=tk.LEFT, padx=(0, 0))
         color_combo.bind('<<ComboboxSelected>>', self._on_params_change)
     
+
     def _create_animation_presets_frame(self, parent):
         """创建动画预设选择框架"""
         preset_frame = ttk.LabelFrame(parent, text="动画预设", padding=10)
@@ -202,13 +203,9 @@ class WanPromptEditorDialog:
                                            state="readonly",
                                            width=40)
         self.animation_combo.pack(side=tk.LEFT, padx=(0, 10))
-        self.animation_combo.bind('<<ComboboxSelected>>', self._on_animation_select)
-        
-        # 应用按钮
-        apply_btn = ttk.Button(combo_frame, text="追加到提示词", 
-                              command=self._append_animation)
-        apply_btn.pack(side=tk.LEFT)
+        self.animation_combo.bind('<<ComboboxSelected>>', self._on_params_change)
     
+
     def _create_prompt_frame(self, parent):
         """创建提示词编辑框架"""
         prompt_frame = ttk.LabelFrame(parent, text="WAN Prompt 编辑器", padding=10)
@@ -253,62 +250,36 @@ class WanPromptEditorDialog:
     
 
     def _on_params_change(self, event):
-        """WAN 参数改变时重新构建提示词"""
-        # 构建额外描述
         extra = ""
-        
         # 添加 WAN 参数
         style = self.camear_style_var.get()
         shot = self.camera_shot_var.get()
         angle = self.camera_angle_var.get()
         color = self.camera_color_var.get()
+        animation = self.animation_combo.get()
         
-        wan_params = []
+        wan_params = {}
         if style and style != "":
-            wan_params.append(f"style: {style}")
+            wan_params["style"] = style
         if shot and shot != "":
-            wan_params.append(f"shot: {shot}")
+            wan_params["shot"] = shot
         if angle and angle != "":
-            wan_params.append(f"angle: {angle}")
+            wan_params["angle"] = angle
         if color and color != "":
-            wan_params.append(f"color: {color}")
-        
-        if wan_params:
-            wan_desc = "(" + ", ".join(wan_params) + ")"
-            extra = wan_desc + "  :  " + extra if extra else wan_desc
+            wan_params["color"] = color
+        if animation and animation != "":
+            wan_params["motion"] = animation
         
         animate_mode = self.scene.get(self.track+"_animation", "")
-        new_prompt = self.workflow.build_prompt(self.scene, extra, self.track, animate_mode)
+        new_prompt = self.workflow.build_prompt(self.scene, wan_params, self.track, animate_mode)
 
-        # 更新文本框（如果是字典，转换为字符串显示）
         self.prompt_text.delete(1.0, tk.END)
-        import json
         prompt_str = json.dumps(new_prompt, ensure_ascii=False, indent=2)
         self.prompt_text.insert(tk.END, prompt_str)
-        
-        print(f"🎬 WAN 提示词已更新 - 风格:{style}, 镜头:{shot}, 角度:{angle}, 色彩:{color}")
-    
-    def _on_animation_select(self, event):
-        """动画预设选择变化"""
-        # 仅选择，不自动应用
-        pass
-    
-    def _append_animation(self):
-        """追加动画预设到提示词"""
-        selection = self.animation_combo.current()
-        if selection >= 0:
-            preset = config_prompt.ANIMATION_PROMPTS[selection]
-            current_text = self.prompt_text.get(1.0, tk.END).strip()
-            
-            # 追加动画提示词
-            if current_text:
-                new_text = current_text + "\n\nMOTION: [" + preset["prompt"] + "]"
-            else:
-                new_text = "MOTION: [" + preset["prompt"] + "]"
-            
-            self.prompt_text.delete(1.0, tk.END)
-            self.prompt_text.insert(tk.END, new_text)
-            print(f"✅ 已追加动画预设: {preset['name']}")
+
+        self.dialog.clipboard_clear()
+        self.dialog.clipboard_append(new_prompt)
+        self.dialog.update()    
     
     def _clear_prompt(self):
         """清空提示词"""
@@ -360,4 +331,12 @@ class WanPromptEditorDialog:
 def show_wan_prompt_editor(parent, workflow, generate_video_callback, scene, track):
     """便捷函数：显示 WAN Prompt 编辑对话框"""
     dialog = WanPromptEditorDialog(parent, workflow, generate_video_callback, scene, track)
+
+    # 设置6秒后自动关闭（取消）
+    def auto_close():
+        if dialog.dialog.winfo_exists():
+            dialog._on_cancel()
+    
+    dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
     dialog.show()
+

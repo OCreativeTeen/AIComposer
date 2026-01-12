@@ -1,6 +1,8 @@
 import os
 import subprocess
 import shutil
+import glob
+import uuid
 from pathlib import Path
 
 from mpmath import rational
@@ -777,6 +779,9 @@ class FfmpegProcessor:
         temp_file = config.get_temp_file(self.pid, "mp4")
         
         try:
+            if not self.has_audio_stream(video_path):
+                change_ratio_to_match_audio_length = True
+                
             video_duration = self.get_duration(video_path)
             audio_duration = self.get_duration(audio_path)
 
@@ -944,6 +949,54 @@ class FfmpegProcessor:
             print(f"❌ fade_video出错: {e}")
 
         return output_path
+
+
+    def extract_first_last_frame(self, video_path):
+        """直接从视频提取第一帧和最后一帧为 PNG 文件，并返回两个 PNG 的路径"""
+        temp_dir = self.temp_dir
+        # 生成唯一的输出文件名前缀
+        output_prefix = f"frame_{uuid.uuid4().hex[:8]}"
+        first_frame_path = os.path.join(temp_dir, f"{output_prefix}_first.png")
+        last_frame_path = os.path.join(temp_dir, f"{output_prefix}_last.png")
+        
+        try:
+            # 提取第一帧（直接提取第一帧，无需指定帧号）
+            self.run_ffmpeg_command([
+                self.ffmpeg_path, "-y",
+                "-i", video_path,
+                "-vframes", "1",  # 只提取一帧（第一帧）
+                "-q:v", "2",
+                first_frame_path
+            ])
+            
+            # 提取最后一帧：使用 -sseof 从文件末尾前0.1秒开始，提取一帧
+            # 这样可以确保获取到最后一帧，即使视频很短也能正常工作
+            self.run_ffmpeg_command([
+                self.ffmpeg_path, "-y",
+                "-sseof", "-0.1",  # 从文件末尾前0.1秒开始（足够短以确保获取最后一帧）
+                "-i", video_path,
+                "-vframes", "1",
+                "-q:v", "2",
+                last_frame_path
+            ])
+            
+            # 检查文件是否成功生成
+            if not os.path.exists(first_frame_path) or not os.path.exists(last_frame_path):
+                print(f"⚠️ 提取帧失败: 第一帧或最后一帧未生成")
+                return None
+            
+            return first_frame_path, last_frame_path
+            
+        except Exception as e:
+            print(f"❌ 提取视频帧出错: {e}")
+            # 清理可能生成的部分文件
+            for path in [first_frame_path, last_frame_path]:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except:
+                        pass
+            return None
 
 
     def video_fade(self, video_path, fade_in_length, fade_out_length, audio_fade):

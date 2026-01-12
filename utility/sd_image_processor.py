@@ -7,11 +7,14 @@ from rembg import remove
 import os
 import config
 from pathlib import Path
+import threading
 # VIDEO_WIDTH and VIDEO_HEIGHT are now obtained from project config via ffmpeg_processor
 from typing import Dict, Any
 import config_prompt
 from . import llm_api
 from .file_util import get_file_path, build_scene_media_prefix, safe_copy_overwrite
+from project_manager import refresh_scene_media
+import subprocess
 
 
 GEN_CONFIG = {
@@ -635,53 +638,42 @@ class SDProcessor:
 
 
 
-    def enhance_clip(self, pid, scene, av_type, level:str, fps_enhace:bool):
-        fps = scene.get(av_type + "_fps", "15")
+    def enhance_clip(self, pid, scene, track, level:str):
+        fps = scene.get(track + "_fps", "15")
         if fps > 24:
             fps = 15
 
-        animate_mode = scene.get(av_type + "_animation", "")
+        animate_mode = scene.get(track + "_animation", "")
 
         if animate_mode in config_prompt.ANIMATE_WS2V:
-            left_input = get_file_path(scene, av_type + "_left")
-            right_input = get_file_path(scene, av_type + "_right")
+            left_input = get_file_path(scene, track + "_left")
+            right_input = get_file_path(scene, track + "_right")
             if left_input and right_input:
                 left_input = self.workflow.ffmpeg_processor.refps_video(left_input, fps)
                 right_input = self.workflow.ffmpeg_processor.refps_video(right_input, fps)
-                enhance_left_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_left_input = build_scene_media_prefix(pid, scene["id"], track, "ENH", True)
                 enhance_left_input = config.get_temp_file(self.pid, "mp4", enhance_left_input + "_" + level + "_")
                 safe_copy_overwrite(left_input, enhance_left_input)
-                if fps_enhace:
-                    self._interpolate_video(enhance_left_input)
-                    scene[av_type + "_status"] = "IN1"
-                else:
-                    self._enhance_video(enhance_left_input)
-                    scene[av_type + "_status"] = "EN1"
+                self._enhance_video(enhance_left_input)
+                scene[track + "_status"] = "EN1"
 
-                enhance_right_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_right_input = build_scene_media_prefix(pid, scene["id"], track, "ENH", True)
                 enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
                 safe_copy_overwrite(right_input, enhance_right_input)
-                if fps_enhace:
-                    self._interpolate_video(enhance_right_input)
-                else:
-                    self._enhance_video(enhance_right_input)
+                self._enhance_video(enhance_right_input)
         else:
-            input = get_file_path(scene, av_type)
+            input = get_file_path(scene, track)
             if input:
                 input = self.workflow.ffmpeg_processor.refps_video(input, fps)
-                enhance_input = build_scene_media_prefix(pid, scene["id"], av_type, "INT" if fps_enhace else "ENH", True)
+                enhance_input = build_scene_media_prefix(pid, scene["id"], track, "ENH", True)
                 enhance_input = config.get_temp_file(pid, "mp4", enhance_input+"_"+level+"_")
                 safe_copy_overwrite(input, enhance_input)
-                if fps_enhace:
-                    self._interpolate_video(enhance_input)
-                else:
-                    self._enhance_video(enhance_input)
+                self._enhance_video(enhance_input)
 
 
  
     ENHANCE_SERVERS = ["http://10.0.0.210:5000", "http://10.0.0.235:5000"]
     current_enhance_server = 0
-
 
     def _enhance_video(self, video_path):
         """调用 REST API 增强单个视频"""
@@ -708,61 +700,58 @@ class SDProcessor:
             print(f"❌ 增强单视频时出错: {str(e)}")
 
 
+    def _enhance_image_in_bat(self, image_path, face_weight=0.3):
+        # 获取当前脚本所在目录的父目录（项目根目录），然后拼接 Real-ESRGAN 子文件夹
+        #project_root = Path("__file__").parent.parent
+        enhancer_root = Path("/ImageEnhance")
+        realesrgan_python = enhancer_root / "venv" / "Scripts" / "python.exe"
 
-    def _interpolate_video(self, video_path) :
-        """调用 REST API 增强单个视频"""
-        try: # clip_project_20251208_1710_10708_S2V_13225050_original.mp4
-            url = self.ENHANCE_SERVERS[self.current_enhance_server] + "/interpolate"
-            self.current_enhance_server = (self.current_enhance_server + 1) % len(self.ENHANCE_SERVERS)
+        temp_path = config.get_temp_path(self.workflow.pid)
+        face_args = f"--face_enhance --face_enhance_weight {face_weight}"  if face_weight > 0.09 else ""
+        # Use explicit Python path to ensure we use the correct version
+        batch_content = f"""
+cd {enhancer_root}
+call venv\\Scripts\\activate.bat
+{str(realesrgan_python)} inference_realesrgan.py -n RealESRGAN_x2plus -i {image_path} -o {temp_path} --suffix out  {face_args}
+"""
+        batch_file = config.get_temp_file(self.workflow.pid, "bat")
+        with open(batch_file, 'w', encoding='utf-8') as f:
+            f.write(batch_content)
 
-            with open(video_path, 'rb') as video_file:
-                files = {'video': video_file}
-                
-                print(f"🚀 正在调用视频增强API: {url}")
-                response = requests.post(url, files=files, timeout=300)
-                
-                if response.status_code >= 200 and response.status_code < 300:
-                    print("✅ 单视频增强成功")
-                    print(f"📄 响应: {response.text}")
-                else:
-                    print(f"❌ 单视频增强失败，状态码: {response.status_code}")
-                    print(f"📄 错误信息: {response.text}")
-                    
-        except requests.exceptions.RequestException as e:
-            print(f"❌ REST API 调用失败: {str(e)}")
-        except Exception as e:
-            print(f"❌ 增强单视频时出错: {str(e)}")
+        result = subprocess.run([str(batch_file)], shell=True, capture_output=True, text=True, check=False, encoding='utf-8', errors='ignore', cwd=str(enhancer_root))
+        print(f"Real-ESRGAN batch script return code: {result.returncode}")
 
+        temp_output = temp_path +"/" + Path(image_path).stem + "_out" + Path(image_path).suffix
+        return self.workflow.ffmpeg_processor.resize_image_smart(temp_output)
 
 
-    def _interpolate_video_2(self, video_path) :
-        server_config = GEN_CONFIG["INTP"]
+    def _enhance_image_in_api(self, image_path, face_enhance_weight=0.3):
+        output_path = config.get_temp_file(self.workflow.pid, "webp")
+        #url = "http://10.0.0.216:5050/enhance"
+        url = os.getenv("ENHANCE_API_URL", "")
+        
+        # 打开图片文件
+        with open(image_path, 'rb') as f:
+            files = {'image': f}
+            data = {
+                'face_enhance_weight': face_enhance_weight
+            }
             
-        data = {
-            'prompt': "",
-            "negative_prompt": "",
-            'filename_prefix': Path(video_path).stem,
-
-            'image_width': server_config["image_width"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_height"],
-            'image_height': server_config["image_height"] if self.workflow.ffmpeg_processor.width > self.workflow.ffmpeg_processor.height else server_config["image_width"],
+            # 发送请求
+            response = requests.post(url, files=files, data=data)
+        
+        # 检查响应
+        if response.status_code == 200:
+            # 保存增强后的图片
+            with open(output_path, 'wb') as f:
+                f.write(response.content)
             
-            "cfg_scale": server_config["cfg"],
-            "steps": server_config["steps"],
-            "seed": server_config["seed"],
-            
-            'motion_frame': server_config["motion_frame"],
-            'frame_rate': server_config["frame_rate"],
-            'num_frames': server_config["max_frames"]
-        }
-        files = {
-            'video': video_path
-        }
-
-        self.post_multipart(
-            data=data,
-            files=files,
-            full_url=server_config["url"]
-        )
+            print(f"✅ 图片增强成功！输出: {output_path}")
+            return self.workflow.ffmpeg_processor.resize_image_smart(output_path)
+        else:
+            error_msg = response.json().get('error', 'Unknown error')
+            print(f"❌ 错误: {error_msg}")
+            return None
 
 
     def post_multipart(self, 

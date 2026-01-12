@@ -62,6 +62,7 @@ aiofiles
 zhconv
 tkinterdnd2
 pygame
+pywin32
 
 # Audio recording
 sounddevice

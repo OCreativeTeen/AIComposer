@@ -11,6 +11,7 @@ import json
 import threading
 import time
 from datetime import datetime
+from io import BytesIO
 import pygame
 import uuid
 from magic_workflow import MagicWorkflow
@@ -27,16 +28,13 @@ from utility.file_util import get_file_path, is_image_file, is_audio_file, is_vi
 from gui.media_review_dialog import AVReviewDialog
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
-from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
+from gui.image_prompts_review_dialog import open_image_prompt_dialog, IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
 import cv2
-from pathlib import Path
-
-from moviepy import VideoFileClip
+import json
 import moviepy
-mp = moviepy  # Create an alias for compatibility
 
 
 def askchoice(title, choices):
@@ -311,7 +309,7 @@ class WorkflowGUI:
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        ttk.Button(row1_frame, text="拷贝图",   command=self.copy_images_to_next).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1_frame, text="拷贝图",   command=self.copy_lastimage_to_next).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -365,27 +363,6 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
 
    
-    def open_image_prompt_dialog(self, create_image_callback, scene, image_mode, language:str):
-        """打开提示词审查对话框，用于在创建图像前预览和编辑提示词"""
-        from gui.image_prompts_review_dialog import ImagePromptsReviewDialog
-        
-        dialog = ImagePromptsReviewDialog(
-            parent=self,
-            workflow=self.workflow,
-            create_image_callback=create_image_callback,
-            scene=scene,
-            track=image_mode,
-            language=language
-        )
-        
-        # 设置6秒后自动关闭（取消）
-        def auto_close():
-            if dialog.dialog.winfo_exists():
-                dialog._on_cancel()
-        
-        dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
-        dialog.show()
-
 
     def swap_narration(self):
         """交换第一轨道与旁白轨道"""
@@ -701,8 +678,16 @@ class WorkflowGUI:
         left_frame.pack_propagate(False)
         
         # 角色选择组合框框架
-        roles_frame = ttk.Frame(left_frame)
-        roles_frame.pack(fill=tk.X, pady=(0, 5))
+        visual_button_frame = ttk.Frame(left_frame)
+        visual_button_frame.pack(fill=tk.X, pady=(0, 5))
+
+
+        ttk.Button(visual_button_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(10, 10))
+
+        ttk.Button(visual_button_frame, text="场景视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
+
+        ttk.Button(visual_button_frame, text="解说视频", width=10, command=lambda: self.regenerate_video(None, True)).pack(side=tk.LEFT, padx=(10, 10))
+
         
         # 图片预览区域（原zero位置）
         images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (支持拖放)", padding=5)
@@ -731,6 +716,7 @@ class WorkflowGUI:
 
         self.clip_image_canvas.drop_target_register(DND_FILES)
         self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
+        self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image'))
 
         # Bottom: clip_image_last
         self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, 
@@ -741,6 +727,7 @@ class WorkflowGUI:
 
         self.clip_image_last_canvas.drop_target_register(DND_FILES)
         self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
+        self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image_last'))
 
         # === Zero Image Canvas (zero_image + zero_image_last) ===
         zero_img_frame = ttk.Frame(images_container)
@@ -759,6 +746,7 @@ class WorkflowGUI:
 
         self.zero_image_canvas.drop_target_register(DND_FILES)
         self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
+        self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
 
         # Bottom: zero_image_last
         self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, 
@@ -769,6 +757,7 @@ class WorkflowGUI:
 
         self.zero_image_last_canvas.drop_target_register(DND_FILES)
         self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
+        self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
 
         # === One Image Canvas (one_image + one_image_last) ===
         one_img_frame = ttk.Frame(images_container)
@@ -787,6 +776,7 @@ class WorkflowGUI:
 
         self.one_image_canvas.drop_target_register(DND_FILES)
         self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
+        self.one_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image'))
 
         # Bottom: one_image_last
         self.one_image_last_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, 
@@ -797,6 +787,7 @@ class WorkflowGUI:
 
         self.one_image_last_canvas.drop_target_register(DND_FILES)
         self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
+        self.one_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image_last'))
 
         # === narration Image Canvas (narration_image + narration_image_last) ===
         narration_img_frame = ttk.Frame(images_container)
@@ -815,6 +806,7 @@ class WorkflowGUI:
 
         self.narration_image_canvas.drop_target_register(DND_FILES)
         self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
+        self.narration_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image"))
 
         # Bottom: narration_image_last
         self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, 
@@ -825,6 +817,7 @@ class WorkflowGUI:
 
         self.narration_image_last_canvas.drop_target_register(DND_FILES)
         self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
+        self.narration_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image_last"))
         
 
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
@@ -1043,8 +1036,6 @@ class WorkflowGUI:
         self.scene_extend_var = tk.StringVar(value="1.0")
         ttk.Combobox(duration_promo_frame, textvariable=self.scene_extend_var, values=["0.0", "0.5", "1.0", "1.5", "2.0"], state="readonly", width=6).pack(side=tk.LEFT)
 
-        ttk.Button(duration_promo_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image("en")).pack(side=tk.LEFT, padx=(10, 10))
-
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(self.video_edit_frame)
         type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
@@ -1056,13 +1047,13 @@ class WorkflowGUI:
         self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_main_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.main_animate_combobox.pack(side=tk.LEFT)
         self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
-        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip")).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT)
 
         ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
         self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.narration_animation_combobox.pack(side=tk.LEFT)
         self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
-        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None)).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None, True)).pack(side=tk.LEFT)
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
@@ -1073,8 +1064,8 @@ class WorkflowGUI:
         action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
-        ttk.Button(action_frame, text="增主轨", width=10, command=lambda: self.enhance_clip(True, False)).pack(side=tk.LEFT)
-        ttk.Button(action_frame, text="增次轨", width=10, command=lambda: self.enhance_clip(False, False)).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="增主轨", width=10, command=lambda: self.enhance_clip("clip")).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="增次轨", width=10, command=lambda: self.enhance_clip("narration")).pack(side=tk.LEFT)
 
         # add a choice list to choose the enhance level, values are from config.FACE_ENHANCE, default value to "0"
         FACE_ENHANCE = ["0", "15", "30", "60"]
@@ -1082,8 +1073,8 @@ class WorkflowGUI:
         self.enhance_level.pack(side=tk.LEFT, padx=2)
         self.enhance_level.set("30")
 
-        ttk.Button(action_frame, text="插主轨", width=10, command=lambda: self.enhance_clip(True, True)).pack(side=tk.LEFT)
-        ttk.Button(action_frame, text="插次轨", width=10, command=lambda: self.enhance_clip(False, True)).pack(side=tk.LEFT)
+        #ttk.Button(action_frame, text="插主轨", width=10, command=lambda: self.enhance_clip(True, True)).pack(side=tk.LEFT)
+        #ttk.Button(action_frame, text="插次轨", width=10, command=lambda: self.enhance_clip(False, True)).pack(side=tk.LEFT)
         #RIFE_EXP = ["0", "1", "2"]
         #self.rife_exp = ttk.Combobox(action_frame, width=5, values=RIFE_EXP)
         #self.rife_exp.pack(side=tk.LEFT, padx=2)
@@ -1304,28 +1295,25 @@ class WorkflowGUI:
 
     def _perform_video_check(self):
         """执行视频检查任务（由单例线程调用）"""
-        animate_gen_list = []
-        for scene_index, scene in enumerate(self.workflow.scenes):
-            #clip_animation = scene.get("clip_animation", "")
-            #if clip_animation in config_prompt.ANIMATE_SOURCE and clip_animation != "":
-            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
-            animate_gen_list.append((scene_name, "clip", scene))
-            #narration_animation = scene.get("narration_animation", "")
-            #if narration_animation in config_prompt.ANIMATE_SOURCE and narration_animation != "":
-            scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "narration", "", False)
-            animate_gen_list.append((scene_name, "narration", scene))
+        #animate_gen_list = []
+        #for scene_index, scene in enumerate(self.workflow.scenes):
+        #    #clip_animation = scene.get("clip_animation", "")
+        #    #if clip_animation in config_prompt.ANIMATE_SOURCE and clip_animation != "":
+        #    scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "clip", "", False)
+        #    animate_gen_list.append((scene_name, "clip", scene))
+        #    #narration_animation = scene.get("narration_animation", "")
+        #    #if narration_animation in config_prompt.ANIMATE_SOURCE and narration_animation != "":
+        #    scene_name = build_scene_media_prefix(self.workflow.pid, str(scene["id"]), "narration", "", False)
+        #    animate_gen_list.append((scene_name, "narration", scene))
 
-        if animate_gen_list == []:
-            return
+        #if animate_gen_list == []:
+        #    return
         
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
-            self.media_scanner.scanning("X:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")                      # clip_p202512231259_10005_S2V__00003-audio.mp4
-            self.media_scanner.scanning("Z:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
-            self.media_scanner.scanning("W:\\wan_video\\output_mp4", config.BASE_MEDIA_PATH+"\\input_mp4")      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
-
-            self.media_scanner.check_gen_video(config.BASE_MEDIA_PATH+"\\input_mp4", animate_gen_list)                 # clip_p202512231259_10005_S2V_23155421.mp4
-            #self.media_scanner.scanning("Y:\\output", config.BASE_MEDIA_PATH+"\\input_mp4")
+            self.media_scanner.scanning("X:\\output")                      # clip_p202512231259_10005_S2V__00003-audio.mp4
+            self.media_scanner.scanning("Z:\\wan_video\\output_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
+            self.media_scanner.scanning("W:\\wan_video\\output_mp4")      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
 
             self.workflow.save_scenes_to_json()
 
@@ -2103,9 +2091,7 @@ class WorkflowGUI:
                     # Update video with new audio
                     clip_video = get_file_path(current_scene, "clip")
                     if clip_video and os.path.exists(clip_video):
-                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(
-                            clip_video, new_audio
-                        )
+                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video( clip_video, new_audio )
                         if output_video:
                             refresh_scene_media(
                                 current_scene, "clip", ".mp4", output_video, True
@@ -3026,6 +3012,83 @@ class WorkflowGUI:
             print(f"❌ 加载 PIP L/R 第一帧失败: {e}")
     
     
+    def copy_image_to_clipboard(self, image_path):
+        """将图像复制到 Windows 剪贴板
+        
+        Args:
+            image_path: 图像文件路径
+        """
+        try:
+            if not image_path or not os.path.exists(image_path):
+                messagebox.showwarning("警告", "图像文件不存在")
+                return False
+            
+            # 尝试使用 win32clipboard
+            try:
+                import win32clipboard  # type: ignore
+                
+                # 打开图像
+                img = Image.open(image_path)
+                
+                # 转换为 RGB 模式（如果需要）
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # 将图像保存到内存中的 BMP 格式（Windows 剪贴板需要）
+                output = BytesIO()
+                img.save(output, 'BMP')
+                data = output.getvalue()[14:]  # 移除 BMP 文件头
+                output.close()
+                
+                # 复制到剪贴板
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+                win32clipboard.CloseClipboard()
+                
+                print(f"✅ 已复制图像到剪贴板: {os.path.basename(image_path)}")
+                return True
+                
+            except ImportError:
+                # 如果没有安装 pywin32，尝试使用其他方法
+                messagebox.showwarning("警告", "需要安装 pywin32 才能复制图像到剪贴板\n请运行: pip install pywin32")
+                return False
+                
+        except Exception as e:
+            error_msg = f"复制图像到剪贴板失败: {str(e)}"
+            print(f"❌ {error_msg}")
+            messagebox.showerror("错误", error_msg)
+            return False
+
+
+    def on_image_canvas_double_click(self, event, image_type):
+        """处理图像 canvas 双击事件，复制图像到剪贴板
+        
+        Args:
+            event: 双击事件
+            image_type: 图像类型，如 'clip_image', 'clip_image_last' 等
+        """
+        try:
+            current_scene = self.get_current_scene()
+            image_path = current_scene.get(image_type)
+            if not image_path:
+                messagebox.showwarning("警告", f"场景中没有 {image_type} 图像")
+                return
+            
+            # pop up messagebox to ask user if want to enhance image
+            dialog = messagebox.askyesno("增强图像", "是否要增强图像？")
+            if dialog:
+                image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
+                oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+
+            if self.copy_image_to_clipboard(image_path):
+                messagebox.showinfo("成功", f"已复制 {image_type.replace('_', ' ')} 到剪贴板\n可以在网页工具中粘贴使用")
+        except Exception as e:
+            error_msg = f"处理双击事件失败: {str(e)}"
+            print(f"❌ {error_msg}")
+            messagebox.showerror("错误", error_msg)
+
+
     def on_image_drop(self, event, image_type):
         """处理图片拖放事件
         
@@ -3352,45 +3415,31 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def copy_images_to_next(self):
+    def copy_lastimage_to_next(self):
         current_scene = self.get_current_scene()
         next_scene = self.workflow.next_scene_of_story(current_scene)
         if current_scene and next_scene:
-            clip_image_split = current_scene.get("clip_image_split", "")
-            clip_animation = current_scene.get("clip_animation", "")
-            narration_animation = current_scene.get("narration_animation", "")
-
-            next_scene["clip_image_split"] = clip_image_split
-            next_scene["clip_animation"] =  clip_animation
-            next_scene["narration_animation"] = narration_animation
-
-            clip_image = current_scene.get("clip_image", "")
             clip_image_last = current_scene.get("clip_image_last", "")
-            if clip_image:
-                refresh_scene_media(next_scene, "clip_image", ".webp", clip_image, True)
-            if clip_image_last:
-                refresh_scene_media(next_scene, "clip_image_last", ".webp", clip_image_last, True)
+            if clip_image_last and clip_image_last.endswith(".webp"):
+                refresh_scene_media(next_scene, "clip_image", ".webp", clip_image_last, True)
 
-            narration_image = current_scene.get("narration_image", "")
             narration_image_last = current_scene.get("narration_image_last", "")
-            if narration_image:
-                refresh_scene_media(next_scene, "narration_image", ".webp", narration_image, True)
-            if narration_image_last:
-                refresh_scene_media(next_scene, "narration_image_last", ".webp", narration_image_last, True)
+            if narration_image_last and narration_image_last.endswith(".webp"):
+                refresh_scene_media(next_scene, "narration_image", ".webp", narration_image_last, True)
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
 
 
-    def enhance_clip(self, clip_or_narration:bool, fps_enhace:bool):
+    def enhance_clip(self, track:str):
         """增强主图或次图"""
         scene = self.get_current_scene()
         level = self.enhance_level.get()
-        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip" if clip_or_narration else "narration", level, fps_enhace)
+        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, track, level)
         self.refresh_gui_scenes()
 
 
-    def recreate_clip_image(self, language:str):
+    def recreate_clip_image(self, full:bool):
         """重新创建主图，先打开对话框让用户审查和编辑提示词"""
         scene = self.get_current_scene()
         
@@ -3411,7 +3460,7 @@ class WorkflowGUI:
             #print("✅ 主图已重新创建")
         
         # 构建正面提示词预览
-        self.open_image_prompt_dialog(create_clip_image, scene, "clip", language)
+        open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
 
 
     def update_current_scene(self):
@@ -3778,7 +3827,7 @@ class WorkflowGUI:
         self.video_canvas.bind('<Double-Button-1>', self.on_video_canvas_double_click)
 
 
-    def handle_av_replacement(self, av_path, replace_media_audio, media_type):
+    def handle_video_replacement(self, video_path, replace_media_audio, media_type):
         """处理音频替换"""
         try:
             current_scene = self.get_current_scene()
@@ -3792,20 +3841,20 @@ class WorkflowGUI:
                     oldv, v = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
                     refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
                     refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
-                    current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
+                    current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
                     current_scene[media_type + "_status"] = "COPY"
 
-            if not av_path:
-                av_path = get_file_path(current_scene, media_type)
+            if not video_path:
+                video_path = get_file_path(current_scene, media_type)
             else:
-                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(av_path)
+                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
                 current_scene[media_type + "_status"] = "DND"
-                av_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=None, height=self.workflow.ffmpeg_processor.height)
+                video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
             if media_type != "clip" and media_type != "narration":
                 replace_media_audio = "keep"
-            review_dialog = AVReviewDialog(self, av_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
+            review_dialog = AVReviewDialog(self, video_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
             
             # 等待对话框关闭
             self.root.wait_window(review_dialog.dialog)
@@ -3842,8 +3891,17 @@ class WorkflowGUI:
             # media_type == clip
             if len(audio_json) > 1:
                 self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
-            #else: # transcribe_way == "multiple_merge":
-            #    self.workflow.merge_scenes_from_json( raw_scene=current_scene, audio_json=audio_json )
+
+            # pop up messagebox to ask user if want to repalce image
+            dialog1 = messagebox.askyesno("替换首帧图像", "是否要替换首帧图像？")
+            dialog2 = messagebox.askyesno("替换末帧图像", "是否要替换末帧图像？")
+            if dialog1 or dialog2:
+                first_image, last_image = self.workflow.ffmpeg_processor.extract_first_last_frame(video_path)
+                if dialog1:
+                    refresh_scene_media(current_scene, media_type+"_image", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(first_image))
+                if dialog2:
+                    refresh_scene_media(current_scene, media_type+"_image_last", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(last_image))
+
             messagebox.showinfo("成功", f"音频已成功替换！\n\n")
                 
         except Exception as e:
@@ -3955,7 +4013,7 @@ class WorkflowGUI:
             replace_media_audio, media_type = selector.show()
             if not media_type:
                 return  # 用户取消
-            self.handle_av_replacement(dropped_file, replace_media_audio, media_type)
+            self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
 
         self.refresh_gui_scenes()
 
@@ -3987,7 +4045,7 @@ class WorkflowGUI:
         else:
             dropped_file = get_file_path(current_scene, "narration")
 
-        self.handle_av_replacement(dropped_file, replace_media_audio, media_type)
+        self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
 
         self.refresh_gui_scenes()
 
@@ -4086,9 +4144,7 @@ class WorkflowGUI:
         # 如果 wan_prompt 是字符串（JSON格式），尝试解析为字典
         if isinstance(wan_prompt, str) and wan_prompt.strip():
             try:
-                import json
-                p = json.loads(wan_prompt)
-                wan_prompt = p
+                wan_prompt = json.loads(wan_prompt)
             except:
                 print("none json wan_prompt")
         
@@ -4107,23 +4163,22 @@ class WorkflowGUI:
         self.workflow.save_scenes_to_json()
 
 
-    def regenerate_video(self, track):
+    def regenerate_video(self, track, prompt_only):
         """打开 WAN 提示词编辑对话框并生成主轨道视频"""
         if track == None:
             track = self.selected_secondary_track
 
         scene = self.get_current_scene()
-        previous_scene = self.get_previous_scene()
-        next_scene = self.get_next_scene()
         
         # 定义生成视频的回调函数
         def generate_callback(wan_prompt):
-            # 保存提示词
             scene[track+"_prompt"] = wan_prompt
             # 使用编辑后的 prompt 生成视频
-            self.generate_video(scene, previous_scene, next_scene, track)
-            # 监控已集成到后台定时器中，无需单独调用 trace_scene_wan_video
-            # 后台检查会自动开始监控有 clip_animation 的场景
+            if not prompt_only:
+                previous_scene = self.get_previous_scene()
+                next_scene = self.get_next_scene()
+                self.generate_video(scene, previous_scene, next_scene, track)
+
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
         
