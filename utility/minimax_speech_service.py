@@ -152,7 +152,7 @@ VOICES = [
     {
         'name': 'man_mature',
         'language': 'chinese',
-        'voice': 'moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a' #'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
+        'voice': 'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
         'name': 'woman_young',
@@ -162,7 +162,7 @@ VOICES = [
     {
         'name': 'man_young',
         'language': 'chinese',
-        'voice': 'Chinese (Mandarin)_Stubborn_Friend'
+        'voice': 'moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85'
     },
 
     {

@@ -436,6 +436,10 @@ class AVReviewDialog:
         # directly, then remix single conversation with current speaking content (if exisitng)
         self.btn_scene_rebuild = ttk.Button(fresh_buttons_frame, text="场景重建", command=lambda: self.remix_conversation("single", False))
         self.btn_scene_rebuild.pack(side=tk.LEFT)
+        self.btn_scene_rebuild = ttk.Button(fresh_buttons_frame, text="前接重建", command=lambda: self.remix_conversation("connect_prev", False))
+        self.btn_scene_rebuild.pack(side=tk.LEFT)
+        self.btn_scene_rebuild = ttk.Button(fresh_buttons_frame, text="后接重建", command=lambda: self.remix_conversation("connect_next", False))
+        self.btn_scene_rebuild.pack(side=tk.LEFT)
         # transcribe exsiting conversation (if >>30 sec), then remix multiple conversation
         self.btn_multi_transcribe = ttk.Button(fresh_buttons_frame, text="多场转录", command=lambda: self.remix_conversation("multiple", True))
         self.btn_multi_transcribe.pack(side=tk.LEFT)
@@ -1247,7 +1251,10 @@ class AVReviewDialog:
 
 
     def remix_conversation(self, mode, transcribe):
-        self.transcribe_way = mode
+        if mode == "connect_prev" or mode == "connect_next" :
+            self.transcribe_way = "single"
+        else:        
+            self.transcribe_way = mode
         self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
 
         if transcribe:
@@ -1255,60 +1262,104 @@ class AVReviewDialog:
             self._update_fresh_json_text()
 
         #topic = config_channel.CHANNEL_CONFIG[project_manager.PROJECT_CONFIG.get('channel', 'default')]["topic"]
-        refresh_json = None
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
-        if refresh_conversation:
-            try:
-                refresh_json = json.loads(refresh_conversation)
-                refresh_json_copy = []
-                for item in refresh_json:
-                    new_item = {
-                        "explicit": self.current_scene.get("explicit", "explicit"),
-                        "implicit": self.current_scene.get("implicit", "implicit"),
-                        "story_details": self.current_scene.get("story_details", ""),
-                        "speaking": item.get("speaking", ""),
-                        "speaker": item.get("speaker", ""),
-                        "voiceover": item.get("voiceover", "")
-                    }
-                    refresh_json_copy.append(new_item)
-                refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
-            except:
-                refresh_json = None
-
-        if not refresh_json:
+        if mode == "connect_next":
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"]["connection"]
+            selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
-                    "name": self.current_scene.get("name", "story"),
+                    "name": "connection_addon_content",
+                    "speaking": refresh_conversation
+                },
+                {
+                    "name":"previous_scene",
                     "explicit": self.current_scene.get("explicit", "explicit"),
                     "implicit": self.current_scene.get("implicit", "implicit"),
-                    "story_details": self.current_scene.get("story_details", ""),
+                    "speaking": self.current_scene.get("speaking", ""),
+                    "speaker": self.current_scene.get("speaker", ""),
+                    "voiceover": self.current_scene.get("voiceover", "")
+                },
+                {
+                    "name":"next_scene",
+                    "explicit": self.next_scene.get("explicit", "explicit"),
+                    "implicit": self.next_scene.get("implicit", "implicit"),
+                    "speaking": self.next_scene.get("speaking", ""),
+                    "speaker": self.next_scene.get("speaker", ""),
+                    "voiceover": self.next_scene.get("voiceover", "")
+                }
+            ]
+            refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+        elif mode == "connect_prev":
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"]["connection"]
+            selected_prompt_example_file = self.workflow.channel + "_connection.json"
+            refresh_json = [
+                {
+                    "name": "connection_addon_content",
+                    "speaking": refresh_conversation
+                },
+                {
+                    "name":"previous_scene",
+                    "explicit": self.previous_scene.get("explicit", "explicit"),
+                    "implicit": self.previous_scene.get("implicit", "implicit"),
+                    "speaking": self.previous_scene.get("speaking", ""),
+                    "speaker": self.previous_scene.get("speaker", ""),
+                    "voiceover": self.previous_scene.get("voiceover", "")
+                },
+                {
+                    "name":"next_scene",
+                    "explicit": self.current_scene.get("explicit", "explicit"),
+                    "implicit": self.current_scene.get("implicit", "implicit"),
                     "speaking": self.current_scene.get("speaking", ""),
                     "speaker": self.current_scene.get("speaker", ""),
                     "voiceover": self.current_scene.get("voiceover", "")
                 }
             ]
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+        else:
+            refresh_json = None
+            if refresh_conversation:
+                try:
+                    refresh_json = json.loads(refresh_conversation)
+                    refresh_json_copy = []
+                    for item in refresh_json:
+                        new_item = {
+                            "explicit": self.current_scene.get("explicit", "explicit"),
+                            "implicit": self.current_scene.get("implicit", "implicit"),
+                            "story_details": self.current_scene.get("story_details", ""),
+                            "speaking": item.get("speaking", ""),
+                            "speaker": item.get("speaker", ""),
+                            "voiceover": item.get("voiceover", "")
+                        }
+                        refresh_json_copy.append(new_item)
+                    refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
+                except:
+                    refresh_json = None
 
-        selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"][self.current_scene["name"]]
-        selected_prompt_example_file = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
+            if not refresh_json:
+                refresh_json = [
+                    {
+                        "name": self.current_scene.get("name", "story"),
+                        "explicit": self.current_scene.get("explicit", "explicit"),
+                        "implicit": self.current_scene.get("implicit", "implicit"),
+                        "story_details": self.current_scene.get("story_details", ""),
+                        "speaking": refresh_conversation if refresh_conversation else self.current_scene.get("speaking", ""),
+                        "speaker": self.current_scene.get("speaker", ""),
+                        "voiceover": refresh_conversation if refresh_conversation else self.current_scene.get("voiceover", "")
+                    }
+                ]
+                refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"][self.current_scene["name"]]
+            selected_prompt_example_file = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
+
         # read file from media folder
         example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
         with open(example_file, "r", encoding="utf-8") as f:
             selected_prompt_example_text = f.read()
-        
-        # Parse JSON string to array
         selected_prompt_example = parse_json_from_text(selected_prompt_example_text)
         if selected_prompt_example is None:
-            # Fallback to json.loads if parse_json_from_text fails
-            try:
-                selected_prompt_example = json.loads(selected_prompt_example_text)
-            except json.JSONDecodeError:
-                messagebox.showerror("错误", f"无法解析示例文件: {example_file}")
-                return
-        
-        # Ensure it's a list/array
-        if not isinstance(selected_prompt_example, list):
-            selected_prompt_example = [selected_prompt_example]
+            messagebox.showerror("错误", f"无法解析示例文件: {example_file}")
+            return
 
         if self.transcribe_way == "multiple":
             # Convert array back to JSON string for formatting

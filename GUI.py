@@ -34,51 +34,9 @@ from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
 import cv2
 import json
-import moviepy
-
-
-def askchoice(title, choices):
-    """
-    自定义的多选择对话框函数
-    返回用户选择的选项字符串
-    """
-    # 创建一个简单的选择对话框
-    root = tk.Toplevel()
-    root.title(title)
-    root.geometry("300x200")
-    root.resizable(False, False)
-    
-    # 居中显示
-    root.transient()
-    root.grab_set()
-    
-    result = None
-    
-    def on_choice(choice):
-        nonlocal result
-        result = choice
-        root.destroy()
-    
-    # 添加标题
-    label = tk.Label(root, text=title, font=("Arial", 12, "bold"))
-    label.pack(pady=10)
-    
-    # 添加选择按钮
-    for choice in choices:
-        btn = tk.Button(root, text=choice, width=20, 
-                       command=lambda c=choice: on_choice(c))
-        btn.pack(pady=5)
-    
-    # 添加取消按钮
-    cancel_btn = tk.Button(root, text="取消", width=20, 
-                          command=lambda: root.destroy())
-    cancel_btn.pack(pady=10)
-    
-    # 等待用户选择
-    root.wait_window()
-    return result
-
-# askchoice函数定义完成，可以直接调用
+import shutil
+from pathlib import Path
+from gui.choice_dialog import askchoice
 
 
 
@@ -450,6 +408,7 @@ class WorkflowGUI:
 
     def choose_secondary_track(self, track_id):
         """选择旁白轨道并重置播放状态"""
+        self.video_frame.config(text=f"预览 - secondary ({track_id})")
         self.selected_secondary_track = track_id
         # 重置播放偏移量到当前场景的起始位置
         self.reset_track_offset()
@@ -457,45 +416,55 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
-    def choose_from_channel_media(self, is_video=False):
-        """从频道媒体文件夹选择文件
-        
-        从 /AI_MEDIA/program/{channel}/host_video 文件夹中选择视频或图片文件
-        
-        Returns:
-            str: 选择的文件路径，如果用户取消则返回空字符串
-        """
+    def choose_from_channel_media(self, track, from_channel_media=False):
         try:
-            # 获取当前频道
             channel = project_manager.PROJECT_CONFIG.get('channel')
-            if not channel:
-                messagebox.showwarning("警告", "未找到频道配置")
-                return ""
-            
-            # 构建目标文件夹路径
-            if is_video:
-                target_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_video"
+            download_path = config.get_project_path(self.workflow.pid) + "/download"
+            if not os.path.exists(download_path):
+                os.makedirs(download_path, exist_ok=True)
+
+            if from_channel_media:
+                source_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_video"
             else:
-                target_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_image"
-            
-            # 确保文件夹存在
-            if not os.path.exists(target_folder):
-                os.makedirs(target_folder, exist_ok=True)
-            
-            # 打开文件选择对话框
-            file_path = filedialog.askopenfilename(
-                title="从频道媒体文件夹选择文件",
-                initialdir=target_folder,
-                filetypes=[
-                    ("视频文件", "*.mp4")
-                ]
-            )
-            
+                source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+
+            mp4_files = []
+            for file in os.listdir(source_folder):
+                if file.endswith(".mp4"):
+                    mp4_files.append(os.path.join(source_folder, file))
+            if len(mp4_files) == 0:
+                file_path = filedialog.askopenfilename(
+                    title="从频道媒体文件夹选择文件",
+                    initialdir=download_path,
+                    filetypes=[
+                        ("视频文件", "*.mp4")
+                    ]
+                )
+            else:
+                file_path = filedialog.askopenfilename(
+                    title="从频道媒体文件夹选择文件",
+                    initialdir=source_folder,
+                    filetypes=[
+                        ("视频文件", "*.mp4")
+                    ]
+                )
+
             if file_path:
-                if is_video:
-                    self.handle_video_replacement(file_path, "replace", "clip")
-                else: 
-                    self.handle_image_replacement(file_path)
+                if not file_path.startswith(download_path):
+                    rename = os.path.join(download_path, track+"_"+str(self.get_current_scene()["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
+                    if from_channel_media:
+                        shutil.copy(file_path, rename)
+                    else:
+                        shutil.move(file_path, rename)
+                else:
+                    rename = file_path
+
+                # audio_choice = "replace" or "keep" or "trim"
+                choices = ["replace", "trim", "keep"]
+                audio_choice = askchoice("选择音频处理方式", choices, self.root)
+                if audio_choice is None:
+                    return
+                self.handle_video_replacement(rename, audio_choice, track)
                 self.refresh_gui_scenes()
                 
         except Exception as e:
@@ -705,14 +674,15 @@ class WorkflowGUI:
         main_content.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         # 左侧：视频预览区域
-        video_frame = ttk.LabelFrame(main_content, text="预览", padding=10)
-        video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
+        self.secondary_track_after_id = "narration"
+        self.video_frame = ttk.LabelFrame(main_content, text=f"预览 - secondary ({self.secondary_track_after_id})", padding=10)
+        self.video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
         # 设置左侧面板的最大宽度，为右侧面板留出空间
-        video_frame.configure(width=1700)
-        video_frame.pack_propagate(False)
+        self.video_frame.configure(width=1700)
+        self.video_frame.pack_propagate(False)
 
         # 创建水平布局框架来并排显示图像标签和视频画布
-        preview_frame = ttk.Frame(video_frame)
+        preview_frame = ttk.Frame(self.video_frame)
         preview_frame.pack(fill=tk.BOTH, expand=True)
         
         # 左侧区域：背景轨道和旁白轨道（减少宽度给video_canvas更多空间）
@@ -731,11 +701,15 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="场景视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
 
-        ttk.Button(visual_button_frame, text="解说视频", width=10, command=lambda: self.regenerate_video(None, True)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="解说视频", width=10, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(10, 10))
 
-        ttk.Button(visual_button_frame, text="频道媒体", width=10, command=lambda: self.choose_from_channel_media(True)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="CLIP媒体", width=10, command=lambda: self.choose_from_channel_media("clip")).pack(side=tk.LEFT, padx=(10, 10))
 
-        
+        ttk.Button(visual_button_frame, text="SECO媒体", width=10, command=lambda: self.choose_from_channel_media("narration")).pack(side=tk.LEFT, padx=(10, 10))
+
+        ttk.Button(visual_button_frame, text="CHAN媒体", width=10, command=lambda: self.choose_from_channel_media("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
+
+
         # 图片预览区域（原zero位置）
         images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (支持拖放)", padding=5)
         images_preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -1001,6 +975,8 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         ttk.Button(video_control_frame, text="分离", command=self.split_scene, width=5).pack(side=tk.LEFT, padx=1) 
+        ttk.Button(video_control_frame, text="拷贝", command=self.copy_story_scene, width=5).pack(side=tk.LEFT, padx=1)
+
         ttk.Button(video_control_frame, text="下移", command=lambda: self.shift_scene(True), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="上移", command=lambda: self.shift_scene(False), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="智分", command=self.split_smart_scene, width=5).pack(side=tk.LEFT, padx=1) 
@@ -1022,12 +998,6 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         # 存储按钮引用以便后续控制状态
-        self.insert_scene_button = ttk.Button(video_control_frame, text="前插", command=self.insert_story_scene, width=6)
-        self.insert_scene_button.pack(side=tk.LEFT, padx=1)
-
-        self.append_scene_button = ttk.Button(video_control_frame, text="后插", command=self.append_scene, width=6)
-        self.append_scene_button.pack(side=tk.LEFT, padx=1)
-
         # add 2 marks, to mark the current video progress sec，　then add a button 'make_silence'　to make the audio  period between mark1 mark2 be silient
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -1093,14 +1063,14 @@ class WorkflowGUI:
         self.scene_main_animate = tk.StringVar(value="")
         self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_main_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.main_animate_combobox.pack(side=tk.LEFT)
-        self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
+        self.main_animate_combobox.bind('<<ComboboxSelected>>', lambda: self.on_scene_field_change("clip_animation", self.scene_main_animate.get()))
         ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip", False)).pack(side=tk.LEFT)
 
         ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
         self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.narration_animation_combobox.pack(side=tk.LEFT)
-        self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
-        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None, False)).pack(side=tk.LEFT)
+        self.narration_animation_combobox.bind('<<ComboboxSelected>>', lambda: self.on_scene_field_change("narration_animation", self.scene_narration_animation.get()))
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("narration", False)).pack(side=tk.LEFT)
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
@@ -2025,10 +1995,8 @@ class WorkflowGUI:
 
     def get_current_video_time(self):
         """Get current video playback time in sec"""
-        #if self.video_start_time:
-        #    elapsed_time = time.time() - self.video_start_time
-        #    current_time = elapsed_time + (self.video_pause_time or 0)
-        #else:
+        if self.video_cap is None:
+            return 0.0, 0.0
         current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES)
         current_time = current_frame / STANDARD_FPS
 
@@ -2360,10 +2328,18 @@ class WorkflowGUI:
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
 
 
-    def insert_story_scene(self):
-        story_level = self.workflow.first_scene_of_story(self.get_current_scene())
+    def copy_story_scene(self):
+        story_level = self.workflow.first_scene_of_story(self.get_current_scene())  or  self.workflow.last_scene_of_story(self.get_current_scene())
 
-        self.workflow.add_story_scene( self.current_scene_index, self.get_current_scene(), story_level, False )
+        if story_level:
+            dialog = messagebox.askyesno("场景/故事", "是否要拷贝场景还是故事？")
+            if dialog:
+                story_level = False
+
+        dup = self.get_current_scene().copy()
+        dup["id"] = self.workflow.max_id(dup) + 1
+
+        self.workflow.scenes.insert(self.current_scene_index+1, dup) 
 
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -3109,27 +3085,52 @@ class WorkflowGUI:
 
 
     def on_image_canvas_double_click(self, event, image_type):
-        """处理图像 canvas 双击事件，复制图像到剪贴板
-        
-        Args:
-            event: 双击事件
-            image_type: 图像类型，如 'clip_image', 'clip_image_last' 等
-        """
         try:
             current_scene = self.get_current_scene()
-            image_path = current_scene.get(image_type)
+            source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+
+            image_path = None
+            image_files = []
+            for file in os.listdir(source_folder):
+                if file.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    image_files.append(os.path.join(source_folder, file))
+            if len(image_files) > 0:
+                dialog = messagebox.askyesno("选择图像", "是否要选择新图像？")
+                if dialog:
+                    image_path = filedialog.askopenfilename(
+                        title="选择图像",
+                        initialdir=source_folder,
+                        filetypes=[
+                            ("图像文件", "*.png;*.jpg;*.jpeg;*.webp")
+                        ]
+                    )
+
+            if image_path:
+                download_path = config.get_project_path(self.workflow.pid) + "/download"
+                image = Path(image_path)
+                rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
+                shutil.move(image_path, rename)
+                image_path = rename
+            else:    
+                image_path = current_scene.get(image_type)
             if not image_path:
                 messagebox.showwarning("警告", f"场景中没有 {image_type} 图像")
                 return
             
-            # pop up messagebox to ask user if want to enhance image
             dialog = messagebox.askyesno("增强图像", "是否要增强图像？")
             if dialog:
                 image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
-                oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+            else:
+                image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
+
+            oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+            self.workflow.save_scenes_to_json()
 
             if self.copy_image_to_clipboard(image_path):
                 messagebox.showinfo("成功", f"已复制 {image_type.replace('_', ' ')} 到剪贴板\n可以在网页工具中粘贴使用")
+
+            self.refresh_gui_scenes()
+
         except Exception as e:
             error_msg = f"处理双击事件失败: {str(e)}"
             print(f"❌ {error_msg}")
@@ -3510,7 +3511,7 @@ class WorkflowGUI:
         open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
 
 
-    def update_current_scene(self):
+    def update_current_scene(self, event=None):
         scene = self.get_current_scene()
         
         # 处理 cinematography 字段：尝试解析 JSON 字符串
@@ -3788,7 +3789,7 @@ class WorkflowGUI:
         ]
         for field in entry_combobox_fields:
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
-            field.bind('<<ComboboxSelected>>', self.on_scene_field_change)
+            field.bind('<<ComboboxSelected>>', self.update_current_scene)
         
         print("📝 已绑定场景编辑字段的自动保存事件 (Ctrl+Enter 或失去焦点时保存)")
     
@@ -3836,11 +3837,13 @@ class WorkflowGUI:
         # 保存按钮现在总是可用
         pass
 
+
     def on_scene_field_enter(self, event=None):
         """当在场景编辑字段中按下Ctrl+Enter时的回调"""
         # 保存当前场景信息到JSON并传播到相同raw_scene_index的场景
         self.update_current_scene()
         return "break"  # 阻止默认的换行行为
+
 
     def on_scene_field_focus_out(self, event=None):
         """当场景编辑字段失去焦点时的回调"""
@@ -3849,14 +3852,12 @@ class WorkflowGUI:
             self.root.after_cancel(self._save_timer)
         self._save_timer = self.root.after(500, lambda: self.update_current_scene())  # 500ms延迟
 
-    def on_scene_field_change(self, event=None):
-        """当场景字段值发生变化时的回调（如Combobox选择变化）"""
-        self.update_current_scene()
 
     def on_volume_change(self, *args):
         """当音量滑块值发生变化时的回调"""
         volume = self.track_volume_var.get()
         self.volume_label.config(text=f"{volume:.1f}")
+
 
     def on_tab_changed(self, event):
         if not hasattr(self, 'workflow') or self.workflow is None:
@@ -3948,11 +3949,9 @@ class WorkflowGUI:
                     refresh_scene_media(current_scene, media_type+"_image", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(first_image))
                 if dialog2:
                     refresh_scene_media(current_scene, media_type+"_image_last", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(last_image))
-
-            messagebox.showinfo("成功", f"音频已成功替换！\n\n")
                 
         except Exception as e:
-            messagebox.showerror("错误", f"音频替换失败: {str(e)}")
+            messagebox.showerror("错误", f"视频替换失败: {str(e)}")
 
 
     def handle_image_replacement(self, source_image_path):
@@ -4027,7 +4026,6 @@ class WorkflowGUI:
         if not media_type:
             return  # 用户取消
         self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
-
         self.refresh_gui_scenes()
 
 
@@ -4059,7 +4057,6 @@ class WorkflowGUI:
             dropped_file = get_file_path(current_scene, "narration")
 
         self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
-
         self.refresh_gui_scenes()
 
 
@@ -4068,81 +4065,19 @@ class WorkflowGUI:
         current_scene["clip_animation"] = self.scene_main_animate.get()
         self.workflow.save_scenes_to_json()
 
-    def on_video_clip_animation_change(self, event=None):
-        """当视频标签页宣传模式发生变化时的回调函数"""
-        # 保存当前场景的宣传模式到JSON
-        current_scene = self.get_current_scene()
-        current_scene["clip_animation"] = self.scene_main_animate.get()
+
+    def on_scene_field_change(self, field_name, field_value, event=None):
+        self.get_current_scene()[field_name] = field_value 
         self.workflow.save_scenes_to_json()
-        self.log_to_output(self.video_output, f"✅ 宣传模式已更新为: {self.scene_main_animate.get()}")
 
 
     def on_image_type_change(self, event=None):
         """处理图像类型选择变化"""
         selected_image_type = self.scene_narration_animation.get()
-        print(f"✅ 场景 {self.current_scene_index + 1} 图像类型已设置为: {selected_image_type}")
-        
-        # 保存图像类型到scenes JSON文件
-        self.save_narration_animation_to_scenes_json(self.current_scene_index, selected_image_type)
-        
+        self.get_current_scene()["narration_animation"] = selected_image_type
         # 标记配置已更改
         self._config_changed = True
 
-
-    def update_scene_field(self, scene_index, field_name, field_value):
-        """更新单个场景的特定字段"""
-        try:
-            workflow = self.workflow
-            
-            if scene_index >= len(workflow.scenes):
-                print(f"❌ 场景索引 {scene_index} 超出范围")
-                return False
-            
-            # 调试：显示更新前的状态
-            old_value = workflow.scenes[scene_index].get(field_name, "未设置")
-            print(f"🔍 调试: 场景 {scene_index + 1} 的 {field_name} 从 '{old_value}' 更新为 '{field_value}'")
-            
-            # 更新workflow内存中的数据
-            workflow.scenes[scene_index][field_name] = field_value
-            
-            # 验证更新
-            new_value = workflow.scenes[scene_index].get(field_name)
-            print(f"✅ 验证: 场景 {scene_index + 1} 的 {field_name} 现在是 '{new_value}'")
-            
-            return self.workflow.save_scenes_to_json()
-            
-        except Exception as e:
-            print(f"❌ 更新场景字段失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
-
-
-    def update_scene_fields(self, scene_index, field_updates):
-        """批量更新单个场景的多个字段"""
-        try:
-            workflow = self.workflow
-            
-            if scene_index >= len(workflow.scenes):
-                print(f"❌ 场景索引 {scene_index} 超出范围")
-                return False
-            
-            # 批量更新workflow内存中的数据
-            for field_name, field_value in field_updates.items():
-                workflow.scenes[scene_index][field_name] = field_value
-            # 立即保存到JSON文件
-            field_names = list(field_updates.keys())
-            return self.workflow.save_scenes_to_json()
-            
-        except Exception as e:
-            print(f"❌ 批量更新场景字段失败: {str(e)}")
-            return False
-
-        
-    def save_narration_animation_to_scenes_json(self, scene_index, image_type):
-        """保存单个场景的图像类型到scenes JSON文件"""
-        return self.update_scene_field(scene_index, "narration_animation", image_type)
-        
 
     def generate_video(self, scene, previous_scene, next_scene, track):
         image_path = get_file_path(scene, track+"_image")
@@ -4178,9 +4113,6 @@ class WorkflowGUI:
 
     def regenerate_video(self, track, prompt_only):
         """打开 WAN 提示词编辑对话框并生成主轨道视频"""
-        if track == None:
-            track = self.selected_secondary_track
-
         scene = self.get_current_scene()
         
         # 定义生成视频的回调函数
@@ -4198,6 +4130,8 @@ class WorkflowGUI:
         # 显示编辑对话框
         show_wan_prompt_editor(self, self.workflow, generate_callback, scene, track)
  
+
+
 
 def main():
     root = TkinterDnD.Tk()

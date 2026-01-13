@@ -237,279 +237,160 @@ print(without_ext)  # Output: sc/bs/c (or sc\bs\c on Windows)
 
 
 
-
-
-cd Real-ESRGAN
-call venv\Scripts\activate.bat
-
-mkdir /wan_video/enhanced/clip_p202601081625_30001_ENH_
-"E:\wan_video\VideoBackProcessor\Real-ESRGAN\venv\Scripts\python.exe" inference_realesrgan.py -n RealESRGAN_x2plus -i /wan_video/original/clip_p202601081625_30001_ENH_ -o /wan_video/enhanced/clip_p202601081625_30001_ENH_ --suffix out  --face_enhance --face_enhance_weight 0.3
-
-
-
-
-
-
-    def visualize_scenes(self, audio_path, audio_json, general_location, style, shot, angle, color):
-        system_prompt = config_prompt.VISUAL_STORY_SUMMARIZATION_SYSTEM_PROMPT.format(
-            language=config.LANGUAGES[self.language],
-            length=512
-        )
-
-        text_summary = self.llm_api.generate_text_summary(
-                            system_prompt, 
-                            "\n".join([segment["speaking"] for segment in audio_json])
-                        )
-        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["speaking"]
-
-        raw_json_path = f"{config.get_project_path(self.pid)}/{Path(audio_path).stem}.json"
-
-        system_prompt = config_prompt.SCENE_SUMMARY_SYSTEM_PROMPT
-        system_prompt = system_prompt + f"\n***FYI*** Generally, video/image is in \'{style}\' style &  \'{color}\' colors; the camera using \'{shot}\' shot, in \'{angle}\' angle."
-
-        user_prompt = json.dumps(audio_json, ensure_ascii=False, indent=2)
-
-        raw_scenes = self.llm_api.generate_json_summary(system_prompt, user_prompt, raw_json_path)
-
-        for i, scene_data in enumerate(raw_scenes):
-            scene_data.update({
-                # "effect": config.get_next_special_effect(),
-                # "raw_scene_index": f"{audio_stem}_raw_{i}",
-                "clip_animation": "",
-                "narration_animation": "",
-                "main_audio": audio_path,
-                "story_summary": text_summary
-            })
-
-        with open(raw_json_path, "w", encoding="utf-8") as f:
-            json.dump(raw_scenes, f, ensure_ascii=False, indent=2)
-
-        print(f"raw scenes summary done for {audio_path}...")
-        return raw_scenes, raw_json_path
-
-
-
-
-
-
-        system_prompt = config_prompt.VISUAL_STORY_SUMMARIZATION_SYSTEM_PROMPT.format(
-            language=config.LANGUAGES[self.language],
-            length=512
-        )
-        text_summary = self.llm_api.generate_text(
-                            system_prompt, 
-                            "\n".join([segment["speaking"] for segment in audio_json])
-                        )
-        text_summary = text_summary + "\nThe story end like ... " + audio_json[-1]["speaking"]
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def _confirm_process_video(self, video_path: str) -> bool:
-        """
-        预览视频并让用户确认是否继续处理。
-        优先弹出图形对话框，无法创建时回退到控制台提示。
-        """
-        abs_path = str(Path(video_path).resolve())
-
-        # 若文件不存在，直接终止
-        if not Path(abs_path).exists():
-            self.logger.error(f"Video not found for confirmation: {abs_path}")
-            return False
-
-        def _launch_default_player():
-            """使用系统默认播放器播放视频"""
-            try:
-                if sys.platform.startswith("win"):
-                    os.startfile(abs_path)  # type: ignore[attr-defined]
-                elif sys.platform == "darwin":
-                    subprocess.Popen(["open", abs_path])
-                else:
-                    subprocess.Popen(["xdg-open", abs_path])
-            except Exception as e:
-                # 避免非 ASCII 日志导致编码异常
-                self.logger.warning(f"Cannot auto-open video for preview: {e}")
-
-        # 弹窗确认；失败则使用命令行确认
+    # from clipboard, get the mp4 url, download it to temp folder, then try to replace the scene[track]
+    def download_channel_media(self, track):
+        """从剪贴板获取 mp4 URL，下载到临时文件夹，然后替换场景的 track"""
         try:
-            import tkinter as tk
-            from tkinter import messagebox
-            from tkinter import ttk
-
-            root = tk.Tk()
-            root.title("确认处理视频")
-            root.geometry("520x180")
-            root.resizable(False, False)
-
-            ttk.Label(root, text="是否处理该视频？").pack(pady=6)
-            path_box = tk.Text(root, height=3, wrap="word")
-            path_box.insert("1.0", abs_path)
-            path_box.configure(state="disabled")
-            path_box.pack(fill="both", padx=10)
-
-            btn_frame = ttk.Frame(root)
-            btn_frame.pack(pady=10)
-
-            result = {"value": None}
-
-            def on_confirm(event=None):
-                result["value"] = True
-                root.destroy()
-
-            def on_cancel(event=None):
-                result["value"] = False
-                root.destroy()
-
-            def on_play(event=None):
-                _launch_default_player()
-
-            ttk.Button(btn_frame, text="播放/预览", command=on_play).grid(row=0, column=0, padx=5)
-            ttk.Button(btn_frame, text="确认处理", command=on_confirm).grid(row=0, column=1, padx=5)
-            ttk.Button(btn_frame, text="取消", command=on_cancel).grid(row=0, column=2, padx=5)
-
-            root.bind("<Return>", on_confirm)
-            root.bind("<Escape>", on_cancel)
-            root.mainloop()
-
-            if result["value"] is not None:
-                return result["value"]
+            # 获取剪贴板中的 URL
+            url = self.root.clipboard_get()
+            if not url or not url.strip():
+                messagebox.showwarning("警告", "剪贴板中没有URL")
+                return
+            
+            url = url.strip()
+            
+            # 验证 URL 格式
+            if not (url.startswith("http://") or url.startswith("https://")):
+                messagebox.showerror("错误", f"无效的URL格式: {url}")
+                return
+            
+            # 确保临时文件夹存在
+            temp_dir = config.get_temp_path(self.workflow.pid)
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # 生成临时文件路径
+            temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}.mp4")
+            
+            # 在后台线程中下载文件
+            def download_task():
+                download_url = url  # 保存到局部变量
+                download_path = temp_path  # 保存到局部变量
+                media_track = track  # 保存到局部变量
+                
+                try:
+                    self.root.after(0, lambda: self.log_to_output(self.video_output, f"📥 开始下载视频..."))
+                    self.root.after(0, lambda u=download_url: self.log_to_output(self.video_output, f"URL: {u}"))
+                    
+                    # 创建 session 以保持 cookies
+                    session = requests.Session()
+                    
+                    # 设置请求头，模拟浏览器请求以避免 403 错误
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Sec-Fetch-Dest': 'video',
+                        'Sec-Fetch-Mode': 'no-cors',
+                        'Sec-Fetch-Site': 'cross-site'
+                    }
+                    
+                    # 尝试从 URL 提取域名作为 Referer
+                    try:
+                        from urllib.parse import urlparse
+                        parsed_url = urlparse(download_url)
+                        referer = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                        headers['Referer'] = referer
+                    except:
+                        pass
+                    
+                    # 下载文件
+                    response = session.get(download_url, headers=headers, stream=True, timeout=60, allow_redirects=True)
+                    
+                    # 如果返回 403，尝试移除一些可能导致问题的头
+                    if response.status_code == 403:
+                        self.root.after(0, lambda: self.log_to_output(self.video_output, f"⚠️ 收到 403 错误，尝试简化请求头..."))
+                        # 简化请求头重试
+                        simple_headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        }
+                        response = session.get(download_url, headers=simple_headers, stream=True, timeout=60, allow_redirects=True)
+                    
+                    response.raise_for_status()
+                    
+                    # 获取文件大小（如果可用）
+                    total_size = int(response.headers.get('content-length', 0))
+                    
+                    # 写入文件
+                    downloaded = 0
+                    last_update_time = time.time()
+                    update_interval = 0.5  # 每0.5秒更新一次进度
+                    
+                    with open(download_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                
+                                # 限制更新频率，避免UI阻塞
+                                current_time = time.time()
+                                if total_size > 0 and (current_time - last_update_time) >= update_interval:
+                                    percent = (downloaded / total_size) * 100
+                                    # 使用默认参数避免闭包问题
+                                    self.root.after(0, lambda d=downloaded, t=total_size, p=percent: self.log_to_output(
+                                        self.video_output, 
+                                        f"下载进度: {p:.1f}% ({d / 1024 / 1024:.1f} MB / {t / 1024 / 1024:.1f} MB)"
+                                    ))
+                                    last_update_time = current_time
+                    
+                    # 验证文件是否存在且不为空
+                    if not os.path.exists(download_path) or os.path.getsize(download_path) == 0:
+                        raise Exception("下载的文件为空或不存在")
+                    
+                    file_size = os.path.getsize(download_path) / (1024 * 1024)  # MB
+                    self.root.after(0, lambda fs=file_size: self.log_to_output(
+                        self.video_output, 
+                        f"✅ 视频下载完成！文件大小: {fs:.1f} MB"
+                    ))
+                    
+                    # 在主线程中处理视频替换
+                    self.root.after(0, lambda p=download_path, t=media_track: self.handle_video_replacement(p, "replace", t))
+                    
+                except requests.exceptions.RequestException as e:
+                    # 检查是否是 403 错误
+                    if hasattr(e, 'response') and e.response is not None:
+                        status_code = e.response.status_code
+                        if status_code == 403:
+                            error_msg = f"下载失败: 403 Forbidden\n\n" \
+                                       f"服务器拒绝了请求。可能的原因：\n" \
+                                       f"1. URL 需要登录认证或 cookies\n" \
+                                       f"2. URL 已过期或需要特殊权限\n" \
+                                       f"3. 服务器检测到自动化请求\n\n" \
+                                       f"建议：\n" \
+                                       f"- 尝试在浏览器中打开 URL 确认是否可以访问\n" \
+                                       f"- 如果浏览器可以访问，可能需要手动下载文件\n" \
+                                       f"- 或者使用浏览器扩展复制完整的请求头（包括 cookies）"
+                        else:
+                            error_msg = f"下载失败: {status_code} {str(e)}"
+                    else:
+                        error_msg = f"下载失败: {str(e)}"
+                    
+                    self.root.after(0, lambda msg=error_msg: self.log_to_output(self.video_output, f"❌ {msg}"))
+                    self.root.after(0, lambda msg=error_msg: messagebox.showerror("错误", msg))
+                    # 清理临时文件
+                    if os.path.exists(download_path):
+                        try:
+                            os.remove(download_path)
+                        except:
+                            pass
+                except Exception as e:
+                    error_msg = f"处理失败: {str(e)}"
+                    self.root.after(0, lambda msg=error_msg: self.log_to_output(self.video_output, f"❌ {msg}"))
+                    self.root.after(0, lambda msg=error_msg: messagebox.showerror("错误", msg))
+                    # 清理临时文件
+                    if os.path.exists(download_path):
+                        try:
+                            os.remove(download_path)
+                        except:
+                            pass
+            
+            # 启动下载线程
+            download_thread = threading.Thread(target=download_task, daemon=True)
+            download_thread.start()
+            
+        except tk.TclError:
+            messagebox.showwarning("警告", "无法访问剪贴板")
         except Exception as e:
-            self.logger.warning(f"GUI confirm failed; fallback to console: {e}")
+            messagebox.showerror("错误", f"下载失败: {str(e)}")
 
-        try:
-            answer = input(f"Process video '{abs_path}'? (y/N): ").strip().lower()
-            return answer in ("y", "yes")
-        except Exception as e:
-            self.logger.error(f"User confirmation failed: {e}")
-            return False
-
-
-
-
-
-
-
-
-
-
-Complete List of Chinese Voice IDs (Speech-02 HD / System Voices)
-
-These IDs are usable via the API (i.e. “system voice_id”, not clone voices).
-
-Style / Label	Voice ID
-青涩青年 (young male, fresh)	male-qn-qingse 
-resource.ppio.com
-
-精英青年 (elite youth male)	male-qn-jingying 
-resource.ppio.com
-
-霸道青年 (domineering youth male)	male-qn-badao 
-resource.ppio.com
-
-青年大学生 (college youth male)	male-qn-daxuesheng 
-resource.ppio.com
-
-少女音色 (young girl)	female-shaonv 
-resource.ppio.com
-
-御姐音色 (cool-mature young woman)	female-yujie 
-resource.ppio.com
-
-成熟女性 (mature female)	female-chengshu 
-resource.ppio.com
-
-甜美女性 (sweet female)	female-tianmei 
-resource.ppio.com
-
-男性主持人 (male presenter / host)	presenter_male 
-resource.ppio.com
-
-女性主持人 (female presenter / host)	presenter_female 
-resource.ppio.com
-
-男性有声书 1 (audiobook male style 1)	audiobook_male_1 
-resource.ppio.com
-
-男性有声书 2 (audiobook male style 2)	audiobook_male_2 
-resource.ppio.com
-
-女性有声书 1 (audiobook female style 1)	audiobook_female_1 
-resource.ppio.com
-
-女性有声书 2 (audiobook female style 2)	audiobook_female_2 
-resource.ppio.com
-
-青涩青年-beta	male-qn-qingse-jingpin 
-resource.ppio.com
-
-精英青年-beta	male-qn-jingying-jingpin 
-resource.ppio.com
-
-霸道青年-beta	male-qn-badao-jingpin 
-resource.ppio.com
-
-青年大学生-beta	male-qn-daxuesheng-jingpin 
-resource.ppio.com
-
-少女-beta	female-shaonv-jingpin 
-resource.ppio.com
-
-御姐-beta	female-yujie-jingpin 
-resource.ppio.com
-
-成熟女性-beta	female-chengshu-jingpin 
-resource.ppio.com
-
-甜美女性-beta	female-tianmei-jingpin 
-resource.ppio.com
-
-聪明男童 (smart boy)	clever_boy 
-resource.ppio.com
-
-可爱男童 (cute boy)	cute_boy 
-resource.ppio.com
-
-萌萌女童 (cute girl)	lovely_girl 
-resource.ppio.com
-
-卡通猪小琪 (cartoon pig “Xiao Qi”)	cartoon_pig 
-resource.ppio.com
-
-病娇弟弟 (sickly cute little brother)	bingjiao_didi 
-resource.ppio.com
-
-俊朗男友 (handsome boyfriend)	junlang_nanyou 
-resource.ppio.com
-
-纯真学弟 (innocent junior schoolboy)	chunzhen_xuedi 
-resource.ppio.com
-
-冷淡学长 (“aloof senior student”)	lengdan_xiongzhang 
-resource.ppio.com
-
-霸道少爷 (domineering young master)	badao_shaoye 
-resource.ppio.com
-
-甜心小玲 (sweetheart “Xiaoling”)	tianxin_xiaoling 
-resource.ppio.com
-
-俏皮萌妹 (playful cute girl)	qiaopi_mengmei 
-resource.ppio.com
-
-妩媚御姐 (seductive older sister style)	wumei_yujie 
-resource.ppio.com
-
-嗲嗲学妹 (“coquettish younger female student”)	diadia_xuemei 
-resource.ppio.com
-
-淡雅学姐 (elegant senior female student)	danya_xuejie 
-resource.ppio.com

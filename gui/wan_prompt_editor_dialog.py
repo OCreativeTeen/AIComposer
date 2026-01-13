@@ -225,6 +225,7 @@ class WanPromptEditorDialog:
         
         return prompt_text
     
+
     def _create_button_frame(self, parent):
         """创建按钮框架"""
         button_frame = ttk.Frame(parent)
@@ -281,10 +282,12 @@ class WanPromptEditorDialog:
         self.dialog.clipboard_append(new_prompt)
         self.dialog.update()    
     
+
     def _clear_prompt(self):
         """清空提示词"""
         self.prompt_text.delete(1.0, tk.END)
     
+
     def _on_generate(self):
         """生成视频按钮处理"""
         wan_prompt = self.prompt_text.get(1.0, tk.END).strip()
@@ -309,10 +312,12 @@ class WanPromptEditorDialog:
         # 调用生成视频回调
         self.generate_video_callback(wan_prompt)
     
+
     def _on_cancel(self):
         """取消按钮处理"""
         self.dialog.destroy()
     
+
     def _center_dialog(self):
         """居中显示对话框"""
         self.dialog.update_idletasks()
@@ -322,6 +327,7 @@ class WanPromptEditorDialog:
         
         # 设置焦点
         self.prompt_text.focus_set()
+    
     
     def show(self):
         """显示对话框（阻塞）"""

@@ -52,7 +52,7 @@ COUNSELING_STORY = """
 You are expert to extend & split the story (on Psychological-counseling/self-healing topic) into scenes: 
 
 *** Input:
-    ** story provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' storylines (duplicated in all json elements), and may has 'story_details' content
+    ** story provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
         Here is the example:
             {{
                 "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
@@ -87,7 +87,7 @@ COUNSELING_ANALYSIS = """
 You are expert to extend & split the analysis (on Psychological-counseling/self-healing topic) into scenes:
 
 *** Input:
-    ** analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
+    ** analysis content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
         Here is the example:
             {{
                 "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
@@ -123,7 +123,7 @@ COUNSELING_INTRO = """
 You are expert to create introduction scene for story & analysis (on Psychological-counseling/self-healing topic):
 
 *** Input:
-    ** story & analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints, and may has 'story_details' content
+    ** story & analysis content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' hints / 'story_details'
         Here is a example:
           [
             {{
@@ -151,13 +151,55 @@ You are expert to create introduction scene for story & analysis (on Psychologic
 """
 
 
+COUNSELING_CONNECTION = """
+You are expert to create connection scene to conenct the speaking/voiceover between the previous scene & next scene to smoothly / continuity words transition:
+
+*** Input:
+    ** connection_addon_content, previous scene & next scene content provided in the user-prompt, has 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' hints'
+        Here is a example:
+          [
+            {{
+                "name": "connection_addon_content",
+                "speaking": ""
+            }}
+            {{
+                "name":"previous_scene",
+                "explicit": "成年后，她追寻亲密关系的方式像是一种继续求生——不是“谈恋爱”，更像是寻找可以暂时靠着的肩膀。一次又一次，她投入得真，又退出得重。每段关系的开始像是一条温暖的毛毯，但结尾却像是掉进了冰冷的水井，越挣扎越失重",
+                "implicit": "她渴望亲密，却害怕暴露真实自己；她愿意依靠，却为每一次依靠感到羞愧。每段关系的结局都像童年的回声：靠近会痛，可离开更痛。她用亲密确认自己存在，用逃离对抗恐惧",
+                "speaking": "我就随便问一句而已。‘你在干嘛？’如果他晚点回，肯定是忙吧，或者手机没电……我不是非要他回，可是为什么心会这么乱。",
+                "voiceover": "她一遍遍为对方寻找理由，也一遍遍说服自己不要太黏人。可亮着的屏幕，始终没有给出她想要的回应。",
+                "speaker": "young_woman"
+            }}
+            {{
+                "name":"next_scene"
+                "explicit": "成年后，她追寻亲密关系的方式像是一种继续求生——不是“谈恋爱”，更像是寻找可以暂时靠着的肩膀。一次又一次，她投入得真，又退出得重。每段关系的开始像是一条温暖的毛毯，但结尾却像是掉进了冰冷的水井，越挣扎越失重",
+                "implicit": "她渴望亲密，却害怕暴露真实自己；她愿意依靠，却为每一次依靠感到羞愧。每段关系的结局都像童年的回声：靠近会痛，可离开更痛。她用亲密确认自己存在，用逃离对抗恐惧",
+                "speaking": "你说得对，我也觉得可能不太合适。嗯，我明白。没关系的。",
+                "voiceover": "她的声音听起来很平静，像是早就预料到了这个结果。电话那头挂断后，房间里只剩下她一个人的呼吸声。",
+                "speaker": "young_woman"
+            }}
+          ]
+
+*** Objective: 
+    ** According to all input content (connetion_addon_content, previous_scene & next_scene content), create a connection scene to make a smooth transition (specially speaking / voiceover content continuity):
+
+*** Output format: 
+    ** Strictly output in json array, which contain only one single scene element with fields like: 
+        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
+        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
+        * speaking: 1st person dialogue ~~~ conenct 'speaking' between the previous scene & next scene with smoothly / continuity smooth conversation ~~~ in original language)
+        * voiceover: as narrator ~~~ conenct 'voiceover' between the previous scene & next scene with smoothly / continuity smooth conversation  ~~~ in original language)
+
+        Here is a Example:
+            {example}
+"""
 
 
 COUNSELINGFEEDBACK_PROGRAM = """
 You are an expert in designing a feedback program following a story-anaylysis episode on psychological counseling and self-healing.
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           [
@@ -211,7 +253,7 @@ COUNSELINGFEEDBACK_FEEDBACK = """
 You are an expert to split feedback content (provide in user-prompt) into scenses .
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           The explicit & implicit of the story & the analysis content:
@@ -303,7 +345,7 @@ MV_STORY = """
 You are expert to extend & split the story (in a song) into scenes: 
 
 *** Input:
-    ** the story content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' storylines (duplicated in all json elements), and may has 'story_details' content
+    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
         Here is a example:
         [
             {{
@@ -388,6 +430,7 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_prompt": {
             "program": COUNSELING_PROGRAM,
+            "connection": COUNSELING_CONNECTION,
             "intro": COUNSELING_INTRO,
             "story": COUNSELING_STORY, 
             "analysis": COUNSELING_ANALYSIS

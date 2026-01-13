@@ -267,7 +267,7 @@ class MagicWorkflow:
                         if av_type == "WS2V":
                             prompt_dict["NARRATOR"] = prompt_dict["NARRATOR"] + "... while the left-side person is listening."
                     else:
-                        prompt_dict["NARRATION"] = f"the person ({narrator}), {actions}."
+                        prompt_dict["NARRATOR"] = f"the person ({narrator}), {actions}."
                 elif speaking:
                     prompt_dict["SPEAKER"] = f"the person ({speaker}), {actions}."
                     prompt_dict["SPEAKING"] = speaking
@@ -762,8 +762,14 @@ class MagicWorkflow:
             if element.get("name") == "program":
                 stories_template[i:i+1] = stories_json
             elif element.get("name") == "intro":
-                element["explicit"] = "story: " + stories_json[0]["explicit"] + "\n\nanalysis: " + stories_json[1]["explicit"],
-                element["implicit"] = "story: " + stories_json[0]["implicit"] + "\n\nanalysis: " + stories_json[1]["implicit"],
+                explicit_parts = []
+                for story in stories_json:
+                    explicit_parts.append(story["name"] + ": " + story["explicit"])
+                element["explicit"] = "\n\n".join(explicit_parts)
+                implicit_parts = []
+                for story in stories_json:
+                    implicit_parts.append(story["name"] + ": " + story["implicit"])
+                element["implicit"] = "\n\n".join(implicit_parts)
                 element["story_details"] = stories_json[0]["story_details"]
 
         # popup dialog to select the story level
@@ -1556,5 +1562,3 @@ class MagicWorkflow:
                 self.scenes.insert(story_index+1, story)
             else:
                 self.scenes.insert(story_index, story) 
-
-
