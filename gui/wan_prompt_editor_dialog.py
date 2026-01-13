@@ -337,6 +337,6 @@ def show_wan_prompt_editor(parent, workflow, generate_video_callback, scene, tra
         if dialog.dialog.winfo_exists():
             dialog._on_cancel()
     
-    dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
+    dialog.dialog.after(10000, auto_close)  # 6000毫秒 = 6秒
     dialog.show()
 

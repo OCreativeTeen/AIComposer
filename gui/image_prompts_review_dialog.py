@@ -322,6 +322,6 @@ def open_image_prompt_dialog(parent, workflow, create_image_callback, scene, ima
         if dialog.dialog.winfo_exists():
             dialog._on_cancel()
     
-    dialog.dialog.after(6000, auto_close)  # 6000毫秒 = 6秒
+    dialog.dialog.after(10000, auto_close)  # 6000毫秒 = 6秒
     dialog.show()
 

@@ -758,18 +758,13 @@ class MagicWorkflow:
         stories_json = json.loads(story_script)
         stories_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
 
-        intro_json = {
-            "name": "intro",
-            "explicit": story_script["explicit"],
-            "implicit": story_script["implicit"],
-            "story_details": story_script["story_details"]
-        }
-
         for i, element in enumerate(stories_template):
             if element.get("name") == "program":
                 stories_template[i:i+1] = stories_json
             elif element.get("name") == "intro":
-                stories_template[i:i+1] = intro_json
+                element["explicit"] = "story: " + stories_json[0]["explicit"] + "\n\nanalysis: " + stories_json[1]["explicit"],
+                element["implicit"] = "story: " + stories_json[0]["implicit"] + "\n\nanalysis: " + stories_json[1]["implicit"],
+                element["story_details"] = stories_json[0]["story_details"]
 
         # popup dialog to select the story level
         story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")
@@ -1352,13 +1347,6 @@ class MagicWorkflow:
                 right_prompt.pop("LISTENING", None)
                 self.sd_processor.sound_to_video(prompt=left_prompt, file_prefix=left_file_prefix, image_path=left_image, sound_path=sound_path, animate_mode=animate_mode, silence=True)
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
-
-
-    def replace_scene_audio(self, scene, audio_path, audio_start_time, audio_duration):
-        extended_audio = self.ffmpeg_audio_processor.extend_audio(audio_path, audio_start_time, audio_duration)
-        olda, newa = refresh_scene_media(scene, "clip_audio", ".wav", extended_audio)
-        newv = self.ffmpeg_processor.add_audio_to_video(scene["clip"], newa)
-        refresh_scene_media(scene, "clip", ".mp4", newv)
 
 
     def promotion_video(self, title):

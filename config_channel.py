@@ -55,7 +55,6 @@ You are expert to extend & split the story (on Psychological-counseling/self-hea
     ** story provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' storylines (duplicated in all json elements), and may has 'story_details' content
         Here is the example:
             {{
-                "name": "story",
                 "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
                 "implicit": "行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应。她的哭泣与自我怀疑暗示深层的羞耻与无价值感，而持续求助又展现生存欲望。整个故事不断浮现的隐性主题是：‘我值得被好好对待吗？有人能看见我并留下来吗？’",
                 "speaking": "xxxxxx",
@@ -88,10 +87,9 @@ COUNSELING_ANALYSIS = """
 You are expert to extend & split the analysis (on Psychological-counseling/self-healing topic) into scenes:
 
 *** Input:
-    ** analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints (duplicated in all json elements), and may has 'story_details' content
+    ** analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
         Here is the example:
             {{
-                "name": "analysis",
                 "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
                 "implicit": "潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？哪些时刻让你感到‘她其实是在求生’？这些参与式问题暗示疗愈可以从被看见、被倾听与重新感受自身价值开始。隐含的引导是：当有人真正听见我，我才可能开始听见自己。",
                 "speaking": "xxxxxx",
@@ -125,22 +123,12 @@ COUNSELING_INTRO = """
 You are expert to create introduction scene for story & analysis (on Psychological-counseling/self-healing topic):
 
 *** Input:
-    ** story & analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints (duplicated in all json elements), and may has 'story_details' content
+    ** story & analysis content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints, and may has 'story_details' content
         Here is a example:
           [
             {{
-                "name": "story",
-                "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
-                "implicit": "行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应。她的哭泣与自我怀疑暗示深层的羞耻与无价值感，而持续求助又展现生存欲望。整个故事不断浮现的隐性主题是：‘我值得被好好对待吗？有人能看见我并留下来吗？’",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "speaker": "zzzzz",
-                "story_details": "ttttt"
-            }},
-            {{
-                "name": "analysis",
-                "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
-                "implicit": "潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？哪些时刻让你感到‘她其实是在求生’？这些参与式问题暗示疗愈可以从被看见、被倾听与重新感受自身价值开始。隐含的引导是：当有人真正听见我，我才可能开始听见自己。",
+                "explicit": "story: 蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场... \n\nanalysis: 呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑...",
+                "implicit": "story: 行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应... \n\nanalysis: 潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？...",
                 "speaking": "xxxxxx",
                 "voiceover": "yyyyy",
                 "speaker": "zzzzz",
@@ -149,14 +137,12 @@ You are expert to create introduction scene for story & analysis (on Psychologic
           ]
 
 *** Objective: 
-    ** According to the input content, create scenes as the introduction narration from a professional counselor (the full story & analysis will be shown to reviewers after):
-        * Try to give open questions / suspensive clues to the audience, make them want to see the full story & analysis
-        * Keep scenese content connect coherently to express a complete narrative, and the smooth, conversational pace (not lecture-like). 
+    ** According to all input content (story & analysis), create a scene as a SHORT & dramatic starting hook (suspense, conflict, or shocking event), leave suspense to grab attention with provocative question / challenge to the audience:
 
 *** Output format: 
-    ** Strictly output in ({json}), which contain scene with fields like: 
+    ** Strictly output in json array, which contain only one single scene element with fields like: 
         * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
-        * speaking: As professional counselor, introduce the story (on Psychological-counseling/self-healing topic), and give open questions / suspensive clues to the audience  ~~~ in original language)
+        * speaking: As professional counselor, give a SHORT & dramatic starting hook (suspense, conflict, or shocking event), leave suspense to grab attention with provocative question / challenge to the audience  ~~~ in original language)
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
         
@@ -171,7 +157,7 @@ COUNSELINGFEEDBACK_PROGRAM = """
 You are an expert in designing a feedback program following a story-anaylysis episode on psychological counseling and self-healing.
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints (duplicated in all json elements), and may has 'story_details' content
+    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           [
@@ -225,13 +211,12 @@ COUNSELINGFEEDBACK_FEEDBACK = """
 You are an expert to split feedback content (provide in user-prompt) into scenses .
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints (duplicated in all json elements), and may has 'story_details' content
+    ** the (previous) story & analysis episode content provided in the user-prompt (json or json array of scene), may has existing the 'speaking' script & 'speaker' + voiceover content, and 'explicit' & 'implicit' hints & 'story_details' (duplicated in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           The explicit & implicit of the story & the analysis content:
           [
             {{
-                "name": "feedback",
                 "explicit": "在上一期故事中，我们一起走进了苏青的生命经历：一个在暴力、恐惧与忽视中长大的孩子，如何把“撤离、隐身、自保”变成了活下去的方式，并在成年后的亲密关系中不断重复寻找安全、又害怕被看见的循环。这一期的反馈里，有观众提到：自己对声音异常敏感，一听到类似的动静就会紧张；有人说在关系中总是先付出、先依附，却又在对方靠近时想逃；也有人被“盔甲”这个隐喻触动，意识到自己也发展出过讨好、冷漠或过度独立来保护自己。作为回应，我想先肯定大家的观察力——你们看到的不是‘性格缺陷’，而是清晰的心理线索。它们指向同一个问题：当安全曾经缺席，我们就会学会用各种方式活下来。理解这一点，不是为了给自己贴标签，而是为了松动自责。现实层面上，一些人分享了自己的尝试，比如通过写下情绪、减少在关系中的自我否定、寻找稳定的小支持（一位朋友、一段固定的独处时间）。这些都不是标准答案，而是提醒我们：改变不一定是翻转人生，有时只是把注意力从‘我哪里不对’转向‘我现在需要什么’。",
                 "implicit": "在故事中，反复浮现的是一些非常基本、也非常人性的需要：安全、被看见、被肯定、以及在关系中保有一点掌控感。很多强烈的情绪反应——警觉、依附、逃离、羞耻——并不说明你脆弱，而恰恰说明你曾经很努力地适应环境。这里我们刻意不做自我诊断，而是邀请一种更温和的理解：当某个反应出现时，也许可以好奇地问一句，‘它是在帮我防御什么？’而不是立刻评判或压制。自我理解并不等于纵容痛苦，而是为内在经验留出空间。疗愈往往不是一次性的顿悟，而是无数个微小的时刻：意识到紧张正在发生、允许情绪存在几分钟、在关系中慢一点回应。请记住，带着好奇和善意观察自己，本身就是一种真实而有效的自我修复方式。你不需要立刻变好，你已经在被看见、也在学着看见自己。",
                 "speaking": "xxxxxx",

@@ -158,7 +158,7 @@ class MediaScanner:
 
             target_scene = None
             for scene in self.workflow.scenes:
-                if scene["id"] == video_info.scenario_id:
+                if str(scene["id"]) == str(video_info.scenario_id):
                     target_scene = scene
                     break
             if not target_scene:

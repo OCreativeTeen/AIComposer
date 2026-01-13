@@ -24,7 +24,7 @@ import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
 import os
-from utility.file_util import get_file_path, is_image_file, is_audio_file, is_video_file, build_scene_media_prefix
+from utility.file_util import get_file_path, is_video_file, build_scene_media_prefix
 from gui.media_review_dialog import AVReviewDialog
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
@@ -457,6 +457,51 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
+    def choose_from_channel_media(self, is_video=False):
+        """从频道媒体文件夹选择文件
+        
+        从 /AI_MEDIA/program/{channel}/host_video 文件夹中选择视频或图片文件
+        
+        Returns:
+            str: 选择的文件路径，如果用户取消则返回空字符串
+        """
+        try:
+            # 获取当前频道
+            channel = project_manager.PROJECT_CONFIG.get('channel')
+            if not channel:
+                messagebox.showwarning("警告", "未找到频道配置")
+                return ""
+            
+            # 构建目标文件夹路径
+            if is_video:
+                target_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_video"
+            else:
+                target_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_image"
+            
+            # 确保文件夹存在
+            if not os.path.exists(target_folder):
+                os.makedirs(target_folder, exist_ok=True)
+            
+            # 打开文件选择对话框
+            file_path = filedialog.askopenfilename(
+                title="从频道媒体文件夹选择文件",
+                initialdir=target_folder,
+                filetypes=[
+                    ("视频文件", "*.mp4")
+                ]
+            )
+            
+            if file_path:
+                if is_video:
+                    self.handle_video_replacement(file_path, "replace", "clip")
+                else: 
+                    self.handle_image_replacement(file_path)
+                self.refresh_gui_scenes()
+                
+        except Exception as e:
+            messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
+
+
     def pip_secondary_track(self, from_zero):
         """将旁白轨道作为画中画叠加到主轨道视频上"""
         try:
@@ -687,6 +732,8 @@ class WorkflowGUI:
         ttk.Button(visual_button_frame, text="场景视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
 
         ttk.Button(visual_button_frame, text="解说视频", width=10, command=lambda: self.regenerate_video(None, True)).pack(side=tk.LEFT, padx=(10, 10))
+
+        ttk.Button(visual_button_frame, text="频道媒体", width=10, command=lambda: self.choose_from_channel_media(True)).pack(side=tk.LEFT, padx=(10, 10))
 
         
         # 图片预览区域（原zero位置）
@@ -1047,13 +1094,13 @@ class WorkflowGUI:
         self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_main_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.main_animate_combobox.pack(side=tk.LEFT)
         self.main_animate_combobox.bind('<<ComboboxSelected>>', self.on_video_clip_animation_change)
-        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip", False)).pack(side=tk.LEFT)
 
         ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
         self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.narration_animation_combobox.pack(side=tk.LEFT)
         self.narration_animation_combobox.bind('<<ComboboxSelected>>', self.on_image_type_change)
-        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None, True)).pack(side=tk.LEFT)
+        ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video(None, False)).pack(side=tk.LEFT)
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
@@ -2147,7 +2194,7 @@ class WorkflowGUI:
         self.scene_speaker.delete("1.0", tk.END)
         self.scene_actions.delete("1.0", tk.END)
         self.scene_visual.delete("1.0", tk.END)
-        self.scene_narrator.delete("1.0", tk.END)
+        self.scene_narrator.set("")
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_caption.delete("1.0", tk.END)
         self.scene_explicit.delete("1.0", tk.END)
@@ -3971,49 +4018,15 @@ class WorkflowGUI:
         if not files:
             return
         dropped_file = files[0]
-        if not os.path.exists(dropped_file):
+        if not os.path.exists(dropped_file) or not is_video_file(dropped_file):
             return
         
-        if is_image_file(dropped_file):
-            self.handle_image_replacement(dropped_file)
-        elif is_audio_file(dropped_file):
-            # ask user if want to replace audio for just current scene, all scenes, or extend to all scenes
-            choice = askchoice("确认替换音频", [
-                "替换当前场景音频",
-                "替换所有场景音频",
-                "缩放所有场景音频"
-            ])
-            if not choice:
-                return  # 用户取消
-
-
-            if choice == "替换当前场景音频":
-                clip_duration = self.workflow.ffmpeg_processor.get_duration(self.get_current_scene()["clip_audio"])
-                self.workflow.replace_scene_audio(self.get_current_scene(), dropped_file, 0, clip_duration)
-
-            elif choice == "替换所有场景音频":
-                start_time = 0.0
-                for scene in self.workflow.scenes:
-                    clip_duration = self.workflow.ffmpeg_processor.get_duration(scene["clip_audio"])
-                    self.workflow.replace_scene_audio(scene, dropped_file, start_time, clip_duration)
-                    start_time += clip_duration
-
-            elif choice == "缩放所有场景音频":
-                total_duration = self.workflow.ffmpeg_processor.get_duration(dropped_file)
-                clip_duration = total_duration / len(self.workflow.scenes)
-                # Extend audio to total duration and assign to each scene
-                start_time = 0.0
-                for scene in self.workflow.scenes:
-                    self.workflow.replace_scene_audio(scene, dropped_file, start_time, clip_duration)
-                    start_time += clip_duration
-
-        elif is_video_file(dropped_file):
-            from gui.media_type_selector import MediaTypeSelector
-            selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.get_current_scene())
-            replace_media_audio, media_type = selector.show()
-            if not media_type:
-                return  # 用户取消
-            self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
+        from gui.media_type_selector import MediaTypeSelector
+        selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.get_current_scene())
+        replace_media_audio, media_type = selector.show()
+        if not media_type:
+            return  # 用户取消
+        self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
 
         self.refresh_gui_scenes()
 
