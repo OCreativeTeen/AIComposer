@@ -1073,7 +1073,8 @@ class AVReviewDialog:
         audio_json = self.transcriber.transcribe_with_whisper(
             self.source_audio_path, 
             self.workflow.language, 
-            3
+            3,
+            15
         )
 
         if not audio_json or len(audio_json) == 0:

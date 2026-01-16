@@ -418,54 +418,61 @@ class WorkflowGUI:
 
     def choose_from_channel_media(self, track, from_channel_media=False):
         try:
-            channel = project_manager.PROJECT_CONFIG.get('channel')
-            download_path = config.get_project_path(self.workflow.pid) + "/download"
-            if not os.path.exists(download_path):
-                os.makedirs(download_path, exist_ok=True)
+            mp4_path = None
 
             if from_channel_media:
+                channel = project_manager.PROJECT_CONFIG.get('channel')
                 source_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_video"
-            else:
-                source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
-
-            mp4_files = []
-            for file in os.listdir(source_folder):
-                if file.endswith(".mp4"):
-                    mp4_files.append(os.path.join(source_folder, file))
-            if len(mp4_files) == 0:
-                file_path = filedialog.askopenfilename(
-                    title="从频道媒体文件夹选择文件",
-                    initialdir=download_path,
-                    filetypes=[
-                        ("视频文件", "*.mp4")
-                    ]
-                )
-            else:
-                file_path = filedialog.askopenfilename(
+                mp4_path = filedialog.askopenfilename(
                     title="从频道媒体文件夹选择文件",
                     initialdir=source_folder,
                     filetypes=[
                         ("视频文件", "*.mp4")
                     ]
                 )
+            else:
+                media_folders = ["L:", "M:"]
+                for folder in media_folders:
+                    mp4_path = filedialog.askopenfilename(
+                        title="从频道媒体文件夹选择文件",
+                        initialdir=folder,
+                        filetypes=[
+                            ("视频文件", "*.mp4")
+                        ]
+                    )
+                    if mp4_path:
+                        break
 
-            if file_path:
-                if not file_path.startswith(download_path):
-                    rename = os.path.join(download_path, track+"_"+str(self.get_current_scene()["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
-                    if from_channel_media:
-                        shutil.copy(file_path, rename)
-                    else:
-                        shutil.move(file_path, rename)
+
+            download_path = config.get_project_path(self.workflow.pid) + "/download"
+            if not os.path.exists(download_path):
+                os.makedirs(download_path, exist_ok=True)
+
+            if mp4_path:
+                rename = os.path.join(download_path, track+"_"+str(self.get_current_scene()["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
+                if from_channel_media:
+                    shutil.copy(mp4_path, rename)
                 else:
-                    rename = file_path
-
-                # audio_choice = "replace" or "keep" or "trim"
-                choices = ["replace", "trim", "keep"]
-                audio_choice = askchoice("选择音频处理方式", choices, self.root)
-                if audio_choice is None:
+                    shutil.move(mp4_path, rename)
+            else:
+                mp4_path = filedialog.askopenfilename(
+                    title="从频道媒体文件夹选择文件",
+                    initialdir=download_path,
+                    filetypes=[
+                        ("视频文件", "*.mp4")
+                    ]
+                )
+                if not mp4_path:
                     return
-                self.handle_video_replacement(rename, audio_choice, track)
-                self.refresh_gui_scenes()
+                rename = mp4_path
+
+            # audio_choice = "replace" or "keep" or "trim"
+            choices = ["replace", "trim", "keep"]
+            audio_choice = askchoice("选择音频处理方式", choices, self.root)
+            if audio_choice is None:
+                return
+            self.handle_video_replacement(rename, audio_choice, track)
+            self.refresh_gui_scenes()
                 
         except Exception as e:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")

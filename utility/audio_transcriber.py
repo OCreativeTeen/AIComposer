@@ -158,7 +158,7 @@ class AudioTranscriber:
         raise RuntimeError(f"所有转录尝试都失败了。最后的错误: {last_error}")
 
 
-    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration) -> List[Dict[str, Any]]:
+    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
         start_time = datetime.now().strftime("%H:%M:%S")
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
 
@@ -310,7 +310,7 @@ class AudioTranscriber:
         if safe_file(json_path):
             merged_segments = read_json(json_path)
         else:
-            self.merge_sentences(reorganized, min_sentence_duration)
+            self.merge_sentences(reorganized, min_sentence_duration, max_sentence_duration)
             merged_segments = reorganized
             write_json(json_path, merged_segments)
         
@@ -334,11 +334,14 @@ class AudioTranscriber:
         return merged_segments
 
 
-    def merge_sentences(self, segments, min_sentence_duration):
+    def merge_sentences(self, segments, min_sentence_duration, max_sentence_duration):
         print(f"📝 合并句子...")
         i = 0
         while i < len(segments):
             if i+1 < len(segments):
+                if segments[i]['end'] - segments[i]['start'] > max_sentence_duration:
+                    i += 1
+                    continue
                 if segments[i]['end'] - segments[i]['start'] < min_sentence_duration or segments[i+1]['end'] - segments[i+1]['start'] < min_sentence_duration:
                     segments[i]['caption'] += segments[i+1]['caption']
                     segments[i]['end'] = segments[i+1]['end']
