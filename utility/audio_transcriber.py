@@ -1,5 +1,5 @@
 from faster_whisper import WhisperModel
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
 import os
 import json
@@ -7,69 +7,38 @@ import zhconv
 from . import llm_api
 import config_prompt
 
-import config
-from pathlib import Path
-from pyannote.audio import Pipeline
-#import torch
-#import torchaudio
-import warnings
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
-from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove
+from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove, read_text, write_text
 import gc
 
-# 抑制 torchcodec 警告（如果功能正常，这个警告可以忽略）
-warnings.filterwarnings('ignore', message='.*torchcodec.*', category=UserWarning)
+
+LANGUAGES = {
+    "zh": "Chinese",
+    "tw": "Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+}
 
 
-def unload_whisper_model(model):
-    """
-    彻底卸载 Whisper 模型并释放 GPU 内存。
-    faster_whisper 使用 CTranslate2，需要特殊处理才能完全释放内存。
-    """
-    if model is None:
-        return
-    
-    try:
-        # 尝试卸载模型的内部组件
-        if hasattr(model, 'model'):
-            if hasattr(model.model, 'unload'):
-                model.model.unload()
-            del model.model
-        
-        if hasattr(model, 'feature_extractor'):
-            del model.feature_extractor
-        
-        if hasattr(model, 'hf_tokenizer'):
-            del model.hf_tokenizer
-            
-    except Exception as e:
-        print(f"⚠️ 卸载模型组件时出错: {e}")
-    
-    # 删除模型引用
-    del model
-    
-    # 强制垃圾回收
-    gc.collect()
-    
-    # CUDA 清理
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-    except Exception as e:
-        print(f"⚠️ CUDA 清理时出错: {e}")
+
+VOICE_TEMP_PATH = "/AI_MEDIA/voice"
+if not os.path.exists(VOICE_TEMP_PATH):
+    os.makedirs(VOICE_TEMP_PATH)
+
 
 
 class AudioTranscriber:
 
-    def __init__(self, workflow, model_size, device):
-        self.workflow = workflow
+    def __init__(self, pid, model_size, device):
+        self.pid = pid
         self.model_size = model_size
         self.device = device
-        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
+        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
 
         #device = torch.device("cuda") 
         #hf_token = os.getenv("HF_TOKEN", "")
@@ -95,14 +64,6 @@ class AudioTranscriber:
             segments = json.load(f)
         text_content = "\n".join([segment["content"] for segment in segments])
         return text_content
-
-
-    def transcribe_to_file(self, audio_path, language, min_sentence_duration, max_sentence_duration):
-        script_json = self.transcribe_with_whisper(audio_path, language, min_sentence_duration, max_sentence_duration)
-
-        script_path = f"{config.get_project_path(self.workflow.pid)}/{Path(audio_path).stem}.srt.json"
-        write_json(script_path, script_json)  
-        return script_path
 
 
     def _transcribe_with_retry(self, audio_path, language) -> List[Dict[str, Any]]:
@@ -197,29 +158,20 @@ class AudioTranscriber:
         raise RuntimeError(f"所有转录尝试都失败了。最后的错误: {last_error}")
 
 
-    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
-        script_path = f"{config.get_temp_path(self.workflow.pid)}/{self.workflow.pid}.srt.json"
-        if safe_file(script_path):
-           return read_json(script_path)
-
+    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration) -> List[Dict[str, Any]]:
         start_time = datetime.now().strftime("%H:%M:%S")
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
-        audio_duration = self.workflow.ffmpeg_audio_processor.get_duration(audio_path)
 
         # ========== Step 1: 加载 Whisper 模型并转录 ==========
-        # 先清理内存，为模型加载腾出空间
         print(f"🧹 Step 1a: 预清理内存...")
         gc.collect()
         clean_memory(cuda=True, verbose=False)
-        
-        # 检查可用内存
         try:
             import psutil
             mem = psutil.virtual_memory()
             print(f"📊 系统内存: 总计={mem.total/1024**3:.1f}GB, 可用={mem.available/1024**3:.1f}GB, 使用率={mem.percent}%")
         except:
             pass
-        
         # 检查 CUDA 内存
         try:
             import torch
@@ -230,50 +182,64 @@ class AudioTranscriber:
                 print(f"📊 GPU 内存: 总计={gpu_mem_total:.1f}GB, 已分配={gpu_mem_allocated:.1f}GB, 已保留={gpu_mem_reserved:.1f}GB")
         except Exception as e:
             print(f"⚠️ 无法获取 GPU 信息: {e}")
-        
-        srt_segments = self._transcribe_with_retry(audio_path, language)
-        
+
+
+        print(f"✅ Step 1 開始: 转录")
+        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.1.json"
+        if safe_file(json_path):
+            srt_segments = read_json(json_path)
+        else:
+            srt_segments = self._transcribe_with_retry(audio_path, language)
+            write_json(json_path, srt_segments)
         print(f"✅ Step 1 完成: 转录得到 {len(srt_segments)} 个片段")
 
         # ========== Step 2: 构建 char_time_pair ==========
-        print(f"📝 Step 2: 构建字符时间对...")
-        char_time_pair = []
-        text_content = ""
-        end_time = 0.0
-        for segment in srt_segments:
-            if end_time > 0 and segment['start']!=end_time: # not the 1st item
-                segment['start'] = end_time # fix start time (must == end of last item)
-            segment_time = segment['end'] - segment['start']
-            segment_text = self.chinese_convert(segment['text'], language)
-            normalize_text = self.normalize_text(segment_text)
-            # Distribute time evenly across speakers
-            if len(normalize_text) > 0:
-                time_per_char = segment_time / len(normalize_text)
-                for i, char in enumerate(normalize_text):
-                    char_time_pair.append((char, segment['start'] + i * time_per_char))
-            text_content += segment_text + " "
-            end_time = segment['end']
+        print(f"📝 Step 2 開始: 构建字符时间对...")
+        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.2.json"
+        text_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.2.txt"
+        if safe_file(json_path):
+            char_time_pair = read_json(json_path)
+            text_content = read_text(text_path)
+        else:
+            char_time_pair = []
+            text_content = ""
+            end_time = 0.0
+            for segment in srt_segments:
+                if end_time > 0 and segment['start']!=end_time: # not the 1st item
+                    segment['start'] = end_time # fix start time (must == end of last item)
+                segment_time = segment['end'] - segment['start']
+                segment_text = self.chinese_convert(segment['text'], language)
+                normalize_text = self.normalize_text(segment_text)
+                # Distribute time evenly across speakers
+                if len(normalize_text) > 0:
+                    time_per_char = segment_time / len(normalize_text)
+                    for i, char in enumerate(normalize_text):
+                        char_time_pair.append((char, segment['start'] + i * time_per_char))
+                text_content += segment_text + " "
+                end_time = segment['end']
 
-        # 保存调试信息后立即清理 srt_segments
-        json_path = f"{config.get_project_path(self.workflow.pid)}/transcriber.debug.1.json"
-        with open(json_path, 'w') as f:
-            json.dump(srt_segments, f, indent=4)
-        
+            write_json(json_path, char_time_pair)
+            write_text(text_path, text_content)
+        print(f"✅ Step 2 完成: char_time_pair数量={len(char_time_pair)}")
+
         # 释放 srt_segments，不再需要
         del srt_segments
         gc.collect()
 
-        print(f"✅ Step 2 完成: char_time_pair数量={len(char_time_pair)}")
-
         # ========== Step 3: 重组文本内容 ==========
-        print(f"📝 Step 3: 重组文本内容...")
-        sentences = self.reorganize_text_content(text_content, language)
+        print(f"📝 Step 3 開始: 重组文本内容...")
+        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.3.json"
+        if safe_file(json_path):
+            sentences = read_json(json_path)
+        else:
+            sentences = self.reorganize_text_content(text_content, language)
+            write_json(json_path, sentences)
+        print(f"✅ Step 3 完成: 重组后句子数量={len(sentences)}")
         
         # 释放 text_content，不再需要
         del text_content
         gc.collect()
         
-        print(f"✅ Step 3 完成: 重组后句子数量={len(sentences)}")
         if len(sentences) == 0:
             del char_time_pair
             gc.collect()
@@ -282,96 +248,109 @@ class AudioTranscriber:
             return None
 
         # ========== Step 4: 匹配句子时间 ==========
-        print(f"📝 Step 4: 匹配句子时间...")
-        reorganized = []
-        current_char_index = 0
-        
-        content = ""
-        for i, sentence in enumerate(sentences):
-            print(f"处理句子 {i+1}/{len(sentences)}: {sentence[:50]}...")
-            content += sentence + "\n"
-            # Find best matching position for this sentence
-            start_pos, end_pos = self.find_best_match_position(
-                sentence, char_time_pair, current_char_index
-            )
+        print(f"📝 Step 4 開始: 匹配句子时间...")
+        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.4.json"
+        if safe_file(json_path):
+            reorganized = read_json(json_path)
+        else:
+            reorganized = []
+            current_char_index = 0
             
-            # Get timing information
-            if start_pos < len(char_time_pair):
-                sentence_start_time = char_time_pair[start_pos][1]
-            else:
-                sentence_start_time = char_time_pair[-1][1] if char_time_pair else 0.0
-            
-            if end_pos < len(char_time_pair):
-                sentence_end_time = char_time_pair[end_pos][1]
-            else:
-                sentence_end_time = char_time_pair[-1][1] if char_time_pair else sentence_start_time
-            
-            # Ensure time progression
-            if reorganized:
-                sentence_start_time = max(sentence_start_time, reorganized[-1]['end'])
-            # Ensure end time is after start time
-            if sentence_end_time <= sentence_start_time:
-                sentence_end_time = sentence_start_time + 1.0  # Add 1 sec as minimum
-            
-            reorganized_segment = {
-                'start': sentence_start_time,
-                'end': sentence_end_time,
-                'caption': sentence
-            }
-            reorganized.append(reorganized_segment)
-            # Update search position for next sentence
-            current_char_index = end_pos
-            print(f"句子时间: {sentence_start_time:.2f}s - {sentence_end_time:.2f}s")
+            content = ""
+            for i, sentence in enumerate(sentences):
+                print(f"处理句子 {i+1}/{len(sentences)}: {sentence[:50]}...")
+                content += sentence + "\n"
+                # Find best matching position for this sentence
+                start_pos, end_pos = self.find_best_match_position(
+                    sentence, char_time_pair, current_char_index
+                )
+                
+                # Get timing information
+                if start_pos < len(char_time_pair):
+                    sentence_start_time = char_time_pair[start_pos][1]
+                else:
+                    sentence_start_time = char_time_pair[-1][1] if char_time_pair else 0.0
+                
+                if end_pos < len(char_time_pair):
+                    sentence_end_time = char_time_pair[end_pos][1]
+                else:
+                    sentence_end_time = char_time_pair[-1][1] if char_time_pair else sentence_start_time
+                
+                # Ensure time progression
+                if reorganized:
+                    sentence_start_time = max(sentence_start_time, reorganized[-1]['end'])
+                # Ensure end time is after start time
+                if sentence_end_time <= sentence_start_time:
+                    sentence_end_time = sentence_start_time + 1.0  # Add 1 sec as minimum
+                
+                reorganized_segment = {
+                    'start': sentence_start_time,
+                    'end': sentence_end_time,
+                    'caption': sentence
+                }
+                reorganized.append(reorganized_segment)
+                # Update search position for next sentence
+                current_char_index = end_pos
+                print(f"句子时间: {sentence_start_time:.2f}s - {sentence_end_time:.2f}s")
 
-        with open(f"{config.get_temp_path(self.workflow.pid)}/transcribe_{Path(audio_path).stem}.txt", "w", encoding="utf-8") as f:
-            f.write(content)
-
-        # 释放不再需要的数据
-        del sentences
-        del char_time_pair
-        del content
-        gc.collect()
+            write_json(json_path, reorganized)
+            # 释放不再需要的数据
+            del sentences
+            del char_time_pair
+            del content
+            gc.collect()
 
         print(f"✅ Step 4 完成: reorganized数量={len(reorganized)}")
 
+
         # ========== Step 5: 合并句子 ==========
-        print(f"📝 Step 5: 合并句子...")
-        merged_segments = self.merge_sentences(reorganized, language, min_sentence_duration, max_sentence_duration)
-        
-        # 释放 reorganized
-        del reorganized
-        gc.collect()
+        print(f"📝 Step 5 開始: 合并句子...")
+        # merged_segments = reorganized
+        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.5.json"
+        if safe_file(json_path):
+            merged_segments = read_json(json_path)
+        else:
+            self.merge_sentences(reorganized, min_sentence_duration)
+            merged_segments = reorganized
+            write_json(json_path, merged_segments)
         
         print(f"✅ Step 5 完成: merged数量={len(merged_segments) if merged_segments else 0}")
-        if not merged_segments or len(merged_segments) == 0:
-            clean_memory(cuda=False, verbose=False)
-            safe_remove(script_path)
-            return None
+
 
         # ========== Step 6: 分配说话者 ==========
-        merged_segments = self.finalize_transcribe(merged_segments, audio_duration)
-        if len(merged_segments) == 0:
-            clean_memory(cuda=False, verbose=False)
-            safe_remove(script_path)
-            return None
-        
-        write_json(script_path, merged_segments)
+        script_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.6.json"
+        if safe_file(script_path):
+           merged_segments = read_json(script_path)
+        else:
+            merged_segments = self.finalize_transcribe(merged_segments)
+            write_json(script_path, merged_segments)
+
+        print(f"✅ Step 6 完成: merged数量={len(merged_segments) if merged_segments else 0}")
         
         # 最终清理
         gc.collect()
         clean_memory(cuda=False, verbose=False)
         print(f"✅ 转录完成，返回 {len(merged_segments)} 个片段")
-        
         return merged_segments
 
 
-    def merge_sentences(self, segments, language, min_sentence_duration, max_sentence_duration):
-        system_prompt = config_prompt.MERGE_SENTENCES_SYSTEM_PROMPT.format(language=language, min_sentence_duration=min_sentence_duration, max_sentence_duration=max_sentence_duration)
-        user_prompt = json.dumps(segments, ensure_ascii=False, indent=2)
-        return self.llm_api.generate_json(system_prompt, user_prompt, None, True)
+    def merge_sentences(self, segments, min_sentence_duration):
+        print(f"📝 合并句子...")
+        i = 0
+        while i < len(segments):
+            if i+1 < len(segments):
+                if segments[i]['end'] - segments[i]['start'] < min_sentence_duration or segments[i+1]['end'] - segments[i+1]['start'] < min_sentence_duration:
+                    segments[i]['caption'] += segments[i+1]['caption']
+                    segments[i]['end'] = segments[i+1]['end']
+                    segments.pop(i+1)
+                    # 不递增 i，因为 result[i] 现在是合并后的元素，可能需要继续与下一个元素合并
+                else:
+                    i += 1
+            else:
+                i += 1
 
 
-    def finalize_transcribe(self, input_segments, audio_duration) -> List[Dict[str, Any]]:
+    def finalize_transcribe(self, input_segments) -> List[Dict[str, Any]]:
         segments = []
         for seg in input_segments:
             segments.append({
@@ -384,8 +363,6 @@ class AudioTranscriber:
         if len(segments) > 0:
             if segments[0]['start'] != 0.0:
                 segments[0]['start'] = 0.0
-            if segments[-1]['end'] != audio_duration:
-                segments[-1]['end'] = audio_duration
 
             end_time = 0.0
             for seg in segments:
@@ -677,12 +654,12 @@ class AudioTranscriber:
             return self.chinese_convert(text, target_language)
         
         system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
-            source_language=config.LANGUAGES[source_language],
-            target_language=config.LANGUAGES[target_language]
+            source_language=LANGUAGES[source_language],
+            target_language=LANGUAGES[target_language]
         )
         prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
-            source_language=config.LANGUAGES[source_language],
-            target_language=config.LANGUAGES[target_language],
+            source_language=LANGUAGES[source_language],
+            target_language=LANGUAGES[target_language],
             text=text
         )
 
@@ -932,3 +909,46 @@ class AudioTranscriber:
         
         return min(original_pos, len(original_text))
     
+
+
+def unload_whisper_model(model):
+    """
+    彻底卸载 Whisper 模型并释放 GPU 内存。
+    faster_whisper 使用 CTranslate2，需要特殊处理才能完全释放内存。
+    """
+    if model is None:
+        return
+    
+    try:
+        # 尝试卸载模型的内部组件
+        if hasattr(model, 'model'):
+            if hasattr(model.model, 'unload'):
+                model.model.unload()
+            del model.model
+        
+        if hasattr(model, 'feature_extractor'):
+            del model.feature_extractor
+        
+        if hasattr(model, 'hf_tokenizer'):
+            del model.hf_tokenizer
+            
+    except Exception as e:
+        print(f"⚠️ 卸载模型组件时出错: {e}")
+    
+    # 删除模型引用
+    del model
+    
+    # 强制垃圾回收
+    gc.collect()
+    
+    # CUDA 清理
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception as e:
+        print(f"⚠️ CUDA 清理时出错: {e}")
+
+

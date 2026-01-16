@@ -403,18 +403,6 @@ ffprobe_path = "ffprobe"
 
 
 
-LANGUAGES = {
-    "zh": "Chinese",
-    "tw": "Chinese",
-    "en": "English",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "fr": "French",
-    "de": "German",
-    "es": "Spanish",
-}
-
-
 TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "circleclose"]
 
 

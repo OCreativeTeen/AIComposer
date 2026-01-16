@@ -789,6 +789,8 @@ TRANSLATION_USER_PROMPT = """Translate following text from {source_language} to 
 SRT_REORGANIZATION_SYSTEM_PROMPT = """
 The text content (given in 'user-prompt') in {language} does not have any punctuation marks. 
 Please help me add the correct periods, commas, question marks, and exclamation marks to make it a natural sentence.
+
+FYI: just add the correct punctuation marks to the text (in the original language), do not add any additional information!!!!! (like 'Here's the text with punctuation marks:...', etc.)
 """
 
 

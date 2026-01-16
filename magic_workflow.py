@@ -14,7 +14,7 @@ import config
 import config_prompt
 import config_channel
 from io import BytesIO
-from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix
+from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation
 from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
@@ -52,7 +52,7 @@ class MagicWorkflow:
         self.downloader = YoutubeDownloader(pid)
         self.llm_api = LLMApi()
         self.speech_service = MinimaxSpeechService(self.pid)
-        self.transcriber = AudioTranscriber(self, model_size="small", device="cuda")
+        self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
 
         config.create_project_path(pid)
 
@@ -355,7 +355,10 @@ class MagicWorkflow:
             
         if introduction_story and introduction_story.strip() != "":
             if introduction_story.endswith(".mp3") or introduction_story.endswith(".wav"):
-                introduction_story = self.transcriber.transcribe_to_file(introduction_story, "zh", 10, 26)
+                introduction_path = f"{config.get_project_path(self.pid)}/{Path(introduction_story).stem}.srt.json"
+                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", 3)
+                write_json(introduction_path, script_json)  
+
             if not introduction_story:
                 return None
 
@@ -373,7 +376,10 @@ class MagicWorkflow:
 
         if previous_dialogue and previous_dialogue.strip() != "":
             if previous_dialogue.endswith(".mp3") or previous_dialogue.endswith(".wav"):
-                previous_dialogue = self.transcriber.transcribe_to_file(previous_dialogue, "zh", 10, 26)
+                previous_path = f"{config.get_project_path(self.pid)}/{Path(previous_dialogue).stem}.srt.json"
+                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", 3)
+                write_json(previous_path, script_json)  
+
             if not previous_dialogue:
                 return None
 
@@ -449,7 +455,7 @@ class MagicWorkflow:
         return start_time_in_story, clip_duration, story_duration, indx, len(ss), s == ss[-1]
 
 
-    def merge_scene(self, from_index, to_index, keep_current=False):
+    def merge_scene(self, from_index, to_index):
         if not (from_index-to_index==1 or from_index-to_index==-1):
             return False
         if from_index > len(self.scenes) - 1 or from_index < 0:
@@ -464,8 +470,12 @@ class MagicWorkflow:
 
         to_scene = self.scenes[to_index]
 
-        if not keep_current:
-            from_scene["speaking"] = to_scene["speaking"]
+        speaking = from_scene.get("speaking", "")
+        caption = from_scene.get("caption", "")
+        voiceover = from_scene.get("voiceover", "")
+        from_scene["speaking"] = speaking + "  " + to_scene.get("speaking", "") if ending_punctuation(speaking) else speaking + "... " + to_scene.get("speaking", "")
+        from_scene["caption"] = caption + "  " + to_scene.get("caption", "") if ending_punctuation(caption) else caption + "... " + to_scene.get("caption", "")
+        from_scene["voiceover"] = voiceover + "  " + to_scene.get("voiceover", "") if ending_punctuation(voiceover) else voiceover + "... " + to_scene.get("voiceover", "")
         # merged_duration = self.find_duration(from_scene) + self.find_duration(to_scene)
         if from_index > to_index:
             audio_list = [get_file_path(to_scene, "clip_audio"), get_file_path(from_scene, "clip_audio")]
@@ -640,10 +650,9 @@ class MagicWorkflow:
 
         current_scene["speaking"] = original_content  #original_content[:int(len(original_content)*current_ratio)]
         current_scene["id"] = max_section_id + 1
-        current_scene["extend"] = 1.0
+        current_scene["extend"] = 0.0
         next_scene["speaking"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
-        next_scene["extend"] = 1.0
 
         #self._generate_video_from_image(current_scene)
         #self._generate_video_from_image(next_scene)
@@ -763,12 +772,15 @@ class MagicWorkflow:
                 stories_template[i:i+1] = stories_json
             elif element.get("name") == "intro":
                 explicit_parts = []
-                for story in stories_json:
-                    explicit_parts.append(story["name"] + ": " + story["explicit"])
-                element["explicit"] = "\n\n".join(explicit_parts)
                 implicit_parts = []
                 for story in stories_json:
-                    implicit_parts.append(story["name"] + ": " + story["implicit"])
+                    name = story.get("name", "")
+                    explicit = story.get("explicit", "")
+                    implicit = story.get("implicit", "")
+                    if name and explicit and implicit:
+                        explicit_parts.append(name + ": " + explicit)
+                        implicit_parts.append(name + ": " + implicit)
+                element["explicit"] = "\n\n".join(explicit_parts)
                 element["implicit"] = "\n\n".join(implicit_parts)
                 element["story_details"] = stories_json[0]["story_details"]
 
@@ -1195,9 +1207,11 @@ class MagicWorkflow:
             if not script_lang:
                 mp3_path = self.downloader.download_audio(url)
                 print("开始转录音频...")
-                script_path = self.transcriber.transcribe_to_file(mp3_path, source_lang, 10, 26)
-                if not script_path:
-                    return None
+
+                script_path = f"{config.get_project_path(self.pid)}/{Path(mp3_path).stem}.srt.json"
+                script_json = self.transcriber.transcribe_with_whisper(mp3_path, "zh", 3)
+                write_json(script_path, script_json)  
+
                 text_path = f"{config.get_project_path(self.pid)}/Youtbue_download/__text_{vid}.{source_lang}.txt"
                 self.transcriber.fetch_text_from_json(script_path)
             else:
@@ -1408,11 +1422,17 @@ class MagicWorkflow:
             valid_narrator = None
             if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
                 valid_narrator = s["narrator"]
+
             if valid_narrator and (not "right" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+                video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
+
+            v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
             video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+
             if valid_narrator and ("right" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+                video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
         video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 

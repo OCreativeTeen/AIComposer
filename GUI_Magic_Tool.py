@@ -9,6 +9,7 @@ from magic_workflow import MagicWorkflow
 import config
 import config_prompt
 from pathlib import Path
+from utility.file_util import write_json
 from project_manager import ProjectConfigManager, create_project_dialog
 import project_manager
 
@@ -1055,8 +1056,10 @@ class MagicToolGUI:
                 
                 file_stem = Path(audio_path).stem
                 
-                # Create output paths
-                script_path = self.workflow.transcriber.transcribe_to_file( audio_path, language, 10, 26 )
+                script_path = f"{config.get_project_path(self.pid)}/{Path(audio_path).stem}.srt.json"
+                script_json = self.transcriber.transcribe_with_whisper(audio_path, "zh", 10, 26)
+                write_json(script_path, script_json)  
+
                 
                 self.log_to_output(self.audio_output, f"✅ 转录完成！")
                 self.log_to_output(self.audio_output, f"字幕文件: {script_path}")

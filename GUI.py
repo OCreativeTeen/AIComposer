@@ -3416,17 +3416,11 @@ class WorkflowGUI:
             else:
                 result = messagebox.askyesnocancel("警告", "⚠️ 请选择操作：\n是: 合并场景\n否: 删除场景\n取消: 取消操作")
                 if result is True:
-                    result = messagebox.askyesno("警告", "⚠️ 请选择保留场景：\n是: 保留当前场景\n否: 保留下一场景")
-                    if result is True:
-                        self.workflow.merge_scene(self.current_scene_index, self.current_scene_index+1, keep_current=True)
-                    else :
-                        self.workflow.merge_scene(self.current_scene_index, self.current_scene_index+1, False)
-                elif result is False:
-                    # 删除场景
+                    self.workflow.merge_scene(self.current_scene_index, self.current_scene_index+1)
+                else:
                     result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
                     if result:
                         ss = self.workflow.replace_scene(self.current_scene_index)
-                # result is None 表示取消，不做任何操作
             
         self.refresh_gui_scenes()
         messagebox.showinfo("合并场景", "完成")

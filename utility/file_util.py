@@ -39,6 +39,16 @@ def safe_file(file):
     return None
 
 
+def read_text(file):
+    with open(file, 'r', encoding="utf-8") as f:
+        return f.read()
+
+
+def write_text(file, text_content):
+    with open(file, "w", encoding="utf-8") as f:
+        f.write(text_content)
+
+
 def read_json(file):
     with open(file, 'r', encoding="utf-8") as f:
         return json.load(f)      # parse
@@ -86,6 +96,12 @@ def is_video_file(file_path):
     file_ext = os.path.splitext(file_path)[1].lower()
     return file_ext in video_extensions
 
+
+def ending_punctuation(text):
+    if text.endswith(".") or text.endswith("?") or text.endswith("!") or text.endswith(";") or text.endswith("...") or text.endswith("..") or text.endswith("。") or text.endswith("！") or text.endswith("？") or text.endswith("；") or text.endswith("…"):
+        return True
+    else:
+        return False
 
 
 def build_scene_media_prefix(pid, scene_id, media_type, animate_type, with_timestamp):

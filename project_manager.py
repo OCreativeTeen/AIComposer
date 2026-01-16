@@ -18,6 +18,7 @@ from config import parse_json_from_text
 import config_channel
 from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove
+from utility.audio_transcriber import LANGUAGES
 
 
 
@@ -255,7 +256,7 @@ class ContentEditorDialog:
         topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
         user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
-        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program"].format(language=config.LANGUAGES[self.language])
+        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program"].format(language=LANGUAGES[self.language])
         # 调用LLM生成内容
         generated_content = self.llm_api.generate_json(system_prompt, user_prompt)
         if generated_content:
