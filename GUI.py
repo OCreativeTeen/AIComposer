@@ -3263,10 +3263,10 @@ class WorkflowGUI:
         self.display_image_on_canvas_for_track('clip_image_last')
         self.display_image_on_canvas_for_track("narration_image")
         self.display_image_on_canvas_for_track("narration_image_last")
-        self.display_image_on_canvas_for_track('zero_image')
-        self.display_image_on_canvas_for_track('zero_image_last')
-        self.display_image_on_canvas_for_track('one_image')
-        self.display_image_on_canvas_for_track('one_image_last')
+        #self.display_image_on_canvas_for_track('zero_image')
+        #self.display_image_on_canvas_for_track('zero_image_last')
+        #self.display_image_on_canvas_for_track('one_image')
+        #self.display_image_on_canvas_for_track('one_image_last')
 
     
     def on_track_volume_change(self, *args):

@@ -8,7 +8,8 @@ from utility.file_util import safe_copy_overwrite
 
 
 class FfmpegAudioProcessor:
-
+    # Class-level cache for duration values (shared across all instances)
+    _duration_cache = {}
 
     def __init__(self, pid):
         self.pid = pid
@@ -443,6 +444,10 @@ class FfmpegAudioProcessor:
         if not filename:
             return 0.0
         
+        # Check cache first
+        if filename in FfmpegAudioProcessor._duration_cache:
+            return FfmpegAudioProcessor._duration_cache[filename]
+        
         try:    
             result = subprocess.run([
                 self.ffprobe_path,
@@ -453,8 +458,22 @@ class FfmpegAudioProcessor:
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             
             if result.returncode == 0 and result.stdout.strip():
-                return float(result.stdout.strip())
+                duration = float(result.stdout.strip())
+                # Save to cache
+                FfmpegAudioProcessor._duration_cache[filename] = duration
+                return duration
             return 0.0
         except Exception as e:
             print(f"FFmpeg Error: {e}")
             return 0.0
+
+    @classmethod
+    def clear_duration_cache(cls):
+        """Clear all cached duration values"""
+        cls._duration_cache.clear()
+
+    @classmethod
+    def invalidate_duration_cache(cls, filename):
+        """Remove a specific file from the duration cache (use when file is modified)"""
+        if filename in cls._duration_cache:
+            del cls._duration_cache[filename]

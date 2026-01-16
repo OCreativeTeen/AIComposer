@@ -26,7 +26,8 @@ NVENC_MAX_PIXELS = 8192 * 8192  # Maximum total pixels
 
 
 class FfmpegProcessor:
-
+    # Class-level cache for duration values (shared across all instances)
+    _duration_cache = {}
 
     def __init__(self, pid, language, video_width=None, video_height=None):
         self.pid = pid
@@ -1824,6 +1825,10 @@ class FfmpegProcessor:
         if not filename:
             return 0.0
         
+        # Check cache first
+        if filename in FfmpegProcessor._duration_cache:
+            return FfmpegProcessor._duration_cache[filename]
+        
         try:    
             result = self.run_ffmpeg_command([
                 self.ffprobe_path,
@@ -1834,12 +1839,25 @@ class FfmpegProcessor:
                 ])
             
             if result.returncode == 0 and result.stdout.strip():
-                return float(result.stdout.strip())
+                duration = float(result.stdout.strip())
+                # Save to cache
+                FfmpegProcessor._duration_cache[filename] = duration
+                return duration
             return 0.0
         except Exception as e:
             print(f"FFmpeg Error: {e}")
             return 0.0
 
+    @classmethod
+    def clear_duration_cache(cls):
+        """Clear all cached duration values"""
+        cls._duration_cache.clear()
+
+    @classmethod
+    def invalidate_duration_cache(cls, filename):
+        """Remove a specific file from the duration cache (use when file is modified)"""
+        if filename in cls._duration_cache:
+            del cls._duration_cache[filename]
 
     def get_resolution(self, filename):
         """Get the resolution (width, height) of an image or video file"""
