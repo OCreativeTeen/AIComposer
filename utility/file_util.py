@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import glob
 from datetime import datetime
 
 
@@ -33,10 +34,14 @@ def safe_remove(file):
         pass
 
 
-def safe_file(file):
-    if file and os.path.exists(file):
-        return file
-    return None
+def safe_file(file, is_dir=False):
+    if not file or not os.path.exists(file):
+        return None
+    if is_dir and not os.path.isdir(file):
+        return None
+    if not is_dir and not os.path.isfile(file):
+        return None
+    return file
 
 
 def read_text(file):
@@ -95,6 +100,16 @@ def is_video_file(file_path):
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv'}
     file_ext = os.path.splitext(file_path)[1].lower()
     return file_ext in video_extensions
+
+
+def check_folder_files(folder_path, file_extension):
+    """Check if the folder_path has any files with the given file_extension"""
+    if not safe_file(folder_path, True):
+        return False
+    # Check if the folder_path has any files with the given file_extension
+    pattern = os.path.join(folder_path, "*" + file_extension)
+    files = glob.glob(pattern)
+    return len(files) > 0
 
 
 def ending_punctuation(text):

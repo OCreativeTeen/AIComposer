@@ -165,17 +165,14 @@ class MediaScanner:
                 return
 
             if "_ENH" in copy_to:
-                status = "EN2"
-            elif "_INT" in copy_to:
-                status = "IN2"
+                target_scene[video_info.video_type + "_status"] = "ENH2"
             else:
-                status = "ORI"
-            target_scene[video_info.video_type + "_status"] = status
-            if status=="ORI":
-                fps = self.ffmpeg_processor.get_video_fps(copy_to)
-                target_scene[video_info.video_type + "_fps"] = fps
+                target_scene[video_info.video_type + "_status"] = "ORIG"
+                target_scene[video_info.video_type + "_fps"] = self.ffmpeg_processor.get_video_fps(copy_to)
+
             if video_info.image_path:
-                target_scene[video_info.video_type + "_image_last"] = video_info.image_path
+                i = self.ffmpeg_processor.image_to_webp(video_info.image_path)
+                refresh_scene_media(target_scene, video_info.video_type + "_image_last", ".webp", i)
 
             for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
                 if re.search(pattern, copy_to):
@@ -183,17 +180,6 @@ class MediaScanner:
         
     
     def _wait_for_file_stability(self, file_path: Path) -> bool:
-        """
-        Wait for a file to become stable (size not changing)
-        
-        Args:
-            file_path: Path to the file to monitor
-            stability_duration: How long the file size must remain constant (sec)
-            check_interval: How often to check file size (sec)
-        
-        Returns:
-            True if file is stable, False if file disappeared or error occurred
-        """
         if not file_path.exists():
             return False
         

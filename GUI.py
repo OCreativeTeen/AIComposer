@@ -24,7 +24,7 @@ import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
 import os
-from utility.file_util import get_file_path, is_video_file, build_scene_media_prefix
+from utility.file_util import get_file_path, is_video_file, check_folder_files, safe_copy_overwrite
 from gui.media_review_dialog import AVReviewDialog
 from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
@@ -68,7 +68,6 @@ class WorkflowGUI:
             self.pygame_mixer_available = False
         
         self.playing_delta = 0.0
-        self.sec_delta = 0.0
 
         # 初始化配置加载标志
         self._loading_config = False
@@ -91,6 +90,10 @@ class WorkflowGUI:
         self.video_check_thread = None  # 后台检查线程
         self.video_check_running = False  # 线程运行标志
         self.video_check_stop_event = threading.Event()  # 停止事件
+        
+        # refresh_gui_scenes 节流控制
+        self.refresh_gui_scenes_last_time = 0  # 上次执行时间
+        self.refresh_gui_scenes_after_id = None  # 延迟任务ID
         
         # 添加视频效果选择存储
         self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
@@ -310,7 +313,8 @@ class WorkflowGUI:
 
 
         ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video(False)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="Video生成+", command=lambda:self.run_finalize_video(True)).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="Video+生成", command=lambda:self.run_finalize_video(True)).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
         # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -393,16 +397,37 @@ class WorkflowGUI:
 
 
     def reset_track_offset(self):
-        """重置旁白轨道播放偏移量到当前场景的起始位置"""
+        """重置轨道偏移量到当前场景的起始位置"""
         current_scene = self.get_current_scene()
         if not current_scene:
-            self.secondary_track_offset = 0
+            self.secondary_track_offset = 0.0
             self.secondary_track_paused_time = None
+            if hasattr(self, 'secondary_track_scale_var'):
+                self.secondary_track_scale_var.set(0.0)
+            self.update_secondary_track_time()
             return
-            
-        self.secondary_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
+        
+        if self.selected_secondary_track == "narration":
+            self.secondary_track_offset = 0.0
+        else:
+            self.secondary_track_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
+            track_path = get_file_path(current_scene, self.selected_secondary_track)
+            if track_path:
+                track_duration = self.workflow.ffmpeg_processor.get_duration(track_path)
+                if self.secondary_track_offset > track_duration:
+                    self.secondary_track_offset = 0.0
+            else:
+                self.secondary_track_offset = 0.0
+
         self.secondary_track_paused_time = None
-        print(f"🔄 重置旁白轨道偏移量: {self.secondary_track_offset:.2f}s")
+        # 更新滑块值
+        if hasattr(self, 'secondary_track_scale_var'):
+            self.secondary_track_scale_var.set(self.secondary_track_offset)
+        
+        # 更新canvas显示（显示新场景对应位置的帧）
+        if hasattr(self, 'display_secondary_track_frame_at_time'):
+            self.display_secondary_track_frame_at_time(self.secondary_track_offset)
+        
         self.update_secondary_track_time()
 
 
@@ -431,17 +456,17 @@ class WorkflowGUI:
                     ]
                 )
             else:
-                media_folders = ["L:", "M:"]
-                for folder in media_folders:
-                    mp4_path = filedialog.askopenfilename(
-                        title="从频道媒体文件夹选择文件",
-                        initialdir=folder,
-                        filetypes=[
-                            ("视频文件", "*.mp4")
-                        ]
-                    )
-                    if mp4_path:
-                        break
+                for folder in ["L:", "M:", "N:"]:
+                    if check_folder_files(folder, ".mp4"):
+                        mp4_path = filedialog.askopenfilename(
+                            title="从频道媒体文件夹选择文件",
+                            initialdir=folder,
+                            filetypes=[
+                                ("视频文件", "*.mp4")
+                            ]
+                        )
+                        if mp4_path:
+                            break
 
 
             download_path = config.get_project_path(self.workflow.pid) + "/download"
@@ -467,10 +492,14 @@ class WorkflowGUI:
                 rename = mp4_path
 
             # audio_choice = "replace" or "keep" or "trim"
-            choices = ["replace", "trim", "keep"]
-            audio_choice = askchoice("选择音频处理方式", choices, self.root)
-            if audio_choice is None:
-                return
+            if track == "clip" or track == "narration":
+                choices = ["replace", "trim", "keep"]
+                audio_choice = askchoice("选择音频处理方式", choices, self.root)
+                if audio_choice is None:
+                    return
+            else:
+                audio_choice = "keep"
+
             self.handle_video_replacement(rename, audio_choice, track)
             self.refresh_gui_scenes()
                 
@@ -478,36 +507,33 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def pip_secondary_track(self, from_zero):
+    def pip_secondary_track(self):
         """将旁白轨道作为画中画叠加到主轨道视频上"""
         try:
             current_scene = self.get_current_scene()
-            narration_path = get_file_path(current_scene, self.selected_secondary_track)
-            narration_audio = get_file_path(current_scene, self.selected_secondary_track+'_audio')
-            narration_left = get_file_path(current_scene, self.selected_secondary_track+'_left')
-            narration_right = get_file_path(current_scene, self.selected_secondary_track+'_right')
-            if not narration_path or not narration_audio:
-                messagebox.showwarning("警告", "旁白轨道视频文件不存在")
+            secondary_path = get_file_path(current_scene, self.selected_secondary_track)
+            secondary_audio = get_file_path(current_scene, self.selected_secondary_track+'_audio')
+            secondary_left = get_file_path(current_scene, self.selected_secondary_track+'_left')
+            secondary_right = get_file_path(current_scene, self.selected_secondary_track+'_right')
+            if not secondary_path or not secondary_audio:
+                messagebox.showwarning("警告", "第二轨道视频文件不存在")
                 return
 
             clip_video = get_file_path(current_scene, "clip")
             clip_audio = get_file_path(current_scene, "clip_audio")
-            start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
-            if from_zero:
-                start_time = 0
+            clip_duration = self.workflow.ffmpeg_processor.get_duration(clip_video)
+            #start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
+            if self.secondary_track_paused_time:
+                start_time = self.secondary_track_paused_time
+            else:
+                start_time = self.secondary_track_offset
 
-            start_time = start_time + self.sec_delta
-
-            if is_story_last_clip: 
-                secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(narration_path, start_time)
-                narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(narration_audio, start_time, None, 0, 0, 1.0)
-            else:    
-                secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(narration_path, start_time, start_time+clip_duration)
-                narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(narration_audio, start_time, clip_duration, 0, 0, 1.0)
+            secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(secondary_path, start_time, start_time+clip_duration)
+            narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, clip_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             
             # 创建画中画设置对话框
-            pip_dialog = PictureInPictureDialog(self.root, clip_video, secondary_track_copy, narration_left, narration_right)
+            pip_dialog = PictureInPictureDialog(self.root, clip_video, secondary_track_copy, secondary_left, secondary_right)
             
             # 等待对话框关闭
             self.root.wait_window(pip_dialog.dialog)
@@ -533,8 +559,8 @@ class WorkflowGUI:
                         background_video=clip_video,
                         overlay_video=secondary_track_copy,
                         overlay_audio=narration_audio_copy,
-                        overlay_left=narration_left,
-                        overlay_right=narration_right,
+                        overlay_left=secondary_left,
+                        overlay_right=secondary_right,
                         settings=settings
                     )
 
@@ -704,17 +730,21 @@ class WorkflowGUI:
         visual_button_frame.pack(fill=tk.X, pady=(0, 5))
 
 
-        ttk.Button(visual_button_frame, text="视觉提示", width=10, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="提示詞", width=7, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Button(visual_button_frame, text="场景视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="生场景", width=7, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="解说视频", width=10, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="生解说", width=7, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(1, 10))
 
-        ttk.Button(visual_button_frame, text="CLIP媒体", width=10, command=lambda: self.choose_from_channel_media("clip")).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="CLIP_", width=7, command=lambda: self.choose_from_channel_media("clip")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="SECO媒体", width=10, command=lambda: self.choose_from_channel_media("narration")).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="SECO_", width=7, command=lambda: self.choose_from_channel_media("narration")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="CHAN媒体", width=10, command=lambda: self.choose_from_channel_media("clip", True)).pack(side=tk.LEFT, padx=(10, 10))
+        ttk.Button(visual_button_frame, text="ZERO_", width=7, command=lambda: self.choose_from_channel_media("zero")).pack(side=tk.LEFT, padx=1)
+
+        ttk.Button(visual_button_frame, text="ONE_", width=7, command=lambda: self.choose_from_channel_media("one")).pack(side=tk.LEFT, padx=(1, 10))
+
+        ttk.Button(visual_button_frame, text="CHAN_", width=7, command=lambda: self.choose_from_channel_media("clip", True)).pack(side=tk.LEFT, padx=1)
 
 
         # 图片预览区域（原zero位置）
@@ -725,128 +755,93 @@ class WorkflowGUI:
         images_container = ttk.Frame(images_preview_frame)
         images_container.pack(fill=tk.BOTH, expand=True)
         
-        # Replace the images_preview_frame section (lines 794-859) with this enhanced version:
-        # === Clip Image Canvas (clip_image + clip_image_last) ===
+        # Top: clip_image
         clip_img_frame = ttk.Frame(images_container)
         clip_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 2))
         ttk.Label(clip_img_frame, text="Clip", anchor=tk.CENTER).pack()
-
-        # Clip image container with two sub-canvases
         clip_canvas_container = ttk.Frame(clip_img_frame)
         clip_canvas_container.pack(fill=tk.BOTH, expand=True)
 
-        # Top: clip_image
-        self.clip_image_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, 
-                                        highlightthickness=2, highlightbackground='blue')
+        self.clip_image_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='blue')
         self.clip_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.clip_image_canvas.create_text(75, 37, text="Clip\nImage", fill="gray", font=("Arial", 8), 
-                                        justify=tk.CENTER, tags="hint")
-
+        self.clip_image_canvas.create_text(75, 37, text="Clip\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.clip_image_canvas.drop_target_register(DND_FILES)
         self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
         self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image'))
 
-        # Bottom: clip_image_last
-        self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, 
-                                                highlightthickness=2, highlightbackground='blue')
+        self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='blue')
         self.clip_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.clip_image_last_canvas.create_text(75, 37, text="Clip\nLast", fill="gray", font=("Arial", 8), 
-                                            justify=tk.CENTER, tags="hint")
-
+        self.clip_image_last_canvas.create_text(75, 37, text="Clip\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.clip_image_last_canvas.drop_target_register(DND_FILES)
         self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
         self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image_last'))
 
-        # === Zero Image Canvas (zero_image + zero_image_last) ===
-        zero_img_frame = ttk.Frame(images_container)
-        zero_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
-        ttk.Label(zero_img_frame, text="Zero", anchor=tk.CENTER).pack()
 
-        zero_canvas_container = ttk.Frame(zero_img_frame)
-        zero_canvas_container.pack(fill=tk.BOTH, expand=True)
-
-        # Top: zero_image
-        self.zero_image_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, 
-                                        highlightthickness=2, highlightbackground='orange')
-        self.zero_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.zero_image_canvas.create_text(75, 37, text="Zero\nImage", fill="gray", font=("Arial", 8), 
-                                        justify=tk.CENTER, tags="hint")
-
-        self.zero_image_canvas.drop_target_register(DND_FILES)
-        self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
-        self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
-
-        # Bottom: zero_image_last
-        self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, 
-                                                highlightthickness=2, highlightbackground='orange')
-        self.zero_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.zero_image_last_canvas.create_text(75, 37, text="Zero\nLast", fill="gray", font=("Arial", 8), 
-                                            justify=tk.CENTER, tags="hint")
-
-        self.zero_image_last_canvas.drop_target_register(DND_FILES)
-        self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
-        self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
-
-        # === One Image Canvas (one_image + one_image_last) ===
-        one_img_frame = ttk.Frame(images_container)
-        one_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
-        ttk.Label(one_img_frame, text="One", anchor=tk.CENTER).pack()
-
-        one_canvas_container = ttk.Frame(one_img_frame)
-        one_canvas_container.pack(fill=tk.BOTH, expand=True)
-
-        # Top: one_image
-        self.one_image_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, 
-                                        highlightthickness=2, highlightbackground='purple')
-        self.one_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.one_image_canvas.create_text(75, 37, text="One\nImage", fill="gray", font=("Arial", 8), 
-                                        justify=tk.CENTER, tags="hint")
-
-        self.one_image_canvas.drop_target_register(DND_FILES)
-        self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
-        self.one_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image'))
-
-        # Bottom: one_image_last
-        self.one_image_last_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, 
-                                            highlightthickness=2, highlightbackground='purple')
-        self.one_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.one_image_last_canvas.create_text(75, 37, text="One\nLast", fill="gray", font=("Arial", 8), 
-                                            justify=tk.CENTER, tags="hint")
-
-        self.one_image_last_canvas.drop_target_register(DND_FILES)
-        self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
-        self.one_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image_last'))
-
-        # === narration Image Canvas (narration_image + narration_image_last) ===
+        # Top: narration_image
         narration_img_frame = ttk.Frame(images_container)
         narration_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(2, 0))
-        ttk.Label(narration_img_frame, text="narration", anchor=tk.CENTER).pack()
-
+        ttk.Label(narration_img_frame, text="Narration", anchor=tk.CENTER).pack()
         narration_canvas_container = ttk.Frame(narration_img_frame)
         narration_canvas_container.pack(fill=tk.BOTH, expand=True)
 
-        # Top: narration_image
-        self.narration_image_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, 
-                                            highlightthickness=2, highlightbackground='green')
+        self.narration_image_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='green')
         self.narration_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.narration_image_canvas.create_text(75, 37, text="narration\nImage", fill="gray", font=("Arial", 8), 
-                                            justify=tk.CENTER, tags="hint")
-
+        self.narration_image_canvas.create_text(75, 37, text="Narration\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.narration_image_canvas.drop_target_register(DND_FILES)
         self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
         self.narration_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image"))
 
-        # Bottom: narration_image_last
-        self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, 
-                                                highlightthickness=2, highlightbackground='green')
+        self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='green')
         self.narration_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.narration_image_last_canvas.create_text(75, 37, text="narration\nLast", fill="gray", font=("Arial", 8), 
-                                                justify=tk.CENTER, tags="hint")
-
+        self.narration_image_last_canvas.create_text(75, 37, text="Narration\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.narration_image_last_canvas.drop_target_register(DND_FILES)
         self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
         self.narration_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image_last"))
         
+
+        # Top: zero_image
+        zero_img_frame = ttk.Frame(images_container)
+        zero_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        ttk.Label(zero_img_frame, text="Zero", anchor=tk.CENTER).pack()
+        zero_canvas_container = ttk.Frame(zero_img_frame)
+        zero_canvas_container.pack(fill=tk.BOTH, expand=True)
+
+        self.zero_image_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='orange')
+        self.zero_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
+        self.zero_image_canvas.create_text(75, 37, text="Zero\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
+        self.zero_image_canvas.drop_target_register(DND_FILES)
+        self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
+        self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
+
+        self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='orange')
+        self.zero_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
+        self.zero_image_last_canvas.create_text(75, 37, text="Zero\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
+        self.zero_image_last_canvas.drop_target_register(DND_FILES)
+        self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
+        self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
+
+
+        # Top: one_image
+        one_img_frame = ttk.Frame(images_container)
+        one_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        ttk.Label(one_img_frame, text="One", anchor=tk.CENTER).pack()
+        one_canvas_container = ttk.Frame(one_img_frame)
+        one_canvas_container.pack(fill=tk.BOTH, expand=True)
+
+        self.one_image_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='purple')
+        self.one_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
+        self.one_image_canvas.create_text(75, 37, text="One\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
+        self.one_image_canvas.drop_target_register(DND_FILES)
+        self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
+        self.one_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image'))
+
+        self.one_image_last_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='purple')
+        self.one_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
+        self.one_image_last_canvas.create_text(75, 37, text="One\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
+        self.one_image_last_canvas.drop_target_register(DND_FILES)
+        self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
+        self.one_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image_last'))
+
 
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
@@ -867,6 +862,19 @@ class WorkflowGUI:
         # 旁白轨道提示文本
         self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示", 
                                             fill="gray", font=("Arial", 10), justify=tk.CENTER, tags="hint")
+        
+        # 旁白轨道时间滑块
+        self.secondary_track_scale_var = tk.DoubleVar(value=0.0)
+        self.secondary_track_scale = tk.Scale(tab_full_narration, 
+                                              from_=0.0, 
+                                              to=1.0, 
+                                              orient=tk.HORIZONTAL,
+                                              variable=self.secondary_track_scale_var,
+                                              command=self.on_secondary_track_scale_changed,
+                                              length=360,
+                                              resolution=0.1)
+        self.secondary_track_scale.pack(fill=tk.X, padx=2, pady=(0, 2))
+        self.secondary_track_scale.config(state=tk.DISABLED)  # 初始状态禁用
         
         # === Tab 2: 画中画 Left & Right ===
         tab_pip_lr = ttk.Frame(self.narration_notebook)
@@ -898,39 +906,32 @@ class WorkflowGUI:
         
         # 旁白轨道播放按钮
         self.track_play_button = ttk.Button(self.track_frame, text="▶", command=self.toggle_track_playback,width=3)
-        self.track_play_button.pack(side=tk.LEFT, padx=2)
+        self.track_play_button.pack(side=tk.LEFT, padx=1)
 
         # add field to display current playing time / duration of narration track, and 2 buttons to move forward and backward sec
-        self.track_time_label = ttk.Label(self.track_frame, text="00:00 / 00:00")
-        self.track_time_label.pack(side=tk.LEFT, padx=2)
+        self.track_time_label = ttk.Label(self.track_frame, text="00:00/00:00")
+        self.track_time_label.pack(side=tk.LEFT, padx=(1, 10))
         
         #ttk.Button(self.secondary_track_frame, text="◀", command=self.move_secondary_track_backward, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.secondary_track_frame, text="▶", command=self.move_secondary_track_forward, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_secondary_track(False), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="📺", command=lambda:self.pip_secondary_track(True), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track("narration"), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track('zero'), width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="💫", command=lambda:self.choose_secondary_track('one'), width=3).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.track_frame, text="📺11", command=lambda:self.pip_secondary_track(), width=5).pack(side=tk.LEFT, padx=(1, 10))
+        ttk.Button(self.track_frame, text="💫NN", command=lambda:self.choose_secondary_track("narration"), width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="💫ZZ", command=lambda:self.choose_secondary_track('zero'), width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="💫OO", command=lambda:self.choose_secondary_track('one'), width=5).pack(side=tk.LEFT, padx=(1, 10))
         #ttk.Button(self.track_frame, text="💫", command=self.swap_narration, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔊", command=self.pip_narration_sound, width=3).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=1)
         
         # 添加音量控制滑块（共用，根据当前tab自动选择）
-        ttk.Label(self.track_frame, text="音量:").pack(side=tk.LEFT, padx=(10, 2))
-        self.volume_scale = ttk.Scale(self.track_frame, from_=0.0, to=1.5, 
-                                     variable=self.track_volume_var, orient=tk.HORIZONTAL, length=60)
-        self.volume_scale.pack(side=tk.LEFT, padx=2)
+        ttk.Label(self.track_frame, text="音量").pack(side=tk.LEFT, padx=(10, 1))
+        self.volume_scale = ttk.Scale(self.track_frame, from_=0.0, to=1.5, variable=self.track_volume_var, orient=tk.HORIZONTAL, length=38)
+        self.volume_scale.pack(side=tk.LEFT, padx=1)
         self.volume_label = ttk.Label(self.track_frame, text="0.2")
-        self.volume_label.pack(side=tk.LEFT, padx=2)
+        self.volume_label.pack(side=tk.LEFT, padx=(1, 10))
 
-        ttk.Button(self.track_frame, text="《《", command=lambda: self.adjust_sec_delta(-0.5), width=3).pack(side=tk.LEFT, padx=1)
-        self.sec_delta_label = ttk.Label(self.track_frame, text="0.0s", width=4)
-        self.sec_delta_label.pack(side=tk.LEFT, padx=1)
-        ttk.Button(self.track_frame, text="》》", command=lambda: self.adjust_sec_delta(0.25), width=3).pack(side=tk.LEFT, padx=1)
 
-        
         # 绑定音量变化事件来更新标签
         self.track_volume_var.trace('w', self.on_track_volume_change)
         
@@ -973,10 +974,10 @@ class WorkflowGUI:
         self.video_stop_button.pack(side=tk.LEFT, padx=1)
 
         # 翻转按钮
-        ttk.Button(video_control_frame, text="《《", command=lambda: self.move_video(-0.25), width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="<", command=lambda: self.move_video(-0.25), width=2).pack(side=tk.LEFT, padx=0)
         self.playing_delta_label = ttk.Label(video_control_frame, text="0.0s", width=4)
-        self.playing_delta_label.pack(side=tk.LEFT, padx=1)
-        ttk.Button(video_control_frame, text="》》", command=lambda: self.move_video(0.25), width=3).pack(side=tk.LEFT, padx=1)
+        self.playing_delta_label.pack(side=tk.LEFT, padx=0)
+        ttk.Button(video_control_frame, text=">", command=lambda: self.move_video(0.25), width=2).pack(side=tk.LEFT, padx=0)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -1179,14 +1180,12 @@ class WorkflowGUI:
         
         # 旁白轨道暂停位置
         self.secondary_track_paused_time = None
-        self.secondary_track_paused_audio_time = None
         self.secondary_track_cap = None
         self.secondary_track_after_id = None
         self.secondary_track_start_time = None
 
         self.secondary_track_playing = False
         self.secondary_track_offset = 0.0
-        self.secondary_track_end_time = 0.0
         self.selected_secondary_track = "narration"
         
         # PIP L/R (画中画左右)
@@ -1197,7 +1196,7 @@ class WorkflowGUI:
         self.pip_lr_start_time = None
         self.pip_lr_paused_time = None
         
-        self.track_time_label.config(text="00:00 / 00:00")
+        self.track_time_label.config(text="00:00/00:00")
 
         # 底部：日志区域
         log_frame = ttk.LabelFrame(tab, text="操作日志", padding=10)
@@ -1354,7 +1353,22 @@ class WorkflowGUI:
             print("⚠️ 检测到后台线程未运行，正在重启...")
             self.start_video_check_thread()
     
+
+    def enhance_clip(self, track:str):
+        """增强主图或次图"""
+        scene = self.get_current_scene()
+        level = self.enhance_level.get()
+        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, track, level)
+        self.refresh_gui_scenes()
+
+
+    def enhance_video(self):
+        for scene in self.workflow.scenes:
+            self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip", "30")
+            self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "narration", "30")
+        self.refresh_gui_scenes()
     
+
     def run_finalize_video(self, add_narration):
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
@@ -1747,7 +1761,29 @@ class WorkflowGUI:
 
 
     def refresh_gui_scenes(self):
-        """刷新场景列表"""
+        """刷新场景列表（节流：每秒最多执行一次）"""
+        current_time = time.time()
+        time_since_last = current_time - self.refresh_gui_scenes_last_time
+        
+        # 如果距离上次执行不到1秒，取消之前的延迟任务，安排新的延迟执行
+        if time_since_last < 1.0:
+            # 取消之前的延迟任务（如果存在）
+            if self.refresh_gui_scenes_after_id is not None:
+                self.root.after_cancel(self.refresh_gui_scenes_after_id)
+            
+            # 安排延迟执行，确保距离上次执行至少1秒
+            delay_ms = int((1.0 - time_since_last) * 1000)
+            self.refresh_gui_scenes_after_id = self.root.after(delay_ms, self._refresh_gui_scenes_impl)
+            return
+        
+        # 如果距离上次执行超过1秒，立即执行
+        self._refresh_gui_scenes_impl()
+    
+    def _refresh_gui_scenes_impl(self):
+        """刷新场景列表的实际实现"""
+        self.refresh_gui_scenes_last_time = time.time()
+        self.refresh_gui_scenes_after_id = None
+        
         # self.workflow.load_scenes()
         if self.current_scene_index >= len(self.workflow.scenes) :
             self.current_scene_index = 0
@@ -1761,11 +1797,11 @@ class WorkflowGUI:
         # 更新视频进度显示
         self.update_video_progress_display()
 
+        # 重置轨道偏移量到新场景的起始位置
         self.reset_track_offset()
 
         # 延迟加载第一帧，确保canvas已完全渲染
-        self.root.after(100, self.load_all_first_frames)
-
+        self.load_all_images_preview()
 
     
     def cleanup_track_video_captures(self):
@@ -1812,22 +1848,6 @@ class WorkflowGUI:
             self.pip_lr_after_id = None
 
 
-    def load_all_first_frames(self):
-        """加载所有轨道的第一帧"""
-        self.load_video_first_frame()
-        
-        # 加载所有图片预览
-        if hasattr(self, 'clip_image_canvas'):
-            self.load_all_images_preview()
-        
-        # 根据当前选中的tab加载轨道视频预览
-        current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
-        if current_tab_index == 0:
-            self.load_secondary_track_first_frame()
-        elif current_tab_index == 1:
-            self.load_pip_lr_first_frame()
-
-
     def load_secondary_track_first_frame(self):
         """加载旁白轨道视频的第一帧到画布（从当前偏移位置）"""
         current_scene = self.get_current_scene()
@@ -1844,7 +1864,10 @@ class WorkflowGUI:
                 self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示",
                                                    fill='white', font=('Arial', 12), 
                                                    justify=tk.CENTER, tags="hint")
-                self.track_time_label.config(text="00:00 / 00:00")
+                self.track_time_label.config(text="00:00/00:00")
+                # 禁用滑块
+                if hasattr(self, 'secondary_track_scale'):
+                    self.secondary_track_scale.config(state=tk.DISABLED)
                 return
             
             # 打开视频文件
@@ -1854,16 +1877,7 @@ class WorkflowGUI:
                 return
             
             # 计算应该显示的帧位置（基于 offset + delta）
-            if self.selected_secondary_track == "narration":
-                start_position = self.sec_delta
-            else:    
-                start_position = self.secondary_track_offset + self.sec_delta
-
-            if start_position < 0:
-                start_position = 0
-            
-            # 跳到正确的帧位置
-            temp_cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_position * STANDARD_FPS))
+            temp_cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.secondary_track_offset * STANDARD_FPS))
             
             ret, frame = temp_cap.read()
             if ret:
@@ -1896,11 +1910,18 @@ class WorkflowGUI:
             total_str = f"{int(total_duration // 60):02d}:{int(total_duration % 60):02d}"
             
             # 显示当前偏移位置和总时长
-            current_str = f"{int(start_position // 60):02d}:{int(start_position % 60):02d}"
-            self.track_time_label.config(text=f"{current_str} / {total_str}")
+            current_str = f"{int(self.secondary_track_offset // 60):02d}:{int(self.secondary_track_offset % 60):02d}"
+            self.track_time_label.config(text=f"{current_str}/{total_str}")
+            
+            # 更新滑块的最大值和当前值
+            if hasattr(self, 'secondary_track_scale'):
+                self.secondary_track_scale.config(to=total_duration, state=tk.NORMAL)
+                if self.secondary_track_paused_time is not None:
+                    self.secondary_track_scale_var.set(self.secondary_track_paused_time)
+                else:
+                    self.secondary_track_scale_var.set(self.secondary_track_offset)
             
             temp_cap.release()
-            print(f"✅ 已加载旁白轨道视频帧 (位置: {start_position:.2f}s): {os.path.basename(track_path)}")
 
         except Exception as e:
             print(f"❌ 加载旁白轨道视频第一帧失败: {e}")
@@ -1928,7 +1949,8 @@ class WorkflowGUI:
 
         extend_value = scene_data.get("extend", 0.0)
         if extend_value is None:
-            extend_value = 1.0
+            extend_value = 0.0
+            self.get_current_scene()["extend"] = 0.0
         extend_str = str(float(extend_value))
         if extend_str in ["0.0", "0.5", "1.0", "1.5", "2.0"]:
             self.scene_extend_var.set(extend_str)
@@ -2315,16 +2337,6 @@ class WorkflowGUI:
         messagebox.showinfo("成功", "媒体清理成功！")
 
 
-    def adjust_sec_delta(self, delta):
-        self.sec_delta = self.sec_delta + delta
-        if self.sec_delta < -10:
-            self.sec_delta = -10
-        if self.sec_delta > 10:
-            self.sec_delta = 10
-        
-        self.sec_delta_label.config(text=f"{self.sec_delta:.1f}s")
-
-
     def move_video(self, delta):
         self.playing_delta = self.playing_delta + delta
         if self.playing_delta < -2.0:
@@ -2462,58 +2474,52 @@ class WorkflowGUI:
         narration_video_path = get_file_path(self.get_current_scene(), self.selected_secondary_track)
         narration_audio_path = get_file_path(self.get_current_scene(), self.selected_secondary_track+'_audio')
         try:
-            # 检查是否是从暂停状态恢复
-            is_resuming = (self.secondary_track_cap and self.secondary_track_paused_time)
-
-            #elif self.secondary_track_paused_time:
-            #    play_start_time = self.secondary_track_paused_time
-            #    print(f"▶️ 从暂停位置 {self.secondary_track_paused_time:.1f}s 恢复播放")
-            #else:
-            #    print(f"▶️ 从头开始播放旁白轨道")
-            
-            if is_resuming:
+            if self.secondary_track_cap and self.secondary_track_paused_time:  #is_resuming
                 play_start_time = self.secondary_track_paused_time
                 # === 从暂停状态恢复（但没有设置偏移） ===
-                self.secondary_track_start_time = time.time()
+                # 计算播放起始时间
+                if self.selected_secondary_track == "narration":
+                    self.secondary_track_start_time = time.time() - play_start_time
+                else:
+                    self.secondary_track_start_time = time.time() - (play_start_time - self.secondary_track_offset)
                 self.secondary_track_playing = True
                 self.track_play_button.config(text="⏸")
-                if self.secondary_track_cap:
-                    self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.secondary_track_paused_time * STANDARD_FPS))
-                try:
-                    pygame.mixer.music.unpause()
-                    print("▶️ 旁白轨道音频已恢复")
-                except Exception as e:
-                    print(f"❌ 恢复旁白轨道音频失败: {e}")
-                    self.play_secondary_track_audio(narration_audio_path)
+                self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.secondary_track_paused_time * STANDARD_FPS))
+                
+                # 从暂停位置重新加载并播放音频（确保音视频同步）
+                self.play_secondary_track_audio(narration_audio_path, play_start_time)
+                print(f"▶ 从暂停位置恢复播放: {play_start_time:.2f}秒")
                 
             else:
-                if self.selected_secondary_track == "narration":
-                    play_start_time = self.sec_delta
-                else:    
-                    play_start_time = self.secondary_track_offset + self.sec_delta
-                if play_start_time < 0:
-                    play_start_time = 0
-
-                # === 全新开始播放或从偏移位置播放 ===
                 if self.secondary_track_cap:
                     self.secondary_track_cap.release()
                 self.secondary_track_cap = cv2.VideoCapture(narration_video_path)
                 if not self.secondary_track_cap.isOpened():
                     return
 
-                self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(play_start_time * STANDARD_FPS))
+                # 优先使用滑块设置的暂停时间，否则使用offset
+                if self.secondary_track_paused_time is not None:
+                    start_position = self.secondary_track_paused_time
+                    # 保存暂停时间用于音频播放，然后清除（因为现在开始播放了）
+                    saved_paused_time = self.secondary_track_paused_time
+                    self.secondary_track_paused_time = None
+                else:
+                    start_position = self.secondary_track_offset
+                    saved_paused_time = None
                 
-                self.secondary_track_end_time = self.workflow.ffmpeg_audio_processor.get_duration(narration_video_path)
+                self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_position * STANDARD_FPS))
                 
                 self.secondary_track_playing = True
                 self.track_play_button.config(text="⏸")
                 
-                self.secondary_track_start_time = time.time()
-                self.secondary_track_paused_time = None
+                # 计算播放起始时间
+                if self.selected_secondary_track == "narration":
+                    self.secondary_track_start_time = time.time() - start_position
+                else:
+                    self.secondary_track_start_time = time.time() - (start_position - self.secondary_track_offset)
                 
-                self.play_secondary_track_audio(narration_audio_path)
-                
-                print(f"▶ 开始播放旁白轨道视频片段: {play_start_time:.1f}s - {self.secondary_track_end_time:.1f}s")
+                # 传递正确的起始位置给音频播放
+                self.play_secondary_track_audio(narration_audio_path, saved_paused_time if saved_paused_time is not None else start_position)
             
             # === 通用处理 - 开始播放循环
             self.play_secondary_track_frame()
@@ -2525,7 +2531,7 @@ class WorkflowGUI:
             print(f"❌ 播放旁白轨道视频失败: {e}")
 
 
-    def play_secondary_track_audio(self, audio_path):
+    def play_secondary_track_audio(self, audio_path, audio_start_offset=None):
         """播放旁白轨道音频（支持从偏移位置开始）"""
         try:
             # 初始化pygame mixer（如果还没有初始化）
@@ -2539,15 +2545,16 @@ class WorkflowGUI:
             pygame.mixer.music.load(audio_path)
             
             # 确定音频开始播放的偏移时间
-            if self.secondary_track_paused_time:
-                audio_start_offset = self.secondary_track_paused_time
-            else:
-                if self.selected_secondary_track == "narration":
-                    audio_start_offset = self.sec_delta
-                else:    
-                    audio_start_offset = self.secondary_track_offset + self.sec_delta
-                if audio_start_offset < 0:
-                    audio_start_offset = 0
+            if audio_start_offset is None:
+                if self.secondary_track_paused_time:
+                    audio_start_offset = self.secondary_track_paused_time
+                else:
+                    if self.selected_secondary_track == "narration":
+                        audio_start_offset = 0.0
+                    else:    
+                        audio_start_offset = self.secondary_track_offset
+                    if audio_start_offset < 0:
+                        audio_start_offset = 0
             
             try:
                 if audio_start_offset > 0:
@@ -2594,9 +2601,9 @@ class WorkflowGUI:
             if self.secondary_track_start_time:
                 # 计算实际经过的时间
                 if self.selected_secondary_track == "narration":
-                    current_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+                    current_time = (time.time() - self.secondary_track_start_time)
                 else:    
-                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
+                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset
                 
                 # 计算应该在第几帧
                 target_frame = int(current_time * STANDARD_FPS)
@@ -2607,7 +2614,8 @@ class WorkflowGUI:
                     self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 
                 # 检查是否超过了视频结束时间
-                if current_time >= self.secondary_track_end_time:
+                duration = self.workflow.ffmpeg_audio_processor.get_duration( self.get_current_scene()[self.selected_secondary_track] )
+                if current_time >= duration:
                     self.stop_secondary_track()
                     return
             
@@ -2664,9 +2672,9 @@ class WorkflowGUI:
         # 计算并保存当前播放偏移时间（关键！与新的同步机制兼容）
         if self.secondary_track_start_time:
             if self.selected_secondary_track == "narration":
-                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time)
             else:    
-                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
+                self.secondary_track_paused_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset
         
         # 暂停音频播放
         try:
@@ -2701,9 +2709,8 @@ class WorkflowGUI:
             
         # 清除所有状态变量
         self.secondary_track_paused_time = None
-        self.secondary_track_paused_audio_time = None
         self.secondary_track_start_time = None
-        self.reset_track_offset() # self.secondary_track_pause_offset
+        self.reset_track_offset()
         
         print("⏹ 清除旁白轨道所有状态")
             
@@ -2855,7 +2862,7 @@ class WorkflowGUI:
             
             current_str = f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}"
             total_str = f"{int(total_duration // 60):02d}:{int(total_duration % 60):02d}"
-            self.track_time_label.config(text=f"{current_str} / {total_str}")
+            self.track_time_label.config(text=f"{current_str}/{total_str}")
             
             # 安排下一帧
             delay = max(1, int(1000 / STANDARD_FPS))
@@ -2967,7 +2974,7 @@ class WorkflowGUI:
                                           fill="gray", font=("Arial", 9), justify=tk.CENTER, tags="hint")
         
         # 重置时间显示
-        self.track_time_label.config(text="00:00 / 00:00")
+        self.track_time_label.config(text="00:00/00:00")
         
         print("⏹ 停止 PIP L/R 播放")
 
@@ -3006,7 +3013,7 @@ class WorkflowGUI:
                 self.pip_right_canvas.delete("all")
                 self.pip_right_canvas.create_text(77, 80, text="Right\n画中画右侧\n未生成", 
                                                   fill='gray', font=('Arial', 9), justify=tk.CENTER, tags="hint")
-                self.track_time_label.config(text="00:00 / 00:00")
+                self.track_time_label.config(text="00:00/00:00")
                 return
             
             if not os.path.exists(left_path) or not os.path.exists(right_path):
@@ -3024,7 +3031,7 @@ class WorkflowGUI:
                 total_frames = temp_cap_left.get(cv2.CAP_PROP_FRAME_COUNT)
                 total_duration = total_frames / STANDARD_FPS
                 total_str = f"{int(total_duration // 60):02d}:{int(total_duration % 60):02d}"
-                self.track_time_label.config(text=f"00:00 / {total_str}")
+                self.track_time_label.config(text=f"00:00/{total_str}")
                 
                 temp_cap_left.release()
             
@@ -3194,16 +3201,12 @@ class WorkflowGUI:
             current_scene = self.get_current_scene()
             if not current_scene:
                 return
-            
-            image_path = current_scene.get(image_type)
-            if not image_path or not os.path.exists(image_path):
-                return
-            
+
             canvas_mapping = {
                 'clip_image': (self.clip_image_canvas, "Clip\nImage", '_clip_image_photo'),
                 'clip_image_last': (self.clip_image_last_canvas, "Clip\nLast", '_clip_image_last_photo'),
-                "narration_image": (self.narration_image_canvas, "narration\nImage", '_narration_image_photo'),
-                "narration_image_last": (self.narration_image_last_canvas, "narration\nLast", '_narration_image_last_photo'),
+                "narration_image": (self.narration_image_canvas, "Narration\nImage", '_narration_image_photo'),
+                "narration_image_last": (self.narration_image_last_canvas, "Narration\nLast", '_narration_image_last_photo'),
                 'zero_image': (self.zero_image_canvas, "Zero\nImage", '_zero_image_photo'),
                 'zero_image_last': (self.zero_image_last_canvas, "Zero\nLast", '_zero_image_last_photo'),
                 'one_image': (self.one_image_canvas, "One\nImage", '_one_image_photo'),
@@ -3213,12 +3216,25 @@ class WorkflowGUI:
             if image_type not in canvas_mapping:
                 return
             
+            image_path = current_scene.get(image_type)
+            if not image_path or not os.path.exists(image_path):
+                # take the first part string from image_type
+                video_type = image_type.split("_")[0]
+                video_path = current_scene.get(video_type)
+                if video_path and os.path.exists(video_path):
+                    if image_type.endswith("_last"):
+                        image_path = self.workflow.ffmpeg_processor.extract_frame(video_path, False)
+                    else:    
+                        image_path = self.workflow.ffmpeg_processor.extract_frame(video_path, True)
+                    oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+                else:
+                    return
+            
             canvas, label, photo_attr = canvas_mapping[image_type]
+            canvas.delete("all")
             
             from PIL import Image, ImageTk
             img = Image.open(image_path)
-            
-            canvas.delete("all")
             
             canvas.update_idletasks()
             canvas_width = canvas.winfo_width()
@@ -3250,7 +3266,7 @@ class WorkflowGUI:
             
             setattr(self, photo_attr, photo)
             
-            print(f"✅ 已显示  {image_type}: {os.path.basename(image_path)}")
+            #print(f"✅ 已显示  {image_type}: {os.path.basename(image_path)}")
             
         except Exception as e:
             print(f"❌ 显示图片失败 ({image_type}): {e}")
@@ -3258,16 +3274,28 @@ class WorkflowGUI:
 
 
     def load_all_images_preview(self):
-        """加载所有图片预览"""
-        self.display_image_on_canvas_for_track('clip_image')
-        self.display_image_on_canvas_for_track('clip_image_last')
-        self.display_image_on_canvas_for_track("narration_image")
-        self.display_image_on_canvas_for_track("narration_image_last")
-        #self.display_image_on_canvas_for_track('zero_image')
-        #self.display_image_on_canvas_for_track('zero_image_last')
-        #self.display_image_on_canvas_for_track('one_image')
-        #self.display_image_on_canvas_for_track('one_image_last')
+        try:
+            self.load_video_first_frame()
 
+            self.display_image_on_canvas_for_track('clip_image')
+            self.display_image_on_canvas_for_track('clip_image_last')
+            self.display_image_on_canvas_for_track("narration_image")
+            self.display_image_on_canvas_for_track("narration_image_last")
+            self.display_image_on_canvas_for_track('zero_image')
+            self.display_image_on_canvas_for_track('zero_image_last')
+            self.display_image_on_canvas_for_track('one_image')
+            self.display_image_on_canvas_for_track('one_image_last')
+
+            # 根据当前选中的tab加载轨道视频预览
+            current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
+            if current_tab_index == 0:
+                self.load_secondary_track_first_frame()
+            elif current_tab_index == 1:
+                self.load_pip_lr_first_frame()
+
+        except Exception as e:
+            print(f"❌ 加载图片预览失败: {e}")
+    
     
     def on_track_volume_change(self, *args):
         """音量变化处理（共用）"""
@@ -3282,22 +3310,28 @@ class WorkflowGUI:
         """更新旁白轨道播放时间显示"""
         try:
             if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
-                self.track_time_label.config(text="00:00 / 00:00")
+                self.track_time_label.config(text="00:00/00:00")
+                # 禁用滑块
+                if hasattr(self, 'secondary_track_scale'):
+                    self.secondary_track_scale.config(state=tk.DISABLED)
                 return
             
             # 获取视频总时长
             total_frames = self.secondary_track_cap.get(cv2.CAP_PROP_FRAME_COUNT)
             total_duration = total_frames / STANDARD_FPS
             
+            # 更新滑块的最大值
+            if hasattr(self, 'secondary_track_scale'):
+                self.secondary_track_scale.config(to=total_duration, state=tk.NORMAL)
+            
             # 确定当前播放时间
             current_time = 0.0
             if self.secondary_track_playing and self.secondary_track_start_time:
                 if self.selected_secondary_track == "narration":
-                    current_time = (time.time() - self.secondary_track_start_time) + self.sec_delta
+                    current_time = (time.time() - self.secondary_track_start_time)
                 else:
-                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset + self.sec_delta
+                    current_time = (time.time() - self.secondary_track_start_time) + self.secondary_track_offset
             elif self.secondary_track_paused_time:
-                # 暂停状态：使用暂停时间
                 current_time = self.secondary_track_paused_time
             else:
                 # 默认：从视频帧位置计算
@@ -3307,17 +3341,124 @@ class WorkflowGUI:
             # 确保时间在合理范围内
             current_time = max(0, min(current_time, total_duration))
             
+            # 更新滑块值（不触发回调）
+            if hasattr(self, 'secondary_track_scale_var'):
+                self.secondary_track_scale_var.set(current_time)
+            
             # 格式化时间显示 (MM:SS 格式)
             current_str = f"{int(current_time // 60):02d}:{int(current_time % 60):02d}"
             total_str = f"{int(total_duration // 60):02d}:{int(total_duration % 60):02d}"
             
-            self.track_time_label.config(text=f"{current_str} / {total_str}")
+            self.track_time_label.config(text=f"{current_str}/{total_str}")
             
         except Exception as e:
             print(f"❌ 更新旁白轨道时间显示失败: {e}")
-            self.track_time_label.config(text="00:00 / 00:00")
+            self.track_time_label.config(text="00:00/00:00")
+            if hasattr(self, 'secondary_track_scale'):
+                self.secondary_track_scale.config(state=tk.DISABLED)
 
 
+    def display_secondary_track_frame_at_time(self, time_position):
+        """在canvas上显示指定时间的视频帧"""
+        try:
+            if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
+                # 如果没有cap，尝试打开视频
+                current_scene = self.get_current_scene()
+                if not current_scene:
+                    return
+                track_path = get_file_path(current_scene, self.selected_secondary_track)
+                if not track_path:
+                    return
+                temp_cap = cv2.VideoCapture(track_path)
+                if not temp_cap.isOpened():
+                    return
+            else:
+                temp_cap = self.secondary_track_cap
+            
+            # 跳转到指定时间
+            temp_cap.set(cv2.CAP_PROP_POS_FRAMES, int(time_position * STANDARD_FPS))
+            ret, frame = temp_cap.read()
+            
+            if ret:
+                from PIL import Image, ImageTk
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                
+                # 调整图像大小适应Canvas
+                canvas_width = self.secondary_track_canvas.winfo_width()
+                canvas_height = self.secondary_track_canvas.winfo_height()
+                
+                if canvas_width > 1 and canvas_height > 1:
+                    pil_image.thumbnail((canvas_width - 10, canvas_height - 10), Image.Resampling.LANCZOS)
+                else:
+                    pil_image.thumbnail((310, 170), Image.Resampling.LANCZOS)
+                
+                # 更新画布显示
+                self.current_secondary_track_frame = ImageTk.PhotoImage(pil_image)
+                self.secondary_track_canvas.delete("all")
+                
+                canvas_width = canvas_width or 320
+                canvas_height = canvas_height or 180
+                x = canvas_width // 2
+                y = canvas_height // 2
+                self.secondary_track_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_secondary_track_frame)
+            
+            # 如果使用的是临时cap，释放它
+            if temp_cap != self.secondary_track_cap:
+                temp_cap.release()
+                
+        except Exception as e:
+            print(f"❌ 显示视频帧失败: {e}")
+
+    
+    def on_secondary_track_scale_changed(self, value):
+        """滑块拖拽回调：更新 secondary_track_paused_time"""
+        try:
+            if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
+                # 即使没有cap，也尝试显示帧
+                current_scene = self.get_current_scene()
+                if current_scene:
+                    self.display_secondary_track_frame_at_time(float(value))
+                return
+            
+            # 获取滑块值
+            new_time = float(value)
+            
+            # 更新暂停时间（即使正在播放，也更新暂停时间以便下次暂停时使用）
+            self.secondary_track_paused_time = new_time
+            
+            # 显示当前帧到canvas
+            self.display_secondary_track_frame_at_time(new_time)
+            
+            # 如果当前正在播放，跳转到新位置
+            if self.secondary_track_playing and self.secondary_track_cap:
+                # 计算新的播放起始时间
+                if self.selected_secondary_track == "narration":
+                    self.secondary_track_start_time = time.time() - new_time
+                else:
+                    self.secondary_track_start_time = time.time() - (new_time - self.secondary_track_offset)
+                
+                # 跳转到新位置
+                self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, int(new_time * STANDARD_FPS))
+                
+                # 如果音频正在播放，也需要跳转
+                try:
+                    if pygame.mixer.music.get_busy():
+                        pygame.mixer.music.stop()
+                        narration_audio_path = get_file_path(self.get_current_scene(), self.selected_secondary_track+'_audio')
+                        if narration_audio_path:
+                            pygame.mixer.music.load(narration_audio_path)
+                            pygame.mixer.music.play(start=new_time)
+                except Exception as e:
+                    print(f"❌ 跳转音频位置失败: {e}")
+            
+            # 更新时间显示
+            self.update_secondary_track_time()
+            
+        except Exception as e:
+            print(f"❌ 滑块拖拽处理失败: {e}")
+
+    
     def move_secondary_track_forward(self):
         """旁白轨道前进1秒"""
         try:
@@ -3478,14 +3619,6 @@ class WorkflowGUI:
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
-
-
-    def enhance_clip(self, track:str):
-        """增强主图或次图"""
-        scene = self.get_current_scene()
-        level = self.enhance_level.get()
-        self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, track, level)
-        self.refresh_gui_scenes()
 
 
     def recreate_clip_image(self, full:bool):
@@ -3884,20 +4017,18 @@ class WorkflowGUI:
             next_scene = self.get_next_scene()
             scenes_same_story = self.workflow.scenes_in_story(current_scene)
 
-            if media_type == 'zero' or media_type == 'one' or media_type == 'narration':
-                v = get_file_path(current_scene, media_type)
-                if not v:
-                    oldv, v = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
-                    refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
-                    refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
-                    current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
-                    current_scene[media_type + "_status"] = "COPY"
-
             if not video_path:
                 video_path = get_file_path(current_scene, media_type)
+                if media_type != 'clip' and video_path is None:
+                    oldv, video_path = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
+                    refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
+                    refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
+                    current_scene[media_type + "_fps"] = current_scene.get(media_type + "_fps", 24)
+
+                temp_video = config.get_temp_file(self.workflow.pid, "mp4")
+                video_path = safe_copy_overwrite(video_path, temp_video)
             else:
                 current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
-                current_scene[media_type + "_status"] = "DND"
                 video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
@@ -3921,9 +4052,10 @@ class WorkflowGUI:
             if media_type != "clip" and media_type != "narration":
                 if transcribe_way == "multiple":
                     for sss in scenes_same_story:
-                        sss[media_type] = current_scene[media_type]
-                        sss[media_type+"_audio"]  = current_scene[media_type+"_audio"]
-                        sss[media_type+"_image"]  = current_scene[media_type+"_image"]
+                        sss[media_type] = current_scene.get(media_type, None)
+                        sss[media_type+"_audio"]  = current_scene.get(media_type+"_audio", None)
+                        sss[media_type+"_image"]  = current_scene.get(media_type+"_image", None)
+                        sss[media_type+"_image_last"]  = current_scene.get(media_type+"_image_last", None)
                         #if "camear_style" in current_scene:
                         #    sss["camear_style"] = current_scene["camear_style"]
                         #if "camera_shot" in current_scene:
@@ -3940,14 +4072,19 @@ class WorkflowGUI:
             # media_type == clip
             if len(audio_json) > 1:
                 self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
+                current_scene = self.get_current_scene()
+                for sss in audio_json:
+                    sss[media_type + "_status"] = "ORIG"
+            else:
+                current_scene[media_type + "_status"] = "ORIG"
 
             # pop up messagebox to ask user if want to repalce image
-            dialog1 = messagebox.askyesno("替换首帧图像", "是否要替换首帧图像？")
+            # dialog1 = messagebox.askyesno("替换首帧图像", "是否要替换首帧图像？")
             dialog2 = messagebox.askyesno("替换末帧图像", "是否要替换末帧图像？")
-            if dialog1 or dialog2:
+            if dialog2:
                 first_image, last_image = self.workflow.ffmpeg_processor.extract_first_last_frame(video_path)
-                if dialog1:
-                    refresh_scene_media(current_scene, media_type+"_image", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(first_image))
+                #if dialog1:
+                #    refresh_scene_media(current_scene, media_type+"_image", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(first_image))
                 if dialog2:
                     refresh_scene_media(current_scene, media_type+"_image_last", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(last_image))
                 
@@ -4048,16 +4185,8 @@ class WorkflowGUI:
         replace_media_audio, media_type = selector.show()
         if not media_type:
             return  # 用户取消
-        elif media_type == 'clip':
-            dropped_file = get_file_path(current_scene, "clip")
-        elif media_type == 'zero':
-            dropped_file = get_file_path(current_scene, "zero")
-        elif media_type == 'one':
-            dropped_file = get_file_path(current_scene, "one")
-        else:
-            dropped_file = get_file_path(current_scene, "narration")
 
-        self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
+        self.handle_video_replacement(None, replace_media_audio, media_type)
         self.refresh_gui_scenes()
 
 

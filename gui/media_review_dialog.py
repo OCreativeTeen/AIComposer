@@ -94,7 +94,7 @@ class AVReviewDialog:
             self.SPEAKER_KEY = "speaker"
             self.SPEAKING_KEY = "speaking"
             self.ACTORS = config_prompt.SPEAKER
-        elif self.media_type == "narration":
+        else:
             self.SPEAKER_KEY = "narrator"
             self.SPEAKING_KEY = "voiceover"
             self.ACTORS = config_prompt.NARRATOR
@@ -431,28 +431,21 @@ class AVReviewDialog:
         self.speaker.bind("<FocusOut>", lambda e: self.on_speaker_changed(e))
 
         # transcribe exsiting conversation (if >>30 sec), then remix single conversation
-        ttk.Button(fresh_buttons_frame, text="场景重建", command=lambda: self.remix_conversation("single", False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="多场重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="单重建", command=lambda: self.remix_conversation("single", False)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="多重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
         
-        ttk.Button(fresh_buttons_frame, text="前接重建", command=lambda: self.remix_conversation("connect_prev", False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="后接重建", command=lambda: self.remix_conversation("connect_next", False)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="前接重", command=lambda: self.remix_conversation("connect_prev", False)).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="后接重", command=lambda: self.remix_conversation("connect_next", False)).pack(side=tk.LEFT)
         # transcribe exsiting conversation (if >>30 sec), then remix multiple conversation
 
-        self.btn_transcribe_audio = ttk.Button(fresh_buttons_frame, text="单场转录", command=lambda: self.transcribe_audio("single"))
-        self.btn_transcribe_audio.pack(side=tk.LEFT)
-        self.btn_transcribe_multiple_audio = ttk.Button(fresh_buttons_frame, text="多场转录", command=lambda: self.transcribe_audio("multiple"))
-        self.btn_transcribe_multiple_audio.pack(side=tk.LEFT)
-        self.btn_regenerate_audio = ttk.Button(fresh_buttons_frame, text="重生音频", command=self.regenerate_audio)
-        self.btn_regenerate_audio.pack(side=tk.LEFT)
-        if self.media_type != 'clip' and self.media_type != 'narration':
-            self.btn_transcribe_audio.config(state=tk.DISABLED)
-            self.btn_transcribe_multiple_audio.config(state=tk.DISABLED)
-            self.btn_regenerate_audio.config(state=tk.DISABLED)
+        ttk.Button(fresh_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
+        ttk.Button(fresh_buttons_frame, text="生音频", command=self.regenerate_audio).pack(side=tk.LEFT)
         
         # ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
         # ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
         
-        ttk.Button(fresh_buttons_frame, text="确认替换", command=self.confirm_replacement).pack(side=tk.RIGHT)
+        ttk.Button(fresh_buttons_frame, text="替换", command=self.confirm_replacement).pack(side=tk.RIGHT)
         ttk.Button(fresh_buttons_frame, text="取消", command=self.cancel).pack(side=tk.RIGHT)
         
         if not pygame.mixer.get_init():
@@ -1245,6 +1238,8 @@ class AVReviewDialog:
 
     def transcribe_audio(self, transcribe_way):
         self.transcribe_way = transcribe_way
+        if self.media_type != 'clip' and self.media_type != 'narration':
+            return
         self._transcribe_recorded_audio()
         self._update_fresh_json_text()
 
@@ -1252,9 +1247,12 @@ class AVReviewDialog:
     def remix_conversation(self, mode, transcribe):
         if mode == "connect_prev" or mode == "connect_next" :
             self.transcribe_way = "single"
-        else:        
+        else:
             self.transcribe_way = mode
         self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
+        
+        if self.media_type != 'clip' and self.media_type != 'narration':
+            return
 
         if transcribe:
             self._transcribe_recorded_audio()
@@ -1388,6 +1386,7 @@ class AVReviewDialog:
             self.current_scene["actions"] = new_scenes[0].get("actions", "")
             self.current_scene["visual"] = new_scenes[0].get("visual", "")
             self.current_scene["start"] = 0.0
+            self.current_scene["extend"] = 0.0
             self.current_scene["end"] = self.audio_duration
             self.current_scene["duration"] = self.audio_duration
             self.current_scene["caption"] = ". ".join([item.get("caption", "") for item in new_scenes])
@@ -1404,6 +1403,7 @@ class AVReviewDialog:
                 duration = fresh_scene.get("duration", self.audio_duration)
                 scene["duration"] = duration if len(self.audio_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
                 scene["start"] = start_time
+                scene["extend"] = 0.0
                 start_time = start_time + scene["duration"]
                 scene["end"] = start_time
                 scene["id"] = start_id + 1
@@ -1483,6 +1483,7 @@ class AVReviewDialog:
                 refresh_scene_media(json_item, self.media_type, ".mp4", v)
                 if self.media_type == "clip":
                     json_item["duration"] = self.workflow.ffmpeg_audio_processor.get_duration(json_item[self.media_type+"_audio"])
+                    json_item["extend"] = 1.0
                     json_item["start"] = start_time
                     start_time = start_time + json_item["duration"]
                     json_item["end"] = start_time
@@ -1510,7 +1511,6 @@ class AVReviewDialog:
 
         self.refresh_edit_timeline()
         self.draw_waveform_placeholder()
-
         # pop up a messagebox to confirm the audio is regenerated
         messagebox.showinfo("成功", "音频已重新生成")
 
@@ -1682,11 +1682,11 @@ class AVReviewDialog:
         i = self.current_scene.get(self.image_field, None)
         if i != self.source_image_path:
             refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
-        if a != self.source_audio_path:
+        if a != self.source_audio_path and self.workflow.ffmpeg_audio_processor.get_duration(a) != self.audio_duration:
             refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
-        if v != self.source_video_path:
-            v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True)
-            refresh_scene_media(self.current_scene, self.video_field, ".mp4", v)
+        if v != self.source_video_path and self.workflow.ffmpeg_processor.get_duration(v) != self.audio_duration:
+            #v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True)
+            refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
 
         # 执行音视频切割（只有在边界被手动调整后才执行）
         # 判断是否需要切割：
@@ -1704,6 +1704,15 @@ class AVReviewDialog:
                 refresh_scene_media(self.current_scene, self.audio_field, ".wav", clip_wav, True)
                 v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start, end)
                 refresh_scene_media(self.current_scene, self.video_field, ".mp4", v, True)
+            else:
+                v = self.source_video_path
+
+            first_image = self.current_scene.get(self.image_field, None)
+            if  not first_image or not os.path.exists(first_image):
+                first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
+                refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
+            last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
+            refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
 
         elif self.clip_multiple_audio_changed():
             print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
@@ -1716,6 +1725,13 @@ class AVReviewDialog:
                 olda, item["speaker_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
                 v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
                 refresh_scene_media(item, "clip", ".mp4", v)
+                first_image = item.get(self.image_field, None)
+                if  not first_image or not os.path.exists(first_image):
+                    first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
+                    refresh_scene_media(item, self.image_field, ".webp", first_image)
+                last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
+                refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
+
             print(f"✓ 音视频切割完成")
         else:
             print(f"ℹ️ 边界未被手动调整，无需切割")
@@ -2311,7 +2327,7 @@ class AVReviewDialog:
             self.source_audio_path = self.workflow.ffmpeg_audio_processor.to_wav(av_path)
             self.source_video_path = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True, True)
         elif is_video_file(av_path):
-            self.source_video_path = self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
+            self.source_video_path = av_path  # self.workflow.ffmpeg_processor.resize_video(av_path, width=self.workflow.ffmpeg_processor.width, height=None)
             if self.replace_media_audio=="keep":
                 self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(self.source_video_path)
             else:

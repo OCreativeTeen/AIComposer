@@ -576,10 +576,7 @@ class MagicWorkflow:
             else:
                 new_scene = current_scene.copy()
 
-            if i == len(new_scenes) - 1:
-                new_scene["extend"] = 1.0
-            else:
-                new_scene["extend"] = 0.0
+            new_scene["extend"] = 0.0
 
             # 分割音频：从 start_time 开始，提取 part_duration 长度
             if original_audio_clip:
@@ -1553,7 +1550,6 @@ class MagicWorkflow:
             self.background_music = self.ffmpeg_audio_processor.to_wav(self.background_music)
             self.background_video = self.ffmpeg_processor.image_audio_to_video(self.background_image, self.background_music, 1)
 
-
         if story_level:
             next_root_id = (int(self.max_id(story)/10000) + 1)*10000
         else:
@@ -1564,7 +1560,10 @@ class MagicWorkflow:
         story = story.copy()
         story["id"] = next_root_id
         story["environment"] = ""
-        story["extend"] = 1.0
+        if story_level:
+            story["extend"] = 1.0
+        else:
+            story["extend"] = 0.0
 
         oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)
         olda, zero_audio = refresh_scene_media(story, "zero_audio", ".wav", self.background_music, True)

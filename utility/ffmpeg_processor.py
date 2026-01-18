@@ -952,52 +952,41 @@ class FfmpegProcessor:
         return output_path
 
 
-    def extract_first_last_frame(self, video_path):
-        """直接从视频提取第一帧和最后一帧为 PNG 文件，并返回两个 PNG 的路径"""
-        temp_dir = self.temp_dir
-        # 生成唯一的输出文件名前缀
-        output_prefix = f"frame_{uuid.uuid4().hex[:8]}"
-        first_frame_path = os.path.join(temp_dir, f"{output_prefix}_first.png")
-        last_frame_path = os.path.join(temp_dir, f"{output_prefix}_last.png")
-        
+    def extract_frame(self, video_path, first):
+        frame_path = os.path.join(self.temp_dir, f"frame_{uuid.uuid4().hex[:8]}.webp")
         try:
-            # 提取第一帧（直接提取第一帧，无需指定帧号）
-            self.run_ffmpeg_command([
-                self.ffmpeg_path, "-y",
-                "-i", video_path,
-                "-vframes", "1",  # 只提取一帧（第一帧）
-                "-q:v", "2",
-                first_frame_path
-            ])
-            
-            # 提取最后一帧：使用 -sseof 从文件末尾前0.1秒开始，提取一帧
-            # 这样可以确保获取到最后一帧，即使视频很短也能正常工作
-            self.run_ffmpeg_command([
-                self.ffmpeg_path, "-y",
-                "-sseof", "-0.1",  # 从文件末尾前0.1秒开始（足够短以确保获取最后一帧）
-                "-i", video_path,
-                "-vframes", "1",
-                "-q:v", "2",
-                last_frame_path
-            ])
-            
-            # 检查文件是否成功生成
-            if not os.path.exists(first_frame_path) or not os.path.exists(last_frame_path):
-                print(f"⚠️ 提取帧失败: 第一帧或最后一帧未生成")
-                return None
-            
-            return first_frame_path, last_frame_path
+            if first:
+                self.run_ffmpeg_command([
+                    self.ffmpeg_path, "-y",
+                    "-i", video_path,
+                    "-vframes", "1",  # 只提取一帧（第一帧）
+                    "-c:v", "libwebp",  # 使用 WebP 编码器
+                    "-compression_level", "4",  # 压缩级别 (0-6, 4为平衡速度和质量)
+                    "-q:v", "75",  # 质量参数 (0-100, 75为高质量)
+                    frame_path
+                ])
+            else:
+                self.run_ffmpeg_command([
+                    self.ffmpeg_path, "-y",
+                    "-sseof", "-0.03",  # 从文件末尾前0.015秒开始（足够短以确保获取最后一帧）
+                    "-i", video_path,
+                    "-vframes", "1",  # 只提取一帧
+                    "-c:v", "libwebp",  # 使用 WebP 编码器
+                    "-compression_level", "4",  # 压缩级别 (0-6, 4为平衡速度和质量)
+                    "-q:v", "75",  # 质量参数 (0-100, 75为高质量)
+                    frame_path
+                ])
+            return frame_path
             
         except Exception as e:
-            print(f"❌ 提取视频帧出错: {e}")
-            # 清理可能生成的部分文件
-            for path in [first_frame_path, last_frame_path]:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except:
-                        pass
+            print(f"❌ Error extracting frame: {e}")
             return None
+
+
+    def extract_first_last_frame(self, video_path):
+        first_frame_path = self.extract_frame(video_path, True)
+        last_frame_path = self.extract_frame(video_path, False)
+        return first_frame_path, last_frame_path
 
 
     def video_fade(self, video_path, fade_in_length, fade_out_length, audio_fade):
@@ -2178,6 +2167,21 @@ class FfmpegProcessor:
             return False
 
 
+    def image_to_webp(self, input_image):
+        if input_image.endswith(".webp"):
+            return input_image
+            
+        output_path = config.get_temp_file(self.pid, "webp")
+        self.run_ffmpeg_command([
+            self.ffmpeg_path, "-y",
+            "-i", input_image,
+            "-c:v", "libwebp",
+            "-compression_level", "4",  # 压缩级别 (0-6, 4为平衡速度和质量)
+            "-q:v", "75",  # 质量参数 (0-100, 75为高质量)
+            output_path
+        ])
+        return output_path
+        
 
     def resize_image_smart(self, input_image, width=None, height=None):
         if width is None:

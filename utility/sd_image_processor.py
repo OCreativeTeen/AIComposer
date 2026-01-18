@@ -637,9 +637,13 @@ class SDProcessor:
         self.wan_vidoe_count += 1
 
 
-
     def enhance_clip(self, pid, scene, track, level:str):
-        fps = scene.get(track + "_fps", "15")
+        status = scene.get(track + "_status", "")
+        print(f"enhance_clip {track} status: {status}")
+        if status == "ENH2":
+            return
+
+        fps = scene.get(track + "_fps", 15)
         if fps > 24:
             fps = 15
 
@@ -655,12 +659,12 @@ class SDProcessor:
                 enhance_left_input = config.get_temp_file(self.pid, "mp4", enhance_left_input + "_" + level + "_")
                 safe_copy_overwrite(left_input, enhance_left_input)
                 self._enhance_video(enhance_left_input)
-                scene[track + "_status"] = "EN1"
 
                 enhance_right_input = build_scene_media_prefix(pid, scene["id"], track, "ENH", True)
                 enhance_right_input = config.get_temp_file(self.pid, "mp4", enhance_right_input + "_" + level + "_")
                 safe_copy_overwrite(right_input, enhance_right_input)
                 self._enhance_video(enhance_right_input)
+                scene[track + "_status"] = "ENH1"
         else:
             input = get_file_path(scene, track)
             if input:
@@ -669,10 +673,10 @@ class SDProcessor:
                 enhance_input = config.get_temp_file(pid, "mp4", enhance_input+"_"+level+"_")
                 safe_copy_overwrite(input, enhance_input)
                 self._enhance_video(enhance_input)
-
+                scene[track + "_status"] = "ENH1"
 
  
-    ENHANCE_SERVERS = ["http://10.0.0.210:5000", "http://10.0.0.235:5000"]
+    ENHANCE_SERVERS = ["http://10.0.0.210:5000", "http://10.0.0.235:5000", "http://10.0.0.210:5000", "http://10.0.0.235:5000", "http://10.0.0.235:5000",]
     current_enhance_server = 0
 
     def _enhance_video(self, video_path):
