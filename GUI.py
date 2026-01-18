@@ -529,7 +529,7 @@ class WorkflowGUI:
                 start_time = self.secondary_track_offset
 
             secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(secondary_path, start_time, start_time+clip_duration)
-            narration_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, clip_duration, 0, 0, 1.0)
+            secondary_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, clip_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             
             # 创建画中画设置对话框
@@ -551,14 +551,35 @@ class WorkflowGUI:
                     refresh_scene_media(current_scene, 'clip', '.mp4', v)
                 elif settings['position'] == "av":
                     refresh_scene_media(current_scene, 'clip', '.mp4', secondary_track_copy)
-                    refresh_scene_media(current_scene, 'clip_audio', '.wav', narration_audio_copy)
+                    refresh_scene_media(current_scene, 'clip_audio', '.wav', secondary_audio_copy)
+                elif settings['position'] == "audio":
+                    if settings['audio_volume'] != 0.0:
+                        volume_main = 1
+                        volume_overlay = 1
+                        if settings['audio_volume'] > 0 :
+                            volume_overlay = settings['audio_volume']
+                            if volume_overlay > 0.9:
+                                volume_overlay = 0.9
+                        elif settings['audio_volume'] < 0:
+                            volume_main = settings['audio_volume']
+                            if volume_main < -0.9:
+                                volume_main = -0.9
+                            volume_main = 1+volume_main    
+
+                        current_time, total_time = self.get_current_video_time()
+                        output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(clip_audio, volume_main, current_time, secondary_audio_copy, volume_overlay)
+                        olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio, True)
+
+                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, output_audio)
+                        olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
+
                 else:
                     # 处理画中画
                     self.process_picture_in_picture(
                         background_audio=clip_audio,
                         background_video=clip_video,
                         overlay_video=secondary_track_copy,
-                        overlay_audio=narration_audio_copy,
+                        overlay_audio=secondary_audio_copy,
                         overlay_left=secondary_left,
                         overlay_right=secondary_right,
                         settings=settings
@@ -1021,7 +1042,7 @@ class WorkflowGUI:
         self.mark2_label.pack(side=tk.LEFT, padx=1)
 
         # 视频进度标签
-        self.video_progress_label = ttk.Label(video_control_frame, text="00:00.00 / 00:00.00")
+        self.video_progress_label = ttk.Label(video_control_frame, text="00:00.00 /00:00.00")
         self.video_progress_label.pack(side=tk.RIGHT, padx=1)
         
         # 初始化视频进度显示
@@ -1742,7 +1763,7 @@ class WorkflowGUI:
             current_time_str = self.format_time_with_centisec(current_time)
             total_time_str = self.format_time_with_centisec(total_time)
             
-            self.video_progress_label.config(text=f"{current_time_str} / {total_time_str}")
+            self.video_progress_label.config(text=f"{current_time_str} /{total_time_str}")
             
             # 计算下一帧的延迟时间（毫秒）- 正常1倍播放速度
             delay = int(1000 / STANDARD_FPS)  # 正常播放速度
@@ -2172,12 +2193,12 @@ class WorkflowGUI:
                     pass
                 else:
                     total_time_str = self.format_time_with_centisec(total_duration)
-                    self.video_progress_label.config(text=f"00:00.00 / {total_time_str}")
+                    self.video_progress_label.config(text=f"00:00.00 /{total_time_str}")
             else:
-                self.video_progress_label.config(text="00:00.00 / 00:00.00")
+                self.video_progress_label.config(text="00:00.00 /00:00.00")
                 
         except Exception as e:
-            self.video_progress_label.config(text="00:00.00 / 00:00.00")
+            self.video_progress_label.config(text="00:00.00 /00:00.00")
             print(f"⚠️ 更新视频进度显示失败: {e}")
 
 

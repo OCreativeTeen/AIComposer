@@ -79,7 +79,7 @@ class PictureInPictureDialog:
         ttk.Label(position_frame, text="位置:").pack(side=tk.LEFT)
         
         self.position_var = tk.StringVar(value=self.position)
-        positions = [("右", "right"), ("左", "left"), ("中心", "center"), ("满屏", "full"), ("影音", "av")]
+        positions = [("右", "right"), ("左", "left"), ("中心", "center"), ("满屏", "full"), ("影音", "av"), ("音频", "audio")]
         for i, (text, value) in enumerate(positions):
             ttk.Radiobutton(position_frame, text=text, variable=self.position_var, 
                           value=value).pack(side=tk.LEFT, padx=(10, 0))
