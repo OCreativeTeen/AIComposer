@@ -52,46 +52,7 @@
 - **示例**: `"@心理造夢坊"`, `"@TEDEd"`
 
 ---
-
-## 当前实现的字段选择策略
-
-### 在 `youtube_downloader.py` 中:
-
-```python
-# 获取频道名 - 尝试多个字段
-channel_name = (
-    video_detail.get('channel') or        # 首选: 频道显示名称
-    video_detail.get('uploader') or       # 备选: 上传者名称
-    video_detail.get('channel_name') or   # 备选: 频道名称(另一字段)
-    video_detail.get('uploader_id') or    # 备选: 上传者ID
-    'Unknown'                             # 最后: 默认值
-)
-
-video_data = {
-    ...
-    'uploader': video_detail.get('uploader', channel_name),
-    'channel': channel_name,              # 独立的 channel 字段
-    'channel_id': video_detail.get('channel_id', ''),
-    ...
-}
-```
-
-### 在 `GUI.py` 中:
-
-```python
-# 从第一个视频获取频道名 - 尝试多个字段
-if videos:
-    first_video = videos[0]
-    channel_name = (
-        first_video.get('channel') or      # 首选: 频道显示名称
-        first_video.get('uploader') or     # 备选: 上传者名称
-        first_video.get('channel_id') or   # 备选: 频道ID(最后备选)
-        'Unknown'                          # 默认值
-    )
-```
-
----
-
+ 
 ## 为什么使用这个顺序?
 
 1. **`channel` 优先**:
@@ -114,15 +75,6 @@ if videos:
    - 提供最后的安全网
 
 ---
-
-## 调试信息
-
-为了排查频道名缺失问题,在下载时会输出调试信息:
-
-```python
-print(f"📺 频道名称: {channel_name}")
-print(f"🔍 调试信息 - channel: {first_video.get('channel')}, uploader: {first_video.get('uploader')}, channel_id: {first_video.get('channel_id')}")
-```
 
 ### 正常输出示例:
 ```

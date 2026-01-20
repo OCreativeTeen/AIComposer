@@ -749,75 +749,76 @@ class YoutubeDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(channel_url, download=False)
 
-                channel_name = info.get('channel', info.get('uploader', info.get('channel_id', 'Unknown')))
+            channel_name = info.get('channel', 'Unknown')
+            if channel_name.lower() == 'unknown':
+                channel_name = info.get('uploader', 'Unknown')
+            if channel_name.lower() == 'unknown':
+                channel_name = info.get('channel_id', 'Unknown')
 
-                youtube_dir = f"{self.project_path}/Youtbue_download"
-                os.makedirs(youtube_dir, exist_ok=True)
+            with open(f'{self.youtube_dir}/info_{channel_name}.json', 'w', encoding='utf-8') as f:
+                json.dump(info, f, ensure_ascii=False, indent=2)
+        
+            video_list_json_path = os.path.join(self.youtube_dir, f"_{channel_name}_hotvideos.json")
+            if os.path.exists(video_list_json_path):
+                return json.load(open(video_list_json_path, 'r', encoding='utf-8'))
 
-                with open(f'{youtube_dir}/info_{channel_name}.json', 'w', encoding='utf-8') as f:
-                    json.dump(info, f, ensure_ascii=False, indent=2)
-            
-                video_list_json_path = os.path.join(youtube_dir, f"_{channel_name}_hotvideos.json")
-                if os.path.exists(video_list_json_path):
-                    return json.load(open(video_list_json_path, 'r', encoding='utf-8'))
+            videos = []
 
-                videos = []
-
-                if 'entries' in info:
-                    # 记录循环开始时间，用于每10分钟检查一次 cookies
-                    loop_start_time = time.time()
-                    cookie_check_interval = 600  # 10分钟 = 600秒
-                    
-                    for count, entry in enumerate(info['entries']):
-                        if entry:
-                            video_url = entry.get('url', '') or entry.get('webpage_url', '') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+            if 'entries' in info:
+                # 记录循环开始时间，用于每10分钟检查一次 cookies
+                loop_start_time = time.time()
+                cookie_check_interval = 600  # 10分钟 = 600秒
+                
+                for count, entry in enumerate(info['entries']):
+                    if entry:
+                        video_url = entry.get('url', '') or entry.get('webpage_url', '') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+                        
+                        try:
+                            video_data = self.get_video_detail(video_url, channel_name)
+                            print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
+                            videos.append(video_data)
+                        except Exception as e:
+                            error_msg = str(e)
+                            print(f"⚠️ 跳过视频: {error_msg}")
+                            self.cookie_valid = False
+                        finally:
+                            # 检查是否已经过了10分钟，如果是则检查并更新 cookies
+                            current_time = time.time()
+                            elapsed_time = current_time - loop_start_time
                             
-                            try:
-                                video_data = self.get_video_detail(video_url, channel_name)
-                                videos.append(video_data)
-                                print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
-                            except Exception as e:
-                                error_msg = str(e)
-                                print(f"⚠️ 跳过视频: {error_msg}")
-                                self.cookie_valid = False
-                            finally:
-                                # 检查是否已经过了10分钟，如果是则检查并更新 cookies
-                                current_time = time.time()
-                                elapsed_time = current_time - loop_start_time
-                                
-                                if elapsed_time >= cookie_check_interval:
-                                    print(f"⏰ 已过去 {elapsed_time/60:.1f} 分钟，检查并更新 cookies...")
-                                    if self._check_and_update_cookies(wait_forever=False):
-                                        print("✅ 已更新 cookies，继续处理...")
-                                    # 重置计时器
-                                    loop_start_time = time.time()
-                                
-                                # 如果 cookies 无效，检查并等待新的 cookies 文件
-                                if not self.cookie_valid:
-                                    print("⏳ Cookies 已失效，等待新的 cookies 文件...")
-                                    # _check_and_update_cookies 会持续等待直到找到新的 cookies 文件
-                                    if self._check_and_update_cookies(wait_forever=True):
-                                        print("✅ 已更新 cookies，继续处理...")
-                                else:
-                                    # YouTube 建议使用延迟来避免 rate limit
-                                    print("⏳ 等待 2 秒以避免限流...")
-                                    time.sleep(2)
-                
-                # 按观看次数排序
-                videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
-                
-                # 限制返回数量
-                videos = videos[:max_videos]
-                # 过滤掉观看次数小于min_view_count的视频
-                videos = [video for video in videos if video.get('view_count', 0) >= min_view_count]
+                            if elapsed_time >= cookie_check_interval:
+                                print(f"⏰ 已过去 {elapsed_time/60:.1f} 分钟，检查并更新 cookies...")
+                                if self._check_and_update_cookies(wait_forever=False):
+                                    print("✅ 已更新 cookies，继续处理...")
+                                # 重置计时器
+                                loop_start_time = time.time()
+                            
+                            # 如果 cookies 无效，检查并等待新的 cookies 文件
+                            if not self.cookie_valid:
+                                print("⏳ Cookies 已失效，等待新的 cookies 文件...")
+                                # _check_and_update_cookies 会持续等待直到找到新的 cookies 文件
+                                if self._check_and_update_cookies(wait_forever=True):
+                                    print("✅ 已更新 cookies，继续处理...")
+                            else:
+                                # YouTube 建议使用延迟来避免 rate limit
+                                print("⏳ 等待 2 秒以避免限流...")
+                                time.sleep(2)
+            
+            # 按观看次数排序
+            videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+            
+            # 限制返回数量
+            videos = videos[:max_videos]
+            # 过滤掉观看次数小于min_view_count的视频
+            videos = [video for video in videos if video.get('view_count', 0) >= min_view_count]
 
-                # 保存视频列表到JSON
-                with open(video_list_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(videos, f, ensure_ascii=False, indent=2)
+            # 保存视频列表到JSON
+            with open(video_list_json_path, 'w', encoding='utf-8') as f:
+                json.dump(videos, f, ensure_ascii=False, indent=2)
 
-                print(f"✅ 成功获取 {len(videos)} 个视频")
-                return videos
-                
+            print(f"✅ 成功获取 {len(videos)} 个视频")
+            return videos
+            
         except Exception as e:
             print(f"❌ 获取视频列表失败: {str(e)}")
             import traceback
@@ -1075,6 +1076,11 @@ class YoutubeGUIManager:
         """
         self.root = root
         self.project_path = project_path
+        self.youtube_dir = f"{self.project_path}/Youtbue_download"
+        # 在导入模块之前先导入os，避免局部变量错误
+        import os
+        os.makedirs(self.youtube_dir, exist_ok=True)
+
         self.get_pid = get_pid_func
         self.tasks = tasks
         self.log_to_output = log_to_output_func
@@ -1230,9 +1236,13 @@ class YoutubeGUIManager:
         dialog.geometry("1100x650")
         dialog.transient(self.root)
         
-        # 顶部信息
-        info_frame = self.ttk.Frame(dialog)
-        info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        # 顶部信息和控制栏
+        top_frame = self.ttk.Frame(dialog)
+        top_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # 第一行：信息标签和刷新按钮
+        info_frame = self.ttk.Frame(top_frame)
+        info_frame.pack(fill=self.tk.X, pady=(0, 5))
         
         info_text = f"频道: {channel_name} | 共 {len(videos)} 个视频"
         info_label = self.ttk.Label(info_frame, text=info_text, font=("Arial", 12, "bold"))
@@ -1240,6 +1250,42 @@ class YoutubeGUIManager:
         
         # 添加刷新按钮
         self.ttk.Button(info_frame, text="🔄 刷新", command=lambda: refresh_video_list()).pack(side=self.tk.RIGHT, padx=5)
+        
+        # 第二行：过滤和排序控制
+        control_frame = self.ttk.Frame(top_frame)
+        control_frame.pack(fill=self.tk.X)
+        
+        # 最小观看次数过滤
+        self.ttk.Label(control_frame, text="最小观看次数:").pack(side=self.tk.LEFT, padx=(0, 5))
+        min_view_var = self.tk.StringVar(value="0")
+        min_view_entry = self.ttk.Entry(control_frame, textvariable=min_view_var, width=15)
+        min_view_entry.pack(side=self.tk.LEFT, padx=(0, 10))
+        
+        # 排序方式
+        sort_mode_var = self.tk.StringVar(value="view_count")  # 默认按观看次数排序
+        
+        def toggle_sort():
+            """切换排序方式"""
+            if sort_mode_var.get() == "view_count":
+                sort_mode_var.set("upload_date")
+                sort_button.config(text="排序: 上传日期 ↓")
+            else:
+                sort_mode_var.set("view_count")
+                sort_button.config(text="排序: 观看次数 ↓")
+            refresh_video_list()
+        
+        sort_button = self.ttk.Button(control_frame, text="排序: 观看次数 ↓", command=toggle_sort)
+        sort_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # 应用过滤函数
+        def apply_filter():
+            refresh_video_list()
+        
+        # 绑定回车键自动应用过滤
+        min_view_entry.bind('<Return>', lambda e: apply_filter())
+        
+        # 应用过滤按钮
+        self.ttk.Button(control_frame, text="应用过滤", command=apply_filter).pack(side=self.tk.LEFT, padx=5)
         
         # 创建Treeview显示视频列表
         columns = ("title", "views", "duration", "upload_date", "status")
@@ -1320,12 +1366,34 @@ class YoutubeGUIManager:
             for item in tree.get_children():
                 tree.delete(item)
             
+            # 获取最小观看次数
+            try:
+                min_view_count = int(min_view_var.get() or "0")
+            except ValueError:
+                min_view_count = 0
+            
+            # 过滤视频：只显示观看次数大于等于最小值的视频
+            filtered_videos = []
+            for video in videos:
+                view_count = video.get('view_count', 0)
+                if view_count >= min_view_count:
+                    filtered_videos.append(video)
+            
+            # 排序视频
+            sort_mode = sort_mode_var.get()
+            if sort_mode == "view_count":
+                # 按观看次数降序排序
+                filtered_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+            elif sort_mode == "upload_date":
+                # 按上传日期降序排序（最新的在前）
+                filtered_videos.sort(key=lambda x: x.get('upload_date', ''), reverse=True)
+            
             # 检查视频状态并填充数据
             youtube_dir = self.os.path.dirname(json_file)
             downloaded_count = 0
             transcribed_count = 0
             
-            for idx, video in enumerate(videos, 1):
+            for idx, video in enumerate(filtered_videos, 1):
                 # 格式化时长
                 duration_sec = video.get('duration', 0)
                 duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}" if duration_sec else "N/A"
@@ -1363,7 +1431,7 @@ class YoutubeGUIManager:
                                  video.get('title', 'Unknown'), channel_name, video.get('id', '')))
             
             # 更新顶部信息标签
-            info_text = f"频道: {channel_name} | 共 {len(videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count}"
+            info_text = f"频道: {channel_name} | 共 {len(filtered_videos)}/{len(videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count}"
             info_label.config(text=info_text)
         
 
@@ -1385,6 +1453,121 @@ class YoutubeGUIManager:
             stats_label.config(text=f"已选择: {len(selected)} 个视频")
         
         tree.bind("<<TreeviewSelect>>", lambda e: update_selection_count())
+        
+        def delete_selected_videos():
+            """删除选中的视频：从列表移除并删除相关文件"""
+            selected_items = tree.selection()
+            if not selected_items:
+                return
+            
+            # 确认删除
+            if not self.messagebox.askyesno("确认删除", 
+                                           f"确定要删除 {len(selected_items)} 个视频吗？\n\n这将从列表中移除并删除相关的文件（mp4、srt、txt）。",
+                                           parent=dialog):
+                return
+            
+            youtube_dir = self.os.path.dirname(json_file)
+            deleted_count = 0
+            failed_count = 0
+            
+            # 收集要删除的视频ID和文件
+            videos_to_remove = []
+            files_to_delete = []
+            
+            for item in selected_items:
+                item_tags = tree.item(item, "tags")
+                if not item_tags or len(item_tags) < 8:
+                    continue
+                
+                video_url = item_tags[0]
+                video_file = item_tags[1]
+                video_id = item_tags[7] if len(item_tags) > 7 else ''
+                video_title = item_tags[5] if len(item_tags) > 5 else 'Unknown'
+                
+                # 找到对应的视频数据
+                video_to_remove = None
+                for video in videos:
+                    if video.get('url') == video_url or video.get('id') == video_id:
+                        video_to_remove = video
+                        break
+                
+                if video_to_remove:
+                    videos_to_remove.append(video_to_remove)
+                    
+                    # 收集要删除的文件
+                    if video_file and self.os.path.exists(video_file):
+                        files_to_delete.append(video_file)
+                    
+                    # 查找并收集SRT和TXT文件
+                    video_detail = {
+                        'title': video_to_remove.get('title', 'Unknown'),
+                        'view_count': video_to_remove.get('view_count', 0),
+                        'upload_date': video_to_remove.get('upload_date', ''),
+                        'duration': video_to_remove.get('duration', 0),
+                        'url': video_url,
+                        'id': video_id
+                    }
+                    
+                    filename_prefix = self.downloader.generate_video_prefix(video_detail, title_length=15)
+                    prefix = f"__{filename_prefix}"
+                    
+                    if self.os.path.exists(youtube_dir):
+                        for filename in self.os.listdir(youtube_dir):
+                            if filename.startswith(prefix):
+                                file_path = self.os.path.join(youtube_dir, filename)
+                                # 收集SRT和TXT文件
+                                if filename.endswith('.srt') or filename.endswith('.txt'):
+                                    files_to_delete.append(file_path)
+            
+            # 删除文件
+            for file_path in files_to_delete:
+                try:
+                    if self.os.path.exists(file_path):
+                        self.os.remove(file_path)
+                        print(f"✅ 已删除文件: {self.os.path.basename(file_path)}")
+                except Exception as e:
+                    print(f"❌ 删除文件失败 {self.os.path.basename(file_path)}: {str(e)}")
+                    failed_count += 1
+            
+            # 从videos列表中移除
+            for video_to_remove in videos_to_remove:
+                if video_to_remove in videos:
+                    videos.remove(video_to_remove)
+                    deleted_count += 1
+            
+            # 保存回JSON文件
+            try:
+                with open(json_file, 'w', encoding='utf-8') as f:
+                    self.json.dump(videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已保存更新后的视频列表到: {json_file}")
+            except Exception as e:
+                print(f"❌ 保存视频列表失败: {str(e)}")
+                self.messagebox.showerror("错误", f"保存视频列表失败: {str(e)}", parent=dialog)
+                return
+            
+            # 刷新列表
+            refresh_video_list()
+            
+            # 显示结果
+            if failed_count > 0:
+                self.messagebox.showwarning("删除完成", 
+                                          f"已删除 {deleted_count} 个视频\n\n{failed_count} 个文件删除失败",
+                                          parent=dialog)
+            else:
+                self.messagebox.showinfo("删除完成", 
+                                       f"已成功删除 {deleted_count} 个视频及其相关文件",
+                                       parent=dialog)
+        
+        # 绑定Delete键
+        def on_key_press(event):
+            if event.keysym == 'Delete':
+                delete_selected_videos()
+        
+        tree.bind('<KeyPress>', on_key_press)
+        # 确保tree可以获得焦点以便接收键盘事件
+        tree.focus_set()
+        # 当点击tree时，确保获得焦点
+        tree.bind('<Button-1>', lambda e: tree.focus_set())
         
         def extract_srt_to_text(srt_file_path):
             """从SRT文件中提取纯文本内容"""
@@ -1999,12 +2182,11 @@ class YoutubeGUIManager:
         # 从第一个视频获取频道名 - 尝试多个字段
         if video_detail_list:
             first_video = video_detail_list[0]
-            channel_name = (
-                first_video.get('channel') or 
-                first_video.get('uploader') or 
-                first_video.get('channel_id') or
-                'Unknown'
-            )
+            channel_name = first_video.get('channel', 'Unknown')
+            if channel_name.lower() == 'unknown':
+                channel_name = first_video.get('uploader', 'Unknown')
+            if channel_name.lower() == 'unknown':
+                channel_name = first_video.get('channel_id', 'Unknown')
             print(f"📺 频道名称: {channel_name}")
             print(f"🔍 调试信息 - channel: {first_video.get('channel')}, uploader: {first_video.get('uploader')}, channel_id: {first_video.get('channel_id')}")
         else:
@@ -2473,6 +2655,26 @@ class YoutubeGUIManager:
                     self.log_to_output(self.download_output, f"❌ 获取视频详情失败")
                     self.root.after(0, lambda: self.messagebox.showerror("错误", "获取视频详情失败"))
                     return
+
+                channel_name = video_data.get('channel', 'Unknown')
+                if channel_name.lower() == 'unknown':
+                    channel_name = video_data.get('uploader', 'Unknown')
+                if channel_name.lower() == 'unknown':
+                    channel_name = video_data.get('channel_id', 'Unknown')
+            
+                video_list_json_path = os.path.join(self.youtube_dir, f"_{channel_name}_hotvideos.json")
+                if os.path.exists(video_list_json_path):
+                    video_list_json = json.load(open(video_list_json_path, 'r', encoding='utf-8'))
+
+                if not video_list_json:
+                    self.log_to_output(self.download_output, f"❌ 获取视频列表失败")
+                    self.root.after(0, lambda: self.messagebox.showerror("错误", "获取视频列表失败"))
+                    return
+
+                # add video_data to video_list_json
+                video_list_json.append(video_data)
+                with open(video_list_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(video_list_json, f, ensure_ascii=False, indent=2)
 
                 video_prefix = self.downloader.generate_video_prefix(video_data, title_length=50)
                 file_path = self.downloader.download_video_highest_resolution(video_url, video_prefix=video_prefix)

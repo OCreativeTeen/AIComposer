@@ -335,14 +335,16 @@ class WorkflowGUI:
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
+        ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
+
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
         ttk.Button(row1_frame, text="YT转录",  command=lambda:self._call_youtube_gui('download_youtube', True)).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="YT寻找",  command=lambda:self._call_youtube_gui('fetch_hot_videos')).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="YT管理",  command=lambda:self._call_youtube_gui('manage_hot_videos')).pack(side=tk.LEFT) 
 
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
 
     def _call_youtube_gui(self, method_name, *args):
         """安全调用YouTube GUI方法"""
