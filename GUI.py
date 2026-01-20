@@ -186,8 +186,7 @@ class WorkflowGUI:
                 self.get_pid, 
                 self.tasks, 
                 self.log_to_output, 
-                self.video_output,  # 使用video_output作为YouTube下载日志输出
-                workflow=self.workflow  # 保留workflow用于transcript_youtube_video方法
+                self.video_output  # 使用video_output作为YouTube下载日志输出
             )
             
             print("✅ 工作流实例创建完成")
