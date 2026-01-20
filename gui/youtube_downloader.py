@@ -350,39 +350,11 @@ class YoutubeDownloader:
 
     def download_captions(self, video_url, lang, download_prefix, format):
         try:
-            # 首先获取视频信息，检查可用的字幕语言
-            ydl_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                subtitles = info.get('subtitles', {})
-                auto_captions = info.get('automatic_captions', {})
+            # 优化：直接尝试下载指定语言的字幕，避免两次提取
+            # 如果失败，再检查可用语言
+            target_lang = lang
             
-            # 检查是否有任何字幕
-            if not subtitles and not auto_captions:
-                print(f"❌ 视频没有任何字幕")
-                return None
-                
-            # 确定要下载的语言
-            target_lang = None
-            available_langs = list(subtitles.keys()) + list(auto_captions.keys())
-            
-            # 首先检查是否有指定语言
-            if lang in subtitles or lang in auto_captions:
-                target_lang = lang
-                print(f"✅ 找到目标语言字幕: {lang}")
-            else:
-                # 没有指定语言，选择第一个可用语言
-                if subtitles:
-                    target_lang = list(subtitles.keys())[0]
-                    print(f"⚠️ 未找到语言 {lang}，使用手动字幕: {target_lang}")
-                elif auto_captions:
-                    target_lang = list(auto_captions.keys())[0]
-                    print(f"⚠️ 未找到语言 {lang}，使用自动字幕: {target_lang}")
-            
-            if not target_lang:
-                return None
-                
-            # 下载字幕，使用 cookies
+            # 第一次尝试：直接下载指定语言的字幕
             ydl_opts = self._get_ydl_opts_base(
                 skip_download=True,
                 writesubtitles=True,
@@ -390,14 +362,87 @@ class YoutubeDownloader:
                 subtitleslangs=[target_lang],
                 subtitlesformat=format,
                 outtmpl=download_prefix,
-                quiet=False,
+                quiet=True,  # 使用 quiet 模式减少输出
+                no_warnings=True,  # 禁用警告
             )
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
-                print(f"✅ 已下载字幕：语言 {target_lang}")
-
-            return target_lang
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([video_url])
+                
+                # 检查文件是否真的下载了
+                expected_file = f"{download_prefix}.{target_lang}.{format}"
+                if os.path.exists(expected_file):
+                    print(f"✅ 已下载字幕：语言 {target_lang}")
+                    return target_lang
+                else:
+                    # 文件不存在，可能下载失败但没报错
+                    raise Exception("字幕文件未生成")
+                    
+            except Exception as direct_error:
+                # 直接下载失败，检查可用语言
+                # 只进行一次提取来检查可用语言
+                check_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
+                with yt_dlp.YoutubeDL(check_opts) as ydl:
+                    info = ydl.extract_info(video_url, download=False)
+                    subtitles = info.get('subtitles', {})
+                    auto_captions = info.get('automatic_captions', {})
+                
+                # 检查是否有任何字幕
+                if not subtitles and not auto_captions:
+                    print(f"❌ 视频没有任何字幕")
+                    return None
+                
+                # 确定要下载的语言
+                target_lang = None
+                
+                # 首先检查是否有指定语言
+                if lang in subtitles or lang in auto_captions:
+                    target_lang = lang
+                    print(f"✅ 找到目标语言字幕: {lang}")
+                    # 语言存在但下载失败，可能是网络问题，再次尝试
+                    ydl_opts = self._get_ydl_opts_base(
+                        skip_download=True,
+                        writesubtitles=True,
+                        writeautomaticsub=True,
+                        subtitleslangs=[target_lang],
+                        subtitlesformat=format,
+                        outtmpl=download_prefix,
+                        quiet=True,
+                        no_warnings=True,
+                    )
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([video_url])
+                    print(f"✅ 已下载字幕：语言 {target_lang}")
+                    return target_lang
+                else:
+                    # 没有指定语言，选择第一个可用语言
+                    if subtitles:
+                        target_lang = list(subtitles.keys())[0]
+                        print(f"⚠️ 未找到语言 {lang}，使用手动字幕: {target_lang}")
+                    elif auto_captions:
+                        target_lang = list(auto_captions.keys())[0]
+                        print(f"⚠️ 未找到语言 {lang}，使用自动字幕: {target_lang}")
+                    
+                    if not target_lang:
+                        return None
+                    
+                    # 下载找到的语言
+                    ydl_opts = self._get_ydl_opts_base(
+                        skip_download=True,
+                        writesubtitles=True,
+                        writeautomaticsub=True,
+                        subtitleslangs=[target_lang],
+                        subtitlesformat=format,
+                        outtmpl=download_prefix,
+                        quiet=True,
+                        no_warnings=True,
+                    )
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([video_url])
+                    print(f"✅ 已下载字幕：语言 {target_lang}")
+                    return target_lang
                 
         except Exception as e:
             print(f"❌ 下载字幕失败: {e}")
@@ -1232,7 +1277,7 @@ class YoutubeGUIManager:
             video_file = None
             
             # 使用可重用的方法生成文件名前缀（用于匹配，使用50字符）
-            filename_prefix = self.downloader.generate_video_prefix( video_detail, title_length=50 )
+            filename_prefix = self.downloader.generate_video_prefix( video_detail, title_length=10 )
             
             # 检查是否已下载 - 只扫描 .mp4 文件
             if self.os.path.exists(youtube_dir):
@@ -1732,10 +1777,22 @@ class YoutubeGUIManager:
         log_scrollbar.config(command=log_text.yview)
         
 
+        def safe_update_ui(func):
+            """安全地更新UI组件，如果对话框已关闭则跳过"""
+            try:
+                if progress_dialog.winfo_exists():
+                    func()
+                    progress_dialog.update()
+            except (self.tk.TclError, AttributeError):
+                # 组件已被销毁，忽略错误
+                pass
+        
         def log_message(msg):
-            log_text.insert(self.tk.END, msg + "\n")
-            log_text.see(self.tk.END)
-            progress_dialog.update()
+            """安全地记录消息，如果对话框已关闭则跳过"""
+            def update_log():
+                log_text.insert(self.tk.END, msg + "\n")
+                log_text.see(self.tk.END)
+            safe_update_ui(update_log)
         
 
         def transcribe_task():
@@ -1748,9 +1805,10 @@ class YoutubeGUIManager:
                 title = video.get('title', 'Unknown')
                 
                 # 更新状态
-                status_label.config(text=f"正在转录 ({idx}/{total}): {title[:50]}...")
+                def update_status():
+                    status_label.config(text=f"正在转录 ({idx}/{total}): {title[:50]}...")
+                safe_update_ui(update_status)
                 log_message(f"\n[{idx}/{total}] 开始转录: {title[:50]}")
-                progress_dialog.update()
                 
                 if idx % 20 == 0:
                     self.downloader._check_and_update_cookies()
@@ -1778,12 +1836,15 @@ class YoutubeGUIManager:
                     failed_count += 1
                 
                 # 更新进度条
-                progress_var.set((idx / total) * 100)
-                progress_dialog.update()
+                def update_progress():
+                    progress_var.set((idx / total) * 100)
+                safe_update_ui(update_progress)
             
             # 完成
-            info_label.config(text=f"转录完成！成功: {success_count}, 失败: {failed_count}")
-            status_label.config(text="")
+            def update_completion():
+                info_label.config(text=f"转录完成！成功: {success_count}, 失败: {failed_count}")
+                status_label.config(text="")
+            safe_update_ui(update_completion)
             log_message(f"\n{'='*50}")
             log_message(f"转录任务完成！")
             log_message(f"成功: {success_count} 个")
@@ -1801,7 +1862,9 @@ class YoutubeGUIManager:
             def close_dialog():
                 progress_dialog.destroy()
             
-            self.ttk.Button(progress_dialog, text="关闭", command=close_dialog).pack(pady=10)
+            def add_close_button():
+                self.ttk.Button(progress_dialog, text="关闭", command=close_dialog).pack(pady=10)
+            safe_update_ui(add_close_button)
         
         # 在后台线程中转录
         thread = self.threading.Thread(target=transcribe_task)
