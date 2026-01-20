@@ -1,7 +1,7 @@
 from urllib.parse import urlparse, parse_qs
 
 from utility.audio_transcriber import AudioTranscriber
-from utility.youtube_downloader import YoutubeDownloader
+from gui.youtube_downloader import YoutubeDownloader
 from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
@@ -49,7 +49,7 @@ class MagicWorkflow:
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
-        self.downloader = YoutubeDownloader(pid)
+        self.downloader = YoutubeDownloader(config.get_project_path(pid))
         self.llm_api = LLMApi()
         self.speech_service = MinimaxSpeechService(self.pid)
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
@@ -1186,112 +1186,6 @@ class MagicWorkflow:
                             tags=config_channel.CHANNEL_CONFIG[self.channel]["channel_tags"], 
                             privacy="unlisted")
         return promo_video_path
-
-
-
-    def transcript_youtube_video(self, url, source_lang, translated_language):
-        try:
-            query = urlparse(url).query
-            params = parse_qs(query)
-            vid = params.get("v", [None])[0]
-            if not vid:
-                raise ValueError("Invalid YouTube URL, could not find video ID.")
-            print(f"🔍 解析链接：{url} - {vid}")
-
-            script_prefix = f"{config.get_project_path(self.pid)}/Youtbue_download/__script_{vid}"
-
-            script_lang = self.downloader.download_captions(url, translated_language, script_prefix)
-            if not script_lang:
-                mp3_path = self.downloader.download_audio(url)
-                print("开始转录音频...")
-
-                script_path = f"{config.get_project_path(self.pid)}/{Path(mp3_path).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(mp3_path, "zh", 3, 15)
-                write_json(script_path, script_json)  
-
-                text_path = f"{config.get_project_path(self.pid)}/Youtbue_download/__text_{vid}.{source_lang}.txt"
-                self.transcriber.fetch_text_from_json(script_path)
-            else:
-                script_path = f"{script_prefix}.{script_lang}.srt"
-                text_path = f"{config.get_project_path(self.pid)}/Youtbue_download/__text_{vid}.{script_lang}.txt"
-                self.transcriber.src_to_text(script_path, text_path)
-
-            if translated_language != source_lang:
-                translated_srt_path = f"{config.get_project_path(self.pid)}/Youtbue_download/__script_{vid}.{translated_language}.srt.json"
-                self.transcriber.translate_srt_file(script_path, source_lang, translated_language, translated_srt_path)
-
-            return script_path
-        except Exception as e:
-            print(f"获取字幕失败: {str(e)}")
-            return None
-
-
-
-    def prepare_final_script(self, base_sec, final_script_path):
-        content = []
-        i = 0
-        subtitle_index = 1
-        
-        while i < len(self.scenes):
-            current_scene = self.scenes[i]
-            current_story = current_scene.get("visual", "")
-            
-            # Find all consecutive scenes with the same story content
-            start_index = i
-            end_index = i
-            
-            start_formatted = base_sec
-            scene_duration = self.get_scene_duration(current_scene)
-            base_sec += scene_duration
-            # Look ahead to find consecutive scenes with same story
-            while (end_index + 1 < len(self.scenes) and 
-                   self.scenes[end_index + 1].get("visual", "") == current_story and
-                   current_story.strip() != ""):  # Only combine non-empty content
-                end_index += 1
-                current_scene = self.scenes[end_index]
-                base_sec += scene_duration
-
-            end_formatted = base_sec
-
-            # Add to content (only if story content is not empty)
-            if current_story.strip():
-                content.append(str(subtitle_index))
-                content.append(f"{start_formatted} --> {end_formatted}")
-                content.append(current_story)
-                content.append("\n")
-                subtitle_index += 1
-                
-                # Log the combination for debugging
-                if end_index > start_index:
-                    print(f"📝 Combined scenes {start_index+1}-{end_index+1} with same content: '{current_story[:50]}{'...' if len(current_story) > 50 else ''}'")
-            
-            # Move to next unique content
-            i = end_index + 1
-
-        with open(final_script_path, "w", encoding="utf-8") as f:
-            f.write('\n'.join(content))
-            
-        print(f"📋 Final script created with {subtitle_index-1} subtitle entries (combined duplicates): {final_script_path}")
-
-
-    def wait_for_background_threads(self, timeout=300):
-        """等待所有后台线程完成"""
-        if not self.background_threads:
-            return
-            
-        print(f"⏳ 等待 {len(self.background_threads)} 个后台线程完成...")
-        
-        for i, thread in enumerate(self.background_threads):
-            if thread.is_alive():
-                print(f"⏳ 等待线程 {i+1}/{len(self.background_threads)} 完成...")
-                thread.join(timeout=timeout//len(self.background_threads))
-                
-        # 清理已完成的线程
-        alive_threads = [t for t in self.background_threads if t.is_alive()]
-        completed = len(self.background_threads) - len(alive_threads)
-        
-        print(f"✅ {completed} 个后台线程完成，{len(alive_threads)} 个仍在运行")
-        self.background_threads = alive_threads
 
 
 

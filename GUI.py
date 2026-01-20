@@ -8,6 +8,7 @@ import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import os
 import json
+import re
 import threading
 import time
 from datetime import datetime
@@ -32,6 +33,7 @@ from gui.image_prompts_review_dialog import open_image_prompt_dialog, IMAGE_PROM
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
+from gui.youtube_downloader import YoutubeGUIManager
 import cv2
 import json
 import shutil
@@ -138,10 +140,11 @@ class WorkflowGUI:
         # 立即创建工作流实例（不再使用懒加载）
         self.create_workflow_instance()
         
+        # 初始化媒体扫描器（必须在启动后台线程之前）
+        self.media_scanner = MediaScanner(self.workflow, 10)
+        
         # 启动单例后台视频检查线程
         self.start_video_check_thread()
-        
-        self.media_scanner = MediaScanner(self.workflow, 10)
         # 绑定窗口关闭事件
 
         self.workflow.load_scenes()
@@ -174,6 +177,18 @@ class WorkflowGUI:
             
             current_gui_title = self.video_title.get().strip()
             self.workflow.post_init(current_gui_title)
+            
+            # 初始化YouTube GUI管理器
+            project_path = config.get_project_path(self.get_pid())
+            self.youtube_gui = YoutubeGUIManager(
+                self.root, 
+                project_path,  # 传入项目路径而不是workflow
+                self.get_pid, 
+                self.tasks, 
+                self.log_to_output, 
+                self.video_output,  # 使用video_output作为YouTube下载日志输出
+                workflow=self.workflow  # 保留workflow用于transcript_youtube_video方法
+            )
             
             print("✅ 工作流实例创建完成")
             
@@ -320,11 +335,25 @@ class WorkflowGUI:
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
+        ttk.Button(row1_frame, text="YT转录",  command=lambda:self._call_youtube_gui('download_youtube', True)).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT寻找",  command=lambda:self._call_youtube_gui('fetch_hot_videos')).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT管理",  command=lambda:self._call_youtube_gui('manage_hot_videos')).pack(side=tk.LEFT) 
+
+        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
         ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="标记清理",  command=self.clean_media_mark).pack(side=tk.LEFT)
 
-   
+    def _call_youtube_gui(self, method_name, *args):
+        """安全调用YouTube GUI方法"""
+        if not hasattr(self, 'youtube_gui') or self.youtube_gui is None:
+            messagebox.showwarning("警告", "YouTube功能尚未初始化，请稍候再试")
+            return
+        method = getattr(self.youtube_gui, method_name, None)
+        if method:
+            method(*args)
+        else:
+            messagebox.showerror("错误", f"YouTube方法 {method_name} 不存在")
 
     def swap_narration(self):
         """交换第一轨道与旁白轨道"""
@@ -568,10 +597,10 @@ class WorkflowGUI:
 
                         current_time, total_time = self.get_current_video_time()
                         output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(clip_audio, volume_main, current_time, secondary_audio_copy, volume_overlay)
-                        olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio, True)
+                        olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio)
 
                         output_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, output_audio)
-                        olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
+                        olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video)
 
                 else:
                     # 处理画中画

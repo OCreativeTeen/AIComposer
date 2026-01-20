@@ -1438,6 +1438,7 @@ class MagicToolGUI:
         thread.daemon = True
         thread.start()
 
+
     def download_playlist(self):
         """下载播放列表中的所有视频"""
         playlist_url = self.playlist_url.get().strip()

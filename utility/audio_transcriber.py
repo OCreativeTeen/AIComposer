@@ -59,10 +59,30 @@ class AudioTranscriber:
         return srt_content
 
 
-    def fetch_text_from_json(self, script_path):
+    def fetch_text_from_json(self, script_path, output_path=None):
+        """
+        从JSON字幕文件中提取文本内容
+        
+        Args:
+            script_path: JSON字幕文件路径
+            output_path: 可选，输出文本文件路径。如果提供，将保存到文件；否则只返回文本
+            
+        Returns:
+            str: 提取的文本内容
+        """
         with open(script_path, "r", encoding="utf-8") as f:
             segments = json.load(f)
-        text_content = "\n".join([segment["content"] for segment in segments])
+        text_content = "\n".join([segment["caption"] for segment in segments])
+        
+        # 如果提供了输出路径，保存到文件
+        if output_path:
+            try:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(text_content)
+                print(f"✅ 文本已保存: {output_path}")
+            except Exception as e:
+                print(f"⚠️ 保存文本文件失败: {str(e)}")
+        
         return text_content
 
 
