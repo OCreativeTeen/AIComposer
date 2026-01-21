@@ -12,7 +12,7 @@ import googleapiclient.discovery
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from utility.llm_api import LLMApi
+from utility.llm_api import LLMApi, OLLAMA
 
 
 
@@ -1076,7 +1076,7 @@ class YoutubeGUIManager:
         self.log_to_output = log_to_output_func
         self.download_output = download_output
         
-        self.llm_api = LLMApi()
+        self.llm_api = LLMApi(OLLAMA)
 
         # 创建YoutubeDownloader实例
         self.downloader = YoutubeDownloader(project_path)
@@ -1209,17 +1209,61 @@ class YoutubeGUIManager:
         self.ttk.Button(bottom_frame, text="取消", command=channel_dialog.destroy).pack(side=self.tk.RIGHT, padx=5)
 
 
-    def _show_channel_videos_dialog(self, channel_name, json_file):
-        """显示频道视频管理对话框"""
-        # 读取视频列表
-        try:
-            with open(json_file, 'r', encoding='utf-8') as f:
-                videos = self.json.load(f)
-        except Exception as e:
-            self.messagebox.showerror("错误", f"读取视频列表失败: {str(e)}")
-            return
+    def fetch_text_content(self, srt_file):
+        with open(srt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
         
-        if not videos:
+        # 使用正则表达式匹配SRT格式
+        # SRT格式：序号\n时间戳\n文本内容\n\n
+        # 匹配模式：数字开头，然后是时间戳行（包含-->），然后是文本内容
+        pattern = r'^\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,\d]+\s*-->\s*\d{2}:\d{2}:\d{2}[,\d]+\s*\n(.*?)(?=\n\d+\s*\n|\Z)'
+        matches = self.re.findall(pattern, content, self.re.MULTILINE | self.re.DOTALL)
+        
+        text_lines = []
+        for match in matches:
+            # 清理匹配的文本内容
+            text_block = match.strip()
+            if text_block:
+                # 分割多行文本，去除空行
+                lines = [line.strip() for line in text_block.split('\n') if line.strip()]
+                text_lines.extend(lines)
+        
+        # 如果没有匹配到，使用备用方法：逐行解析
+        if not text_lines:
+            lines = content.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if not line:
+                    i += 1
+                    continue
+                
+                # 检查是否是序号（纯数字）
+                if line.isdigit():
+                    i += 1
+                    # 跳过时间戳行（包含 -->）
+                    if i < len(lines) and '-->' in lines[i]:
+                        i += 1
+                    # 读取文本内容（直到遇到空行或下一个序号）
+                    while i < len(lines):
+                        text_line = lines[i].strip()
+                        if not text_line:
+                            break
+                        if text_line.isdigit():
+                            break
+                        text_lines.append(text_line)
+                        i += 1
+                else:
+                    i += 1
+        
+        return '\n'.join(text_lines) if text_lines else None
+
+
+    def _show_channel_videos_dialog(self, channel_name, channel_vidoe_json_file):
+        """显示频道视频管理对话框"""
+        with open(channel_vidoe_json_file, 'r', encoding='utf-8') as f:
+            channel_videos = self.json.load(f)
+        if not channel_videos:
             self.messagebox.showwarning("提示", "视频列表为空")
             return
         
@@ -1237,7 +1281,7 @@ class YoutubeGUIManager:
         info_frame = self.ttk.Frame(top_frame)
         info_frame.pack(fill=self.tk.X, pady=(0, 5))
         
-        info_text = f"频道: {channel_name} | 共 {len(videos)} 个视频"
+        info_text = f"频道: {channel_name} | 共 {len(channel_videos)} 个视频"
         info_label = self.ttk.Label(info_frame, text=info_text, font=("Arial", 12, "bold"))
         info_label.pack(side=self.tk.LEFT)
         
@@ -1366,7 +1410,7 @@ class YoutubeGUIManager:
             video_file = None
             
             # 使用可重用的方法生成文件名前缀（用于匹配，使用50字符）
-            filename_prefix = self.downloader.generate_video_prefix( video_detail, title_length=10 )
+            filename_prefix = self.downloader.generate_video_prefix( video_detail, title_length=15 )
             
             # 检查是否已下载 - 只扫描 .mp4 文件
             if self.os.path.exists(youtube_dir):
@@ -1376,6 +1420,7 @@ class YoutubeGUIManager:
                         continue
                     if filename.startswith(filename_prefix):
                         video_file = self.os.path.join(youtube_dir, filename)
+                        video_detail['video_path'] = video_file
                         break
             
             if video_file:
@@ -1417,7 +1462,7 @@ class YoutubeGUIManager:
             
             # 过滤视频：只显示观看次数大于等于最小值的视频
             filtered_videos = []
-            for video in videos:
+            for video in channel_videos:
                 view_count = video.get('view_count', 0)
                 if view_count >= min_view_count:
                     filtered_videos.append(video)
@@ -1432,7 +1477,7 @@ class YoutubeGUIManager:
                 filtered_videos.sort(key=lambda x: x.get('upload_date', ''), reverse=True)
             
             # 检查视频状态并填充数据
-            youtube_dir = self.os.path.dirname(json_file)
+            youtube_dir = self.os.path.dirname(channel_vidoe_json_file)
             downloaded_count = 0
             transcribed_count = 0
             
@@ -1473,8 +1518,12 @@ class YoutubeGUIManager:
                                  video.get('upload_date', ''), str(duration_sec), 
                                  video.get('title', 'Unknown'), channel_name, video.get('id', '')))
             
+            with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
+                self.json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已保存更新后的视频列表到: {channel_vidoe_json_file}")
+
             # 更新顶部信息标签
-            info_text = f"频道: {channel_name} | 共 {len(filtered_videos)}/{len(videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count}"
+            info_text = f"频道: {channel_name} | 共 {len(filtered_videos)}/{len(channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count}"
             info_label.config(text=info_text)
         
 
@@ -1509,7 +1558,7 @@ class YoutubeGUIManager:
                                            parent=dialog):
                 return
             
-            youtube_dir = self.os.path.dirname(json_file)
+            youtube_dir = self.os.path.dirname(channel_vidoe_json_file)
             deleted_count = 0
             failed_count = 0
             
@@ -1528,7 +1577,7 @@ class YoutubeGUIManager:
                 
                 # 找到对应的视频数据
                 video_to_remove = None
-                for video in videos:
+                for video in channel_videos:
                     if video.get('url') == video_url or video.get('id') == video_id:
                         video_to_remove = video
                         break
@@ -1573,15 +1622,15 @@ class YoutubeGUIManager:
             
             # 从videos列表中移除
             for video_to_remove in videos_to_remove:
-                if video_to_remove in videos:
-                    videos.remove(video_to_remove)
+                if video_to_remove in channel_videos:
+                    channel_videos.remove(video_to_remove)
                     deleted_count += 1
             
             # 保存回JSON文件
             try:
-                with open(json_file, 'w', encoding='utf-8') as f:
-                    self.json.dump(videos, f, ensure_ascii=False, indent=2)
-                print(f"✅ 已保存更新后的视频列表到: {json_file}")
+                with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
+                    self.json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已保存更新后的视频列表到: {channel_vidoe_json_file}")
             except Exception as e:
                 print(f"❌ 保存视频列表失败: {str(e)}")
                 self.messagebox.showerror("错误", f"保存视频列表失败: {str(e)}", parent=dialog)
@@ -1610,97 +1659,35 @@ class YoutubeGUIManager:
         tree.focus_set()
         # 当点击tree时，确保获得焦点
         tree.bind('<Button-1>', lambda e: tree.focus_set())
-        
-        def extract_srt_to_text(srt_file_path):
-            """从SRT文件中提取纯文本内容"""
-            try:
-                with open(srt_file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # 使用正则表达式匹配SRT格式
-                # SRT格式：序号\n时间戳\n文本内容\n\n
-                # 匹配模式：数字开头，然后是时间戳行（包含-->），然后是文本内容
-                pattern = r'^\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,\d]+\s*-->\s*\d{2}:\d{2}:\d{2}[,\d]+\s*\n(.*?)(?=\n\d+\s*\n|\Z)'
-                matches = self.re.findall(pattern, content, self.re.MULTILINE | self.re.DOTALL)
-                
-                text_lines = []
-                for match in matches:
-                    # 清理匹配的文本内容
-                    text_block = match.strip()
-                    if text_block:
-                        # 分割多行文本，去除空行
-                        lines = [line.strip() for line in text_block.split('\n') if line.strip()]
-                        text_lines.extend(lines)
-                
-                # 如果没有匹配到，使用备用方法：逐行解析
-                if not text_lines:
-                    lines = content.split('\n')
-                    i = 0
-                    while i < len(lines):
-                        line = lines[i].strip()
-                        if not line:
-                            i += 1
-                            continue
-                        
-                        # 检查是否是序号（纯数字）
-                        if line.isdigit():
-                            i += 1
-                            # 跳过时间戳行（包含 -->）
-                            if i < len(lines) and '-->' in lines[i]:
-                                i += 1
-                            # 读取文本内容（直到遇到空行或下一个序号）
-                            while i < len(lines):
-                                text_line = lines[i].strip()
-                                if not text_line:
-                                    break
-                                if text_line.isdigit():
-                                    break
-                                text_lines.append(text_line)
-                                i += 1
-                        else:
-                            i += 1
-                
-                return '\n'.join(text_lines) if text_lines else None
-            except Exception as e:
-                print(f"❌ 解析SRT文件失败: {str(e)}")
-                return None
-        
 
-        def fetch_text_content(filename_prefix):
-            srt_file = None
-            prefix = f"__{filename_prefix}"
-            for filename in self.os.listdir(self.youtube_dir):
-                if filename.startswith(prefix) and filename.endswith('.srt'):
-                    srt_file = self.os.path.join(self.youtube_dir, filename)
+        def get_video_detail(video_url):
+            video_detail = None
+            for video in channel_videos:
+                if video.get('url') == video_url:
+                    video_detail = video
                     break
-            if not srt_file:
-                return None
-            
-            txt_file = self.os.path.splitext(srt_file)[0] + '.txt'
-            
-            if self.os.path.exists(txt_file):
-                try:
-                    with open(txt_file, 'r', encoding='utf-8') as f:
-                        text_content = f.read()
-                    print(f"✅ 从现有文件读取: {txt_file}")
-                    return text_content
-                except Exception as e:
-                    print(f"❌ 读取文本文件失败: {str(e)}")
-                    return None
-            else:
-                text_content = extract_srt_to_text(srt_file)
-                if text_content is None:
-                    return None
-                
-                try:
-                    with open(txt_file, 'w', encoding='utf-8') as f:
-                        f.write(text_content)
-                    print(f"✅ 已保存文本文件: {txt_file}")
-                    return text_content
-                except Exception as e:
-                    print(f"❌ 保存文本文件失败: {str(e)}")
-                    return None
-        
+            return video_detail
+
+        def update_text_content(video_url):
+            if not video_url:
+                return
+            video_detail = get_video_detail(video_url)
+            if not video_detail or not video_detail.get('transcribed_file', ''):
+                return
+
+            changed = False
+            if not video_detail.get('text_content', ''):
+                text_content = self.fetch_text_content(video_detail.get('transcribed_file', ''))
+                video_detail['text_content'] = text_content
+                changed = True
+            if not video_detail.get('summary', ''):
+                summary = self.llm_api.generate_text(config_prompt.SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese'), video_detail['text_content'])
+                video_detail['summary'] = summary
+                changed = True
+            if changed: 
+                with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
+                    self.json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+                    print(f"✅ 已保存更新后的视频列表到: {channel_vidoe_json_file}")
 
         def on_double_click(event):
             """双击事件处理：提取SRT内容并显示"""
@@ -1717,30 +1704,16 @@ class YoutubeGUIManager:
             if not item_tags or len(item_tags) < 2:
                 return
             
-            # 从item_tags重建video_detail对象
-            video_detail = {
-                'title': item_tags[5] if len(item_tags) > 5 else 'Unknown',
-                'view_count': int(item_tags[2]) if len(item_tags) > 2 and item_tags[2].isdigit() else 0,
-                'upload_date': item_tags[3] if len(item_tags) > 3 else '',
-                'duration': int(item_tags[4]) if len(item_tags) > 4 and item_tags[4].isdigit() else 0,
-                'url': item_tags[0] if len(item_tags) > 0 else '',
-                'id': item_tags[7] if len(item_tags) > 7 else ''
-            }
-            
-            filename_prefix = self.downloader.generate_video_prefix(video_detail, title_length=50)
-            text_content = fetch_text_content(filename_prefix)
-            
-            if text_content is None:
-                self.messagebox.showwarning("提示", "未找到转录文件（SRT）或提取文本内容失败", parent=dialog)
+            # get the video item from channel_videos
+            video_detail = None
+            for video in channel_videos:
+                if video.get('url') == item_tags[0]:
+                    video_detail = video
+                    break
+            if not video_detail or not video_detail.get('transcribed_file', ''):
                 return
-            
-            # 复制到剪贴板
-            try:
-                self.root.clipboard_clear()
-                self.root.clipboard_append(text_content)
-                print("✅ 已复制到剪贴板")
-            except Exception as e:
-                print(f"⚠️ 复制到剪贴板失败: {str(e)}")
+
+            update_text_content(video_detail)
             
             # 弹出窗口显示内容
             content_dialog = self.tk.Toplevel(dialog)
@@ -1761,9 +1734,7 @@ class YoutubeGUIManager:
             scrollbar = self.ttk.Scrollbar(text_frame)
             scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
             
-            text_widget = self.tk.Text(text_frame, wrap=self.tk.WORD, 
-                                      yscrollcommand=scrollbar.set,
-                                      font=("Arial", 11))
+            text_widget = self.tk.Text(text_frame, wrap=self.tk.WORD, yscrollcommand=scrollbar.set, font=("Arial", 11))
             text_widget.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
             scrollbar.config(command=text_widget.yview)
             
@@ -1805,23 +1776,8 @@ class YoutubeGUIManager:
             selected_videos = []
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
-                if item_tags and len(item_tags) >= 7:
-                    url = item_tags[0]
-                    view_count = int(item_tags[2]) if item_tags[2].isdigit() else 0
-                    upload_date = item_tags[3]
-                    duration = int(item_tags[4]) if item_tags[4].isdigit() else 0
-                    title = item_tags[5]
-                    channel = item_tags[6]
-                    
-                    selected_videos.append({
-                        'url': url,
-                        'title': title,
-                        'view_count': view_count,
-                        'upload_date': upload_date,
-                        'duration': duration,
-                        'channel': channel,
-                        'id': item_tags[7] if len(item_tags) > 7 else ''
-                    })
+                video_detail = get_video_detail(item_tags[0])
+                selected_videos.append(video_detail)
             
             if not selected_videos:
                 self.messagebox.showwarning("提示", "无法获取视频信息", parent=dialog)
@@ -1835,6 +1791,9 @@ class YoutubeGUIManager:
             
             # 开始下载（不关闭对话框，下载完成后刷新列表）
             self._download_videos_batch(selected_videos, on_complete=lambda: refresh_video_list())
+            with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
+                self.json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已保存更新后的视频列表到: {channel_vidoe_json_file}")
 
 
         def compile_selected():
@@ -1853,16 +1812,9 @@ class YoutubeGUIManager:
 
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
-                video_detail = {
-                    'title': item_tags[5] if len(item_tags) > 5 else 'Unknown',
-                    'view_count': int(item_tags[2]) if len(item_tags) > 2 and item_tags[2].isdigit() else 0,
-                    'upload_date': item_tags[3] if len(item_tags) > 3 else '',
-                    'duration': int(item_tags[4]) if len(item_tags) > 4 and item_tags[4].isdigit() else 0,
-                    'url': item_tags[0] if len(item_tags) > 0 else '',
-                    'id': item_tags[7] if len(item_tags) > 7 else ''
-                }
-                filename_prefix = self.downloader.generate_video_prefix(video_detail, title_length=50)
-                text_content = fetch_text_content(filename_prefix)
+
+                video_detail = get_video_detail(item_tags[0])
+                text_content = self.fetch_text_content(video_detail.get('transcribed_file', ''))
                 user_prompt += "Title: " + video_detail['title'] + "\n" + "Content: " + text_content + "\n----------------------------\n"
 
             system_prompt = config_prompt.COMPILE_COUNSELING_STORY_SYSTEM_PROMPT
@@ -1895,7 +1847,6 @@ class YoutubeGUIManager:
             self.ttk.Button(button_frame, text="关闭", command=response_dialog.destroy).pack(side=self.tk.RIGHT, padx=5)
 
 
-
         def transcribe_selected():
             selected_items = tree.selection()
             if not selected_items:
@@ -1907,67 +1858,67 @@ class YoutubeGUIManager:
             videos_already_transcribed = []
             videos_not_downloaded = []
             
-            youtube_dir = self.os.path.dirname(json_file)
+            youtube_dir = self.os.path.dirname(channel_vidoe_json_file)
             
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
-                if item_tags and len(item_tags) >= 2:
-                    video_file = item_tags[1]
-                    video_url = item_tags[0] if len(item_tags) > 0 else ''
-                    video_title = item_tags[5] if len(item_tags) > 5 else 'Unknown'
-                    
-                    if video_file and self.os.path.exists(video_file):
-                        # 检查是否已有SRT文件
-                        filename_no_ext = self.os.path.splitext(self.os.path.basename(video_file))[0]
-                        possible_transcript_files = [
-                            self.os.path.join(youtube_dir, f"__{filename_no_ext}.zh.srt"),
-                            self.os.path.join(youtube_dir, f"__{filename_no_ext}.en.srt"),
-                            self.os.path.join(youtube_dir, f"__{filename_no_ext}.srt")
-                        ]
-                        has_transcript = any(self.os.path.exists(f) for f in possible_transcript_files)
-                        
-                        if has_transcript:
-                            videos_already_transcribed.append(video_title)
-                        else:
-                            # 视频已下载但没有SRT文件，可以转录
-                            videos_to_transcribe.append({
-                                'file_path': video_file,
-                                'url': video_url,
-                                'title': video_title
-                            })
-                    else:
-                        videos_not_downloaded.append(video_title)
-            
+
+                video_detail = None
+                for video in channel_videos:
+                    if video.get('url') == item_tags[0]:
+                        video_detail = video
+                        break
+                if not video_detail:
+                    continue
+
+                video_file = video_detail.get('video_path', '')
+                if not video_file:
+                    prefix = self.downloader.generate_video_prefix(video_detail, title_length=15)
+                    if os.path.exists(os.path.join(youtube_dir, f"__{prefix}.mp4")):
+                        video_file = os.path.join(youtube_dir, f"__{prefix}.mp4")
+                        video_detail['video_path'] = video_file
+                
+                if not video_file or not self.os.path.exists(video_file):
+                    videos_not_downloaded.append(video_detail)
+                    continue
+
+                # 检查是否已有SRT文件
+                filename_no_ext = self.os.path.splitext(self.os.path.basename(video_file))[0]
+                possible_transcript_files = [
+                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.zh.srt"),
+                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.en.srt"),
+                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.srt")
+                ]
+                transcribed_file = None
+                for f in possible_transcript_files:
+                    if self.os.path.exists(f):
+                        transcribed_file = f
+                        break
+                
+                if transcribed_file:
+                    video_detail['transcribed_file'] = transcribed_file
+                    videos_already_transcribed.append(video_detail)
+                else:
+                    videos_to_transcribe.append(video_detail)
+
             # 如果没有可转录的视频，显示提示
             if not videos_to_transcribe:
-                message_parts = []
-                if videos_already_transcribed:
-                    message_parts.append(f"已转录: {len(videos_already_transcribed)} 个")
-                if videos_not_downloaded:
-                    message_parts.append(f"未下载: {len(videos_not_downloaded)} 个")
-                
-                if videos_already_transcribed and videos_not_downloaded:
-                    message = f"选中的视频中：\n- {len(videos_already_transcribed)} 个已转录\n- {len(videos_not_downloaded)} 个未下载\n\n没有需要转录的视频。"
-                elif videos_already_transcribed:
-                    message = f"选中的 {len(videos_already_transcribed)} 个视频都已转录，无需重复转录。"
-                else:
-                    message = "选中的视频都未下载，请先下载。"
-                
-                self.messagebox.showwarning("提示", message, parent=dialog)
+                self.messagebox.showwarning("提示", "选中的视频都未下载，请先下载。", parent=dialog)
                 return
             
-            # 如果有部分视频已转录或未下载，显示提示
-            if videos_already_transcribed or videos_not_downloaded:
-                message_parts = []
-                if videos_already_transcribed:
-                    message_parts.append(f"已转录: {len(videos_already_transcribed)} 个")
-                if videos_not_downloaded:
-                    message_parts.append(f"未下载: {len(videos_not_downloaded)} 个")
-                
-                message = f"将转录 {len(videos_to_transcribe)} 个视频\n\n（{', '.join(message_parts)}）\n\n是否继续？"
-                if not self.messagebox.askyesno("确认转录", message, parent=dialog):
+            message = f"将转录 {len(videos_to_transcribe)} 个视频\n\n是否继续？"
+            if not self.messagebox.askyesno("确认转录", message, parent=dialog):
+                return
+
+            if videos_already_transcribed:
+                for video_detail in videos_already_transcribed:
+                    update_text_content(video_detail.get('url', ''))
+
+            if videos_not_downloaded:
+                for video_detail in videos_not_downloaded:
+                    self.messagebox.showwarning("提示", "选中的视频都未下载，请先下载。", parent=dialog)
                     return
-            
+
             # 弹出语言选择对话框
             lang_dialog = self.tk.Toplevel(dialog)
             lang_dialog.title("选择转录语言")
@@ -2005,7 +1956,7 @@ class YoutubeGUIManager:
             target_lang = target_lang_var.get()
             
             # 开始转录（不关闭对话框，转录完成后刷新列表）
-            self._transcribe_videos_batch(videos_to_transcribe, target_lang, on_complete=lambda: refresh_video_list())
+            _transcribe_videos_batch(videos_to_transcribe, target_lang, on_complete=lambda: refresh_video_list())
         
         self.ttk.Button(bottom_frame, text="全选", command=select_all).pack(side=self.tk.LEFT, padx=5)
         self.ttk.Button(bottom_frame, text="不选", command=deselect_all).pack(side=self.tk.LEFT, padx=5)
@@ -2016,135 +1967,125 @@ class YoutubeGUIManager:
         self.ttk.Button(bottom_frame, text="下载", command=download_selected).pack(side=self.tk.RIGHT, padx=5)
 
 
-    def _transcribe_videos_batch(self, videos, target_lang, on_complete=None):
-        total = len(videos)
-        
-        # 创建进度对话框
-        progress_dialog = self.tk.Toplevel(self.root)
-        progress_dialog.title("批量转录进度")
-        progress_dialog.geometry("600x300")
-        progress_dialog.transient(self.root)
-        progress_dialog.grab_set()
-        
-        # 进度信息
-        info_label = self.ttk.Label(progress_dialog, text=f"准备转录 {total} 个视频...", 
-                               font=("Arial", 12, "bold"))
-        info_label.pack(pady=10)
-        
-        # 进度条
-        progress_var = self.tk.DoubleVar()
-        progress_bar = self.ttk.Progressbar(progress_dialog, variable=progress_var, maximum=100)
-        progress_bar.pack(fill=self.tk.X, padx=20, pady=10)
-        
-        # 当前状态
-        status_label = self.ttk.Label(progress_dialog, text="", font=("Arial", 10))
-        status_label.pack(pady=5)
-        
-        # 详细日志
-        log_frame = self.ttk.Frame(progress_dialog)
-        log_frame.pack(fill=self.tk.BOTH, expand=True, padx=20, pady=10)
-        
-        log_scrollbar = self.ttk.Scrollbar(log_frame)
-        log_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
-        
-        log_text = self.tk.Text(log_frame, height=10, yscrollcommand=log_scrollbar.set)
-        log_text.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
-        log_scrollbar.config(command=log_text.yview)
-        
-
-        def safe_update_ui(func):
-            """安全地更新UI组件，如果对话框已关闭则跳过"""
-            try:
-                if progress_dialog.winfo_exists():
-                    func()
-                    progress_dialog.update()
-            except (self.tk.TclError, AttributeError):
-                # 组件已被销毁，忽略错误
-                pass
-        
-        def log_message(msg):
-            """安全地记录消息，如果对话框已关闭则跳过"""
-            def update_log():
-                log_text.insert(self.tk.END, msg + "\n")
-                log_text.see(self.tk.END)
-            safe_update_ui(update_log)
-        
-
-        def transcribe_task():
-            success_count = 0
-            failed_count = 0
+        def _transcribe_videos_batch(videos, target_lang, on_complete=None):
+            total = len(videos)
             
-            for idx, video in enumerate(videos, 1):
-                file_path = video.get('file_path', '')
-                video_url = video.get('url', '')
-                title = video.get('title', 'Unknown')
-                
-                # 更新状态
-                def update_status():
-                    status_label.config(text=f"正在转录 ({idx}/{total}): {title[:50]}...")
-                safe_update_ui(update_status)
-                log_message(f"\n[{idx}/{total}] 开始转录: {title[:50]}")
-                
-                if idx % 20 == 0:
-                    self.downloader._check_and_update_cookies()
-
+            progress_dialog = self.tk.Toplevel(self.root)
+            progress_dialog.title("批量转录进度")
+            progress_dialog.geometry("600x300")
+            progress_dialog.transient(self.root)
+            progress_dialog.grab_set()
+            
+            info_label = self.ttk.Label(progress_dialog, text=f"准备转录 {total} 个视频...", font=("Arial", 12, "bold"))
+            info_label.pack(pady=10)
+            
+            progress_var = self.tk.DoubleVar()
+            progress_bar = self.ttk.Progressbar(progress_dialog, variable=progress_var, maximum=100)
+            progress_bar.pack(fill=self.tk.X, padx=20, pady=10)
+            
+            status_label = self.ttk.Label(progress_dialog, text="", font=("Arial", 10))
+            status_label.pack(pady=5)
+            
+            log_frame = self.ttk.Frame(progress_dialog)
+            log_frame.pack(fill=self.tk.BOTH, expand=True, padx=20, pady=10)
+            
+            log_scrollbar = self.ttk.Scrollbar(log_frame)
+            log_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+            
+            log_text = self.tk.Text(log_frame, height=10, yscrollcommand=log_scrollbar.set)
+            log_text.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+            log_scrollbar.config(command=log_text.yview)
+            
+            def safe_update_ui(func):
+                """安全地更新UI组件，如果对话框已关闭则跳过"""
                 try:
-                    filename_no_ext = self.os.path.splitext(self.os.path.basename(file_path))[0]
-                    download_prefix = self.os.path.join(self.os.path.dirname(file_path), f"__{filename_no_ext}")
+                    if progress_dialog.winfo_exists():
+                        func()
+                        progress_dialog.update()
+                except (self.tk.TclError, AttributeError):
+                    # 组件已被销毁，忽略错误
+                    pass
+
+            def transcribe_task():
+                success_count = 0
+                failed_count = 0
+                
+                for idx, video_detail in enumerate(videos, 1):
+                    file_path = video_detail.get('file_path', '')
+                    video_url = video_detail.get('url', '')
+                    title = video_detail.get('title', 'Unknown')
                     
-                    lang = self.downloader.download_captions(
-                        video_url,
-                        target_lang,
-                        download_prefix,
-                        "srt"
-                    )
+                    # 更新状态
+                    def update_status():
+                        status_label.config(text=f"正在转录 ({idx}/{total}): {title[:50]}...")
+                    safe_update_ui(update_status)
                     
-                    if lang:
-                        log_message(f"  ✅ 转录成功")
-                        success_count += 1
-                    else:
-                        log_message(f"  ❌ 转录失败：无法下载字幕")
-                        failed_count += 1
+                    if idx % 20 == 0:
+                        self.downloader._check_and_update_cookies()
+
+                    try:
+                        filename_no_ext = self.os.path.splitext(self.os.path.basename(file_path))[0]
+                        download_prefix = self.os.path.join(self.os.path.dirname(file_path), f"__{filename_no_ext}")
                         
-                except Exception as e:
-                    log_message(f"  ❌ 转录失败: {str(e)}")
-                    failed_count += 1
+                        lang = self.downloader.download_captions(
+                            video_url,
+                            target_lang,
+                            download_prefix,
+                            "srt"
+                        )
+                        
+                        if lang:
+                            print(f"  ✅ 转录成功")
+                            update_text_content(video_url)
+                            success_count += 1
+                        else:
+                            print(f"  ❌ 转录失败：无法下载字幕")
+                            failed_count += 1
+                            
+                    except Exception as e:
+                        print(f"  ❌ 转录失败: {str(e)}")
+                        failed_count += 1
+                    
+                    # 更新进度条
+                    def update_progress():
+                        progress_var.set((idx / total) * 100)
+                    safe_update_ui(update_progress)
+
+                # save the video_detail to channel_videos
+                with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
+                    self.json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+
+
+                def update_completion():
+                    info_label.config(text=f"转录完成！成功: {success_count}, 失败: {failed_count}")
+                    status_label.config(text="")
+                safe_update_ui(update_completion)
+
+                print(f"\n{'='*50}")
+                print(f"转录任务完成！")
+                print(f"成功: {success_count} 个")
+                print(f"失败: {failed_count} 个")
                 
-                # 更新进度条
-                def update_progress():
-                    progress_var.set((idx / total) * 100)
-                safe_update_ui(update_progress)
+                # 调用完成回调（刷新视频列表）
+                if on_complete:
+                    try:
+                        on_complete()
+                        print("✅ 已刷新视频列表")
+                    except Exception as e:
+                        print(f"⚠️ 刷新列表失败: {str(e)}")
+                
+                # 添加关闭按钮
+                def close_dialog():
+                    progress_dialog.destroy()
+                
+                def add_close_button():
+                    self.ttk.Button(progress_dialog, text="关闭", command=close_dialog).pack(pady=10)
+                safe_update_ui(add_close_button)
             
-            # 完成
-            def update_completion():
-                info_label.config(text=f"转录完成！成功: {success_count}, 失败: {failed_count}")
-                status_label.config(text="")
-            safe_update_ui(update_completion)
-            log_message(f"\n{'='*50}")
-            log_message(f"转录任务完成！")
-            log_message(f"成功: {success_count} 个")
-            log_message(f"失败: {failed_count} 个")
-            
-            # 调用完成回调（刷新视频列表）
-            if on_complete:
-                try:
-                    on_complete()
-                    log_message("✅ 已刷新视频列表")
-                except Exception as e:
-                    log_message(f"⚠️ 刷新列表失败: {str(e)}")
-            
-            # 添加关闭按钮
-            def close_dialog():
-                progress_dialog.destroy()
-            
-            def add_close_button():
-                self.ttk.Button(progress_dialog, text="关闭", command=close_dialog).pack(pady=10)
-            safe_update_ui(add_close_button)
-        
-        # 在后台线程中转录
-        thread = self.threading.Thread(target=transcribe_task)
-        thread.daemon = True
-        thread.start()
+            # 在后台线程中转录
+            thread = self.threading.Thread(target=transcribe_task)
+            thread.daemon = True
+            thread.start()
 
 
     def fetch_hot_videos(self):
@@ -2338,6 +2279,7 @@ class YoutubeGUIManager:
                     # 使用可重用的方法生成文件名前缀（下载时使用100字符）
                     video_prefix = self.downloader.generate_video_prefix( video_detail, title_length=50 )
                     file_path = self.downloader.download_video_highest_resolution(video_detail['url'], video_prefix=video_prefix)
+                    video_detail['video_path'] = file_path
                     
                     if file_path and self.os.path.exists(file_path):
                         file_size = self.os.path.getsize(file_path) / (1024 * 1024)  # MB

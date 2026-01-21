@@ -794,6 +794,9 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 """
 
 
+SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT = """
+Summarize the psychology-related topics, theories, or discussion (given in user-prompt) into a concise summary (less than 200 words) in {language}.
+"""
 
 
 COMPILE_COUNSELING_STORY_SYSTEM_PROMPT = """
