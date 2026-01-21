@@ -795,7 +795,8 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 
 
 SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT = """
-Summarize the psychology-related topics, theories, or discussion (given in user-prompt) into a concise summary (less than 200 words) in {language}.
+Summarize the psychology-related topics, theories, or discussion (given in user-prompt) into a concise summary (less than 400 words) in {language}.
+FYI: Focus on the content only, do not add any additional information!!!!!
 """
 
 

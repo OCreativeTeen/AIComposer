@@ -21,6 +21,7 @@ class YoutubeDownloader:
     def __init__(self, project_path):
         print("YoutubeDownloader init...")
         self.project_path = project_path
+        self.youtube_dir = f"{self.project_path}/Youtbue_download"
         
         # Cookies 文件路径（优先检查下载文件夹，然后检查项目路径）
         self.cookies_file = self._find_cookies_file()
@@ -1683,6 +1684,7 @@ class YoutubeGUIManager:
             if not video_detail.get('summary', ''):
                 summary = self.llm_api.generate_text(config_prompt.SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese'), video_detail['text_content'])
                 video_detail['summary'] = summary
+                video_detail.pop('description', None)
                 changed = True
             if changed: 
                 with open(channel_vidoe_json_file, 'w', encoding='utf-8') as f:
@@ -1858,8 +1860,6 @@ class YoutubeGUIManager:
             videos_already_transcribed = []
             videos_not_downloaded = []
             
-            youtube_dir = self.os.path.dirname(channel_vidoe_json_file)
-            
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
 
@@ -1874,8 +1874,8 @@ class YoutubeGUIManager:
                 video_file = video_detail.get('video_path', '')
                 if not video_file:
                     prefix = self.downloader.generate_video_prefix(video_detail, title_length=15)
-                    if os.path.exists(os.path.join(youtube_dir, f"__{prefix}.mp4")):
-                        video_file = os.path.join(youtube_dir, f"__{prefix}.mp4")
+                    if os.path.exists(os.path.join(self.youtube_dir, f"__{prefix}.mp4")):
+                        video_file = os.path.join(self.youtube_dir, f"__{prefix}.mp4")
                         video_detail['video_path'] = video_file
                 
                 if not video_file or not self.os.path.exists(video_file):
@@ -1885,9 +1885,9 @@ class YoutubeGUIManager:
                 # 检查是否已有SRT文件
                 filename_no_ext = self.os.path.splitext(self.os.path.basename(video_file))[0]
                 possible_transcript_files = [
-                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.zh.srt"),
-                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.en.srt"),
-                    self.os.path.join(youtube_dir, f"__{filename_no_ext}.srt")
+                    self.os.path.join(self.youtube_dir, f"__{filename_no_ext}.zh.srt"),
+                    self.os.path.join(self.youtube_dir, f"__{filename_no_ext}.en.srt"),
+                    self.os.path.join(self.youtube_dir, f"__{filename_no_ext}.srt")
                 ]
                 transcribed_file = None
                 for f in possible_transcript_files:
