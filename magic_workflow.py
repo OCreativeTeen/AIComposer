@@ -49,7 +49,7 @@ class MagicWorkflow:
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
-        self.downloader = YoutubeDownloader(config.get_project_path(pid))
+        self.downloader = YoutubeDownloader(self.pid, config.get_project_path(self.pid))
         self.llm_api = LLMApi()
         self.speech_service = MinimaxSpeechService(self.pid)
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")

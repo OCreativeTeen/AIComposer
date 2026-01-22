@@ -183,7 +183,7 @@ class WorkflowGUI:
             self.youtube_gui = YoutubeGUIManager(
                 self.root, 
                 project_path,  # 传入项目路径而不是workflow
-                self.get_pid, 
+                self.get_pid(), 
                 self.tasks, 
                 self.log_to_output, 
                 self.video_output  # 使用video_output作为YouTube下载日志输出

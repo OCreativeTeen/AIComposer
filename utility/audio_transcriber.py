@@ -6,7 +6,7 @@ import json
 import zhconv
 from . import llm_api
 import config_prompt
-
+from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
 from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove, read_text, write_text
@@ -39,6 +39,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.device = device
         self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
+        self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
         #device = torch.device("cuda") 
         #hf_token = os.getenv("HF_TOKEN", "")
@@ -149,7 +150,7 @@ class AudioTranscriber:
                     srt_segments.append({
                         'start': seg.start,
                         'end': seg.end,
-                        'text': seg.text
+                        'caption': seg.text
                     })
                 
                 print(f"✅ 转录完成，共 {len(srt_segments)} 个片段")
@@ -178,12 +179,15 @@ class AudioTranscriber:
         raise RuntimeError(f"所有转录尝试都失败了。最后的错误: {last_error}")
 
 
-    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration) -> List[Dict[str, Any]]:
+    def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration, re_org=True) -> List[Dict[str, Any]]:
         start_time = datetime.now().strftime("%H:%M:%S")
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
+        if audio_path.endswith('.mp4'):
+            audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(audio_path)
+        if audio_path.endswith('.mp3'):
+            audio_path = self.ffmpeg_audio_processor.to_wav(audio_path)
 
         # ========== Step 1: 加载 Whisper 模型并转录 ==========
-        print(f"🧹 Step 1a: 预清理内存...")
         gc.collect()
         clean_memory(cuda=True, verbose=False)
         try:
@@ -204,42 +208,29 @@ class AudioTranscriber:
             print(f"⚠️ 无法获取 GPU 信息: {e}")
 
 
-        print(f"✅ Step 1 開始: 转录")
-        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.1.json"
-        if safe_file(json_path):
-            srt_segments = read_json(json_path)
-        else:
-            srt_segments = self._transcribe_with_retry(audio_path, language)
-            write_json(json_path, srt_segments)
+        srt_segments = self._transcribe_with_retry(audio_path, language)
         print(f"✅ Step 1 完成: 转录得到 {len(srt_segments)} 个片段")
 
-        # ========== Step 2: 构建 char_time_pair ==========
-        print(f"📝 Step 2 開始: 构建字符时间对...")
-        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.2.json"
-        text_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.2.txt"
-        if safe_file(json_path):
-            char_time_pair = read_json(json_path)
-            text_content = read_text(text_path)
-        else:
-            char_time_pair = []
-            text_content = ""
-            end_time = 0.0
-            for segment in srt_segments:
-                if end_time > 0 and segment['start']!=end_time: # not the 1st item
-                    segment['start'] = end_time # fix start time (must == end of last item)
-                segment_time = segment['end'] - segment['start']
-                segment_text = self.chinese_convert(segment['text'], language)
-                normalize_text = self.normalize_text(segment_text)
-                # Distribute time evenly across speakers
-                if len(normalize_text) > 0:
-                    time_per_char = segment_time / len(normalize_text)
-                    for i, char in enumerate(normalize_text):
-                        char_time_pair.append((char, segment['start'] + i * time_per_char))
-                text_content += segment_text + " "
-                end_time = segment['end']
+        if not re_org:
+            return self.merge_sentences(srt_segments, min_sentence_duration, max_sentence_duration)
 
-            write_json(json_path, char_time_pair)
-            write_text(text_path, text_content)
+        # ========== Step 2: 构建 char_time_pair ==========
+        char_time_pair = []
+        text_content = ""
+        end_time = 0.0
+        for segment in srt_segments:
+            if end_time > 0 and segment['start']!=end_time: # not the 1st item
+                segment['start'] = end_time # fix start time (must == end of last item)
+            segment_time = segment['end'] - segment['start']
+            segment_text = self.chinese_convert(segment['caption'], language)
+            normalize_text = self.normalize_text(segment_text)
+            # Distribute time evenly across speakers
+            if len(normalize_text) > 0:
+                time_per_char = segment_time / len(normalize_text)
+                for i, char in enumerate(normalize_text):
+                    char_time_pair.append((char, segment['start'] + i * time_per_char))
+            text_content += segment_text + " "
+            end_time = segment['end']
         print(f"✅ Step 2 完成: char_time_pair数量={len(char_time_pair)}")
 
         # 释放 srt_segments，不再需要
@@ -247,13 +238,7 @@ class AudioTranscriber:
         gc.collect()
 
         # ========== Step 3: 重组文本内容 ==========
-        print(f"📝 Step 3 開始: 重组文本内容...")
-        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.3.json"
-        if safe_file(json_path):
-            sentences = read_json(json_path)
-        else:
-            sentences = self.reorganize_text_content(text_content, language)
-            write_json(json_path, sentences)
+        sentences = self.reorganize_text_content(text_content, language)
         print(f"✅ Step 3 完成: 重组后句子数量={len(sentences)}")
         
         # 释放 text_content，不再需要
@@ -264,137 +249,103 @@ class AudioTranscriber:
             del char_time_pair
             gc.collect()
             clean_memory(cuda=False, verbose=False)
-            safe_remove(script_path)
             return None
 
         # ========== Step 4: 匹配句子时间 ==========
-        print(f"📝 Step 4 開始: 匹配句子时间...")
-        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.4.json"
-        if safe_file(json_path):
-            reorganized = read_json(json_path)
-        else:
-            reorganized = []
-            current_char_index = 0
+        reorganized = []
+        current_char_index = 0
+        
+        content = ""
+        for i, sentence in enumerate(sentences):
+            print(f"处理句子 {i+1}/{len(sentences)}: {sentence[:50]}...")
+            content += sentence + "\n"
+            # Find best matching position for this sentence
+            start_pos, end_pos = self.find_best_match_position(
+                sentence, char_time_pair, current_char_index
+            )
             
-            content = ""
-            for i, sentence in enumerate(sentences):
-                print(f"处理句子 {i+1}/{len(sentences)}: {sentence[:50]}...")
-                content += sentence + "\n"
-                # Find best matching position for this sentence
-                start_pos, end_pos = self.find_best_match_position(
-                    sentence, char_time_pair, current_char_index
-                )
-                
-                # Get timing information
-                if start_pos < len(char_time_pair):
-                    sentence_start_time = char_time_pair[start_pos][1]
-                else:
-                    sentence_start_time = char_time_pair[-1][1] if char_time_pair else 0.0
-                
-                if end_pos < len(char_time_pair):
-                    sentence_end_time = char_time_pair[end_pos][1]
-                else:
-                    sentence_end_time = char_time_pair[-1][1] if char_time_pair else sentence_start_time
-                
-                # Ensure time progression
-                if reorganized:
-                    sentence_start_time = max(sentence_start_time, reorganized[-1]['end'])
-                # Ensure end time is after start time
-                if sentence_end_time <= sentence_start_time:
-                    sentence_end_time = sentence_start_time + 1.0  # Add 1 sec as minimum
-                
-                reorganized_segment = {
-                    'start': sentence_start_time,
-                    'end': sentence_end_time,
-                    'caption': sentence
-                }
-                reorganized.append(reorganized_segment)
-                # Update search position for next sentence
-                current_char_index = end_pos
-                print(f"句子时间: {sentence_start_time:.2f}s - {sentence_end_time:.2f}s")
+            # Get timing information
+            if start_pos < len(char_time_pair):
+                sentence_start_time = char_time_pair[start_pos][1]
+            else:
+                sentence_start_time = char_time_pair[-1][1] if char_time_pair else 0.0
+            
+            if end_pos < len(char_time_pair):
+                sentence_end_time = char_time_pair[end_pos][1]
+            else:
+                sentence_end_time = char_time_pair[-1][1] if char_time_pair else sentence_start_time
+            
+            # Ensure time progression
+            if reorganized:
+                sentence_start_time = max(sentence_start_time, reorganized[-1]['end'])
+            # Ensure end time is after start time
+            if sentence_end_time <= sentence_start_time:
+                sentence_end_time = sentence_start_time + 1.0  # Add 1 sec as minimum
+            
+            reorganized_segment = {
+                'start': sentence_start_time,
+                'end': sentence_end_time,
+                'caption': sentence
+            }
+            reorganized.append(reorganized_segment)
+            # Update search position for next sentence
+            current_char_index = end_pos
+            print(f"句子时间: {sentence_start_time:.2f}s - {sentence_end_time:.2f}s")
 
-            write_json(json_path, reorganized)
-            # 释放不再需要的数据
-            del sentences
-            del char_time_pair
-            del content
-            gc.collect()
-
+        del sentences
+        del char_time_pair
+        del content
+        gc.collect()
+        
         print(f"✅ Step 4 完成: reorganized数量={len(reorganized)}")
 
+        merged_segments = self.merge_sentences(reorganized, min_sentence_duration, max_sentence_duration)
 
-        # ========== Step 5: 合并句子 ==========
-        print(f"📝 Step 5 開始: 合并句子...")
-        # merged_segments = reorganized
-        json_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.5.json"
-        if safe_file(json_path):
-            merged_segments = read_json(json_path)
-        else:
-            self.merge_sentences(reorganized, min_sentence_duration, max_sentence_duration)
-            merged_segments = reorganized
-            write_json(json_path, merged_segments)
-        
-        print(f"✅ Step 5 完成: merged数量={len(merged_segments) if merged_segments else 0}")
-
-
-        # ========== Step 6: 分配说话者 ==========
-        script_path = f"{VOICE_TEMP_PATH}/{self.pid}.srt.6.json"
-        if safe_file(script_path):
-           merged_segments = read_json(script_path)
-        else:
-            merged_segments = self.finalize_transcribe(merged_segments)
-            write_json(script_path, merged_segments)
-
-        print(f"✅ Step 6 完成: merged数量={len(merged_segments) if merged_segments else 0}")
-        
-        # 最终清理
         gc.collect()
         clean_memory(cuda=False, verbose=False)
         print(f"✅ 转录完成，返回 {len(merged_segments)} 个片段")
         return merged_segments
 
 
-    def merge_sentences(self, segments, min_sentence_duration, max_sentence_duration):
+    def merge_sentences(self, input_segments, min_sentence_duration, max_sentence_duration):
         print(f"📝 合并句子...")
         i = 0
-        while i < len(segments):
-            if i+1 < len(segments):
-                if segments[i]['end'] - segments[i]['start'] > max_sentence_duration:
+        while i < len(input_segments):
+            if i+1 < len(input_segments):
+                if input_segments[i]['end'] - input_segments[i]['start'] > max_sentence_duration:
                     i += 1
                     continue
-                if segments[i]['end'] - segments[i]['start'] < min_sentence_duration or segments[i+1]['end'] - segments[i+1]['start'] < min_sentence_duration:
-                    segments[i]['caption'] += segments[i+1]['caption']
-                    segments[i]['end'] = segments[i+1]['end']
-                    segments.pop(i+1)
+                if input_segments[i]['end'] - input_segments[i]['start'] < min_sentence_duration or input_segments[i+1]['end'] - input_segments[i+1]['start'] < min_sentence_duration:
+                    input_segments[i]['caption'] += input_segments[i+1]['caption']
+                    input_segments[i]['end'] = input_segments[i+1]['end']
+                    input_segments.pop(i+1)
                     # 不递增 i，因为 result[i] 现在是合并后的元素，可能需要继续与下一个元素合并
                 else:
                     i += 1
             else:
                 i += 1
 
-
-    def finalize_transcribe(self, input_segments) -> List[Dict[str, Any]]:
-        segments = []
+        final_segments = []
         for seg in input_segments:
-            segments.append({
+            final_segments.append({
                 "start": float(seg["start"]),
                 "end": float(seg["end"]),
                 "duration": float(seg["end"]) - float(seg["start"]),
                 "caption": seg["caption"]
             })
 
-        if len(segments) > 0:
-            if segments[0]['start'] != 0.0:
-                segments[0]['start'] = 0.0
+        if len(final_segments) > 0:
+            if final_segments[0]['start'] != 0.0:
+                final_segments[0]['start'] = 0.0
 
             end_time = 0.0
-            for seg in segments:
+            for seg in final_segments:
                 if end_time > 0 and seg['start'] != end_time: # not the 1st item
                     seg['start'] = end_time # fix start time (must == end of last item)
                 seg['duration'] = seg['end'] - seg['start']
                 end_time = seg['end']
 
-        return segments
+        return final_segments
 
 
     def assign_speakers_old(self, segments, diarization) -> List[Dict[str, Any]]:
