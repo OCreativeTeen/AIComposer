@@ -20,12 +20,11 @@ ANIMATE_TYPE_PATTERNS = [
     (r"_S2V(_\d{8})?\.mp4$", "_S2V"), # clip_project_20251208_1710_10708_S2V_13231028_60_.mp4
     (r"_INT(_\d{8})?\.mp4$", "_INT"),
     (r"_ENH(_\d{8})?\.mp4$", "_ENH"),
-    (r"_FS2V(_\d{8})?\.mp4$", "_FS2V"),
     (r"_AI2V(_\d{8})?\.mp4$", "_AI2V")
 ]
 
 
-ANIMATE_WITH_AUDIO = ["_WS2VL", "_WS2VR", "_S2V", "_FS2V"]
+ANIMATE_WITH_AUDIO = ["_WS2VL", "_WS2VR", "_S2V"]
 
 
 
@@ -170,13 +169,15 @@ class MediaScanner:
                 target_scene[video_info.video_type + "_status"] = "ORIG"
                 target_scene[video_info.video_type + "_fps"] = self.ffmpeg_processor.get_video_fps(copy_to)
 
-            if video_info.image_path:
-                i = self.ffmpeg_processor.image_to_webp(video_info.image_path)
-                refresh_scene_media(target_scene, video_info.video_type + "_image_last", ".webp", i)
+            #if video_info.image_path:
+            #    i = self.ffmpeg_processor.image_to_webp(video_info.image_path)
+            #    refresh_scene_media(target_scene, video_info.video_type + "_image_last", ".webp", i)
 
             for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
                 if re.search(pattern, copy_to):
-                    self.take_gen_video(copy_to, video_info.video_type, type_suffix, target_scene)
+                    v = self.take_gen_video(copy_to, video_info.video_type, type_suffix, target_scene)
+                    refresh_scene_media(scene, video_info.video_type+"_image_last", ".webp", self.ffmpeg_processor.extract_frame(v, False))
+
         
     
     def _wait_for_file_stability(self, file_path: Path) -> bool:
@@ -235,8 +236,8 @@ class MediaScanner:
                 video_mode=match.group(4)
             )
 
-        # Unified pattern for WS2VL, WS2VR, S2V, FS2V, PS2V - handle all video types
-        unified_pattern = r'^(clip|narration|zero)_(.+)_([^_]+)_(WS2VL|WS2VR|S2V|FS2V|PS2V)_(.*?).*-audio(\.mp4)?$'
+        # Unified pattern for WS2VL, WS2VR, S2V - handle all video types
+        unified_pattern = r'^(clip|narration|zero)_(.+)_([^_]+)_(WS2VL|WS2VR|S2V)_(.*?).*-audio(\.mp4)?$'
         match = re.match(unified_pattern, filename)
         if match and match.group(2) == pid:
             return VideoFileInfo(
@@ -285,14 +286,12 @@ class MediaScanner:
 
         if "_WS2VL" == type_suffix:
             #scene[av_type+"_left_input"] = original_gen_video
-            refresh_scene_media(scene, media_type+"_left", ".mp4", gen_video, True)
+            oldv, gen_video = refresh_scene_media(scene, media_type+"_left", ".mp4", gen_video, True)
         elif "_WS2VR" == type_suffix:
             #scene[av_type+"_right_input"] = original_gen_video
-            refresh_scene_media(scene, media_type+"_right", ".mp4", gen_video, True)
+            oldv, gen_video = refresh_scene_media(scene, media_type+"_right", ".mp4", gen_video, True)
         else:
             #scene[av_type+"_input"] = original_gen_video
             oldv, gen_video = refresh_scene_media(scene, media_type, ".mp4", gen_video, True)
-            # refresh_scene_media(scene, "clip_image_last", ".webp", self.ffmpeg_processor.extract_last_frame(gen_video))
-            # thread = threading.Thread(target=self.workflow.sd_processor._improve_image_as_webp, args=(scene, media_type))
-            # thread.daemon = True
-            # thread.start()
+
+        return gen_video

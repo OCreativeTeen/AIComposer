@@ -33,7 +33,7 @@ from gui.image_prompts_review_dialog import open_image_prompt_dialog, IMAGE_PROM
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
-from gui.youtube_downloader import YoutubeGUIManager
+from gui.downloader import MediaGUIManager
 import cv2
 import json
 import shutil
@@ -101,7 +101,7 @@ class WorkflowGUI:
         self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
         
         # 添加当前效果和图像类型选择变量
-        self.scene_narration_animation = tk.StringVar(value=config_prompt.ANIMATE_SOURCE[0])
+        self.narration_animation = tk.StringVar(value=config_prompt.ANIMATE_SOURCE[0])
         
         # 创建动画名称到提示语的映射字典（双向）
         self.animation_name_to_prompt = {item["name"]: item["prompt"] for item in config_prompt.ANIMATION_PROMPTS}
@@ -180,7 +180,7 @@ class WorkflowGUI:
             
             # 初始化YouTube GUI管理器
             project_path = config.get_project_path(self.get_pid())
-            self.youtube_gui = YoutubeGUIManager(
+            self.youtube_gui = MediaGUIManager(
                 self.root, 
                 project_path,  # 传入项目路径而不是workflow
                 self.get_pid(), 
@@ -1119,16 +1119,16 @@ class WorkflowGUI:
 
         # 宣传模式（可编辑）
         ttk.Label(type_mood_action_frame, text="主动画:").pack(side=tk.LEFT)
-        self.scene_main_animate = tk.StringVar(value="")
-        self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_main_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
+        self.clip_animate = tk.StringVar(value="")
+        self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.clip_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.main_animate_combobox.pack(side=tk.LEFT)
-        self.main_animate_combobox.bind('<<ComboboxSelected>>', lambda: self.on_scene_field_change("clip_animation", self.scene_main_animate.get()))
+        self.main_animate_combobox.bind('<<ComboboxSelected>>', lambda event: self.on_scene_field_change("clip_animation", self.clip_animate.get()))
         ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("clip", False)).pack(side=tk.LEFT)
 
         ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
-        self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.scene_narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
+        self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=6)
         self.narration_animation_combobox.pack(side=tk.LEFT)
-        self.narration_animation_combobox.bind('<<ComboboxSelected>>', lambda: self.on_scene_field_change("narration_animation", self.scene_narration_animation.get()))
+        self.narration_animation_combobox.bind('<<ComboboxSelected>>', lambda event: self.on_scene_field_change("narration_animation", self.narration_animation.get()))
         ttk.Button(type_mood_action_frame, text="生", width=4, command=lambda: self.regenerate_video("narration", False)).pack(side=tk.LEFT)
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
@@ -2009,12 +2009,12 @@ class WorkflowGUI:
             self.scene_extend_var.set("0.0")
 
         # 设置宣传复选框状态
-        clip_animation = scene_data.get("clip_animation", "")
-        self.scene_main_animate.set(clip_animation)
+        clip_animation = scene_data.get("clip_animation", "S2V")
+        self.clip_animate.set(clip_animation)
         
         # 加载当前场景的图像类型设置
-        current_image_type = scene_data.get("narration_animation", config_prompt.ANIMATE_SOURCE[0])
-        self.scene_narration_animation.set(current_image_type)
+        narration_animate = scene_data.get("narration_animation", "S2V")
+        self.narration_animation.set(narration_animate)
 
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
@@ -2236,7 +2236,7 @@ class WorkflowGUI:
         self.scene_duration.delete(0, tk.END)
         self.scene_extend_var.set("0.0")
         
-        self.scene_main_animate.set("")
+        self.clip_animate.set("")
         
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaker.delete("1.0", tk.END)
@@ -2293,46 +2293,7 @@ class WorkflowGUI:
     def split_smart_scene(self):
         """分离当前场景"""
         current_scene = self.get_current_scene()
-        original_duration = self.workflow.find_clip_duration(current_scene)
-        if original_duration <= 0:
-            return False
-
-        gen_config = [
-            sd_image_processor.GEN_CONFIG["S2V"].copy(),
-            sd_image_processor.GEN_CONFIG["FS2V"].copy()
-        ]
-
-        for server_config in gen_config:
-            section_duration = (server_config["max_frames"]-4) * 1.0 / server_config["frame_rate"]
-            server_config["section_duration"] = section_duration
-            sections = int(original_duration / section_duration)
-            if original_duration / section_duration > sections:
-                sections += 1
-            server_config["sections"] = sections
-
-        min_sections = 1000000
-        best_config = None
-        for server_config in gen_config:
-            if server_config["sections"] < min_sections:
-                min_sections = server_config["sections"]
-                best_config = server_config
-
-        if best_config is None:
-            gen_config = gen_config[0]
-
-        if gen_config[0]["sections"] == gen_config[1]["sections"]:
-            best_config = gen_config[0]
-
-        if best_config["sections"] == 1:
-            return False
-
-        if best_config == gen_config[0]:
-            animate_mode = "S2V"
-        else:
-            animate_mode = "FS2V"
-        current_scene["clip_animation"] = animate_mode
-
-        new_scenes = self.workflow.split_smart_scene(current_scene, best_config["sections"])
+        new_scenes = self.workflow.split_smart_scene(current_scene)
 
         self.playing_delta = 0.0
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
@@ -2354,7 +2315,7 @@ class WorkflowGUI:
     def clean_media_mark(self):
         """标记清理"""
         for scene in self.workflow.scenes:
-            scene["clip_animation"] = ""
+            scene["clip_animation"] = "S2V"
 
         self.workflow.save_scenes_to_json()
         messagebox.showinfo("成功", "标记清理成功！")
@@ -3722,7 +3683,8 @@ class WorkflowGUI:
             "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
             "explicit": self.scene_explicit.get("1.0", tk.END).strip(),
             #"cinematography": cinematography_value,
-            "clip_animation": self.scene_main_animate.get(),
+            "clip_animation": self.clip_animate.get(),
+            "narration_animation": self.narration_animation.get(),
             "promotion": self.scene_promotion.get("1.0", tk.END).strip()
         })
         self.workflow.save_scenes_to_json()
@@ -4243,7 +4205,7 @@ class WorkflowGUI:
 
     def on_clip_animation_change(self, event=None):
         current_scene = self.get_current_scene()
-        current_scene["clip_animation"] = self.scene_main_animate.get()
+        current_scene["clip_animation"] = self.clip_animate.get()
         self.workflow.save_scenes_to_json()
 
 
@@ -4252,10 +4214,9 @@ class WorkflowGUI:
         self.workflow.save_scenes_to_json()
 
 
-    def on_image_type_change(self, event=None):
+    def on_narration_animation_change(self, event=None):
         """处理图像类型选择变化"""
-        selected_image_type = self.scene_narration_animation.get()
-        self.get_current_scene()["narration_animation"] = selected_image_type
+        self.get_current_scene()["narration_animation"] = self.narration_animation.get()
         # 标记配置已更改
         self._config_changed = True
 
@@ -4264,7 +4225,7 @@ class WorkflowGUI:
         image_path = get_file_path(scene, track+"_image")
         image_last_path = get_file_path(scene, track+"_image_last")
 
-        animate_mode = scene.get(track+"_animation", "")
+        animate_mode = scene.get(track+"_animation", "S2V")
         if animate_mode not in config_prompt.ANIMATE_SOURCE or animate_mode.strip() == "":
             return
 

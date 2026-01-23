@@ -795,7 +795,7 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 
 
 SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT = """
-Summarize the psychology-related topics, theories, or discussion (given in user-prompt) into a concise summary (less than 400 words) in {language}.
+Make very detailed summary about the psychology-related discussion/analysis (given in user-prompt) (less than 1000 words) in {language}.
 FYI: Focus on the content only, do not add any additional information!!!!!
 """
 
@@ -968,8 +968,8 @@ NARRATOR = [
 
 ANIMATE_I2V = ["I2V"]
 ANIMATE_2I2V = ["2I2V"]
-ANIMATE_S2V = ["S2V", "FS2V"]
+ANIMATE_S2V = ["S2V"]
 ANIMATE_WS2V = ["WS2V"]
 ANIMATE_AI2V = ["AI2V"]
 
-ANIMATE_SOURCE = [""] + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_S2V + ANIMATE_WS2V + ANIMATE_AI2V
+ANIMATE_SOURCE = ANIMATE_S2V + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_WS2V + ANIMATE_AI2V

@@ -27,8 +27,9 @@ GEN_CONFIG = {
         "I2V":    {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
         "2I2V":   {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
 
-        "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
-        "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
+        "HS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
+        "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
+        "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":316, "image_width":570, "image_height":321},
         "WS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":91,  "image_width":468, "image_height":480},
         #"FS2V": {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "model": "wan", "seed": 1234567890, "steps": 4, "cfg": 1.0, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":683, "image_height":384},
         "AI2V":   {"url": "http://10.0.0.231:9001/wan/action_transfer","face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":121, "image_width":853, "image_height":480},

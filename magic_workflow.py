@@ -1,7 +1,8 @@
 from urllib.parse import urlparse, parse_qs
 
 from utility.audio_transcriber import AudioTranscriber
-from gui.youtube_downloader import YoutubeDownloader
+from gui.downloader import MediaDownloader, MediaGUIManager
+from utility import sd_image_processor
 from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
@@ -14,7 +15,7 @@ import config
 import config_prompt
 import config_channel
 from io import BytesIO
-from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation
+from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation, safe_copy_overwrite
 from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
@@ -49,7 +50,7 @@ class MagicWorkflow:
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
-        self.downloader = YoutubeDownloader(self.pid, config.get_project_path(self.pid))
+        self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid))
         self.llm_api = LLMApi()
         self.speech_service = MinimaxSpeechService(self.pid)
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
@@ -542,21 +543,43 @@ class MagicWorkflow:
         return True
 
 
-
-    def split_smart_scene(self, current_scene, sections) -> list:
+    def split_smart_scene(self, current_scene) -> list:
         """将场景按照指定时长分割成多个部分"""
-        # 找到当前场景的索引
         current_index = None
         for i, scene in enumerate(self.scenes):
             if scene is current_scene:
                 current_index = i
                 break
-        
-        original_duration = self.find_clip_duration(current_scene)
-        
+
         original_audio_clip = get_file_path(current_scene, "clip_audio")
         original_video_clip = get_file_path(current_scene, "clip")
+        original_duration = self.find_clip_duration(current_scene)
+        if original_duration <= 0 or not original_audio_clip or not original_video_clip:
+            return False
+
+        s2v_config = None
+        for config in [sd_image_processor.GEN_CONFIG["HS2V"], sd_image_processor.GEN_CONFIG["S2V"], sd_image_processor.GEN_CONFIG["FS2V"]]:
+            s2v_config = config.copy()
+            s2v_config["section_duration"] = (s2v_config["max_frames"]-4) * 1.0 / s2v_config["frame_rate"]
+            if original_duration - s2v_config["section_duration"] <= 0.0:
+                current_scene["clip_animation"] = "S2V"
+                return False
+
+        ss = int(original_duration / s2v_config["section_duration"])
+        remain = original_duration - ss * s2v_config["section_duration"]
+        if remain > 0.05:
+            ss += 1
         
+        section_def = []
+        for i in range(ss):
+            section_def.append(s2v_config.copy())
+
+        if remain > 0.05:
+            section_def[-1]["section_duration"] = remain
+        else:
+            if remain > 0.0:
+                section_def[-1]["section_duration"] = section_def[-1]["section_duration"] + remain
+
         # 获取当前场景的section ID，用于生成新的场景ID
         max_section_id = current_scene["id"]
         current_section = current_scene["id"] // 100
@@ -567,36 +590,27 @@ class MagicWorkflow:
         # 创建所有新场景的列表
         new_scenes = []
         start_time = 0.0
-        part_duration = original_duration / sections
-        for i in range(sections):
-            # 创建新场景
+        for i, sdef in enumerate(section_def):
             if i == 0:
-                # 第一个场景使用原场景
                 new_scene = current_scene
             else:
                 new_scene = current_scene.copy()
 
-            new_scene["extend"] = 0.0
-
-            # 分割音频：从 start_time 开始，提取 part_duration 长度
-            if original_audio_clip:
-                trimmed_audio = self.ffmpeg_audio_processor.audio_cut_fade(
-                    original_audio_clip, start_time, part_duration, 0, 0, 1.0
-                )
-                refresh_scene_media(new_scene, "clip_audio", ".wav", trimmed_audio)
-            
-            # 分割视频：从 start_time 开始，提取到 start_time + part_duration
-            if original_video_clip:
-                trimmed_video = self.ffmpeg_processor.trim_video(
-                    original_video_clip, start_time=start_time, end_time=start_time + part_duration
-                )
-                refresh_scene_media(new_scene, "clip", ".mp4", trimmed_video)
-            
-            # 更新场景ID和内容
             new_scene["id"] = max_section_id + i + 1
-            
+            new_scene["extend"] = 0.0
             new_scenes.append(new_scene)
-            start_time += part_duration
+
+            trimmed_audio = self.ffmpeg_audio_processor.audio_cut_fade(
+                original_audio_clip, start_time, sdef["section_duration"], 0, 0, 1.0
+            )
+            refresh_scene_media(new_scene, "clip_audio", ".wav", trimmed_audio)
+            
+            trimmed_video = self.ffmpeg_processor.trim_video(
+                original_video_clip, start_time=start_time, end_time=start_time + sdef["section_duration"]
+            )
+            refresh_scene_media(new_scene, "clip", ".mp4", trimmed_video)
+            
+            start_time += sdef["section_duration"]
         
         # 使用 replace_scene_with_others 一次性替换原场景
         self.replace_scene_with_others(current_index, new_scenes)
@@ -1114,7 +1128,7 @@ class MagicWorkflow:
 
         if not image_main_scene:
             for scene in self.scenes:
-                clip_animation = scene.get("clip_animation", "")
+                clip_animation = scene.get("clip_animation", "S2V")
                 if clip_animation == "VIDEO" or clip_animation == "IMAGE" or clip_animation == "IMAGE_MAIN":
                     image_main_scene = scene
                     break
@@ -1222,7 +1236,19 @@ class MagicWorkflow:
 
         elif animate_mode in config_prompt.ANIMATE_S2V:
             file_prefix = build_scene_media_prefix(self.pid, scene["id"], video_type, "S2V", False)
-            self.sd_processor.sound_to_video(prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, sound_path=sound_path, next_sound_path=next_sound_path, animate_mode=animate_mode, silence=False)
+
+            s2v_mode = "FS2V"
+            for config in ["HS2V", "S2V", "FS2V"]:
+                s2v_config = sd_image_processor.GEN_CONFIG[config].copy()
+                original_duration = self.find_clip_duration(scene)
+                section_duration = (s2v_config["max_frames"]-4) * 1.0 / s2v_config["frame_rate"]
+                if original_duration - section_duration <= 0.0:
+                    s2v_mode = config
+                    break
+            self.sd_processor.sound_to_video( 
+                                  prompt=wan_prompt, file_prefix=file_prefix, image_path=image_path, 
+                                  sound_path=sound_path, next_sound_path=next_sound_path, animate_mode=s2v_mode, silence=False 
+                              )
 
         elif animate_mode in config_prompt.ANIMATE_AI2V:
             if not action_path:
@@ -1324,6 +1350,16 @@ class MagicWorkflow:
             if valid_narrator and ("right" in valid_narrator):
                 v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
                 video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
+
+        final_video_dir = f"{self.publish_path}/{self.pid}"
+        if not os.path.exists(final_video_dir):
+            os.makedirs(final_video_dir)
+        for file in os.listdir(final_video_dir):
+            os.remove(os.path.join(final_video_dir, file))
+
+        for i, v in enumerate(video_segments):
+            video_path = f"{final_video_dir}/{i:04d}.mp4"
+            safe_copy_overwrite(v["path"], video_path)
 
         video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
