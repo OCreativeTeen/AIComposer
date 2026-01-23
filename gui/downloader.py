@@ -1201,13 +1201,9 @@ class MediaGUIManager:
         return None
 
 
-    def update_text_content(self, video_url, video_detail=None, transcribed_file=None):
-        if not video_url and not video_detail:
-            return None
+    def update_text_content(self, video_detail=None, transcribed_file=None):
         if not video_detail:
-            video_detail = self.get_video_detail(video_url)
-            if not video_detail:
-                return None
+            return None
 
         if transcribed_file:
             video_detail['transcribed_file'] = transcribed_file
@@ -1418,6 +1414,10 @@ class MediaGUIManager:
             summarized_count = 0
             
             for idx, video in enumerate(filtered_videos, 1):
+                video.pop('text_content', None)
+                summary = video.get('summary', None)
+                if summary:
+                    video.pop('description', None)
                 # 格式化时长
                 duration_sec = video.get('duration', 0)
                 duration_str = f"{duration_sec // 60}:{duration_sec % 60:02d}" if duration_sec else "N/A"
@@ -1573,8 +1573,6 @@ class MediaGUIManager:
 
 
         def on_double_click(event):
-            """双击事件处理：提取SRT内容并显示（异步执行，不阻塞UI）"""
-            # 获取被双击的项目
             item = tree.identify_row(event.y)
             if not item:
                 return
@@ -1584,18 +1582,48 @@ class MediaGUIManager:
                 tree.selection_set(item)
             
             item_tags = tree.item(item, "tags")
-            if not item_tags:
+            video_detail = self.get_video_detail(item_tags[0])
+            # 获取摘要内容
+            summary = video_detail.get('summary', '')
+            if not summary or not summary.strip():
                 return
-            
-            # 异步调用 update_text_content（不阻塞UI）
-            def update_async():
-                self.update_text_content(item_tags[0])
-                messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=dialog)
-            
-            # 在后台线程中执行
-            thread = threading.Thread(target=update_async)
-            thread.daemon = True
-            thread.start()
+
+            if video_detail:
+                # show the summary in a new window
+                summary_window = tk.Toplevel(dialog)
+                summary_window.title(f"{video_detail['title']} - 摘要")
+                summary_window.geometry("800x600")
+                summary_window.resizable(True, True)
+                summary_window.transient(dialog)
+                # 创建主框架
+                main_frame = ttk.Frame(summary_window, padding=10)
+                main_frame.pack(fill=tk.BOTH, expand=True)
+                # 创建标签
+                label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
+                label.pack(anchor=tk.W, pady=(0, 5))
+                # 创建可滚动的文本区域
+                text_widget = scrolledtext.ScrolledText(
+                    main_frame,
+                    wrap=tk.WORD,
+                    width=70,
+                    height=25,
+                    font=("Arial", 10),
+                    padx=10,
+                    pady=10
+                )
+                text_widget.pack(fill=tk.BOTH, expand=True)
+                
+                # 插入摘要内容
+                text_widget.insert(tk.END, summary)
+                text_widget.config(state=tk.DISABLED)  # 设置为只读
+                
+                # 添加关闭按钮
+                button_frame = ttk.Frame(main_frame)
+                button_frame.pack(fill=tk.X, pady=(10, 0))
+                ttk.Button(button_frame, text="关闭", command=summary_window.destroy).pack(side=tk.RIGHT)
+                
+                # 设置焦点
+                summary_window.focus_set()
         
         # 绑定双击事件
         tree.bind("<Double-1>", on_double_click)
@@ -1618,18 +1646,24 @@ class MediaGUIManager:
         def summarize_selected():
             selected_items = tree.selection()
             if not selected_items:
-                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
+
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
-                self.update_text_content(item_tags[0])
+                video_detail = self.get_video_detail(item_tags[0])
+                if not video_detail:
+                    continue
+                summary = video_detail.get('summary', '')
+                if summary and summary.strip():
+                    continue
+                self.update_text_content(video_detail)
+
             messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=dialog)
 
 
         def download_selected():
             selected_items = tree.selection()
             if not selected_items:
-                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
             # 获取选中视频的信息
             selected_videos = []
@@ -1640,7 +1674,6 @@ class MediaGUIManager:
                     selected_videos.append(video_detail)
             
             if not selected_videos:
-                messagebox.showwarning("提示", "无法获取视频信息", parent=dialog)
                 return
             
             # 确认下载
@@ -1716,7 +1749,7 @@ class MediaGUIManager:
 
                 transcribed_file = self.match_video_file(video_detail,'transcribed_file', ['.srt','.zh.srt','.en.srt','.json','.zh.json','.en.json'])
                 if transcribed_file:
-                    self.update_text_content(None, video_detail)
+                    self.update_text_content(video_detail)
                     videos_already_transcribed.append(video_detail)
                 else:
                     videos_to_transcribe.append(video_detail)
@@ -1768,7 +1801,7 @@ class MediaGUIManager:
                     downloaded_file = self.downloader.download_captions( video_detail, target_lang )
                     if downloaded_file:
                         print(f"  ✅ 转录成功")
-                        self.update_text_content(None, video_detail, downloaded_file)
+                        self.update_text_content(video_detail, downloaded_file)
                         success_count += 1
                     else:
                         print(f"  ❌ 转录失败：无法下载字幕")
