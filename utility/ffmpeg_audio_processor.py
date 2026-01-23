@@ -10,12 +10,37 @@ from utility.file_util import safe_copy_overwrite
 class FfmpegAudioProcessor:
     # Class-level cache for duration values (shared across all instances)
     _duration_cache = {}
+    # Class-level cache for CUDA availability
+    _cuda_available = None
 
     def __init__(self, pid):
         self.pid = pid
         self.ffmpeg_path = ffmpeg_path
         self.ffprobe_path = ffprobe_path
         self.effect_path = config.get_effect_path()
+
+    @classmethod
+    def _check_cuda_availability(cls):
+        """检查 CUDA 硬件加速是否可用"""
+        if cls._cuda_available is not None:
+            return cls._cuda_available
+
+        try:
+            cmd = [ffmpeg_path, "-hwaccels"]
+            result = subprocess.run(
+                cmd, 
+                check=True, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                errors='ignore'
+            )
+            cls._cuda_available = "cuda" in result.stdout
+            return cls._cuda_available
+        except Exception as e:
+            print(f"⚠️  无法检查 CUDA 可用性: {e}")
+            cls._cuda_available = False
+            return cls._cuda_available
 
 
     def make_silence(self, duration):
@@ -73,8 +98,41 @@ class FfmpegAudioProcessor:
             return None
 
 
-    def extract_audio_from_video(self, video_path):
-        output_audio_path = config.get_temp_file(self.pid, "wav")
+    def to_mp3(self, input_audio_path):
+        output_audio_path = config.get_temp_file(self.pid, "mp3")
+        try:
+            cmd = [self.ffmpeg_path, "-y"]
+            
+            # 如果 CUDA 可用，添加硬件加速参数（用于加速输入解码）
+            if self._check_cuda_availability():
+                cmd.extend(["-hwaccel", "cuda"])
+                print("🚀 使用 CUDA 硬件加速进行 MP3 转换")
+            
+            cmd.extend([
+                "-i", input_audio_path,
+                "-c:a", "libmp3lame",  # 使用 MP3 编码器
+                "-b:a", "192k",  # 设置音频比特率为 192kbps（可选，可根据需要调整）
+                "-ar", "44100",  # 采样率 44.1kHz
+                "-ac", "2",  # 立体声
+                output_audio_path
+            ])
+            
+            subprocess.run(
+                cmd, 
+                check=True, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                errors='ignore'
+            )
+            return output_audio_path
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg Error converting to MP3: {e.stderr}")
+            return None
+
+
+    def extract_audio_from_video(self, video_path, output_format="wav"):
+        output_audio_path = config.get_temp_file(self.pid, output_format)
 
         # if the video has no audio channel, return None
         try:
@@ -97,16 +155,29 @@ class FfmpegAudioProcessor:
             return None
 
         try:
-            subprocess.run([
-                self.ffmpeg_path, "-y",
-                "-i", video_path,
-                "-vn",
-                "-c:a", "pcm_s16le",    
-                "-ar", "44100",
-                "-ac", "2",
-                output_audio_path
-            ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            if output_format == "mp3":
+                subprocess.run([
+                    self.ffmpeg_path, "-y",
+                    "-i", video_path,
+                    "-vn",
+                    "-c:a", "libmp3lame",
+                    "-b:a", "192k",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    output_audio_path
+                ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            else: # wav
+                subprocess.run([
+                    self.ffmpeg_path, "-y",
+                    "-i", video_path,
+                    "-vn",
+                    "-c:a", "pcm_s16le",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    output_audio_path
+                ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             return output_audio_path
+            
         except subprocess.CalledProcessError as e:
             print(f"FFmpeg Error taking audio from video: {e.stderr}")
             return None

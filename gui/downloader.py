@@ -14,12 +14,14 @@ import config_prompt
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
-
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+
+from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.llm_api import LLMApi, OLLAMA
 from utility.audio_transcriber import AudioTranscriber
-from utility.file_util import write_json
+from utility.file_util import write_json, safe_copy_overwrite, safe_remove
+from gui.choice_dialog import askchoice
         
 # 导入所需模块
 import tkinter as tk
@@ -40,6 +42,7 @@ class MediaDownloader:
         self.pid = pid
         self.project_path = project_path
         self.youtube_dir = f"{self.project_path}/Youtbue_download"
+        self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         
         # Cookies 文件路径（优先检查下载文件夹，然后检查项目路径）
         self.cookies_file = self._find_cookies_file()
@@ -328,56 +331,12 @@ class MediaDownloader:
         return opts
 
 
-    def has_subtitles(self, video_url):
-        """检查视频是否存在字幕语言"""
-        try:
-            ydl_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                subtitles = info.get('subtitles', {})
-                auto_captions = info.get('automatic_captions', {})
-
-                # 检查是否有目标语言字幕
-                if len(subtitles) > 0:
-                    return list(subtitles.keys())[0]
-                elif len(auto_captions) > 0:
-                    return list(auto_captions.keys())[0]
-                return None
-        except Exception as e:
-            print(f"❌ 检查字幕失败: {e}")
-            return None
-    
-
-    def get_available_subtitles(self, video_url):
-        """获取视频所有可用的字幕语言列表"""
-        try:
-            ydl_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                subtitles = info.get('subtitles', {})
-                auto_captions = info.get('automatic_captions', {})
-                
-                result = {
-                    'manual_subtitles': list(subtitles.keys()),
-                    'auto_captions': list(auto_captions.keys()),
-                    'all_languages': list(set(list(subtitles.keys()) + list(auto_captions.keys())))
-                }
-                
-                print(f"📝 可用字幕语言: 手动={len(result['manual_subtitles'])}, 自动={len(result['auto_captions'])}")
-                return result
-        except Exception as e:
-            print(f"❌ 获取字幕语言列表失败: {e}")
-            return {'manual_subtitles': [], 'auto_captions': [], 'all_languages': []}
-
-
-    def find_video_caption(self, video_detail):
+    def find_video_basic(self, video_detail):
         check_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
         with yt_dlp.YoutubeDL(check_opts) as ydl:
             info = ydl.extract_info(video_detail.get('url', ''), download=False)
-            subtitles = info.get('subtitles', {})
-            auto_captions = info.get('automatic_captions', {})
-
-        return subtitles, auto_captions
+            return info
+        return None
 
 
     def download_captions(self, video_detail, target_lang):
@@ -386,12 +345,6 @@ class MediaDownloader:
 
         video_url = video_detail.get('url', '')
         if not video_url:
-            print(f"❌ 视频URL不存在")
-            return None
-
-        video_path = video_detail.get('video_path', '')
-        if not video_path:
-            print(f"❌ 视频文件不存在")
             return None
 
         download_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
@@ -436,17 +389,128 @@ class MediaDownloader:
         if os.path.exists(src_path):
             return src_path
 
-        script_json = self.transcriber.transcribe_with_whisper(video_path, target_lang, 3, 15, re_org=False)
+        audio_path = video_detail.get('audio_path', '')
+        if not audio_path:
+            video_path = video_detail.get('video_path', '')
+            if video_path:
+                audio_path = download_prefix + ".mp3"
+                safe_copy_overwrite(self.ffmpeg_audio_processor.extract_audio_from_video(video_path, "mp3"), audio_path)
+                video_detail['audio_path'] = audio_path
+            else:
+                audio_path = self.download_audio_only(video_detail)
+
+            if not audio_path:
+                print(f"❌ 音频文件不存在")
+                return None
+
+        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, 3, 15, re_org=False)
         write_json(src_path, script_json)  
         return src_path
 
 
-    def download_video_highest_resolution(self, video_url, video_prefix, sleep_interval=2):
-        # check if  f"{self.project_path}/Youtbue_download"/{video_prefix}.mp4 exists
-        if os.path.exists(f"{self.project_path}/Youtbue_download/{video_prefix}.mp4"):
-            return f"{self.project_path}/Youtbue_download/{video_prefix}.mp4"
+    def download_audio_only(self, video_detail, sleep_interval=2):
+        video_url = video_detail.get('url', '')
+        if not video_url:
+            return None
 
-        outtmpl = os.path.join(f"{self.project_path}/Youtbue_download", f'{video_prefix}.%(ext)s')
+        video_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
+
+        video_path = video_prefix + ".mp4"
+        if os.path.exists(video_path):
+            audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(video_path, "mp3")
+            safe_copy_overwrite(audio_path, video_prefix + ".mp3")
+            video_detail['audio_path'] = audio_path
+            return audio_path
+
+        audio_extensions = ['mp3', 'm4a', 'webm', 'opus', 'wav']
+        for ext in audio_extensions:
+            audio_path = video_prefix + "." + ext
+            if os.path.exists(audio_path):
+                if not audio_path.endswith('.mp3'):
+                    a = self.ffmpeg_audio_processor.to_mp3(audio_path)
+                    safe_remove(audio_path)
+                    audio_path = video_prefix + ".mp3"
+                    safe_copy_overwrite(a, audio_path)
+                video_detail['audio_path'] = audio_path
+                return audio_path
+
+        outtmpl = video_prefix + ".%(ext)s"
+        format_string = 'bestaudio'
+        # 使用基础选项，包含 cookies 支持
+        ydl_opts_kwargs = {
+            'format': format_string,
+            'outtmpl': outtmpl,
+            'quiet': False,
+            'progress_hooks': [self._progress_hook],
+            'skip_download': False,  # 需要下载
+            'ignoreerrors': False,  # 不忽略错误,让调用者处理
+        }
+        if sleep_interval is not None:
+            ydl_opts_kwargs['sleep_interval'] = sleep_interval
+        
+        ydl_opts = self._get_ydl_opts_base(**ydl_opts_kwargs)
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+                
+                # 检查各种可能的音频扩展名
+                for ext in audio_extensions:
+                    expected_path = os.path.abspath(f"{video_prefix}.{ext}")
+                    if os.path.exists(expected_path):
+                        print(f"✅ 找到下载的音频文件: {expected_path}")
+                        if not expected_path.endswith('.mp3'):
+                            a = self.ffmpeg_audio_processor.to_mp3(expected_path)
+                            safe_remove(expected_path)
+                            expected_path = video_prefix + ".mp3"
+                            safe_copy_overwrite(a, expected_path)
+                        video_detail['audio_path'] = expected_path
+                        return expected_path
+                
+                # 如果找不到，尝试从 info 中获取实际文件名
+                if 'requested_downloads' in info and len(info['requested_downloads']) > 0:
+                    actual_path = info['requested_downloads'][0].get('filepath')
+                    if actual_path and os.path.exists(actual_path):
+                        expected_path = os.path.abspath(actual_path)
+                        if not expected_path.endswith('.mp3'):
+                            a = self.ffmpeg_audio_processor.to_mp3(expected_path)
+                            safe_remove(expected_path)
+                            expected_path = video_prefix + ".mp3"
+                            safe_copy_overwrite(a, expected_path)
+                        video_detail['audio_path'] = expected_path
+                        return expected_path
+                
+                return None
+        except Exception as e:
+            error_msg = str(e)
+            # 检查是否是 cookies 无效的错误
+            if self._check_cookie_invalid(error_msg):
+                print("❌ 检测到 cookies 可能已失效")
+                self.cookie_valid = False
+
+            return None
+
+
+    def download_video_highest_resolution(self, video_detail, sleep_interval=2):
+        video_url = video_detail.get('url', '')
+        if not video_url:
+            return None
+        video_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
+
+        target_video_path = video_prefix + ".mp4"
+        target_audio_path = video_prefix + ".mp3"
+        if os.path.exists(target_video_path):
+            if video_detail.get('video_path', '') == target_video_path:
+                return video_detail['video_path']
+            video_detail['video_path'] = video_prefix + ".mp4"
+            audio_path = video_detail.get('audio_path', '')
+            if not audio_path or audio_path != target_audio_path:
+                a = self.ffmpeg_audio_processor.extract_audio_from_video(target_video_path, "mp3")
+                safe_copy_overwrite(a, target_audio_path)
+                video_detail['audio_path'] = target_audio_path
+            return video_detail['video_path']
+
+        outtmpl = video_prefix + ".%(ext)s"
         # 优先级: MP4 高质量 -> 任何高质量 -> 最佳可用
         format_string = (
             #'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/'  # 1. MP4 1080p + M4A
@@ -476,61 +540,25 @@ class MediaDownloader:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
-                
-                if video_prefix:
-                    expected_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{video_prefix}.mp4")
-                else:
-                    expected_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{info['title']}.mp4")
-                
                 # 验证文件是否存在
-                if not os.path.exists(expected_path):
+                if not os.path.exists(target_video_path):
                     # 尝试查找其他扩展名
-                    base_path = expected_path.rsplit('.', 1)[0]
+                    base_path = target_video_path.rsplit('.', 1)[0]
                     for ext in ['webm', 'mkv', 'mp4']:
                         alt_path = f"{base_path}.{ext}"
                         if os.path.exists(alt_path):
                             print(f"✅ 找到下载文件: {alt_path}")
-                            return alt_path
-                    raise Exception(f"下载的文件不存在: {expected_path}")
+                            target_video_path = alt_path
+                            break
                 
-                return expected_path
+                safe_copy_overwrite(self.ffmpeg_audio_processor.extract_audio_from_video(target_video_path, "mp3"), target_audio_path)
+                video_detail['audio_path'] = target_audio_path
+                video_detail['video_path'] = target_video_path
+
+                return target_video_path
+
         except Exception as e:
-            error_msg = str(e)
-            
-            # 检查是否是 cookies 无效的错误
-            if self._check_cookie_invalid(error_msg):
-                print("❌ 检测到 cookies 可能已失效")
-                self.cookie_valid = False
-            
-            if "Requested format is not available" in error_msg or "HTTP Error 403" in error_msg:
-                print(f"⚠️ 格式不可用,尝试使用最基础的格式...")
-                # 最后的备用方案: 只下载最佳可用格式
-                ydl_opts = self._get_ydl_opts_base(
-                    format='best',
-                    outtmpl=outtmpl,
-                    quiet=False,
-                    progress_hooks=[self._progress_hook],
-                    skip_download=False,
-                )
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(video_url, download=True)
-                        
-                        if video_prefix:
-                            expected_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{video_prefix}.mp4")
-                        else:
-                            expected_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{info['title']}.mp4")
-                        
-                        return expected_path
-                except Exception as retry_error:
-                    retry_error_msg = str(retry_error)
-                    if self._check_cookie_invalid(retry_error_msg):
-                        print("❌ 备用方案也失败，cookies 可能已失效")
-                        self.cookie_valid = False
-                    print(f"❌ 备用方案也失败: {retry_error}")
-                    raise
-            else:
-                raise
+            return None
 
 
     def get_playlist_info(self, playlist_url):
@@ -569,50 +597,6 @@ class MediaDownloader:
             except Exception as e:
                 print(f"❌ 获取播放列表信息失败: {str(e)}")
                 return None
-
-
-    def download_playlist_highest_resolution(self, playlist_url, max_videos=None):
-        """下载播放列表中的所有视频，最高分辨率"""
-        ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'outtmpl': os.path.join(f"{self.youtube_dir}", '%(playlist_index)s-%(title)s.%(ext)s'),
-            'merge_output_format': 'mp4',
-            'quiet': False,
-            'progress_hooks': [self._progress_hook],
-            'ignoreerrors': True,  # 忽略单个视频的错误，继续下载其他视频
-        }
-        
-        # 如果设置了最大视频数量限制
-        if max_videos:
-            ydl_opts['playlist_items'] = f'1-{max_videos}'
-        
-        downloaded_files = []
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(playlist_url, download=True)
-                
-                # 收集下载的文件信息
-                if 'entries' in info:
-                    for entry in info['entries']:
-                        if entry and 'title' in entry:
-                            expected_filename = f"{entry.get('playlist_index', 'unknown')}-{entry['title']}.mp4"
-                            expected_path = os.path.join(f"{self.project_path}/Youtbue_download", expected_filename)
-                            if os.path.exists(expected_path):
-                                downloaded_files.append({
-                                    'title': entry['title'],
-                                    'url': entry.get('webpage_url', ''),
-                                    'file_path': expected_path,
-                                    'duration': entry.get('duration', 0),
-                                    'view_count': entry.get('view_count', 0)
-                                })
-                
-                print(f"✅ 播放列表下载完成，共下载 {len(downloaded_files)} 个视频")
-                return downloaded_files
-                
-            except Exception as e:
-                print(f"❌ 播放列表下载失败: {str(e)}")
-                return downloaded_files
 
 
     def get_video_detail(self, video_url, channel_name='Unknown'):
@@ -685,7 +669,7 @@ class MediaDownloader:
                 return []
 
         
-            video_list_json_path = os.path.join(self.youtube_dir, f"_{channel_name}_hotvideos.json")
+            video_list_json_path = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
             if os.path.exists(video_list_json_path) and max_videos > 0:
                 return json.load(open(video_list_json_path, 'r', encoding='utf-8'))
 
@@ -966,14 +950,14 @@ class MediaGUIManager:
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, project_path)
 
-        self.channel_list_json = f"{self.youtube_dir}/_hotvideos.json"
+        self.channel_list_json = ""
         self.channel_videos = []
         self.channel_name = ""
         
 
     def manage_hot_videos(self):
         # 查找所有热门视频JSON文件
-        pattern = os.path.join(self.youtube_dir, "*_hotvideos.json")
+        pattern = f"{self.youtube_dir}/*_hotvideos.json"
         json_files = glob.glob(pattern)
         
         if not json_files:
@@ -1069,13 +1053,18 @@ class MediaGUIManager:
                 messagebox.showwarning("提示", "视频列表为空")
                 return
 
-            self.channel_name = channel['name']            
+            self.channel_name = channel['name']   
+            self.check_channel_videos()
             # 显示该频道的视频管理对话框
             self._show_channel_videos_dialog()
         
         ttk.Button(bottom_frame, text="确定", command=on_confirm).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="取消", command=channel_dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
+
+    def check_channel_videos(self):
+        for video in self.channel_videos:
+            self.check_video_status(video)
 
     def fetch_text_content(self, srt_file):
         if srt_file.endswith('.json'):
@@ -1134,39 +1123,49 @@ class MediaGUIManager:
         """检查单个视频的下载、转录和摘要状态"""
         status_parts = []
         video_file = None
+        audio_file = None
         
         # 使用可重用的方法生成文件名前缀（用于匹配，使用50字符）
         filename_prefix = self.downloader.generate_video_prefix( video_detail )
         
         # 检查是否已下载 - 只扫描 .mp4 文件
-        if os.path.exists(self.youtube_dir):
-            for filename in os.listdir(self.youtube_dir):
-                # 只检查 .mp4 文件
-                if not filename.lower().endswith('.mp4'):
-                    continue
-                if filename.startswith(filename_prefix):
-                    video_file = os.path.join(self.youtube_dir, filename)
-                    video_detail['video_path'] = video_file
-                    break
+        for filename in os.listdir(self.youtube_dir):
+            # 只检查 .mp4 文件
+            if not filename_prefix in filename:
+                continue
+            if filename.lower().endswith('.mp4'):
+                video_file = os.path.join(self.youtube_dir, filename)
+                video_detail['video_path'] = video_file
+            elif filename.lower().endswith('.mp3'):
+                audio_file = os.path.join(self.youtube_dir, filename)
+                video_detail['audio_path'] = audio_file
+            elif filename.lower().endswith('.wav'):
+                audio_file = os.path.join(self.youtube_dir, filename)
+                a = self.downloader.ffmpeg_audio_processor.to_mp3(audio_file)
+                safe_remove(audio_file)
+                audio_file = f"{self.youtube_dir}/__{filename_prefix}.mp3"
+                safe_copy_overwrite(a, audio_file)
+                video_detail['audio_path'] = audio_file
         
-        if video_file:
+        if video_file and not audio_file:
+            a = self.downloader.ffmpeg_audio_processor.extract_audio_from_video(video_file, "mp3")
+            audio_file = f"{self.youtube_dir}/__{filename_prefix}.mp3"
+            safe_copy_overwrite(a, audio_file)
+            video_detail['audio_path'] = audio_file
+
+        if video_file or audio_file:
             status_parts.append("✅ 已下载")
         else:
             status_parts.append("⬜ 未下载")
         
         # 检查是否已转录 - 检查 .srt 文件（转录生成的字幕文件）
-        if video_file:
-            # 查找所有以 __{filename_prefix} 开头且以 .srt 结尾的文件
-            has_transcript = False
-            prefix = f"__{filename_prefix}"
-            for filename in os.listdir(self.youtube_dir):
-                if filename.startswith(prefix) and (filename.endswith('.srt') or filename.endswith('.json')):
-                    has_transcript = True
-                    break
-            if has_transcript:
-                status_parts.append("✅ 已转录")
-            else:
-                status_parts.append("⬜ 未转录")
+        has_transcript = False
+        for filename in os.listdir(self.youtube_dir):
+            if filename_prefix in filename and (filename.endswith('.srt') or filename.endswith('.json')):
+                has_transcript = True
+                break
+        if has_transcript:
+            status_parts.append("✅ 已转录")
         else:
             status_parts.append("⬜ 未转录")
         
@@ -1177,7 +1176,7 @@ class MediaGUIManager:
         else:
             status_parts.append("⬜ 未摘要")
         
-        return " ".join(status_parts), video_file
+        return " ".join(status_parts), video_file, audio_file
 
 
     def get_video_detail(self, video_url):
@@ -1189,13 +1188,14 @@ class MediaGUIManager:
         return video_detail
 
 
-    def match_video_file(self, video_detail, field, pre, postfixs):
-        file = video_detail.get(field, '')
-        if not file:
-            prefix = self.downloader.generate_video_prefix(video_detail)
+    def match_video_file(self, video_detail, field, postfixs):
+        prefix = self.downloader.generate_video_prefix(video_detail)
+        for file in os.listdir(self.youtube_dir):
+            if not prefix in file:
+                continue
             for postfix in postfixs:
-                if os.path.exists(os.path.join(self.youtube_dir, f"{pre}{prefix}{postfix}")):
-                    file = os.path.join(self.youtube_dir, f"{pre}{prefix}{postfix}")
+                if file.endswith(postfix):
+                    file = os.path.join(self.youtube_dir, file)
                     video_detail[field] = file
                     return video_detail
         return None
@@ -1332,8 +1332,8 @@ class MediaGUIManager:
             matched_count = 0
             for item in tree.get_children():
                 item_tags = tree.item(item, "tags")
-                if item_tags and len(item_tags) > 5:
-                    video_title = item_tags[5] if len(item_tags) > 5 else ''
+                if item_tags:
+                    video_title = item_tags[1]
                     if search_text in video_title.lower():
                         tree.selection_add(item)
                         matched_count += 1
@@ -1434,7 +1434,7 @@ class MediaGUIManager:
                     upload_date_str = "N/A"
                 
                 # 检查视频状态
-                status_str, video_file = self.check_video_status(video)
+                status_str, video_file, audio_file = self.check_video_status(video)
                 
                 # 统计
                 if "✅ 已下载" in status_str:
@@ -1452,9 +1452,15 @@ class MediaGUIManager:
                                upload_date_str,
                                status_str
                            ),
-                           tags=(video.get('url', ''), video_file or '', str(view_count), 
-                                 video.get('upload_date', ''), str(duration_sec), 
-                                 video.get('title', 'Unknown'), self.channel_name))
+                           tags=(   video.get('url', ''), 
+                                    video.get('title', 'Unknown'), 
+                                    video_file or '', 
+                                    audio_file or '', 
+                                    str(view_count), 
+                                    video.get('upload_date', ''), 
+                                    str(duration_sec), 
+                                    self.channel_name)
+                                )
             
             with open(self.channel_list_json, 'w', encoding='utf-8') as f:
                 json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
@@ -1497,7 +1503,7 @@ class MediaGUIManager:
             
             for item in selected_items:
                 item_tags = tree.item(item, "tags")
-                if not item_tags or len(item_tags) < 1:
+                if not item_tags:
                     continue
                 
                 video_url = item_tags[0]
@@ -1512,7 +1518,7 @@ class MediaGUIManager:
                             if filename_prefix in filename:
                                 file_path = os.path.join(self.youtube_dir, filename)
                                 # 收集SRT和TXT文件
-                                if filename.endswith('.srt') or filename.endswith('.json') or filename.endswith('.mp4'):
+                                if filename.endswith('.srt') or filename.endswith('.json') or filename.endswith('.mp4') or filename.endswith('.mp3') or filename.endswith('.wav'):
                                     files_to_delete.append(file_path)
             
             # 删除文件
@@ -1578,7 +1584,7 @@ class MediaGUIManager:
                 tree.selection_set(item)
             
             item_tags = tree.item(item, "tags")
-            if not item_tags or len(item_tags) < 2:
+            if not item_tags:
                 return
             
             # 异步调用 update_text_content（不阻塞UI）
@@ -1652,9 +1658,9 @@ class MediaGUIManager:
                     try:
                         print(f"[{idx}/{total}] 下载: {video_detail['title']}")
                         # 使用可重用的方法生成文件名前缀（下载时使用100字符）
-                        video_prefix = self.downloader.generate_video_prefix(video_detail)
-                        file_path = self.downloader.download_video_highest_resolution(video_detail['url'], video_prefix=video_prefix)
-                        video_detail['video_path'] = file_path
+                        #file_path = self.downloader.download_video_highest_resolution(video_detail)
+                        file_path = self.downloader.download_audio_only(video_detail)
+                        video_detail['audio_path'] = file_path
                         
                         if file_path and os.path.exists(file_path):
                             file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
@@ -1702,12 +1708,13 @@ class MediaGUIManager:
                 if not video_detail:
                     continue
 
-                video_file = self.match_video_file(video_detail,'video_path','',['.mp4'])
-                if not video_file:
+                video_file = self.match_video_file(video_detail,'video_path',['.mp4'])
+                audio_file = self.match_video_file(video_detail,'audio_path',['.mp3'])
+                if not video_file and not audio_file:
                     videos_not_downloaded.append(video_detail)
                     continue
 
-                transcribed_file = self.match_video_file(video_detail,'transcribed_file' ,'__' ,['.srt','.zh.srt','.en.srt','.json','.zh.json','.en.json'])
+                transcribed_file = self.match_video_file(video_detail,'transcribed_file', ['.srt','.zh.srt','.en.srt','.json','.zh.json','.en.json'])
                 if transcribed_file:
                     self.update_text_content(None, video_detail)
                     videos_already_transcribed.append(video_detail)
@@ -1726,11 +1733,29 @@ class MediaGUIManager:
             # 开始转录（不关闭对话框，转录完成后刷新列表）
             self.downloader._check_and_update_cookies()
 
-            subtitles, auto_captions = self.downloader.find_video_caption(videos_to_transcribe[0])
-            all_languages = (subtitles or []) + (auto_captions or [])
+            basic_info = self.downloader.find_video_basic(videos_to_transcribe[0])
+            if basic_info:
+                # subtitles 和 auto_captions 的格式示例：
+                # subtitles = {
+                #     'zh': [{'ext': 'vtt', 'url': 'https://...'}, {'ext': 'srt', 'url': 'https://...'}],
+                #     'en': [{'ext': 'vtt', 'url': 'https://...'}],
+                #     'zh-Hans': [{'ext': 'vtt', 'url': 'https://...'}]
+                # }
+                # auto_captions = {
+                #     'zh': [{'ext': 'vtt', 'url': 'https://...'}],
+                #     'en': [{'ext': 'vtt', 'url': 'https://...'}, {'ext': 'srt', 'url': 'https://...'}]
+                # }
+                # 键是语言代码（如 'zh', 'en', 'zh-Hans'），值是包含字幕格式信息的列表
+                subtitles = basic_info.get('subtitles', {})
+                auto_captions = basic_info.get('automatic_captions', {})
+                # 将字典的键（语言代码）转换为列表
+                all_languages = list(subtitles.keys() if subtitles else []) + list(auto_captions.keys() if auto_captions else [])
+                # 去重并保持顺序
+                all_languages = list(dict.fromkeys(all_languages))
             if not all_languages:
                 all_languages = ["zh", "en"]
-            target_lang = simpledialog.askstring("选择语言", "请输入语言代码（如: zh, en）:", parent=dialog)
+
+            target_lang = askchoice("选择语言", all_languages, parent=dialog)
             if not target_lang:
                 return
 
@@ -2018,7 +2043,7 @@ class MediaGUIManager:
 
             channel_name = self.get_channel_name(video_data)
         
-            self.channel_list_json = os.path.join(self.youtube_dir, f"_{channel_name}_hotvideos.json")
+            self.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
             if os.path.exists(self.channel_list_json):
                 self.channel_videos = json.load(open(self.channel_list_json, 'r', encoding='utf-8'))
 
@@ -2026,8 +2051,7 @@ class MediaGUIManager:
                 self.root.after(0, lambda: messagebox.showerror("错误", "获取视频列表失败"))
                 return
 
-            video_prefix = self.downloader.generate_video_prefix(video_data)
-            file_path = self.downloader.download_video_highest_resolution(video_url, video_prefix=video_prefix)
+            file_path = self.downloader.download_video_highest_resolution(video_data)
 
             if file_path and os.path.exists(file_path):
                 file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
