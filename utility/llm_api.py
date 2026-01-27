@@ -11,6 +11,8 @@ import tkinter.ttk as ttk
 
 
 OLLAMA = "gemma3:12b-it-qat"
+OLLAMA2 = "gemma3:12b-it-qat 2"
+
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"
 GEMINI_2_0_FLASH = "gemini-2.0-flash"  # 免费
@@ -26,6 +28,9 @@ MODELS = {
     },
     OLLAMA : {
         "url": "http://10.0.0.216:11434/v1"
+    },
+    OLLAMA2 : {
+        "url": "http://10.0.0.222:11434/v1"
     },
     MANUAL: {
         "url": "http://10.0.0.238:11434/v1"
@@ -51,6 +56,11 @@ class LLMApi:
         self.ollama_client = OpenAI(
             api_key="ollama",
             base_url =  MODELS[OLLAMA]["url"],
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
+        )
+        self.ollama_client_2 = OpenAI(
+            api_key="ollama",
+            base_url =  MODELS[OLLAMA2]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.manal_client = OpenAI(
@@ -321,8 +331,9 @@ class LLMApi:
 
             else: # model == OLLAMA or model == "gemma3:27b-it-qat":
 
+                llm_model = model.split(' ')[0]
                 request_params = {
-                    "model": model,  # 使用确定的模型名称
+                    "model": llm_model,  # 使用确定的模型名称
                     "messages": messages,
                     "max_tokens": 256000,
                     "stream": False
@@ -332,7 +343,10 @@ class LLMApi:
                     json.dump(request_params, f, ensure_ascii=False, indent=2)
 
                 print(f"🔄 使用 OLLAMA 模型 ({model}) 生成文本...")
-                response = self.ollama_client.chat.completions.create(**request_params)
+                if model == OLLAMA2:
+                    response = self.ollama_client_2.chat.completions.create(**request_params)
+                else:
+                    response = self.ollama_client.chat.completions.create(**request_params)
                 return self.parse_response(response)
 
         except Exception as e:

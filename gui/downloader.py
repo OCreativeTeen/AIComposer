@@ -1,14 +1,11 @@
 import os
-import time
 import yt_dlp
 import subprocess
 import shutil
 import json
 import re
 import threading
-import uuid
 import glob
-from datetime import datetime
 
 import config_prompt
 
@@ -18,7 +15,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.llm_api import LLMApi, OLLAMA
+from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
 from utility.file_util import write_json, safe_copy_overwrite, safe_remove
 from gui.choice_dialog import askchoice
@@ -27,13 +24,10 @@ from gui.choice_dialog import askchoice
 import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.messagebox as messagebox
-import tkinter.filedialog as filedialog
 import tkinter.scrolledtext as scrolledtext
 import tkinter.simpledialog as simpledialog
 
         
-
-
 
 class MediaDownloader:
 
@@ -43,29 +37,17 @@ class MediaDownloader:
         self.project_path = project_path
         self.youtube_dir = f"{self.project_path}/Youtbue_download"
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
-        
+
+        self.channel_list_json = ""
+        self.channel_videos = []
+        self.channel_name = ""
+
         # Cookies 文件路径（优先检查下载文件夹，然后检查项目路径）
-        self.cookies_file = self._find_cookies_file()
-        
-        # Cookies 有效性标志
-        self.cookie_valid = True
-        
-        # 不使用浏览器自动提取（由于 DPAPI 解密问题）
-        self.use_browser_cookies = False
-        self.browser = None
-        
-        # 检查 cookies 文件是否存在
-        if os.path.exists(self.cookies_file):
-            print(f"✅ 找到 cookies 文件: {self.cookies_file}")
-            # 验证文件不为空
-            if os.path.getsize(self.cookies_file) > 0:
-                print(f"📊 Cookies 文件大小: {os.path.getsize(self.cookies_file)} 字节")
-            else:
-                print(f"⚠️ Cookies 文件为空！")
-                self._print_cookies_help()
+        self.cookie_file = self._find_cookies_file()
+        if self.cookie_file and os.path.exists(self.cookie_file):
+            print(f"✅ 找到 cookies 文件: {self.cookie_file}")
         else:
-            print(f"⚠️ 未找到 cookies 文件: {self.cookies_file}")
-            self._print_cookies_help()
+            print(f"⚠️ 未找到 cookies 文件")
         
         # 检测 JavaScript 运行时
         self.js_runtime = self._detect_js_runtime()
@@ -73,79 +55,23 @@ class MediaDownloader:
 
 
     def _find_cookies_file(self):
-        """
-        查找 cookies 文件，按优先级检查以下位置：
-        1. Windows 下载文件夹（找到后移动到项目路径并删除原文件）
-        2. 项目路径
-        
-        Returns:
-            str: cookies 文件的完整路径
-        """
         cookies_filename = "www.youtube.com_cookies.txt"
+        download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+        download_cookies = os.path.join(download_folder, cookies_filename)
         
-        # 优先级 1: Windows 下载文件夹
-        try:
-            # 获取 Windows 下载文件夹路径
-            download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
-            download_cookies = os.path.join(download_folder, cookies_filename)
-            
-            if os.path.exists(download_cookies):
-                print(f"✅ 在下载文件夹找到 cookies 文件: {download_cookies}")
-                
-                # 移动到项目路径
-                project_cookies = os.path.join(self.project_path, cookies_filename)
-                try:
-                    # 如果项目路径已有文件，直接删除
-                    if os.path.exists(project_cookies):
-                        os.remove(project_cookies)
-                        print(f"🗑️ 已删除旧的 cookies 文件: {project_cookies}")
-                    
-                    # 移动文件到项目路径
-                    shutil.move(download_cookies, project_cookies)
-                    print(f"📦 已将 cookies 文件移动到项目路径: {project_cookies}")
-                    print(f"🗑️ 已从下载文件夹删除原文件")
-                    return project_cookies
-                except Exception as e:
-                    print(f"⚠️ 移动 cookies 文件时出错: {e}")
-                    # 如果移动失败，仍然使用下载文件夹的文件
-                    return download_cookies
-        except Exception as e:
-            print(f"⚠️ 检查下载文件夹时出错: {e}")
-        
-        # 优先级 2: 项目路径
-        project_cookies = os.path.join(self.project_path, cookies_filename)
-        if os.path.exists(project_cookies):
-            print(f"✅ 在项目路径找到 cookies 文件: {project_cookies}")
+        if os.path.exists(download_cookies):
+            print(f"✅ 在下载文件夹找到 cookies 文件: {download_cookies}")
+            # 移动到项目路径
+            project_cookies = os.path.join(self.project_path, cookies_filename)
+            if os.path.exists(project_cookies):
+                os.remove(project_cookies)
+                print(f"🗑️ 已删除旧的 cookies 文件: {project_cookies}")
+            # 移动文件到项目路径
+            shutil.move(download_cookies, project_cookies)
             return project_cookies
         
-        # 如果都不存在，返回项目路径（用于创建新文件）
-        print(f"📁 Cookies 文件位置（将在此处查找）: {project_cookies}")
-        return project_cookies
+        return None
 
-    def _check_cookie_invalid(self, error_msg):
-        """
-        检查错误信息是否表示 cookies 无效
-        
-        Args:
-            error_msg: 错误消息字符串
-            
-        Returns:
-            bool: 如果 cookies 无效返回 True
-        """
-        invalid_keywords = [
-            'no longer valid',
-            'invalid',
-            'Sign in to confirm',
-            'rate-limited',
-            'Video unavailable',
-            'This content isn\'t available'
-        ]
-        
-        error_lower = str(error_msg).lower()
-        for keyword in invalid_keywords:
-            if keyword.lower() in error_lower:
-                return True
-        return False
 
     def _check_and_update_cookies(self, wait_forever=True):
         """
@@ -178,8 +104,7 @@ class MediaDownloader:
                     # 移动新文件
                     shutil.move(download_cookies, project_cookies)
 
-                    self.cookies_file = project_cookies
-                    self.cookie_valid = True
+                    self.cookie_file = project_cookies
                     # 重置 cookies 日志标志，以便下次使用新 cookies 时打印信息
                     if hasattr(self, '_cookies_logged'):
                         delattr(self, '_cookies_logged')
@@ -191,14 +116,13 @@ class MediaDownloader:
                     print(f"⚠️ 更新 cookies 文件时出错: {e}")
                     return False
             
+            # 等待并检查
+            print(f"⏳  请将新的 cookies 文件保存到: {download_cookies}")
             # 如果未找到且不需要等待，返回 False
             if not wait_forever:
                 return False
-            
-            # 等待并检查
-            print("⏳ 等待下载文件夹中的新 cookies 文件...")
-            print(f"   请将新的 cookies 文件保存到: {download_cookies}")
-            time.sleep(5)  # 每 5 秒检查一次
+            # show a dialog to tell user to save the new cookies file to the download folder
+            messagebox.showinfo("提示", "请将新的 cookies 文件保存到下载文件夹")
 
 
     def _detect_js_runtime(self):
@@ -249,35 +173,6 @@ class MediaDownloader:
         print("   建议安装 Node.js: https://nodejs.org/")
         return (None, None)
 
-    def _print_cookies_help(self):
-        """打印如何获取 cookies 的帮助信息"""
-        print("\n" + "="*60)
-        print("💡 如何获取 YouTube Cookies：")
-        print("="*60)
-        print("\n方法 1：使用浏览器扩展（推荐）")
-        print("  1. 安装扩展：")
-        print("     Chrome/Edge: 搜索 'Get cookies.txt LOCALLY'")
-        print("     Firefox: 搜索 'cookies.txt'")
-        print("  2. 访问 youtube.com 并登录")
-        print("  3. 点击扩展图标，导出 cookies")
-        print("  4. 保存为: www.youtube.com_cookies.txt")
-        print("  5. 放入以下任一位置（按优先级）：")
-        download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
-        print(f"     - Windows 下载文件夹: {download_folder}")
-        print(f"     - 项目路径: {self.project_path}")
-        
-        print("\n方法 2：使用 yt-dlp 命令（需要先关闭浏览器）")
-        print("  PowerShell 命令：")
-        download_folder = os.path.join(os.path.expanduser("~"), "Downloads")
-        print(f'  cd "{download_folder}"  # 或 cd "{self.project_path}"')
-        print('  yt-dlp --cookies-from-browser chrome --cookies www.youtube.com_cookies.txt "https://www.youtube.com"')
-        
-        print("\n⚠️ 注意：")
-        print("  - Cookies 文件包含登录信息，请勿分享")
-        print("  - Cookies 会过期，需要定期更新")
-        print("  - 某些视频可能仍需要 cookies 才能访问")
-        print("="*60 + "\n")
-
 
     def _get_ydl_opts_base(self, **kwargs):
         """
@@ -293,11 +188,11 @@ class MediaDownloader:
         opts = {}
         
         # 只使用 cookies 文件（不从浏览器提取，避免 DPAPI 错误）
-        if os.path.exists(self.cookies_file) and os.path.getsize(self.cookies_file) > 0:
-            opts['cookiefile'] = self.cookies_file
+        if os.path.exists(self.cookie_file) and os.path.getsize(self.cookie_file) > 0:
+            opts['cookiefile'] = self.cookie_file
             # 只在第一次使用时打印，避免重复输出
             if not hasattr(self, '_cookies_logged'):
-                print(f"🍪 使用 cookies 文件: {self.cookies_file}")
+                print(f"🍪 使用 cookies 文件: {self.cookie_file}")
                 self._cookies_logged = True
         
         # 添加请求间隔延迟，避免被 YouTube 限流
@@ -332,11 +227,13 @@ class MediaDownloader:
 
 
     def find_video_basic(self, video_detail):
+        if not self.cookie_file:
+            return None
+
         check_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
         with yt_dlp.YoutubeDL(check_opts) as ydl:
             info = ydl.extract_info(video_detail.get('url', ''), download=False)
             return info
-        return None
 
 
     def download_captions(self, video_detail, target_lang):
@@ -365,23 +262,23 @@ class MediaDownloader:
         #file_path = f"{download_prefix}.{target_lang}.{format}"
         #if os.path.exists(file_path):
         #    return file_path
-
-        ydl_opts = self._get_ydl_opts_base(
-            skip_download=True,
-            writesubtitles=True,
-            writeautomaticsub=True,
-            subtitleslangs=[target_lang],
-            subtitlesformat="srt",
-            outtmpl=download_prefix,
-            quiet=True,
-            no_warnings=True,
-        )
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-        print(f"✅ 已下载字幕：语言 {target_lang}")
-        src_path = f"{download_prefix}.{target_lang}.srt"
-        if os.path.exists(src_path):
-            return src_path
+        if self.cookie_file:
+            ydl_opts = self._get_ydl_opts_base(
+                skip_download=True,
+                writesubtitles=True,
+                writeautomaticsub=True,
+                subtitleslangs=[target_lang],
+                subtitlesformat="srt",
+                outtmpl=download_prefix,
+                quiet=True,
+                no_warnings=True,
+            )
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+            print(f"✅ 已下载字幕：语言 {target_lang}")
+            src_path = f"{download_prefix}.{target_lang}.srt"
+            if os.path.exists(src_path):
+                return src_path
 
         # 如果下载失败，尝试转录
         print(f"❌ 下载字幕失败，尝试转录...")
@@ -482,12 +379,8 @@ class MediaDownloader:
                 
                 return None
         except Exception as e:
-            error_msg = str(e)
-            # 检查是否是 cookies 无效的错误
-            if self._check_cookie_invalid(error_msg):
-                print("❌ 检测到 cookies 可能已失效")
-                self.cookie_valid = False
-
+            print(f"❌ 下载音频失败: {str(e)}")
+            self.cookie_file = None
             return None
 
 
@@ -621,7 +514,6 @@ class MediaDownloader:
                 'thumbnail': video_detail.get('thumbnail', ''),
                 'description': video_detail.get('description', '')[:200] if video_detail.get('description') else ''
             }
-            
             return video_data
 
 
@@ -644,7 +536,23 @@ class MediaDownloader:
         return f"{view_count_str}_{date_str}_{safe_title}"
 
 
+    def is_video_new(self, video_data):
+        is_new_video = True
+        if self.channel_videos:
+            for existing_video in self.channel_videos:
+                existing_title = existing_video.get('title', '').lower()
+                existing_view_count = existing_video.get('view_count', 0)
+                existing_upload_date = existing_video.get('upload_date', '')
+                if existing_title == video_data.get('title', '').lower() and existing_view_count == video_data.get('view_count', 0) and existing_upload_date == video_data.get('upload_date', ''):
+                    is_new_video = False
+                    break
+
+        return is_new_video;
+
+
     def list_hot_videos(self, channel_url, max_videos=200, min_view_count=500):
+        self._check_and_update_cookies()
+
         try:
             # 使用基础选项，包含 cookies 支持
             ydl_opts = self._get_ydl_opts_base(
@@ -666,18 +574,12 @@ class MediaDownloader:
                 json.dump(info, f, ensure_ascii=False, indent=2)
         
             if not info or 'entries' not in info:
-                return []
+                return None
 
-        
-            video_list_json_path = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
-            if os.path.exists(video_list_json_path) and max_videos > 0:
-                return json.load(open(video_list_json_path, 'r', encoding='utf-8'))
-
-            # 记录循环开始时间，用于每10分钟检查一次 cookies
-            loop_start_time = time.time()
-            cookie_check_interval = 600  # 10分钟 = 600秒
-            
-            videos = []
+            self.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+            if os.path.exists(self.channel_list_json):
+                with open(self.channel_list_json, 'r', encoding='utf-8') as f:
+                    self.channel_videos = json.load(f)
 
             for count, entry in enumerate(info['entries']):
                 if count >= max_videos:
@@ -685,56 +587,30 @@ class MediaDownloader:
 
                 if entry:
                     video_url = entry.get('url', '') or entry.get('webpage_url', '') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
-                    
                     try:
                         video_data = self.get_video_detail(video_url, channel_name)
                         print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
-                        videos.append(video_data)
+
+                        is_new_video = self.is_video_new(video_data)
+                        if is_new_video:
+                            self.channel_videos.append(video_data)
                     except Exception as e:
                         error_msg = str(e)
                         print(f"⚠️ 跳过视频: {error_msg}")
-                        self.cookie_valid = False
-                    finally:
-                        # 检查是否已经过了10分钟，如果是则检查并更新 cookies
-                        current_time = time.time()
-                        elapsed_time = current_time - loop_start_time
-                        
-                        if elapsed_time >= cookie_check_interval:
-                            print(f"⏰ 已过去 {elapsed_time/60:.1f} 分钟，检查并更新 cookies...")
-                            if self._check_and_update_cookies(wait_forever=False):
-                                print("✅ 已更新 cookies，继续处理...")
-                            # 重置计时器
-                            loop_start_time = time.time()
-                        
-                        # 如果 cookies 无效，检查并等待新的 cookies 文件
-                        if not self.cookie_valid:
-                            print("⏳ Cookies 已失效，等待新的 cookies 文件...")
-                            # _check_and_update_cookies 会持续等待直到找到新的 cookies 文件
-                            if self._check_and_update_cookies(wait_forever=True):
-                                print("✅ 已更新 cookies，继续处理...")
-                        else:
-                            # YouTube 建议使用延迟来避免 rate limit
-                            print("⏳ 等待 2 秒以避免限流...")
-                            time.sleep(2)
+                        self.cookie_file = None
             
-            # 按观看次数排序
-            videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+            self.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+            self.channel_videos = [video for video in self.channel_videos if video.get('view_count', 0) >= min_view_count]
+            with open(self.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
 
-            # 过滤掉观看次数小于min_view_count的视频
-            videos = [video for video in videos if video.get('view_count', 0) >= min_view_count]
-
-            # 保存视频列表到JSON
-            with open(video_list_json_path, 'w', encoding='utf-8') as f:
-                json.dump(videos, f, ensure_ascii=False, indent=2)
-
-            print(f"✅ 成功获取 {len(videos)} 个视频")
-            return videos
+            return channel_name
             
         except Exception as e:
             print(f"❌ 获取视频列表失败: {str(e)}")
             import traceback
             traceback.print_exc()
-            return []
+            return None
 
 
     def _progress_hook(self, d):
@@ -926,6 +802,21 @@ class MediaDownloader:
         return response["id"]
 
 
+    def select_language(self, video_detail):
+        basic_info = self.find_video_basic(video_detail)
+        subtitles = basic_info.get('subtitles', {})
+        auto_captions = basic_info.get('automatic_captions', {})
+
+        target_lang = None
+
+        all_languages = list(subtitles.keys() if subtitles else []) + list(auto_captions.keys() if auto_captions else [])
+        if all_languages:
+            all_languages = list(dict.fromkeys(all_languages))
+            target_lang = askchoice("选择语言", all_languages)
+        if not target_lang:
+            target_lang = "zh"
+        return target_lang
+
 
 
 # YouTube GUI管理类
@@ -945,14 +836,10 @@ class MediaGUIManager:
         self.log_to_output = log_to_output_func
         self.download_output = download_output
         
-        self.llm_api = LLMApi(OLLAMA)
+        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA2)
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, project_path)
-
-        self.channel_list_json = ""
-        self.channel_videos = []
-        self.channel_name = ""
         
 
     def manage_hot_videos(self):
@@ -968,8 +855,8 @@ class MediaGUIManager:
         channel_data = []
         for json_file in json_files:
             filename = os.path.basename(json_file)
-            # 从文件名中提取频道名：_频道名_hotvideos.json -> 频道名
-            match = re.match(r'_(.+?)_hotvideos\.json', filename)
+            # 从文件名中提取频道名：频道名_hotvideos.json -> 频道名
+            match = re.match(r'(.+?)_hotvideos\.json', filename)
             if match:
                 channel_name = match.group(1)
                 # 读取文件获取视频数量
@@ -1043,28 +930,25 @@ class MediaGUIManager:
                 return
             
             channel = channel_data[selected[0]]
-            self.channel_list_json = channel['file']
+            self.downloader.channel_list_json = channel['file']
             channel_dialog.destroy()
             
             """显示频道视频管理对话框"""
-            with open(self.channel_list_json, 'r', encoding='utf-8') as f:
-                self.channel_videos = json.load(f)
-            if not self.channel_videos:
+            with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
+                self.downloader.channel_videos = json.load(f)
+            if not self.downloader.channel_videos:
                 messagebox.showwarning("提示", "视频列表为空")
                 return
 
-            self.channel_name = channel['name']   
-            self.check_channel_videos()
+            self.downloader.channel_name = channel['name']   
+            for video in self.downloader.channel_videos:
+                self.check_video_status(video)
             # 显示该频道的视频管理对话框
             self._show_channel_videos_dialog()
         
         ttk.Button(bottom_frame, text="确定", command=on_confirm).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="取消", command=channel_dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
-
-    def check_channel_videos(self):
-        for video in self.channel_videos:
-            self.check_video_status(video)
 
     def fetch_text_content(self, srt_file):
         if srt_file.endswith('.json'):
@@ -1162,6 +1046,7 @@ class MediaGUIManager:
         has_transcript = False
         for filename in os.listdir(self.youtube_dir):
             if filename_prefix in filename and (filename.endswith('.srt') or filename.endswith('.json')):
+                video_detail['transcribed_file'] = os.path.join(self.youtube_dir, filename)
                 has_transcript = True
                 break
         if has_transcript:
@@ -1181,7 +1066,7 @@ class MediaGUIManager:
 
     def get_video_detail(self, video_url):
         video_detail = None
-        for video in self.channel_videos:
+        for video in self.downloader.channel_videos:
             if video.get('url') == video_url:
                 video_detail = video
                 break
@@ -1201,7 +1086,7 @@ class MediaGUIManager:
         return None
 
 
-    def update_text_content(self, video_detail=None, transcribed_file=None):
+    def update_text_content(self, video_detail=None, transcribed_file=None, in_background=True):
         if not video_detail:
             return None
 
@@ -1213,7 +1098,7 @@ class MediaGUIManager:
                 return video_detail
 
         # 如果已有摘要，立即返回
-        if video_detail.get('summary', ''):
+        if video_detail.get('summary', '') and video_detail.get('topic_type', ''):
             return video_detail
 
         text_content = self.fetch_text_content(transcribed_file)
@@ -1222,24 +1107,30 @@ class MediaGUIManager:
         def generate_summary_background(url, text_content):
             """在后台线程中生成摘要"""
             try:
-                summary = self.llm_api.generate_text(
+                summary = self.llm_api.generate_json(
                     config_prompt.SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese'), 
-                    text_content
+                    text_content,
+                    expect_list=False
                 )
-                video_detail = self.get_video_detail(url)
-                video_detail['summary'] = summary
-                video_detail.pop('description', None)
-                # 保存更新后的摘要
-                with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
-                print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
+                if summary and summary.get('summary', '') and summary.get('topic_type', ''):
+                    video_detail = self.get_video_detail(url)
+                    video_detail['summary'] = summary.get('summary', '')
+                    video_detail['topic_type'] = summary.get('topic_type', '')
+                    video_detail.pop('description', None)
+                    # 保存更新后的摘要
+                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
             except Exception as e:
                 print(f"❌ 摘要生成失败: {str(e)}")
         
-        # 启动后台线程
-        thread = threading.Thread(target=generate_summary_background, args=(url, text_content))
-        thread.daemon = True
-        thread.start()
+
+        if in_background:
+            thread = threading.Thread(target=generate_summary_background, args=(url, text_content))
+            thread.daemon = True
+            thread.start()
+        else:
+            generate_summary_background(url, text_content)
 
         return video_detail
 
@@ -1261,7 +1152,7 @@ class MediaGUIManager:
     def _show_channel_videos_dialog(self):
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"热门视频管理 - {self.channel_name}")
+        dialog.title(f"热门视频管理 - {self.downloader.channel_name}")
         dialog.geometry("1500x650")
         dialog.transient(self.root)
         
@@ -1273,7 +1164,7 @@ class MediaGUIManager:
         info_frame = ttk.Frame(top_frame)
         info_frame.pack(fill=tk.X, pady=(0, 5))
         
-        info_text = f"频道: {self.channel_name} | 共 {len(self.channel_videos)} 个视频"
+        info_text = f"频道: {self.downloader.channel_name} | 共 {len(self.downloader.channel_videos)} 个视频"
         info_label = ttk.Label(info_frame, text=info_text, font=("Arial", 12, "bold"))
         info_label.pack(side=tk.LEFT)
         
@@ -1394,7 +1285,7 @@ class MediaGUIManager:
             
             # 过滤视频：只显示观看次数大于等于最小值的视频
             filtered_videos = []
-            for video in self.channel_videos:
+            for video in self.downloader.channel_videos:
                 view_count = video.get('view_count', 0)
                 if view_count >= min_view_count:
                     filtered_videos.append(video)
@@ -1459,14 +1350,14 @@ class MediaGUIManager:
                                     str(view_count), 
                                     video.get('upload_date', ''), 
                                     str(duration_sec), 
-                                    self.channel_name)
+                                    self.downloader.channel_name)
                                 )
             
-            with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
+            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
 
             # 更新顶部信息标签
-            info_text = f"频道: {self.channel_name} | 共 {len(filtered_videos)}/{len(self.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count}"
+            info_text = f"频道: {self.downloader.channel_name} | 共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count}"
             info_label.config(text=info_text)
         
 
@@ -1533,15 +1424,15 @@ class MediaGUIManager:
             
             # 从videos列表中移除
             for video_detail in videos_to_remove:
-                if video_detail in self.channel_videos:
-                    self.channel_videos.remove(video_detail)
+                if video_detail in self.downloader.channel_videos:
+                    self.downloader.channel_videos.remove(video_detail)
                     deleted_count += 1
             
             # 保存回JSON文件
             try:
-                with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
-                print(f"✅ 已保存更新后的视频列表到: {self.channel_list_json}")
+                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
             except Exception as e:
                 print(f"❌ 保存视频列表失败: {str(e)}")
                 messagebox.showerror("错误", f"保存视频列表失败: {str(e)}", parent=dialog)
@@ -1583,47 +1474,57 @@ class MediaGUIManager:
             
             item_tags = tree.item(item, "tags")
             video_detail = self.get_video_detail(item_tags[0])
+            if not video_detail:
+                return
             # 获取摘要内容
             summary = video_detail.get('summary', '')
-            if not summary or not summary.strip():
-                return
+            topic_type = video_detail.get('topic_type', '')
+            if not summary or not summary.strip() or not topic_type or not topic_type.strip():
+                self.update_text_content(video_detail, in_background=False)
+                topic_type = video_detail.get('topic_type', '')
+                summary = video_detail.get('summary', '')
 
-            if video_detail:
-                # show the summary in a new window
-                summary_window = tk.Toplevel(dialog)
-                summary_window.title(f"{video_detail['title']} - 摘要")
-                summary_window.geometry("800x600")
-                summary_window.resizable(True, True)
-                summary_window.transient(dialog)
-                # 创建主框架
-                main_frame = ttk.Frame(summary_window, padding=10)
-                main_frame.pack(fill=tk.BOTH, expand=True)
-                # 创建标签
-                label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
-                label.pack(anchor=tk.W, pady=(0, 5))
-                # 创建可滚动的文本区域
-                text_widget = scrolledtext.ScrolledText(
-                    main_frame,
-                    wrap=tk.WORD,
-                    width=70,
-                    height=25,
-                    font=("Arial", 10),
-                    padx=10,
-                    pady=10
-                )
-                text_widget.pack(fill=tk.BOTH, expand=True)
-                
-                # 插入摘要内容
-                text_widget.insert(tk.END, summary)
-                text_widget.config(state=tk.DISABLED)  # 设置为只读
-                
-                # 添加关闭按钮
-                button_frame = ttk.Frame(main_frame)
-                button_frame.pack(fill=tk.X, pady=(10, 0))
-                ttk.Button(button_frame, text="关闭", command=summary_window.destroy).pack(side=tk.RIGHT)
-                
-                # 设置焦点
-                summary_window.focus_set()
+            # show the summary in a new window
+            summary_window = tk.Toplevel(dialog)
+            summary_window.title(f"{video_detail['title']} - 摘要")
+            summary_window.geometry("1000x800")
+            summary_window.resizable(True, True)
+            summary_window.transient(dialog)
+            # 创建主框架
+            main_frame = ttk.Frame(summary_window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            if topic_type:
+                topic_frame = ttk.Frame(main_frame)
+                topic_frame.pack(fill=tk.X, pady=(0, 10))
+                ttk.Label(topic_frame, text="主题类型：", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
+                ttk.Label(topic_frame, text=topic_type, font=("Arial", 10), foreground="blue").pack(side=tk.LEFT)
+            
+            # 创建标签
+            label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
+            label.pack(anchor=tk.W, pady=(0, 5))
+            # 创建可滚动的文本区域
+            text_widget = scrolledtext.ScrolledText(
+                main_frame,
+                wrap=tk.WORD,
+                width=70,
+                height=25,
+                font=("Arial", 10),
+                padx=10,
+                pady=10
+            )
+            text_widget.pack(fill=tk.BOTH, expand=True)
+            
+            # 插入摘要内容
+            text_widget.insert(tk.END, summary)
+            text_widget.config(state=tk.DISABLED)  # 设置为只读
+            
+            # 添加关闭按钮
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            ttk.Button(button_frame, text="关闭", command=summary_window.destroy).pack(side=tk.RIGHT)
+            
+            summary_window.focus_set()
         
         # 绑定双击事件
         tree.bind("<Double-1>", on_double_click)
@@ -1673,6 +1574,8 @@ class MediaGUIManager:
                 if video_detail:
                     selected_videos.append(video_detail)
             
+            # filter out the videos that are already downloaded
+            selected_videos = [video for video in selected_videos if video.get('audio_path', '') == '']
             if not selected_videos:
                 return
             
@@ -1716,9 +1619,9 @@ class MediaGUIManager:
                 print(f"成功: {completed[0]} 个")
                 print(f"失败: {failed[0]} 个")
                 
-                with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
-                    print(f"✅ 已保存更新后的视频列表到: {self.channel_list_json}")
+                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
                 # 在主线程中刷新列表
                 dialog.after(0, populate_tree)
             
@@ -1764,33 +1667,9 @@ class MediaGUIManager:
                 return
 
             # 开始转录（不关闭对话框，转录完成后刷新列表）
-            self.downloader._check_and_update_cookies()
+            self.downloader._check_and_update_cookies(wait_forever=False)
 
-            basic_info = self.downloader.find_video_basic(videos_to_transcribe[0])
-            if basic_info:
-                # subtitles 和 auto_captions 的格式示例：
-                # subtitles = {
-                #     'zh': [{'ext': 'vtt', 'url': 'https://...'}, {'ext': 'srt', 'url': 'https://...'}],
-                #     'en': [{'ext': 'vtt', 'url': 'https://...'}],
-                #     'zh-Hans': [{'ext': 'vtt', 'url': 'https://...'}]
-                # }
-                # auto_captions = {
-                #     'zh': [{'ext': 'vtt', 'url': 'https://...'}],
-                #     'en': [{'ext': 'vtt', 'url': 'https://...'}, {'ext': 'srt', 'url': 'https://...'}]
-                # }
-                # 键是语言代码（如 'zh', 'en', 'zh-Hans'），值是包含字幕格式信息的列表
-                subtitles = basic_info.get('subtitles', {})
-                auto_captions = basic_info.get('automatic_captions', {})
-                # 将字典的键（语言代码）转换为列表
-                all_languages = list(subtitles.keys() if subtitles else []) + list(auto_captions.keys() if auto_captions else [])
-                # 去重并保持顺序
-                all_languages = list(dict.fromkeys(all_languages))
-            if not all_languages:
-                all_languages = ["zh", "en"]
-
-            target_lang = askchoice("选择语言", all_languages, parent=dialog)
-            if not target_lang:
-                return
+            target_lang = self.downloader.select_language(videos_to_transcribe[0])
 
             # 初始化计数器
             success_count = 0
@@ -1812,8 +1691,8 @@ class MediaGUIManager:
                     failed_count += 1
             
             # 保存更新后的视频列表
-            with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
+            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             
             # 显示完成信息
             print(f"\n{'='*50}")
@@ -1949,48 +1828,25 @@ class MediaGUIManager:
                 channel_url = channel_url[:-1]
             channel_url = channel_url + "/videos"
 
-        # 显示加载对话框
-        loading_dialog = tk.Toplevel(self.root)
-        loading_dialog.title("获取视频列表中")
-        loading_dialog.geometry("300x100")
-        loading_dialog.transient(self.root)
-        loading_dialog.grab_set()
-        ttk.Label(loading_dialog, text="正在获取视频列表，请稍候...", font=("Arial", 12)).pack(pady=30)
-        self.root.update()
-        
-        # 在后台线程中获取视频列表
-        fetch_complete = [False]  # 用于跟踪是否完成
-
         def fetch_video_list():
             try:
-                self.channel_videos = self.downloader.list_hot_videos(
+                new_channel_name = self.downloader.list_hot_videos(
                     channel_url, 
                     max_videos=int(max_videos_var.get()), 
                     min_view_count=int(min_view_count_var.get())
                 )
+                if not new_channel_name:
+                    return
+
+                print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
+
             except Exception as e:
                 error_msg = str(e)
-            finally:
-                fetch_complete[0] = True
+                print(f"❌ 获取视频列表失败: {error_msg}")
         
         thread = threading.Thread(target=fetch_video_list)
         thread.daemon = True
         thread.start()
-        
-        # 使用轮询方式等待完成，而不是 join()
-        def check_completion():
-            if fetch_complete[0]:
-                loading_dialog.destroy()
-                
-                if not self.channel_videos:
-                    messagebox.showwarning("提示", "未找到符合条件的视频")
-                    return
-            else:
-                # 继续检查，每100ms检查一次
-                self.root.after(100, check_completion)
-        
-        # 开始检查
-        self.root.after(100, check_completion)
 
 
 
@@ -2010,15 +1866,6 @@ class MediaGUIManager:
         url_var = tk.StringVar()
         url_entry = ttk.Entry(url_frame, textvariable=url_var, width=50)
         url_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # 语言选择
-        lang_frame = ttk.Frame(dialog)
-        ttk.Label(lang_frame, text="语言:").pack(side=tk.LEFT, padx=(20, 0))
-        target_lang_var = tk.StringVar(value="zh")
-        target_lang_combo = ttk.Combobox(lang_frame, textvariable=target_lang_var, 
-                                          values=["zh", "en", "ja", "ko", "es", "fr", "de"], 
-                                          width=10, state="readonly")
-        target_lang_combo.pack(side=tk.LEFT, padx=5)
         
         result_var = tk.StringVar(value="cancel")
         
@@ -2042,79 +1889,113 @@ class MediaGUIManager:
         
         # 等待对话框关闭
         self.root.wait_window(dialog)
-        
         if result_var.get() == "cancel":
             return
         
         # 在对话框关闭后，通过 StringVar 获取值（它们仍然存在）
         video_url = url_var.get().strip()
-        target_lang = target_lang_var.get()
         
-        # 确认下载
-        if not messagebox.askyesno("确认下载", f"确定要下载并转录这个视频吗？\n\nURL: {video_url}\n目标语言: {target_lang}\n\n转录结果将保存到项目的 Youtbue_download 文件夹中。"):
+        print(f"📥 开始下载YouTube视频并转录...")
+        print(f"URL: {video_url}")
+
+        self.downloader._check_and_update_cookies()
+        video_data = self.downloader.get_video_detail(video_url, channel_name='Unknown')
+        if not video_data:
+            self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
             return
-        
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "download_youtube",
-            "status": "运行中",
-            "start_time": datetime.now(),
-            "pid": self.pid
-        }
-        
-        def run_task():
-            print(f"📥 开始下载YouTube视频并转录...")
-            print(f"URL: {video_url}")
-            print(f"语言: {target_lang}")
 
-            self.downloader._check_and_update_cookies()
+        channel_name = self.get_channel_name(video_data)
 
-            video_data = self.downloader.get_video_detail(video_url, channel_name='Unknown')
-            if not video_data:
-                self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
-                return
+        if not transcribe:
+            self.downloader.download_video_highest_resolution(video_data)
+            return
+    
+        self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+        if os.path.exists(self.downloader.channel_list_json):
+            self.downloader.channel_videos = json.load(open(self.downloader.channel_list_json, 'r', encoding='utf-8'))
+        else:
+            self.downloader.channel_list_json = None
+            self.downloader.channel_videos = []
 
-            channel_name = self.get_channel_name(video_data)
-        
-            self.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
-            if os.path.exists(self.channel_list_json):
-                self.channel_videos = json.load(open(self.channel_list_json, 'r', encoding='utf-8'))
-
-            if not self.channel_videos:
-                self.root.after(0, lambda: messagebox.showerror("错误", "获取视频列表失败"))
-                return
-
-            file_path = self.downloader.download_video_highest_resolution(video_data)
-
-            if file_path and os.path.exists(file_path):
-                file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
-                video_data["video_path"] = file_path
-                video_data["file_size_mb"] = file_size
-                video_data["status"] = "success"
-            else:
-                self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
-                return
+        if not self.downloader.channel_videos:
+            # show all the *_hotvideos.json files in the youtube_dir,  let user to select one
+            # if user Not select one, ask user give a new channel name, then create a new file with the new channel name
+            # and add the video_data as the first item in the new file (change the channel_name to the new channel name)
             
-            if transcribe:
-                transcribed_file = self.downloader.download_captions( video_data, target_lang )
-                if transcribed_file:
-                    print(f"✅ YouTube视频转录完成！")
-                    video_data['transcribed_file'] = transcribed_file
-                    self.tasks[task_id]["status"] = "完成"
-                    self.tasks[task_id]["result"] = transcribed_file
-                    self.root.after(0, lambda: messagebox.showinfo("转录完成", "YouTube视频转录完成！"))
-                else:
-                    print(f"❌ YouTube视频转录失败")
-                    self.tasks[task_id]["status"] = "失败"
-                    self.tasks[task_id]["error"] = "转录失败，未生成字幕文件"
-                    self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
+            # 查找所有热门视频JSON文件
+            channel_list_json_files = glob.glob(f"{self.youtube_dir}/*_hotvideos.json")
             
-            self.channel_videos.append(video_data)
-            with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
-                print(f"✅ 已保存更新后的视频列表到: {self.channel_list_json}")
+            # 使用线程安全的队列来传递结果
+            selected_file = None
+            if channel_list_json_files:
+                # 准备选项列表和文件路径映射
+                channel_choices = []
+                channel_to_file = {}
+                
+                for json_file in channel_list_json_files:
+                    filename = os.path.basename(json_file)
+                    # 提取频道名
+                    match = re.match(r'(.+?)_hotvideos\.json', filename)
+                    if match:
+                        channel_name = match.group(1)
+                        channel_choices.append(channel_name)
+                        channel_to_file[channel_name] = json_file
+                
+                # 在主线程中显示选择对话框
+                choice = askchoice("选择视频列表文件", channel_choices, parent=self.root)
+                if choice:
+                    if choice in channel_to_file:
+                        selected_file = channel_to_file[choice]
+            
+            # 如果用户选择了文件，加载它
+            if selected_file:
+                self.downloader.channel_list_json = selected_file
+                try:
+                    with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
+                        self.downloader.channel_videos = json.load(f)
+                except Exception as e:
+                    print(f"❌ 读取视频列表失败: {e}")
+                    self.downloader.channel_videos = []
+            
+            if not selected_file or not self.downloader.channel_videos:
+                self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+                self.downloader.channel_videos = []
+                # 保存到文件
+                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 
-        # 在独立线程中运行任务
-        thread = threading.Thread(target=run_task)
-        thread.daemon = True
-        thread.start()
+
+        is_new_video = self.downloader.is_video_new(video_data)
+        if not is_new_video:
+            print(f"✅ 视频已存在，跳过下载...")
+            return
+
+        file_path = self.downloader.download_audio_only(video_data)
+
+        if file_path and os.path.exists(file_path):
+            file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
+            video_data["audio_path"] = file_path
+            video_data["file_size_mb"] = file_size
+            video_data["status"] = "success"
+        else:
+            self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
+            return
+
+
+        target_lang = self.downloader.select_language(video_url)
+
+        transcribed_file = self.downloader.download_captions( video_data, target_lang )
+        if transcribed_file:
+            print(f"✅ YouTube视频转录完成！")
+            video_data['transcribed_file'] = transcribed_file
+            self.root.after(0, lambda: messagebox.showinfo("转录完成", "YouTube视频转录完成！"))
+        else:
+            print(f"❌ YouTube视频转录失败")
+            self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
+        
+        self.downloader.channel_videos.append(video_data)
+        self.update_text_content(video_data, in_background=False)
+        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")

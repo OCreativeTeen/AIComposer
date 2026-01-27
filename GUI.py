@@ -34,6 +34,7 @@ import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
 from gui.downloader import MediaGUIManager
+from gui.suno_music_prompt_gui import SunoMusicPromptGUI
 import cv2
 import json
 import shutil
@@ -340,21 +341,22 @@ class WorkflowGUI:
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        ttk.Button(row1_frame, text="YT转录",  command=lambda:self._call_youtube_gui('download_youtube', True)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="YT寻找",  command=lambda:self._call_youtube_gui('fetch_hot_videos')).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="YT管理",  command=lambda:self._call_youtube_gui('manage_hot_videos')).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT視頻",  command=lambda:self.youtube_gui.download_youtube(False)).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT音頻",  command=lambda:self.youtube_gui.download_youtube(True)).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT寻找",  command=lambda:self.youtube_gui.fetch_hot_videos()).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="YT管理",  command=lambda:self.youtube_gui.manage_hot_videos()).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
 
-
-    def _call_youtube_gui(self, method_name, *args):
-        """安全调用YouTube GUI方法"""
-        if not hasattr(self, 'youtube_gui') or self.youtube_gui is None:
-            messagebox.showwarning("警告", "YouTube功能尚未初始化，请稍候再试")
-            return
-        method = getattr(self.youtube_gui, method_name, None)
-        if method:
-            method(*args)
-        else:
-            messagebox.showerror("错误", f"YouTube方法 {method_name} 不存在")
+   
+    def _open_suno_gui(self):
+        """打开SUNO音乐提示词管理窗口"""
+        try:
+            # 创建SUNO管理窗口
+            suno_gui = SunoMusicPromptGUI(self.root)
+        except Exception as e:
+            messagebox.showerror("错误", f"打开SUNO管理窗口失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def swap_narration(self):
         """交换第一轨道与旁白轨道"""
@@ -3133,6 +3135,8 @@ class WorkflowGUI:
 
             if image_path:
                 download_path = config.get_project_path(self.workflow.pid) + "/download"
+                if not os.path.exists(download_path):
+                    os.makedirs(download_path)
                 image = Path(image_path)
                 rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
                 shutil.move(image_path, rename)

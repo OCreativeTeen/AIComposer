@@ -1341,15 +1341,18 @@ class MagicWorkflow:
                 valid_narrator = s["narrator"]
 
             if valid_narrator and (not "right" in valid_narrator):
-                v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
-                video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
-            v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
+            #v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
+            #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
             video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
             if valid_narrator and ("right" in valid_narrator):
-                v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
-                video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+                #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
         final_video_dir = f"{self.publish_path}/{self.pid}"
         if not os.path.exists(final_video_dir):
