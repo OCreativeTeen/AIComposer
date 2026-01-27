@@ -1725,6 +1725,12 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
+    def get_current_video_time(self):
+        if not self.video_cap:
+            return 0, 0
+        return self.video_cap.get(cv2.CAP_PROP_POS_MSEC) / 1000, self.video_cap.get(cv2.CAP_PROP_FRAME_COUNT) / STANDARD_FPS
+
+
     def play_next_frame(self):
         """播放下一帧"""
         if not self.video_playing or not self.video_cap:
