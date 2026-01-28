@@ -1387,30 +1387,21 @@ class MediaGUIManager:
                 if not item_tags:
                     continue
                 
-                video_url = item_tags[0]
-                
-                # 找到对应的视频数据
-                video_detail = self.get_video_detail(video_url)
-                if video_detail:
-                    videos_to_remove.append(video_detail)
-                    filename_prefix = self.downloader.generate_video_prefix(video_detail)
-                    if os.path.exists(self.youtube_dir):
-                        for filename in os.listdir(self.youtube_dir):
-                            if filename_prefix in filename:
-                                file_path = os.path.join(self.youtube_dir, filename)
-                                # 收集SRT和TXT文件
-                                if filename.endswith('.srt') or filename.endswith('.json') or filename.endswith('.mp4') or filename.endswith('.mp3') or filename.endswith('.wav'):
-                                    files_to_delete.append(file_path)
+                video_detail = self.get_video_detail(item_tags[0])
+                videos_to_remove.append(video_detail)
+                #    filename_prefix = self.downloader.generate_video_prefix(video_detail)
+                #    for filename in os.listdir(self.youtube_dir):
+                #        if filename_prefix in filename:
+                #            file_path = os.path.join(self.youtube_dir, filename)
+                #            # 收集SRT和TXT文件
+                #            if filename.endswith('.srt') or filename.endswith('.json') or filename.endswith('.mp4') or filename.endswith('.mp3') or filename.endswith('.wav'):
+                #                files_to_delete.append(file_path)
             
             # 删除文件
-            for file_path in files_to_delete:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                        print(f"✅ 已删除文件: {os.path.basename(file_path)}")
-                except Exception as e:
-                    print(f"❌ 删除文件失败 {os.path.basename(file_path)}: {str(e)}")
-                    failed_count += 1
+            #for file_path in files_to_delete:
+                #if os.path.exists(file_path):
+                #    os.remove(file_path)
+                #    print(f"✅ 已删除文件: {os.path.basename(file_path)}")
             
             # 从videos列表中移除
             for video_detail in videos_to_remove:
@@ -1418,15 +1409,9 @@ class MediaGUIManager:
                     self.downloader.channel_videos.remove(video_detail)
                     deleted_count += 1
             
-            # 保存回JSON文件
-            try:
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
-            except Exception as e:
-                print(f"❌ 保存视频列表失败: {str(e)}")
-                messagebox.showerror("错误", f"保存视频列表失败: {str(e)}", parent=dialog)
-                return
+            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
             
             # 刷新列表
             populate_tree()
