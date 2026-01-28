@@ -804,6 +804,8 @@ class MediaDownloader:
 
     def select_language(self, video_detail):
         basic_info = self.find_video_basic(video_detail)
+        if not basic_info:
+            return "zh"
         subtitles = basic_info.get('subtitles', {})
         auto_captions = basic_info.get('automatic_captions', {})
 
@@ -836,7 +838,7 @@ class MediaGUIManager:
         self.log_to_output = log_to_output_func
         self.download_output = download_output
         
-        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA2)
+        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, project_path)
@@ -886,68 +888,36 @@ class MediaGUIManager:
             messagebox.showwarning("提示", "未找到有效的频道视频列表")
             return
         
-        # 显示频道选择对话框
-        channel_dialog = tk.Toplevel(self.root)
-        channel_dialog.title("选择频道")
-        channel_dialog.geometry("600x400")
-        channel_dialog.transient(self.root)
-        channel_dialog.grab_set()
-        
-        # 顶部提示
-        top_frame = ttk.Frame(channel_dialog)
-        top_frame.pack(fill=tk.X, padx=10, pady=10)
-        ttk.Label(top_frame, text="请选择要管理的频道：", 
-                  font=("Arial", 12, "bold")).pack(side=tk.LEFT)
-        
-        # 创建频道列表
-        list_frame = ttk.Frame(channel_dialog)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, 
-                            font=("Arial", 11), selectmode=tk.SINGLE)
-        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=listbox.yview)
-        
-        # 填充频道列表
+        # 准备选项列表和映射
+        channel_choices = []
+        choice_to_channel = {}
         for channel in channel_data:
-            listbox.insert(tk.END, f"{channel['name']} ({channel['video_count']} 个视频)")
+            choice_text = f"{channel['name']} ({channel['video_count']} 个视频)"
+            channel_choices.append(choice_text)
+            choice_to_channel[choice_text] = channel
         
-        # 默认选择第一个
-        if channel_data:
-            listbox.selection_set(0)
+        # 使用 askchoice 显示选择对话框
+        selected_choice = askchoice("选择频道", channel_choices, parent=self.root)
         
-        # 底部按钮
-        bottom_frame = ttk.Frame(channel_dialog)
-        bottom_frame.pack(fill=tk.X, padx=10, pady=10)
+        if not selected_choice or selected_choice not in choice_to_channel:
+            return  # 用户取消或无效选择
         
-        def on_confirm():
-            selected = listbox.curselection()
-            if not selected:
-                messagebox.showwarning("提示", "请选择一个频道", parent=channel_dialog)
-                return
-            
-            channel = channel_data[selected[0]]
-            self.downloader.channel_list_json = channel['file']
-            channel_dialog.destroy()
-            
-            """显示频道视频管理对话框"""
-            with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
-                self.downloader.channel_videos = json.load(f)
-            if not self.downloader.channel_videos:
-                messagebox.showwarning("提示", "视频列表为空")
-                return
+        # 获取选中的频道
+        channel = choice_to_channel[selected_choice]
+        self.downloader.channel_list_json = channel['file']
+        
+        # 显示频道视频管理对话框
+        with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
+            self.downloader.channel_videos = json.load(f)
+        if not self.downloader.channel_videos:
+            messagebox.showwarning("提示", "视频列表为空")
+            return
 
-            self.downloader.channel_name = channel['name']   
-            for video in self.downloader.channel_videos:
-                self.check_video_status(video)
-            # 显示该频道的视频管理对话框
-            self._show_channel_videos_dialog()
-        
-        ttk.Button(bottom_frame, text="确定", command=on_confirm).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="取消", command=channel_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        self.downloader.channel_name = channel['name']   
+        for video in self.downloader.channel_videos:
+            self.check_video_status(video)
+        # 显示该频道的视频管理对话框
+        self._show_channel_videos_dialog()
 
 
     def fetch_text_content(self, srt_file):
@@ -1097,34 +1067,54 @@ class MediaGUIManager:
             if not transcribed_file:
                 return video_detail
 
-        # 如果已有摘要，立即返回
-        if video_detail.get('summary', '') and video_detail.get('topic_type', ''):
+        summary = video_detail.get('summary', '')
+        topic_type = video_detail.get('topic_type', '')
+        topic_category = video_detail.get('topic_category', '')
+        tags = video_detail.get('tags', '')
+        if in_background and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip():
             return video_detail
 
         text_content = self.fetch_text_content(transcribed_file)
         url = video_detail.get('url', '')
+
         # 摘要生成改为后台线程执行（非阻塞）
         def generate_summary_background(url, text_content):
             """在后台线程中生成摘要"""
-            try:
-                summary = self.llm_api.generate_json(
-                    config_prompt.SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese'), 
-                    text_content,
-                    expect_list=False
-                )
-                if summary and summary.get('summary', '') and summary.get('topic_type', ''):
-                    video_detail = self.get_video_detail(url)
-                    video_detail['summary'] = summary.get('summary', '')
-                    video_detail['topic_type'] = summary.get('topic_type', '')
-                    video_detail.pop('description', None)
-                    # 保存更新后的摘要
-                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                    print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
-            except Exception as e:
-                print(f"❌ 摘要生成失败: {str(e)}")
-        
+            video_detail = self.get_video_detail(url)
+            # read the topic_choices from media/topics.json
+            with open(os.path.join(os.path.dirname(__file__), '..', 'media', 'topics.json'), 'r', encoding='utf-8') as f:
+                topic_choices = json.load(f)
 
+            summary = video_detail.get('summary', '')
+            if not in_background or not summary or not summary.strip():
+                result = self.llm_api.generate_text(
+                    config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', max_words=1500 if in_background else 2500), 
+                    text_content
+                )
+                if result:
+                    video_detail.pop('description', None)
+                    video_detail['summary'] = result
+                else:
+                    return video_detail
+
+            result = self.llm_api.generate_json(
+                config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic_choices=topic_choices), 
+                text_content,
+                expect_list=False
+            )
+            if result:
+                if result.get('topic_type', '') and result.get('topic_type', '').strip():
+                    video_detail['topic_type'] = result.get('topic_type', '')
+                if result.get('topic_category', '') and result.get('topic_category', '').strip():
+                    video_detail['topic_category'] = result.get('topic_category', '')
+                if result.get('tags', '') and result.get('tags', '').strip():
+                    video_detail['tags'] = result.get('tags', '')
+
+            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
+        
+        
         if in_background:
             thread = threading.Thread(target=generate_summary_background, args=(url, text_content))
             thread.daemon = True
@@ -1455,7 +1445,6 @@ class MediaGUIManager:
         def on_key_press(event):
             if event.keysym == 'Delete':
                 delete_selected_videos()
-        
         tree.bind('<KeyPress>', on_key_press)
         # 确保tree可以获得焦点以便接收键盘事件
         tree.focus_set()
@@ -1463,12 +1452,27 @@ class MediaGUIManager:
         tree.bind('<Button-1>', lambda e: tree.focus_set())
 
 
+        def on_enter_key(event):
+            on_focus(event, low_priority=False)
+
         def on_double_click(event):
-            item = tree.identify_row(event.y)
+            on_focus(event, low_priority=True)
+
+        def on_focus(event, low_priority=False):
+            # 处理鼠标事件和键盘事件
+            if hasattr(event, 'y') and event.y:
+                # 鼠标事件：通过坐标识别行
+                item = tree.identify_row(event.y)
+            else:
+                # 键盘事件：获取当前选中的项
+                selected = tree.selection()
+                if not selected:
+                    return
+                item = selected[0]
+            
             if not item:
                 return
-            
-            # 选中该项目（如果还没有选中）
+
             if item not in tree.selection():
                 tree.selection_set(item)
             
@@ -1476,12 +1480,18 @@ class MediaGUIManager:
             video_detail = self.get_video_detail(item_tags[0])
             if not video_detail:
                 return
-            # 获取摘要内容
+
             summary = video_detail.get('summary', '')
             topic_type = video_detail.get('topic_type', '')
-            if not summary or not summary.strip() or not topic_type or not topic_type.strip():
-                self.update_text_content(video_detail, in_background=False)
+            topic_category = video_detail.get('topic_category', '')
+            tags = video_detail.get('tags', '')
+            if not low_priority or not summary or not summary.strip() or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() or not tags or not tags.strip():
+                # show a messagebox to let user know the summary is generating (non-blocking)
+                self.root.after(0, lambda: messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=self.root))
+                self.update_text_content(video_detail, in_background=low_priority)
                 topic_type = video_detail.get('topic_type', '')
+                topic_category = video_detail.get('topic_category', '')
+                tags = video_detail.get('tags', '')
                 summary = video_detail.get('summary', '')
 
             # show the summary in a new window
@@ -1494,13 +1504,14 @@ class MediaGUIManager:
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
-            if topic_type:
+            if topic_type and topic_category and tags:
                 topic_frame = ttk.Frame(main_frame)
                 topic_frame.pack(fill=tk.X, pady=(0, 10))
-                ttk.Label(topic_frame, text="主题类型：", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
-                ttk.Label(topic_frame, text=topic_type, font=("Arial", 10), foreground="blue").pack(side=tk.LEFT)
+                ttk.Label(topic_frame, text="主题类型：", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(10, 15))
+                ttk.Label(topic_frame, text=topic_category, font=("Arial", 10), foreground="blue").pack(side=tk.LEFT, padx=(15, 15))
+                ttk.Label(topic_frame, text=topic_type, font=("Arial", 10), foreground="blue").pack(side=tk.LEFT, padx=(15, 15))
+                ttk.Label(topic_frame, text=tags, font=("Arial", 10), foreground="blue").pack(side=tk.LEFT, padx=(15, 10))
             
-            # 创建标签
             label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
             label.pack(anchor=tk.W, pady=(0, 5))
             # 创建可滚动的文本区域
@@ -1528,6 +1539,8 @@ class MediaGUIManager:
         
         # 绑定双击事件
         tree.bind("<Double-1>", on_double_click)
+        # 绑定 Enter 键（键盘）
+        tree.bind("<Return>", on_enter_key)
         
         # 底部按钮框架（先创建框架，按钮在后面定义函数后添加）
         bottom_frame = ttk.Frame(dialog)
@@ -1555,7 +1568,10 @@ class MediaGUIManager:
                 if not video_detail:
                     continue
                 summary = video_detail.get('summary', '')
-                if summary and summary.strip():
+                topic_type = video_detail.get('topic_type', '')
+                topic_category = video_detail.get('topic_category', '')
+                tags = video_detail.get('tags', '')
+                if summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip():
                     continue
                 self.update_text_content(video_detail)
 
@@ -1659,7 +1675,7 @@ class MediaGUIManager:
 
             # 如果没有可转录的视频，显示提示
             if not videos_to_transcribe:
-                messagebox.showwarning("提示", "选中的视频都未下载，请先下载。", parent=dialog)
+                messagebox.showwarning("提示", "没有可转录的视频", parent=dialog)
                 return
             
             message = f"将转录 {len(videos_to_transcribe)} 个视频\n\n是否继续？"
@@ -1995,7 +2011,7 @@ class MediaGUIManager:
             self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
         
         self.downloader.channel_videos.append(video_data)
-        self.update_text_content(video_data, in_background=False)
+        self.update_text_content(video_data)
         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")

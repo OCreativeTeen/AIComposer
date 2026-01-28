@@ -27,7 +27,7 @@ MODELS = {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
     },
     OLLAMA : {
-        "url": "http://10.0.0.216:11434/v1"
+        "url": "http://10.0.0.231:11434/v1"
     },
     OLLAMA2 : {
         "url": "http://10.0.0.222:11434/v1"

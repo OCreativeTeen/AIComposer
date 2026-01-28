@@ -794,60 +794,61 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 """
 
 
-SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT = """
-Make very detailed summary about the psychology-related discussion/analysis (given in user-prompt) in {language}.
+GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
+For psychology-related discussion/analysis content (given in user-prompt), you are expert to:
 
-output as json format, like the example:
+1. give tags for the content, choices are :
+    scenario, case-study, analysis, insight, evidence, theory, solution, intervention, exercise, feedback, reflection
+    FYI: give string of tags separated by commas, not list!!
+
+
+2. choose a topic_type & topic_category about the content from following choices (the topic explaination is given),
+{topic_choices}
+
+
+output as json format (strictly follow the format):
 {{
-    "summary": "The summary of the content (less than 1200 words) ~ FYI: Focus on the content only, do not add any additional information!!!!!",
-    "topic_type": "The topic-type of the content"
+    "topic_type": "The topic type of the content",
+    "topic_category": "The topic category of the content",
+    "tags": "The tags of the content -- give string of tags separated by commas, not list!!"
 }}
 
-FYI: the topic_type should be one of the following choices (the topic explaination is given):
+like the example :
+{{
+    "topic_type": "糾纏與綁架機制 - 共生與控制",
+    "topic_category": "原生家庭與分離",
+    "tags": "case-study, analysis, insight, solution"
+}}
+"""
 
-    共生與控制 (父母過度介入導致子女「成長卻被拖住」，難以完成個體化)
-    情感綁架 (以愛為名的控制，利用對方的同情或恐懼達到目的)
-    愧疚型親子關係 (孩子因無法滿足父母期待或感到必須為父母的情緒負責，而產生深沉的罪惡感)
-    代際衝突與疏離 (價值觀斷層導致的心理距離，以及未解決的童年創傷)
-    照顧者壓力 (成年子女在承擔照護義務時的情感枯竭)
 
-    匱乏感與過度努力 (源於內在安全感缺失，透過迎合與討好來換取認可，反而降低了吸引力)
-    高價值展示 (真正的吸引力來自於「活出自我」而非「表演」，體現在擁有選擇權與不妥協的標準)
-    情感安全感與持續付出 (真愛的兩大指標，區別於「方便工具」式的利用關係)
-    婚姻權力不對等 (資源、情感或話語權的失衡，導致一方的長期失聲)
-    控制型伴侶 (透過監控、貶低或隔離等手段進行情感操控)
-    極端行為與暴力 (家庭暴力、無情人格表現，以及從關係視角出發的極端行為分析)
+SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT = """
+Make very detailed summary about the psychology-related discussion/analysis (given in user-prompt) (include facts, analysis, insights, conclusions, etc... less than {max_words} words) in {language}.
+FYI: Focus on the content only, do not add any additional information!!!!!
+"""
 
-    吸引力悖論 (典型的「好人/壞人」情感吸引模式，或在傷害中尋求親密的受虐傾向)
-    依附破裂 (承諾恐懼、無法建立穩定的長期關係，或在親密中感到窒息)
-    性別焦慮 (男性對社會地位與脆弱表達的恐懼；女性對情感安全與自我認同的平衡)
 
-    自我壓抑型人格 (習慣性扮演「好脾氣」或「老好人」，過度善良卻失去自我（源於內在價值的匱乏）)
-    衝突迴避 (寧可犧牲需求也不願面對對峙，導致內在憤怒積壓)
-    攻擊性受阻 (無法正當表達憤怒或主辦權（Agency），轉而向內攻擊自我)
+SUMMERIZE_COUNSELING_STORY_SYSTEM_PROMPT = """
+Make very detailed summary about the psychology-related discussion/analysis (given in user-prompt) (include facts, analysis, insights, conclusions, etc... less than {max_words} words) in {language}.
 
-    過度獨立 (抱持「我只能靠自己」的信念，不敢依賴他人，情感長期處於關閉狀態)
-    依賴恐懼 (將依賴視為弱點，因害怕依賴後的拋棄而預先推開他人)
+And choose a topic_type & topic_category about the content from following choices (the topic explaination is given):
 
-    情緒的信號功能 (explaination:： 理解負面情緒（如恐懼、憤怒、悲傷）背後的積極意義與保護機制)
-    反脆弱心態 (學習在混亂與壓力中受益，將挫折視為心智成長的「陪練」)
-    認知失調與內耗 (想法與行動不一致產生的心理折磨，以及過度分析導致的心理癱瘓)
+{topic_choices}
 
-    分離別人與自己 (區分「別人的事」與「自己的事」，停止對外部不可控因素的無效糾纏)
-    心性磨練 (將他人的指責視為鏡子，觀察內心的波動原因)
-    主動掌控感 (從「受害者視角」轉向「創造者視角」，為自己的情緒負 100% 的責任)
 
-    嫉妒與自戀破裂 (對他人成功的隱性敵意，以及當現實與膨脹的自我意象衝突時的崩潰感)
-    成就者的情感缺席 (追求「目標至上」導致的功能性冷漠，忽略了生命的情感連結)
-    不配得感 (深層的自我價值缺失，認為自己不配擁有美好的事物)
+output as json format:
+{{
+    "summary": "The very detailed summary of the content (include facts, analysis, insights, conclusions, etc... less than {max_words} words) ~ FYI: Focus on the content only, do not add any additional information!!!!!",
+    "topic_type": "The topic type of the content"
+    "topic_category": "The topic category of the content"
+}}
 
-    AI取代焦慮與身分危機 (擔心人的價值低於演算法，產生的技能過時恐懼)
-    數位異化 (社交媒體帶來的 FOMO 焦慮，以及「連結卻不親密」的孤獨感)
-    決策疲勞 (資訊過載導致失去內在羅盤，過度依賴外部數據或演算法)
-
-    意義感喪失 (explaination:： 在後工作時代的生命意義危機，認同感隨之碎片化)
-    道德與責任規避 (科技驅動下的倫理模糊，以及「系統決定」導致的責任喪失)
-    未來感缺失 (陷入短視的生存模式，無法想像未來的習得性無助)
+like the example :
+{{
+    "summary": "本次讨论围绕西蒙娜·德·波伏娃的《第二性》展开，主要探讨女性在传统社会中被定位为“他者”的困境，以及如何找回女性自身的“主体性...",
+    "topic_type": "糾纏與綁架機制 - 共生與控制",
+    "topic_category": "原生家庭與分離"
+}}
 """
 
 

@@ -163,8 +163,7 @@ class AudioTranscriber:
         finally:
             if model is not None:
                 print(f"🧹 正在卸载模型...")
-                sys.stdout.flush()
-                unload_whisper_model(model)
+                #unload_whisper_model(model)
                 model = None
             # clean_memory(cuda=True, verbose=False)
         
@@ -176,8 +175,8 @@ class AudioTranscriber:
         print(f"🔍 开始转录：{audio_path} ~ {start_time}")
         if audio_path.endswith('.mp4'):
             audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(audio_path)
-        if audio_path.endswith('.mp3'):
-            audio_path = self.ffmpeg_audio_processor.to_wav(audio_path)
+        #if audio_path.endswith('.mp3'):
+        #    audio_path = self.ffmpeg_audio_processor.to_wav(audio_path)
 
         # ========== Step 1: 加载 Whisper 模型并转录 ==========
         #clean_memory(cuda=True, verbose=False)
