@@ -11,6 +11,9 @@ from difflib import SequenceMatcher
 from typing import List, Dict, Any
 from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove, read_text, write_text
 import gc
+import math
+import math
+import torch
 
 
 LANGUAGES = {
@@ -112,62 +115,105 @@ class AudioTranscriber:
         device = "cuda"
         compute_type = "int8"
         
-        model = None
+        print(f"📝 尝试加载模型 (device={device}, compute_type={compute_type})...")
+        model = WhisperModel(
+            self.model_size, 
+            device=device, 
+            compute_type=compute_type,
+            cpu_threads=4 if device == "cpu" else 1,
+            num_workers=1
+        )
+        
+        # 获取音频总时长
+        total_duration = self.ffmpeg_audio_processor.get_duration(audio_path)
+        print(f"📝 音频总时长: {total_duration:.1f}s ({total_duration/60:.1f} 分钟)")
+        
+        # 如果音频超过5分钟（300秒），则分割成多个片段
+        MAX_SEGMENT_DURATION = 300  # 5分钟
+        # 计算需要分割的片段数（向上取整）
+        num_segments = math.ceil(total_duration / MAX_SEGMENT_DURATION)
+        segment_duration = total_duration / num_segments
+        print(f"📝 音频超过5分钟，将分割成 {num_segments} 个片段，每个约 {segment_duration:.1f}s ({segment_duration/60:.2f} 分钟)")
+        
+        # 分割并转录每个片段
+        all_segments = []
+        temp_files = []
+        
         try:
-            print(f"📝 尝试加载模型 (device={device}, compute_type={compute_type})...")
-            
-            model = WhisperModel(
-                self.model_size, 
-                device=device, 
-                compute_type=compute_type,
-                cpu_threads=4 if device == "cpu" else 1,
-                num_workers=1
-            )
-            print(f"✅ 模型加载成功 (device={device})")
-            print(f"📝 开始转录 (language={lang})...")
-            
-            # 使用低内存设置转录
-            segments_gen, info = model.transcribe(
-                audio_path, 
-                beam_size=1,  # 最小 beam_size
-                language=lang,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500),
-                condition_on_previous_text=False,
-                word_timestamps=False,  # 禁用词级时间戳，节省内存
-            )
-            print(f"📝 音频信息: language={info.language}, duration={info.duration:.1f}s")
-            
-            # 迭代生成器
-            srt_segments = []
-            seg_count = 0
-            for seg in segments_gen:
-                seg_count += 1
-                if seg_count % 10 == 0:
-                    print(f"   处理片段 {seg_count}...")
-                    sys.stdout.flush()
-                srt_segments.append({
-                    'start': seg.start,
-                    'end': seg.end,
-                    'caption': seg.text
-                })
-            
-            print(f"✅ 转录完成，共 {len(srt_segments)} 个片段")
-            with open(transcribe_file, "w", encoding="utf-8") as f:
-                json.dump(srt_segments, f, ensure_ascii=False, indent=2)
-            return srt_segments
-            
+            for i in range(num_segments):
+                start_time = i * segment_duration
+                # 最后一个片段可能稍短，确保不超过总时长
+                if i == num_segments - 1:
+                    segment_length = total_duration - start_time
+                else:
+                    segment_length = segment_duration
+                
+                print(f"📝 处理片段 {i+1}/{num_segments} (从 {start_time:.1f}s 开始，长度 {segment_length:.1f}s)...")
+                
+                # 使用audio_cut_fade分割音频
+                segment_audio = self.ffmpeg_audio_processor.audio_cut_fade(
+                    audio_path, 
+                    start_time, 
+                    segment_length,
+                    fade_in=0,
+                    fade_out=0,
+                    volume=1.0
+                )
+                temp_files.append(segment_audio)
+                
+                # 转录这个片段
+                segments_gen, info = model.transcribe(
+                    segment_audio, 
+                    beam_size=1,
+                    language=lang,
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=500),
+                    condition_on_previous_text=False,
+                    word_timestamps=False,
+                )
+                
+                segment_list = list(segments_gen)  # 强制消费
+                segments_gen = None  # 立即释放生成器
+                del info  # 释放info对象
+
+                # 收集片段结果，并调整时间戳（加上偏移量）
+                seg_count = 0
+                for seg in segment_list:
+                    seg_count += 1
+                    all_segments.append({
+                        'start': seg.start + start_time,  # 调整时间戳
+                        'end': seg.end + start_time,      # 调整时间戳
+                        'caption': seg.text
+                    })
+                
+                print(f"   ✅ 片段 {i+1} 转录完成，共 {seg_count} 个文本片段")
+                del segment_list
+
+                # CRITICAL: Force CUDA to release memory
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Wait for all operations to complete
+                torch.cuda.ipc_collect()   # Clean up IPC memory
+                # clean_memory(cuda=True, verbose=False)
+
+            print(f"✅ 所有片段转录完成，共 {len(all_segments)} 个文本片段")
+            return all_segments
+
         except Exception as e:
-            print(f"❌ 使用 {device}/{compute_type} 失败: {type(e).__name__}: {e}")
-            
+            print(f"❌ 转录失败: {e}")
+            return []
+
         finally:
+            # 清理临时文件
+            for temp_file in temp_files:
+                try:
+                    safe_remove(temp_file)
+                except Exception as e:
+                    print(f"⚠️ 清理临时文件失败: {temp_file}, {e}")
+
             if model is not None:
                 print(f"🧹 正在卸载模型...")
-                #unload_whisper_model(model)
                 model = None
-            # clean_memory(cuda=True, verbose=False)
-        
-        return []
+            clean_memory(cuda=True, verbose=False)
 
 
     def transcribe_with_whisper(self, audio_path, language, min_sentence_duration, max_sentence_duration, re_org=True) -> List[Dict[str, Any]]:
