@@ -1,7 +1,7 @@
 from urllib.parse import urlparse, parse_qs
 
 from utility.audio_transcriber import AudioTranscriber
-from gui.downloader import MediaDownloader, MediaGUIManager
+from gui.downloader import MediaDownloader
 from utility import sd_image_processor
 from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
@@ -16,7 +16,6 @@ import config_prompt
 import config_channel
 from io import BytesIO
 from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation, safe_copy_overwrite
-from utility.minimax_speech_service import MinimaxSpeechService
 from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
 import project_manager
@@ -52,7 +51,6 @@ class MagicWorkflow:
         self.sd_processor = SDProcessor(self)
         self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid))
         self.llm_api = LLMApi()
-        self.speech_service = MinimaxSpeechService(self.pid)
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
 
         config.create_project_path(pid)
@@ -357,7 +355,7 @@ class MagicWorkflow:
         if introduction_story and introduction_story.strip() != "":
             if introduction_story.endswith(".mp3") or introduction_story.endswith(".wav"):
                 introduction_path = f"{config.get_project_path(self.pid)}/{Path(introduction_story).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", 3, 15)
+                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh")
                 write_json(introduction_path, script_json)  
 
             if not introduction_story:
@@ -378,7 +376,7 @@ class MagicWorkflow:
         if previous_dialogue and previous_dialogue.strip() != "":
             if previous_dialogue.endswith(".mp3") or previous_dialogue.endswith(".wav"):
                 previous_path = f"{config.get_project_path(self.pid)}/{Path(previous_dialogue).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", 3, 15)
+                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh")
                 write_json(previous_path, script_json)  
 
             if not previous_dialogue:
@@ -490,10 +488,6 @@ class MagicWorkflow:
         refresh_scene_media(from_scene, "clip", ".mp4",  self.ffmpeg_processor.concat_videos(video_list, True))
 
         del self.scenes[to_index]
-
-        # self.refresh_scene_visual(from_scene)
-
-        #self._generate_video_from_image(from_scene)
         return True
 
 
@@ -637,8 +631,6 @@ class MagicWorkflow:
 
         self.replace_scene_with_others(n, [current_scene, next_scene])
 
-        current_ratio = position / original_duration
-
         f1st, s2nd = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
         refresh_scene_media(current_scene, "clip_audio", ".wav", f1st)
         refresh_scene_media(next_scene, "clip_audio", ".wav", s2nd)
@@ -665,14 +657,7 @@ class MagicWorkflow:
         next_scene["speaking"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
 
-        #self._generate_video_from_image(current_scene)
-        #self._generate_video_from_image(next_scene)
-
-        #self.refresh_scene(current_scene)
-        #self.refresh_scene(next_scene)
-
         self.save_scenes_to_json()
-
         return True
 
 
@@ -1203,19 +1188,6 @@ class MagicWorkflow:
 
 
 
-    def regenerate_audio_item(self, speaker, content, actions, lang):
-        voice = self.speech_service.get_voice(speaker, lang)
-        ssml = self.speech_service.create_ssml(text=content, voice=voice, actions=actions)
-        audio_file = self.speech_service.synthesize_speech(ssml)
-        if audio_file:  # 只添加成功生成的音频文件
-            wav = self.ffmpeg_audio_processor.to_wav(audio_file)
-        else:
-            wav = None
-
-        return wav
-
-
-
     def rebuild_scene_video(self, scene, video_type, animate_mode, image_path, image_last_path, sound_path, next_sound_path, action_path, wan_prompt):
         if not sound_path or not image_path:
             return
@@ -1345,9 +1317,9 @@ class MagicWorkflow:
                 #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
                 #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
-            #v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
+            v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
             #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
-            video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":s["extend"]})
+            video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":s["extend"]})
 
             if valid_narrator and ("right" in valid_narrator):
                 video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":s["extend"]})

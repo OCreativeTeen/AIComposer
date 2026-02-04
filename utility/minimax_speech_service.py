@@ -24,7 +24,7 @@ class MinimaxSpeechService:
         print(f"TTS URL: {self.tts_url}")
 
 
-    def create_ssml(self, text: str, voice: str, actions: str, speed: float = 1.0, pitch: int = 0, vol: float = 1.0) -> str:
+    def create_ssml(self, text: str, voice: str, actions: str, language: str, speed: float = 1.0, pitch: int = 0, vol: float = 1.0) -> str:
         # Escape special XML characters in text
         import html
         escaped_text = html.escape(text)
@@ -37,7 +37,8 @@ class MinimaxSpeechService:
         escaped_text = re.sub(r'([,.!，。？，；：]) ', r'\1', escaped_text)
         
         # 将剩余的空格替换为语音停顿标记
-        escaped_text = escaped_text.replace(" ", "<#0.5#>")
+        if language == "chinese":
+            escaped_text = escaped_text.replace(" ", "<#0.5#>")
 
         actions = actions.lower()
         mood = None
@@ -50,7 +51,7 @@ class MinimaxSpeechService:
 
         ssml = f"""
 {{
-    "model":"speech-2.6-hd",
+    "model":"speech-2.8-hd",
     "text":"{escaped_text}",
     "stream":false,
     "language_boost":"auto",
@@ -59,8 +60,7 @@ class MinimaxSpeechService:
         "voice_id":"{voice}",
         "speed":{speed},
         "vol":{vol},
-        "pitch":{pitch},
-        "emotion":"{mood}"
+        "pitch":{pitch}
     }},
     "audio_setting":{{
         "sample_rate":32000,
@@ -153,6 +153,11 @@ VOICES = [
         'name': 'man_mature',
         'language': 'chinese',
         'voice': 'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
+    },
+    {
+        'name': 'man_mature',
+        'language': 'english',
+        'voice': 'moss_audio_b37dc4b3-9691-11f0-aeab-4aec103046b8' #'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
         'name': 'woman_young',

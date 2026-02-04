@@ -8,6 +8,7 @@ import threading
 import glob
 
 import config_prompt
+from datetime import datetime
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -31,16 +32,16 @@ import tkinter.simpledialog as simpledialog
 
 class MediaDownloader:
 
-    def __init__(self, pid, project_path):
+    def __init__(self, pid, youtube_path):
         print("YoutubeDownloader init...")
         self.pid = pid
-        self.project_path = project_path
-        self.youtube_dir = f"{self.project_path}/Youtbue_download"
+        self.youtube_dir = youtube_path
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
         self.channel_list_json = ""
         self.channel_videos = []
         self.channel_name = ""
+        self.latest_date = datetime.now()
 
         # Cookies 文件路径（优先检查下载文件夹，然后检查项目路径）
         self.cookie_file = self._find_cookies_file()
@@ -62,7 +63,7 @@ class MediaDownloader:
         if os.path.exists(download_cookies):
             print(f"✅ 在下载文件夹找到 cookies 文件: {download_cookies}")
             # 移动到项目路径
-            project_cookies = os.path.join(self.project_path, cookies_filename)
+            project_cookies = os.path.join(self.youtube_dir, cookies_filename)
             if os.path.exists(project_cookies):
                 os.remove(project_cookies)
                 print(f"🗑️ 已删除旧的 cookies 文件: {project_cookies}")
@@ -94,7 +95,7 @@ class MediaDownloader:
                 print(f"🔄 在下载文件夹发现新的 cookies 文件: {download_cookies}")
                 
                 # 移动到项目路径
-                project_cookies = os.path.join(self.project_path, cookies_filename)
+                project_cookies = os.path.join(self.youtube_dir, cookies_filename)
                 try:
                     # 如果项目路径已有文件，直接删除
                     if os.path.exists(project_cookies):
@@ -300,9 +301,12 @@ class MediaDownloader:
                 print(f"❌ 音频文件不存在")
                 return None
 
-        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, 3, 15, re_org=False)
-        write_json(src_path, script_json)  
-        return src_path
+        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang)
+        if script_json:
+            write_json(src_path, script_json)  
+            return src_path
+        else:
+            return None
 
 
     def download_audio_only(self, video_detail, sleep_interval=2):
@@ -530,10 +534,22 @@ class MediaDownloader:
         else:
             date_str = "00000000"
         # 清理标题中的非法字符，并限制长度
-        safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
-        safe_title = safe_title[:title_length]  # 限制长度
+        safe_title = self.make_safe_file_name(title, title_length)
         # 构建文件名前缀（用于匹配）
         return f"{view_count_str}_{date_str}_{safe_title}"
+
+
+    def get_channel_name(self, video_detail):
+        if not video_detail:
+            return 'Unknown'
+        channel_name = video_detail.get('channel', 'Unknown')
+        if channel_name.lower() == 'unknown':
+            channel_name = video_detail.get('uploader', 'Unknown')
+        if channel_name.lower() == 'unknown':
+            channel_name = video_detail.get('channel_id', 'Unknown')
+        channel_name = self.make_safe_file_name(channel_name)
+        print(f"📺 频道名称: {channel_name}")
+        return channel_name
 
 
     def is_video_new(self, video_data):
@@ -550,6 +566,41 @@ class MediaDownloader:
         return is_new_video;
 
 
+    def make_safe_file_name(self, title, title_length=15):
+        if not title:
+            return "untitled"
+        
+        # 将空格替换为下划线
+        safe_title = title.replace(' ', '_')
+        
+        # 移除 Windows 和 Unix 系统不允许的字符
+        # Windows: < > : " / \ | ? *
+        # Unix: / (以及控制字符)
+        safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '_', safe_title)
+        
+        # 移除 Windows 保留名称（CON, PRN, AUX, NUL, COM1-9, LPT1-9）
+        reserved_names = ['CON', 'PRN', 'AUX', 'NUL'] + \
+                        [f'COM{i}' for i in range(1, 10)] + \
+                        [f'LPT{i}' for i in range(1, 10)]
+        if safe_title.upper() in reserved_names:
+            safe_title = '_' + safe_title
+        
+        # 移除尾随空格和点（Windows 不允许）
+        safe_title = safe_title.rstrip(' .')
+        
+        # 如果清理后为空，使用默认名称
+        if not safe_title.strip():
+            safe_title = "untitled"
+        
+        # 限制长度
+        safe_title = safe_title[:title_length] if title_length > 0 else safe_title
+        
+        # 再次移除尾随空格和点（可能在截断后产生）
+        safe_title = safe_title.rstrip(' .')
+        
+        return safe_title
+
+
     def list_hot_videos(self, channel_url, max_videos=200, min_view_count=500):
         self._check_and_update_cookies()
 
@@ -564,11 +615,7 @@ class MediaDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(channel_url, download=False)
 
-            channel_name = info.get('channel', 'Unknown')
-            if channel_name.lower() == 'unknown':
-                channel_name = info.get('uploader', 'Unknown')
-            if channel_name.lower() == 'unknown':
-                channel_name = info.get('channel_id', 'Unknown')
+            channel_name = self.get_channel_name(info)
 
             with open(f'{self.youtube_dir}/info_{channel_name}.json', 'w', encoding='utf-8') as f:
                 json.dump(info, f, ensure_ascii=False, indent=2)
@@ -580,6 +627,16 @@ class MediaDownloader:
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
+                    self.latest_date = max(
+                                            (
+                                                datetime.strptime(v["upload_date"], "%Y%m%d")
+                                                for v in self.channel_videos
+                                                if v.get("upload_date")
+                                            ),
+                                            default=None
+                                        )                    
+            else:
+                self.channel_videos = []
 
             for count, entry in enumerate(info['entries']):
                 if count >= max_videos:
@@ -601,6 +658,15 @@ class MediaDownloader:
             
             self.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
             self.channel_videos = [video for video in self.channel_videos if video.get('view_count', 0) >= min_view_count]
+            self.latest_date = max(
+                                    (
+                                        datetime.strptime(v["upload_date"], "%Y%m%d")
+                                        for v in self.channel_videos
+                                        if v.get("upload_date")
+                                    ),
+                                    default=None
+                                )                    
+
             with open(self.channel_list_json, 'w', encoding='utf-8') as f:
                 json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
 
@@ -635,8 +701,8 @@ class MediaDownloader:
     def convert_vtt_to_srt(self, vid, lang):
         # ffmpeg_path = os.path.abspath("ffmpeg/bin/ffmpeg.exe")         
         ffmpeg_path = os.path.abspath("ffmpeg.exe") 
-        vtt_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{vid}.{lang}.vtt")
-        srt_path = os.path.abspath(f"{self.project_path}/Youtbue_download/{vid}.{lang}.srt")
+        vtt_path = os.path.abspath(f"{self.youtube_dir}/Download/{vid}.{lang}.vtt")
+        srt_path = os.path.abspath(f"{self.youtube_dir}/Download/{vid}.{lang}.srt")
         try:
             subprocess.run([
                 ffmpeg_path,
@@ -825,12 +891,10 @@ class MediaDownloader:
 class MediaGUIManager:
     """YouTube GUI管理器 - 处理所有YouTube相关的GUI对话框"""
     
-    def __init__(self, root, project_path, pid, tasks, log_to_output_func, download_output):
+    def __init__(self, root, channel_path, pid, tasks, log_to_output_func, download_output):
         self.root = root
-        self.project_path = project_path
-        self.youtube_dir = f"{self.project_path}/Youtbue_download"
-        # 在导入模块之前先导入os，避免局部变量错误
-        import os
+        self.channel_path = channel_path
+        self.youtube_dir = f"{channel_path}/Download"
         os.makedirs(self.youtube_dir, exist_ok=True)
 
         self.pid = pid
@@ -841,7 +905,7 @@ class MediaGUIManager:
         self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
 
         # 创建YoutubeDownloader实例
-        self.downloader = MediaDownloader(pid, project_path)
+        self.downloader = MediaDownloader(pid, self.youtube_dir)
         
 
     def manage_hot_videos(self):
@@ -909,6 +973,14 @@ class MediaGUIManager:
         # 显示频道视频管理对话框
         with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
             self.downloader.channel_videos = json.load(f)
+            self.downloader.latest_date = max(
+                (
+                    datetime.strptime(v["upload_date"], "%Y%m%d")
+                    for v in self.downloader.channel_videos
+                    if v.get("upload_date")
+                ),
+                default=None
+            )
         if not self.downloader.channel_videos:
             messagebox.showwarning("提示", "视频列表为空")
             return
@@ -1082,7 +1154,7 @@ class MediaGUIManager:
             """在后台线程中生成摘要"""
             video_detail = self.get_video_detail(url)
             # read the topic_choices from media/topics.json
-            with open(os.path.join(os.path.dirname(__file__), '..', 'media', 'topics.json'), 'r', encoding='utf-8') as f:
+            with open(os.path.join(self.channel_path, 'topics.json'), 'r', encoding='utf-8') as f:
                 topic_choices = json.load(f)
 
             summary = video_detail.get('summary', '')
@@ -1125,20 +1197,6 @@ class MediaGUIManager:
         return video_detail
 
 
-    def get_channel_name(self, video_detail):
-        # 从第一个视频获取频道名 - 尝试多个字段
-        if not video_detail:
-            return 'Unknown'
-        channel_name = video_detail.get('channel', 'Unknown')
-        if channel_name.lower() == 'unknown':
-            channel_name = video_detail.get('uploader', 'Unknown')
-        if channel_name.lower() == 'unknown':
-            channel_name = video_detail.get('channel_id', 'Unknown')
-        print(f"📺 频道名称: {channel_name}")
-        print(f"🔍 调试信息 - channel: {video_detail.get('channel')}, uploader: {video_detail.get('uploader')}, channel_id: {video_detail.get('channel_id')}")
-        return channel_name
-
-
     def _show_channel_videos_dialog(self):
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
@@ -1172,19 +1230,23 @@ class MediaGUIManager:
         min_view_entry.pack(side=tk.LEFT, padx=(0, 10))
         
         # 排序方式
-        sort_mode_var = tk.StringVar(value="view_count")  # 默认按观看次数排序
+        sort_mode_var = tk.StringVar(value="hot_degree")  # 默认按热度排序
         
         def toggle_sort():
             """切换排序方式"""
-            if sort_mode_var.get() == "view_count":
-                sort_mode_var.set("upload_date")
-                sort_button.config(text="排序: 上传日期 ↓")
-            else:
+            current_mode = sort_mode_var.get()
+            if current_mode == "hot_degree":
                 sort_mode_var.set("view_count")
                 sort_button.config(text="排序: 观看次数 ↓")
+            elif current_mode == "view_count":
+                sort_mode_var.set("upload_date")
+                sort_button.config(text="排序: 上传日期 ↓")
+            else:  # upload_date
+                sort_mode_var.set("hot_degree")
+                sort_button.config(text="排序: 热度 ↓")
             populate_tree()
         
-        sort_button = ttk.Button(control_frame, text="排序: 观看次数 ↓", command=toggle_sort)
+        sort_button = ttk.Button(control_frame, text="排序: 热度 ↓", command=toggle_sort)
         sort_button.pack(side=tk.LEFT, padx=5)
         
         # 绑定回车键自动应用过滤
@@ -1282,17 +1344,36 @@ class MediaGUIManager:
             
             # 排序视频
             sort_mode = sort_mode_var.get()
-            if sort_mode == "view_count":
-                # 按观看次数降序排序
-                filtered_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+            if sort_mode == "hot_degree":
+                # 计算每个视频的热度值（每日观看次数）
+                def calculate_hot_degree(video):
+                    view_count = video.get('view_count', 0)
+                    upload_date = video.get('upload_date', '')
+                    if upload_date and len(upload_date) == 8:
+                        try:
+                            # 热度 = 观看次数 / 日期范围天数
+                            date_obj = datetime.strptime(upload_date, '%Y%m%d')
+                            days = (self.downloader.latest_date - date_obj).days + 1
+                            return view_count / (days if days > 0 else 1)
+                        except:
+                            pass
+                    # 如果无法计算，返回0
+                    return 0.0
+                
+                filtered_videos.sort(key=calculate_hot_degree, reverse=True)
+
             elif sort_mode == "upload_date":
                 # 按上传日期降序排序（最新的在前）
                 filtered_videos.sort(key=lambda x: x.get('upload_date', ''), reverse=True)
+            elif sort_mode == "view_count":
+                # 按观看次数降序排序
+                filtered_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
             
             # 检查视频状态并填充数据
             downloaded_count = 0
             transcribed_count = 0
             summarized_count = 0
+            hottest_degree = 0.0
             
             for idx, video in enumerate(filtered_videos, 1):
                 video.pop('text_content', None)
@@ -1310,6 +1391,10 @@ class MediaGUIManager:
                 # 格式化上传日期
                 upload_date = video.get('upload_date', '')
                 if upload_date and len(upload_date) == 8:  # YYYYMMDD
+                    days = (self.downloader.latest_date - datetime.strptime(upload_date, '%Y%m%d')).days + 1
+                    degree = view_count / (days if days > 0 else 1)
+                    if hottest_degree < degree:
+                        hottest_degree = degree
                     upload_date_str = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:]}"
                 else:
                     upload_date_str = "N/A"
@@ -1347,7 +1432,7 @@ class MediaGUIManager:
                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
 
             # 更新顶部信息标签
-            info_text = f"频道: {self.downloader.channel_name} | 共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count}"
+            info_text = f"频道: {self.downloader.channel_name} | 共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count} | 热度: {hottest_degree:.2f}"
             info_label.config(text=info_text)
         
 
@@ -1541,6 +1626,52 @@ class MediaGUIManager:
             tree.selection_remove(*tree.get_children())
             update_selection_count()
 
+ 
+        def re_summarize_selected():
+            selected_items = tree.selection()
+            if not selected_items:
+                return
+
+            # 收集所有需要处理的视频详情
+            videos_to_process = []
+            for item in selected_items:
+                item_tags = tree.item(item, "tags")
+                video_detail = self.get_video_detail(item_tags[0])
+                if video_detail:
+                    videos_to_process.append(video_detail)
+
+            if not videos_to_process:
+                return
+
+            total = len(videos_to_process)
+            completed = [0]
+
+            def summarize_task():
+                """在后台线程中处理摘要生成"""
+                for idx, video_detail in enumerate(videos_to_process, 1):
+                    try:
+                        print(f"[{idx}/{total}] 重新生成摘要: {video_detail.get('title', 'Unknown')[:50]}")
+                        self.update_text_content(video_detail, in_background=False)
+                        completed[0] += 1
+                    except Exception as e:
+                        print(f"❌ 错误: {video_detail.get('title', 'Unknown')[:50]} - {str(e)}")
+                
+                # 处理完成
+                print(f"\n{'='*50}")
+                print(f"批量摘要生成完成！")
+                print(f"成功: {completed[0]} 个")
+                
+                # 在主线程中刷新列表
+                dialog.after(0, populate_tree)
+                dialog.after(0, lambda: messagebox.showinfo("提示", f"摘要生成完成！\n成功: {completed[0]} 个", parent=dialog))
+
+            # 在后台线程中处理
+            thread = threading.Thread(target=summarize_task)
+            thread.daemon = True
+            thread.start()
+            
+            messagebox.showinfo("提示", f"正在为 {total} 个视频重新生成摘要，请稍后...", parent=dialog)
+
 
         def summarize_selected():
             selected_items = tree.selection()
@@ -1576,7 +1707,7 @@ class MediaGUIManager:
                     selected_videos.append(video_detail)
             
             # filter out the videos that are already downloaded
-            selected_videos = [video for video in selected_videos if video.get('audio_path', '') == '']
+            selected_videos = [video for video in selected_videos if (video.get('audio_path', '') == '' or not os.path.exists(video.get('audio_path', '')))]
             if not selected_videos:
                 return
             
@@ -1703,6 +1834,22 @@ class MediaGUIManager:
             populate_tree()
 
 
+
+        def tag_selected():
+            selected_items = tree.selection()
+            if not selected_items:
+                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
+                return
+
+            for item in selected_items:
+                item_tags = tree.item(item, "tags")
+                video_detail = self.get_video_detail(item_tags[0])
+                if not video_detail:
+                    continue
+                self.update_text_content(video_detail)
+
+
+
         def compile_selected():
             selected_items = tree.selection()
             if not selected_items:
@@ -1760,7 +1907,8 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="不选", command=deselect_all).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="编撰", command=compile_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="转录", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="下载", command=download_selected).pack(side=tk.RIGHT, padx=5)
@@ -1905,7 +2053,7 @@ class MediaGUIManager:
             self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
             return
 
-        channel_name = self.get_channel_name(video_data)
+        channel_name = self.downloader.get_channel_name(video_data)
 
         if not transcribe:
             self.downloader.download_video_highest_resolution(video_data)
@@ -1914,6 +2062,14 @@ class MediaGUIManager:
         self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
         if os.path.exists(self.downloader.channel_list_json):
             self.downloader.channel_videos = json.load(open(self.downloader.channel_list_json, 'r', encoding='utf-8'))
+            self.downloader.latest_date = max(
+                (
+                    datetime.strptime(v["upload_date"], "%Y%m%d")
+                    for v in self.downloader.channel_videos
+                    if v.get("upload_date")
+                ),
+                default=None
+            )            
         else:
             self.downloader.channel_list_json = None
             self.downloader.channel_videos = []
@@ -1954,6 +2110,14 @@ class MediaGUIManager:
                 try:
                     with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
                         self.downloader.channel_videos = json.load(f)
+                        self.downloader.latest_date = max(
+                            (
+                                datetime.strptime(v["upload_date"], "%Y%m%d")
+                                for v in self.downloader.channel_videos
+                                if v.get("upload_date")
+                            ),
+                            default=None
+                        )                
                 except Exception as e:
                     print(f"❌ 读取视频列表失败: {e}")
                     self.downloader.channel_videos = []
@@ -1961,9 +2125,6 @@ class MediaGUIManager:
             if not selected_file or not self.downloader.channel_videos:
                 self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
                 self.downloader.channel_videos = []
-                # 保存到文件
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                 print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 
 
@@ -1996,7 +2157,11 @@ class MediaGUIManager:
             self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
         
         self.downloader.channel_videos.append(video_data)
+        this_video_date = datetime.strptime(video_data["upload_date"], "%Y%m%d")
+        if this_video_date > self.downloader.latest_date:
+            self.downloader.latest_date = this_video_date
         self.update_text_content(video_data)
+        
         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")

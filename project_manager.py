@@ -462,15 +462,15 @@ class ProjectSelectionDialog:
         # 创建新项目配置对话框
         new_project_dialog = tk.Toplevel(self.dialog)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("500x700")
+        new_project_dialog.geometry("1000x600")
         new_project_dialog.transient(self.dialog)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
-        x = (new_project_dialog.winfo_screenwidth() - 500) // 2
-        y = (new_project_dialog.winfo_screenheight() - 700) // 2
-        new_project_dialog.geometry(f"500x700+{x}+{y}")
+        x = (new_project_dialog.winfo_screenwidth() - 1000) // 2
+        y = (new_project_dialog.winfo_screenheight() - 600) // 2
+        new_project_dialog.geometry(f"1000x600+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -479,7 +479,7 @@ class ProjectSelectionDialog:
         
         # PID输入
         ttk.Label(main_frame, text="项目ID (PID):").grid(row=row, column=0, sticky='w', pady=5)
-        pid_entry = ttk.Entry(main_frame, width=25)
+        pid_entry = ttk.Entry(main_frame, width=80)
         pid_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
         # 自动生成默认PID
         auto_pid = f"p{datetime.now().strftime('%Y%m%d%H%M')}"
@@ -488,21 +488,137 @@ class ProjectSelectionDialog:
         
         # 语言选择
         ttk.Label(main_frame, text="语言:").grid(row=row, column=0, sticky='w', pady=5)
-        language_combo = ttk.Combobox(main_frame, values=self.default_project_config['languages'], state="readonly", width=22)
+        language_combo = ttk.Combobox(main_frame, values=self.default_project_config['languages'], state="readonly", width=80)
         language_combo.grid(row=row, column=1, padx=(10, 0), pady=5)
         language_combo.set(self.default_project_config['default_language'])
         row += 1
         
         # 频道选择
         ttk.Label(main_frame, text="频道:").grid(row=row, column=0, sticky='w', pady=5)
-        channel_combo = ttk.Combobox(main_frame, values=self.default_project_config['channels'], state="readonly", width=22)
+        channel_combo = ttk.Combobox(main_frame, values=self.default_project_config['channels'], state="readonly", width=80)
         channel_combo.grid(row=row, column=1, padx=(10, 0), pady=5)
         channel_combo.set(self.default_project_config['default_channel'])
         row += 1
         
+        # 主题分类选择（两级：category 和 type）
+        topics_data = []  # 存储完整的 topics.json 数据
+        
+        ttk.Label(main_frame, text="主题分类:").grid(row=row, column=0, sticky='w', pady=5)
+        topic_category_combo = ttk.Combobox(main_frame, values=[], state="readonly", width=80)
+        topic_category_combo.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        row += 1
+        
+        ttk.Label(main_frame, text="主题类型:").grid(row=row, column=0, sticky='nw', pady=5)
+        # 创建带滚动条的多选 Listbox
+        topic_type_frame = ttk.Frame(main_frame)
+        topic_type_frame.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        
+        topic_type_listbox = tk.Listbox(topic_type_frame, selectmode=tk.EXTENDED, width=80, height=6)
+        topic_type_scrollbar = ttk.Scrollbar(topic_type_frame, orient=tk.VERTICAL, command=topic_type_listbox.yview)
+        topic_type_listbox.configure(yscrollcommand=topic_type_scrollbar.set)
+        
+        topic_type_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        topic_type_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 显示说明文本的标签（支持多行）
+        topic_explanation_label = ttk.Label(main_frame, text="", foreground="gray", wraplength=700, justify='left')
+        topic_explanation_label.grid(row=row, column=2, padx=(10, 0), pady=5, sticky='nw')
+        row += 1
+        
+        # 更新主题类型选项的函数（根据选择的 category）
+        def update_topic_type(*args):
+            selected_category = topic_category_combo.get()
+            topic_type_listbox.delete(0, tk.END)  # 清空当前选项
+            topic_explanation_label.config(text="")
+            
+            if selected_category and topics_data:
+                # 过滤出属于选中 category 的所有 topic_type
+                type_options = []
+                for topic in topics_data:
+                    if topic.get('topic_category') == selected_category:
+                        topic_type = topic.get('topic_type', '')
+                        if topic_type:
+                            type_options.append(topic_type)
+                
+                # 去重并排序
+                type_options = sorted(list(set(type_options)))
+                for option in type_options:
+                    topic_type_listbox.insert(tk.END, option)
+        
+        # 更新说明文本的函数（显示所有选中类型的说明）
+        def update_explanation(*args):
+            selected_category = topic_category_combo.get()
+            selected_indices = topic_type_listbox.curselection()
+            
+            if selected_category and selected_indices and topics_data:
+                explanations = []
+                for idx in selected_indices:
+                    selected_type = topic_type_listbox.get(idx)
+                    # 查找匹配的说明
+                    for topic in topics_data:
+                        if (topic.get('topic_category') == selected_category and 
+                            topic.get('topic_type') == selected_type):
+                            explanation = topic.get('explaination', '')
+                            if explanation:
+                                explanations.append(f"• {selected_type}: {explanation}")
+                                break
+                
+                if explanations:
+                    topic_explanation_label.config(text="说明:\n" + "\n\n".join(explanations), foreground="gray")
+                else:
+                    topic_explanation_label.config(text="")
+            else:
+                topic_explanation_label.config(text="")
+        
+        # 绑定事件
+        topic_category_combo.bind('<<ComboboxSelected>>', lambda e: (update_topic_type(), update_explanation()))
+        topic_type_listbox.bind('<<ListboxSelect>>', update_explanation)
+        
+        # 加载主题分类选项的函数（从 topics.json）
+        def update_topic_choices(*args):
+            channel = channel_combo.get()
+            topics_data.clear()  # 清空旧数据
+            topic_category_combo.set('')  # 清空选择
+            topic_category_combo['values'] = []
+            topic_type_listbox.delete(0, tk.END)  # 清空类型列表
+            topic_explanation_label.config(text="")
+            
+            if channel:
+                topics_file = os.path.join(config.get_channel_path(channel), 'topics.json')
+                if os.path.exists(topics_file):
+                    try:
+                        with open(topics_file, 'r', encoding='utf-8') as f:
+                            loaded_topics = json.load(f)
+                        
+                        # 确保是列表格式
+                        if isinstance(loaded_topics, list):
+                            topics_data.extend(loaded_topics)
+                        elif isinstance(loaded_topics, dict):
+                            # 如果是字典，尝试转换为列表
+                            topics_data.append(loaded_topics)
+                        
+                        # 提取所有唯一的 topic_category
+                        categories = set()
+                        for topic in topics_data:
+                            category = topic.get('topic_category', '')
+                            if category:
+                                categories.add(category)
+                        
+                        topic_category_combo['values'] = sorted(list(categories))
+                    except Exception as e:
+                        print(f"加载主题分类失败: {e}")
+                        topics_data.clear()
+                else:
+                    print(f"主题文件不存在: {topics_file}")
+        
+        # 绑定频道改变事件
+        channel_combo.bind('<<ComboboxSelected>>', update_topic_choices)
+        # 初始化加载主题分类
+        update_topic_choices()
+        
         # 标题
         ttk.Label(main_frame, text="标题:").grid(row=row, column=0, sticky='w', pady=5)
-        title_entry = ttk.Entry(main_frame, width=25)
+        title_entry = ttk.Entry(main_frame, width=80)
         title_entry.grid(row=row, column=1, padx=(10, 0), pady=5)
         title_entry.insert(0, self.default_project_config['default_title'])
         row += 1
@@ -568,6 +684,11 @@ class ProjectSelectionDialog:
             channel = channel_combo.get()
             title = title_entry.get().strip()
             resolution = resolution_var.get()
+            topic_category = topic_category_combo.get().strip()
+            # 获取所有选中的主题类型，用 | 连接
+            selected_indices = topic_type_listbox.curselection()
+            topic_types = [topic_type_listbox.get(idx) for idx in selected_indices]
+            topic_type = '|'.join(topic_types) if topic_types else ''
             
             if not pid:
                 messagebox.showerror("错误", "请输入项目ID")
@@ -606,6 +727,12 @@ class ProjectSelectionDialog:
                 **self.default_project_config.get('additional_fields', {}),
                 'story': story_var.get()
             }
+            
+            # 如果选择了主题分类和类型，添加到配置中
+            if topic_category:
+                self.selected_config['topic_category'] = topic_category
+            if topic_type:
+                self.selected_config['topic_type'] = topic_type
             
             self.result = 'new'
             new_project_dialog.destroy()

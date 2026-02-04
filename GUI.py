@@ -180,10 +180,9 @@ class WorkflowGUI:
             self.workflow.post_init(current_gui_title)
             
             # 初始化YouTube GUI管理器
-            project_path = config.get_project_path(self.get_pid())
             self.youtube_gui = MediaGUIManager(
                 self.root, 
-                project_path,  # 传入项目路径而不是workflow
+                config.get_channel_path(channel),  # 传入项目路径而不是workflow
                 self.get_pid(), 
                 self.tasks, 
                 self.log_to_output, 
@@ -337,6 +336,7 @@ class WorkflowGUI:
 
         ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -345,7 +345,6 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="YT音頻",  command=lambda:self.youtube_gui.download_youtube(True)).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="YT寻找",  command=lambda:self.youtube_gui.fetch_hot_videos()).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="YT管理",  command=lambda:self.youtube_gui.manage_hot_videos()).pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
 
    
     def _open_suno_gui(self):

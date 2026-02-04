@@ -1,3 +1,32 @@
+SIMPLE_REORGANIZE = """
+As professional speaker, rephrase in first person dialogue, the entire passage in "speaking" field of the input json, in orginal language, making it fluent and logical, but still sounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.
+
+*** Input:
+    ** Original conversation content provided in the user-prompt, example like:
+            {{
+                "name": "story",
+                "speaking": "xxxxxx",
+                "speaker": "zzzzz"
+            }}
+
+
+*** Output format: 
+    ** Strictly output in json array, which contain only one single scene element with fields like: 
+        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
+        * speaking: rephrase as first person dialogue, the original conversation content in a fluent and logical, ounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.  ~~~ in original language)
+        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
+        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
+        
+        Here is a Example:
+            {{
+                "speaking": "xxxxxx",
+                "speaker": "zzzzz",
+                "actions": "happy",
+                "visual": "yyyyy"
+            }}
+"""
+
+
 
 COUNSELING_PROGRAM = """
 You are expert to plan the story-telling program on Psychological-counseling/self-healing topic. 

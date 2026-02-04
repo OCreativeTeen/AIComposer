@@ -783,18 +783,16 @@ class FfmpegProcessor:
             if not self.has_audio_stream(video_path):
                 change_ratio_to_match_audio_length = True
                 
-            video_duration = self.get_duration(video_path)
             audio_duration = self.get_duration(audio_path)
 
             if match_audio_length:
                 # Use a small tolerance (0.1s) to handle floating-point precision issues
-                duration_diff = audio_duration - video_duration
+                duration_diff = audio_duration - self.get_duration(video_path)
                 
                 if duration_diff > 0.1 or change_ratio_to_match_audio_length:
                     # Audio is significantly longer, or extend video to match audio duration
                     #self.extend_video_with_last_frame(video_path, audio_path, temp_file)
                     video_path = self.adjust_video_to_duration( video_path, audio_duration )
-                video_duration = audio_duration
 
             cmd = self._ffmpeg_input_args(video_path, audio_path)
 
