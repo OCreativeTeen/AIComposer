@@ -502,23 +502,38 @@ class MediaDownloader:
             quiet=True,
             skip_download=True
         )
-        with yt_dlp.YoutubeDL(video_info_opts) as video_ydl:
-            video_detail = video_ydl.extract_info(video_url, download=False)
-            
-            video_data = {
-                'title': video_detail.get('title', 'Unknown Title'),
-                'url': video_url,
-                'id': video_detail.get('id', ''),
-                'duration': video_detail.get('duration', 0),
-                'view_count': video_detail.get('view_count', 0),
-                'uploader': video_detail.get('uploader', channel_name),
-                'channel': channel_name,  # 添加独立的 channel 字段
-                'channel_id': video_detail.get('channel_id', ''),
-                'upload_date': video_detail.get('upload_date', ''),
-                'thumbnail': video_detail.get('thumbnail', ''),
-                'description': video_detail.get('description', '')[:200] if video_detail.get('description') else ''
-            }
-            return video_data
+        try:
+            with yt_dlp.YoutubeDL(video_info_opts) as video_ydl:
+                video_detail = video_ydl.extract_info(video_url, download=False)
+                
+                if not video_detail:
+                    raise Exception(f"无法获取视频信息: {video_url}")
+                
+                video_data = {
+                    'title': video_detail.get('title', 'Unknown Title'),
+                    'url': video_url,
+                    'id': video_detail.get('id', ''),
+                    'duration': video_detail.get('duration', 0),
+                    'view_count': video_detail.get('view_count', 0),
+                    'uploader': video_detail.get('uploader', channel_name),
+                    'channel': channel_name,  # 添加独立的 channel 字段
+                    'channel_id': video_detail.get('channel_id', ''),
+                    'upload_date': video_detail.get('upload_date', ''),
+                    'thumbnail': video_detail.get('thumbnail', ''),
+                    'description': video_detail.get('description', '')[:200] if video_detail.get('description') else ''
+                }
+                return video_data
+        except yt_dlp.utils.DownloadError as e:
+            error_msg = str(e)
+            if '403' in error_msg or 'Forbidden' in error_msg:
+                raise Exception(f"HTTP 403 Forbidden - YouTube 访问被拒绝，可能需要更新 cookies 或等待: {video_url}")
+            elif 'challenge' in error_msg.lower():
+                raise Exception(f"YouTube 挑战验证失败: {video_url}")
+            else:
+                raise Exception(f"下载错误: {error_msg}")
+        except Exception as e:
+            # 重新抛出异常，让调用者处理
+            raise
 
 
     def generate_video_prefix(self, video_detail, title_length=15):
@@ -644,17 +659,63 @@ class MediaDownloader:
 
                 if entry:
                     video_url = entry.get('url', '') or entry.get('webpage_url', '') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
-                    try:
-                        video_data = self.get_video_detail(video_url, channel_name)
-                        print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
-
+                    video_id = entry.get('id', '')
+                    
+                    # 首先尝试使用 entry 中的基本信息
+                    video_data = None
+                    if entry.get('view_count') is not None and entry.get('title'):
+                        # entry 中已有足够信息，直接使用
+                        video_data = {
+                            'title': entry.get('title', 'Unknown Title'),
+                            'url': video_url,
+                            'id': video_id,
+                            'duration': entry.get('duration', 0),
+                            'view_count': entry.get('view_count', 0),
+                            'uploader': entry.get('uploader', channel_name),
+                            'channel': channel_name,
+                            'channel_id': entry.get('channel_id', ''),
+                            'upload_date': entry.get('upload_date', ''),
+                            'thumbnail': entry.get('thumbnail', ''),
+                            'description': entry.get('description', '')[:200] if entry.get('description') else ''
+                        }
+                        print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看 (使用列表信息)")
+                    else:
+                        # entry 中信息不足，尝试获取详细信息
+                        try:
+                            video_data = self.get_video_detail(video_url, channel_name)
+                            print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
+                        except Exception as e:
+                            error_msg = str(e)
+                            # 检查是否是 403 或挑战验证错误
+                            if '403' in error_msg or 'Forbidden' in error_msg or 'challenge' in error_msg.lower():
+                                print(f"⚠️ 跳过视频 (403/挑战验证失败): {video_id} - 尝试使用基本信息")
+                                # 尝试使用 entry 中的基本信息，即使不完整
+                                if entry.get('title'):
+                                    video_data = {
+                                        'title': entry.get('title', 'Unknown Title'),
+                                        'url': video_url,
+                                        'id': video_id,
+                                        'duration': entry.get('duration', 0),
+                                        'view_count': entry.get('view_count', 0),  # 可能是 0 或 None
+                                        'uploader': entry.get('uploader', channel_name),
+                                        'channel': channel_name,
+                                        'channel_id': entry.get('channel_id', ''),
+                                        'upload_date': entry.get('upload_date', ''),
+                                        'thumbnail': entry.get('thumbnail', ''),
+                                        'description': entry.get('description', '')[:200] if entry.get('description') else ''
+                                    }
+                                    print(f"  → 使用基本信息: {video_data['title'][:50]}")
+                                else:
+                                    print(f"  → 无法获取视频信息，跳过")
+                                    continue
+                            else:
+                                print(f"⚠️ 跳过视频: {error_msg}")
+                                continue
+                    
+                    if video_data:
                         is_new_video = self.is_video_new(video_data)
                         if is_new_video:
                             self.channel_videos.append(video_data)
-                    except Exception as e:
-                        error_msg = str(e)
-                        print(f"⚠️ 跳过视频: {error_msg}")
-                        self.cookie_file = None
             
             self.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
             self.channel_videos = [video for video in self.channel_videos if video.get('view_count', 0) >= min_view_count]
