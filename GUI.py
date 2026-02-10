@@ -8,7 +8,6 @@ import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import os
 import json
-import re
 import threading
 import time
 from datetime import datetime
@@ -18,7 +17,6 @@ import uuid
 from magic_workflow import MagicWorkflow
 import config
 import config_prompt
-import utility.sd_image_processor as sd_image_processor
 from PIL import Image, ImageTk
 from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media
 import project_manager

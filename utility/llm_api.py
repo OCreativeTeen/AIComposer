@@ -113,6 +113,7 @@ class LLMApi:
         return {"role": role, "content": content}
 
 
+    # { "topic_category": "心智成长与存在焦虑", "topic_subtype": "觉醒期与意义崩塌", "problem_tags": "我开始怀疑以前相信的一切, 努力好像不一定 有回报, 我看清规则却更迷茫" "component_tags": "analysis, insight, reflection, exercise" }
     def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True) -> Union[Dict, List]:
         max_retries = 3
         for attempt in range(max_retries):
@@ -191,6 +192,108 @@ class LLMApi:
         # Step 2: 移除首尾空白
         content_string = content_string.strip()
         
+        # Step 2.5: 修复常见的 JSON 错误（如缺少逗号）
+        def fix_common_json_errors(text: str) -> str:
+            """修复常见的 JSON 格式错误，特别是 LLM 生成的错误"""
+            # 使用字符级解析来安全地修复错误（保护字符串内容）
+            result = []
+            i = 0
+            in_string = False
+            escape_next = False
+            
+            while i < len(text):
+                char = text[i]
+                
+                # 处理转义字符
+                if escape_next:
+                    result.append(char)
+                    escape_next = False
+                    i += 1
+                    continue
+                
+                if char == '\\':
+                    result.append(char)
+                    escape_next = True
+                    i += 1
+                    continue
+                
+                # 跟踪字符串状态
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    result.append(char)
+                    i += 1
+                    continue
+                
+                # 只在字符串外处理修复
+                if not in_string:
+                    # 修复缺少逗号：`"key": "value" "key2":` -> `"key": "value", "key2":`
+                    # 模式：值结束引号 + 空白 + 键开始引号 + ... + 冒号
+                    if char == '"' and result and result[-1] == '"':
+                        # 检查后面是否是新键的模式
+                        j = i + 1
+                        # 跳过空白
+                        while j < len(text) and text[j] in ' \t\n\r':
+                            j += 1
+                        if j < len(text) and text[j] == '"':
+                            # 可能是新键，继续查找冒号
+                            k = j + 1
+                            found_colon = False
+                            while k < len(text):
+                                if text[k] == '\\':
+                                    k += 2
+                                    continue
+                                if text[k] == '"':
+                                    # 键结束，查找冒号
+                                    k += 1
+                                    while k < len(text) and text[k] in ' \t\n\r':
+                                        k += 1
+                                    if k < len(text) and text[k] == ':':
+                                        found_colon = True
+                                    break
+                                k += 1
+                            
+                            if found_colon:
+                                # 确认是缺少逗号的情况，添加逗号
+                                result.append(',')
+                    
+                    # 修复多余的逗号：`,,` -> `,`
+                    if char == ',' and i + 1 < len(text) and text[i+1] == ',':
+                        result.append(',')
+                        i += 1  # 跳过第二个逗号
+                        continue
+                    
+                    # 修复末尾多余的逗号：`,}` -> `}` 或 `,]` -> `]`
+                    if char == ',':
+                        j = i + 1
+                        while j < len(text) and text[j] in ' \t\n\r':
+                            j += 1
+                        if j < len(text) and text[j] in '}]':
+                            # 跳过这个逗号
+                            i += 1
+                            continue
+                
+                # 普通字符
+                result.append(char)
+                i += 1
+            
+            fixed_text = ''.join(result)
+            
+            # 使用正则表达式进行额外的修复（作为补充）
+            # 修复缺少逗号：`"value" "key":` -> `"value", "key":`
+            # 匹配：引号 + 空白 + 引号 + 键名 + 引号 + 空白 + 冒号
+            # 这个模式匹配值结束和新键开始之间缺少逗号的情况
+            pattern = r'("(?:[^"\\]|\\.)*")\s+("(?:[^"\\]|\\.)*"\s*:)'
+            fixed_text = re.sub(pattern, r'\1,\2', fixed_text)
+            
+            # 修复多余的逗号
+            fixed_text = re.sub(r',\s*,+', ',', fixed_text)  # `,,` 或 `,,,` -> `,`
+            fixed_text = re.sub(r',\s*([}\]])', r'\1', fixed_text)  # `,}` -> `}` 或 `,]` -> `]`
+            
+            return fixed_text
+        
+        # 应用 JSON 错误修复
+        content_string = fix_common_json_errors(content_string)
+        
         # Step 3: 首先尝试从 ```json ... ``` 代码块中提取JSON
         json_pattern = r'```json\s*(.*?)\s*```'
         matches = re.findall(json_pattern, content_string, re.DOTALL)
@@ -260,8 +363,11 @@ class LLMApi:
         
         # Step 6: 最后的尝试 - 轻量级清理（仅用于明显损坏的JSON）
         try:
+            # 再次应用 JSON 错误修复（以防前面的步骤没有完全修复）
+            cleaned = fix_common_json_errors(content_string)
+            
             # 移除控制字符（除了换行、回车、制表符）
-            cleaned = ''.join(char for char in content_string if ord(char) >= 32 or char in '\n\r\t')
+            cleaned = ''.join(char for char in cleaned if ord(char) >= 32 or char in '\n\r\t')
             
             # 移除首尾的引号（如果整个字符串被引号包裹）
             if cleaned.startswith('"') and cleaned.endswith('"'):

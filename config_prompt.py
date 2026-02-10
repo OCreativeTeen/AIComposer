@@ -369,10 +369,106 @@ SPEAKING_PROMPTS = {
 #     **高潮（释放）：**Cinematic Pop / World Music（加入合唱感、鼓点加强、弦乐堆叠，情绪高涨）
 
 SUNO_CONTENT_ENHANCE_SYSTEM_PROMPT = [
-"Following below as example of a music style/genre, make prompt to create similar music (in English): * (add more details with richer musical direction and mood guidanc) * (transcend from the orginal content, to distill/extract deeper profound, elevated emotions and higher realm of resonance that moves and inspires)",
-"对(YOUTUBE链接)的音乐, 详细分析其音乐/歌曲的特性(风格,情绪,气氛,地域,时代,节奏,乐器,人声特质,人声伴唱,内容类型等等), 以此生成提示词(PROMPT), 用在SUNO-AI来生成类似的音乐/歌曲",
-"Conduct an in-depth analysis of the music from the specified YouTube link, identifying key attributes including style, mood, emotion, atmosphere, regional and historical context, tempo, instrumentation, vocal speakeristics, backing vocals, and lyrical themes. Use these attributes to create effective prompts for SUNO AI to generate similar music or songs."
+"""
+Conduct an in-depth analysis of the music from the specified YouTube link, identifying key attributes including style, mood, emotion, atmosphere, regional and historical context, tempo, instrumentation, vocal speakeristics, backing vocals, and lyrical themes. Use these attributes to create effective prompts for SUNO AI to generate similar music or songs."
+""",
+
+"""
+SUNO MUSIC PROMPT GENERATION SYSTEM PROMPT:
+You will analyze the music from the specified YouTube link or music-description (in user-prompt),  and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
+
+1) Deep music analysis (extract reusable “finalized” details)
+    Analyze the track thoroughly and output a structured breakdown of the following attributes:
+    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
+    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
+    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
+    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
+    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
+    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
+    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
+    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
+    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
+
+
+2) Extract “DNA rules” for generating a similar new song
+    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
+        signature chord cadence types
+        signature rhythm patterns
+        signature synth/texture choices
+        signature vocal production (double, harmony stack, adlibs)
+        signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+
+4) Output format: always produce detailed SUNO prompts
+    After analysis, output 1-3 detailed SUNO prompts that are:
+        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
+        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+""",
+
+
+"""
+TWO-LAYERS SUNO MUSIC PROMPT GENERATION SYSTEM PROMPT:
+You will analyze the music from the specified YouTube link or music-description (in user-prompt),  and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
+
+1) Deep music analysis (extract reusable “finalized” details)
+    Analyze the track thoroughly and output a structured breakdown of the following attributes:
+    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
+    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
+    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
+    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
+    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
+    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
+    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
+    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
+    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
+
+
+2) Extract “DNA rules” for generating a similar new song
+    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
+        signature chord cadence types
+        signature rhythm patterns
+        signature synth/texture choices
+        signature vocal production (double, harmony stack, adlibs)
+        signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+3) Force the specific two-part melodic architecture:
+
+    The new song must have a clear contrast between two melodic worlds:
+        Front section (A-world): high conflict + dramatic movement
+            allow minor key / modal tension, dissonant passing tones, “push-pull” phrasing
+            big dynamic swings, dramatic rises/falls, sharper rhythmic accents
+            hook can feel edgy, restless, emotionally complex
+
+        Back section (B-world): stable + sunny + supportive melodic bed
+            shift toward major / brighter mode, stable stepwise melody, smoother rhythm
+            acts as “foundation / resolution” and supports the earlier motif
+            feels warm, optimistic, grounded, consistent
+            Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
+
+4) Output format: always produce detailed SUNO prompts
+    After analysis, output 1-3 detailed SUNO prompts that are:
+        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
+        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+"""
 ]
+
+
+
+SUNO_LYRICS_SYSTEM_PROMPT = """
+You are a professional to make the lyrics for a {suno_lang} song, which express the content in 'user-prompt':
+
+** Please make the lyrics like story-telling (has details to describe the content / feelings / conflicts / etc)
+        **** make it transcend/distill/elevated realm of resonance that moves and inspires.
+** Lyrics should be concise, non-repetitive, and carefully crafted with strong, consistent rhyme schemes.
+
+** The lyrics is for music styles like : 
+{music_styles}
+
+"""
+
+
 
 SUNO_LANGUAGE = [
     "Instrumental Music",
@@ -797,27 +893,29 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
 For psychology-related discussion/analysis content (given in user-prompt), you are expert to:
 
-1. give tags for the content, choices are :
+1. give component_tags for the content, choices are :
     scenario, case-study, analysis, insight, evidence, theory, solution, intervention, exercise, feedback, reflection
     FYI: give string of tags separated by commas, not list!!
 
 
-2. choose a topic_type & topic_category about the content from following choices (the topic explaination is given),
+2. choose a topic_category & a topic_subtype about the content from following choices (the topic explaination is given),
 {topic_choices}
 
 
 output as json format (strictly follow the format):
 {{
-    "topic_type": "The topic type of the content",
     "topic_category": "The topic category of the content",
-    "tags": "The tags of the content -- give string of tags separated by commas, not list!!"
+    "topic_subtype": "The topic subtype of the content",
+    "problem_tags": "The topic tags of the content -- give string of tags separated by commas, not list!!",
+    "component_tags": "The component_tags of the content -- give string of tags separated by commas, not list!!"
 }}
 
 like the example :
 {{
-    "topic_type": "糾纏與綁架機制 - 共生與控制",
-    "topic_category": "原生家庭與分離",
-    "tags": "case-study, analysis, insight, solution"
+    "topic_category": "人格形成与早期创伤",
+    "topic_subtype": "原生家庭脚本与角色固化",
+    "problem_tags": "我从小就是那个最懂事的, 我不被偏爱但被需要, 我一反抗就内疚",
+    "component_tags": "case-study, analysis, insight, solution"
 }}
 """
 

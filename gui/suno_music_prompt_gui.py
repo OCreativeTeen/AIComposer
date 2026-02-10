@@ -348,8 +348,12 @@ class SunoMusicPromptGUI:
         button_frame = ttk.Frame(inputs_frame)
         button_frame.pack(fill=tk.X, padx=5, pady=10)
         
-        ttk.Button(button_frame, text="生成SUNO提示词222", 
+        ttk.Button(button_frame, text="生SUNO提示 2222", 
                   command=lambda: self.generate_music_prompt(False)).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(button_frame, text="生SUNO歌词 1111", 
+                  command=self.concise_music_lyrics).pack(side=tk.LEFT, padx=(0, 5))
+
         ttk.Button(button_frame, text="保存音乐风格", 
                   command=self.save_music_style).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="清空内容", 
@@ -358,9 +362,6 @@ class SunoMusicPromptGUI:
         ttk.Button(button_frame, text="Refine", 
                   command=self.refine_music_prompt).pack(side=tk.LEFT, padx=(0, 5))
 
-        ttk.Button(button_frame, text="生成SUNO歌词", 
-                  command=self.concise_music_lyrics).pack(side=tk.LEFT, padx=(0, 5))
-        
 
         
         # Initialize the style comboboxes with the first category's values
@@ -377,7 +378,7 @@ class SunoMusicPromptGUI:
         content_areas_frame.grid_columnconfigure(2, weight=2)  # lyrics_frame weight (wider, 2x)
         
         # Left side - Original content area
-        left_frame = ttk.LabelFrame(content_areas_frame, text="音乐内容", padding="5")
+        left_frame = ttk.LabelFrame(content_areas_frame, text="音乐内容构建/提示", padding="5")
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
         
         # Content explanation - Combobox and button in same row
@@ -439,7 +440,7 @@ class SunoMusicPromptGUI:
         self.music_content.bind('<FocusOut>', self.on_project_config_change)
         
         # Music prompt - directly child of content_areas_frame
-        prompt_frame = ttk.LabelFrame(content_areas_frame, text="提示词", padding="5")
+        prompt_frame = ttk.LabelFrame(content_areas_frame, text="SUNO-AI 提示词", padding="5")
         prompt_frame.grid(row=0, column=1, sticky="nsew", padx=(2, 2))
         prompt_frame.grid_rowconfigure(1, weight=1)
         
@@ -566,52 +567,34 @@ class SunoMusicPromptGUI:
     
 
     def generate_music_prompt(self, is_lyrics=False):
-        """Generate music prompts for the project"""
-        
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "generate_music_prompts",
-            "status": "运行中",
-            "start_time": datetime.now()
-        }
-        
-        def run_task():
-            try:
-                # Generate music prompts using workflow
-                content = self.music_content.get(1.0, tk.END).strip()
+        try:
+            # Generate music prompts using workflow
+            system_prompt = self.music_content.get(1.0, tk.END).strip()
+            user_prompt = self.music_prompt.get(1.0, tk.END).strip()
+            
+            music_prompt = self.llm_api.generate_text(system_prompt, user_prompt)
 
-                music_prompt = self.prepare_suno_music( content=content )
-                if music_prompt:
-                    # 使用默认参数捕获变量值，避免闭包问题
-                    self.root.after(0, lambda mp=music_prompt: self.music_prompt.delete(1.0, tk.END))
-                    self.root.after(0, lambda mp=music_prompt: self.music_prompt.insert(1.0, mp))
-                else:
-                    self.root.after(0, lambda: messagebox.showerror("错误", "生成音乐提示词失败：未获得有效响应"))
-                    return
+            if music_prompt:
+                # 使用默认参数捕获变量值，避免闭包问题
+                self.root.after(0, lambda mp=music_prompt: self.music_prompt.delete(1.0, tk.END))
+                self.root.after(0, lambda mp=music_prompt: self.music_prompt.insert(1.0, mp))
+            else:
+                self.root.after(0, lambda: messagebox.showerror("错误", "生成音乐提示词失败：未获得有效响应"))
+                return
 
-                self.status_var.set("就绪")
-                self.tasks[task_id]["status"] = "完成"
-                
-                # Auto-save the configuration
-                self.root.after(100, self.save_project_config)
-                
-                # Show success message in main thread
-                self.root.after(0, lambda: messagebox.showinfo("成功", f"SUNO音乐提示词生成完成！"))
-                
-            except Exception as e:
-                error_msg = str(e)
-                self.log_to_output(self.music_output, f"❌ SUNO音乐提示词生成失败: {error_msg}")
-                self.status_var.set("发生错误")
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = error_msg
-                
-                # Show error message in main thread
-                self.root.after(0, lambda: messagebox.showerror("错误", f"SUNO音乐提示词生成失败: {error_msg}"))
-        
-        # Run in separate thread
-        thread = threading.Thread(target=run_task)
-        thread.daemon = True
-        thread.start()
+            self.status_var.set("就绪")
+            
+            # Auto-save the configuration
+            self.root.after(100, self.save_project_config)
+            # Show success message in main thread
+            self.root.after(0, lambda: messagebox.showinfo("成功", f"SUNO音乐提示词生成完成！"))
+            
+        except Exception as e:
+            error_msg = str(e)
+            self.log_to_output(self.music_output, f"❌ SUNO音乐提示词生成失败: {error_msg}")
+            self.status_var.set("发生错误")
+            # Show error message in main thread
+            self.root.after(0, lambda: messagebox.showerror("错误", f"SUNO音乐提示词生成失败: {error_msg}"))
     
 
     def save_music_style(self):
@@ -649,19 +632,6 @@ class SunoMusicPromptGUI:
     
 
 
-    def prepare_suno_music(self, content):
-        system_prompt = "You are a professional to make SUNO-AI prompt for music creation according to the content of 'user-prompt' (in English, try add more details with richer musical guidance)"
-        return self.llm_api.generate_text(system_prompt, content)
-
-
-
-    def prepare_suno_lyrics(self, suno_lang, styles, content):
-        system_prompt = f"""
-You are a professional to make SUNO-AI prompt for song lyrics to cover the content in 'user-prompt' (in English, make it transcend/distill/elevated realm of resonance that moves and inspires).
-**FYI: music-style details are in the 'music-style' section of the user-prompt**
-"""
-        return self.llm_api.generate_text(system_prompt, content + "\n\n\n***music-style***\n" + styles)
-    
     def refine_music_prompt(self):
         """Refine and reorganize the music prompt content using LLM"""
         current_content = self.music_prompt.get(1.0, tk.END).strip()
@@ -712,41 +682,34 @@ Output the concise version of the music prompt."""
             messagebox.showwarning("警告", "歌词起始内容为空，无法进行生成")
             return
         
-        def run_concise():
-            try:
-                language = self.suno_language.get()
-                music_styles = self.music_style.get(1.0, tk.END).strip()
-                music_prompt = self.music_prompt.get(1.0, tk.END).strip()
+        try:
+            language = self.suno_language.get()
+            music_styles = self.music_style.get(1.0, tk.END).strip()
+            music_prompt = self.music_prompt.get(1.0, tk.END).strip()
+            if music_prompt:
+                music_styles = music_styles + "\n\n***\n" + music_prompt
 
-                lyrics_prompt = self.prepare_suno_lyrics(
-                    suno_lang=language,
-                    styles=music_prompt + "\n\n\n***music-style***\n" + music_styles,
-                    content=current_lyrics
-                )
-                
-                if lyrics_prompt:
-                    # 使用默认参数捕获变量值，避免闭包问题
-                    lyrics_text = lyrics_prompt.strip()
-                    self.root.after(0, lambda: self.music_lyrics.delete(1.0, tk.END))
-                    self.root.after(0, lambda lt=lyrics_text: self.music_lyrics.insert(1.0, lt))
-                    self.root.after(0, lambda: self.on_project_config_change())
-                    self.status_var.set("就绪")
-                    self.log_to_output(self.music_output, "✅ 歌词精简完成")
-                    self.root.after(0, lambda: messagebox.showinfo("成功", "歌词精简完成！"))
-                else:
-                    self.status_var.set("发生错误")
-                    self.log_to_output(self.music_output, "❌ 歌词精简失败：未获得有效响应")
-                    self.root.after(0, lambda: messagebox.showerror("错误", "歌词精简失败：未获得有效响应"))
-                    
-            except Exception as e:
-                error_msg = str(e)
-                self.log_to_output(self.music_output, f"❌ 歌词精简失败: {error_msg}")
+            system_prompt = config_prompt.SUNO_LYRICS_SYSTEM_PROMPT.format(suno_lang=language, music_styles=music_styles)
+            lyrics_prompt = self.llm_api.generate_text(system_prompt, current_lyrics)
+            
+            if lyrics_prompt:
+                lyrics_text = lyrics_prompt.strip()
+                self.root.after(0, lambda: self.music_lyrics.delete(1.0, tk.END))
+                self.root.after(0, lambda lt=lyrics_text: self.music_lyrics.insert(1.0, lt))
+                self.root.after(0, lambda: self.on_project_config_change())
+                self.status_var.set("就绪")
+                self.log_to_output(self.music_output, "✅ 歌词精简完成")
+                self.root.after(0, lambda: messagebox.showinfo("成功", "歌词精简完成！"))
+            else:
                 self.status_var.set("发生错误")
-                self.root.after(0, lambda: messagebox.showerror("错误", f"歌词精简失败: {error_msg}"))
-        
-        thread = threading.Thread(target=run_concise)
-        thread.daemon = True
-        thread.start()
+                self.log_to_output(self.music_output, "❌ 歌词精简失败：未获得有效响应")
+                self.root.after(0, lambda: messagebox.showerror("错误", "歌词精简失败：未获得有效响应"))
+                
+        except Exception as e:
+            error_msg = str(e)
+            self.log_to_output(self.music_output, f"❌ 歌词精简失败: {error_msg}")
+            self.status_var.set("发生错误")
+            self.root.after(0, lambda: messagebox.showerror("错误", f"歌词精简失败: {error_msg}"))
 
 
 
