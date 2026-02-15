@@ -2085,8 +2085,20 @@ class MediaGUIManager:
                         tags_var.set(new_tags)
                     # 更新 audience 显示
                     update_audience_display()
+
             
-            
+            def copy_material():
+                """拷贝原文"""
+                text_content = self.fetch_text_content(video_detail)
+                if text_content:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text_content)
+                    self.root.update()
+                    messagebox.showinfo("成功", "原文已拷贝到剪贴板", parent=summary_window)
+                else:
+                    messagebox.showinfo("提示", "原文不存在", parent=summary_window)
+
+
             def re_category_tags():
                 """重新分类"""
                 selected_category = category_var.get()
@@ -2121,6 +2133,9 @@ class MediaGUIManager:
             
             re_tag_category_btn = ttk.Button(button_frame, text="重新分类", command=re_category_tags)
             re_tag_category_btn.pack(side=tk.LEFT, padx=5)
+
+            copy_material_btn = ttk.Button(button_frame, text="拷贝原文", command=copy_material)
+            copy_material_btn.pack(side=tk.LEFT, padx=5)
 
 
             # 保存按钮

@@ -298,6 +298,52 @@ class ContentEditorDialog:
         }
 
 
+class AnalysisEditorDialog:
+    """分析内容编辑器对话框 - 编辑 Analysis 字段（LLM 生成待后续集成）"""
+
+    def __init__(self, parent, initial_analysis=""):
+        self.parent = parent
+        self.result_analysis = initial_analysis
+        self.create_dialog()
+
+    def create_dialog(self):
+        """创建编辑器对话框"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("分析内容编辑器")
+        self.dialog.geometry("800x500")
+        self.dialog.transient(self.parent)
+        self.dialog.grab_set()
+
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() - 800) // 2
+        y = (self.dialog.winfo_screenheight() - 500) // 2
+        self.dialog.geometry(f"800x500+{x}+{y}")
+
+        main_frame = ttk.Frame(self.dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="分析内容 (Analysis):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        self.analysis_editor = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, width=80, height=15)
+        self.analysis_editor.pack(fill=tk.BOTH, expand=True)
+        self.analysis_editor.insert('1.0', self.result_analysis)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(button_frame, text="确定", command=self.on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
+
+    def on_ok(self):
+        self.result_analysis = self.analysis_editor.get('1.0', tk.END).strip()
+        self.dialog.destroy()
+
+    def on_cancel(self):
+        self.dialog.destroy()
+
+    def show(self):
+        """显示对话框并返回结果"""
+        self.dialog.wait_window()
+        return {'analysis': self.result_analysis}
+
 
 class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
@@ -500,7 +546,7 @@ class ProjectSelectionDialog:
         channel_combo.set(self.default_project_config['default_channel'])
         row += 1
         
-        # 主题分类选择（两级：category 和 type）
+        # 主题分类选择（两级：category 和 subtype，各单选）
         topics_data = []  # 存储完整的 topics.json 数据
         
         ttk.Label(main_frame, text="主题分类:").grid(row=row, column=0, sticky='w', pady=5)
@@ -508,79 +554,68 @@ class ProjectSelectionDialog:
         topic_category_combo.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
         row += 1
         
-        ttk.Label(main_frame, text="主题类型:").grid(row=row, column=0, sticky='nw', pady=5)
-        # 创建带滚动条的多选 Listbox
-        topic_type_frame = ttk.Frame(main_frame)
-        topic_type_frame.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
-        
-        topic_type_listbox = tk.Listbox(topic_type_frame, selectmode=tk.EXTENDED, width=80, height=6)
-        topic_type_scrollbar = ttk.Scrollbar(topic_type_frame, orient=tk.VERTICAL, command=topic_type_listbox.yview)
-        topic_type_listbox.configure(yscrollcommand=topic_type_scrollbar.set)
-        
-        topic_type_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        topic_type_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Label(main_frame, text="主题子类型:").grid(row=row, column=0, sticky='w', pady=5)
+        topic_subtype_combo = ttk.Combobox(main_frame, values=[], state="readonly", width=80)
+        topic_subtype_combo.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        row += 1
         
         # 显示说明文本的标签（支持多行）
         topic_explanation_label = ttk.Label(main_frame, text="", foreground="gray", wraplength=700, justify='left')
-        topic_explanation_label.grid(row=row, column=2, padx=(10, 0), pady=5, sticky='nw')
+        topic_explanation_label.grid(row=row, column=1, columnspan=2, padx=(10, 0), pady=5, sticky='nw')
         row += 1
         
-        # 更新主题类型选项的函数（根据选择的 category）
-        def update_topic_type(*args):
+        # 更新主题子类型选项的函数（根据选择的 category）
+        def update_topic_subtype(*args):
             selected_category = topic_category_combo.get()
-            topic_type_listbox.delete(0, tk.END)  # 清空当前选项
+            topic_subtype_combo.set('')
+            topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
             
             if selected_category and topics_data:
-                # 过滤出属于选中 category 的所有 topic_type
-                type_options = []
+                subtypes = []
                 for topic in topics_data:
                     if topic.get('topic_category') == selected_category:
-                        topic_type = topic.get('topic_type', '')
-                        if topic_type:
-                            type_options.append(topic_type)
-                
-                # 去重并排序
-                type_options = sorted(list(set(type_options)))
-                for option in type_options:
-                    topic_type_listbox.insert(tk.END, option)
+                        for subtype_item in topic.get('topic_subtypes', []):
+                            if isinstance(subtype_item, dict):
+                                subtype_name = subtype_item.get('topic_subtype', '')
+                                if subtype_name and subtype_name not in subtypes:
+                                    subtypes.append(subtype_name)
+                topic_subtype_combo['values'] = sorted(subtypes)
         
-        # 更新说明文本的函数（显示所有选中类型的说明）
+        # 更新说明文本的函数（显示 topic_core_question 和 sample_topic）
         def update_explanation(*args):
             selected_category = topic_category_combo.get()
-            selected_indices = topic_type_listbox.curselection()
             
-            if selected_category and selected_indices and topics_data:
-                explanations = []
-                for idx in selected_indices:
-                    selected_type = topic_type_listbox.get(idx)
-                    # 查找匹配的说明
-                    for topic in topics_data:
-                        if (topic.get('topic_category') == selected_category and 
-                            topic.get('topic_type') == selected_type):
-                            explanation = topic.get('explaination', '')
-                            if explanation:
-                                explanations.append(f"• {selected_type}: {explanation}")
-                                break
-                
-                if explanations:
-                    topic_explanation_label.config(text="说明:\n" + "\n\n".join(explanations), foreground="gray")
+            if selected_category and topics_data:
+                for topic in topics_data:
+                    if topic.get('topic_category') == selected_category:
+                        core_q = topic.get('topic_core_question', '')
+                        sample = topic.get('sample_topic', '')
+                        parts = []
+                        if core_q:
+                            parts.append(f"核心问题: {core_q}")
+                        if sample:
+                            parts.append(f"示例: {sample}")
+                        if parts:
+                            topic_explanation_label.config(text="\n".join(parts), foreground="gray")
+                        else:
+                            topic_explanation_label.config(text="")
+                        break
                 else:
                     topic_explanation_label.config(text="")
             else:
                 topic_explanation_label.config(text="")
         
-        # 绑定事件
-        topic_category_combo.bind('<<ComboboxSelected>>', lambda e: (update_topic_type(), update_explanation()))
-        topic_type_listbox.bind('<<ListboxSelect>>', update_explanation)
-        
+        # 绑定事件在下方内容区域统一设置（含 update_buttons_state）
+
         # 加载主题分类选项的函数（从 topics.json）
         def update_topic_choices(*args):
             channel = channel_combo.get()
             topics_data.clear()  # 清空旧数据
             topic_category_combo.set('')  # 清空选择
             topic_category_combo['values'] = []
-            topic_type_listbox.delete(0, tk.END)  # 清空类型列表
+            topic_subtype_combo.set('')
+            topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
             
             if channel:
@@ -610,7 +645,12 @@ class ProjectSelectionDialog:
                         topics_data.clear()
                 else:
                     print(f"主题文件不存在: {topics_file}")
-        
+            # 频道切换后需更新编辑按钮状态
+            try:
+                update_buttons_state()
+            except NameError:
+                pass  # 初次加载时 update_buttons_state 尚未定义
+
         # 绑定频道改变事件
         channel_combo.bind('<<ComboboxSelected>>', update_topic_choices)
         # 初始化加载主题分类
@@ -633,35 +673,72 @@ class ProjectSelectionDialog:
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
 
-        # 统一的内容编辑器按钮
-        content_label_frame = ttk.LabelFrame(main_frame, text="内容编辑", padding=10)
-        content_label_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
+        # 内容编辑区域：分析内容 | Story 内容（并排）
+        content_panels_frame = ttk.Frame(main_frame)
+        content_panels_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
+        content_panels_frame.columnconfigure(0, weight=1)
+        content_panels_frame.columnconfigure(1, weight=1)
         row += 1
-        
-        # 使用变量存储三个字段的内容
+
         story_var = tk.StringVar(value="")
-        
-        # 显示当前内容的预览
-        preview_frame = ttk.Frame(content_label_frame)
-        preview_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        story_preview = ttk.Label(preview_frame, text="Story: (未编辑)", foreground="gray")
-        story_preview.pack(anchor='w', pady=2)
-        
-        # 更新预览显示的函数
+        analysis_var = tk.StringVar(value="")
+
+        # 左侧：分析内容
+        analysis_label_frame = ttk.LabelFrame(content_panels_frame, text="分析内容", padding=10)
+        analysis_label_frame.grid(row=0, column=0, padx=(0, 5), sticky='nsew')
+        analysis_preview = ttk.Label(analysis_label_frame, text="Analysis: (未编辑)", foreground="gray", wraplength=300)
+        analysis_preview.pack(anchor='w', pady=(0, 10))
+        edit_analysis_btn = ttk.Button(analysis_label_frame, text="编辑 Analysis", command=lambda: None)
+        edit_analysis_btn.pack(pady=5)
+
+        # 右侧：Story 内容
+        story_label_frame = ttk.LabelFrame(content_panels_frame, text="Story 内容", padding=10)
+        story_label_frame.grid(row=0, column=1, padx=(5, 0), sticky='nsew')
+        story_preview = ttk.Label(story_label_frame, text="Story: (未编辑)", foreground="gray", wraplength=300)
+        story_preview.pack(anchor='w', pady=(0, 10))
+        edit_story_btn = ttk.Button(story_label_frame, text="编辑 Story", command=lambda: None)
+        edit_story_btn.pack(pady=5)
+
+        # 更新预览显示
         def update_previews():
             story_val = story_var.get()
-            
             if story_val:
                 preview_text = story_val[:50] + "..." if len(story_val) > 50 else story_val
                 story_preview.config(text=f"Story: {preview_text}", foreground="black")
             else:
                 story_preview.config(text="Story: (未编辑)", foreground="gray")
-            
+
+            analysis_val = analysis_var.get()
+            if analysis_val:
+                preview_text = analysis_val[:50] + "..." if len(analysis_val) > 50 else analysis_val
+                analysis_preview.config(text=f"Analysis: {preview_text}", foreground="black")
+            else:
+                analysis_preview.config(text="Analysis: (未编辑)", foreground="gray")
+
         story_var.trace_add('write', lambda *args: update_previews())
-        
-        # 统一的编辑按钮
-        def open_unified_editor():
+        analysis_var.trace_add('write', lambda *args: update_previews())
+
+        # 根据 topic 选择状态启用/禁用编辑按钮
+        def update_buttons_state(*args):
+            has_topic = bool(topic_category_combo.get().strip() and topic_subtype_combo.get().strip())
+            state = 'normal' if has_topic else 'disabled'
+            edit_story_btn.config(state=state)
+            edit_analysis_btn.config(state=state)
+
+        # 覆盖绑定，加入按钮状态更新
+        def on_topic_category_selected(e):
+            update_topic_subtype()
+            update_explanation()
+            update_buttons_state()
+
+        def on_topic_subtype_selected(e):
+            update_explanation()
+            update_buttons_state()
+
+        topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
+        topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
+
+        def open_story_editor():
             editor = ContentEditorDialog(
                 new_project_dialog,
                 language_combo.get(),
@@ -671,8 +748,18 @@ class ProjectSelectionDialog:
             result = editor.show()
             if result:
                 story_var.set(result.get('story', ''))
-        
-        ttk.Button(content_label_frame, text="编辑 Story", command=open_unified_editor).pack(pady=5)
+
+        def open_analysis_editor():
+            editor = AnalysisEditorDialog(new_project_dialog, analysis_var.get())
+            result = editor.show()
+            if result:
+                analysis_var.set(result.get('analysis', ''))
+
+        edit_story_btn.config(command=open_story_editor)
+        edit_analysis_btn.config(command=open_analysis_editor)
+
+        # 初始状态：按钮禁用（topic 未选时）
+        update_buttons_state()
         
         # 按钮
         button_frame = ttk.Frame(main_frame)
@@ -685,10 +772,7 @@ class ProjectSelectionDialog:
             title = title_entry.get().strip()
             resolution = resolution_var.get()
             topic_category = topic_category_combo.get().strip()
-            # 获取所有选中的主题类型，用 | 连接
-            selected_indices = topic_type_listbox.curselection()
-            topic_types = [topic_type_listbox.get(idx) for idx in selected_indices]
-            topic_type = '|'.join(topic_types) if topic_types else ''
+            topic_subtype = topic_subtype_combo.get().strip()
             
             if not pid:
                 messagebox.showerror("错误", "请输入项目ID")
@@ -725,14 +809,15 @@ class ProjectSelectionDialog:
                 'video_width': video_width,
                 'video_height': video_height,
                 **self.default_project_config.get('additional_fields', {}),
-                'story': story_var.get()
+                'story': story_var.get(),
+                'analysis': analysis_var.get()
             }
             
-            # 如果选择了主题分类和类型，添加到配置中
+            # 如果选择了主题分类和子类型，添加到配置中
             if topic_category:
                 self.selected_config['topic_category'] = topic_category
-            if topic_type:
-                self.selected_config['topic_type'] = topic_type
+            if topic_subtype:
+                self.selected_config['topic_subtype'] = topic_subtype
             
             self.result = 'new'
             new_project_dialog.destroy()

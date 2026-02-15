@@ -966,7 +966,7 @@ class FfmpegProcessor:
             else:
                 self.run_ffmpeg_command([
                     self.ffmpeg_path, "-y",
-                    "-sseof", "-0.05",  # 从文件末尾前0.015秒开始（足够短以确保获取最后一帧）
+                    "-sseof", "-0.1",  # 从文件末尾前0.015秒开始（足够短以确保获取最后一帧）
                     "-i", video_path,
                     "-vframes", "1",  # 只提取一帧
                     "-c:v", "libwebp",  # 使用 WebP 编码器
