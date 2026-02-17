@@ -171,7 +171,6 @@ class ProjectConfigManager:
 
 
 class ContentEditorDialog:
-    """内容编辑器对话框 - 统一编辑 Story字段"""
     
     def __init__(self, parent, language, channel, initial_story=""):
         self.parent = parent
@@ -256,32 +255,22 @@ class ContentEditorDialog:
         topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
         user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
-        system_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program"].format(language=LANGUAGES[self.language])
+        raw_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program_story"]
+        try:
+            system_prompt = raw_prompt.format(language=LANGUAGES[self.language])
+        except KeyError:
+            system_prompt = raw_prompt
         # 调用LLM生成内容
-        generated_content = self.llm_api.generate_json(system_prompt, user_prompt)
+        generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
         if generated_content:
-            for item in generated_content:
-                item["story_details"] = story
-
             self.story_editor.config(state=tk.NORMAL)
             self.story_editor.delete('1.0', tk.END)
             self.story_editor.insert('1.0', json.dumps(generated_content, indent=2, ensure_ascii=False))
+            self.result_story = self.story_editor.get('1.0', tk.END).strip()
             messagebox.showinfo("成功", "内容生成完成！")
         else:
             messagebox.showerror("错误", "内容生成失败")
-            return
-    
-        try:
-            story_content = self.story_editor.get('1.0', tk.END).strip()
-            story_content = parse_json_from_text(story_content)
-            if not story_content:
-                messagebox.showerror("错误", "故事内容为空")
-                return
-        except Exception as e:
-            messagebox.showerror("错误", "故事内容格式错误")
-            return
 
-        self.result_story = self.story_editor.get('1.0', tk.END).strip()
         self.dialog.destroy()
 
 
@@ -293,17 +282,20 @@ class ContentEditorDialog:
     def show(self):
         """显示对话框并返回结果"""
         self.dialog.wait_window()
-        return {
-            'story': self.result_story
-        }
+        return self.result_story
+
 
 
 class AnalysisEditorDialog:
-    """分析内容编辑器对话框 - 编辑 Analysis 字段（LLM 生成待后续集成）"""
+    """分析内容编辑器 - 使用 Story 内容调用 LLM 生成分析"""
 
-    def __init__(self, parent, initial_analysis=""):
+    def __init__(self, parent, initial_analysis="", story_content="", language="tw", channel=""):
         self.parent = parent
         self.result_analysis = initial_analysis
+        self.story_content = story_content
+        self.language = language
+        self.channel = channel
+        self.llm_api = LLMApi()
         self.create_dialog()
 
     def create_dialog(self):
@@ -333,7 +325,37 @@ class AnalysisEditorDialog:
         ttk.Button(button_frame, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
 
     def on_ok(self):
-        self.result_analysis = self.analysis_editor.get('1.0', tk.END).strip()
+        """使用 Story 内容调用 LLM 生成分析"""
+        if not self.llm_api:
+            messagebox.showerror("错误", "LLM API 未初始化")
+            return
+
+        if not self.story_content or not self.story_content.strip():
+            messagebox.showerror("错误", "请先编辑并保存 Story 内容，再生成分析")
+            return
+
+        topic = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("topic", "")
+        if self.result_analysis:
+            user_prompt = f"Here is the Initial analysis script on topic of {topic}:  {self.result_analysis}"
+        else:
+            user_prompt = f"Here is the Initial story script on topic of {topic}:  {self.story_content}"
+
+        raw_prompt = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("channel_prompt", {}).get("program_analysis", "")
+        try:
+            system_prompt = raw_prompt.format(language=LANGUAGES.get(self.language, self.language)) if raw_prompt else ""
+        except (KeyError, ValueError):
+            system_prompt = raw_prompt
+
+        generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
+        if generated_content:
+            self.analysis_editor.config(state=tk.NORMAL)
+            self.analysis_editor.delete('1.0', tk.END)
+            self.analysis_editor.insert('1.0', json.dumps(generated_content, indent=2, ensure_ascii=False))
+            self.result_analysis = self.analysis_editor.get('1.0', tk.END).strip()
+            messagebox.showinfo("成功", "分析内容生成完成！")
+        else:
+            messagebox.showerror("错误", "分析内容生成失败")
+
         self.dialog.destroy()
 
     def on_cancel(self):
@@ -342,7 +364,8 @@ class AnalysisEditorDialog:
     def show(self):
         """显示对话框并返回结果"""
         self.dialog.wait_window()
-        return {'analysis': self.result_analysis}
+        return self.result_analysis
+
 
 
 class ProjectSelectionDialog:
@@ -715,17 +738,20 @@ class ProjectSelectionDialog:
             else:
                 analysis_preview.config(text="Analysis: (未编辑)", foreground="gray")
 
-        story_var.trace_add('write', lambda *args: update_previews())
-        analysis_var.trace_add('write', lambda *args: update_previews())
+        _editor_open = [False]  # 用 list 以便在闭包中修改；同一时刻只允许打开一个编辑器
 
-        # 根据 topic 选择状态启用/禁用编辑按钮
+        # 根据 topic 与 story 状态启用/禁用编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(topic_category_combo.get().strip() and topic_subtype_combo.get().strip())
-            state = 'normal' if has_topic else 'disabled'
-            edit_story_btn.config(state=state)
-            edit_analysis_btn.config(state=state)
+            has_story = bool(story_var.get().strip())
+            editor_busy = _editor_open[0]
+            edit_story_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
+            # Analysis 仅在已有 Story 内容时可编辑
+            edit_analysis_btn.config(state='normal' if has_topic and has_story and not editor_busy else 'disabled')
 
-        # 覆盖绑定，加入按钮状态更新
+        story_var.trace_add('write', lambda *args: (update_previews(), update_buttons_state()))
+        analysis_var.trace_add('write', lambda *args: update_previews())
+
         def on_topic_category_selected(e):
             update_topic_subtype()
             update_explanation()
@@ -739,21 +765,39 @@ class ProjectSelectionDialog:
         topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
 
         def open_story_editor():
-            editor = ContentEditorDialog(
-                new_project_dialog,
-                language_combo.get(),
-                channel_combo.get(),
-                story_var.get()
-            )
-            result = editor.show()
-            if result:
-                story_var.set(result.get('story', ''))
+            _editor_open[0] = True
+            update_buttons_state()
+            try:
+                editor = ContentEditorDialog(
+                    new_project_dialog,
+                    language_combo.get(),
+                    channel_combo.get(),
+                    story_var.get()
+                )
+                result = editor.show()
+                if result:
+                    story_var.set(result)
+            finally:
+                _editor_open[0] = False
+                update_buttons_state()
 
         def open_analysis_editor():
-            editor = AnalysisEditorDialog(new_project_dialog, analysis_var.get())
-            result = editor.show()
-            if result:
-                analysis_var.set(result.get('analysis', ''))
+            _editor_open[0] = True
+            update_buttons_state()
+            try:
+                editor = AnalysisEditorDialog(
+                    new_project_dialog,
+                    initial_analysis=analysis_var.get(),
+                    story_content=story_var.get(),
+                    language=language_combo.get(),
+                    channel=channel_combo.get()
+                )
+                result = editor.show()
+                if result:
+                    analysis_var.set(result)
+            finally:
+                _editor_open[0] = False
+                update_buttons_state()
 
         edit_story_btn.config(command=open_story_editor)
         edit_analysis_btn.config(command=open_analysis_editor)
@@ -809,15 +853,21 @@ class ProjectSelectionDialog:
                 'video_width': video_width,
                 'video_height': video_height,
                 **self.default_project_config.get('additional_fields', {}),
-                'story': story_var.get(),
-                'analysis': analysis_var.get()
+                'story_details': [ 
+                    { 
+                        'name': 'story', 
+                        'topic_category': topic_category,
+                        'topic_subtype': topic_subtype,
+                        'story_details': story_var.get()
+                    }, 
+                    { 
+                        'name': 'analysis', 
+                        'topic_category': topic_category, 
+                        'topic_subtype': topic_subtype, 
+                        'story_details': analysis_var.get()
+                    } 
+                ]
             }
-            
-            # 如果选择了主题分类和子类型，添加到配置中
-            if topic_category:
-                self.selected_config['topic_category'] = topic_category
-            if topic_subtype:
-                self.selected_config['topic_subtype'] = topic_subtype
             
             self.result = 'new'
             new_project_dialog.destroy()

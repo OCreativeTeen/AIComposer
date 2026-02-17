@@ -758,27 +758,14 @@ class MagicWorkflow:
             return
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
-        channel_topic = config_channel.CHANNEL_CONFIG[channel]["topic"]
-        story_script = project_manager.PROJECT_CONFIG.get('story', "{}")
-        stories_json = json.loads(story_script)
+        stories_json = project_manager.PROJECT_CONFIG.get('story_details', "{}")
         stories_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
 
         for i, element in enumerate(stories_template):
             if element.get("name") == "program":
                 stories_template[i:i+1] = stories_json
             elif element.get("name") == "intro":
-                explicit_parts = []
-                implicit_parts = []
-                for story in stories_json:
-                    name = story.get("name", "")
-                    explicit = story.get("explicit", "")
-                    implicit = story.get("implicit", "")
-                    if name and explicit and implicit:
-                        explicit_parts.append(name + ": " + explicit)
-                        implicit_parts.append(name + ": " + implicit)
-                element["explicit"] = "\n\n".join(explicit_parts)
-                element["implicit"] = "\n\n".join(implicit_parts)
-                element["story_details"] = stories_json[0]["story_details"]
+                element["story_details"] = stories_json
 
         # popup dialog to select the story level
         story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")

@@ -1328,7 +1328,7 @@ class AVReviewDialog:
                         new_item = {
                             "explicit": self.current_scene.get("explicit", "explicit"),
                             "implicit": self.current_scene.get("implicit", "implicit"),
-                            "story_details": self.current_scene.get("story_details", ""),
+                            "story_details": self.current_scene.get("story_details", {}),
                             "speaking": item.get("speaking", ""),
                             "speaker": item.get("speaker", ""),
                             "voiceover": item.get("voiceover", "")
@@ -1344,7 +1344,7 @@ class AVReviewDialog:
                         "name": self.current_scene.get("name", "story"),
                         "explicit": self.current_scene.get("explicit", "explicit"),
                         "implicit": self.current_scene.get("implicit", "implicit"),
-                        "story_details": self.current_scene.get("story_details", ""),
+                        "story_details": self.current_scene.get("story_details", {}),
                         "speaking": self.current_scene.get("speaking", ""),
                         "speaker": self.current_scene.get("speaker", ""),
                         "voiceover": self.current_scene.get("voiceover", "")
@@ -1365,20 +1365,26 @@ class AVReviewDialog:
             with open(example_file, "r", encoding="utf-8") as f:
                 selected_prompt_example_text = f.read()
             selected_prompt_example = parse_json_from_text(selected_prompt_example_text)
-            if not selected_prompt_example or selected_prompt_example is not list or len(selected_prompt_example) == 0:
+            if not selected_prompt_example or not isinstance(selected_prompt_example, list) or len(selected_prompt_example) == 0:
                 messagebox.showerror("错误", f"无法解析示例文件: {example_file}")
                 return
             example_json_str = json.dumps(selected_prompt_example, indent=2, ensure_ascii=False)
 
             if self.transcribe_way == "multiple":
                 if len(self.audio_json) > 1:
-                    selected_prompt = selected_prompt.format(json=f"json array holding {len(self.audio_json)} scenes", example=example_json_str)
+                    json_str = f"json array holding {len(self.audio_json)} scenes"
+                    objective_str = "split it into several scenes, which build the whole program"
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
                 else:
-                    selected_prompt = selected_prompt.format(json="json array holding scenes", example=example_json_str)
+                    json_str = "json array holding scenes"
+                    objective_str = "split it into several scenes, which build the whole program"
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
             else:
                 selected_prompt_example_item = selected_prompt_example[0]
                 example_json_str = json.dumps(selected_prompt_example_item, indent=2, ensure_ascii=False)
-                selected_prompt = selected_prompt.format(json="a single json item describing a scene", example=example_json_str)
+                json_str = "a single json item describing a scene"
+                objective_str = "recreate a scene in detail"
+                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
 
         else:
             selected_prompt = config_channel.SIMPLE_REORGANIZE
@@ -1411,7 +1417,7 @@ class AVReviewDialog:
             start_time = 0.0
             for i, scene in enumerate(new_scenes):
                 fresh_scene = self.audio_json[i] if i < len(self.audio_json) else self.audio_json[-1]
-                scene["caption"] = fresh_scene["caption"]
+                scene["caption"] = fresh_scene.get("caption", "")
                 duration = fresh_scene.get("duration", self.audio_duration)
                 scene["duration"] = duration if len(self.audio_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
                 scene["start"] = start_time

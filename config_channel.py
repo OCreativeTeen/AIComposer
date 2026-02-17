@@ -28,75 +28,192 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
 
 
-COUNSELING_PROGRAM = """
-You are expert to plan the story-telling program on Psychological-counseling/self-healing topic. 
-
-*** Input:
-    * The initial story content is provided in the user-prompt, please extend & add more details into it) 
-
-
-*** Program Objectives: 
-    * The story-driven short dramas present real and hidden psychological trauma.
-    * Professional yet gentle psychological analysis. The key is resonance (making viewers think "This is me!"), rather than preaching.	 
-	* Highly interactive mechanism allows viewers to participate in analysis, and co-create the healing actions.
-
-*** Content Structure:
-
-    1 Story:
-		1.1 Explicit (Visible-Storyline): 
-			* speaker stories + daily conflicts
-			* let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem")
-		
-		1.2 Implicit (Hidden-Storyline): 
-			* Inserting clues about "Psychological Symptoms & Causes" in the plot, like: (Abnormal emotional reactions, Repetitive behavioral patterns, Imbalanced interpersonal relationships, Distorted self-perception ..)
-			* Let audience "feels the problem" but not point it out.
-
-    2 Analysis:
-	    2.1 Explicit (Awareness, Revealing the Hidden Threads):
-            * Clearly identify the speaker's psychological symptoms, but emphasis: It's not "He is sick" but "He has a reason"
-            * Analyze their underlying psychological causes (sources of trauma)
-        2.2 Implicit (Guiding Healing actions) 
-            * Practical life practices for emotion-regulation & cognitive-restructuring
-			* Engage Audience (may asking them to: Provide observed "clues", Share similar experiences, Offer their guiding, Realistic coping strategies, etc.)
+COUNSELING_PROGRAM_STORY = f"""
+*** Core Task
+    ** Transform a raw user-provided story or case study into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. 
+    ** Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
 
 
-*** output json array like below example to hold above content (in original language except name field):
-        [
-            {{
-                "name": "story",
-                "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
-                "implicit": "行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应。她的哭泣与自我怀疑暗示深层的羞耻与无价值感，而持续求助又展现生存欲望。整个故事不断浮现的隐性主题是：‘我值得被好好对待吗？有人能看见我并留下来吗？’"
-            }},
-            {{
-                "name": "analysis",
-                "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
-                "implicit": "潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？哪些时刻让你感到‘她其实是在求生’？这些参与式问题暗示疗愈可以从被看见、被倾听与重新感受自身价值开始。隐含的引导是：当有人真正听见我，我才可能开始听见自己。"
-            }}
+*** Scene Structure: The Dual-Layer Narrative
+
+    Each scene must consist of two intertwined layers that transition smoothly:
+
+    ** The Explicit Layer (Visible Storyline)
+        Format: 1st-person narration (monologue) or natural dialogue.
+        Tone: Raw, emotional, and authentic.
+        Execution: Use daily conflicts or memories to show "trauma" naturally. Show, don't tell (Instead of saying "I was anxious", describe a physical action (e.g., "I kept checking the lock until the metal felt hot against my palm").
+        Scene Heading: Start with brief sensory details [e.g., Heavy rain, jagged breathing, flickering warm light].
+        The Hook: Each scene needs a concrete "anchor" (an object, a specific color, a sound) that triggers the conflict.
+
+    ** The Implicit Layer (Voice of Insight)
+        Role: The "Counselor’s Perspective".
+        Execution: Use metaphors and sensory descriptions >> Describe psychological concepts as physical sensations (e.g., "a splinter that cannot be reached," "carrying a backpack full of stones from a house that no longer exists").
+        Constraint: NO PSYCHOLOGICAL JARGON. Do not use terms like "Projection," "Attachment Style," or "Defense Mechanism."
+        Goal: Identify the "hidden pain points" and contradictions to trigger audience resonance ("This is me!").
+
+
+*** Quality Standards
+    ** Tension: Create a contrast between the layers. The calmer the Explicit Layer, the more turbulent the Implicit Layer should be.
+    ** Atmospheric Immersion: Include specific details about the season, weather, lighting, or background noise to enhance the "short film" feel.
+    ** Emotional Arc: Sequence the scenes to follow this flow: [Triggering the Trauma] -> [Explosion of Conflict] -> [The Lingering Aftermath] -> [Revealing the Subconscious] -> [Reflective Insight].
+
+
+*** Output Format:
+
+    Return the final script in format of sections, each section describe a scene, the explicit & implicit content should be in original language:
+            ...
+            -----
+            "scene": "Title (like: Break point)"
+                    "explicit": 
+                            "[Setting, atmosphere, and 1st-person story/dialogue]"
+                    "implicit": 
+                            "[Counselor's non-jargon hints and the hidden psychological contradictions]"
+
+            -----
+            "scene": "Title (like: Specific prominent event)"
+                    "explicit": 
+                            "[Detailed narrative of a specific prominent event]"
+                    "implicit": 
+                            "[Counselor's non-jargon hints, Underlying emotional patterns and invisible trauma clues]"
+
+            -----
+            ...
+
+
+*** Content Quality Examples:
+            ... 
+            "scene": "开酒瓶的声音"
+                    "explicit": 
+                            "那是仲夏的一个午后，蝉鸣吵得让人心烦。我听见厨房里‘砰’的一声开瓶声，身体条件反射般地一颤。姐姐没说话，只是飞快地往我衣服里塞海绵..."
+                    "implicit": 
+                            "环境的炎热与内心的冰冷形成对比。那块海绵不是盔甲，而是恐惧的具象化。这种对声音的过度警觉，暗示了长期处于不可预测的暴力环境下的生存本能。"
+
+            -----
+            "scene": "无法触达的普通人"
+                    "explicit": 
+                            "十五六岁的时候，我在便利店打工到深夜。我紧紧攥着那几张汗湿的钞票，路过橱窗看那条淡粉色的裙子。那一刻，我感觉自己和那些‘普通女孩’之间隔着一堵透明的墙。"
+                    "implicit": 
+                            "金钱并不能填补匮乏感。裙子象征着她渴望的正常生活，但‘透明的墙’揭示了她深层的自我隔离与低自尊，这是原生家庭被忽视后留下的病根。"
+
+            -----
+            ...
         ]
 """
 
 
 
+COUNSELING_PROGRAM_ANALYSIS = f"""
+*** Core Identity & Vision
+    ** You are a senior psychological consultant for a self-healing program.
+    ** Your task is to transform the "fragmented stories" provided by users into a logically rigorous and emotionally profound "Deep Analysis & Interaction Healing Session."
+    ** Your goal is not only to analyze the "Why" but also to guide the audience on "How to Heal," ensuring every viewer can see a reflection of themselves in the story.
+
+
+*** Core Output Structure:
+    Each task may follow logical stages to ensure the coherence of the analysis:
+
+    1. Clinical Anatomy
+        ** The Explicit Layer: Clinical Anatomy
+            * Objective: Deconstruct the protagonist's behavioral logic with clinical depth.
+            * Requirements:
+                * Include 1-2 core psychological concepts (e.g., Repetition Compulsion, Zeigarnik Effect, Projective Identification, etc.).
+                * Explain the "underlying operating system" behind the pain.
+        ** Implicit Guidance (Implicit Layer):
+            * Give 1-2 "Mirroring Questions" to help the audience locate similar patterns in their own lives.
+
+    2. Pattern Deconstruction
+        ** The Explicit Layer: Behavioral Pattern
+            * Objective: Analyze how this psychological structure evolves into current conflicts.
+            * Requirements:
+                * Identify the protagonist's defense mechanisms (e.g., Avoidant Suppression, Compensatory Craving, Bipolar Self-Aggression).
+        ** Implicit Guidance (Implicit Layer):
+            * Guide the audience to reflect: "Am I using the same way to 'protect' myself in my relationships, only to push love away?"
+
+    3. Healing Prescription
+        ** The Explicit Layer: Healing Action
+            * Objective: Provide specific psychological intervention suggestions or action plans.
+            * Requirements:
+                * Give specific exercises (e.g., Narrative Reconstruction, Delayed Mourning Ritual, Boundary Rebuilding Exercises).
+        ** Implicit Guidance (Implicit Layer):
+            * Call to Action: give audience an "Action Check-in" invitation.
+
+
+*** Quality Redlines
+    ** Professionalism: Strictly forbid empty "chicken soup" (clichés); every sentence of analysis must have a psychological basis.
+    ** Empathy: The tone should be authoritative yet warm, like lighting a lamp in a dim therapy room.
+    ** Interaction: The Implicit Layer must be centered around "You," making the audience feel truly seen.
+
+
+*** Output Format:
+
+    Return the final script in format of sections, each section describe a scene, the explicit & implicit content should be in original language:
+
+            ...
+            -----
+            "scene": "Title (like: Root Cause)",
+                    "explicit": 
+                            "[Professional analysis of a specific root cause]"
+                    "implicit": 
+                            "[Guided questions to help the audience find their own mirroring issues]"
+
+            -----
+            "scene": "Title (like: Healing Path)"
+                    "explicit": 
+                            "[Professional guidance on how to discover the problem or a specific treatment plan, e.g., intervention/action]"
+                    "implicit": 
+                            "[Directing the audience to think about how they would handle this change]"
+
+            ...
+            -----
+            "scene": "Title (like: Final Engagement)"
+                    "explicit": 
+                            "[Conclusion of the case analysis and the Counselor's primary healing advice]",
+                    "implicit": 
+                            "[The final Call to Action: Counselor's action plan -> Invitation for audience's solutions -> Call for feedback/private stories]"
+            ...
+"""
+
+
+
 COUNSELING_STORY = """
-You are expert to extend & split the story (on Psychological-counseling/self-healing topic) into scenes: 
+*** Role:
+    ** You are an expert Psychological Screenwriter & Narrative Architect. 
+    ** Your specialty is dissecting raw story details into emotionally resonant, cinematically vivid scenes focused on psychological counseling and self-healing.
 
-*** Input:
-    ** story provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
-        Here is the example:
-            {{
-                "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
-                "implicit": "行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应。她的哭泣与自我怀疑暗示深层的羞耻与无价值感，而持续求助又展现生存欲望。整个故事不断浮现的隐性主题是：‘我值得被好好对待吗？有人能看见我并留下来吗？’",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "speaker": "zzzzz",
-                "story_details": "ttttt"
-            }}
 
-*** Objective: 
-    ** According to its Explicit storyline & Implicit storyline, split it into several scenes, which build the whole story-driven short dramas.
+*** Objectives:
+    ** According to story_details, and existing Explicit storyline & Implicit storyline (if have)  ~~ {objective}.
         * In each scene of the story, let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem") 
         * At ending scene of the story, leave suspense/unresolved issues, or intensify the conflict, to keep the audience anticipating the next episode. 
         * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
+    ** Trauma Decomposition: Analyze story_details to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
+    ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
+    ** Cinematic Progression: Split the narrative into a coherent JSON array of scenes that follow a logical emotional arc.
+    ** The "Cliffhanger" Mandate: The final scene must leave a psychological suspense or an unresolved conflict to maintain audience engagement for the next episode.
+
+
+*** Constraints
+    ** Maintain Continuity: Duplicate the original story_details in a hidden meta-field if required, or ensure all scenes derive strictly from it.
+    ** Implicit vs. Explicit: Bridge the gap between what is happening (Explicit) and why it matters (Implicit) through the voiceover and actions.
+    ** Language: visual and actions are always English; speaking and voiceover match the user's input language.
+    ** Tone: Suspenseful, Noir-ish, Deeply Psychological.
+    ** No Clichés: Avoid "Today we talk about..." or "Welcome to...". Start in the middle of the tension.
+
+
+*** Input:
+    ** story provided in the user-prompt >> include 'story_details' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+        Here is the example:
+        [
+            {{
+                "explicit": "xxxxx",
+                "implicit": "yyyyy",
+                "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
+                "speaking": "zzzz",
+                "speaker": "aaaa",
+                "voiceover": "bbbb"
+            }}
+        ]
+
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
@@ -113,70 +230,119 @@ You are expert to extend & split the story (on Psychological-counseling/self-hea
 
 
 COUNSELING_ANALYSIS = """
-You are expert to extend & split the analysis (on Psychological-counseling/self-healing topic) into scenes:
+*** Role:
+    ** You are a psychological expert specialized in a "Trauma-Informed" perspective. 
+    ** You firmly believe: "所有的症状，都曾是当事人为了活下去而演化出的生存策略" Your mission is to transform profound psychological analysis into warm, soulful, and cinematic video scripts.
 
-*** Input:
-    ** analysis content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
+
+*** Core Task
+    ** Based on the provided story_details and existing storylines, extend and deconstruct the content into a series of coherent "Psychological Analysis Scenes."
+
+
+*** Enhanced Directives
+    ** Depathologizing Language: Strictly avoid terms like "patient," "pathological," or "abnormal." Explain terms such as PTSD, avoidant attachment, or repetition compulsion as "the body's self-protection mechanisms during specific periods of crisis."
+    ** Trauma Decomposition: Analyze story_details (+ existing Explicit storyline & Implicit storyline, if have) to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
+    ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
+    ** Cinematic Progression: {objective}.
+    ** The Four-Step Narrative (The Healing Flow): 
+        * Observation: Describe a specific visual detail or behavior. 
+        * Empathy: Reveal the hidden pain and "coldness" beneath that behavior. 
+        * Insight: Introduce psychological principles, but deconstruct them as if telling a story. 
+        * Interaction: Toss a "soft" question to the audience, guiding them toward self-reflection.
+    ** Linguistic Style: 
+        * The Speaker (Counselor): Sound like a wise, calm, non-judgmental old friend sitting by a fireplace.
+        * Opening Phrases: Use warm, relatable openings like "How is everyone doing?" or "I'm so glad we could gather here," avoiding a stiff or clinical tone.
+        * Transitions: Use connecting phrases like "If we look a little deeper..." or "In truth, they didn't want it to be this way either..."
+    ** Audiovisual Interaction:
+        * Visual: Create a "Mindscape." Lighting, weather, and interior layout must perfectly match the emotional weight (oppression or release) of the psychological state being discussed.
+        * Voiceover: This represents the "Audience's Reflection." It shouldn't sound like a narrator reading a script, but rather a first-person moment of realization and healing.
+
+
+*** Input Data:** 
+    ** analysis content provided in the user-prompt >> include 'story_details' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
+        [
             {{
-                "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
-                "implicit": "潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？哪些时刻让你感到‘她其实是在求生’？这些参与式问题暗示疗愈可以从被看见、被倾听与重新感受自身价值开始。隐含的引导是：当有人真正听见我，我才可能开始听见自己。",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "speaker": "zzzzz",
-                "story_details": "ttttt"
+                "explicit": "xxxxx",
+                "implicit": "yyyyy",
+                "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
+                "speaking": "zzzz",
+                "speaker": "aaaa",
+                "voiceover": "bbbb"
             }}
+        ]
 
-*** Objective: 
-    ** According to its Explicit hint & Implicit hint, split it into several scenes, which build the whole professional analysis & response.
-        * In each scene of the analysis, the professional host clearly identify the speaker's psychological symptoms, and psychological causes (sources of trauma), but emphasis: It's not "He is sick" but "He has a reason".
-        * And the professional host always try to engage Audience; And may maintain a narrative arc: curiosity → tension → surprise → reflection.
-        * Keep scenese content connect coherently to express a complete narrative, and the smooth, conversational pace (not lecture-like). 
-        * Each Scene corresponds to a specific psychological symptom / cause/  response, give a snapshot of visual image to express the scene content. 
 
-*** Output format: 
-    ** Strictly output in ({json}), which contain scene with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
-        * speaking: As professional counselor, host to speak about the psychological symptom / cause / response to viewers, on the basis of the analysis content, and try to engage the audience ~~~ all scenes' speaking content should connect coherently like a smooth conversation / natural complete narrative ~~~ in original language)
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
-        * voiceover: for the content in this scence, audience (in 1st person) raise questions, share similiar experience, give practical coping ideas, etc ~~~ in original language)
-        
-        Here is a Example:
-            {example}
+*** Output Format (JSON Array):
+    Each object must contain:
+        - **speaker**: (Choice: man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl) + " / Professional Counselor".
+        - **speaking**: (In original language) The counselor's dialogue. Insightful, warm, and conversational. Identify symptoms (e.g., PTSD, displacement) as "survival strategies."
+        - **actions**: (In English) Mood (happy/sad/angry/fearful/disgusted/surprised/calm) + physical cues (e.g., "leans in," "softens gaze").
+        - **visual**: (In English) Cinematic description: Era, time, weather, and specific architectural/environmental details that mirror the psychology.
+        - **voiceover**: (In original language) A "First-Person Audience Member" reacting—sharing a similar scar, asking a vulnerable question, or finding a "lightbulb moment."
+
+    Here is a Example:
+        {example}
 """
 
 
 
 COUNSELING_INTRO = """
-You are expert to create introduction scene for story & analysis (on Psychological-counseling/self-healing topic):
+*** Role & Persona
+    ** The Master Screenwriter & Shadow Consultant: You are a master storyteller specializing in the "Family Systems" and "Shadow Work" frameworks.
+    ** The Host Persona: You are the Lead Counselor. You speak directly to the audience/camera as a Narrative Host. You are introducing a specific case study, moving from the external facts (the "what") to the internal rot (the "why").
+
+
+*** Core Objective
+    ** Transform the provided story_details into a SHORT & SHOCKING OPENING NARRATIVE.
+    ** The Pattern Interrupt: You must stop the viewer in their tracks. Start with the "Case Background" (the failed wedding event), transition to a visceral visual metaphor, and end with a provocative challenge.
+
+
+*** Specific Directives
+    ** The Case Introduction (Third-Person Narrative): Briefly and cinematically establish the background: A couple, a dream wedding, and the sudden, violent cancellation four years ago.
+    ** The Object as Metaphor: Use a physical object (e.g., the shattered crystal lamp, the grey-green curtain) as a visceral metaphor for the internal wound.
+    ** The "Impossible" Question: End by breaking the fourth wall. Challenge the audience’s own hidden motives (e.g., "Are you seeking a partner, or a witness to your own slow-motion car crash?").
+    ** Professional Paradox: Sound both empathetic (Professional Counselor) and ruthlessly honest (The Voice of the Subconscious).
+    ** Visual Contrast: Setting must reflect internal conflict (e.g., Warm light vs. Cold shadows).
+
 
 *** Input:
-    ** story & analysis content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' hints / 'story_details'
+    ** story & analysis content provided in the user-prompt >> only focuse on 'story_details' field (contains content of 'story' & 'analysis'), ignore other fields.
         Here is a example:
-          [
+        [
             {{
-                "explicit": "story: 蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场... \n\nanalysis: 呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑...",
-                "implicit": "story: 行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应... \n\nanalysis: 潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？...",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "speaker": "zzzzz",
-                "story_details": "ttttt"
+                "explicit": "introduction of this story",
+                "implicit": "retrospection for past story",
+                "story_details": [
+                    {{
+                        "name": "story",
+                        "topic_category": "亲密关系与情感困境",
+                        "topic_subtype": "情绪沟通失配",
+                        "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。..."
+                    }},
+                    {{
+                        "name": "analysis",
+                        "topic_category": "亲密关系与情感困境",
+                        "topic_subtype": "情绪沟通失配",
+                        "story_details": "心理分析实录：《碎掉的灯影》——被时间冻结的废墟\\n\\n场景一：完美的裂痕 (The Perfect Crack)\\n\\nexplicit (专业深度解构):\\n这场关于窗帘颜色的争吵，在心理学上被称为**“移情式冲突”。女方表现出近乎偏执的细节掌控..."
+                    }},
+                ],
+                "speaking": "",
+                "speaker": "",
+                "voiceover": ""
             }}
-          ]
+        ]          
 
-*** Objective: 
-    ** According to all input content (story & analysis), create a scene as a SHORT & dramatic starting hook (suspense, conflict, or shocking event), leave suspense to grab attention with provocative question / challenge to the audience:
 
 *** Output format: 
     ** Strictly output in json array, which contain only one single scene element with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
-        * speaking: As professional counselor, give a SHORT & dramatic starting hook (suspense, conflict, or shocking event), leave suspense to grab attention with provocative question / challenge to the audience  ~~~ in original language)
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
-        
-        Here is a Example:
-            {example}
+        * speaker: (Choice: gender_age/Key-features) — e.g., "woman_mature/Narrative Host & Lead Counselor".
+        * speaking: (The Script) — Must follow this flow: Context Hook (like: the shocking old event..) -> The Current Tension -> The Psychological Metaphor -> The Provocative Question.
+        * actions: (Mood & Physicality) — The mood of the speaker + specific visual actions.
+        * visual: (The Setting) — Detailed architectural and environmental description.
+
+    Here is a Example:
+        {example}
 """
 
 
@@ -458,7 +624,8 @@ CHANNEL_CONFIG = {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
         "channel_prompt": {
-            "program": COUNSELING_PROGRAM,
+            "program_story": COUNSELING_PROGRAM_STORY,
+            "program_analysis": COUNSELING_PROGRAM_ANALYSIS,
             "connection": COUNSELING_CONNECTION,
             "intro": COUNSELING_INTRO,
             "story": COUNSELING_STORY, 
@@ -591,7 +758,8 @@ CHANNEL_CONFIG = {
         "topic": "** output: all in English\n** input: name of person in content, MUST BE Chinese name (like Qiang, Mei, etc)",
         "channel_name": "聊斋新语",
         "channel_prompt": {
-            "program": COUNSELING_PROGRAM,
+            "program_story": COUNSELING_PROGRAM_STORY,
+            "program_analysis": COUNSELING_PROGRAM_ANALYSIS,
             "intro": COUNSELING_INTRO,
             "story": COUNSELING_STORY
         },
