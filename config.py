@@ -1,8 +1,61 @@
 import os
+import re
 import uuid
 import random
 import glob
 import json
+
+
+def extract_text_from_srt_content(content):
+    """
+    从 SRT 字幕内容中提取纯文本（去掉序号、时间戳等）。
+    可被 downloader、project_manager 等模块复用。
+
+    Args:
+        content: SRT 文件内容字符串
+
+    Returns:
+        提取的文本行用换行符拼接；无有效文本时返回 None。
+    """
+    if not content or not content.strip():
+        return None
+
+    # 使用正则表达式匹配 SRT 格式：序号\n时间戳\n文本内容\n\n
+    pattern = r'^\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,\d]+\s*-->\s*\d{2}:\d{2}:\d{2}[,\d]+\s*\n(.*?)(?=\n\d+\s*\n|\Z)'
+    matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
+
+    text_lines = []
+    for match in matches:
+        text_block = match.strip()
+        if text_block:
+            lines = [line.strip() for line in text_block.split('\n') if line.strip()]
+            text_lines.extend(lines)
+
+    # 如果没有匹配到，使用备用方法：逐行解析
+    if not text_lines:
+        lines = content.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line:
+                i += 1
+                continue
+            if line.isdigit():
+                i += 1
+                if i < len(lines) and '-->' in lines[i]:
+                    i += 1
+                while i < len(lines):
+                    text_line = lines[i].strip()
+                    if not text_line:
+                        break
+                    if text_line.isdigit():
+                        break
+                    text_lines.append(text_line)
+                    i += 1
+            else:
+                i += 1
+
+    return '\n'.join(text_lines) if text_lines else None
 
 
 def parse_json_from_text(text):
@@ -65,6 +118,37 @@ def parse_json_from_text(text):
     
     return None
 
+
+def load_topics(channel_path: str) -> tuple:
+    """
+    从频道目录下的 topics.json 加载 topic_choices 和 topic_categories。
+    可被 downloader、project_manager 等模块复用。
+
+    Args:
+        channel_path: 频道目录路径（可用 config.get_channel_path(channel) 获取）
+
+    Returns:
+        (topic_choices, topic_categories): 主题列表与去重后的分类列表
+    """
+    topics_file = os.path.join(channel_path, 'topics.json')
+    topic_choices = []
+    topic_categories = []
+    if os.path.exists(topics_file):
+        try:
+            with open(topics_file, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                topic_choices = loaded
+            elif isinstance(loaded, dict):
+                topic_choices = [loaded]
+            for item in topic_choices:
+                if isinstance(item, dict):
+                    category = item.get('topic_category') or item.get('category')
+                    if category and category not in topic_categories:
+                        topic_categories.append(category)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return topic_choices, topic_categories
 
 
 # self.channel is like israle_zh,  need to get the 'isreale' part out

@@ -7,6 +7,7 @@ import re
 import threading
 import glob
 
+import config
 import config_prompt
 from datetime import datetime
 
@@ -63,7 +64,7 @@ class MediaDownloader:
         if os.path.exists(download_cookies):
             print(f"✅ 在下载文件夹找到 cookies 文件: {download_cookies}")
             # 移动到项目路径
-            project_cookies = os.path.join(self.youtube_dir, cookies_filename)
+            project_cookies = os.path.join(f"{self.youtube_dir}/work", cookies_filename)
             if os.path.exists(project_cookies):
                 os.remove(project_cookies)
                 print(f"🗑️ 已删除旧的 cookies 文件: {project_cookies}")
@@ -95,7 +96,7 @@ class MediaDownloader:
                 print(f"🔄 在下载文件夹发现新的 cookies 文件: {download_cookies}")
                 
                 # 移动到项目路径
-                project_cookies = os.path.join(self.youtube_dir, cookies_filename)
+                project_cookies = os.path.join(f"{self.youtube_dir}/work", cookies_filename)
                 try:
                     # 如果项目路径已有文件，直接删除
                     if os.path.exists(project_cookies):
@@ -291,7 +292,7 @@ class MediaDownloader:
         if not audio_path:
             video_path = video_detail.get('video_path', '')
             if video_path:
-                audio_path = download_prefix + ".mp3"
+                audio_path = self.youtube_dir + "/media/__" + self.generate_video_prefix(video_detail) + ".mp3"
                 safe_copy_overwrite(self.ffmpeg_audio_processor.extract_audio_from_video(video_path, "mp3"), audio_path)
                 video_detail['audio_path'] = audio_path
             else:
@@ -314,7 +315,7 @@ class MediaDownloader:
         if not video_url:
             return None
 
-        video_prefix = self.youtube_dir + "/" + self.generate_video_prefix(video_detail)
+        video_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
 
         video_path = video_prefix + ".mp4"
         if os.path.exists(video_path):
@@ -401,7 +402,7 @@ class MediaDownloader:
         video_url = video_detail.get('url', '')
         if not video_url:
             return None
-        video_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
+        video_prefix = self.youtube_dir + "/media/__" + self.generate_video_prefix(video_detail)
 
         target_video_path = video_prefix + ".mp4"
         target_audio_path = video_prefix + ".mp3"
@@ -641,13 +642,13 @@ class MediaDownloader:
 
             channel_name = self.get_channel_name(info)
 
-            with open(f'{self.youtube_dir}/info_{channel_name}.json', 'w', encoding='utf-8') as f:
+            with open(f'{self.youtube_dir}/work/info_{channel_name}.json', 'w', encoding='utf-8') as f:
                 json.dump(info, f, ensure_ascii=False, indent=2)
         
             if not info or 'entries' not in info:
                 return None
 
-            self.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+            self.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
@@ -743,29 +744,6 @@ class MediaDownloader:
             print(f"✅ 下载完成: {d.get('filename', 'Unknown file')}")
         elif d['status'] == 'error':
             print(f"❌ 下载错误: {d.get('error', 'Unknown error')}")
-
-
-    def convert_vtt_to_srt(self, vid, lang):
-        # ffmpeg_path = os.path.abspath("ffmpeg/bin/ffmpeg.exe")         
-        ffmpeg_path = os.path.abspath("ffmpeg.exe") 
-        vtt_path = os.path.abspath(f"{self.youtube_dir}/Download/{vid}.{lang}.vtt")
-        srt_path = os.path.abspath(f"{self.youtube_dir}/Download/{vid}.{lang}.srt")
-        try:
-            subprocess.run([
-                ffmpeg_path,
-                '-y',  # overwrite
-                '-i', str(vtt_path),
-                str(srt_path)
-            ], check=True, encoding='utf-8', errors='ignore')
-            print(f"🎉 Converted to SRT: {srt_path}")
-            os.remove(vtt_path)
-
-            with open(srt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                return content
-        except subprocess.CalledProcessError as e:
-            print(f"⚠️ FFmpeg failed: {e}")
-            return ""
 
 
     def upload_video(self, file_path, thumbnail_path, title, description, language, script_path, secret_key, channel_id, categoryId, tags, privacy="unlisted"):
@@ -943,6 +921,9 @@ class MediaGUIManager:
         self.channel_path = channel_path
         self.youtube_dir = f"{channel_path}/Download"
         os.makedirs(self.youtube_dir, exist_ok=True)
+        os.makedirs(f"{self.youtube_dir}/list", exist_ok=True)
+        os.makedirs(f"{self.youtube_dir}/media", exist_ok=True)
+        os.makedirs(f"{self.youtube_dir}/work", exist_ok=True)
 
         self.pid = pid
         self.tasks = tasks
@@ -964,15 +945,7 @@ class MediaGUIManager:
         self.active_summary_threads = []
         self.active_threads_lock = threading.Lock()
 
-        with open(os.path.join(self.channel_path, 'topics.json'), 'r', encoding='utf-8') as f:
-            self.topic_choices = json.load(f)
-
-        self.topic_categories = []
-        for item in self.topic_choices:
-            if isinstance(item, dict):
-                category = item.get('topic_category') or item.get('category')
-                if category and category not in self.topic_categories:
-                    self.topic_categories.append(category)
+        self.topic_choices, self.topic_categories = config.load_topics(self.channel_path)
         
         # 初始化主主题分类变量
         self.main_topic_category = None
@@ -981,7 +954,7 @@ class MediaGUIManager:
 
     def manage_hot_videos(self):
         # 查找所有热门视频JSON文件
-        pattern = f"{self.youtube_dir}/*_hotvideos.json"
+        pattern = f"{self.youtube_dir}/list/*_hotvideos.txt"
         json_files = glob.glob(pattern)
         
         if not json_files:
@@ -992,8 +965,8 @@ class MediaGUIManager:
         channel_data = []
         for json_file in json_files:
             filename = os.path.basename(json_file)
-            # 从文件名中提取频道名：频道名_hotvideos.json -> 频道名
-            match = re.match(r'(.+?)_hotvideos\.json', filename)
+            # 从文件名中提取频道名：频道名_hotvideos.txt -> 频道名
+            match = re.match(r'(.+?)_hotvideos\.txt', filename)
             if match:
                 channel_name = match.group(1)
                 # 读取文件获取视频数量
@@ -1073,51 +1046,7 @@ class MediaGUIManager:
 
         with open(srt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-
-        # 使用正则表达式匹配SRT格式
-        # SRT格式：序号\n时间戳\n文本内容\n\n
-        # 匹配模式：数字开头，然后是时间戳行（包含-->），然后是文本内容
-        pattern = r'^\d+\s*\n\s*\d{2}:\d{2}:\d{2}[,\d]+\s*-->\s*\d{2}:\d{2}:\d{2}[,\d]+\s*\n(.*?)(?=\n\d+\s*\n|\Z)'
-        matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
-        
-        text_lines = []
-        for match in matches:
-            # 清理匹配的文本内容
-            text_block = match.strip()
-            if text_block:
-                # 分割多行文本，去除空行
-                lines = [line.strip() for line in text_block.split('\n') if line.strip()]
-                text_lines.extend(lines)
-        
-        # 如果没有匹配到，使用备用方法：逐行解析
-        if not text_lines:
-            lines = content.split('\n')
-            i = 0
-            while i < len(lines):
-                line = lines[i].strip()
-                if not line:
-                    i += 1
-                    continue
-                
-                # 检查是否是序号（纯数字）
-                if line.isdigit():
-                    i += 1
-                    # 跳过时间戳行（包含 -->）
-                    if i < len(lines) and '-->' in lines[i]:
-                        i += 1
-                    # 读取文本内容（直到遇到空行或下一个序号）
-                    while i < len(lines):
-                        text_line = lines[i].strip()
-                        if not text_line:
-                            break
-                        if text_line.isdigit():
-                            break
-                        text_lines.append(text_line)
-                        i += 1
-                else:
-                    i += 1
-        
-        return '\n'.join(text_lines) if text_lines else None
+        return config.extract_text_from_srt_content(content)
 
 
     def check_video_status(self,video_detail):
@@ -1130,27 +1059,27 @@ class MediaGUIManager:
         filename_prefix = self.downloader.generate_video_prefix( video_detail )
         
         # 检查是否已下载 - 只扫描 .mp4 文件
-        for filename in os.listdir(self.youtube_dir):
+        for filename in os.listdir(f"{self.youtube_dir}/media"):
             # 只检查 .mp4 文件
             if not filename_prefix in filename:
                 continue
             if filename.lower().endswith('.mp4'):
-                video_file = os.path.join(self.youtube_dir, filename)
+                video_file = os.path.join(f"{self.youtube_dir}/media", filename)
                 video_detail['video_path'] = video_file
             elif filename.lower().endswith('.mp3'):
-                audio_file = os.path.join(self.youtube_dir, filename)
+                audio_file = os.path.join(f"{self.youtube_dir}/media", filename)
                 video_detail['audio_path'] = audio_file
             elif filename.lower().endswith('.wav'):
-                audio_file = os.path.join(self.youtube_dir, filename)
+                audio_file = os.path.join(f"{self.youtube_dir}/media", filename)
                 a = self.downloader.ffmpeg_audio_processor.to_mp3(audio_file)
                 safe_remove(audio_file)
-                audio_file = f"{self.youtube_dir}/__{filename_prefix}.mp3"
+                audio_file = f"{self.youtube_dir}/media/___{filename_prefix}.mp3"
                 safe_copy_overwrite(a, audio_file)
                 video_detail['audio_path'] = audio_file
         
         if video_file and not audio_file:
             a = self.downloader.ffmpeg_audio_processor.extract_audio_from_video(video_file, "mp3")
-            audio_file = f"{self.youtube_dir}/__{filename_prefix}.mp3"
+            audio_file = f"{self.youtube_dir}/media/___{filename_prefix}.mp3"
             safe_copy_overwrite(a, audio_file)
             video_detail['audio_path'] = audio_file
 
@@ -1192,12 +1121,12 @@ class MediaGUIManager:
 
     def match_video_file(self, video_detail, field, postfixs):
         prefix = self.downloader.generate_video_prefix(video_detail)
-        for file in os.listdir(self.youtube_dir):
+        for file in os.listdir(f"{self.youtube_dir}/media"):
             if not prefix in file:
                 continue
             for postfix in postfixs:
                 if file.endswith(postfix):
-                    file = os.path.join(self.youtube_dir, file)
+                    file = os.path.join(f"{self.youtube_dir}/media", file)
                     video_detail[field] = file
                     return video_detail
         return None
@@ -1640,7 +1569,13 @@ class MediaGUIManager:
                     if filename_prefix in filename:
                         file_path = os.path.join(self.youtube_dir, filename)
                         # 收集SRT和TXT文件
-                        if filename.endswith('.srt') or filename.endswith('.json') or filename.endswith('.mp4') or filename.endswith('.mp3') or filename.endswith('.wav'):
+                        if filename.endswith('.srt') or filename.endswith('.json'):
+                            files_to_delete.append(file_path)
+                for filename in os.listdir(f"{self.youtube_dir}/media"):
+                    if filename_prefix in filename:
+                        file_path = os.path.join(f"{self.youtube_dir}/media", filename)
+                        # 收集SRT和TXT文件
+                        if filename.endswith('.mp4') or filename.endswith('.mp3') or filename.endswith('.wav'):
                             files_to_delete.append(file_path)
             
             # 删除文件
@@ -2350,7 +2285,7 @@ class MediaGUIManager:
                         #file_path = self.downloader.download_video_highest_resolution(video_detail)
                         file_path = self.downloader.download_audio_only(video_detail)
                         if file_path and os.path.exists(file_path):
-                            file_fix = self.youtube_dir + "/" + self.downloader.generate_video_prefix(video_detail)+".mp3"
+                            file_fix = self.youtube_dir + "/media/" + self.downloader.generate_video_prefix(video_detail)+".mp3"
                             os.rename(file_path, file_fix)
                             video_detail['audio_path'] = file_fix
                             file_path = file_fix
@@ -2688,7 +2623,7 @@ class MediaGUIManager:
             self.downloader.download_video_highest_resolution(video_data)
             return
     
-        self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+        self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
         if os.path.exists(self.downloader.channel_list_json):
             self.downloader.channel_videos = json.load(open(self.downloader.channel_list_json, 'r', encoding='utf-8'))
             self.downloader.latest_date = max(
@@ -2704,12 +2639,12 @@ class MediaGUIManager:
             self.downloader.channel_videos = []
 
         if not self.downloader.channel_videos:
-            # show all the *_hotvideos.json files in the youtube_dir,  let user to select one
+            # show all the *_hotvideos.txt files in the youtube_dir,  let user to select one
             # if user Not select one, ask user give a new channel name, then create a new file with the new channel name
             # and add the video_data as the first item in the new file (change the channel_name to the new channel name)
             
             # 查找所有热门视频JSON文件
-            channel_list_json_files = glob.glob(f"{self.youtube_dir}/*_hotvideos.json")
+            channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*_hotvideos.txt")
             
             # 使用线程安全的队列来传递结果
             selected_file = None
@@ -2752,7 +2687,7 @@ class MediaGUIManager:
                     self.downloader.channel_videos = []
             
             if not selected_file or not self.downloader.channel_videos:
-                self.downloader.channel_list_json = f"{self.youtube_dir}/{channel_name}_hotvideos.json"
+                self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
                 self.downloader.channel_videos = []
                 print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 

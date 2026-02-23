@@ -14,9 +14,10 @@ import json
 import glob
 from datetime import datetime
 import config
+import config_prompt
 from config import parse_json_from_text
 import config_channel
-from utility.llm_api import LLMApi
+from utility.llm_api import LLMApi, OLLAMA
 from utility.file_util import safe_copy_overwrite, safe_remove
 from utility.audio_transcriber import LANGUAGES
 
@@ -170,6 +171,7 @@ class ProjectConfigManager:
             return False
 
 
+
 class ContentEditorDialog:
     
     def __init__(self, parent, language, channel, initial_story=""):
@@ -180,6 +182,7 @@ class ContentEditorDialog:
         self.result_story = initial_story
         # 初始化LLM API
         self.llm_api = LLMApi()
+        self.llm_api_local = LLMApi(OLLAMA)
         
         self.create_dialog()
     
@@ -212,7 +215,7 @@ class ContentEditorDialog:
         self.story_editor = scrolledtext.ScrolledText(story_frame, wrap=tk.WORD, width=90, height=15)
         self.story_editor.pack(fill=tk.BOTH, expand=True)
         self.story_editor.insert('1.0', self.result_story)
-        # 绑定双击事件：从剪贴板粘贴
+
         self.story_editor.bind('<Double-1>', self.on_story_editor_double_click)
         
         # 按钮框架
@@ -227,8 +230,8 @@ class ContentEditorDialog:
         right_buttons = ttk.Frame(button_frame)
         right_buttons.pack(side=tk.RIGHT)
         
-        ttk.Button(right_buttons, text="确定", command=self.on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(right_buttons, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_buttons, text="重整", command=self.on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(right_buttons, text="返回", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
     
 
     def on_story_editor_double_click(self, event):
@@ -246,12 +249,8 @@ class ContentEditorDialog:
             # 其他错误时，可以显示提示（可选）
             print(f"粘贴剪贴板内容时出错: {e}")
 
+
     def on_ok(self):
-        """使用LLM生成内容"""
-        if not self.llm_api:
-            messagebox.showerror("错误", "LLM API未初始化，无法生成内容")
-            return
-        
         topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
         user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
@@ -262,20 +261,25 @@ class ContentEditorDialog:
             system_prompt = raw_prompt
         # 调用LLM生成内容
         generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
-        if generated_content:
+
+        topic_choices, topic_categories = config.load_topics(config.get_channel_path(self.channel))
+
+        category_result = self.llm_api_local.generate_json(
+            config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language=LANGUAGES.get(self.language, self.language), topic_choices=topic_choices), 
+            generated_content,
+            expect_list=False
+        )
+        if category_result:
+            category_result['story'] = generated_content
+
             self.story_editor.config(state=tk.NORMAL)
             self.story_editor.delete('1.0', tk.END)
-            self.story_editor.insert('1.0', json.dumps(generated_content, indent=2, ensure_ascii=False))
+            self.story_editor.insert('1.0', json.dumps(category_result, indent=2, ensure_ascii=False))
             self.result_story = self.story_editor.get('1.0', tk.END).strip()
-            messagebox.showinfo("成功", "内容生成完成！")
-        else:
-            messagebox.showerror("错误", "内容生成失败")
-
-        self.dialog.destroy()
 
 
     def on_cancel(self):
-        """取消按钮"""
+        self.result_story = self.story_editor.get('1.0', tk.END).strip()
         self.dialog.destroy()
     
 
@@ -289,10 +293,11 @@ class ContentEditorDialog:
 class AnalysisEditorDialog:
     """分析内容编辑器 - 使用 Story 内容调用 LLM 生成分析"""
 
-    def __init__(self, parent, initial_analysis="", story_content="", language="tw", channel=""):
+    def __init__(self, parent, initial_analysis="", story_content="", reference_content="", language="tw", channel=""):
         self.parent = parent
         self.result_analysis = initial_analysis
         self.story_content = story_content
+        self.reference_content = reference_content
         self.language = language
         self.channel = channel
         self.llm_api = LLMApi()
@@ -335,10 +340,9 @@ class AnalysisEditorDialog:
             return
 
         topic = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("topic", "")
-        if self.result_analysis:
-            user_prompt = f"Here is the Initial analysis script on topic of {topic}:  {self.result_analysis}"
-        else:
-            user_prompt = f"Here is the Initial story script on topic of {topic}:  {self.story_content}"
+
+        user_prompt = f"Here is the K-Story:\n{self.story_content}\n\n\nHere is the Reference: \n{self.reference_content}"
+        # user_prompt = f"Here is the Initial analysis script on topic of {topic}:  {self.result_analysis}"
 
         raw_prompt = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("channel_prompt", {}).get("program_analysis", "")
         try:
@@ -346,17 +350,18 @@ class AnalysisEditorDialog:
         except (KeyError, ValueError):
             system_prompt = raw_prompt
 
-        generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
-        if generated_content:
+        generated_json = self.llm_api.generate_json(system_prompt, user_prompt, expect_list=False)
+        if generated_json:
             self.analysis_editor.config(state=tk.NORMAL)
             self.analysis_editor.delete('1.0', tk.END)
-            self.analysis_editor.insert('1.0', json.dumps(generated_content, indent=2, ensure_ascii=False))
+            self.analysis_editor.insert('1.0', json.dumps(generated_json, indent=2, ensure_ascii=False))
             self.result_analysis = self.analysis_editor.get('1.0', tk.END).strip()
             messagebox.showinfo("成功", "分析内容生成完成！")
         else:
             messagebox.showerror("错误", "分析内容生成失败")
 
         self.dialog.destroy()
+
 
     def on_cancel(self):
         self.dialog.destroy()
@@ -366,6 +371,220 @@ class AnalysisEditorDialog:
         self.dialog.wait_window()
         return self.result_analysis
 
+
+
+class ReferenceEditorDialog:
+    """参考内容编辑器 - 基于 Story 分析的参考案例与素材（搜索/生成逻辑待后续集成）"""
+
+    def __init__(self, parent, initial_reference="", story_content="", topic_category="", topic_subtype=""):
+        self.parent = parent
+        self.result_reference = initial_reference
+        self.story_content = story_content
+        self.topic_category = topic_category
+        self.topic_subtype = topic_subtype
+        self.llm_api = LLMApi()
+        self.create_dialog()
+
+    def create_dialog(self):
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("参考内容编辑器")
+        self.dialog.geometry("800x500")
+        self.dialog.transient(self.parent)
+        self.dialog.grab_set()
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() - 800) // 2
+        y = (self.dialog.winfo_screenheight() - 500) // 2
+        self.dialog.geometry(f"800x500+{x}+{y}")
+
+        main_frame = ttk.Frame(self.dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(main_frame, text="参考内容 (References)：分析与案例素材，供主持人参考，亦作为生成分析内容的输入", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+        self.reference_editor = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, width=80, height=15)
+        self.reference_editor.pack(fill=tk.BOTH, expand=True)
+        self.reference_editor.insert('1.0', self.result_reference)
+        self.reference_editor.bind('<Double-1>', self._on_paste_from_clipboard)
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(button_frame, text="从 NotebookLM 获取", command=self._fetch_from_notebooklm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="确定", command=self.on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
+
+    def _on_paste_from_clipboard(self, event=None):
+        try:
+            clipboard_content = self.dialog.clipboard_get()
+            if clipboard_content:
+                self.reference_editor.insert(tk.INSERT, clipboard_content)
+        except tk.TclError:
+            pass
+
+    def _fetch_from_notebooklm(self):
+        """工作流：复制 prompt 到剪贴板 → 用户在 NotebookLM 生成 → 粘贴结果 → 勾选需要的项 → 写入 reference_editor"""
+        if not self.story_content or not self.story_content.strip():
+            messagebox.showerror("错误", "请先完成 Story 内容，再获取参考")
+            return
+
+        reference_filter_prompt = config_channel.COUNSELING_REFERENCE_FILTER + "\n---------\n" + "Topic-Category: " + self.topic_category + "\nTopic-Subtype: " + self.topic_subtype + "\n\n" + self.story_content
+        try:
+            self.dialog.clipboard_clear()
+            self.dialog.clipboard_append(reference_filter_prompt)
+        except tk.TclError:
+            pass
+
+        messagebox.showinfo("提示", "已将筛选 Prompt 复制到剪贴板。\n\n请到 NotebookLM 中使用该 prompt 生成参考列表。\n\n点击确定后，将打开粘贴窗口，请将生成的 JSON 粘贴到该窗口中（双击可快速粘贴剪贴板），然后确认以继续勾选需要的参考项。")
+
+        paste_dialog = tk.Toplevel(self.dialog)
+        paste_dialog.title("粘贴 NotebookLM 生成内容")
+        paste_dialog.geometry("700x400")
+        paste_dialog.transient(self.dialog)
+        paste_dialog.grab_set()
+        paste_dialog.update_idletasks()
+        x = (paste_dialog.winfo_screenwidth() - 700) // 2
+        y = (paste_dialog.winfo_screenheight() - 400) // 2
+        paste_dialog.geometry(f"700x400+{x}+{y}")
+
+        ttk.Label(paste_dialog, text="请将 NotebookLM 生成的 JSON 粘贴到下方（双击可从剪贴板粘贴）", font=('TkDefaultFont', 10)).pack(anchor='w', padx=20, pady=(20, 5))
+        paste_text = scrolledtext.ScrolledText(paste_dialog, wrap=tk.WORD, width=80, height=12)
+        paste_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+
+        def paste_on_double_click(e):
+            try:
+                clipboard_content = paste_dialog.clipboard_get()
+                json_content = self.llm_api.parse_json(clipboard_content, expect_list=True)
+                if json_content:
+                    paste_text.insert(tk.INSERT, json.dumps(json_content, indent=2, ensure_ascii=False))
+                else:
+                    paste_text.insert(tk.INSERT, clipboard_content)
+            except tk.TclError:
+                pass
+
+        paste_text.bind('<Double-1>', paste_on_double_click)
+
+        generated_content = [None]
+
+        def on_paste_confirm():
+            raw = paste_text.get('1.0', tk.END).strip()
+            if not raw:
+                messagebox.showerror("错误", "请先粘贴 NotebookLM 生成的内容")
+                return
+            
+            parsed = parse_json_from_text(raw)
+            if not parsed:
+                messagebox.showerror("错误", "无法解析为 JSON 对象，请确认粘贴的是包含 story 与 analysis 的 JSON")
+                return
+            if isinstance(parsed, list):
+                if len(parsed) == 0:
+                    messagebox.showerror("错误", "JSON array size = 0")
+                    return
+                parsed = parsed[0]
+
+            story_list = parsed.get("story")
+            analysis_list = parsed.get("analysis")
+            if not isinstance(story_list, list):
+                story_list = []
+            if not isinstance(analysis_list, list):
+                analysis_list = []
+            if len(story_list) == 0 and len(analysis_list) == 0:
+                messagebox.showerror("错误", "JSON 中 story 与 analysis 均为空或不存在，请确认格式正确")
+                return
+            generated_content[0] = {"story": story_list, "analysis": analysis_list}
+            paste_dialog.destroy()
+
+        btn_f = ttk.Frame(paste_dialog)
+        btn_f.pack(fill=tk.X, pady=10)
+        ttk.Button(btn_f, text="确认", command=on_paste_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="取消", command=paste_dialog.destroy).pack(side=tk.LEFT, padx=5)
+        paste_dialog.wait_window()
+
+        if generated_content[0] is None:
+            return
+
+        data = generated_content[0]
+
+        def show_section_select_dialog(section_title, items):
+            """显示一个区块的勾选对话框，返回用户勾选后的列表；取消则返回 None。"""
+            if not items:
+                return []
+            select_dialog = tk.Toplevel(self.dialog)
+            select_dialog.title(section_title)
+            select_dialog.geometry("650x450")
+            select_dialog.transient(self.dialog)
+            select_dialog.grab_set()
+            select_dialog.update_idletasks()
+            x = (select_dialog.winfo_screenwidth() - 650) // 2
+            y = (select_dialog.winfo_screenheight() - 450) // 2
+            select_dialog.geometry(f"650x450+{x}+{y}")
+
+            ttk.Label(select_dialog, text="勾选需要保留的参考项，然后点击确认", font=('TkDefaultFont', 10)).pack(anchor='w', padx=20, pady=(20, 5))
+            canvas_frame = ttk.Frame(select_dialog)
+            canvas_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+            canvas = tk.Canvas(canvas_frame)
+            scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+            scrollable = ttk.Frame(canvas)
+            scrollable.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+            canvas.create_window((0, 0), window=scrollable, anchor='nw')
+            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            vars_items = []
+            for i, item in enumerate(items):
+                cb_var = tk.BooleanVar(value=True)
+                vars_items.append((cb_var, item))
+                if isinstance(item, dict):
+                    source = item.get("source_name", "") or ""
+                    fpath = item.get("transcribed_file", "") or ""
+                    fpath_tail = fpath[-36:] if len(fpath) > 36 else fpath
+                    reason = item.get("reason", "") or ""
+                    lines = []
+                    if source:
+                        lines.append(f"来源: {source}")
+                    if fpath_tail:
+                        lines.append(f"文件名: {fpath_tail}")
+                    if reason:
+                        lines.append(f"原因: {reason}")
+                    display_text = "\n".join(lines) if lines else json.dumps(item, ensure_ascii=False)[:120] + ("..." if len(json.dumps(item, ensure_ascii=False)) > 120 else "")
+                else:
+                    display_text = json.dumps(item, ensure_ascii=False)[:120] + ("..." if len(json.dumps(item, ensure_ascii=False)) > 120 else "")
+                row_f = ttk.Frame(scrollable)
+                row_f.pack(fill=tk.X, pady=6)
+                ttk.Checkbutton(row_f, variable=cb_var).pack(side=tk.LEFT, padx=(0, 8), anchor='n')
+                ttk.Label(row_f, text=display_text, wraplength=520, justify='left').pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            selected_result = [None]
+
+            def on_confirm():
+                selected_result[0] = [item for (cb_var, item) in vars_items if cb_var.get()]
+                select_dialog.destroy()
+
+            btn_f2 = ttk.Frame(select_dialog)
+            btn_f2.pack(fill=tk.X, pady=10)
+            ttk.Button(btn_f2, text="确认", command=on_confirm).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_f2, text="取消", command=select_dialog.destroy).pack(side=tk.LEFT, padx=5)
+            select_dialog.wait_window()
+            return selected_result[0]
+
+        selected_story = show_section_select_dialog("勾选参考项：Story（故事/案例）", data.get("story", []))
+        if selected_story is None:
+            return
+        selected_analysis = show_section_select_dialog("勾选参考项：Analysis（分析/理论）", data.get("analysis", []))
+        if selected_analysis is None:
+            return
+
+        result = {"story": selected_story, "analysis": selected_analysis}
+        self.reference_editor.delete('1.0', tk.END)
+        self.reference_editor.insert('1.0', json.dumps(result, indent=2, ensure_ascii=False))
+
+    def on_confirm(self):
+        self.result_reference = self.reference_editor.get('1.0', tk.END).strip()
+        self.dialog.destroy()
+
+    def on_cancel(self):
+        self.dialog.destroy()
+
+    def show(self):
+        self.dialog.wait_window()
+        return self.result_reference
 
 
 class ProjectSelectionDialog:
@@ -384,6 +603,7 @@ class ProjectSelectionDialog:
         self.config_manager = config_manager
         self.selected_config = None
         self.result = None
+        self.llm_api = LLMApi()    
         
         # 默认项目配置选项
         # 从config.py获取可用的频道列表
@@ -402,6 +622,7 @@ class ProjectSelectionDialog:
         
         self.create_dialog()
     
+
     def create_dialog(self):
         """创建对话框"""
         self.dialog = tk.Toplevel(self.parent)
@@ -642,32 +863,10 @@ class ProjectSelectionDialog:
             topic_explanation_label.config(text="")
             
             if channel:
-                topics_file = os.path.join(config.get_channel_path(channel), 'topics.json')
-                if os.path.exists(topics_file):
-                    try:
-                        with open(topics_file, 'r', encoding='utf-8') as f:
-                            loaded_topics = json.load(f)
-                        
-                        # 确保是列表格式
-                        if isinstance(loaded_topics, list):
-                            topics_data.extend(loaded_topics)
-                        elif isinstance(loaded_topics, dict):
-                            # 如果是字典，尝试转换为列表
-                            topics_data.append(loaded_topics)
-                        
-                        # 提取所有唯一的 topic_category
-                        categories = set()
-                        for topic in topics_data:
-                            category = topic.get('topic_category', '')
-                            if category:
-                                categories.add(category)
-                        
-                        topic_category_combo['values'] = sorted(list(categories))
-                    except Exception as e:
-                        print(f"加载主题分类失败: {e}")
-                        topics_data.clear()
-                else:
-                    print(f"主题文件不存在: {topics_file}")
+                channel_path = config.get_channel_path(channel)
+                loaded_choices, loaded_categories = config.load_topics(channel_path)
+                topics_data.extend(loaded_choices)
+                topic_category_combo['values'] = sorted(loaded_categories)
             # 频道切换后需更新编辑按钮状态
             try:
                 update_buttons_state()
@@ -696,31 +895,42 @@ class ProjectSelectionDialog:
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
 
-        # 内容编辑区域：分析内容 | Story 内容（并排）
+        # 内容编辑区域：分析内容 | Story 内容 | 参考内容（三列并排）
         content_panels_frame = ttk.Frame(main_frame)
         content_panels_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
         content_panels_frame.columnconfigure(0, weight=1)
         content_panels_frame.columnconfigure(1, weight=1)
+        content_panels_frame.columnconfigure(2, weight=1)
         row += 1
 
         story_var = tk.StringVar(value="")
         analysis_var = tk.StringVar(value="")
+        reference_var = tk.StringVar(value="")
 
-        # 左侧：分析内容
+        # 第二列：Story 内容
+        story_label_frame = ttk.LabelFrame(content_panels_frame, text="Story 内容", padding=10)
+        story_label_frame.grid(row=0, column=0, padx=5, sticky='nsew')
+        story_preview = ttk.Label(story_label_frame, text="Story: (未编辑)", foreground="gray", wraplength=200)
+        story_preview.pack(anchor='w', pady=(0, 10))
+        edit_story_btn = ttk.Button(story_label_frame, text="故事起始", command=lambda: None)
+        edit_story_btn.pack(pady=5)
+
+        # 第三列：参考内容
+        reference_label_frame = ttk.LabelFrame(content_panels_frame, text="参考内容", padding=10)
+        reference_label_frame.grid(row=0, column=1, padx=(5, 0), sticky='nsew')
+        reference_preview = ttk.Label(reference_label_frame, text="References: (未编辑)", foreground="gray", wraplength=200)
+        reference_preview.pack(anchor='w', pady=(0, 10))
+        edit_reference_btn = ttk.Button(reference_label_frame, text="参考收集", command=lambda: None)
+        edit_reference_btn.pack(pady=5)
+
+        # 第一列：分析内容
         analysis_label_frame = ttk.LabelFrame(content_panels_frame, text="分析内容", padding=10)
-        analysis_label_frame.grid(row=0, column=0, padx=(0, 5), sticky='nsew')
-        analysis_preview = ttk.Label(analysis_label_frame, text="Analysis: (未编辑)", foreground="gray", wraplength=300)
+        analysis_label_frame.grid(row=0, column=2, padx=(0, 5), sticky='nsew')
+        analysis_preview = ttk.Label(analysis_label_frame, text="Analysis: (未编辑)", foreground="gray", wraplength=200)
         analysis_preview.pack(anchor='w', pady=(0, 10))
-        edit_analysis_btn = ttk.Button(analysis_label_frame, text="编辑 Analysis", command=lambda: None)
+        edit_analysis_btn = ttk.Button(analysis_label_frame, text="完成编辑", command=lambda: None)
         edit_analysis_btn.pack(pady=5)
 
-        # 右侧：Story 内容
-        story_label_frame = ttk.LabelFrame(content_panels_frame, text="Story 内容", padding=10)
-        story_label_frame.grid(row=0, column=1, padx=(5, 0), sticky='nsew')
-        story_preview = ttk.Label(story_label_frame, text="Story: (未编辑)", foreground="gray", wraplength=300)
-        story_preview.pack(anchor='w', pady=(0, 10))
-        edit_story_btn = ttk.Button(story_label_frame, text="编辑 Story", command=lambda: None)
-        edit_story_btn.pack(pady=5)
 
         # 更新预览显示
         def update_previews():
@@ -738,6 +948,13 @@ class ProjectSelectionDialog:
             else:
                 analysis_preview.config(text="Analysis: (未编辑)", foreground="gray")
 
+            reference_val = reference_var.get()
+            if reference_val:
+                preview_text = reference_val[:50] + "..." if len(reference_val) > 50 else reference_val
+                reference_preview.config(text=f"References: {preview_text}", foreground="black")
+            else:
+                reference_preview.config(text="References: (未编辑)", foreground="gray")
+
         _editor_open = [False]  # 用 list 以便在闭包中修改；同一时刻只允许打开一个编辑器
 
         # 根据 topic 与 story 状态启用/禁用编辑按钮
@@ -746,11 +963,14 @@ class ProjectSelectionDialog:
             has_story = bool(story_var.get().strip())
             editor_busy = _editor_open[0]
             edit_story_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
-            # Analysis 仅在已有 Story 内容时可编辑
-            edit_analysis_btn.config(state='normal' if has_topic and has_story and not editor_busy else 'disabled')
+            # Analysis、参考 仅在已有 Story 内容时可编辑
+            can_edit_derived = has_topic and has_story and not editor_busy
+            edit_analysis_btn.config(state='normal' if can_edit_derived else 'disabled')
+            edit_reference_btn.config(state='normal' if can_edit_derived else 'disabled')
 
         story_var.trace_add('write', lambda *args: (update_previews(), update_buttons_state()))
         analysis_var.trace_add('write', lambda *args: update_previews())
+        reference_var.trace_add('write', lambda *args: update_previews())
 
         def on_topic_category_selected(e):
             update_topic_subtype()
@@ -776,7 +996,24 @@ class ProjectSelectionDialog:
                 )
                 result = editor.show()
                 if result:
-                    story_var.set(result)
+                    obj = parse_json_from_text(result) if isinstance(result, str) else result
+                    if isinstance(obj, dict):
+                        name = obj.pop('story_name', '')
+                        if name:
+                            title_entry.delete(0, tk.END)
+                            title_entry.insert(0, name)
+                        category = obj.pop('topic_category', '')
+                        if category:
+                            topic_category_combo.set(category)
+                        subtype = obj.pop('topic_subtype', '')
+                        if subtype:
+                            topic_subtype_combo.set(subtype)
+
+                        obj.pop('problem_tags', '')
+                        obj.pop('component_tags', '')
+                        story_var.set(obj.get('story', ''))
+                    else:
+                        story_var.set(result)
             finally:
                 _editor_open[0] = False
                 update_buttons_state()
@@ -784,22 +1021,73 @@ class ProjectSelectionDialog:
         def open_analysis_editor():
             _editor_open[0] = True
             update_buttons_state()
+
             try:
-                editor = AnalysisEditorDialog(
+                # Analysis Editor (edit comprehensive_analysis)
+                editor_analysis = AnalysisEditorDialog(
                     new_project_dialog,
                     initial_analysis=analysis_var.get(),
                     story_content=story_var.get(),
+                    reference_content=reference_var.get(),
                     language=language_combo.get(),
                     channel=channel_combo.get()
                 )
+                res_analysis = editor_analysis.show()
+                if res_analysis:
+                    analysis_var.set(res_analysis)
+            finally:
+                _editor_open[0] = False
+                update_buttons_state()
+
+        def open_reference_editor():
+            _editor_open[0] = True
+            update_buttons_state()
+            try:
+                editor = ReferenceEditorDialog(
+                    new_project_dialog,
+                    initial_reference=reference_var.get(),
+                    story_content=story_var.get(),
+                    topic_category=topic_category_combo.get().strip(),
+                    topic_subtype=topic_subtype_combo.get().strip()
+                )
                 result = editor.show()
-                if result:
-                    analysis_var.set(result)
+                # get json from result
+                result_json = parse_json_from_text(result) if isinstance(result, str) else result
+                story_list = result_json.get('story', [])
+                # for each item in story_list, get transcribed_file, source_name, reason
+                for item in story_list:
+                    fpath = item.pop('transcribed_file', '')
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            item['content'] = config.extract_text_from_srt_content(f.read())
+                        item['name'] = fpath[-36:] if len(fpath) > 36 else fpath
+                    except Exception as e:
+                        item['content'] = None
+                # filter out None  content item in story_list        
+                story_list = [item for item in story_list if item['content'] is not None]
+
+                analysis_list = result_json.get('analysis', [])
+                for item in analysis_list:
+                    fpath = item.pop('transcribed_file', '')
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            item['content'] = config.extract_text_from_srt_content(f.read())
+                        item['name'] = fpath[-36:] if len(fpath) > 36 else fpath
+                    except Exception as e:
+                        item['content'] = None
+                # filter out None  content item in analysis_list
+                analysis_list = [item for item in analysis_list if item['content'] is not None]
+
+                result_json['story'] = story_list
+                result_json['analysis'] = analysis_list
+
+                reference_var.set(json.dumps(result_json, indent=2, ensure_ascii=False))
             finally:
                 _editor_open[0] = False
                 update_buttons_state()
 
         edit_story_btn.config(command=open_story_editor)
+        edit_reference_btn.config(command=open_reference_editor)
         edit_analysis_btn.config(command=open_analysis_editor)
 
         # 初始状态：按钮禁用（topic 未选时）
@@ -865,7 +1153,13 @@ class ProjectSelectionDialog:
                         'topic_category': topic_category, 
                         'topic_subtype': topic_subtype, 
                         'story_details': analysis_var.get()
-                    } 
+                    },
+                    { 
+                        'name': 'reference', 
+                        'topic_category': topic_category, 
+                        'topic_subtype': topic_subtype, 
+                        'story_details': reference_var.get()
+                    }
                 ]
             }
             
