@@ -1219,6 +1219,9 @@ class WorkflowGUI:
         self.scene_promotion.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
+        ttk.Button(self.video_edit_frame, text="story_details", command=self._open_story_details_dialog).grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
+
         # 旁白轨道播放状态
         self.secondary_track_playing = False
         self.secondary_track_cap = None
@@ -3663,6 +3666,55 @@ class WorkflowGUI:
         # 构建正面提示词预览
         open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
 
+
+    def _open_story_details_dialog(self):
+        """弹出窗口显示并编辑当前场景的 story_details，可保存回场景"""
+        scene = self.get_current_scene()
+        if not scene:
+            messagebox.showwarning("提示", "没有当前场景")
+            return
+        story_details = scene.get("story_details")
+        if story_details is None:
+            story_details = {}
+        if isinstance(story_details, (dict, list)):
+            initial_text = json.dumps(story_details, indent=2, ensure_ascii=False)
+        else:
+            initial_text = str(story_details)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("story_details - 当前场景")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 700) // 2
+        y = (dialog.winfo_screenheight() - 500) // 2
+        dialog.geometry(f"700x500+{x}+{y}")
+
+        ttk.Label(dialog, text="可编辑 story_details，保存后将写回当前场景", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
+        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=22)
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        text_widget.insert("1.0", initial_text)
+
+        def on_save():
+            raw = text_widget.get("1.0", tk.END).strip()
+            if not raw:
+                scene["story_details"] = {}
+            else:
+                try:
+                    parsed = json.loads(raw)
+                    scene["story_details"] = parsed
+                except json.JSONDecodeError as e:
+                    messagebox.showerror("错误", f"JSON 格式无效: {e}")
+                    return
+            self.workflow.save_scenes_to_json()
+            dialog.destroy()
+            messagebox.showinfo("成功", "已保存到当前场景")
+
+        btn_f = ttk.Frame(dialog)
+        btn_f.pack(pady=10)
+        ttk.Button(btn_f, text="保存", command=on_save).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="取消", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
     def update_current_scene(self, event=None):
         scene = self.get_current_scene()

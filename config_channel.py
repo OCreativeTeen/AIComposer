@@ -167,25 +167,38 @@ Provided by user:
 *** TASK A — CREATE "augmented_story" + TITLE
 
 1. Extract the ROOT WOUND
-   (e.g., shame avoidance, fear of failure, unresolved collective trauma).
+    Analyze the original Case-Story and identify its Root-Wound, central inner conflict, emotional triggers, and underlying psychological patterns.
+    Focus especially on themes related to mental health, internal struggle, identity tension, or relational dynamics.
+    Preserve the original story’s tone and main trajectory.
 
 2. FULL PRIVACY TRANSFORMATION
-   Change all identifying details:
-   names, roles, locations, symbolic objects, settings.
-   Emotional truth and relational deadlock MUST remain intact.
+    Change all identifying details: names, roles, locations, symbolic objects, settings ... etc, to make the story privacy-safe.
+    Emotional truth and relational deadlock.
 
-3. INTEGRATE REFERENCES
-   Blend useful dynamics from reference stories to make the narrative
-   more archetypal and broadly relatable.
+3. Extract Useful Elements from Reference Stories
+    From the reference stories, selectively identify:
+    * situations or scenes that illustrate similar emotional dynamics
+    * believable symptoms, behaviors, or reactions
+    * moments of tension, misunderstanding, or escalation
+    * symbolic or archetypal patterns that reinforce the psychological theme
 
-4. ESCALATE EMOTIONAL STAKES
-   Increase cinematic tension and psychological clarity.
+4. Integrate & Expand the Story
+    Blend suitable elements into the original story by:
+    * adding new scenes or interactions that clarify the inner conflict
+    * extending existing moments with more grounded emotional detail    
+    * introducing realistic obstacles or consequences that reveal the psychological root of the problem
+    * enhancing dramatic tension without exaggeration or melodrama
+    Ensure all added material feels organic to the original narrative.
+    Use references only as inspiration for expansion and depth. Do not replicate plots or characters.
 
-5. PLANT INTERVENTION SEEDS
+5. Maintain Archetypal Relatability
+    Keep characters psychologically believable and broadly relatable.
+    Avoid over-dramatization, extreme trauma inflation, or unrealistic escalation.
+    Emphasize subtle behavioral cues, internal contradictions, and lived-in realism.
    Subtly introduce a turning point or moment of honest shift.
 
-6. STORY STRUCTURE (Two Layers)
 
+6. STORY STRUCTURE (Two Layers)
    --- Explicit Layer (Visible Story) ---
    • Format: first-person monologue or natural dialogue.
    • Tone: raw, grounded, experiential.
@@ -203,41 +216,47 @@ Provided by user:
 ---
 
 *** TASK B — CREATE "profound_analysis"
-(Based on the new augmented_story)
 
-1) Clinical Anatomy
-   Explicit:
-   • Deep root-cause analysis.
-   • Include 1–2 core psychological concepts
-     (e.g., Repetition Compulsion, Zeigarnik Effect).
-   • Explain the “operating system” behind the pain.
-   Implicit:
-   • Provide 1–2 mirroring questions for audience self-reflection.
+1. Analyze the new augmented_story:
+    Clearly identify the psychological symptoms, psychological causes (sources of trauma)
+    Give guid for Practical life practices for emotion-regulation & cognitive-restructuring
 
-2) Pattern Deconstruction
-   Explicit:
-   • Trace how early structure becomes present conflict.
-   • Identify defense patterns
-     (avoidant suppression, compensatory craving, etc.).
-   Implicit:
-   • Invite reflection on self-protective behaviors that block intimacy.
+2. Extract Useful Elements from Reference Analysis
+    * psychological insights that illustrate similar psychological themes
+    * therapeutic techniques or interventions that are applicable to the augmented story
+    * psychological insights that are applicable to the augmented story
 
-3) Healing Prescription
-   Explicit:
-   • Give actionable interventions or exercises
-     (Narrative Reconstruction, Boundary Practice, Rituals, etc.).
-   Implicit:
-   • Offer an “Action Check-in” invitation for audience engagement.
+3. Then give a deep analysis of the augmented story, including:
+    1) Root Cause:
+        Explicit:
+            • Deep root-cause analysis.
+            • Include 1–2 core psychological concepts (e.g., Repetition Compulsion, Zeigarnik Effect).
+            • Explain the “operating system” behind the pain.
+        Implicit:
+            • Provide 1–2 mirroring questions for audience self-reflection.
+
+    2) Healing Path
+        Explicit:
+            • Trace how early structure becomes present conflict.
+            • Identify defense patterns (avoidant suppression, compensatory craving, etc.).
+        Implicit:
+            • Invite reflection on self-protective behaviors that block intimacy.
+
+    3) Final Engagement
+        Explicit:
+            • Give actionable interventions or exercises (Narrative Reconstruction, Boundary Practice, Rituals, etc.).
+        Implicit:
+            • Offer an “Action Check-in” invitation for audience engagement.
 
 ---
 
 *** CONSTRAINTS
-- NO diagnoses or medical labeling.
-- Avoid empty motivational clichés.
-- Story = literary fiction quality.
-- Analysis = elite clinical clarity.
-- Tone = authoritative, warm, deeply empathetic.
-- Implicit Layer speaks directly to “you”.
+    - NO diagnoses or medical labeling.
+    - Avoid empty motivational clichés.
+    - Story = literary fiction quality.
+    - Analysis = elite clinical clarity.
+    - Tone = authoritative, warm, deeply empathetic.
+    - Implicit Layer speaks directly to “you”.
 
 ---
 
@@ -319,6 +338,7 @@ COUNSELING_STORY = """
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
         * voiceover: as narrator, to re-phrase this scene content: describe who (the speaker or action) & what happen (content & visual image) in this scene  ~~~ in original language)
+    ** don't include 'story_details' field in the output.
 
     Here is a Example:  
          {example}
@@ -377,6 +397,7 @@ COUNSELING_ANALYSIS = """
         - **actions**: (In English) Mood (happy/sad/angry/fearful/disgusted/surprised/calm) + physical cues (e.g., "leans in," "softens gaze").
         - **visual**: (In English) Cinematic description: Era, time, weather, and specific architectural/environmental details that mirror the psychology.
         - **voiceover**: (In original language) A "First-Person Audience Member" reacting—sharing a similar scar, asking a vulnerable question, or finding a "lightbulb moment."
+    ** don't include 'story_details' field in the output.
 
     Here is a Example:
         {example}

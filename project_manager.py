@@ -1033,7 +1033,13 @@ class ProjectSelectionDialog:
                     channel=channel_combo.get()
                 )
                 res_analysis = editor_analysis.show()
+                # get json from result, and get augmented_story_title,  if not None, set it to title_entry
                 if res_analysis:
+                    res_analysis_json = parse_json_from_text(res_analysis)
+                    augmented_story_title = res_analysis_json.get('augmented_story_title', '')
+                    if augmented_story_title:
+                        title_entry.delete(0, tk.END)
+                        title_entry.insert(0, augmented_story_title)
                     analysis_var.set(res_analysis)
             finally:
                 _editor_open[0] = False
@@ -1132,6 +1138,11 @@ class ProjectSelectionDialog:
                 video_width = self.default_project_config['default_video_width']
                 video_height = self.default_project_config['default_video_height']
                 
+            enhanced_content = analysis_var.get()
+            enhanced_content = json.loads(enhanced_content)
+            enhanced_story = enhanced_content.get('augmented_story', '')
+            profound_analysis = enhanced_content.get('profound_analysis', '')
+
             # 创建新项目配置
             self.selected_config = {
                 'pid': pid,
@@ -1140,25 +1151,20 @@ class ProjectSelectionDialog:
                 'video_title': title,
                 'video_width': video_width,
                 'video_height': video_height,
+                'topic_category': topic_category,
+                'topic_subtype': topic_subtype,
                 **self.default_project_config.get('additional_fields', {}),
+
+                'raw_story': story_var.get(),
+
                 'story_details': [ 
                     { 
                         'name': 'story', 
-                        'topic_category': topic_category,
-                        'topic_subtype': topic_subtype,
-                        'story_details': story_var.get()
-                    }, 
-                    { 
-                        'name': 'analysis', 
-                        'topic_category': topic_category, 
-                        'topic_subtype': topic_subtype, 
-                        'story_details': analysis_var.get()
+                        'story_details': enhanced_story
                     },
                     { 
-                        'name': 'reference', 
-                        'topic_category': topic_category, 
-                        'topic_subtype': topic_subtype, 
-                        'story_details': reference_var.get()
+                        'name': 'analysis', 
+                        'story_details': profound_analysis
                     }
                 ]
             }
