@@ -1219,7 +1219,7 @@ class WorkflowGUI:
         self.scene_promotion.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Button(self.video_edit_frame, text="story_details", command=self._open_story_details_dialog).grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Button(self.video_edit_frame, text="Scene Content", command=self._open_scene_content_dialog).grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # 旁白轨道播放状态
@@ -3667,22 +3667,22 @@ class WorkflowGUI:
         open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
 
 
-    def _open_story_details_dialog(self):
+    def _open_scene_content_dialog(self):
         """弹出窗口显示并编辑当前场景的 story_details，可保存回场景"""
         scene = self.get_current_scene()
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
-        story_details = scene.get("story_details")
-        if story_details is None:
-            story_details = {}
-        if isinstance(story_details, (dict, list)):
-            initial_text = json.dumps(story_details, indent=2, ensure_ascii=False)
+        content = scene.get("content")
+        if content is None:
+            content = {}
+        if isinstance(content, (dict, list)):
+            initial_text = json.dumps(content, indent=2, ensure_ascii=False)
         else:
-            initial_text = str(story_details)
+            initial_text = str(content)
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("story_details - 当前场景")
+        dialog.title("Scene Content - 当前场景")
         dialog.geometry("700x500")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -3691,7 +3691,7 @@ class WorkflowGUI:
         y = (dialog.winfo_screenheight() - 500) // 2
         dialog.geometry(f"700x500+{x}+{y}")
 
-        ttk.Label(dialog, text="可编辑 story_details，保存后将写回当前场景", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
+        ttk.Label(dialog, text="可编辑 Scene Content，保存后将写回当前场景", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
         text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=22)
         text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         text_widget.insert("1.0", initial_text)
@@ -3699,11 +3699,11 @@ class WorkflowGUI:
         def on_save():
             raw = text_widget.get("1.0", tk.END).strip()
             if not raw:
-                scene["story_details"] = {}
+                scene["content"] = {}
             else:
                 try:
                     parsed = json.loads(raw)
-                    scene["story_details"] = parsed
+                    scene["content"] = parsed
                 except json.JSONDecodeError as e:
                     messagebox.showerror("错误", f"JSON 格式无效: {e}")
                     return
@@ -3887,17 +3887,17 @@ class WorkflowGUI:
             return True  # 出错时继续关闭应用
     
     def get_current_config_data(self):
-        """获取当前的配置数据"""
-        config_data = {
+        """获取当前的配置数据（以 PROJECT_CONFIG 为基底，保留 topic_category/topic_subtype/init_content/debut_content_* 等所有字段）"""
+        config_data = (project_manager.PROJECT_CONFIG.copy() if project_manager.PROJECT_CONFIG else {})
+        # 仅覆盖 GUI 可编辑的字段
+        config_data.update({
             'pid': self.get_pid(),
-            'language': self.shared_language.cget('text'), 
+            'language': self.shared_language.cget('text'),
             'channel': self.shared_channel.cget('text'),
             'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '默认视频标题',
-            # video_width and video_height are read-only from project config, not saved
-            'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
-            'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-            'story': project_manager.PROJECT_CONFIG.get('story', '')
-        }
+            'video_width': config_data.get('video_width', '1920'),
+            'video_height': config_data.get('video_height', '1080'),
+        })
 
         # Add audio_prepares data if available
         workflow = self.workflow
@@ -3922,39 +3922,27 @@ class WorkflowGUI:
             print(f"⚠️ 清理临时文件时出错: {e}")
 
     def save_config(self):
-        """保存当前项目配置"""
+        """保存当前项目配置（以 PROJECT_CONFIG 为基底，保留 topic_category/topic_subtype/init_content/debut_content_* 等所有字段）"""
         try:
             workflow = self.workflow
-            
-            config_data = {
+            # 以现有配置为基底，避免丢失 topic_category/topic_subtype/init_content/debut_content_1/debut_content_2 等
+            config_data = (project_manager.PROJECT_CONFIG.copy() if project_manager.PROJECT_CONFIG else {})
+            # 仅覆盖 GUI 可编辑的字段
+            config_data.update({
                 'pid': self.get_pid(),
                 'language': self.shared_language.cget('text'),
                 'channel': self.shared_channel.cget('text'),
                 'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '视频标题',
-                # video_width and video_height are read-only from project config, not saved
-                'video_width': project_manager.PROJECT_CONFIG.get('video_width', '1920') if project_manager.PROJECT_CONFIG else '1920',
-                'video_height': project_manager.PROJECT_CONFIG.get('video_height', '1080') if project_manager.PROJECT_CONFIG else '1080',
-                'story': project_manager.PROJECT_CONFIG.get('story', '')
-            }
+                'video_width': config_data.get('video_width', '1920'),
+                'video_height': config_data.get('video_height', '1080'),
+            })
 
             # Save audio_prepares data if available
             if workflow and hasattr(workflow, 'audio_prepares'):
                 config_data['audio_prepares'] = workflow.video_prepares
-            
-            # Preserve video_id and other important fields from existing config
-            if project_manager.PROJECT_CONFIG:
-                if 'video_id' in project_manager.PROJECT_CONFIG:
-                    config_data['video_id'] = project_manager.PROJECT_CONFIG['video_id']
-                if 'generated_titles' in project_manager.PROJECT_CONFIG:
-                    config_data['generated_titles'] = project_manager.PROJECT_CONFIG['generated_titles']
-                if 'generated_tags' in project_manager.PROJECT_CONFIG:
-                    config_data['generated_tags'] = project_manager.PROJECT_CONFIG['generated_tags']
-                # Preserve kernel, story from existing config
-                if 'story' in project_manager.PROJECT_CONFIG:
-                    config_data['story'] = project_manager.PROJECT_CONFIG['story']
-            
-            # 更新当前项目配置
-            project_manager.PROJECT_CONFIG = config_data
+
+            # 更新当前项目配置（统一通过 set_global_config）
+            ProjectConfigManager.set_global_config(config_data)
             
             # 保存到文件
             config_manager = ProjectConfigManager(self.get_pid())

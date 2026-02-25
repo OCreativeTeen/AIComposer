@@ -918,7 +918,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
 *** Output JSON Specification
     {{
         "analysis_logic": "Briefly describe the psychological conflict identified (within 100 words)",
-        "story_name": "The name of the story (less than 16 words)",
+        "title": "The name of the story (less than 16 words)",
         "topic_category": "The primary category from the Classification System",
         "topic_subtype": "The specific sub-type from the Classification System",
         "problem_tags": "1-3 selected tags, provided as a comma-separated string",

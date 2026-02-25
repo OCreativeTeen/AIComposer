@@ -13,7 +13,6 @@ from typing import Dict, Any
 import config_prompt
 from . import llm_api
 from .file_util import get_file_path, build_scene_media_prefix, safe_copy_overwrite
-from project_manager import refresh_scene_media
 import subprocess
 
 

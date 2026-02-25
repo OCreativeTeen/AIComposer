@@ -758,14 +758,27 @@ class MagicWorkflow:
             return
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
-        stories_json = project_manager.PROJECT_CONFIG.get('story_details', "{}")
-        stories_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
+        init_content = project_manager.PROJECT_CONFIG.get('init_content', "")
+        debut_content_1 = project_manager.PROJECT_CONFIG.get('debut_content_1', "")
+        debut_content_2 = project_manager.PROJECT_CONFIG.get('debut_content_2', "")
+        raw_template = config_channel.CHANNEL_CONFIG[channel]["channel_template"]
+        # 支持 channel_template 为「数组的数组」：按 channel_template_index 选取
+        template_index = project_manager.PROJECT_CONFIG.get('channel_template_index', 0)
+        if raw_template and isinstance(raw_template[0], list):
+            stories_template = raw_template[template_index] if template_index < len(raw_template) else raw_template[0]
+        else:
+            stories_template = raw_template
 
         for i, element in enumerate(stories_template):
-            if element.get("name") == "program":
-                stories_template[i:i+1] = stories_json
+            if element.get("name") == "development1":
+                element["content"] = debut_content_1
+            if element.get("name") == "development2":
+                element["content"] = debut_content_2
             elif element.get("name") == "intro":
-                element["story_details"] = stories_json
+                element["content"] = {
+                    "content1": debut_content_1,
+                    "content2": debut_content_2
+                }
 
         # popup dialog to select the story level
         story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")

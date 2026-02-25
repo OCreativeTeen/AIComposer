@@ -4,8 +4,11 @@ import os, time, threading
 from PIL import Image, ImageTk
 from utility.file_util import get_file_path, safe_remove, safe_file
 from utility.audio_transcriber import AudioTranscriber
-from project_manager import refresh_scene_media
 import config, config_channel
+
+def _refresh_scene_media(*args, **kwargs):
+    from project_manager import refresh_scene_media as _fn
+    return _fn(*args, **kwargs)
 from utility.llm_api import LLMApi
 import json
 from config import parse_json_from_text
@@ -23,10 +26,10 @@ except ImportError:
     DND_AVAILABLE = False
     print("警告: tkinterdnd2 不可用，拖放功能将被禁用")
 
-# Audio recording imports
+# Audio recording imports (optional)
 try:
-    import sounddevice as sd
-    import soundfile as sf
+    import sounddevice as sd  # type: ignore[import-untyped]
+    import soundfile as sf  # type: ignore[import-untyped]
     import numpy as np
     RECORDING_AVAILABLE = True
 except ImportError:
@@ -1328,7 +1331,7 @@ class AVReviewDialog:
                         new_item = {
                             "explicit": self.current_scene.get("explicit", "explicit"),
                             "implicit": self.current_scene.get("implicit", "implicit"),
-                            "story_details": self.current_scene.get("story_details", {}),
+                            "content": self.current_scene.get("content", {}),
                             "speaking": item.get("speaking", ""),
                             "speaker": item.get("speaker", ""),
                             "voiceover": item.get("voiceover", "")
@@ -1344,7 +1347,7 @@ class AVReviewDialog:
                         "name": self.current_scene.get("name", "story"),
                         "explicit": self.current_scene.get("explicit", "explicit"),
                         "implicit": self.current_scene.get("implicit", "implicit"),
-                        "story_details": self.current_scene.get("story_details", {}),
+                        "content": self.current_scene.get("content", {}),
                         "speaking": self.current_scene.get("speaking", ""),
                         "speaker": self.current_scene.get("speaker", ""),
                         "voiceover": self.current_scene.get("voiceover", "")
@@ -1359,6 +1362,7 @@ class AVReviewDialog:
 
 
         if selected_prompt_example_file:
+            program_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
             selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"][self.current_scene["name"]]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
@@ -1374,17 +1378,17 @@ class AVReviewDialog:
                 if len(self.audio_json) > 1:
                     json_str = f"json array holding {len(self.audio_json)} scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
                 else:
                     json_str = "json array holding scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
             else:
                 selected_prompt_example_item = selected_prompt_example[0]
                 example_json_str = json.dumps(selected_prompt_example_item, indent=2, ensure_ascii=False)
                 json_str = "a single json item describing a scene"
                 objective_str = "recreate a scene in detail"
-                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str)
+                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
 
         else:
             selected_prompt = config_channel.SIMPLE_REORGANIZE
@@ -1503,10 +1507,10 @@ class AVReviewDialog:
                 tts_wav = None
 
             if tts_wav:
-                olda, a = refresh_scene_media(json_item, self.SPEAKER_KEY+"_audio", ".wav", tts_wav, True)
-                refresh_scene_media(json_item, self.media_type+"_audio", ".wav", a, True)
+                olda, a = _refresh_scene_media(json_item, self.SPEAKER_KEY+"_audio", ".wav", tts_wav, True)
+                _refresh_scene_media(json_item, self.media_type+"_audio", ".wav", a, True)
                 v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, json_item[self.media_type+"_audio"])
-                refresh_scene_media(json_item, self.media_type, ".mp4", v)
+                _refresh_scene_media(json_item, self.media_type, ".mp4", v)
                 if self.media_type == "clip":
                     json_item["duration"] = self.workflow.ffmpeg_audio_processor.get_duration(json_item[self.media_type+"_audio"])
                     json_item["extend"] = 1.0
@@ -1707,12 +1711,12 @@ class AVReviewDialog:
         a = self.current_scene.get(self.audio_field, None)
         i = self.current_scene.get(self.image_field, None)
         if i != self.source_image_path:
-            refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
+            _refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
         if a != self.source_audio_path and self.workflow.ffmpeg_audio_processor.get_duration(a) != self.audio_duration:
-            refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
+            _refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
         if v != self.source_video_path and self.workflow.ffmpeg_processor.get_duration(v) != self.audio_duration:
             #v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True)
-            refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
+            _refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
 
         # 执行音视频切割（只有在边界被手动调整后才执行）
         # 判断是否需要切割：
@@ -1726,19 +1730,19 @@ class AVReviewDialog:
             # 如果是完整音频（从0到结束），不需要切割
             if abs(start) > 0.1 or abs(end - self.audio_duration) > 0.1:
                 clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, start, end - start)
-                refresh_scene_media(self.current_scene, self.SPEAKER_KEY+"_audio", ".wav", clip_wav, True)
-                refresh_scene_media(self.current_scene, self.audio_field, ".wav", clip_wav, True)
+                _refresh_scene_media(self.current_scene, self.SPEAKER_KEY+"_audio", ".wav", clip_wav, True)
+                _refresh_scene_media(self.current_scene, self.audio_field, ".wav", clip_wav, True)
                 v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start, end)
-                refresh_scene_media(self.current_scene, self.video_field, ".mp4", v, True)
+                _refresh_scene_media(self.current_scene, self.video_field, ".mp4", v, True)
             else:
                 v = self.source_video_path
 
             first_image = self.current_scene.get(self.image_field, None)
             if  not first_image or not os.path.exists(first_image):
                 first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
-                refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
+                _refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
             last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
-            refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
+            _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
 
         elif self.clip_multiple_audio_changed():
             print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
@@ -1748,15 +1752,15 @@ class AVReviewDialog:
                     print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
                     continue
                 clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, item["start"], item["duration"])
-                olda, item["speaker_audio"] = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                olda, item["speaker_audio"] = _refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
                 v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
-                refresh_scene_media(item, "clip", ".mp4", v)
+                _refresh_scene_media(item, "clip", ".mp4", v)
                 first_image = item.get(self.image_field, None)
                 if  not first_image or not os.path.exists(first_image):
                     first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
-                    refresh_scene_media(item, self.image_field, ".webp", first_image)
+                    _refresh_scene_media(item, self.image_field, ".webp", first_image)
                 last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
-                refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
+                _refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
 
             print(f"✓ 音视频切割完成")
         else:

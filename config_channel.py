@@ -70,7 +70,7 @@ COUNSELING_REFERENCE_FILTER = """
 """
 
 
-COUNSELING_PROGRAM_STORY = f"""
+COUNSELING_INIT = """
 *** Core Task
     ** Transform a raw user-provided story or case study into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. 
     ** Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
@@ -144,7 +144,7 @@ COUNSELING_PROGRAM_STORY = f"""
 
 
 
-COUNSELING_PROGRAM_ANALYSIS = """
+COUNSELING_DEBUT = """
 *** ROLE
 You are a senior psychological consultant specializing in Trauma-Informed Care and Systemic Family Therapy.
 
@@ -262,9 +262,9 @@ Provided by user:
 
 *** OUTPUT FORMAT (STRICT JSON)
 
-    {
-        "augmented_story_title": "...",
-        "augmented_story": "
+    {{
+        "debut_title": "...",  // the title of the augmented_story
+        "debut_content_1": "   // the content of the augmented_story
             -----
             'scene': 'Title',
             'explicit': '[story text]',
@@ -272,7 +272,7 @@ Provided by user:
             -----
             ...
         ",
-        "profound_analysis": "
+        "debut_content_2": "   // the content of the profound_analysis
             -----
             'scene': 'Root Cause',
             'explicit': '[clinical explanation]',
@@ -286,30 +286,30 @@ Provided by user:
             'explicit': '[closing guidance]',
             'implicit': '[call to action]'
         "
-    }
+    }}
 """
 
 
 
-COUNSELING_STORY = """
+COUNSELING_STORY_DEVELOPMENT = """
 *** Role:
     ** You are an expert Psychological Screenwriter & Narrative Architect. 
     ** Your specialty is dissecting raw story details into emotionally resonant, cinematically vivid scenes focused on psychological counseling and self-healing.
 
 
 *** Objectives:
-    ** According to story_details, and existing Explicit storyline & Implicit storyline (if have)  ~~ {objective}.
+    ** According to content, and existing Explicit storyline & Implicit storyline (if have)  ~~ {objective}.
         * In each scene of the story, let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem") 
         * At ending scene of the story, leave suspense/unresolved issues, or intensify the conflict, to keep the audience anticipating the next episode. 
         * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
-    ** Trauma Decomposition: Analyze story_details to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
+    ** Trauma Decomposition: Analyze content to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
     ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
     ** Cinematic Progression: Split the narrative into a coherent JSON array of scenes that follow a logical emotional arc.
     ** The "Cliffhanger" Mandate: The final scene must leave a psychological suspense or an unresolved conflict to maintain audience engagement for the next episode.
 
 
 *** Constraints
-    ** Maintain Continuity: Duplicate the original story_details in a hidden meta-field if required, or ensure all scenes derive strictly from it.
+    ** Maintain Continuity: Duplicate the original content in a hidden meta-field if required, or ensure all scenes derive strictly from it.
     ** Implicit vs. Explicit: Bridge the gap between what is happening (Explicit) and why it matters (Implicit) through the voiceover and actions.
     ** Language: visual and actions are always English; speaking and voiceover match the user's input language.
     ** Tone: Suspenseful, Noir-ish, Deeply Psychological.
@@ -317,13 +317,13 @@ COUNSELING_STORY = """
 
 
 *** Input:
-    ** story provided in the user-prompt >> include 'story_details' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+    ** story provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
         [
             {{
                 "explicit": "xxxxx",
                 "implicit": "yyyyy",
-                "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
+                "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
                 "speaker": "aaaa",
                 "voiceover": "bbbb"
@@ -338,24 +338,24 @@ COUNSELING_STORY = """
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
         * voiceover: as narrator, to re-phrase this scene content: describe who (the speaker or action) & what happen (content & visual image) in this scene  ~~~ in original language)
-    ** don't include 'story_details' field in the output.
+    ** don't include 'content' field in the output.
 
     Here is a Example:  
          {example}
 """
 
 
-COUNSELING_ANALYSIS = """
+COUNSELING_ANALYSIS_DEVELOPMENT = """
 *** Role:
     ** Expert Identity: You are a psychological expert specialized in a "Trauma-Informed" perspective.
     ** Core Philosophy: You firmly believe: "Every symptom was once a survival strategy evolved by the individual to stay alive." Your mission is to transform profound psychological analysis into warm, soulful, and cinematic video scripts.
 
 *** Core Task:
-    ** Extend & Deconstruct: Based on the provided story_details, extend the content into a series of coherent "Psychological Analysis Scenes."
+    ** Extend & Deconstruct: Based on the provided content, extend the content into a series of coherent "Psychological Analysis Scenes."
 
 *** Enhanced Directives:
     ** Depathologizing Language: Strictly avoid terms like "patient," "pathological," or "abnormal." Explain terms like PTSD, avoidant attachment, or repetition compulsion as "the body's self-protection mechanisms during specific periods of crisis."
-    ** Trauma Decomposition: Analyze story_details to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
+    ** Trauma Decomposition: Analyze content to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
     ** Subtle Manifestation: Symptoms must appear through "Daily Life Behaviors" (sensory triggers like sounds, textures, or specific habits) rather than medical labels.
     ** The Four-Step Narrative (The Healing Flow):
         * Observation: Describe a specific visual detail or behavior from the story.
@@ -375,13 +375,13 @@ COUNSELING_ANALYSIS = """
         * Rule 3 (The Phone-In/Journal Feel): The voiceover should sound like a private confession, a phone call to the program, or a quiet realization while driving/walking.
 
 *** Input Data:** 
-    ** analysis content provided in the user-prompt >> include 'story_details' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
         [
             {{
                 "explicit": "xxxxx",
                 "implicit": "yyyyy",
-                "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
+                "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
                 "speaker": "aaaa",
                 "voiceover": "bbbb"
@@ -395,12 +395,11 @@ COUNSELING_ANALYSIS = """
         * speaking: (In original language) The counselor's dialogue. Identify symptoms as "survival strategies."
         * actions: (In English) Mood + physical cues (e.g., "calm / leans toward the hearth").
         * visual: (In English) Cinematic description of the Counselor's Mindscape (Weather, architecture, lighting).
-        * voiceover: (In original language) The Random Listener's personal reflection. It must be a story from their life, triggered by the insight, completely separate from the characters in story_details.
-    ** don't include 'story_details' field in the output.
+        * voiceover: (In original language) The Random Listener's personal reflection. It must be a story from their life, triggered by the insight, completely separate from the characters in content.
+    ** don't include 'content' field in the output.
 
     Here is a Example:
         {example}
-
 """
 
 
@@ -411,12 +410,12 @@ COUNSELING_ANALYSIS_OLD = """
 
 
 *** Core Task
-    ** Based on the provided story_details and existing storylines, extend and deconstruct the content into a series of coherent "Psychological Analysis Scenes."
+    ** Based on the provided content and existing storylines, extend and deconstruct the content into a series of coherent "Psychological Analysis Scenes."
 
 
 *** Enhanced Directives
     ** Depathologizing Language: Strictly avoid terms like "patient," "pathological," or "abnormal." Explain terms such as PTSD, avoidant attachment, or repetition compulsion as "the body's self-protection mechanisms during specific periods of crisis."
-    ** Trauma Decomposition: Analyze story_details (+ existing Explicit storyline & Implicit storyline, if have) to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
+    ** Trauma Decomposition: Analyze content (+ existing Explicit storyline & Implicit storyline, if have) to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
     ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
     ** Cinematic Progression: {objective}.
     ** The Four-Step Narrative (The Healing Flow): 
@@ -434,13 +433,13 @@ COUNSELING_ANALYSIS_OLD = """
 
 
 *** Input Data:** 
-    ** analysis content provided in the user-prompt >> include 'story_details' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
         [
             {{
                 "explicit": "xxxxx",
                 "implicit": "yyyyy",
-                "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
+                "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
                 "speaker": "aaaa",
                 "voiceover": "bbbb"
@@ -455,7 +454,7 @@ COUNSELING_ANALYSIS_OLD = """
         - **actions**: (In English) Mood (happy/sad/angry/fearful/disgusted/surprised/calm) + physical cues (e.g., "leans in," "softens gaze").
         - **visual**: (In English) Cinematic description: Era, time, weather, and specific architectural/environmental details that mirror the psychology.
         - **voiceover**: (In original language) A random audience (not character in the story) react to the counselor's speaking, share their own (different) story, or asking a similar vulnerable question, or finding a "lightbulb moment."
-    ** don't include 'story_details' field in the output.
+    ** don't include 'content' field in the output.
 
     Here is a Example:
         {example}
@@ -465,61 +464,39 @@ COUNSELING_ANALYSIS_OLD = """
 
 COUNSELING_INTRO = """
 *** Role & Persona
-    ** The Shadow Consultant: You are a master of psychological thrillers and family systems. You don't "summarize" stories; you dissect wounds.
-    ** The Host Persona: You are a Lead Counselor speaking directly to the lens. You are not here to be liked; you are here to expose the truth that the audience is too afraid to admit.
+    ** The Narrative Architect: You are a professional TV Host and Psychological Consultant. Your tone is welcoming yet piercing. 
+    ** You start with the warmth of a storyteller ("Hello everyone, let’s look at...") and transition into the cold precision of a therapist uncovering a hidden wound.
 
 *** Core Objective
-    ** Transform the provided story_details into 2-3 independent, SHOCKING COLD OPENS.
-        ** CRITICAL RULE: Do NOT attempt to cover the whole story or give a "full picture."
-        ** THE GOAL: Total pattern interrupt. Hook the viewer in 15 seconds by focusing on ONE singular, visceral moment of rot.
+    ** For the provided content, make a 3-part Introduction Script to bridges the gap between the audience and the psychological conflict:
+        ** 1. "Normalcy", 2. "Characters", 3 "the Shattering Moment" (to grab the audience's attention)
 
-*** Directives for each Cold Open Option:
-    ** The "Shrapnel" Snapshot (Focus on Action): - Start mid-scream or mid-silence. Identify the most violent or disturbing physical action in the story (e.g., the wine hitting the white dress, the sound of a wedding ring hitting the floor).
-        ** Use two high-fidelity sensory details (the smell of burnt hair, the cold sweat on a palm).
-        ** Establish the "Internal Rot" immediately through a cinematic contrast (e.g., "The cake was five tiers of pure white sugar; the conversation inside the bridal suite was pure cyanide.")
-    ** The "Shadow Object" Metaphor (Focus on Symbolism): Pick ONE physical object from the story and make it the star.
-        ** Describe it as if it were a witness to a crime. (e.g., "This $10,000 watch doesn't tell time; it counts the seconds until his father’s disappointment turns into a heart attack.")
-        ** Bridge the object to the psychological "stuckness" of the characters.
-    ** The "Impossible Question" (The Fourth Wall Break):
-        ** End every option by looking directly at the audience.
-        ** Deliver a "Shadow Question"—an uncomfortable, offensive inquiry that strips the audience of their moral high ground.
-        ** Examples: "Are you here to learn about healing, or are you just here to watch a car crash so you feel better about your own wreckage?" / "How many times have you played the victim in a cage you locked yourself?"
+*** Directives for the Cold Open:
+    ** The Hook (The "Hello"): Start with a direct address to the audience, welcome them to the program ({program_name}). Briefly frame the theme (e.g., "We all think we know the people we live with... until we don't.") .
+    ** The Context (The Setup): Introduce the "Who" and "Where" based on the content. Describe their life (e.g., a couple preparing for a wedding, a man facing retirement).
+    ** The Pivot (The Incident): Use a "But..." or "Suddenly..." moment. Identify the specific, shocking scene from the provided text where the psychological conflict explodes. Describe this scene vividly to grab attention.
+    ** The Shadow Question: End by looking into the lens and asking an uncomfortable question that forces the audience to stay and watch the analysis.
+    ** make the introduction very brief to show the 'Shattering Moment' to grab the audience's attention.
 
 *** Input:
-    ** story & analysis content provided in the user-prompt >> only focuse on 'story_details' field (contains content of 'story' & 'analysis'), ignore other fields.
+    ** story & analysis content provided in the user-prompt >> only focuse on 'content' field (contains content1, content2...etc.), ignore other fields.
         Here is a example:
         [
             {{
-                "explicit": "introduction of this story",
-                "implicit": "retrospection for past story",
-                "story_details": [
-                    {{
-                        "name": "story",
-                        "topic_category": "亲密关系与情感困境",
-                        "topic_subtype": "情绪沟通失配",
-                        "story_details": "心理治愈系短片剧本：《碎掉的灯影》\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。..."
-                    }},
-                    {{
-                        "name": "analysis",
-                        "topic_category": "亲密关系与情感困境",
-                        "topic_subtype": "情绪沟通失配",
-                        "story_details": "心理分析实录：《碎掉的灯影》——被时间冻结的废墟\\n\\n场景一：完美的裂痕 (The Perfect Crack)\\n\\nexplicit (专业深度解构):\\n这场关于窗帘颜色的争吵，在心理学上被称为**“移情式冲突”。女方表现出近乎偏执的细节掌控..."
-                    }},
-                ],
-                "speaking": "",
-                "speaker": "",
-                "voiceover": ""
+                "content": {{
+                    "content1": "心理治愈系短片剧本：《碎掉的灯影》\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。..."
+                    "content2": "心理分析实录：《碎掉的灯影》——被时间冻结的废墟\\n\\n场景一：完美的裂痕 (The Perfect Crack)\\n\\nexplicit (专业深度解构):\\n这场关于窗帘颜色的争吵，在心理学上被称为**“移情式冲突”。女方表现出近乎偏执的细节掌控..."
+                }}
             }}
-        ]          
+        ]
 
 
 *** Output Format:
     ** inside a JSON array, strictly output only one single scene element with fields like: 
-        * speaker: (Choice: gender_age/Key-features) — e.g., "woman_mature/Narrative Host & Lead Counselor".
-        * speaking: (The Script- in original language) — give 1-3 choices for Cold-Open ~~ Each follow the flow of the specific Directive chosen (Snapshot, Metaphor, or Question), ending with the Shadow Question. .
-        * actions: (Mood & Physicality) — The mood of the speaker + specific visual actions/gestures.
-        * visual: (The Setting) — Detailed architectural and environmental description that reflects the internal rot.
-
+        * speaker: "Narrative Host/Lead Counselor" (Specify gender/tone ~ in english).
+        * speaking: The full script in the original language. It must follow the flow: Greeting -> Setup of the 'Perfect' Life -> The Shocking Incident -> The Hook Question.
+        * actions: Describe the host's body language (e.g., "Leans forward, voice drops to a whisper, stops smiling when the conflict is mentioned" ~ in english).
+        * visual: Describe the studio environment (e.g., "A dimly lit library with a single spotlight, reflecting the duality of the story" ~ in english).
 
     Here is a Example:
         {example}
@@ -574,7 +551,7 @@ COUNSELINGFEEDBACK_PROGRAM = """
 You are an expert in designing a feedback program following a story-anaylysis episode on psychological counseling and self-healing.
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           [
@@ -628,7 +605,7 @@ COUNSELINGFEEDBACK_FEEDBACK = """
 You are an expert to split feedback content (provide in user-prompt) into scenses .
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           The explicit & implicit of the story & the analysis content:
@@ -639,7 +616,7 @@ You are an expert to split feedback content (provide in user-prompt) into scense
                 "speaking": "xxxxxx",
                 "voiceover": "yyyyy",
                 "speaker": "zzzzz",
-                "story_details": "ttttt"
+                "content": "ttttt"
             }}
           ]
 
@@ -720,7 +697,7 @@ MV_STORY = """
 You are expert to extend & split the story (in a song) into scenes: 
 
 *** Input:
-    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'story_details' (duplicate in all json elements)
+    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         Here is a example:
         [
             {{
@@ -730,7 +707,7 @@ You are expert to extend & split the story (in a song) into scenes:
                 "speaking": "xxxxxx",
                 "voiceover": "yyyyy",
                 "speaker": "zzzzz",
-                "story_details": "ttttt"
+                "content": "ttttt"
             }}
         ]
 
@@ -798,40 +775,88 @@ BROADWAY_STORY = """
 
 
 
+def get_channel_templates(channel):
+    """
+    获取频道的模板列表。支持 channel_template 为数组或「数组的数组」两种格式。
+    返回: (templates_list, template_labels)
+    - templates_list: 实际可用的模板列表，每个元素为 section 数组
+    - template_labels: 用于 UI 显示的模板标题列表，如 ["模板 1: starting → intro → development1 → development2 → ending", ...]
+    """
+    if channel not in CHANNEL_CONFIG:
+        return [], []
+    raw = CHANNEL_CONFIG[channel].get("channel_template", [])
+    if not raw:
+        return [], []
+    # 判断是否为「数组的数组」：第一项是 list 且其元素为 dict
+    first = raw[0]
+    if isinstance(first, list) and len(first) > 0 and isinstance(first[0], dict):
+        templates_list = raw
+        template_labels = []
+        for i, tpl in enumerate(templates_list):
+            names = [s.get("name", "") for s in tpl if isinstance(s, dict)]
+            label = f"模板 {i + 1}: {' → '.join(names)}"
+            template_labels.append(label)
+        return templates_list, template_labels
+    # 否则为单一模板（数组）
+    if isinstance(first, dict):
+        return [raw], [f"模板 1: {' → '.join(s.get('name', '') for s in raw if isinstance(s, dict))}"]
+    return [], []
+
+
 CHANNEL_CONFIG = {
 
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
         "channel_prompt": {
-            "program_story": COUNSELING_PROGRAM_STORY,
-            "program_analysis": COUNSELING_PROGRAM_ANALYSIS,
+            "program_init": COUNSELING_INIT,
+            "program_debut": COUNSELING_DEBUT,
             "connection": COUNSELING_CONNECTION,
             "intro": COUNSELING_INTRO,
-            "story": COUNSELING_STORY, 
-            "analysis": COUNSELING_ANALYSIS
+            "development1": COUNSELING_STORY_DEVELOPMENT, 
+            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
         },
         "channel_template": [
-            {
-                "name": "open",
-                "explicit": "opening video",
-                "implicit": "less than 8 sec of opening video"
-            },
-            {
-                "name": "intro",
-                "explicit": "introduction of this story",
-                "implicit": "retrospection for past story"
-            },
-            {
-                "name": "program",
-                "explicit": "program",
-                "implicit": "program"
-            },
-            {
-                "name": "end",
-                "explicit": "end video",
-                "implicit": "less than 8 sec of end video"
-            }
+            [
+                {
+                    "name": "starting",
+                    "description": "opening video"
+                },
+                {
+                    "name": "intro",
+                    "description": "introduction of this story"
+                },
+                {
+                    "name": "development1",
+                    "description": "1st development"
+                },
+                {
+                    "name": "development2",
+                    "description": "2nd development"
+                },
+                {
+                    "name": "ending",
+                    "description": "ending video"
+                }
+            ],
+            [
+                {
+                    "name": "starting",
+                    "description": "opening video"
+                },
+                {
+                    "name": "intro",
+                    "description": "introduction of this story"
+                },
+                {
+                    "name": "development1",
+                    "description": "1st development"
+                },
+                {
+                    "name": "ending",
+                    "description": "ending video"
+                }
+            ]
         ],
         "channel_category_id": ["27", "24", "19"],
         "channel_tags": ["默观深省", "冥想", "静心", "心灵成长", "自我探索", "Inner peace", "Meditation", "Self-discovery", "心理咨询", "psychological counseling", "心理成长", "Psychology", "心时代，人人都是故事"],
@@ -938,10 +963,10 @@ CHANNEL_CONFIG = {
         "topic": "** output: all in English\n** input: name of person in content, MUST BE Chinese name (like Qiang, Mei, etc)",
         "channel_name": "聊斋新语",
         "channel_prompt": {
-            "program_story": COUNSELING_PROGRAM_STORY,
-            "program_analysis": COUNSELING_PROGRAM_ANALYSIS,
+            "program_init": COUNSELING_INIT,
+            "program_debut": COUNSELING_DEBUT,
             "intro": COUNSELING_INTRO,
-            "story": COUNSELING_STORY
+            "story": COUNSELING_STORY_DEVELOPMENT
         },
         "channel_template": [
             {

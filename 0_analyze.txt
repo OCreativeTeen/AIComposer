@@ -23,8 +23,7 @@ wan22 3 frames
 python -m venv venv
       specify  python version  
             (If Python is installed via Windows Store or py launcher)
-                py -3.10 -m venv myenv310
-                py -3.11 -m venv myenv310
+                py -3.11 -m venv venv
             else 
                 C:\Python310\python.exe -m venv myenv310-path
      
@@ -41,7 +40,9 @@ nvidia-smi
 
 
 
-pip install -r requirements.txt
+
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+        pip install -r requirements.txt
 
 
 --------------------------
