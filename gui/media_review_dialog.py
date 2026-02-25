@@ -1268,7 +1268,7 @@ class AVReviewDialog:
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
         if mode == "connect_next":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"]["connection"]
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["prompt"]["prompt"]
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1295,7 +1295,7 @@ class AVReviewDialog:
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
         elif mode == "connect_prev":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"]["connection"]
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_template"][0].get("prompt_3", "")
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1363,7 +1363,7 @@ class AVReviewDialog:
 
         if selected_prompt_example_file:
             program_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_prompt"][self.current_scene["name"]]
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel][""][self.current_scene["name"]]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
             with open(example_file, "r", encoding="utf-8") as f:

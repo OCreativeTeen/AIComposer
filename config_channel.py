@@ -808,35 +808,28 @@ CHANNEL_CONFIG = {
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
-        "channel_prompt": {
-            "program_init": COUNSELING_INIT,
-            "program_debut": COUNSELING_DEBUT,
-            "connection": COUNSELING_CONNECTION,
-            "intro": COUNSELING_INTRO,
-            "development1": COUNSELING_STORY_DEVELOPMENT, 
-            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
-        },
         "channel_template": [
             [
                 {
                     "name": "starting",
-                    "description": "opening video"
+                    "prompt": COUNSELING_INIT,
+                    "prompt_2": COUNSELING_DEBUT,
+                    "prompt_3": COUNSELING_CONNECTION
                 },
                 {
                     "name": "intro",
-                    "description": "introduction of this story"
+                    "prompt": COUNSELING_INTRO
                 },
                 {
                     "name": "development1",
-                    "description": "1st development"
+                    "prompt": COUNSELING_STORY_DEVELOPMENT
                 },
                 {
                     "name": "development2",
-                    "description": "2nd development"
+                    "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
                 },
                 {
-                    "name": "ending",
-                    "description": "ending video"
+                    "name": "ending"
                 }
             ],
             [
@@ -866,31 +859,21 @@ CHANNEL_CONFIG = {
     "counselingfeedback": {
         "topic": "Comments & Directions of Case Analysis of Psychological Counseling",
         "channel_name": "心理故事馆-评论",
-        "channel_prompt": {
-            "program": COUNSELINGFEEDBACK_PROGRAM,
-            "intro": COUNSELING_INTRO,
-            "feedback": COUNSELINGFEEDBACK_FEEDBACK
-        },
         "channel_template": [
             {
-                "name": "open",
-                "explicit": "opening video",
-                "implicit": "less than 8 sec of opening video"
+                "name": "starting",
+                "prompt": COUNSELINGFEEDBACK_PROGRAM
             },
             {
                 "name": "intro",
-                "explicit": "introduction of this story",
-                "implicit": "retrospection for past story"
+                "prompt": COUNSELING_INTRO
             },
             {
-                "name": "program",
-                "explicit": "views' feedback about the past story",
-                "implicit": "less than 10 minutes of feedback"
+                "name": "feedback",
+                "prompt": COUNSELINGFEEDBACK_FEEDBACK
             },
             {
-                "name": "end",
-                "explicit": "end video",
-                "implicit": "less than 8 sec of end video"
+                "name": "ending"
             }
         ],
         "channel_category_id": ["27", "24", "19"],
@@ -901,16 +884,15 @@ CHANNEL_CONFIG = {
     "mv": {
         "topic": "Musical myths and legends",
         "channel_name": "音乐故事",
-        "channel_prompt": {
-            "program": MV_PROGRAM,
-            "musicstory": MV_STORY
-        },
         "channel_template": [
             {
-                "name": "program",
-                "explicit": "program",
-                "implicit": "program"
+                "name": "starting",
+                "prompt": MV_PROGRAM
             },
+            {
+                "name": "program",
+                "prompt": MV_STORY
+            }        
         ],
         "channel_category_id": ["19", "25", "27", "24"],
         "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
@@ -921,83 +903,27 @@ CHANNEL_CONFIG = {
     "broadway": {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
-        "channel_prompt": {
-            "program": BROADWAY_PROGRAM,
-            "intro": BROADWAY_INTRO,
-            "story": BROADWAY_STORY
-        },
         "channel_template": [
             {
-                "name": "open",
-                "explicit": "opening video",
-                "implicit": "less than 8 sec of opening video"
+                "name": "starting",
+                "prompt": BROADWAY_PROGRAM
             },
             {
-                "name": "retro-intro",
-                "explicit": "retrospection for past story,  or introduction of this story",
-                "implicit": "less than 2 minutes of retro-intro"
+                "name": "intro",
+                "prompt": BROADWAY_INTRO
             },
             {
-                "name": "program",
-                "explicit": "program",
-                "implicit": "program"
-            },
+                "name": "story",
+                "prompt": BROADWAY_STORY
+            }
             {
-                "name": "suspense",
-                "explicit": "suspense continuation of the story",
-                "implicit": "less than 8 minutes of suspense continuation"
-            },
-            {
-                "name": "end",
-                "explicit": "end video",
-                "implicit": "less than 8 sec of end video"
+                "name": "ending"
             }
         ],
         "channel_category_id": ["19", "25", "27", "24"],
         "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
         "channel_key": "config/client_secret_main.json",
         "channel_list": ""
-    },
-
-    "strange_zh": {
-        "topic": "** output: all in English\n** input: name of person in content, MUST BE Chinese name (like Qiang, Mei, etc)",
-        "channel_name": "聊斋新语",
-        "channel_prompt": {
-            "program_init": COUNSELING_INIT,
-            "program_debut": COUNSELING_DEBUT,
-            "intro": COUNSELING_INTRO,
-            "story": COUNSELING_STORY_DEVELOPMENT
-        },
-        "channel_template": [
-            {
-                "name": "open",
-                "explicit": "opening video",
-                "implicit": "less than 8 sec of opening video"
-            },
-            {
-                "name": "retro-intro",
-                "explicit": "retrospection for past story,  or introduction of this story",
-                "implicit": "less than 2 minutes of retro-intro"
-            },
-            {
-                "name": "program",
-                "explicit": "program",
-                "implicit": "program"
-            },
-            {
-                "name": "analysis",
-                "explicit": "analysis of the story",
-                "implicit": "less than 8 minutes of analysis"
-            },
-            {
-                "name": "end",
-                "explicit": "end video",
-                "implicit": "less than 8 sec of end video"
-            }
-        ],
-        "channel_category_id": ["24"],
-        "channel_tags": ["聊斋志异", "现代寓言", "古今对照", "中国文化", "灵异故事", "Liaozhai", "Chinese ghost stories", "Modern social issues"],
-        "channel_key": "config/client_secret_main.json"
     }
 
 }
