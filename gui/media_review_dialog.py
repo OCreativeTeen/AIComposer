@@ -1268,7 +1268,7 @@ class AVReviewDialog:
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
         if mode == "connect_next":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["prompt"]["prompt"]
+            selected_prompt = config_channel.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1277,16 +1277,12 @@ class AVReviewDialog:
                 },
                 {
                     "name":"previous_scene",
-                    "explicit": self.current_scene.get("explicit", "explicit"),
-                    "implicit": self.current_scene.get("implicit", "implicit"),
                     "speaking": self.current_scene.get("speaking", ""),
                     "speaker": self.current_scene.get("speaker", ""),
                     "voiceover": self.current_scene.get("voiceover", "")
                 },
                 {
                     "name":"next_scene",
-                    "explicit": self.next_scene.get("explicit", "explicit"),
-                    "implicit": self.next_scene.get("implicit", "implicit"),
                     "speaking": self.next_scene.get("speaking", ""),
                     "speaker": self.next_scene.get("speaker", ""),
                     "voiceover": self.next_scene.get("voiceover", "")
@@ -1295,7 +1291,7 @@ class AVReviewDialog:
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
         elif mode == "connect_prev":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_template"][0].get("prompt_3", "")
+            selected_prompt = config_channel.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1304,16 +1300,12 @@ class AVReviewDialog:
                 },
                 {
                     "name":"previous_scene",
-                    "explicit": self.previous_scene.get("explicit", "explicit"),
-                    "implicit": self.previous_scene.get("implicit", "implicit"),
                     "speaking": self.previous_scene.get("speaking", ""),
                     "speaker": self.previous_scene.get("speaker", ""),
                     "voiceover": self.previous_scene.get("voiceover", "")
                 },
                 {
                     "name":"next_scene",
-                    "explicit": self.current_scene.get("explicit", "explicit"),
-                    "implicit": self.current_scene.get("implicit", "implicit"),
                     "speaking": self.current_scene.get("speaking", ""),
                     "speaker": self.current_scene.get("speaker", ""),
                     "voiceover": self.current_scene.get("voiceover", "")
@@ -1329,8 +1321,6 @@ class AVReviewDialog:
                     refresh_json_copy = []
                     for item in refresh_json:
                         new_item = {
-                            "explicit": self.current_scene.get("explicit", "explicit"),
-                            "implicit": self.current_scene.get("implicit", "implicit"),
                             "content": self.current_scene.get("content", {}),
                             "speaking": item.get("speaking", ""),
                             "speaker": item.get("speaker", ""),
@@ -1345,8 +1335,6 @@ class AVReviewDialog:
                 refresh_json = [
                     {
                         "name": self.current_scene.get("name", "story"),
-                        "explicit": self.current_scene.get("explicit", "explicit"),
-                        "implicit": self.current_scene.get("implicit", "implicit"),
                         "content": self.current_scene.get("content", {}),
                         "speaking": self.current_scene.get("speaking", ""),
                         "speaker": self.current_scene.get("speaker", ""),
@@ -1363,7 +1351,7 @@ class AVReviewDialog:
 
         if selected_prompt_example_file:
             program_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel][""][self.current_scene["name"]]
+            selected_prompt = self.current_scene.get("prompt", "")[0]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
             with open(example_file, "r", encoding="utf-8") as f:
@@ -1443,8 +1431,6 @@ class AVReviewDialog:
         for item in json_array:
             new_item = self.current_scene.copy()
             new_item["name"] = self.current_scene.get("name", "story")
-            new_item["explicit"] = self.current_scene.get("explicit", "explicit")
-            new_item["implicit"] = self.current_scene.get("implicit", "implicit")
 
             if "id" in item:
                 new_item["id"] = item["id"]

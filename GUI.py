@@ -1192,8 +1192,8 @@ class WorkflowGUI:
 
         # add the text field to show the kernel
         ttk.Label(self.video_edit_frame, text="故事:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_explicit = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
-        self.scene_explicit.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_content = scrolledtext.ScrolledText(self.video_edit_frame, width=35, height=2)
+        self.scene_content.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
         # add the text field to show the kernel
@@ -2055,8 +2055,8 @@ class WorkflowGUI:
         self.scene_implicit.delete("1.0", tk.END)
         self.scene_implicit.insert("1.0", scene_data.get("implicit", ""))
 
-        self.scene_explicit.delete("1.0", tk.END)
-        self.scene_explicit.insert("1.0", scene_data.get("explicit", ""))
+        self.scene_content.delete("1.0", tk.END)
+        self.scene_content.insert("1.0", scene_data.get("content", ""))
 
         # 加载宣传信息
         self.scene_promotion.delete("1.0", tk.END)
@@ -2253,7 +2253,7 @@ class WorkflowGUI:
         self.scene_narrator.set("")
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_caption.delete("1.0", tk.END)
-        self.scene_explicit.delete("1.0", tk.END)
+        self.scene_content.delete("1.0", tk.END)
         self.scene_implicit.delete("1.0", tk.END)
         #self.scene_cinematography.delete("1.0", tk.END)
         self.scene_promotion.delete("1.0", tk.END)
@@ -3740,7 +3740,7 @@ class WorkflowGUI:
             "extend": float(self.scene_extend_var.get()) if self.scene_extend_var.get() != "0.0" else 0.0,
 
             "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
-            "explicit": self.scene_explicit.get("1.0", tk.END).strip(),
+            "explicit": self.scene_content.get("1.0", tk.END).strip(),
             #"cinematography": cinematography_value,
             "clip_animation": self.clip_animate.get(),
             "narration_animation": self.narration_animation.get(),
@@ -3965,7 +3965,7 @@ class WorkflowGUI:
             self.scene_voiceover,
             self.scene_caption,
 
-            self.scene_explicit,
+            self.scene_content,
             self.scene_implicit,
             #self.scene_cinematography,
             self.scene_promotion

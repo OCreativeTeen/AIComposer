@@ -176,10 +176,11 @@ class ProjectConfigManager:
 
 class ProgramInitEditorDialog:
     
-    def __init__(self, parent, language, channel, initial_story=""):
+    def __init__(self, parent, language, channel, channel_template, initial_story=""):
         self.parent = parent
         self.language = language
         self.channel = channel
+        self.channel_template = channel_template
 
         self.result_story = initial_story
         # 初始化LLM API
@@ -256,7 +257,7 @@ class ProgramInitEditorDialog:
         topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
         user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
-        raw_prompt = config_channel.CHANNEL_CONFIG[self.channel]["channel_prompt"]["program_init"]
+        raw_prompt = self.channel_template[0]["prompt"][0]
         try:
             system_prompt = raw_prompt.format(language=LANGUAGES[self.language])
         except KeyError:
@@ -295,13 +296,14 @@ class ProgramInitEditorDialog:
 class DebutEditorDialog:
     """分析内容编辑器 - 使用 INIT 内容调用 LLM 生成分析"""
 
-    def __init__(self, parent, initial_analysis="", story_content="", reference_content="", language="tw", channel=""):
+    def __init__(self, parent, initial_analysis, story_content, reference_content, language, channel, channel_template):
         self.parent = parent
         self.result_analysis = initial_analysis
         self.story_content = story_content
         self.reference_content = reference_content
         self.language = language
         self.channel = channel
+        self.channel_template = channel_template
         self.llm_api = LLMApi()
         self.create_dialog()
 
@@ -331,6 +333,7 @@ class DebutEditorDialog:
         ttk.Button(button_frame, text="确定", command=self.on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="取消", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
 
+
     def on_ok(self):
         """使用 INIT 内容调用 LLM 生成分析"""
         if not self.llm_api:
@@ -341,12 +344,10 @@ class DebutEditorDialog:
             messagebox.showerror("错误", "请先编辑并保存 INIT 内容，再生成分析")
             return
 
-        topic = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("topic", "")
-
         user_prompt = f"Here is the K-Story:\n{self.story_content}\n\n\nHere is the Reference: \n{self.reference_content}"
         # user_prompt = f"Here is the Initial analysis script on topic of {topic}:  {self.result_analysis}"
 
-        raw_prompt = config_channel.CHANNEL_CONFIG.get(self.channel, {}).get("channel_prompt", {}).get("program_debut", "")
+        raw_prompt = self.channel_template[0]["prompt"][1]
         try:
             system_prompt = raw_prompt.format(language=LANGUAGES.get(self.language, self.language)) if raw_prompt else ""
         except (KeyError, ValueError):
@@ -378,12 +379,14 @@ class DebutEditorDialog:
 class ReferenceEditorDialog:
     """参考内容编辑器 - 基于 Story 分析的参考案例与素材（搜索/生成逻辑待后续集成）"""
 
-    def __init__(self, parent, initial_reference="", story_content="", topic_category="", topic_subtype=""):
+    def __init__(self, parent, initial_reference, story_content, topic_category, topic_subtype, channel, reference_filter):
         self.parent = parent
         self.result_reference = initial_reference
         self.story_content = story_content
         self.topic_category = topic_category
         self.topic_subtype = topic_subtype
+        self.channel = channel
+        self.reference_filter = reference_filter
         self.llm_api = LLMApi()
         self.create_dialog()
 
@@ -426,7 +429,7 @@ class ReferenceEditorDialog:
             messagebox.showerror("错误", "请先完成 INIT 内容，再获取参考")
             return
 
-        reference_filter_prompt = config_channel.COUNSELING_REFERENCE_FILTER + "\n---------\n" + "Topic-Category: " + self.topic_category + "\nTopic-Subtype: " + self.topic_subtype + "\n\n" + self.story_content
+        reference_filter_prompt = self.reference_filter + "\n---------\n" + "Topic-Category: " + self.topic_category + "\nTopic-Subtype: " + self.topic_subtype + "\n\n" + self.story_content
         try:
             self.dialog.clipboard_clear()
             self.dialog.clipboard_append(reference_filter_prompt)
@@ -604,6 +607,7 @@ class ProjectSelectionDialog:
         self.parent = parent
         self.config_manager = config_manager
         self.selected_config = None
+        self.channel_template = None
         self.result = None
         self.llm_api = LLMApi()    
         
@@ -793,6 +797,10 @@ class ProjectSelectionDialog:
         channel_combo.pack(side=tk.LEFT)
         channel_combo.set(self.default_project_config['default_channel'])
         channel_template_index_var = tk.IntVar(value=0)  # 当前选中的模板索引
+
+        templates_list, template_labels = config_channel.get_channel_templates(channel_combo.get())
+        self.channel_template = templates_list[0]
+
         template_label = ttk.Label(channel_frame, text="", foreground="gray")
         template_label.pack(side=tk.LEFT, padx=(10, 0))
 
@@ -805,6 +813,7 @@ class ProjectSelectionDialog:
             else:
                 choose_template_btn.pack_forget()
                 channel_template_index_var.set(0)
+                self.channel_template = templates_list[0]
                 template_label.config(text="", foreground="gray")
 
         def on_choose_template():
@@ -817,6 +826,7 @@ class ProjectSelectionDialog:
             if selected is not None:
                 idx = template_labels.index(selected)
                 channel_template_index_var.set(idx)
+                self.channel_template = templates_list[idx]
                 template_label.config(text=f"模板 {idx + 1}", foreground="black")
 
         choose_template_btn = ttk.Button(channel_frame, text="选择模板", command=on_choose_template)
@@ -1032,6 +1042,7 @@ class ProjectSelectionDialog:
                     new_project_dialog,
                     language_combo.get(),
                     channel_combo.get(),
+                    self.channel_template,
                     init_content_var.get()
                 )
                 result = editor.show()
@@ -1071,7 +1082,8 @@ class ProjectSelectionDialog:
                     story_content=init_content_var.get(),
                     reference_content=reference_content_var.get(),
                     language=language_combo.get(),
-                    channel=channel_combo.get()
+                    channel=channel_combo.get(),
+                    channel_template=self.channel_template
                 )
                 res_analysis = editor_debut.show()
                 # get json from result, and get debut_title,  if not None, set it to title_entry
@@ -1096,7 +1108,9 @@ class ProjectSelectionDialog:
                     initial_reference=reference_content_var.get(),
                     story_content=init_content_var.get(),
                     topic_category=topic_category_combo.get().strip(),
-                    topic_subtype=topic_subtype_combo.get().strip()
+                    topic_subtype=topic_subtype_combo.get().strip(),
+                    channel=channel_combo.get(),
+                    reference_filter=config_channel.CHANNEL_CONFIG[channel_combo.get()].get('channel_reference_filter', '')
                 )
                 result = editor.show()
                 # get json from result
@@ -1136,6 +1150,9 @@ class ProjectSelectionDialog:
 
         edit_init_btn.config(command=open_init_editor)
         edit_reference_btn.config(command=open_reference_editor)
+        # if not config_channel.CHANNEL_CONFIG[self.channel].get('channel_reference_filter', ''), set edit_reference_btn to disabled
+        if not config_channel.CHANNEL_CONFIG[channel_combo.get()].get('channel_reference_filter', ''):
+            edit_reference_btn.config(state='disabled')
         edit_debut_btn.config(command=open_debut_editor)
 
         # 初始状态：按钮禁用（topic 未选时）
@@ -1181,12 +1198,11 @@ class ProjectSelectionDialog:
                 video_width = self.default_project_config['default_video_width']
                 video_height = self.default_project_config['default_video_height']
 
-            channel_template_index = channel_template_index_var.get()
             self.selected_config = {
                 'pid': pid,
                 'language': language,
                 'channel': channel,
-                'channel_template_index': channel_template_index,
+                'channel_template': self.channel_template,
                 'video_title': title,
                 'video_width': video_width,
                 'video_height': video_height,
@@ -1201,10 +1217,7 @@ class ProjectSelectionDialog:
             enhanced_content = json.loads(enhanced_content)
             debut_content_1 = enhanced_content.get('debut_content_1', '')
             debut_content_2 = enhanced_content.get('debut_content_2', '')
-            if debut_content_1:
-                self.selected_config['debut_content_1'] = debut_content_1
-            if debut_content_2:
-                self.selected_config['debut_content_2'] = debut_content_2
+            self.selected_config['content'] = [debut_content_1, debut_content_2]
             # 创建新项目配置
             self.result = 'new'
             new_project_dialog.destroy()
@@ -1219,6 +1232,7 @@ class ProjectSelectionDialog:
         # 等待对话框关闭
         new_project_dialog.wait_window()
     
+
     def open_selected(self):
         """打开选中的项目"""
         selection = self.project_tree.selection()

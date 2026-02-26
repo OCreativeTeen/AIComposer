@@ -298,7 +298,7 @@ COUNSELING_STORY_DEVELOPMENT = """
 
 
 *** Objectives:
-    ** According to content, and existing Explicit storyline & Implicit storyline (if have)  ~~ {objective}.
+    ** According to content  ~~ {objective}.
         * In each scene of the story, let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem") 
         * At ending scene of the story, leave suspense/unresolved issues, or intensify the conflict, to keep the audience anticipating the next episode. 
         * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
@@ -310,19 +310,16 @@ COUNSELING_STORY_DEVELOPMENT = """
 
 *** Constraints
     ** Maintain Continuity: Duplicate the original content in a hidden meta-field if required, or ensure all scenes derive strictly from it.
-    ** Implicit vs. Explicit: Bridge the gap between what is happening (Explicit) and why it matters (Implicit) through the voiceover and actions.
     ** Language: visual and actions are always English; speaking and voiceover match the user's input language.
     ** Tone: Suspenseful, Noir-ish, Deeply Psychological.
     ** No Clichés: Avoid "Today we talk about..." or "Welcome to...". Start in the middle of the tension.
 
 
 *** Input:
-    ** story provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+    ** story provided in the user-prompt >> include 'content' (duplicate in all json elements), may already have existing 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
         [
             {{
-                "explicit": "xxxxx",
-                "implicit": "yyyyy",
                 "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
                 "speaker": "aaaa",
@@ -343,6 +340,7 @@ COUNSELING_STORY_DEVELOPMENT = """
     Here is a Example:  
          {example}
 """
+
 
 
 COUNSELING_ANALYSIS_DEVELOPMENT = """
@@ -375,12 +373,10 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
         * Rule 3 (The Phone-In/Journal Feel): The voiceover should sound like a private confession, a phone call to the program, or a quiet realization while driving/walking.
 
 *** Input Data:** 
-    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
+    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), may already have existing 'speaking' script & 'speaker' + voiceover content.
         Here is the example:
         [
             {{
-                "explicit": "xxxxx",
-                "implicit": "yyyyy",
                 "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
                 "speaker": "aaaa",
@@ -396,64 +392,6 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
         * actions: (In English) Mood + physical cues (e.g., "calm / leans toward the hearth").
         * visual: (In English) Cinematic description of the Counselor's Mindscape (Weather, architecture, lighting).
         * voiceover: (In original language) The Random Listener's personal reflection. It must be a story from their life, triggered by the insight, completely separate from the characters in content.
-    ** don't include 'content' field in the output.
-
-    Here is a Example:
-        {example}
-"""
-
-
-COUNSELING_ANALYSIS_OLD = """
-*** Role:
-    ** You are a psychological expert specialized in a "Trauma-Informed" perspective. 
-    ** You firmly believe: "所有的症状，都曾是当事人为了活下去而演化出的生存策略" Your mission is to transform profound psychological analysis into warm, soulful, and cinematic video scripts.
-
-
-*** Core Task
-    ** Based on the provided content and existing storylines, extend and deconstruct the content into a series of coherent "Psychological Analysis Scenes."
-
-
-*** Enhanced Directives
-    ** Depathologizing Language: Strictly avoid terms like "patient," "pathological," or "abnormal." Explain terms such as PTSD, avoidant attachment, or repetition compulsion as "the body's self-protection mechanisms during specific periods of crisis."
-    ** Trauma Decomposition: Analyze content (+ existing Explicit storyline & Implicit storyline, if have) to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
-    ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
-    ** Cinematic Progression: {objective}.
-    ** The Four-Step Narrative (The Healing Flow): 
-        * Observation: Describe a specific visual detail or behavior. 
-        * Empathy: Reveal the hidden pain and "coldness" beneath that behavior. 
-        * Insight: Introduce psychological principles, but deconstruct them as if telling a story. 
-        * Interaction: Toss a "soft" question to the audience, guiding them toward self-reflection.
-    ** Linguistic Style: 
-        * The Speaker (Counselor): Sound like a wise, calm, non-judgmental old friend sitting by a fireplace.
-        * Opening Phrases: Use warm, relatable openings like "How is everyone doing?" or "I'm so glad we could gather here," avoiding a stiff or clinical tone.
-        * Transitions: Use connecting phrases like "If we look a little deeper..." or "In truth, they didn't want it to be this way either..."
-    ** Audiovisual Interaction:
-        * Visual: Create a "Mindscape." Lighting, weather, and interior layout must perfectly match the emotional weight (oppression or release) of the psychological state being discussed.
-        * Voiceover: An random audience (not character in the story)'s moment of realization / reflection (on hurt / healing) on their own (different) story. Not like a narrator reading a script.
-
-
-*** Input Data:** 
-    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), and may already have existing 'explicit' / 'implicit' storylines, 'speaking' script & 'speaker' + voiceover content.
-        Here is the example:
-        [
-            {{
-                "explicit": "xxxxx",
-                "implicit": "yyyyy",
-                "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
-                "speaking": "zzzz",
-                "speaker": "aaaa",
-                "voiceover": "bbbb"
-            }}
-        ]
-
-
-*** Output Format (JSON Array):
-    Each object must contain:
-        - **speaker**: (Choice: man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl) + " / Professional Counselor".
-        - **speaking**: (In original language) The counselor's dialogue. Insightful, warm, and conversational. Identify symptoms (e.g., PTSD, displacement) as "survival strategies."
-        - **actions**: (In English) Mood (happy/sad/angry/fearful/disgusted/surprised/calm) + physical cues (e.g., "leans in," "softens gaze").
-        - **visual**: (In English) Cinematic description: Era, time, weather, and specific architectural/environmental details that mirror the psychology.
-        - **voiceover**: (In original language) A random audience (not character in the story) react to the counselor's speaking, share their own (different) story, or asking a similar vulnerable question, or finding a "lightbulb moment."
     ** don't include 'content' field in the output.
 
     Here is a Example:
@@ -516,16 +454,12 @@ You are expert to create connection scene to conenct the speaking/voiceover betw
             }}
             {{
                 "name":"previous_scene",
-                "explicit": "成年后，她追寻亲密关系的方式像是一种继续求生——不是“谈恋爱”，更像是寻找可以暂时靠着的肩膀。一次又一次，她投入得真，又退出得重。每段关系的开始像是一条温暖的毛毯，但结尾却像是掉进了冰冷的水井，越挣扎越失重",
-                "implicit": "她渴望亲密，却害怕暴露真实自己；她愿意依靠，却为每一次依靠感到羞愧。每段关系的结局都像童年的回声：靠近会痛，可离开更痛。她用亲密确认自己存在，用逃离对抗恐惧",
                 "speaking": "我就随便问一句而已。‘你在干嘛？’如果他晚点回，肯定是忙吧，或者手机没电……我不是非要他回，可是为什么心会这么乱。",
                 "voiceover": "她一遍遍为对方寻找理由，也一遍遍说服自己不要太黏人。可亮着的屏幕，始终没有给出她想要的回应。",
                 "speaker": "young_woman"
             }}
             {{
                 "name":"next_scene"
-                "explicit": "成年后，她追寻亲密关系的方式像是一种继续求生——不是“谈恋爱”，更像是寻找可以暂时靠着的肩膀。一次又一次，她投入得真，又退出得重。每段关系的开始像是一条温暖的毛毯，但结尾却像是掉进了冰冷的水井，越挣扎越失重",
-                "implicit": "她渴望亲密，却害怕暴露真实自己；她愿意依靠，却为每一次依靠感到羞愧。每段关系的结局都像童年的回声：靠近会痛，可离开更痛。她用亲密确认自己存在，用逃离对抗恐惧",
                 "speaking": "你说得对，我也觉得可能不太合适。嗯，我明白。没关系的。",
                 "voiceover": "她的声音听起来很平静，像是早就预料到了这个结果。电话那头挂断后，房间里只剩下她一个人的呼吸声。",
                 "speaker": "young_woman"
@@ -784,7 +718,7 @@ def get_channel_templates(channel):
     """
     if channel not in CHANNEL_CONFIG:
         return [], []
-    raw = CHANNEL_CONFIG[channel].get("channel_template", [])
+    raw = CHANNEL_CONFIG[channel].get("channel_templates", [])
     if not raw:
         return [], []
     # 判断是否为「数组的数组」：第一项是 list 且其元素为 dict
@@ -803,55 +737,56 @@ def get_channel_templates(channel):
     return [], []
 
 
+
+
 CHANNEL_CONFIG = {
 
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
-        "channel_template": [
+        "channel_reference_filter": COUNSELING_REFERENCE_FILTER,
+        "channel_templates": [
             [
                 {
                     "name": "starting",
-                    "prompt": COUNSELING_INIT,
-                    "prompt_2": COUNSELING_DEBUT,
-                    "prompt_3": COUNSELING_CONNECTION
+                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT, COUNSELING_CONNECTION]
                 },
                 {
                     "name": "intro",
-                    "prompt": COUNSELING_INTRO
+                    "prompt": [COUNSELING_INTRO]
                 },
                 {
                     "name": "development1",
-                    "prompt": COUNSELING_STORY_DEVELOPMENT
+                    "prompt": [COUNSELING_STORY_DEVELOPMENT]
                 },
                 {
                     "name": "development2",
-                    "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
+                    "prompt": [COUNSELING_ANALYSIS_DEVELOPMENT]
                 },
                 {
-                    "name": "ending"
+                    "name": "ending",
+                    "prompt": []
                 }
             ],
             [
                 {
                     "name": "starting",
-                    "description": "opening video"
+                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT, COUNSELING_CONNECTION]
                 },
                 {
                     "name": "intro",
-                    "description": "introduction of this story"
+                    "prompt": [COUNSELING_INTRO]
                 },
                 {
                     "name": "development1",
-                    "description": "1st development"
+                    "prompt": [COUNSELING_STORY_DEVELOPMENT]
                 },
                 {
                     "name": "ending",
-                    "description": "ending video"
+                    "prompt": []
                 }
             ]
         ],
-        "channel_category_id": ["27", "24", "19"],
         "channel_tags": ["默观深省", "冥想", "静心", "心灵成长", "自我探索", "Inner peace", "Meditation", "Self-discovery", "心理咨询", "psychological counseling", "心理成长", "Psychology", "心时代，人人都是故事"],
         "channel_key": "config/client_secret_creative4teen.json"
     },
@@ -859,24 +794,26 @@ CHANNEL_CONFIG = {
     "counselingfeedback": {
         "topic": "Comments & Directions of Case Analysis of Psychological Counseling",
         "channel_name": "心理故事馆-评论",
-        "channel_template": [
-            {
-                "name": "starting",
-                "prompt": COUNSELINGFEEDBACK_PROGRAM
-            },
-            {
-                "name": "intro",
-                "prompt": COUNSELING_INTRO
-            },
-            {
-                "name": "feedback",
-                "prompt": COUNSELINGFEEDBACK_FEEDBACK
-            },
-            {
-                "name": "ending"
-            }
+        "channel_templates": [
+            [
+                {
+                    "name": "starting",
+                    "prompt": [COUNSELINGFEEDBACK_PROGRAM]
+                },
+                {
+                    "name": "intro",
+                    "prompt": [COUNSELING_INTRO]
+                },
+                {
+                    "name": "feedback",
+                    "prompt": COUNSELINGFEEDBACK_FEEDBACK
+                },
+                {
+                    "name": "ending",
+                    "prompt": []
+                }
+            ]
         ],
-        "channel_category_id": ["27", "24", "19"],
         "channel_tags": ["默观深省", "冥想", "静心", "心灵成长", "自我探索", "Inner peace", "Meditation", "Self-discovery", "心理咨询", "psychological counseling", "心理成长", "Psychology", "心时代，人人都是故事"],
         "channel_key": "config/client_secret_creative4teen.json"
     },
@@ -884,17 +821,18 @@ CHANNEL_CONFIG = {
     "mv": {
         "topic": "Musical myths and legends",
         "channel_name": "音乐故事",
-        "channel_template": [
-            {
-                "name": "starting",
-                "prompt": MV_PROGRAM
-            },
-            {
-                "name": "program",
-                "prompt": MV_STORY
-            }        
+        "channel_templates": [
+            [
+                {
+                    "name": "starting",
+                    "prompt": [MV_PROGRAM]
+                },
+                {
+                    "name": "program",
+                    "prompt": [MV_STORY]
+                }        
+            ]
         ],
-        "channel_category_id": ["19", "25", "27", "24"],
         "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
         "channel_key": "config/client_secret_main.json",
         "channel_list": ""
@@ -903,24 +841,26 @@ CHANNEL_CONFIG = {
     "broadway": {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
-        "channel_template": [
-            {
-                "name": "starting",
-                "prompt": BROADWAY_PROGRAM
-            },
-            {
-                "name": "intro",
-                "prompt": BROADWAY_INTRO
-            },
-            {
-                "name": "story",
-                "prompt": BROADWAY_STORY
-            }
-            {
-                "name": "ending"
-            }
+        "channel_templates": [
+            [
+                {
+                    "name": "starting",
+                    "prompt": [BROADWAY_PROGRAM]
+                },
+                {
+                    "name": "intro",
+                    "prompt": [BROADWAY_INTRO]
+                },
+                {
+                    "name": "story",
+                    "prompt": [BROADWAY_STORY]
+                },
+                {
+                    "name": "ending",
+                    "prompt": []
+                }
+            ]
         ],
-        "channel_category_id": ["19", "25", "27", "24"],
         "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
         "channel_key": "config/client_secret_main.json",
         "channel_list": ""
