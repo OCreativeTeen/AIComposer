@@ -1268,7 +1268,7 @@ class AVReviewDialog:
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
         if mode == "connect_next":
-            selected_prompt = project_manager.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]['channel_prompt'].get('channel_story_connection', '')
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1291,7 +1291,7 @@ class AVReviewDialog:
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
         elif mode == "connect_prev":
-            selected_prompt = project_manager.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
+            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]['channel_prompt'].get('channel_story_connection', '')
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {

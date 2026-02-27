@@ -180,6 +180,8 @@ Provided by user:
 
 2. FULL PRIVACY TRANSFORMATION
     Change all identifying details: names, roles, locations, symbolic objects, settings ... etc, to make the story privacy-safe.
+        changing suggestions: {changing}
+
     Emotional truth and relational deadlock.
 
 3. Extract Useful Elements from Reference Stories
@@ -309,14 +311,14 @@ COUNSELING_STORY_DEVELOPMENT = """
 
 
 *** Objectives:
-    ** According to content  ~~ {objective}.
-        * In each scene of the story, let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem") 
-        * At ending scene of the story, leave suspense/unresolved issues, or intensify the conflict, to keep the audience anticipating the next episode. 
-        * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
     ** Trauma Decomposition: Analyze content to identify core psychological themes (e.g., trauma triggers, defense mechanisms, attachment styles).
     ** Subtle Manifestation: Problems/symptoms must appear naturally through "Daily Life Symptoms" rather than medical labels. Use sensory triggers (sounds, colors, textures).
     ** Cinematic Progression: Split the narrative into a coherent JSON array of scenes that follow a logical emotional arc.
     ** The "Cliffhanger" Mandate: The final scene must leave a psychological suspense or an unresolved conflict to maintain audience engagement for the next episode.
+    ** According to content  ~~ {objective}.
+        * In each scene of the story, let the problems/symptoms appear naturally in daily-life (Not directly point out as "psychological problem") 
+        * At ending scene of the story, leave suspense/unresolved issues, or intensify the conflict, to keep the audience anticipating the next episode. 
+        * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
 
 
 *** Constraints
@@ -469,7 +471,82 @@ COUNSELING_INTRO = """
 
 
 
-COUNSELING_CONNECTION = """
+COUNSELING_STORY_CHANGING = """
+### TASK: Key Feature Extraction & Transformative Rewriting
+
+You are a narrative analyst and structural editor.
+
+Your task is to transform a real-life story in a way that removes identifiable “signature events” while preserving the psychological dynamics, emotional conflicts, and thematic structure.
+
+The goal is:
+- The original person should NOT feel the story is directly about them.
+- However, the emotional truth and internal conflict must remain intact.
+
+---
+
+### STEP 1: Identify Recognizable Key Features
+
+Carefully analyze the original story and extract all highly identifiable elements, including but not limited to:
+
+1. Specific illnesses or diagnoses
+2. Unique or unusual incidents (e.g., a specific object falling, a rare accident)
+3. Distinct life events (e.g., divorce during pregnancy, bankruptcy after lottery win)
+4. Family structure specifics (daughter → son, single child → twins)
+5. Occupation or industry details
+6. Geographic markers
+7. Age, timeline markers
+8. Highly specific symbolic objects
+9. Any event that the original person would immediately recognize as “this is my story”
+
+List them clearly as:
+
+- Key Feature #1:
+- Key Feature #2:
+- Key Feature #3:
+etc.
+
+---
+
+### STEP 2: Design Safe Transformations
+
+For each key feature:
+
+- Propose a transformed version that changes surface details
+- Keep psychological function intact
+- Maintain equivalent emotional weight
+- Avoid creating implausible scenarios
+
+Format:
+
+Key Feature #1: [Original]
+→ Transformed Version:
+→ Psychological Function Preserved:
+
+---
+
+### STEP 3: Structural Integrity Check
+
+After listing transformations, briefly confirm:
+
+- Does the emotional arc remain intact?
+- Does the central internal conflict remain the same?
+- Is recognizability sufficiently reduced?
+
+Answer briefly in bullet points.
+
+---
+
+### IMPORTANT RULES
+
+- Do NOT exaggerate.
+- Do NOT change the core psychological wound.
+- Change only surface identifiers and narrative fingerprints.
+- Maintain realism and archetypal relatability.
+
+"""
+
+
+COUNSELING_STORY_CONNECTION = """
 You are expert to create connection scene to conenct the speaking/voiceover between the previous scene & next scene to smoothly / continuity words transition:
 
 *** Input:
@@ -772,12 +849,18 @@ CHANNEL_CONFIG = {
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
-        "channel_reference_filter": COUNSELING_REFERENCE_FILTER,
+        "channel_prompt": {
+            "channel_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "channel_story_changing": COUNSELING_STORY_CHANGING,
+            "channel_story_connection": COUNSELING_STORY_CONNECTION,
+            "channel_program_init": COUNSELING_INIT,
+            "channel_Program_debut": COUNSELING_DEBUT
+        },
         "channel_templates": [
             [
                 {
                     "name": "starting",
-                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT, COUNSELING_CONNECTION]
+                    "prompt": []
                 },
                 {
                     "name": "intro",
@@ -799,7 +882,7 @@ CHANNEL_CONFIG = {
             [
                 {
                     "name": "starting",
-                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT, COUNSELING_CONNECTION]
+                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT]
                 },
                 {
                     "name": "intro",
