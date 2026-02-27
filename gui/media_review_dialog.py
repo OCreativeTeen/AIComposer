@@ -14,6 +14,7 @@ import json
 from config import parse_json_from_text
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
+import project_manager
 from utility.minimax_speech_service import MinimaxSpeechService
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 
@@ -1264,11 +1265,10 @@ class AVReviewDialog:
             self._transcribe_recorded_audio()
             self._update_fresh_json_text()
 
-        #topic = config_channel.CHANNEL_CONFIG[project_manager.PROJECT_CONFIG.get('channel', 'default')]["topic"]
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
         if mode == "connect_next":
-            selected_prompt = config_channel.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
+            selected_prompt = project_manager.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1291,7 +1291,7 @@ class AVReviewDialog:
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
         elif mode == "connect_prev":
-            selected_prompt = config_channel.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
+            selected_prompt = project_manager.PROJECT_CONFIG.get('channel_template', [])[0]["prompt"][2]
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1350,7 +1350,9 @@ class AVReviewDialog:
 
 
         if selected_prompt_example_file:
-            program_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
+            channel_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
+            topic_type = project_manager.PROJECT_CONFIG.get('topic_category', '') + " - " + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
+            soul = project_manager.PROJECT_CONFIG.get('soul', '')
             selected_prompt = self.current_scene.get("prompt", "")[0]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
@@ -1366,17 +1368,17 @@ class AVReviewDialog:
                 if len(self.audio_json) > 1:
                     json_str = f"json array holding {len(self.audio_json)} scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
                 else:
                     json_str = "json array holding scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
             else:
                 selected_prompt_example_item = selected_prompt_example[0]
                 example_json_str = json.dumps(selected_prompt_example_item, indent=2, ensure_ascii=False)
                 json_str = "a single json item describing a scene"
                 objective_str = "recreate a scene in detail"
-                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, program_name=program_name)
+                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
 
         else:
             selected_prompt = config_channel.SIMPLE_REORGANIZE

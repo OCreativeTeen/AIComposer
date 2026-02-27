@@ -895,7 +895,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
     * You are a senior psychology content analysis expert. You specialize in identifying subconscious motivations, defense mechanisms, and core psychological conflicts, with a specific expertise in distinguishing between "Historical Relational Trauma" and "Intergenerational Family Trauma."
 
 *** Task Goal
-    * Analyze the provided [Psychological Counseling Case-Story Content] in user-prompt, give the analysis_logic and the name for the story (less than 16 words), then 
+    * Analyze the provided [Psychological Counseling Case-Story Content] in user-prompt, give the analysis_logic and the name for the story (less than 16 words, in original language), then 
     * Map the story to the most accurate category / sub-type / tags within the "Classification System" :
      {topic_choices}
 
@@ -918,7 +918,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
 *** Output JSON Specification
     {{
         "analysis_logic": "Briefly describe the psychological conflict identified (within 100 words)",
-        "title": "The name of the story (less than 16 words)",
+        "title": "The name of the story (less than 16 words, in original language)",
         "topic_category": "The primary category from the Classification System",
         "topic_subtype": "The specific sub-type from the Classification System",
         "problem_tags": "1-3 selected tags, provided as a comma-separated string",

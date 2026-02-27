@@ -176,12 +176,14 @@ class ProjectConfigManager:
 
 class ProgramInitEditorDialog:
     
-    def __init__(self, parent, language, channel, channel_template, initial_story=""):
+    def __init__(self, parent, language, channel, channel_template, topic_category="", topic_subtype="", soul="", initial_story=""):
         self.parent = parent
         self.language = language
         self.channel = channel
         self.channel_template = channel_template
-
+        self.soul = soul
+        self.topic_category = topic_category
+        self.topic_subtype = topic_subtype
         self.result_story = initial_story
         # 初始化LLM API
         self.llm_api = LLMApi()
@@ -254,12 +256,11 @@ class ProgramInitEditorDialog:
 
 
     def on_ok(self):
-        topic=config_channel.CHANNEL_CONFIG[self.channel]["topic"]
         story=self.story_editor.get('1.0', tk.END).strip()
-        user_prompt = f"Here is the Initial story script on topic of {topic}:  {story}"
+        user_prompt = f"Here is the Initial story script on topic of {self.topic_category} - {self.topic_subtype}:  {story}"
         raw_prompt = self.channel_template[0]["prompt"][0]
         try:
-            system_prompt = raw_prompt.format(language=LANGUAGES[self.language])
+            system_prompt = raw_prompt.format(language=LANGUAGES[self.language], topic=self.topic_category + " - " + self.topic_subtype, soul=self.soul or '')
         except KeyError:
             system_prompt = raw_prompt
         # 调用LLM生成内容
@@ -296,7 +297,7 @@ class ProgramInitEditorDialog:
 class DebutEditorDialog:
     """分析内容编辑器 - 使用 INIT 内容调用 LLM 生成分析"""
 
-    def __init__(self, parent, initial_analysis, story_content, reference_content, language, channel, channel_template):
+    def __init__(self, parent, initial_analysis, story_content, reference_content, language, channel, channel_template, topic_category='', topic_subtype='', soul=''):
         self.parent = parent
         self.result_analysis = initial_analysis
         self.story_content = story_content
@@ -304,6 +305,9 @@ class DebutEditorDialog:
         self.language = language
         self.channel = channel
         self.channel_template = channel_template
+        self.topic_category = topic_category
+        self.topic_subtype = topic_subtype
+        self.soul = soul
         self.llm_api = LLMApi()
         self.create_dialog()
 
@@ -349,7 +353,11 @@ class DebutEditorDialog:
 
         raw_prompt = self.channel_template[0]["prompt"][1]
         try:
-            system_prompt = raw_prompt.format(language=LANGUAGES.get(self.language, self.language)) if raw_prompt else ""
+            system_prompt = raw_prompt.format(
+                language=LANGUAGES.get(self.language, self.language),
+                topic=self.topic_category + " - " + self.topic_subtype,
+                soul=self.soul or ''
+            ) if raw_prompt else ""
         except (KeyError, ValueError):
             system_prompt = raw_prompt
 
@@ -379,12 +387,13 @@ class DebutEditorDialog:
 class ReferenceEditorDialog:
     """参考内容编辑器 - 基于 Story 分析的参考案例与素材（搜索/生成逻辑待后续集成）"""
 
-    def __init__(self, parent, initial_reference, story_content, topic_category, topic_subtype, channel, reference_filter):
+    def __init__(self, parent, initial_reference, story_content, topic_category, topic_subtype, soul='', channel='', reference_filter=''):
         self.parent = parent
         self.result_reference = initial_reference
         self.story_content = story_content
-        self.topic_category = topic_category
-        self.topic_subtype = topic_subtype
+        self.topic_category = topic_category or ''
+        self.topic_subtype = topic_subtype or ''
+        self.soul = soul or ''
         self.channel = channel
         self.reference_filter = reference_filter
         self.llm_api = LLMApi()
@@ -429,7 +438,8 @@ class ReferenceEditorDialog:
             messagebox.showerror("错误", "请先完成 INIT 内容，再获取参考")
             return
 
-        reference_filter_prompt = self.reference_filter + "\n---------\n" + "Topic-Category: " + self.topic_category + "\nTopic-Subtype: " + self.topic_subtype + "\n\n" + self.story_content
+        soul_part = ("Soul: " + self.soul + "\n\n") if self.soul else ""
+        reference_filter_prompt = self.reference_filter + "\n---------\n" + "Topic-Category: " + (self.topic_category or '') + "\nTopic-Subtype: " + (self.topic_subtype or '') + "\n\n" + soul_part + self.story_content
         try:
             self.dialog.clipboard_clear()
             self.dialog.clipboard_append(reference_filter_prompt)
@@ -608,6 +618,9 @@ class ProjectSelectionDialog:
         self.config_manager = config_manager
         self.selected_config = None
         self.channel_template = None
+        self.topic_category = None
+        self.topic_subtype = None
+        self.soul = None
         self.result = None
         self.llm_api = LLMApi()    
         
@@ -713,6 +726,7 @@ class ProjectSelectionDialog:
         if self.project_tree.get_children():
             self.project_tree.selection_set(self.project_tree.get_children()[0])
     
+
     def refresh_projects(self):
         """刷新项目列表"""
         # 清空现有项目
@@ -753,6 +767,7 @@ class ProjectSelectionDialog:
                 self.refresh_projects()
                 messagebox.showinfo("成功", "项目配置已删除")
     
+
     def create_new_project(self):
         """创建新项目"""
         # 创建新项目配置对话框
@@ -854,6 +869,9 @@ class ProjectSelectionDialog:
         # 更新主题子类型选项的函数（根据选择的 category）
         def update_topic_subtype(*args):
             selected_category = topic_category_combo.get()
+            self.topic_category = selected_category.strip() if selected_category else None
+            self.topic_subtype = None
+            self.soul = None
             topic_subtype_combo.set('')
             topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
@@ -869,22 +887,39 @@ class ProjectSelectionDialog:
                                     subtypes.append(subtype_name)
                 topic_subtype_combo['values'] = sorted(subtypes)
         
-        # 更新说明文本的函数（显示 topic_core_question 和 sample_topic）
+        # 更新说明文本的函数（显示 soul 和 sample_topic），并更新 self.topic_category/subtype/soul
         def update_explanation(*args):
             selected_category = topic_category_combo.get()
+            selected_subtype = topic_subtype_combo.get()
+            self.topic_category = selected_category.strip() if selected_category else None
+            self.topic_subtype = selected_subtype.strip() if selected_subtype else None
+            self.soul = None
             
             if selected_category and topics_data:
                 for topic in topics_data:
                     if topic.get('topic_category') == selected_category:
-                        core_q = topic.get('topic_core_question', '')
-                        sample = topic.get('sample_topic', '')
-                        parts = []
-                        if core_q:
-                            parts.append(f"核心问题: {core_q}")
-                        if sample:
-                            parts.append(f"示例: {sample}")
-                        if parts:
-                            topic_explanation_label.config(text="\n".join(parts), foreground="gray")
+                        category_soul = topic.get('soul', '')
+                        category_soul_file = os.path.join(config.get_channel_path(channel_combo.get()), category_soul)
+                        with open(category_soul_file, 'r', encoding='utf-8') as f:
+                            category_soul = f.read()
+                        subtype_soul = ''
+                        if selected_subtype:
+                            for st in topic.get('topic_subtypes', []):
+                                if isinstance(st, dict) and st.get('topic_subtype') == selected_subtype:
+                                    subtype_soul = st.get('soul', '')
+                                    subtype_soul_file = os.path.join(config.get_channel_path(channel_combo.get()), subtype_soul)
+                                    with open(subtype_soul_file, 'r', encoding='utf-8') as f:
+                                        subtype_soul = f.read()
+                                    break
+                        parts = [p for p in (category_soul, subtype_soul) if p]
+                        self.soul = ' | '.join(parts) if parts else None
+                        display_parts = []
+                        if self.soul:
+                            first_line = (self.soul.split('\n')[0] or self.soul).strip()
+                            display_soul = (first_line[:64] + '…') if len(first_line) > 64 else first_line
+                            display_parts.append(f"灵魂: {display_soul}")
+                        if display_parts:
+                            topic_explanation_label.config(text="\n".join(display_parts), foreground="gray")
                         else:
                             topic_explanation_label.config(text="")
                         break
@@ -904,6 +939,9 @@ class ProjectSelectionDialog:
             topic_subtype_combo.set('')
             topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
+            self.topic_category = None
+            self.topic_subtype = None
+            self.soul = None
             
             if channel:
                 channel_path = config.get_channel_path(channel)
@@ -1008,7 +1046,7 @@ class ProjectSelectionDialog:
 
         # 根据 topic 与 story 状态启用/禁用编辑按钮
         def update_buttons_state(*args):
-            has_topic = bool(topic_category_combo.get().strip() and topic_subtype_combo.get().strip())
+            has_topic = bool(self.topic_category and self.topic_subtype)
             has_story = bool(init_content_var.get().strip())
             editor_busy = _editor_open[0]
             edit_init_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
@@ -1039,11 +1077,14 @@ class ProjectSelectionDialog:
             update_buttons_state()
             try:
                 editor = ProgramInitEditorDialog(
-                    new_project_dialog,
-                    language_combo.get(),
-                    channel_combo.get(),
-                    self.channel_template,
-                    init_content_var.get()
+                    parent=new_project_dialog,
+                    language=language_combo.get(),
+                    channel=channel_combo.get(),
+                    channel_template=self.channel_template,
+                    topic_category=self.topic_category or '',
+                    topic_subtype=self.topic_subtype or '',
+                    soul=self.soul or '',
+                    initial_story=init_content_var.get()
                 )
                 result = editor.show()
                 if result:
@@ -1056,9 +1097,11 @@ class ProjectSelectionDialog:
                         category = obj.pop('topic_category', '')
                         if category:
                             topic_category_combo.set(category)
+                            update_topic_subtype()
                         subtype = obj.pop('topic_subtype', '')
                         if subtype:
                             topic_subtype_combo.set(subtype)
+                        update_explanation()
 
                         obj.pop('problem_tags', '')
                         obj.pop('component_tags', '')
@@ -1083,7 +1126,10 @@ class ProjectSelectionDialog:
                     reference_content=reference_content_var.get(),
                     language=language_combo.get(),
                     channel=channel_combo.get(),
-                    channel_template=self.channel_template
+                    channel_template=self.channel_template,
+                    topic_category=self.topic_category or '',
+                    topic_subtype=self.topic_subtype or '',
+                    soul=self.soul or ''
                 )
                 res_analysis = editor_debut.show()
                 # get json from result, and get debut_title,  if not None, set it to title_entry
@@ -1107,8 +1153,9 @@ class ProjectSelectionDialog:
                     new_project_dialog,
                     initial_reference=reference_content_var.get(),
                     story_content=init_content_var.get(),
-                    topic_category=topic_category_combo.get().strip(),
-                    topic_subtype=topic_subtype_combo.get().strip(),
+                    topic_category=self.topic_category or '',
+                    topic_subtype=self.topic_subtype or '',
+                    soul=self.soul or '',
                     channel=channel_combo.get(),
                     reference_filter=config_channel.CHANNEL_CONFIG[channel_combo.get()].get('channel_reference_filter', '')
                 )
@@ -1169,8 +1216,6 @@ class ProjectSelectionDialog:
             channel = channel_combo.get()
             title = title_entry.get().strip()
             resolution = resolution_var.get()
-            topic_category = topic_category_combo.get().strip()
-            topic_subtype = topic_subtype_combo.get().strip()
             
             if not pid:
                 messagebox.showerror("错误", "请输入项目ID")
@@ -1206,8 +1251,9 @@ class ProjectSelectionDialog:
                 'video_title': title,
                 'video_width': video_width,
                 'video_height': video_height,
-                'topic_category': topic_category,
-                'topic_subtype': topic_subtype,
+                'topic_category': self.topic_category or '',
+                'topic_subtype': self.topic_subtype or '',
+                'soul': self.soul or '',
                 **self.default_project_config.get('additional_fields', {}),
 
                 'init_content': init_content_var.get()

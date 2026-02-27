@@ -3740,7 +3740,7 @@ class WorkflowGUI:
             "extend": float(self.scene_extend_var.get()) if self.scene_extend_var.get() != "0.0" else 0.0,
 
             "implicit": self.scene_implicit.get("1.0", tk.END).strip(),
-            "explicit": self.scene_content.get("1.0", tk.END).strip(),
+            "content": self.scene_content.get("1.0", tk.END).strip(),
             #"cinematography": cinematography_value,
             "clip_animation": self.clip_animate.get(),
             "narration_animation": self.narration_animation.get(),
