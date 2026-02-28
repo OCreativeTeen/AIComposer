@@ -1328,6 +1328,7 @@ class AVReviewDialog:
                         }
                         refresh_json_copy.append(new_item)
                     refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
+                    refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
                 except:
                     refresh_json = None
 
@@ -1342,6 +1343,7 @@ class AVReviewDialog:
                     }
                 ]
                 refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+                refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
 
             if mode == "simple":
                 selected_prompt_example_file = None
@@ -1352,7 +1354,6 @@ class AVReviewDialog:
         if selected_prompt_example_file:
             channel_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
             topic_type = project_manager.PROJECT_CONFIG.get('topic_category', '') + " - " + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
-            soul = project_manager.PROJECT_CONFIG.get('soul', '')
             selected_prompt = self.current_scene.get("prompt", "")[0]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
@@ -1368,17 +1369,17 @@ class AVReviewDialog:
                 if len(self.audio_json) > 1:
                     json_str = f"json array holding {len(self.audio_json)} scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
                 else:
                     json_str = "json array holding scenes"
                     objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
+                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
             else:
                 selected_prompt_example_item = selected_prompt_example[0]
                 example_json_str = json.dumps(selected_prompt_example_item, indent=2, ensure_ascii=False)
                 json_str = "a single json item describing a scene"
                 objective_str = "recreate a scene in detail"
-                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type, soul=soul)
+                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
 
         else:
             selected_prompt = config_channel.SIMPLE_REORGANIZE

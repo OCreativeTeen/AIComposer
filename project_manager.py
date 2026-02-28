@@ -257,10 +257,11 @@ class ProgramInitEditorDialog:
 
     def on_ok(self):
         story=self.story_editor.get('1.0', tk.END).strip()
-        user_prompt = f"Here is the Initial story script on topic of {self.topic_category} - {self.topic_subtype}:  {story}"
+        topic = self.topic_category + " - " + self.topic_subtype
+        user_prompt = f"On topic of {topic}, the initial story script is : \n{story}\n\n\nAnd the core-insight ('soul') is: \n{self.soul}"
         raw_prompt = config_channel.CHANNEL_CONFIG[self.channel]['channel_prompt'].get('channel_program_init', '')
         try:
-            system_prompt = raw_prompt.format(language=LANGUAGES[self.language], topic=self.topic_category + " - " + self.topic_subtype, soul=self.soul or '')
+            system_prompt = raw_prompt.format(language=LANGUAGES[self.language], topic=self.topic_category + " - " + self.topic_subtype)
         except KeyError:
             system_prompt = raw_prompt
         # 调用LLM生成内容
@@ -349,77 +350,19 @@ class DebutEditorDialog:
             messagebox.showerror("错误", "请先编辑并保存 INIT 内容，再生成分析")
             return
 
+        topic = self.topic_category + " - " + self.topic_subtype
+
         changing_system_prompt = config_channel.CHANNEL_CONFIG[self.channel]['channel_prompt'].get('channel_story_changing', '')
-        changing_user_prompt = f"Here is the K-Story:\n{self.story_content}\n\n\n"
+        changing = self.llm_api.generate_text(changing_system_prompt, self.story_content) or ""
 
-        # Generate changing suggestion, open dialog for user to edit or regenerate, return edited changing
-        changing = ""
-        if not changing_system_prompt:
-            changing = ""
-        else:
-            while True:
-                if changing:
-                    changing_user_prompt_with_prev = changing_user_prompt + f"Here is the previous Changing Suggestion:\n{changing}"
-                else:
-                    changing_user_prompt_with_prev = changing_user_prompt
-                changing = self.llm_api.generate_text(changing_system_prompt, changing_user_prompt_with_prev) or ""
-                changing_result = [changing]
+        user_prompt = f"Here is the K-Story:\n{self.story_content}"
 
-                changing_dialog = tk.Toplevel(self.dialog)
-                changing_dialog.title("Changing Suggestion")
-                changing_dialog.geometry("800x500")
-                changing_dialog.transient(self.dialog)
-                changing_dialog.grab_set()
-                changing_dialog.update_idletasks()
-                x = (changing_dialog.winfo_screenwidth() - 800) // 2
-                y = (changing_dialog.winfo_screenheight() - 500) // 2
-                changing_dialog.geometry(f"800x500+{x}+{y}")
-
-                cf = ttk.Frame(changing_dialog, padding=20)
-                cf.pack(fill=tk.BOTH, expand=True)
-                ttk.Label(cf, text="Changing Suggestion (可编辑，确认后用于生成分析):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-                changing_text = scrolledtext.ScrolledText(cf, wrap=tk.WORD, width=80, height=15)
-                changing_text.pack(fill=tk.BOTH, expand=True)
-                changing_text.insert('1.0', changing)
-
-                action_result = [None]  # "confirm" | "regenerate" | "cancel"
-
-                def on_changing_confirm():
-                    action_result[0] = "confirm"
-                    changing_result[0] = changing_text.get('1.0', tk.END).strip()
-                    changing_dialog.destroy()
-
-                def on_changing_regenerate():
-                    action_result[0] = "regenerate"
-                    changing_result[0] = changing_text.get('1.0', tk.END).strip()
-                    changing_dialog.destroy()
-
-                def on_changing_cancel():
-                    action_result[0] = "cancel"
-                    changing_result[0] = None
-                    changing_dialog.destroy()
-
-                btn_f = ttk.Frame(cf)
-                btn_f.pack(fill=tk.X, pady=(10, 0))
-                ttk.Button(btn_f, text="确认", command=on_changing_confirm).pack(side=tk.LEFT, padx=5)
-                ttk.Button(btn_f, text="重新生成", command=on_changing_regenerate).pack(side=tk.LEFT, padx=5)
-                ttk.Button(btn_f, text="取消", command=on_changing_cancel).pack(side=tk.LEFT, padx=5)
-                changing_dialog.wait_window()
-
-                if action_result[0] == "cancel":
-                    self.dialog.destroy()
-                    return
-                changing = changing_result[0] or ""
-                if action_result[0] == "confirm":
-                    break
-
-        user_prompt = f"Here is the K-Story:\n{self.story_content}\n\n\nHere is the Reference: \n{self.reference_content}"
+        user_prompt = f"On topic of {topic}, the K-Story: \n{self.story_content}\n\n\nAnd here is the Reference: \n{self.reference_content}\n\n\nAnd the core-insight ('soul') is: \n{self.soul}"
 
         raw_prompt = config_channel.CHANNEL_CONFIG[self.channel]['channel_prompt'].get('channel_Program_debut', '')
         system_prompt = raw_prompt.format(
             language=LANGUAGES.get(self.language, self.language),
             topic=self.topic_category + " - " + self.topic_subtype,
-            soul=self.soul or '',
             changing=changing
         )
 
