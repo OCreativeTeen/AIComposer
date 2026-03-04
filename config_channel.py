@@ -469,153 +469,6 @@ COUNSELING_DEBUT = """
 
 
 
-COUNSELING_DEBUT_OLD = """
-*** ROLE
-    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy. User-prompt has a section to present your core-insight ('soul') on the topic of {topic}).
-    ** Your mission:
-        1) Transform a raw real-life Case-Story into a privacy-safe, psychologically amplified "augmented_story".
-        2) Generate a deep "profound_analysis" that explains root causes AND guides audience healing.
-            Goal: Help every listener recognize themselves and learn how to heal — not just why pain exists.
-
----
-
-*** INPUT CONTEXT
-Provided by user:
-- Case-Story: original psychological conflict or trauma narrative.
-- Reference:
-    • Stories: similar cases or emotional patterns.
-    • Analysis: psychological insights (e.g., inner child, defenses, relational dynamics).
-
----
-
-*** TASK A — CREATE "augmented_story" + TITLE
-
-1. Extract the ROOT WOUND
-    Analyze the original Case-Story and identify its Root-Wound, central inner conflict, emotional triggers, and underlying psychological patterns.
-    Focus especially on themes related to mental health, internal struggle, identity tension, or relational dynamics.
-    Preserve the original story’s tone and main trajectory.
-
-2. Extract Useful Elements from Reference Stories
-    From the reference stories, selectively identify:
-    * situations or scenes that illustrate similar emotional dynamics
-    * believable symptoms, behaviors, or reactions
-    * moments of tension, misunderstanding, or escalation
-    * symbolic or archetypal patterns that reinforce the psychological theme
-
-3. Integrate & Expand the Story
-    Blend suitable elements into the original story by:
-    * adding new scenes or interactions that clarify the inner conflict
-    * extending existing moments with more grounded emotional detail    
-    * introducing realistic obstacles or consequences that reveal the psychological root of the problem
-    * enhancing dramatic tension without exaggeration or melodrama
-    Ensure all added material feels organic to the original narrative.
-    Use references only as inspiration for expansion and depth. Do not replicate plots or characters.
-
-4. Maintain Archetypal Relatability
-    Keep characters psychologically believable and broadly relatable.
-    Avoid over-dramatization, extreme trauma inflation, or unrealistic escalation.
-    Emphasize subtle behavioral cues, internal contradictions, and lived-in realism.
-   Subtly introduce a turning point or moment of honest shift.
-
-
-5. STORY STRUCTURE (Two Layers)
-   --- Explicit Layer (Visible Story) ---
-   • Format: first-person monologue or natural dialogue.
-   • Tone: raw, grounded, experiential.
-   • Show, don’t tell (describe actions/sensations instead of labels).
-   • Begin scenes with sensory heading:
-     [e.g., heavy rain, shallow breathing, flickering warm light].
-   • Each scene uses a concrete trigger object/sound/color.
-
-   --- Implicit Layer (Counselor Voice) ---
-   • Perspective: quiet counselor insight.
-   • Use metaphors and sensory language ONLY.
-   • NO psychological jargon words allowed.
-   • Reveal hidden contradictions that spark audience recognition.
-
----
-
-*** TASK B — CREATE "profound_analysis"
-
-1. Analyze the new augmented_story:
-    Clearly identify the psychological symptoms, psychological causes (sources of trauma)
-    Give guid for Practical life practices for emotion-regulation & cognitive-restructuring
-
-2. Extract Useful Elements from Reference Analysis
-    * psychological insights that illustrate similar psychological themes
-    * therapeutic techniques or interventions that are applicable to the augmented story
-    * psychological insights that are applicable to the augmented story
-
-3. Then give a deep analysis of the augmented story, including:
-    1) Root Cause:
-        Explicit:
-            • Deep root-cause analysis.
-            • Include 1–2 core psychological concepts (e.g., Repetition Compulsion, Zeigarnik Effect).
-            • Explain the “operating system” behind the pain.
-        Implicit:
-            • Provide 1–2 mirroring questions for audience self-reflection.
-
-    2) Healing Path
-        Explicit:
-            • Trace how early structure becomes present conflict.
-            • Identify defense patterns (avoidant suppression, compensatory craving, etc.).
-        Implicit:
-            • Invite reflection on self-protective behaviors that block intimacy.
-
-    3) Final Engagement
-        Explicit:
-            • Give actionable interventions or exercises (Narrative Reconstruction, Boundary Practice, Rituals, etc.).
-        Implicit:
-            • Offer an “Action Check-in” invitation for audience engagement.
-
----
-
-*** CONSTRAINTS
-    ** NO diagnoses or medical labeling.
-    ** Avoid empty motivational clichés.
-    ** Story = literary fiction quality.
-    ** Analysis = elite clinical clarity.
-    ** Tone = authoritative, warm, deeply empathetic.
-    ** Implicit Layer speaks directly to “you”.
-    ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
-
----
-
-*** OUTPUT FORMAT (STRICT JSON)
-
-    {{
-        "debut_title": "...",  // the title of the augmented_story
-        "debut_content_1": "   // the content of the augmented_story
-            -----
-            'scene': 'Title',
-            'explicit': '[story text]',
-            'implicit': '[non-jargon counselor insight]'
-            -----
-            ...
-        ",
-        "debut_content_2": "   // the content of the profound_analysis
-            -----
-            'scene': 'Root Cause',
-            'explicit': '[clinical explanation]',
-            'implicit': '[mirroring questions]'
-            -----
-            'scene': 'Healing Path',
-            'explicit': '[interventions]',
-            'implicit': '[audience reflection]'
-            -----
-            'scene': 'Final Engagement',
-            'explicit': '[closing guidance]',
-            'implicit': '[call to action]'
-        "
-    }}
-"""
-
-
-
 COUNSELING_STORY_DEVELOPMENT = """
 ROLE: Senior Psychological Counselor & TV Host
     ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
@@ -743,10 +596,11 @@ COUNSELING_INTRO = """
 
 
 *** Core Objective
-    ** For the provided content, make a VERY brief introduction Script to bridges the gap between the audience and the psychological conflict:
+    ** For the content provided in the user-prompt, make a VERY brief introduction Script to bridges the gap between the audience and the psychological conflict:
         * 1. "Welcome": direct address to the audience, welcome them to the program ({channel_name})
         * 2. "Normalcy": Introduce the "Who" and "Where" based on the content. Describe their life (e.g., a couple preparing for a wedding, a man facing retirement).
         * 3. "the Shattering Moment":  To grab the audience's attention, identify the specific, shocking scene from the provided text where the psychological conflict explodes. Describe this scene vividly to grab attention.
+            * don't try to give full story cover, just VERY briefly describe the most important / shocking scene vividly to grab attention.
 
 *** Input:
     ** story & analysis content provided in the user-prompt >> only focuse on 'content' field (contains content1, content2...etc.), ignore other fields.
@@ -761,78 +615,12 @@ COUNSELING_INTRO = """
 *** Output Format:
     ** inside a JSON array, strictly output only one single scene element with fields like: 
         * speaker: "Narrative Host/Lead Counselor" (Specify gender/tone ~ in english).
-        * speaking: The full script in the original language. It must follow the flow: Greeting -> Setup of the 'Perfect' Life -> The Shocking Incident -> The Hook Question.
+        * speaking: The VERY brief introduction script of the story (in the original language).
         * actions: Describe the host's body language (e.g., "Leans forward, voice drops to a whisper, stops smiling when the conflict is mentioned" ~ in english).
         * visual: Describe the studio environment (e.g., "A dimly lit library with a single spotlight, reflecting the duality of the story" ~ in english).
 
     Here is a Example:
         {example}
-"""
-
-
-
-COUNSELING_STORY_CHANGING = """
-### ROLE
-You are a narrative forensic analyst and structural story editor.
-
-Your task is to detect identifiable narrative fingerprints in a story and redesign them while preserving psychological structure and emotional truth.
-
-The transformation must anonymize the story without weakening its core conflict.
-
----
-
-### OUTPUT FORMAT (STRICT JSON ONLY)
-
-Return your output in the following JSON structure:
-	[
-		{
-		  "scene": "",
-		  "original_feature": "",
-		  "transformed_feature": "",
-		  "psychological_function_preserved": ""
-		}
-	]
-
----
-
-### STEP 1 — Identify Recognizable Features
-
-Extract all highly identifiable elements, including:
-
-- Specific illnesses or diagnoses
-- Rare or unusual incidents
-- Distinct symbolic objects
-- Precise life events
-- Family structure markers
-- Occupation/industry specificity
-- Geographic or timeline identifiers
-- Any event the original person would immediately recognize
-
----
-
-### STEP 2 — Transform Each Feature
-
-For each identified feature:
-
-- Change surface identifiers
-- Maintain equivalent emotional intensity
-- Preserve psychological function
-- Keep scenario realistic
-- Avoid exaggeration
-
----
-
-### STEP 3 — Preserve Psychological Architecture
-
-The transformation MUST preserve:
-
-- Core wound
-- Shadow dynamic
-- Defense mechanism
-- Attachment pattern
-- Central internal contradiction
-
-Only alter narrative fingerprints — not psychological architecture.
 """
 
 
@@ -972,8 +760,136 @@ You are an expert to split feedback content (provide in user-prompt) into scense
 """
 
 
+MV_RAW = """
+ROLE
+    ** You are a cinematic music-video storyteller and emotional narrative designer specializing in symbolic visual storytelling, poetic imagery, and character-driven emotional arcs.
 
-MV_PROGRAM = """
+    ** Your task is to transform the raw story elements (provided in user-prompt) into a vivid, cinematic MV story that visually expresses emotion, conflict, and inner transformation.
+
+
+OBJECTIVES
+
+    1️⃣ IDENTIFY THE EMOTIONAL CORE
+
+        Analyze the raw story and identify internally:
+
+            ** The core emotional wound
+            ** The central relationship tension or inner conflict
+            ** The dominant emotional tone of the song
+            ** Key emotional turning points
+            ** Hidden longing or unresolved desire
+            ** The emotional arc (loss → search → confrontation → transformation)
+
+        Preserve:
+            ** The emotional truth
+            ** The overall trajectory of the story
+            ** The feeling embedded in the song
+
+        Do NOT output analysis.  
+        This step is internal understanding only.
+
+
+    2️⃣ CINEMATIC TRANSFORMATION
+
+        Transform the raw story into a **visually powerful MV narrative**.
+
+        The story must be driven by:
+            ** visual actions
+            ** symbolic imagery
+            ** atmosphere and mood
+            ** small emotional gestures
+
+        Replace literal explanation with:
+            ** symbolic locations
+            ** poetic objects
+            ** visual metaphors
+            ** emotional body language
+
+        The story should feel like a sequence of vivid moments rather than a traditional plot.
+
+
+    3️⃣ EMOTIONAL INTENSIFICATION
+
+        Deepen the emotional impact by introducing:
+
+            ** visual contrasts (light vs shadow, distance vs closeness)
+            ** repeating symbolic motifs
+            ** moments of silence or stillness
+            ** subtle character reactions
+            ** escalating emotional tension
+
+        Strengthen the sense of:
+
+            • longing  
+            • misunderstanding  
+            • emotional distance  
+            • fragile connection  
+            • inner struggle  
+            • quiet revelation
+
+
+NARRATIVE RULES (CRITICAL)
+
+    ❌ No didactic storytelling
+
+    ✅ Emotion must be shown through images
+    ✅ Characters reveal themselves through behavior
+    ✅ Symbolic objects carry emotional meaning
+    ✅ Let the audience *feel* the story rather than be told
+
+
+STORY STRUCTURE (MV STYLE)
+
+    Create a cinematic progression aligned with a song's emotional flow:
+
+        ** Opening Atmosphere
+            Establish tone, location, and emotional mood.
+
+        ** The Connection
+            Show the relationship or inner desire.
+
+        ** The Fracture
+            A subtle event reveals emotional distance or conflict.
+
+        ** The Spiral
+            The character moves through memories, places, or symbolic moments.
+
+        ** The Confrontation
+            A visual moment where the emotional truth becomes unavoidable.
+
+        ** The Transformation
+            The character changes, lets go, or reaches a quiet realization.
+
+        ** Final Image
+            A powerful symbolic image that captures the song’s emotional essence.
+
+
+STYLE
+
+    The story should feel like:
+        ** a short film
+        ** visually poetic
+        ** emotionally immersive
+        ** symbolic and cinematic
+
+    Focus on:
+        ** mood
+        ** visual detail
+        ** sensory imagery
+        ** emotional subtlety
+
+
+OUTPUT
+
+    ** Cinematic MV Story (vivid, visual, emotionally immersive)
+"""
+
+
+MV_INIT = """
+"""
+
+
+MV_DEBUT = """
 You are an expert in designing a music-video narrative that translates song lyrics into a visually driven, emotionally resonant story.
 
 *** Input:
@@ -1142,7 +1058,6 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_prompt": {
             "channel_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "channel_story_changing": COUNSELING_STORY_CHANGING,
             "channel_story_connection": COUNSELING_STORY_CONNECTION,
             "channel_program_init": COUNSELING_INIT,
             "channel_program_debut": COUNSELING_DEBUT,
@@ -1224,22 +1139,31 @@ CHANNEL_CONFIG = {
     "mv": {
         "topic": "Musical myths and legends",
         "channel_name": "音乐故事",
+        "channel_prompt": {
+            "channel_program_init": MV_INIT,
+            "channel_program_debut": MV_DEBUT,
+            "channel_program_raw": MV_RAW
+        },
         "channel_templates": [
             [
                 {
                     "name": "starting",
-                    "prompt": [MV_PROGRAM]
+                    "prompt": []
                 },
                 {
-                    "name": "program",
+                    "name": "development1",
                     "prompt": [MV_STORY]
-                }        
+                },
+                {
+                    "name": "ending",
+                    "prompt": []
+                }
             ]
         ],
         "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
-        "channel_key": "config/client_secret_main.json",
-        "channel_list": ""
+        "channel_key": "config/client_secret_main.json"
     },
+
 
     "broadway": {
         "topic": "Musical myths and legends",
