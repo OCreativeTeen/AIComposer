@@ -8,6 +8,13 @@ PICTURE_STYLE = """
 
 
 
+CONCISE_SPEAKING_PROMPT = """
+Condense the spoken content (given in user-prompt) into a clearer and more concise form while preserving the original meaning, personality, emotional tone, and storytelling flow. 
+Remove repetition and filler words, and slightly strengthen the emotional impact if appropriate.
+"""
+
+
+
 IMAGE_DESCRIPTION_SYSTEM_PROMPT = """
 You are a professional expert who is good at analyzing & describing the image (attached in the user-prompt) as a Scene, in English.
 

@@ -956,9 +956,6 @@ class AVReviewDialog:
 
 
     def restore_edit_timeline_change(self):
-        if self.media_type != "clip":
-            return
-        
         """恢复剪辑区间变动 - 从 audio_json 的 start/end 字段重新读取边界"""
         self.stop_playback()
         
@@ -977,10 +974,7 @@ class AVReviewDialog:
 
 
     def confirm_edit_timeline_change(self):
-        if self.media_type != "clip":
-            return
-        
-        """确认剪辑区间变动 - 将时间轴的值保存到 audio_json"""
+        """确认剪辑区间变动 - 将时间轴的值保存到 audio_json（单场景/多场景均适用）"""
         self.stop_playback()
         
         # 获取边界：优先使用 _pending_boundaries，否则从 audio_json 计算
@@ -1701,9 +1695,9 @@ class AVReviewDialog:
         i = self.current_scene.get(self.image_field, None)
         if i != self.source_image_path:
             _refresh_scene_media(self.current_scene, self.image_field, ".webp", self.source_image_path, True)
-        if a != self.source_audio_path and self.workflow.ffmpeg_audio_processor.get_duration(a) != self.audio_duration:
+        if a != self.source_audio_path:
             _refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
-        if v != self.source_video_path and self.workflow.ffmpeg_processor.get_duration(v) != self.audio_duration:
+        if v != self.source_video_path:
             #v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True)
             _refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
 
@@ -1721,17 +1715,21 @@ class AVReviewDialog:
                 clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, start, end - start)
                 _refresh_scene_media(self.current_scene, self.SPEAKER_KEY+"_audio", ".wav", clip_wav, True)
                 _refresh_scene_media(self.current_scene, self.audio_field, ".wav", clip_wav, True)
-                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start, end)
-                _refresh_scene_media(self.current_scene, self.video_field, ".mp4", v, True)
+                if self.source_video_path:
+                    v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, start, end)
+                    _refresh_scene_media(self.current_scene, self.video_field, ".mp4", v, True)
+                else:
+                    v = None
             else:
                 v = self.source_video_path
 
-            first_image = self.current_scene.get(self.image_field, None)
-            if  not first_image or not os.path.exists(first_image):
-                first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
-                _refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
-            last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
-            _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
+            if v:
+                first_image = self.current_scene.get(self.image_field, None)
+                if not first_image or not os.path.exists(first_image):
+                    first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
+                    _refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
+                last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
+                _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
 
         elif self.clip_multiple_audio_changed():
             print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")

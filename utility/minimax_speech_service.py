@@ -24,7 +24,7 @@ class MinimaxSpeechService:
         print(f"TTS URL: {self.tts_url}")
 
 
-    def create_ssml(self, text: str, voice: str, actions: str, language: str, speed: float = 1.0, pitch: int = 0, vol: float = 1.0) -> str:
+    def create_ssml(self, text, voice, actions, language) -> str:
         # Escape special XML characters in text
         import html
         escaped_text = html.escape(text)
@@ -51,16 +51,16 @@ class MinimaxSpeechService:
 
         ssml = f"""
 {{
-    "model":"speech-2.8-hd",
+    "model":"speech-2.8-turbo",
     "text":"{escaped_text}",
     "stream":false,
     "language_boost":"auto",
     "output_format":"hex",
     "voice_setting":{{
-        "voice_id":"{voice}",
-        "speed":{speed},
-        "vol":{vol},
-        "pitch":{pitch}
+        "voice_id":"{voice["voice"]}",
+        "speed":{voice["speed"]},
+        "vol":{voice["volume"]},
+        "pitch":{voice["pitch"]}
     }},
     "audio_setting":{{
         "sample_rate":32000,
@@ -136,10 +136,10 @@ class MinimaxSpeechService:
             if voice["language"] != language:
                 continue
             if voice["name"].lower() in speaker.lower():
-                return voice["voice"]
+                return voice
             if voice["voice"].lower() in speaker.lower():
-                return voice["voice"]
-        return "male-qn-qingse"
+                return voice
+        return VOICES[0]
 
 # man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl
 # Common Chinese voices and moods
@@ -147,43 +147,67 @@ VOICES = [
     {
         'name': 'woman_mature',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.05,
+        'pitch': -1,
         'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54' #'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
     },
     {
         'name': 'man_mature',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
         'name': 'man_mature',
         'language': 'english',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'moss_audio_b37dc4b3-9691-11f0-aeab-4aec103046b8' #'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
         'name': 'woman_young',
         'language': 'chinese',
-        'voice': 'Chinese (Mandarin)_Warm_Bestie' # female-shaonv  female-tianmei-jingpin
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
+        'voice': 'Ukrainian_CalmWoman' # 'Chinese (Mandarin)_Warm_Bestie' # female-shaonv  female-tianmei-jingpin    Russian_Dramatic_Speaker_v1
     },
     {
         'name': 'man_young',
         'language': 'chinese',
-        'voice': 'moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85'
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
+        'voice': 'Ukrainian_WiseScholar'  #Cantonese_resonant_host_vv2     moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    Portuguese_Helpful_Advisor_v1
     },
 
     {
         'name': 'girl',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Warm_Girl' #Chinese (Mandarin)_Cute_Spirit' 'BritishChild_female_1_v1'
     },
     {
         'name': 'boy',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Straightforward_Boy'
     },
 
     {
         'name': 'teen_boy',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Southern_man_young'  
     },
     {
@@ -195,11 +219,17 @@ VOICES = [
     {
         'name': 'man_old',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Humorous_Elder'
     },
     {
         'name': 'woman_old',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'Chinese (Mandarin)_Kind-hearted_Elder'
     },
 
@@ -207,16 +237,25 @@ VOICES = [
     {
         'name': 'trump',
         'language': 'english',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'moss_audio_b37dc4b3-9691-11f0-aeab-4aec103046b8'
     },
     {
         'name': 'wwj',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'moss_audio_73fe2657-9743-11f0-aeab-4aec103046b8'
     },
     {
         'name': 'qin',
         'language': 'chinese',
+        'volume': 1.0,
+        'speed': 1.0,
+        'pitch': 0,
         'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54'
     }
 ]

@@ -176,9 +176,9 @@ class ProjectConfigManager:
 
 class ProgramInitEditorDialog:
     
-    def __init__(self, parent, raw_story):
+    def __init__(self, parent, reference_story):
         self.parent = parent
-        self.init_story = raw_story
+        self.init_story = reference_story
         # 初始化LLM API
         self.llm_api = LLMApi()
         self.llm_api_local = LLMApi(OLLAMA)
@@ -250,14 +250,12 @@ class ProgramInitEditorDialog:
 
 
     def on_ok(self):
-        story=self.story_editor.get('1.0', tk.END).strip()
-        topic = (self.init_story.get('topic_category') or '') + " - " + (self.init_story.get('topic_subtype') or '')
-        user_prompt = f"On topic of {topic}, the initial story script is : \n{story}\n\n\nAnd the core-insight ('soul') is: \n{self.init_story.get('soul', '')}"
-        raw_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('channel_program_init', '')
-        try:
-            system_prompt = raw_prompt.format(language=LANGUAGES[self.init_story['language']], topic=topic)
-        except KeyError:
-            system_prompt = raw_prompt
+        topic = self.init_story.get('topic_category','') + " - " + self.init_story.get('topic_subtype','')
+        user_prompt = f"On topic of {topic}, the initial story script is : \n{self.init_story.get('raw_content','')}\n\n\n\
+                      And the core-insight ('soul') is: \n{self.init_story.get('soul', '')}\n\n\n\
+                      And the reference stories are: \n{self.init_story.get('reference_content',{}).get('story','')}"
+        system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('channel_program_init', '')
+        system_prompt = system_prompt.format(language=LANGUAGES[self.init_story['language']], topic=topic)
         # 调用LLM生成内容
         generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
 
@@ -310,7 +308,8 @@ class DebutEditorDialog:
         ttk.Label(main_frame, text="分析内容 (Analysis):", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
         self.analysis_editor = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, width=80, height=15)
         self.analysis_editor.pack(fill=tk.BOTH, expand=True)
-        self.analysis_editor.insert('1.0', self.debut_story['init_content'])
+        init_text = self.debut_story.get('init_content') or self.debut_story.get('raw_content') or ''
+        self.analysis_editor.insert('1.0', init_text)
 
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X, pady=(10, 0))
@@ -319,21 +318,25 @@ class DebutEditorDialog:
 
 
     def on_ok(self):
-        """使用 INIT 内容调用 LLM 生成分析"""
+        """使用 INIT 或 RAW 内容调用 LLM 生成分析（可不等 INIT 完成，用 raw_content 作为 K-Story）"""
         if not self.llm_api:
             messagebox.showerror("错误", "LLM API 未初始化")
             return
 
-        if not self.debut_story['init_content'].strip():
-            messagebox.showerror("错误", "请先编辑并保存 INIT 内容，再生成分析")
+        k_story = self.debut_story.get('init_content')
+        if not k_story:
+            messagebox.showerror("错误", "请先完成 RAW 或 INIT 内容，再生成分析")
             return
 
         topic = self.debut_story['topic_category'] + " - " + self.debut_story['topic_subtype']
+        ref_analysis = self.debut_story.get('reference_content').get('analysis', [])
 
-        user_prompt = f"On topic of {topic}, the K-Story: \n{self.debut_story['init_content']}\n\n\nAnd the Reference: \n{self.debut_story['reference_content']}\n\n\nAnd the core-insight ('soul') is: \n{self.debut_story['soul']}"
+        user_prompt = f"On topic of {topic}, the K-Story: \n{k_story}\n\n\n\
+                        And the reference analysises are: \n{ref_analysis}\n\n\n\
+                        And the core-insight ('soul') is: \n{self.debut_story.get('soul')}"
 
-        raw_prompt = config_channel.CHANNEL_CONFIG[self.debut_story['channel']]['channel_prompt'].get('channel_program_debut', '')
-        system_prompt = raw_prompt.format(
+        system_prompt = config_channel.CHANNEL_CONFIG[self.debut_story['channel']]['channel_prompt'].get('channel_program_debut', '')
+        system_prompt = system_prompt.format(
             language=LANGUAGES.get(self.debut_story['language']),
             topic=topic
         )
@@ -342,7 +345,7 @@ class DebutEditorDialog:
         self.analysis_editor.config(state=tk.NORMAL)
         self.analysis_editor.delete('1.0', tk.END)
         self.analysis_editor.insert('1.0', generated)
-        self.debut_story['debut_content'] = self.analysis_editor.get('1.0', tk.END).strip()
+        self.debut_story['debut_content'] = generated
 
         self.dialog.destroy()
 
@@ -384,7 +387,7 @@ class ReferenceEditorDialog:
         ttk.Label(main_frame, text="参考内容 (References)：分析与案例素材，供主持人参考，亦作为生成分析内容的输入", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
         self.reference_editor = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, width=80, height=15)
         self.reference_editor.pack(fill=tk.BOTH, expand=True)
-        self.reference_editor.insert('1.0', self.reference_story['init_content'])
+        self.reference_editor.insert('1.0', self.reference_story['raw_content'])
         self.reference_editor.bind('<Double-1>', self._on_paste_from_clipboard)
 
         button_frame = ttk.Frame(main_frame)
@@ -403,11 +406,13 @@ class ReferenceEditorDialog:
 
     def _fetch_from_notebooklm(self):
         """工作流：复制 prompt 到剪贴板 → 用户在 NotebookLM 生成 → 粘贴结果 → 勾选需要的项 → 写入 reference_editor"""
-        if not self.reference_story['init_content'] or not self.reference_story['init_content'].strip():
-            messagebox.showerror("错误", "请先完成 INIT 内容，再获取参考")
+        if not self.reference_story['raw_content'] or not self.reference_story['raw_content'].strip():
+            messagebox.showerror("错误", "请先完成 RAW 内容，再获取参考")
             return
 
-        reference_filter_prompt = self.reference_filter + "\n---------\n" + "Topic-Category: " + (self.reference_story['topic_category'] or '') + "\nTopic-Subtype: " + (self.reference_story['topic_subtype'] or '') + "\n\n" + self.reference_story['init_content']
+        reference_filter_prompt = self.reference_filter + "\n---------\n" + \
+                                  "Topic-Category: " + self.reference_story['topic_category'] + "\nTopic-Subtype: " + self.reference_story['topic_subtype'] + \
+                                  "\n\n" + self.reference_story['raw_content']
         try:
             self.dialog.clipboard_clear()
             self.dialog.clipboard_append(reference_filter_prompt)
@@ -430,6 +435,7 @@ class ReferenceEditorDialog:
         paste_text = scrolledtext.ScrolledText(paste_dialog, wrap=tk.WORD, width=80, height=12)
         paste_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
 
+
         def paste_on_double_click(e):
             try:
                 clipboard_content = paste_dialog.clipboard_get()
@@ -444,6 +450,7 @@ class ReferenceEditorDialog:
         paste_text.bind('<Double-1>', paste_on_double_click)
 
         generated_content = [None]
+
 
         def on_paste_confirm():
             raw = paste_text.get('1.0', tk.END).strip()
@@ -473,6 +480,7 @@ class ReferenceEditorDialog:
             generated_content[0] = {"story": story_list, "analysis": analysis_list}
             paste_dialog.destroy()
 
+
         btn_f = ttk.Frame(paste_dialog)
         btn_f.pack(fill=tk.X, pady=10)
         ttk.Button(btn_f, text="确认", command=on_paste_confirm).pack(side=tk.LEFT, padx=5)
@@ -483,6 +491,7 @@ class ReferenceEditorDialog:
             return
 
         data = generated_content[0]
+
 
         def show_section_select_dialog(section_title, items):
             """显示一个区块的勾选对话框，返回用户勾选后的列表；取消则返回 None。"""
@@ -547,6 +556,7 @@ class ReferenceEditorDialog:
             select_dialog.wait_window()
             return selected_result[0]
 
+
         selected_story = show_section_select_dialog("勾选参考项：Story（故事/案例）", data.get("story", []))
         if selected_story is None:
             return
@@ -559,6 +569,7 @@ class ReferenceEditorDialog:
         self.reference_editor.delete('1.0', tk.END)
         self.reference_editor.insert('1.0', json.dumps(result, indent=2, ensure_ascii=False))
 
+
     def on_confirm(self):
         self.dialog.destroy()
 
@@ -568,6 +579,7 @@ class ReferenceEditorDialog:
     def show(self):
         self.dialog.wait_window()
         return self.reference_story['reference_content']
+
 
 
 
@@ -1001,21 +1013,22 @@ class ProjectSelectionDialog:
         edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
         edit_raw_btn.pack(pady=5)
 
-        # 第二列：INIT 内容
-        story_label_frame = ttk.LabelFrame(content_panels_frame, text="INIT内容", padding=10)
-        story_label_frame.grid(row=0, column=1, padx=5, sticky='nsew')
-        init_preview = ttk.Label(story_label_frame, text="INIT: (未编辑)", foreground="gray", wraplength=200)
-        init_preview.pack(anchor='w', pady=(0, 10))
-        edit_init_btn = ttk.Button(story_label_frame, text="INIT编辑", command=lambda: None)
-        edit_init_btn.pack(pady=5)
-
         # 第三列：参考内容
         reference_label_frame = ttk.LabelFrame(content_panels_frame, text="参考内容", padding=10)
-        reference_label_frame.grid(row=0, column=2, padx=(5, 0), sticky='nsew')
+        reference_label_frame.grid(row=0, column=1, padx=(5, 0), sticky='nsew')
         reference_preview = ttk.Label(reference_label_frame, text="REF: (未编辑)", foreground="gray", wraplength=200)
         reference_preview.pack(anchor='w', pady=(0, 10))
         edit_reference_btn = ttk.Button(reference_label_frame, text="参考收集", command=lambda: None)
         edit_reference_btn.pack(pady=5)
+
+
+        # 第二列：INIT 内容
+        story_label_frame = ttk.LabelFrame(content_panels_frame, text="INIT内容", padding=10)
+        story_label_frame.grid(row=0, column=2, padx=5, sticky='nsew')
+        init_preview = ttk.Label(story_label_frame, text="INIT: (未编辑)", foreground="gray", wraplength=200)
+        init_preview.pack(anchor='w', pady=(0, 10))
+        edit_init_btn = ttk.Button(story_label_frame, text="INIT编辑", command=lambda: None)
+        edit_init_btn.pack(pady=5)
 
         # 第四列：DEBUT 内容
         debut_label_frame = ttk.LabelFrame(content_panels_frame, text="DEBUT内容", padding=10)
@@ -1054,17 +1067,21 @@ class ProjectSelectionDialog:
             else:
                 debut_preview.config(text="DEBUT: (未编辑)", foreground="gray")
 
-        # 根据 topic 与 story 状态启用/禁用编辑按钮
+        # 根据 topic、raw、reference 状态启用/禁用编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
-            has_story = bool(self.story_result.get('init_content', '').strip())
+            has_raw = bool((self.story_result.get('raw_content') or '').strip())
+            ref = self.story_result.get('reference_content')
+            has_reference = isinstance(ref, dict) and (bool(ref.get('story')) or bool(ref.get('analysis')))
+            has_ref_filter = bool(config_channel.CHANNEL_CONFIG.get(self.story_result.get('channel'), {}).get('channel_prompt', {}).get('channel_reference_filter', ''))
             editor_busy = _editor_open[0]
             edit_raw_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
-            edit_init_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
-            # Analysis、参考 仅在已有 Story 内容时可编辑
-            can_edit_derived = has_topic and has_story and not editor_busy
-            edit_debut_btn.config(state='normal' if can_edit_derived else 'disabled')
-            edit_reference_btn.config(state='normal' if can_edit_derived else 'disabled')
+            # 参考收集：raw_content 不空 且 频道配置了 reference_filter
+            edit_reference_btn.config(state='normal' if has_topic and has_raw and has_ref_filter and not editor_busy else 'disabled')
+            # INIT编辑、DEBUT编辑：需参考收集完成（reference_content 不空），不必等 INIT 完成
+            can_edit_after_ref = has_topic and has_reference and not editor_busy
+            edit_init_btn.config(state='normal' if can_edit_after_ref else 'disabled')
+            edit_debut_btn.config(state='normal' if can_edit_after_ref else 'disabled')
 
 
         def on_topic_category_selected(e):
@@ -1117,9 +1134,14 @@ class ProjectSelectionDialog:
             if case_story_result[0] is None or not case_story_result[0]:
                 return
 
-            raw_story_system_prompt = config_channel.COUNSELING_RAW.format( topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
-        
+            raw_story_system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('channel_program_raw', '')
+
+            raw_story_system_prompt = raw_story_system_prompt.format( topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
+
+
             self.story_result['raw_content'] = self.llm_api.generate_text(raw_story_system_prompt, case_story_result[0])
+            # raw_content 就绪后立即刷新按钮状态（参考收集应立即可用）
+            update_buttons_state()
 
             topic_choices, topic_categories = config.load_topics(config.get_channel_path(self.story_result['channel']))
 
@@ -1165,7 +1187,8 @@ class ProjectSelectionDialog:
 
                 preview = (story_str[:40] + '…') if len(story_str) > 40 else story_str
                 raw_preview.config(text=f"RAW: {preview}", foreground="black")
-
+        # RAW 生成后刷新按钮状态（参考收集、DEBUT 等需 raw_content 不为空）
+        update_buttons_state()
 
         edit_raw_btn.config(command=open_raw_editor)
 
@@ -1176,7 +1199,7 @@ class ProjectSelectionDialog:
             try:
                 editor = ProgramInitEditorDialog(
                     parent=new_project_dialog,
-                    raw_story=self.story_result
+                    reference_story=self.story_result
                 )
                 self.story_result['init_content'] = editor.show()
                 update_previews()
@@ -1248,11 +1271,10 @@ class ProjectSelectionDialog:
                 _editor_open[0] = False
                 update_buttons_state()
 
-        edit_init_btn.config(command=open_init_editor)
         edit_reference_btn.config(command=open_reference_editor)
-        # if not config_channel.CHANNEL_CONFIG[self.channel].get('channel_reference_filter', ''), set edit_reference_btn to disabled
-        if not config_channel.CHANNEL_CONFIG[self.story_result['channel']].get('channel_prompt', {}).get('channel_reference_filter', ''):
-            edit_reference_btn.config(state='disabled')
+
+        edit_init_btn.config(command=open_init_editor)
+
         edit_debut_btn.config(command=open_debut_editor)
 
         # 初始状态：按钮禁用（topic 未选时）
