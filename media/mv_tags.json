@@ -1,0 +1,26 @@
+[
+    {
+        "tag_type": "ATMOSPHERE",
+        "tags": ["Light & relaxing rhythm", "Romantic & gentle narrative", "Epic atmosphere", "Mysterious atmosphere", "Reflective & nostalgic atmosphere", "Longing & hopeful atmosphere"]
+    },
+    {
+        "tag_type": "MUSIC_GENRE",
+        "tags": ["Rock", "Pop", "Jazz", "Classical", "Electronic", "Country", "Hip Hop", "R&B", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska"]
+    },
+    {
+        "tag_type": "STRUCTURE",
+        "tags": ["Layer by layer", "Rising arc", "Call and response", "A-B-A", "Reverse (major & minor) contrast", "Circular reprise", "Descent and dissolve", "Crescendo to silence"]
+    },
+    {
+        "tag_type": "MELODY",
+        "tags": ["Lyrical and emotional", "Strong melody (hummable)", "Descending lament", "Chant-like", "Epic cinematic", "Atmospheric", "Sacred & Cinematic"]
+    },
+    {
+        "tag_type": "Rhythm Groove",
+        "tags": ["Slow Ballad","Pop Groove","R&B Groove","Acoustic Folk Groove","Bossa Nova","Latin Groove","Ambient Pulse","Dreamy Waltz","Cinematic Undercurrent","Afrobeat Groove","House Beat","Trap Beat","Drum & Bass","Epic Drum Pulse","Swing Jazz","World Folk Rhythm"]
+    },
+    {
+        "tag_type": "INSTRUMENTS",
+        "tags": ["Piano", "Acoustic Guitar", "Electric Guitar", "String Ensemble", "Solo Violin", "Cello", "Woodwinds (Flute / Clarinet)", "Brass (Trumpet / Horn)", "Light Percussion", "Epic Drums", "Synth Pads / Drones", "Electronic Synth", "Chinese Traditional Instruments", "Japanese Traditional Instruments", "Korean Traditional Instruments", "Indian Traditional Instruments", "Middle Eastern Instruments (Oud / Santur / Ney)", "Celtic Folk Instruments", "African Percussion", "Latin Percussion"]
+    }
+]

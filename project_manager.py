@@ -618,6 +618,7 @@ class ProjectSelectionDialog:
             'channel_template': None,
             'topic_category': None,
             'topic_subtype': None,
+            'tags': None,  # list of selected tag values from tags.json (one per tag_type)
             'soul': None,
             'content': None,
             'action': None,
@@ -870,6 +871,7 @@ class ProjectSelectionDialog:
         
         # 主题分类选择（两级：category 和 subtype，各单选）
         topics_data = []  # 存储完整的 topics.json 数据
+        tag_choices_data = []  # 存储 tags.json 数据 [{tag_type, tags}, ...]
         
         ttk.Label(main_frame, text="主题分类:").grid(row=row, column=0, sticky='w', pady=5)
         topic_category_combo = ttk.Combobox(main_frame, values=[], state="readonly", width=80)
@@ -886,11 +888,62 @@ class ProjectSelectionDialog:
         topic_explanation_label.grid(row=row, column=1, columnspan=2, padx=(10, 0), pady=5, sticky='nw')
         row += 1
         
+        # 主题标签选择（根据 tags.json，每个 tag_type 选一个值）
+        tag_tags_frame = ttk.LabelFrame(main_frame, text="主题标签 (选填)", padding=5)
+        tag_tags_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+        main_frame.columnconfigure(1, weight=1)
+        tag_tags_inner = ttk.Frame(tag_tags_frame)
+        tag_tags_inner.pack(fill=tk.X, expand=True)
+        row += 1
+        
+        def sync_tags_from_combos(*args):
+            """从各 tag 下拉框收集选中值，写入 story_result['tags']"""
+            selected = []
+            for cb in tag_combo_refs:
+                v = cb.get().strip() if cb.get() else ''
+                if v:
+                    selected.append(v)
+            self.story_result['tags'] = selected if selected else None
+        
+        tag_combo_refs = []  # 存储各 tag 类型对应的 Combobox 引用，供 sync_tags_from_combos 读取
+        
+        def update_tag_selectors(*args):
+            """根据 topic_category、topic_subtype 和 tag_choices_data 更新标签选择 UI"""
+            for w in tag_tags_inner.winfo_children():
+                w.destroy()
+            tag_combo_refs.clear()
+            selected_category = topic_category_combo.get()
+            selected_subtype = topic_subtype_combo.get()
+            if not selected_category or not selected_subtype or not tag_choices_data:
+                ttk.Label(tag_tags_inner, text="请先选择主题分类和子类型", foreground="gray").pack(anchor='w')
+                self.story_result['tags'] = None
+                return
+            for i, tag_item in enumerate(tag_choices_data):
+                if not isinstance(tag_item, dict):
+                    continue
+                tag_type = tag_item.get('tag_type', '')
+                tags_list = tag_item.get('tags') or []
+                if not tags_list:
+                    continue
+                r = ttk.Frame(tag_tags_inner)
+                r.pack(fill=tk.X, pady=2)
+                ttk.Label(r, text=f"{tag_type}:", width=16, anchor='w').pack(side=tk.LEFT, padx=(0, 5))
+                vals = [''] + sorted(tags_list)
+                cb = ttk.Combobox(r, values=vals, state="readonly", width=50)
+                cb.set('')
+                cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                tag_combo_refs.append(cb)
+                cb.bind('<<ComboboxSelected>>', sync_tags_from_combos)
+            if not tag_combo_refs:
+                ttk.Label(tag_tags_inner, text="当前频道无可选标签", foreground="gray").pack(anchor='w')
+                self.story_result['tags'] = None
+        
         # 更新主题子类型选项的函数（根据选择的 category）
         def update_topic_subtype(*args):
             selected_category = topic_category_combo.get()
             self.story_result['topic_category'] = selected_category.strip() if selected_category else None
             self.story_result['topic_subtype'] = None
+            self.story_result['tags'] = None
             self.story_result['soul'] = None
             topic_subtype_combo.set('')
             topic_subtype_combo['values'] = []
@@ -935,6 +988,7 @@ class ProjectSelectionDialog:
                     topic_explanation_label.config(text="")
             else:
                 topic_explanation_label.config(text="")
+            update_tag_selectors()
         
         # 绑定事件在下方内容区域统一设置（含 update_buttons_state）
 
@@ -943,6 +997,7 @@ class ProjectSelectionDialog:
             self.story_result['channel'] = channel_combo.get()
             self.story_result['language'] = language_combo.get()
             topics_data.clear()  # 清空旧数据
+            tag_choices_data.clear()
             topic_category_combo.set('')  # 清空选择
             topic_category_combo['values'] = []
             topic_subtype_combo.set('')
@@ -950,18 +1005,24 @@ class ProjectSelectionDialog:
             topic_explanation_label.config(text="")
             self.story_result['topic_category'] = None
             self.story_result['topic_subtype'] = None
+            self.story_result['tags'] = None
             self.story_result['soul'] = None
             
             if self.story_result['channel']:
                 channel_path = config.get_channel_path(self.story_result['channel'])
-                loaded_choices, loaded_categories = config.load_topics(channel_path)
+                loaded_choices, loaded_categories, loaded_tags = config.load_topics(channel_path)
                 topics_data.extend(loaded_choices)
+                tag_choices_data.extend(loaded_tags)
                 topic_category_combo['values'] = sorted(loaded_categories)
             # 频道切换后需更新编辑按钮状态
             try:
                 update_buttons_state()
             except NameError:
                 pass  # 初次加载时 update_buttons_state 尚未定义
+            try:
+                update_tag_selectors()
+            except NameError:
+                pass
 
         # 绑定 combobox 改变事件，即时同步到 story_result
         def on_channel_changed(e=None):
@@ -1143,7 +1204,7 @@ class ProjectSelectionDialog:
             # raw_content 就绪后立即刷新按钮状态（参考收集应立即可用）
             update_buttons_state()
 
-            topic_choices, topic_categories = config.load_topics(config.get_channel_path(self.story_result['channel']))
+            topic_choices, topic_categories, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
 
             category_result = self.llm_api_local.generate_json(
                 config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic_choices=topic_choices),
@@ -1173,13 +1234,13 @@ class ProjectSelectionDialog:
                 if analysis_logic:
                     self.story_result['analysis_logic'] = analysis_logic
 
-                problem_tags = category_result.get('problem_tags', '')
+                problem_tags = category_result.get('tags', '')
                 if problem_tags:
-                    self.story_result['problem_tags'] = problem_tags
+                    self.story_result['tags'] = problem_tags
 
-                component_tags = category_result.get('component_tags', '')
+                component_tags = category_result.get('tags', '')
                 if component_tags:
-                    self.story_result['component_tags'] = component_tags
+                    self.story_result['tags'] = component_tags
 
                 story_str = json.dumps(category_result, indent=2, ensure_ascii=False)
                 new_project_dialog.clipboard_clear()

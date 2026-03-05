@@ -119,20 +119,22 @@ def parse_json_from_text(text):
     return None
 
 
-def load_topics(channel_path: str) -> tuple:
+def load_topics(channel_path: str) -> tuple[list, list, list]:
     """
-    从频道目录下的 topics.json 加载 topic_choices 和 topic_categories。
+    从频道目录下的 topics.json 和 tags.json 加载 topic_choices、topic_categories 和 tag_choices。
     可被 downloader、project_manager 等模块复用。
 
     Args:
         channel_path: 频道目录路径（可用 config.get_channel_path(channel) 获取）
 
     Returns:
-        (topic_choices, topic_categories): 主题列表与去重后的分类列表
+        (topic_choices, topic_categories, tag_choices): 主题列表、去重后的分类列表、tag 类型及选项列表
     """
     topics_file = os.path.join(channel_path, 'topics.json')
+    tags_file = os.path.join(channel_path, 'tags.json')
     topic_choices = []
     topic_categories = []
+    tag_choices = []
     if os.path.exists(topics_file):
         try:
             with open(topics_file, 'r', encoding='utf-8') as f:
@@ -148,7 +150,17 @@ def load_topics(channel_path: str) -> tuple:
                         topic_categories.append(category)
         except (json.JSONDecodeError, OSError):
             pass
-    return topic_choices, topic_categories
+    if os.path.exists(tags_file):
+        try:
+            with open(tags_file, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                tag_choices = loaded
+            elif isinstance(loaded, dict):
+                tag_choices = [loaded]
+        except (json.JSONDecodeError, OSError):
+            pass
+    return topic_choices, topic_categories, tag_choices
 
 
 # self.channel is like israle_zh,  need to get the 'isreale' part out

@@ -1,0 +1,209 @@
+[
+    {
+        "topic_category": "Love",
+        "description": "romantic relationships",
+        "soul": "mv_soul__love__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Falling in Love",
+              "soul": "mv_soul__love__falling_in_love.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Longing",
+              "soul": "mv_soul__love__longing.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Heartbreak",
+              "soul": "mv_soul__love__heartbreak.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Reunion",
+              "soul": "mv_soul__love__reunion.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Male-Female Dialogue",
+              "soul": "mv_soul__love__male_female_dialogue.md",
+              "tags": []
+            }
+        ]
+    },
+
+    {
+        "topic_category": "Entertainment",
+        "description": "dance / performance",
+        "soul": "mv_soul__entertainment__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Dance Song",
+              "soul": "mv_soul__entertainment__dance_song.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Group Dance",
+              "soul": "mv_soul__entertainment__group_dance.md",
+              "tags": []
+            }
+        ]
+    },
+
+    {
+        "topic_category": "Travel / Nature",
+        "description": "landscapes, journey",
+        "soul": "mv_soul__travel__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Landscapes",
+              "soul": "mv_soul__travel__landscapes.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Cultural Journey",
+              "soul": "mv_soul__travel__cultural_journey.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Pilgrimage",
+              "soul": "mv_soul__travel__pilgrimage.md",
+              "tags": []
+            }
+        ]
+    },
+
+    {
+        "topic_category": "Children",
+        "description": "Family / lullabies",
+        "soul": "mv_soul__children__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Lullaby",
+              "soul": "mv_soul__children__lullaby.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Bedtime song",
+              "soul": "mv_soul__children__bedtime_song.md",
+              "tags": []
+            }
+        ]
+    },
+
+    {
+        "topic_category": "Spiritual",
+        "description": "prayer, worship, confession",
+        "soul": "mv_soul__spiritual__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Prayer",
+              "soul": "mv_soul__spiritual__prayer.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Worship",
+              "soul": "mv_soul__spiritual__worship.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Confession",
+              "soul": "mv_soul__spiritual__confession.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Healing",
+              "soul": "mv_soul__spiritual__healing.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Psalm Hymn",
+              "soul": "mv_soul__spiritual__psalm_hymn.md",
+              "tags": []
+            }
+        ]
+    },
+    {
+        "topic_category": "Life Journey",
+        "description": "inspiration, growth",
+        "soul": "mv_soul__life__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Inspirational",
+              "soul": "mv_soul__life__inspirational.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Overcoming Struggles",
+              "soul": "mv_soul__life__overcoming_struggles.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Self Reflection",
+              "soul": "mv_soul__life__self_reflection.md",
+              "tags": []
+            }
+        ]
+    },
+    {
+        "topic_category": "Social",
+        "description": "patriotism, ceremonies",
+        "soul": "mv_soul__social__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Patriotic",
+              "soul": "mv_soul__social__patriotic.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Wedding",
+              "soul": "mv_soul__social__wedding.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Ceremony",
+              "soul": "mv_soul__social__ceremony.md",
+              "tags": []
+            }
+        ]
+    },
+    {
+        "topic_category": "Relationship",
+        "description": "friendship, family",
+        "soul": "mv_soul__relationship__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Friendship",
+              "soul": "mv_soul__relationship__friendship.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Loyalty",
+              "soul": "mv_soul__relationship__loyalty.md",
+              "tags": []
+            }
+        ]
+    },
+    {
+        "topic_category": "Narrative Story",
+        "description": "allegory, mythology",
+        "soul": "mv_soul__narrative__.md",
+        "topic_subtypes": [
+            {
+              "topic_subtype": "Ballad",
+              "soul": "mv_soul__narrative__ballad.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Mythological",
+              "soul": "mv_soul__narrative__mythological.md",
+              "tags": []
+            },
+            {
+              "topic_subtype": "Allegorical",
+              "soul": "mv_soul__narrative__allegorical.md",
+              "tags": []
+            }
+        ]
+    }
+]

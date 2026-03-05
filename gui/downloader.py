@@ -945,7 +945,7 @@ class MediaGUIManager:
         self.active_summary_threads = []
         self.active_threads_lock = threading.Lock()
 
-        self.topic_choices, self.topic_categories = config.load_topics(self.channel_path)
+        self.topic_choices, self.topic_categories, self.tag_choices = config.load_topics(self.channel_path)
         
         # 初始化主主题分类变量
         self.main_topic_category = None
@@ -1147,7 +1147,7 @@ class MediaGUIManager:
         topic_type = video_detail.get('topic_subtype', '')
         topic_category = video_detail.get('topic_category', '')
         tags = video_detail.get('component_tags', '')
-        problem_tags = video_detail.get('problem_tags', '')
+        problem_tags = video_detail.get('tags', '')
         if in_background and not tag_again and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip() and problem_tags and problem_tags.strip():
             return video_detail
 
@@ -1230,11 +1230,10 @@ class MediaGUIManager:
                     video_detail.pop('topic_type', None)
                 if result.get('topic_category', '') and result.get('topic_category', '').strip():
                     video_detail['topic_category'] = result.get('topic_category', '')
-                if result.get('problem_tags', '') and result.get('problem_tags', '').strip():
-                    video_detail['problem_tags'] = result.get('problem_tags', '')
+                if result.get('tags', '') and result.get('tags', '').strip():
+                    video_detail['tags'] = result.get('tags', '')
                 if result.get('component_tags', '') and result.get('component_tags', '').strip():   
                     video_detail['component_tags'] = result.get('component_tags', '')
-                    video_detail.pop('tags', None)
                 # 保存到文件（在锁内，确保数据一致性）
                 try:
                     with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -1332,7 +1331,7 @@ class MediaGUIManager:
             # 搜索并选择匹配的视频
             matched_count = 0
             for item in tree.get_children():
-                item_tags = tree.item(item, "problem_tags")
+                item_tags = tree.item(item, "tags")
                 if item_tags:
                     video_title = item_tags[1]
                     if search_text in video_title.lower():
@@ -1356,7 +1355,7 @@ class MediaGUIManager:
         smart_select_entry.bind('<Return>', lambda e: smart_select())
         
         # 创建Treeview显示视频列表
-        columns = ("title", "views", "duration", "upload_date", "status", "topic_category", "topic_subtype", "problem_tags")
+        columns = ("title", "views", "duration", "upload_date", "status", "topic_category", "topic_subtype", "tags")
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -1378,7 +1377,7 @@ class MediaGUIManager:
         tree.heading("status", text="状态")
         tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
-        tree.heading("problem_tags", text="问题标签")
+        tree.heading("tags", text="问题标签")
         
         tree.column("#0", width=20, anchor="center")
         tree.column("title", width=400, anchor="w")
@@ -1388,7 +1387,7 @@ class MediaGUIManager:
         tree.column("status", width=150, anchor="center")
         tree.column("topic_category", width=120, anchor="w")
         tree.column("topic_subtype", width=150, anchor="w")
-        tree.column("problem_tags", width=200, anchor="w")
+        tree.column("tags", width=200, anchor="w")
         
 
         def populate_tree():
@@ -1491,7 +1490,7 @@ class MediaGUIManager:
                 # 获取主题相关字段
                 topic_category = video.get('topic_category', '')
                 topic_subtype = video.get('topic_subtype', '')
-                problem_tags = video.get('problem_tags', '')
+                tags = video.get('tags', '')
                 if isinstance(problem_tags, list):
                     problem_tags = ' | '.join(problem_tags)
                 elif not isinstance(problem_tags, str):
@@ -1629,7 +1628,7 @@ class MediaGUIManager:
             # 获取当前值
             current_category = video_detail.get('topic_category', '')
             current_subtype = video_detail.get('topic_subtype', '')
-            current_tags = video_detail.get('problem_tags', '')
+            current_tags = video_detail.get('tags', '')
             if isinstance(current_tags, list):
                 current_tags = ' | '.join(current_tags)
             elif not isinstance(current_tags, str):
@@ -1695,12 +1694,11 @@ class MediaGUIManager:
                             for subtype_item in item.get('topic_subtypes', []):
                                 # 匹配选中的 topic_subtype
                                 if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
-                                    # 从 problem_tags 数组中获取每个项的 tag 字段
-                                    for tag_item in subtype_item.get('problem_tags', []):
-                                        if isinstance(tag_item, dict):
-                                            tag_name = tag_item.get('tag', '')
-                                            if tag_name and tag_name not in tags:
-                                                tags.append(tag_name)
+                                    # tags 为字符串数组，直接使用
+                                    for tag in subtype_item.get('tags', []):
+                                        tag_str = tag if isinstance(tag, str) else (tag.get('tag', '') if isinstance(tag, dict) else str(tag))
+                                        if tag_str and tag_str not in tags:
+                                            tags.append(tag_str)
                 tags_listbox.delete(0, tk.END)
                 for tag in tags:
                     tags_listbox.insert(tk.END, tag)
@@ -1757,9 +1755,9 @@ class MediaGUIManager:
                     video_detail.pop('topic_subtype', None)
                 
                 if tags_list:
-                    video_detail['problem_tags'] = tags_list
+                    video_detail['tags'] = tags_list
                 else:
-                    video_detail.pop('problem_tags', None)
+                    video_detail.pop('tags', None)
                 
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -1824,7 +1822,7 @@ class MediaGUIManager:
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
-            topic_tags = video_detail.get('problem_tags', '')
+            topic_tags = video_detail.get('tags', '')
             if isinstance(topic_tags, list):
                 topic_tags = ' | '.join(topic_tags)
             elif not isinstance(topic_tags, str):
@@ -1837,7 +1835,7 @@ class MediaGUIManager:
                 topic_type = video_detail.get('topic_subtype', '')
                 topic_category = video_detail.get('topic_category', '')
                 topic_subtype = video_detail.get('topic_subtype', '')
-                topic_tags = video_detail.get('problem_tags', '')
+                topic_tags = video_detail.get('tags', '')
                 if isinstance(topic_tags, list):
                     topic_tags = ' | '.join(topic_tags)
                 elif not isinstance(topic_tags, str):
@@ -1877,16 +1875,10 @@ class MediaGUIManager:
             tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=40)
             tags_entry.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
             
-            # 受众群体显示（只读，根据选中的标签动态计算）
-            ttk.Label(topic_frame, text="受众群体:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
-            audience_var = tk.StringVar(value='')
-            audience_label = ttk.Label(topic_frame, textvariable=audience_var, width=40, foreground="blue", wraplength=400)
-            audience_label.grid(row=3, column=1, padx=5, pady=5, sticky='w')
-            
             # 可选标签列表（用于快速选择）
-            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky='nw', padx=5, pady=5)
+            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
             tags_listbox_frame = ttk.Frame(topic_frame)
-            tags_listbox_frame.grid(row=4, column=1, padx=5, pady=5, sticky='nsew')
+            tags_listbox_frame.grid(row=3, column=1, padx=5, pady=5, sticky='nsew')
             
             tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=6)
             tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
@@ -1914,98 +1906,23 @@ class MediaGUIManager:
                     subtype_var.set('')
                 update_tags()
             
-            # 存储标签和对应的 audience 映射
-            tag_to_audience_map = {}
-            
             def update_tags(*args):
-                """根据选择的子类型更新标签选项"""
+                """根据选择的子类型更新标签选项（tags 为字符串数组）"""
                 selected_category = category_var.get()
                 selected_subtype = subtype_var.get()
                 tags = []
-                tag_to_audience_map.clear()  # 清空之前的映射
-                
                 if selected_category and selected_subtype and self.topic_choices:
                     for item in self.topic_choices:
                         if isinstance(item, dict) and item.get('topic_category') == selected_category:
                             for subtype_item in item.get('topic_subtypes', []):
-                                # 匹配选中的 topic_subtype
                                 if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
-                                    # 从 problem_tags 数组中获取每个项的 tag 字段和 audience
-                                    for tag_item in subtype_item.get('problem_tags', []):
-                                        if isinstance(tag_item, dict):
-                                            tag_name = tag_item.get('tag', '')
-                                            if tag_name and tag_name not in tags:
-                                                tags.append(tag_name)
-                                                # 存储标签对应的 audience
-                                                tag_audience = tag_item.get('audience', [])
-                                                if isinstance(tag_audience, list):
-                                                    tag_to_audience_map[tag_name] = tag_audience
-                                                elif tag_audience:
-                                                    tag_to_audience_map[tag_name] = [tag_audience]
-                                                else:
-                                                    tag_to_audience_map[tag_name] = []
-                
+                                    for tag in subtype_item.get('tags', []) or subtype_item.get('problem_tags', []):
+                                        tag_str = tag if isinstance(tag, str) else (tag.get('tag', '') if isinstance(tag, dict) else str(tag))
+                                        if tag_str and tag_str not in tags:
+                                            tags.append(tag_str)
                 tags_listbox.delete(0, tk.END)
                 for tag in tags:
                     tags_listbox.insert(tk.END, tag)
-                
-                # 更新 audience 显示
-                update_audience_display()
-            
-            def calculate_audience_from_tags():
-                """根据当前选中的标签计算 audience"""
-                tags_text = tags_var.get().strip()
-                if not tags_text:
-                    return []
-                
-                # 解析标签（用逗号分隔）
-                selected_tags = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
-                
-                # 收集所有标签对应的 audience
-                all_audiences = []
-                
-                # 首先从 tag_to_audience_map 中查找（如果已填充）
-                for tag in selected_tags:
-                    if tag in tag_to_audience_map:
-                        all_audiences.extend(tag_to_audience_map[tag])
-                
-                # 如果 tag_to_audience_map 为空或某些标签没有找到，从 topics.json 中查找
-                selected_category = category_var.get()
-                selected_subtype = subtype_var.get()
-                
-                if self.topic_choices and (not tag_to_audience_map or len(all_audiences) == 0):
-                    for item in self.topic_choices:
-                        if isinstance(item, dict) and item.get('topic_category') == selected_category:
-                            for subtype_item in item.get('topic_subtypes', []):
-                                if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
-                                    for tag_item in subtype_item.get('problem_tags', []):
-                                        if isinstance(tag_item, dict):
-                                            tag_name = tag_item.get('tag', '')
-                                            if tag_name in selected_tags:
-                                                tag_audience = tag_item.get('audience', [])
-                                                if isinstance(tag_audience, list):
-                                                    all_audiences.extend(tag_audience)
-                                                elif tag_audience:
-                                                    all_audiences.append(tag_audience)
-                
-                # 去重
-                unique_audiences = []
-                seen = set()
-                for aud in all_audiences:
-                    aud_str = str(aud).strip()
-                    if aud_str and aud_str not in seen:
-                        unique_audiences.append(aud_str)
-                        seen.add(aud_str)
-                
-                return unique_audiences
-            
-            def update_audience_display(*args):
-                """更新 audience 显示"""
-                audiences = calculate_audience_from_tags()
-                if audiences:
-                    audience_var.set(', '.join(audiences))
-                else:
-                    audience_var.set('')
             
             def add_selected_tags():
                 """将选中的标签添加到输入框"""
@@ -2018,8 +1935,6 @@ class MediaGUIManager:
                         tags_var.set(f"{current_tags_text},{new_tags}")
                     else:
                         tags_var.set(new_tags)
-                    # 更新 audience 显示
-                    update_audience_display()
 
             
             def copy_material():
@@ -2056,7 +1971,6 @@ class MediaGUIManager:
             # 绑定事件
             category_combo.bind('<<ComboboxSelected>>', update_subtypes)
             subtype_combo.bind('<<ComboboxSelected>>', update_tags)
-            tags_var.trace('w', update_audience_display)  # 当标签输入改变时，更新 audience 显示
             
             # 按钮框架
             button_frame = ttk.Frame(topic_frame)
@@ -2086,7 +2000,7 @@ class MediaGUIManager:
                 else:
                     tags_list = []
                 
-                # 更新视频详情（不保存 audience，因为它会根据标签动态计算）
+                # 更新视频详情
                 if category:
                     video_detail['topic_category'] = category
                 if subtype:
@@ -2111,18 +2025,11 @@ class MediaGUIManager:
             
             # 配置网格权重
             topic_frame.columnconfigure(1, weight=1)
-            topic_frame.rowconfigure(4, weight=1)  # 标签列表在第4行
+            topic_frame.rowconfigure(3, weight=1)  # 标签列表在第3行
             
             # 初始化子类型和标签选项
             if topic_category:
-                update_subtypes()  # 这会调用 update_tags()，进而调用 update_audience_display()
-            else:
-                # 如果没有分类，也要初始化 audience 显示（基于现有标签）
-                # 延迟一点，确保所有变量都已设置
-                summary_window.after(50, update_audience_display)
-            
-            # 确保 audience 显示已初始化（延迟一点，确保所有变量都已设置）
-            summary_window.after(100, update_audience_display)
+                update_subtypes()  # 这会调用 update_tags()
             
             label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
             label.pack(anchor=tk.W, pady=(0, 5))

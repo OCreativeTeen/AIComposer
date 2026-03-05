@@ -928,7 +928,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
         "title": "The name of the story (less than 16 words, in original language)",
         "topic_category": "The primary category from the Classification System",
         "topic_subtype": "The specific sub-type from the Classification System",
-        "problem_tags": "1-3 selected tags, provided as a comma-separated string",
+        "tags": "1-3 selected tags, provided as a comma-separated string",
         "component_tags": "Selected component tags from choices, provided as a comma-separated string"
     }}
 """
@@ -950,7 +950,7 @@ output as json format (strictly follow the format):
 {{
     "topic_category": "The topic category of the content",
     "topic_subtype": "The topic subtype of the content",
-    "problem_tags": "The topic tags of the content -- give string of tags separated by commas, not list!!",
+    "tags": "The topic tags of the content -- give string of tags separated by commas, not list!!",
     "component_tags": "The component_tags of the content -- give string of tags separated by commas, not list!!"
 }}
 
@@ -958,7 +958,7 @@ like the example :
 {{
     "topic_category": "人格形成与早期创伤",
     "topic_subtype": "原生家庭脚本与角色固化",
-    "problem_tags": "我从小就是那个最懂事的, 我不被偏爱但被需要, 我一反抗就内疚",
+    "tags": "我从小就是那个最懂事的, 我不被偏爱但被需要, 我一反抗就内疚",
     "component_tags": "case-study, analysis, insight, solution"
 }}
 """
