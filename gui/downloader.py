@@ -648,7 +648,7 @@ class MediaDownloader:
             if not info or 'entries' not in info:
                 return None
 
-            self.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
+            self.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
@@ -954,7 +954,7 @@ class MediaGUIManager:
 
     def manage_hot_videos(self):
         # 查找所有热门视频JSON文件
-        pattern = f"{self.youtube_dir}/list/*_hotvideos.txt"
+        pattern = f"{self.youtube_dir}/list/*.json.txt"
         json_files = glob.glob(pattern)
         
         if not json_files:
@@ -965,8 +965,8 @@ class MediaGUIManager:
         channel_data = []
         for json_file in json_files:
             filename = os.path.basename(json_file)
-            # 从文件名中提取频道名：频道名_hotvideos.txt -> 频道名
-            match = re.match(r'(.+?)_hotvideos\.txt', filename)
+            # 从文件名中提取频道名：频道名.json.txt -> 频道名
+            match = re.match(r'(.+?)\.json\.txt', filename)
             if match:
                 channel_name = match.group(1)
                 # 读取文件获取视频数量
@@ -1042,7 +1042,7 @@ class MediaGUIManager:
             return None
 
         if srt_file.endswith('.json'):
-            return self.downloader.transcriber.fetch_text_from_json(srt_file)
+            return config.fetch_text_from_json(srt_file)
 
         with open(srt_file, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -1146,9 +1146,8 @@ class MediaGUIManager:
         summary = video_detail.get('summary', '')
         topic_type = video_detail.get('topic_subtype', '')
         topic_category = video_detail.get('topic_category', '')
-        tags = video_detail.get('component_tags', '')
         problem_tags = video_detail.get('tags', '')
-        if in_background and not tag_again and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip() and problem_tags and problem_tags.strip():
+        if in_background and not tag_again and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and problem_tags and problem_tags.strip():
             return video_detail
 
         text_content = self.fetch_text_content(video_detail)
@@ -1232,8 +1231,6 @@ class MediaGUIManager:
                     video_detail['topic_category'] = result.get('topic_category', '')
                 if result.get('tags', '') and result.get('tags', '').strip():
                     video_detail['tags'] = result.get('tags', '')
-                if result.get('component_tags', '') and result.get('component_tags', '').strip():   
-                    video_detail['component_tags'] = result.get('component_tags', '')
                 # 保存到文件（在锁内，确保数据一致性）
                 try:
                     with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -1262,6 +1259,20 @@ class MediaGUIManager:
         info_text = f"频道: {self.downloader.channel_name} | 共 {len(self.downloader.channel_videos)} 个视频"
         info_label = ttk.Label(info_frame, text=info_text, font=("Arial", 12, "bold"))
         info_label.pack(side=tk.LEFT)
+        
+        #for video in self.downloader.channel_videos:
+        #    video.pop('component_tags', None)
+        #       transcribed_file = video.get('transcribed_file', '')
+        #    if transcribed_file:
+        #        content = config.fetch_text_from_json(transcribed_file)
+        #        # if content is None or empty, then remove this video from self.downloader.channel_videos
+        #        if content:
+        #            video['content'] = content
+        #        else:
+        #            self.downloader.channel_videos.remove(video)
+        #
+        #with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+        #    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
         
         # 添加刷新按钮
         ttk.Button(info_frame, text="🔄 刷新", command=lambda: populate_tree()).pack(side=tk.RIGHT, padx=5)
@@ -1490,7 +1501,7 @@ class MediaGUIManager:
                 # 获取主题相关字段
                 topic_category = video.get('topic_category', '')
                 topic_subtype = video.get('topic_subtype', '')
-                tags = video.get('tags', '')
+                problem_tags = video.get('tags', '')
                 if isinstance(problem_tags, list):
                     problem_tags = ' | '.join(problem_tags)
                 elif not isinstance(problem_tags, str):
@@ -1621,18 +1632,20 @@ class MediaGUIManager:
             """编辑视频的主题信息对话框"""
             edit_dialog = tk.Toplevel(dialog)
             edit_dialog.title("编辑主题信息")
-            edit_dialog.geometry("600x500")
+            edit_dialog.geometry("700x550")
             edit_dialog.transient(dialog)
             edit_dialog.grab_set()
             
             # 获取当前值
             current_category = video_detail.get('topic_category', '')
             current_subtype = video_detail.get('topic_subtype', '')
-            current_tags = video_detail.get('tags', '')
-            if isinstance(current_tags, list):
-                current_tags = ' | '.join(current_tags)
-            elif not isinstance(current_tags, str):
-                current_tags = str(current_tags) if current_tags else ''
+            current_tags_raw = video_detail.get('tags', '')
+            if isinstance(current_tags_raw, list):
+                current_tags = ', '.join(str(t) for t in current_tags_raw)
+            elif isinstance(current_tags_raw, str):
+                current_tags = current_tags_raw
+            else:
+                current_tags = str(current_tags_raw) if current_tags_raw else ''
             
             # 主题分类选择
             ttk.Label(edit_dialog, text="主题分类:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
@@ -1646,16 +1659,69 @@ class MediaGUIManager:
             subtype_combo = ttk.Combobox(edit_dialog, textvariable=subtype_var, values=[], state="readonly", width=50)
             subtype_combo.grid(row=1, column=1, padx=10, pady=5, sticky='ew')
             
-            # 主题标签选择（多选）
-            ttk.Label(edit_dialog, text="主题标签 (用 | 分隔):").grid(row=2, column=0, sticky='nw', padx=10, pady=5)
+            # 辅助：解析标签为 analysis(无=) 与 manual(name=value)
+            def _parse_tags_to_parts(tags_text):
+                parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
+                analysis = [p for p in parts if '=' not in p]
+                manual = [p for p in parts if '=' in p]
+                return analysis, manual
+            
+            # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
+            ttk.Label(edit_dialog, text="主题标签 (可编辑, 用 , 或 | 分隔):").grid(row=2, column=0, sticky='nw', padx=10, pady=5)
             tags_var = tk.StringVar(value=current_tags)
-            tags_entry = ttk.Entry(edit_dialog, textvariable=tags_var, width=50)
+            tags_entry = ttk.Entry(edit_dialog, textvariable=tags_var, width=60)
             tags_entry.grid(row=2, column=1, padx=10, pady=5, sticky='ew')
             
-            # 标签选择列表（用于快速选择）
-            ttk.Label(edit_dialog, text="可选标签:").grid(row=3, column=0, sticky='nw', padx=10, pady=5)
+            # tag_choices 多选组（来自 tags.json，如 GENRE=、Rhythm=，值用/连接）
+            tag_radio_refs = []
+            row_tag_radios = 3
+            if self.tag_choices:
+                tag_radios_frame = ttk.LabelFrame(edit_dialog, text="标签选择 (name=value，可多选，值用/连接)", padding=5)
+                tag_radios_frame.grid(row=row_tag_radios, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
+                tag_radios_frame.columnconfigure(0, weight=1)
+                existing_manual = {t.split('=', 1)[0]: t.split('=', 1)[-1] for t in _parse_tags_to_parts(current_tags)[1]}
+                for tag_item in self.tag_choices:
+                    if not isinstance(tag_item, dict):
+                        continue
+                    tag_type = tag_item.get('tag_type', '')
+                    tags_list = tag_item.get('tags') or []
+                    if not tags_list:
+                        continue
+                    r = ttk.LabelFrame(tag_radios_frame, text=f"{tag_type}:", padding=3)
+                    r.pack(fill=tk.X, pady=3)
+                    existing_vals = existing_manual.get(tag_type, '').split('/') if existing_manual.get(tag_type) else []
+                    existing_set = {v.strip() for v in existing_vals if v.strip()}
+                    check_vars = []
+                    inner = ttk.Frame(r)
+                    inner.pack(fill=tk.X, expand=True)
+                    n_cols = 10
+                    for col_idx, val in enumerate(sorted(tags_list)):
+                        ri, ci = col_idx // n_cols, col_idx % n_cols
+                        cb_var = tk.BooleanVar(value=val in existing_set)
+                        cb = ttk.Checkbutton(inner, text=val, variable=cb_var, command=lambda: _sync_tags_from_radios())
+                        cb.grid(row=ri, column=ci, sticky='w', padx=(0, 8), pady=1)
+                        check_vars.append((val, cb_var))
+                    for c in range(n_cols):
+                        inner.columnconfigure(c, weight=1)
+                    tag_radio_refs.append((tag_type, check_vars))
+                row_tag_radios += 1
+            
+            def _sync_tags_from_radios():
+                """从多选组更新 tags_var：保留分析标签 + 手动 name=value（多选用/连接）"""
+                analysis, _ = _parse_tags_to_parts(tags_var.get())
+                manual = []
+                for tag_type, check_vars in tag_radio_refs:
+                    vals = [v for v, cb_var in check_vars if cb_var.get()]
+                    if vals:
+                        manual.append(f"{tag_type}={'/'.join(vals)}")
+                combined = analysis + manual
+                tags_var.set(', '.join(combined))
+            
+            
+            # 标签选择列表（来自 topics 子类型的可选标签）
+            ttk.Label(edit_dialog, text="可选标签:").grid(row=row_tag_radios, column=0, sticky='nw', padx=10, pady=5)
             tags_listbox_frame = ttk.Frame(edit_dialog)
-            tags_listbox_frame.grid(row=3, column=1, padx=10, pady=5, sticky='nsew')
+            tags_listbox_frame.grid(row=row_tag_radios, column=1, padx=10, pady=5, sticky='nsew')
             
             tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=8)
             tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
@@ -1696,9 +1762,8 @@ class MediaGUIManager:
                                 if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
                                     # tags 为字符串数组，直接使用
                                     for tag in subtype_item.get('tags', []):
-                                        tag_str = tag if isinstance(tag, str) else (tag.get('tag', '') if isinstance(tag, dict) else str(tag))
-                                        if tag_str and tag_str not in tags:
-                                            tags.append(tag_str)
+                                        if tag not in tags:
+                                            tags.append(tag)
                 tags_listbox.delete(0, tk.END)
                 for tag in tags:
                     tags_listbox.insert(tk.END, tag)
@@ -1707,13 +1772,13 @@ class MediaGUIManager:
                 """将选中的标签添加到输入框"""
                 selected_indices = tags_listbox.curselection()
                 if selected_indices:
-                    current_tags_text = tags_var.get()
+                    current_tags_text = tags_var.get().strip()
                     selected_tags = [tags_listbox.get(i) for i in selected_indices]
-                    new_tags = ','.join(selected_tags)
+                    new_part = ', '.join(selected_tags)
                     if current_tags_text:
-                        tags_var.set(f"{current_tags_text},{new_tags}")
+                        tags_var.set(f"{current_tags_text}, {new_part}")
                     else:
-                        tags_var.set(new_tags)
+                        tags_var.set(new_part)
 
             # 绑定事件
             category_combo.bind('<<ComboboxSelected>>', update_subtypes)
@@ -1721,7 +1786,7 @@ class MediaGUIManager:
             
             # 添加标签按钮
             add_tags_btn = ttk.Button(edit_dialog, text="添加选中标签", command=add_selected_tags)
-            add_tags_btn.grid(row=4, column=1, padx=10, pady=5, sticky='w')
+            add_tags_btn.grid(row=row_tag_radios + 1, column=1, padx=10, pady=5, sticky='w')
 
             # 初始化
             if current_category:
@@ -1729,7 +1794,7 @@ class MediaGUIManager:
             
             # 按钮框架
             button_frame = ttk.Frame(edit_dialog)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=20)
+            button_frame.grid(row=row_tag_radios + 2, column=0, columnspan=2, pady=20)
             
             def save_changes():
                 """保存更改"""
@@ -1737,9 +1802,9 @@ class MediaGUIManager:
                 subtype = subtype_var.get().strip()
                 tags_text = tags_var.get().strip()
                 
-                # 解析标签（用 | 分隔）
+                # 解析标签（支持 , 或 | 分隔，保留 GENRE=xxx 等格式）
                 if tags_text:
-                    tags_list = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                    tags_list = [tag.strip() for tag in re.split(r'[|,]', tags_text) if tag.strip()]
                 else:
                     tags_list = []
                 
@@ -1772,7 +1837,7 @@ class MediaGUIManager:
             
             # 配置网格权重
             edit_dialog.columnconfigure(1, weight=1)
-            edit_dialog.rowconfigure(3, weight=1)
+            edit_dialog.rowconfigure(row_tag_radios, weight=1)
         
         def edit_selected_topics():
             """编辑选中视频的主题信息"""
@@ -1827,8 +1892,7 @@ class MediaGUIManager:
                 topic_tags = ' | '.join(topic_tags)
             elif not isinstance(topic_tags, str):
                 topic_tags = str(topic_tags) if topic_tags else ''
-            tags = video_detail.get('component_tags', '')
-            if not low_priority or not summary or not summary.strip() or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() or not tags or not tags.strip():
+            if not low_priority or not summary or not summary.strip() or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() :
                 # show a messagebox to let user know the summary is generating (non-blocking)
                 # self.root.after(0, lambda: messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=self.root))
                 self.update_text_content(video_detail, in_background=low_priority)
@@ -1840,7 +1904,6 @@ class MediaGUIManager:
                     topic_tags = ' | '.join(topic_tags)
                 elif not isinstance(topic_tags, str):
                     topic_tags = str(topic_tags) if topic_tags else ''
-                tags = video_detail.get('component_tags', '')
                 summary = video_detail.get('summary', '')
 
             # show the summary in a new window
@@ -1917,9 +1980,8 @@ class MediaGUIManager:
                             for subtype_item in item.get('topic_subtypes', []):
                                 if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
                                     for tag in subtype_item.get('tags', []) or subtype_item.get('problem_tags', []):
-                                        tag_str = tag if isinstance(tag, str) else (tag.get('tag', '') if isinstance(tag, dict) else str(tag))
-                                        if tag_str and tag_str not in tags:
-                                            tags.append(tag_str)
+                                        if tag not in tags:
+                                            tags.append(tag)
                 tags_listbox.delete(0, tk.END)
                 for tag in tags:
                     tags_listbox.insert(tk.END, tag)
@@ -2137,7 +2199,7 @@ class MediaGUIManager:
                 summary = video_detail.get('summary', '')
                 topic_type = video_detail.get('topic_subtype', '')
                 topic_category = video_detail.get('topic_category', '')
-                tags = video_detail.get('component_tags', '')
+                tags = video_detail.get('tags', '')
                 if summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip():
                     continue
                 videos_to_process.append(video_detail)
@@ -2530,7 +2592,7 @@ class MediaGUIManager:
             self.downloader.download_video_highest_resolution(video_data)
             return
     
-        self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
+        self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
         if os.path.exists(self.downloader.channel_list_json):
             self.downloader.channel_videos = json.load(open(self.downloader.channel_list_json, 'r', encoding='utf-8'))
             self.downloader.latest_date = max(
@@ -2546,12 +2608,12 @@ class MediaGUIManager:
             self.downloader.channel_videos = []
 
         if not self.downloader.channel_videos:
-            # show all the *_hotvideos.txt files in the youtube_dir,  let user to select one
+            # show all the *.json.txt files in the youtube_dir,  let user to select one
             # if user Not select one, ask user give a new channel name, then create a new file with the new channel name
             # and add the video_data as the first item in the new file (change the channel_name to the new channel name)
             
             # 查找所有热门视频JSON文件
-            channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*_hotvideos.txt")
+            channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*.json.txt")
             
             # 使用线程安全的队列来传递结果
             selected_file = None
@@ -2563,7 +2625,7 @@ class MediaGUIManager:
                 for json_file in channel_list_json_files:
                     filename = os.path.basename(json_file)
                     # 提取频道名
-                    match = re.match(r'(.+?)_hotvideos\.json', filename)
+                    match = re.match(r'(.+?)\.json\.txt', filename)
                     if match:
                         channel_name = match.group(1)
                         channel_choices.append(channel_name)
@@ -2594,7 +2656,7 @@ class MediaGUIManager:
                     self.downloader.channel_videos = []
             
             if not selected_file or not self.downloader.channel_videos:
-                self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}_hotvideos.txt"
+                self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
                 self.downloader.channel_videos = []
                 print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 

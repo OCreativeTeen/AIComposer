@@ -2,6 +2,7 @@ import json
 import base64
 import requests
 from PIL import Image
+from datetime import datetime
 from io import BytesIO
 from rembg import remove
 import os
@@ -676,7 +677,7 @@ class SDProcessor:
                 scene[track + "_status"] = "ENH1"
 
  
-    ENHANCE_SERVERS = ["http://10.0.0.210:5000", "http://10.0.0.235:5000", "http://10.0.0.210:5000", "http://10.0.0.235:5000", "http://10.0.0.235:5000",]
+    ENHANCE_SERVERS = ["http://10.0.0.235:5000", "http://10.0.0.235:5000",]
     current_enhance_server = 0
 
     def _enhance_video(self, video_path):
@@ -765,15 +766,35 @@ call venv\\Scripts\\activate.bat
         # Prepare form data
         form_data = data.copy() if data else {}
         
-        # Prepare files for upload
+        # Prepare files for upload (keep file paths for curl dump)
         files_to_upload = {}
+        file_paths_for_curl = {}  # field_name -> file_path
         if files:
             for field_name, file_path in files.items():
                 if not os.path.exists(file_path):
                     raise FileNotFoundError(f"File not found: {file_path}")
-                # Open file and add to upload
+                file_paths_for_curl[field_name] = file_path
                 files_to_upload[field_name] = open(file_path, 'rb')
-        
+
+        # Write equivalent curl command to project temp folder for debugging
+        try:
+            temp_dir = config.get_temp_path(self.workflow.pid)
+            curl_filename = datetime.now().strftime("%Y%m%d%H%M%S") + ".txt"
+            curl_path = os.path.join(temp_dir, curl_filename)
+            curl_parts = ["curl", "-X", "POST", "--timeout", "60"]
+            for k, v in form_data.items():
+                curl_parts.append("-F")
+                v_esc = str(v).replace('\\', '\\\\').replace('"', '\\"')
+                curl_parts.append(f'"{k}={v_esc}"')
+            for field_name, path in file_paths_for_curl.items():
+                curl_parts.append("-F")
+                curl_parts.append(f'"{field_name}=@{path}"')
+            curl_parts.append(f'"{full_url}"')
+            with open(curl_path, "w", encoding="utf-8") as cf:
+                cf.write(" ".join(curl_parts))
+        except Exception as e:
+            pass  # ignore curl dump errors
+
         try:
             response = requests.post(
                 full_url,
@@ -781,9 +802,9 @@ call venv\\Scripts\\activate.bat
                 files=files_to_upload,
                 timeout=60
             )
-            
+
             return response
-            
+
         finally:
             # Close all opened files
             for file_obj in files_to_upload.values():

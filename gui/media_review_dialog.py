@@ -1259,10 +1259,25 @@ class AVReviewDialog:
             self._transcribe_recorded_audio()
             self._update_fresh_json_text()
 
+        _name = self.current_scene.get("name", "")
+        _content = ""
+        selected_prompt = ""
+        if _name == "development2":
+            _content = project_manager.PROJECT_CONFIG.get('debut_content', "")
+            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('development2', '')
+        elif _name == "development1":
+            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('development2', '')
+        elif _name == "intro":
+            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('intro', '')
+        else:
+            return
+
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
         if mode == "connect_next":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]['channel_prompt'].get('channel_story_connection', '')
+            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('channel_story_connection', '')
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1285,7 +1300,7 @@ class AVReviewDialog:
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
 
         elif mode == "connect_prev":
-            selected_prompt = config_channel.CHANNEL_CONFIG[self.workflow.channel]['channel_prompt'].get('channel_story_connection', '')
+            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('channel_story_connection', '')
             selected_prompt_example_file = self.workflow.channel + "_connection.json"
             refresh_json = [
                 {
@@ -1315,7 +1330,7 @@ class AVReviewDialog:
                     refresh_json_copy = []
                     for item in refresh_json:
                         new_item = {
-                            "content": self.current_scene.get("content", {}),
+                            "content": _content,
                             "speaking": item.get("speaking", ""),
                             "speaker": item.get("speaker", ""),
                             "voiceover": item.get("voiceover", "")
@@ -1330,7 +1345,7 @@ class AVReviewDialog:
                 refresh_json = [
                     {
                         "name": self.current_scene.get("name", "story"),
-                        "content": self.current_scene.get("content", {}),
+                        "content": _content,
                         "speaking": self.current_scene.get("speaking", ""),
                         "speaker": self.current_scene.get("speaker", ""),
                         "voiceover": self.current_scene.get("voiceover", "")
@@ -1348,7 +1363,6 @@ class AVReviewDialog:
         if selected_prompt_example_file:
             channel_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
             topic_type = project_manager.PROJECT_CONFIG.get('topic_category', '') + " - " + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
-            selected_prompt = self.current_scene.get("prompt", "")[0]
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
             with open(example_file, "r", encoding="utf-8") as f:
@@ -1393,7 +1407,6 @@ class AVReviewDialog:
             self.current_scene["actions"] = new_scenes[0].get("actions", "")
             self.current_scene["visual"] = new_scenes[0].get("visual", "")
             self.current_scene["start"] = 0.0
-            self.current_scene["extend"] = 0.0
             self.current_scene["end"] = self.audio_duration
             self.current_scene["duration"] = self.audio_duration
             self.current_scene["caption"] = ". ".join([item.get("caption", "") for item in new_scenes])
@@ -1410,7 +1423,6 @@ class AVReviewDialog:
                 duration = fresh_scene.get("duration", self.audio_duration)
                 scene["duration"] = duration if len(self.audio_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
                 scene["start"] = start_time
-                scene["extend"] = 0.0
                 start_time = start_time + scene["duration"]
                 scene["end"] = start_time
                 scene["id"] = start_id + 1
@@ -1496,7 +1508,6 @@ class AVReviewDialog:
                 _refresh_scene_media(json_item, self.media_type, ".mp4", v)
                 if self.media_type == "clip":
                     json_item["duration"] = self.workflow.ffmpeg_audio_processor.get_duration(json_item[self.media_type+"_audio"])
-                    json_item["extend"] = 1.0
                     json_item["start"] = start_time
                     start_time = start_time + json_item["duration"]
                     json_item["end"] = start_time
@@ -1700,12 +1711,13 @@ class AVReviewDialog:
         if v != self.source_video_path:
             #v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, self.source_audio_path, True)
             _refresh_scene_media(self.current_scene, self.video_field, ".mp4", self.source_video_path, True)
+            self.source_audio_path = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(self.source_video_path)
+            _refresh_scene_media(self.current_scene, self.audio_field, ".wav", self.source_audio_path, True)
 
         # 执行音视频切割（只有在边界被手动调整后才执行）
         # 判断是否需要切割：
         # 1. 有多个场景
         # 2. 场景的边界不是默认的（即被手动编辑过）
-
         if self.media_type != "clip" or len(self.audio_json) == 1:
             scene = self.audio_json[0]
             start = scene.get('start', 0)
@@ -1757,7 +1769,6 @@ class AVReviewDialog:
             'audio_json': self.audio_json,
             'transcribe_way': self.transcribe_way
         }
-        
         self.close_dialog()
 
 
@@ -2765,43 +2776,6 @@ class AVReviewDialog:
                 update_widget(widget)
         except Exception as e:
             print(f"⚠️ 更新裁剪控件最大值失败: {e}")
-
-
-
-    def try_update_scene_visual_fields(self, current_scene, scene_data):
-        # 显示对比对话框，让用户比较和编辑
-        updated_data = self._show_scene_comparison_dialog(current_scene, scene_data)
-        if updated_data is None:
-            return  # 用户取消
-
-        content = scene_data.get("speaking", "")
-        if content:
-            current_scene["speaking"] = content
-        story = scene_data.get("visual", "")
-        speaker = scene_data.get("speaker", "")
-        if speaker:
-            current_scene["speaker"] = speaker
-        if story:
-            current_scene["visual"] = story
-        actions = scene_data.get("actions", "")
-        if actions:
-            current_scene["actions"] = actions
-        #cinematography = scene_data.get("cinematography", "")
-        #if cinematography:
-        #    # 规范化 cinematography 字段，确保正确处理 JSON 字符串
-        #    current_scene["cinematography"] = self._normalize_json_string_field(cinematography)
-        narrator = scene_data.get("narrator", "")
-        if narrator:
-            current_scene["narrator"] = narrator
-        actions = scene_data.get("actions", "")
-        if actions:
-            current_scene["actions"] = actions
-        kernel = scene_data.get("kernel", "")
-        if kernel:
-            current_scene["kernel"] = kernel
-
-        self.save_scenes_to_json()
-
 
 
     def _show_scene_comparison_dialog(self, current_scene, new_scene_data):

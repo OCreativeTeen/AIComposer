@@ -455,18 +455,26 @@ class FfmpegProcessor:
 
             # 根据动画选择构建视频滤镜
             vf_filter = self._build_animation_filter(animation_choice)
-            
-            cmd = self._ffmpeg_input_args(image_path, audio_path)
+
+            # -loop 1 必须作为图片的【输入选项】放在 -i image_path 前，否则图片只算一帧，-shortest 会按最短流截断导致输出只有一帧
+            cmd = [
+                self.ffmpeg_path, "-y",
+            ]
+            cmd.extend(self._get_input_args())
+            cmd.extend([
+                "-loop", "1",
+                "-i", image_path,
+                "-i", audio_path,
+            ])
             cmd.extend(self._get_audio_encode_args())
             cmd.extend(self._get_video_output_args(keyframe_interval=True))
             cmd.extend(self._get_output_optimization_args())
             cmd.extend([
-                "-shortest",  # Use shortest stream duration (audio duration)
-                "-loop", "1",
+                "-shortest",  # 以音频时长为准截断（图片因 -loop 1 为“无限长”）
                 "-vf", vf_filter,
                 video_path
             ])
-            
+
             self.run_ffmpeg_command(cmd)
         except subprocess.CalledProcessError as e:
             print(f"FFmpeg Error 1: {e.stderr}")
@@ -592,6 +600,38 @@ class FfmpegProcessor:
             return None
 
         return output_path
+
+
+    def extract_audio_segment(self, audio_path, start_time, duration, fade_out_duration=0):
+        """
+        从音频文件中提取指定时间段，可选在末尾添加淡出。
+        Returns: 临时 wav 路径，失败返回 None
+        """
+        try:
+            if duration <= 0:
+                return None
+            output_path = config.get_temp_file(self.pid, "wav")
+            fade_out = min(fade_out_duration, duration) if fade_out_duration > 0 else 0
+            fade_st = max(0, duration - fade_out)
+            # atrim: start=起始秒, duration=时长; asetpts 重置时间戳; 可选 afade 淡出
+            if fade_out > 0.01:
+                af_filter = f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS,afade=t=out:st={fade_st:.6f}:d={fade_out:.6f}[a]"
+            else:
+                af_filter = f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS[a]"
+            cmd = [
+                self.ffmpeg_path, "-y",
+                "-i", audio_path,
+                "-filter_complex", af_filter,
+                "-map", "[a]",
+                "-ac", "2",
+                "-ar", str(STANDARD_AUDIO_RATE),
+                output_path
+            ]
+            self.run_ffmpeg_command(cmd)
+            return output_path
+        except subprocess.CalledProcessError as e:
+            print(f"extract_audio_segment 出错: {e.stderr}")
+            return None
 
 
     def to_webp(self, image_path):
@@ -979,12 +1019,6 @@ class FfmpegProcessor:
         except Exception as e:
             print(f"❌ Error extracting frame: {e}")
             return None
-
-
-    def extract_first_last_frame(self, video_path):
-        first_frame_path = self.extract_frame(video_path, True)
-        last_frame_path = self.extract_frame(video_path, False)
-        return first_frame_path, last_frame_path
 
 
     def video_fade(self, video_path, fade_in_length, fade_out_length, audio_fade):

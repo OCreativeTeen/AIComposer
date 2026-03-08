@@ -4,8 +4,12 @@
         "tags": ["Light & relaxing rhythm", "Romantic & gentle narrative", "Epic atmosphere", "Mysterious atmosphere", "Reflective & nostalgic atmosphere", "Longing & hopeful atmosphere"]
     },
     {
-        "tag_type": "MUSIC_GENRE",
-        "tags": ["Rock", "Pop", "Jazz", "Classical", "Electronic", "Country", "Hip Hop", "R&B", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska", "Reggae", "Soul", "Funk", "Disco", "Blues", "Rap", "Metal", "Punk", "Ska"]
+        "tag_type": "GENRE",
+        "tags": ["Pop","Rock","Jazz","Classical","Electronic","Hip Hop / Rap","R&B / Soul","Funk","Disco","Blues","Country","Folk","Reggae / Ska","Latin","Metal","Punk","Gospel","World","Ambient","Cinematic","Dance / EDM","Lo-fi","Indie"]
+    },
+    {
+        "tag_type": "INSTRUMENTS",
+        "tags": ["Piano", "Acoustic Guitar", "Electric Guitar", "String Ensemble", "Solo Violin", "Cello", "Woodwinds (Flute / Clarinet)", "Brass (Trumpet / Horn)", "Light Percussion", "Epic Drums", "Synth Pads / Drones", "Electronic Synth", "Chinese Traditional Instruments", "Japanese Traditional Instruments", "Korean Traditional Instruments", "Indian Traditional Instruments", "Middle Eastern Instruments (Oud / Santur / Ney)", "Celtic Folk Instruments", "African Percussion", "Latin Percussion"]
     },
     {
         "tag_type": "STRUCTURE",
@@ -16,11 +20,7 @@
         "tags": ["Lyrical and emotional", "Strong melody (hummable)", "Descending lament", "Chant-like", "Epic cinematic", "Atmospheric", "Sacred & Cinematic"]
     },
     {
-        "tag_type": "Rhythm Groove",
+        "tag_type": "Rhythm",
         "tags": ["Slow Ballad","Pop Groove","R&B Groove","Acoustic Folk Groove","Bossa Nova","Latin Groove","Ambient Pulse","Dreamy Waltz","Cinematic Undercurrent","Afrobeat Groove","House Beat","Trap Beat","Drum & Bass","Epic Drum Pulse","Swing Jazz","World Folk Rhythm"]
-    },
-    {
-        "tag_type": "INSTRUMENTS",
-        "tags": ["Piano", "Acoustic Guitar", "Electric Guitar", "String Ensemble", "Solo Violin", "Cello", "Woodwinds (Flute / Clarinet)", "Brass (Trumpet / Horn)", "Light Percussion", "Epic Drums", "Synth Pads / Drones", "Electronic Synth", "Chinese Traditional Instruments", "Japanese Traditional Instruments", "Korean Traditional Instruments", "Indian Traditional Instruments", "Middle Eastern Instruments (Oud / Santur / Ney)", "Celtic Folk Instruments", "African Percussion", "Latin Percussion"]
     }
 ]

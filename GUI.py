@@ -197,39 +197,6 @@ class WorkflowGUI:
             self.workflow = None
 
 
-    def get_current_scene(self):
-        if not hasattr(self, 'workflow') or self.workflow is None or not hasattr(self.workflow, 'scenes') or self.workflow.scenes is None:
-            return None
-            
-        if self.workflow.scenes and self.current_scene_index >= 0 and self.current_scene_index < len(self.workflow.scenes):
-            return self.workflow.scenes[self.current_scene_index]
-        else:
-            return None
-    
-
-    def get_previous_scene(self):
-        if self.workflow.scenes and self.current_scene_index > 0 and self.current_scene_index < len(self.workflow.scenes):
-            return self.workflow.scenes[self.current_scene_index - 1]
-        else:
-            return None    
-
-
-    def get_next_scene(self):
-        if self.workflow.scenes and self.current_scene_index >= 0 and self.current_scene_index < len(self.workflow.scenes)-1:
-            return self.workflow.scenes[self.current_scene_index + 1]
-        else:
-            return None
-
-
-    def get_previous_story_last_scene(self):
-        if self.workflow.scenes and self.current_scene_index > 0 and self.current_scene_index < len(self.workflow.scenes):
-            # loop from self.current_scene_index to 0,  
-            for i in range(self.current_scene_index, 0, -1):
-                if self.workflow.scenes[i]["id"]%10000 != self.workflow.scenes[self.current_scene_index]["id"]%10000:
-                    return self.workflow.scenes[i]
-        return None    
-
-    
     def show_project_selection(self):
         # 使用新的项目管理器
         result, selected_config = create_project_dialog(self.root)
@@ -360,7 +327,7 @@ class WorkflowGUI:
 
     def swap_narration(self):
         """交换第一轨道与旁白轨道"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         clip_video_path = get_file_path(current_scene, 'clip')
         clip_audio_path = get_file_path(current_scene, 'clip_audio')
         track_path = get_file_path(current_scene, "narration")
@@ -378,7 +345,7 @@ class WorkflowGUI:
 
     def swap_zero(self):
         """交换第一轨道与旁白轨道"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         clip_video_path = get_file_path(current_scene, 'clip')
         clip_audio_path = get_file_path(current_scene, 'clip_audio')
         zero_path = get_file_path(current_scene, "zero")
@@ -399,7 +366,7 @@ class WorkflowGUI:
 
 
     def track_recover(self):
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         clip = current_scene.get('clip', None)
         back = current_scene.get('back', None)
         if not back:
@@ -430,7 +397,7 @@ class WorkflowGUI:
 
     def reset_track_offset(self):
         """重置轨道偏移量到当前场景的起始位置"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not current_scene:
             self.secondary_track_offset = 0.0
             self.secondary_track_paused_time = None
@@ -479,7 +446,7 @@ class WorkflowGUI:
 
             channel = project_manager.PROJECT_CONFIG.get('channel')
             source_folder = f"{config.BASE_PROGRAM_PATH}/{channel}/host_video"
-            scene_name = self.get_current_scene()['name']
+            scene_name = self.workflow.get_scene_by_index(self.current_scene_index)['name']
 
             video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
             video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
@@ -509,10 +476,9 @@ class WorkflowGUI:
             if not os.path.exists(download_path):
                 os.makedirs(download_path, exist_ok=True)
 
-            rename = os.path.join(download_path, track+"_"+str(self.get_current_scene()["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
+            rename = os.path.join(download_path, track+"_"+str(self.workflow.get_scene_by_index(self.current_scene_index)["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
             shutil.copy(mp4_path, rename)
-            audio_choice = "keep"
-            self.handle_video_replacement(rename, audio_choice, track)
+            self.media_scanner.video_simple_replacement(self.workflow.get_scene_by_index(self.current_scene_index), rename, "keep", track)
             self.refresh_gui_scenes()
                 
         except Exception as e:
@@ -538,7 +504,7 @@ class WorkflowGUI:
             os.makedirs(download_path, exist_ok=True)
 
         if media_path:
-            rename = os.path.join(download_path, track+"_"+str(self.get_current_scene()["id"]) + "_" + datetime.now().strftime("%H%M%S") + media_post)
+            rename = os.path.join(download_path, track+"_"+str(self.workflow.get_scene_by_index(self.current_scene_index)["id"]) + "_" + datetime.now().strftime("%H%M%S") + media_post)
             shutil.move(media_path, rename)
         else:
             matching = []
@@ -565,20 +531,17 @@ class WorkflowGUI:
 
         if media_post == ".mp4":
             if track == "clip" or track == "narration":
-                choices = ["replace", "trim", "keep"]
-                audio_choice = askchoice("选择音频处理方式", choices, self.root)
-                if audio_choice is None:
-                    return
+                audio_choice = "replace"
             else:
                 audio_choice = "keep"
-            self.handle_video_replacement(rename, audio_choice, track)
+            self.media_scanner.video_simple_replacement(self.workflow.get_scene_by_index(self.current_scene_index), rename, audio_choice, track)
         else: # audio
-            olda, newa = refresh_scene_media(self.get_current_scene(), track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
-            vtrack = get_file_path(self.get_current_scene(), track)
+            olda, newa = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
+            vtrack = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), track)
             if not vtrack:
-                vtrack = get_file_path(self.get_current_scene(), "clip")
+                vtrack = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), "clip")
             newv = self.workflow.ffmpeg_processor.add_audio_to_video(vtrack, newa)
-            refresh_scene_media(self.get_current_scene(), track, ".mp4", newv)
+            refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track, ".mp4", newv)
 
         self.refresh_gui_scenes()
 
@@ -591,7 +554,7 @@ class WorkflowGUI:
         if not self.workflow or not self.speech_service:
             messagebox.showerror("错误", "工作流未就绪，请先选择项目")
             return
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if track == "clip":
             voice_values = config_prompt.SPEAKER
             content_field = "speaking"
@@ -698,10 +661,112 @@ class WorkflowGUI:
         messagebox.showinfo("成功", f"{track_label} 音频已生成并替换")
 
 
+    def remove_secondary_track(self):
+        """删除当前选中的旁白轨道（视频+音频）"""
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not current_scene:
+            return
+        track = self.selected_secondary_track
+        track_path = get_file_path(current_scene, track)
+        if not track_path:
+            messagebox.showinfo("提示", f"当前场景的 {track} 轨道没有内容，无需删除")
+            return
+        track_label = {"narration": "旁白(NN)", "zero": "ZZ", "one": "OO"}.get(track, track)
+        if not messagebox.askyesno("确认删除", f"确定要删除当前 {track_label} 轨道的视频和音频吗？"):
+            return
+        for key in [track, track + '_audio', track + '_left', track + '_right', track + '_image', track + '_fps']:
+            current_scene.pop(key, None)
+        if hasattr(self, 'workflow') and self.workflow:
+            self.workflow.save_scenes_to_json()
+        self.secondary_track_offset = 0.0
+        self.secondary_track_paused_time = None
+        if hasattr(self, 'secondary_track_scale_var'):
+            self.secondary_track_scale_var.set(0.0)
+        self.secondary_track_canvas.delete("all")
+        self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示",
+                                               fill='white', font=('Arial', 12), justify=tk.CENTER, tags="hint")
+        if hasattr(self, 'secondary_track_scale'):
+            self.secondary_track_scale.config(state=tk.DISABLED)
+        self.update_secondary_track_time()
+        self._update_remove_track_btn_state()
+
+    def _update_remove_track_btn_state(self):
+        """根据当前场景是否有轨道内容，启用/禁用删除按钮"""
+        try:
+            if not hasattr(self, 'remove_track_btn'):
+                return
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            track_path = get_file_path(current_scene, self.selected_secondary_track) if current_scene else None
+            self.remove_track_btn.config(state=tk.NORMAL if track_path else tk.DISABLED)
+        except Exception:
+            pass
+
+    def mix_zero_audio_to_clips(self):
+        """将起始场景的 zero_audio 连续混入当前及后续 N 个场景的 clip 视频，最后一个场景末尾 2 秒淡出"""
+        try:
+            n = int(getattr(self, 'mix_scenes_var', tk.StringVar(value="1")).get())
+            n = max(1, min(5, n))
+            volume = self.track_volume_var.get()
+            volume = max(0.0, min(1.5, volume))
+
+            # 使用起始场景的 zero_audio
+            start_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            zero_audio = get_file_path(start_scene, "zero_audio")
+            if not zero_audio or not os.path.exists(zero_audio):
+                messagebox.showwarning("警告", "当前场景没有 zero_audio，无法混音")
+                return
+
+            fp = self.workflow.ffmpeg_processor
+            zero_duration = fp.get_duration(zero_audio) or 0
+            if zero_duration <= 0:
+                messagebox.showwarning("警告", "zero_audio 无法读取时长")
+                return
+
+            mixed_count = 0
+            total_offset = 0.0
+            scenes_to_mix = []
+            for i in range(n):
+                idx = self.current_scene_index + i
+                if idx >= len(self.workflow.scenes):
+                    break
+                scene = self.workflow.get_scene_by_index(idx)
+                clip_path = get_file_path(scene, "clip")
+                if not clip_path or not os.path.exists(clip_path):
+                    continue
+                clip_dur = fp.get_duration(clip_path) or 0
+                if clip_dur <= 0:
+                    continue
+                scenes_to_mix.append((scene, clip_path, clip_dur))
+
+            for idx, (scene, clip_path, clip_dur) in enumerate(scenes_to_mix):
+                is_last = (idx == len(scenes_to_mix) - 1)
+                if total_offset + clip_dur > zero_duration:
+                    break
+                fade_out = 2.0 if is_last else 0.0
+                segment_audio = fp.extract_audio_segment(zero_audio, total_offset, clip_dur, fade_out_duration=fade_out)
+                if not segment_audio:
+                    continue
+                output_video = fp.video_audio_mix(clip_path, segment_audio, volume=volume)
+                if output_video:
+                    output_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(output_video)
+                    refresh_scene_media(scene, "clip", ".mp4", output_video)
+                    refresh_scene_media(scene, "clip_audio", ".wav", output_audio)
+                    mixed_count += 1
+                total_offset += clip_dur
+
+            if mixed_count > 0:
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                messagebox.showinfo("成功", f"已将 zero_audio 混入 {mixed_count} 个场景的 clip 视频（音量: {volume:.2f}）")
+            else:
+                messagebox.showwarning("警告", "没有可处理的场景")
+        except Exception as e:
+            messagebox.showerror("错误", f"混零失败: {str(e)}")
+
     def pip_secondary_track(self):
         """将旁白轨道作为画中画叠加到主轨道视频上"""
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             secondary_path = get_file_path(current_scene, self.selected_secondary_track)
             secondary_audio = get_file_path(current_scene, self.selected_secondary_track+'_audio')
             secondary_left = get_file_path(current_scene, self.selected_secondary_track+'_left')
@@ -710,39 +775,68 @@ class WorkflowGUI:
                 messagebox.showwarning("警告", "第二轨道视频文件不存在")
                 return
 
-            clip_video = get_file_path(current_scene, "clip")
-            clip_audio = get_file_path(current_scene, "clip_audio")
-            clip_duration = self.workflow.ffmpeg_processor.get_duration(clip_video)
             #start_time, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
             if self.secondary_track_paused_time:
                 start_time = self.secondary_track_paused_time
             else:
                 start_time = self.secondary_track_offset
 
-            secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(secondary_path, start_time, start_time+clip_duration)
-            secondary_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, clip_duration, 0, 0, 1.0)
+            # popup to ask user to select background source ? 
+            # if is clip_image or clip_image_last, then generate background video from clip_image or clip_image_last + narration_audio
+            # if is clip, then use clip_audio
+            background_source = askchoice("选择背景来源", ["clip", "clip_image", "clip_image_last"], self.root)
+            if background_source is None:
+                return
+            if background_source == "clip":
+                target_video_track = "clip"  
+                background_audio = get_file_path(current_scene, "clip_audio")
+                background_video = get_file_path(current_scene, "clip")
+            elif background_source == "clip_image":
+                target_video_track = "narration"
+                image = get_file_path(current_scene, 'clip_image')
+                background_audio = get_file_path(current_scene, "narration_audio")
+                if not background_audio or not os.path.exists(background_audio):
+                    messagebox.showwarning("警告", "场景中没有 narration_audio")
+                    return
+                background_video = self.workflow.ffmpeg_processor.image_audio_to_video(image, background_audio, 1)
+            elif background_source == "clip_image_last":
+                target_video_track = "narration"
+                image = get_file_path(current_scene, 'clip_image_last')
+                background_audio = get_file_path(current_scene, "narration_audio")
+                if not background_audio or not os.path.exists(background_audio):
+                    messagebox.showwarning("警告", "场景中没有 narration_audio")
+                    return
+                background_video = self.workflow.ffmpeg_processor.image_audio_to_video(image, background_audio, 1)
+            else:
+                return
+
+            audio_duration = self.workflow.ffmpeg_processor.get_duration(background_audio)
+
+            secondary_track_copy = self.workflow.ffmpeg_processor.trim_video(secondary_path, start_time, start_time+audio_duration)
+            secondary_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, audio_duration, 0, 0, 1.0)
             print(f"📺 打开画中画设置对话框...")
             
             # 创建画中画设置对话框
-            pip_dialog = PictureInPictureDialog(self.root, clip_video, secondary_track_copy, secondary_left, secondary_right)
+            pip_dialog = PictureInPictureDialog(self.root, background_video, secondary_track_copy, secondary_left, secondary_right)
             
             # 等待对话框关闭
             self.root.wait_window(pip_dialog.dialog)
-            
+
             # 检查用户的选择
             if pip_dialog.result:
                 settings = pip_dialog.result
                 print(f"📺 用户选择的画中画设置: {settings}")
 
                 back = current_scene.get('back', '')
-                current_scene['back'] = clip_video + "," + back
-
+                if background_source == "clip":
+                    current_scene['back'] = background_video + "," + back
+                
                 if settings['position'] == "full":
-                    v = self.workflow.ffmpeg_processor.add_audio_to_video(secondary_track_copy, clip_audio)
-                    refresh_scene_media(current_scene, 'clip', '.mp4', v)
+                    v = self.workflow.ffmpeg_processor.add_audio_to_video(secondary_track_copy, background_audio)
+                    refresh_scene_media(current_scene, target_video_track, '.mp4', v)
                 elif settings['position'] == "av":
-                    refresh_scene_media(current_scene, 'clip', '.mp4', secondary_track_copy)
-                    refresh_scene_media(current_scene, 'clip_audio', '.wav', secondary_audio_copy)
+                    refresh_scene_media(current_scene, target_video_track, '.mp4', secondary_track_copy)
+                    refresh_scene_media(current_scene, target_video_track+'_audio', '.wav', secondary_audio_copy)
                 elif settings['position'] == "audio":
                     if settings['audio_volume'] != 0.0:
                         volume_main = 1
@@ -758,22 +852,23 @@ class WorkflowGUI:
                             volume_main = 1+volume_main    
 
                         current_time, total_time = self.get_current_video_time()
-                        output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(clip_audio, volume_main, current_time, secondary_audio_copy, volume_overlay)
-                        olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio)
+                        output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(background_audio, volume_main, current_time, secondary_audio_copy, volume_overlay)
+                        olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), target_video_track+'_audio', ".wav", output_audio)
 
-                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, output_audio)
-                        olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video)
+                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(background_video, output_audio)
+                        olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), target_video_track, ".mp4", output_video)
 
                 else:
                     # 处理画中画
                     self.process_picture_in_picture(
-                        background_audio=clip_audio,
-                        background_video=clip_video,
+                        background_audio=background_audio,
+                        background_video=background_video,
                         overlay_video=secondary_track_copy,
                         overlay_audio=secondary_audio_copy,
                         overlay_left=secondary_left,
                         overlay_right=secondary_right,
-                        settings=settings
+                        settings=settings,
+                        output_track=target_video_track
                     )
 
                 # 更新显示
@@ -790,8 +885,8 @@ class WorkflowGUI:
             messagebox.showerror("错误", error_msg)
 
 
-    def process_picture_in_picture(self, background_video, background_audio, overlay_video, overlay_audio, overlay_left, overlay_right, settings):
-        """处理画中画视频生成"""
+    def process_picture_in_picture(self, background_video, background_audio, overlay_video, overlay_audio, overlay_left, overlay_right, settings, output_track="clip"):
+        """处理画中画视频生成。output_track: 输出到 clip 或 narration"""
         try:
             print(f"🎬 开始处理画中画...")
             if not self.video_cap:
@@ -834,10 +929,11 @@ class WorkflowGUI:
             print(f"✅ 画中画处理完成: {output_video}")
 
             output_audio = None
+            audio_field = output_track + "_audio"
             if settings['audio_volume'] == 0.0:
-                olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", background_audio, True)
+                olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), audio_field, ".wav", background_audio, True)
                 output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, background_audio)
-                olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
+                olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), output_track, ".mp4", output_video, True)
             else:
                 output_audio = background_audio
                 if overlay_audio:
@@ -854,10 +950,10 @@ class WorkflowGUI:
                         volume_main = 1+volume_main    
 
                     output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(background_audio, volume_main, current_time, overlay_audio, volume_overlay)
-                    olda, output_audio = refresh_scene_media(self.get_current_scene(), "clip_audio", ".wav", output_audio, True)
+                    olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), audio_field, ".wav", output_audio, True)
 
                     output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, output_audio)
-                    olda, output_video = refresh_scene_media(self.get_current_scene(), "clip", ".mp4", output_video, True)
+                    olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), output_track, ".mp4", output_video, True)
             
             return output_video, output_audio
 
@@ -942,7 +1038,9 @@ class WorkflowGUI:
         visual_button_frame.pack(fill=tk.X, pady=(0, 5))
 
 
-        ttk.Button(visual_button_frame, text="提示詞", width=7, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(visual_button_frame, text="末帧", width=7, command=lambda: self.fetch_last_image()).pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Button(visual_button_frame, text="提示词", width=7, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Button(visual_button_frame, text="生场景", width=7, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=1)
 
@@ -1146,11 +1244,24 @@ class WorkflowGUI:
         self.volume_scale.pack(side=tk.LEFT, padx=1)
         self.volume_label = ttk.Label(self.track_frame, text="0.2")
         self.volume_label.pack(side=tk.LEFT, padx=(1, 10))
-
-
         # 绑定音量变化事件来更新标签
         self.track_volume_var.trace('w', self.on_track_volume_change)
+
+        # add a button to remove current self.secondary_track (if selected) otherwise disable the button
+        # if self.secondary_track is selected, warning user to remove which track ,  then if user confirm, remove this track (video plus audio field) from current scene
+        self.remove_track_btn = ttk.Button(self.track_frame, text="🗑", command=self.remove_secondary_track, width=3)
+        self.remove_track_btn.pack(side=tk.LEFT, padx=1)
+        self.root.after(100, self._update_remove_track_btn_state)  # 延迟设置初始状态
+
+        # add a combobox 'mix_scenes' to choose a number of scene (default 1, choice 1,2,3,4,5), and add a button (mix zero audio to current & following (total mix_scenes number) scent's clip videos  ~  on volume of track_volume_var)
+        ttk.Label(self.track_frame, text="混零").pack(side=tk.LEFT, padx=(10, 1))
+        self.mix_scenes_var = tk.StringVar(value="1")
+        mix_scenes_combo = ttk.Combobox(self.track_frame, textvariable=self.mix_scenes_var, values=["1", "2", "3", "4", "5"], width=3, state="readonly")
+        mix_scenes_combo.pack(side=tk.LEFT, padx=1)
+        ttk.Button(self.track_frame, text="混零到clip", command=self.mix_zero_audio_to_clips, width=8).pack(side=tk.LEFT, padx=(1, 10))
         
+
+
         # 初始化所有轨道播放相关变量
         # 图片预览引用（防止垃圾回收）
         self._clip_image_photo = None
@@ -1203,7 +1314,6 @@ class WorkflowGUI:
 
         ttk.Button(video_control_frame, text="下移", command=lambda: self.shift_scene(True), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="上移", command=lambda: self.shift_scene(False), width=5).pack(side=tk.LEFT, padx=1)
-        ttk.Button(video_control_frame, text="智分", command=self.split_smart_scene, width=5).pack(side=tk.LEFT, padx=1) 
         ttk.Button(video_control_frame, text="删合", command=self.merge_or_delete, width=5).pack(side=tk.LEFT, padx=1)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
@@ -1268,15 +1378,6 @@ class WorkflowGUI:
         duration_promo_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
         row_number += 1
 
-        # 持续时间（只读）
-        ttk.Label(duration_promo_frame, text="持续:").pack(side=tk.LEFT)
-        self.scene_duration = ttk.Entry(duration_promo_frame, width=6, state="normal")
-        self.scene_duration.pack(side=tk.LEFT)
-
-        ttk.Label(duration_promo_frame, text="延长:").pack(side=tk.LEFT)
-        self.scene_extend_var = tk.StringVar(value="1.0")
-        ttk.Combobox(duration_promo_frame, textvariable=self.scene_extend_var, values=["0.0", "0.5", "1.0", "1.5", "2.0"], state="readonly", width=3).pack(side=tk.LEFT)
-
         ttk.Button(duration_promo_frame, text="增主轨", width=8, command=lambda: self.enhance_clip("clip")).pack(side=tk.LEFT)
         ttk.Button(duration_promo_frame, text="增次轨", width=8, command=lambda: self.enhance_clip("narration")).pack(side=tk.LEFT)
 
@@ -1284,6 +1385,10 @@ class WorkflowGUI:
         self.enhance_level = ttk.Combobox(duration_promo_frame, width=3, values=FACE_ENHANCE)
         self.enhance_level.pack(side=tk.LEFT, padx=2)
         self.enhance_level.set("30")
+
+        ttk.Button(duration_promo_frame, text="故事", width=5, command=self._open_scene_content_dialog).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="精讲", width=5, command=lambda: self.concise_scene_speak("speaking")).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
 
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(self.video_edit_frame)
@@ -1303,10 +1408,6 @@ class WorkflowGUI:
         self.narration_animation_combobox.pack(side=tk.LEFT)
         self.narration_animation_combobox.bind('<<ComboboxSelected>>', lambda event: self.on_scene_field_change("narration_animation", self.narration_animation.get()))
         ttk.Button(type_mood_action_frame, text="生", width=3, command=lambda: self.regenerate_video("narration", False)).pack(side=tk.LEFT)
-
-        ttk.Button(type_mood_action_frame, text="故事", width=5, command=self._open_scene_content_dialog).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="精讲", width=5, command=lambda: self.concise_scene_speak("speaking")).pack(side=tk.LEFT)
-        ttk.Button(type_mood_action_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
         row_number += 1
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
@@ -1371,6 +1472,13 @@ class WorkflowGUI:
         self.scene_language.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
         self.scene_language.set(self.shared_language.cget('text'))
+
+        # add new field to the scene --  narration_ahead (checkbox, by default scene has no field), if user checked, narration_ahead = True will be set & saved to scene.json
+        ttk.Label(self.video_edit_frame, text="提前:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        self.narration_ahead = tk.BooleanVar(value=False)
+        self.narration_ahead_checkbox = ttk.Checkbutton(self.video_edit_frame, text="", variable=self.narration_ahead, command=self._on_narration_ahead_change)
+        self.narration_ahead_checkbox.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        row_number += 1
 
         # 旁白轨道播放状态
         self.secondary_track_playing = False
@@ -1538,7 +1646,7 @@ class WorkflowGUI:
         try:
             # 1. 检查 X:\output 中新生成的原始视频（监控逻辑）
             self.media_scanner.scanning("X:\\output")                      # clip_p202512231259_10005_S2V__00003-audio.mp4
-            self.media_scanner.scanning("Z:\\wan_video\\output_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
+            #self.media_scanner.scanning("Z:\\wan_video\\output_mp4")                     # clip_p202512231259_10005_INT_25115141_30__00001.mp4  ~~~ interpolate
             self.media_scanner.scanning("W:\\wan_video\\output_mp4")      # clip_p20251208_10708_ENH_13231028_0_.mp4   clip_p202512231259_10005_EHN_.mp4  ~~~ enhance
 
             self.workflow.save_scenes_to_json()
@@ -1559,7 +1667,7 @@ class WorkflowGUI:
 
     def enhance_clip(self, track:str):
         """增强主图或次图"""
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         level = self.enhance_level.get()
         self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, track, level)
         self.refresh_gui_scenes()
@@ -1671,7 +1779,7 @@ class WorkflowGUI:
     def load_video_first_frame(self):
         self._cleanup_video_before_switch()
 
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             
         video_path = get_file_path(current_scene, "clip")
         if not video_path:
@@ -1763,7 +1871,7 @@ class WorkflowGUI:
 
 
     def toggle_video_playback(self):
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         video_path = None
         if current_scene:
             video_path = get_file_path(current_scene, "clip")
@@ -1790,7 +1898,7 @@ class WorkflowGUI:
 
     def play_video(self):
         """播放视频"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         video_path = None
         if current_scene:
             video_path = get_file_path(current_scene, "clip")
@@ -1819,7 +1927,7 @@ class WorkflowGUI:
 
 
     def start_audio_playback(self):
-        clip = get_file_path(self.get_current_scene(), "clip_audio")
+        clip = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), "clip_audio")
         if not clip:
             return
         pygame.mixer.music.load(clip)
@@ -2059,7 +2167,7 @@ class WorkflowGUI:
 
     def load_secondary_track_first_frame(self):
         """加载旁白轨道视频的第一帧到画布（从当前偏移位置）"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not current_scene:
             return
             
@@ -2077,6 +2185,7 @@ class WorkflowGUI:
                 # 禁用滑块
                 if hasattr(self, 'secondary_track_scale'):
                     self.secondary_track_scale.config(state=tk.DISABLED)
+                self._update_remove_track_btn_state()
                 return
             
             # 打开视频文件
@@ -2131,6 +2240,7 @@ class WorkflowGUI:
                     self.secondary_track_scale_var.set(self.secondary_track_offset)
             
             temp_cap.release()
+            self._update_remove_track_btn_state()
 
         except Exception as e:
             print(f"❌ 加载旁白轨道视频第一帧失败: {e}")
@@ -2138,6 +2248,7 @@ class WorkflowGUI:
             self.secondary_track_canvas.create_text(160, 90, text="旁白轨道视频预览\n选择视频后播放显示",
                                                fill='white', font=('Arial', 12), 
                                                justify=tk.CENTER, tags="hint")
+            self._update_remove_track_btn_state()
 
 
     def update_scene_display(self):
@@ -2149,22 +2260,9 @@ class WorkflowGUI:
             return
             
         self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
-        scene_data = self.get_current_scene()
+        scene_data = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene_data:
             return
-        
-        self.scene_duration.delete(0, tk.END)
-        self.scene_duration.insert(0, f"{self.workflow.find_clip_duration(scene_data):.2f}")
-
-        extend_value = scene_data.get("extend", 0.0)
-        if extend_value is None:
-            extend_value = 0.0
-            self.get_current_scene()["extend"] = 0.0
-        extend_str = str(float(extend_value))
-        if extend_str in ["0.0", "0.5", "1.0", "1.5", "2.0"]:
-            self.scene_extend_var.set(extend_str)
-        else:
-            self.scene_extend_var.set("0.0")
 
         # 设置宣传复选框状态
         clip_animation = scene_data.get("clip_animation", "S2V")
@@ -2173,6 +2271,8 @@ class WorkflowGUI:
         # 加载当前场景的图像类型设置
         narration_animate = scene_data.get("narration_animation", "S2V")
         self.narration_animation.set(narration_animate)
+
+        self.narration_ahead.set(bool(scene_data.get("narration_ahead", False)))
 
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
@@ -2226,7 +2326,7 @@ class WorkflowGUI:
         current_frame = self.video_cap.get(cv2.CAP_PROP_POS_FRAMES)
         current_time = current_frame / STANDARD_FPS
 
-        total_time = self.workflow.find_clip_duration(self.get_current_scene())
+        total_time = self.workflow.find_clip_duration(self.workflow.get_scene_by_index(self.current_scene_index))
         
         if current_time > total_time:
             current_time = total_time
@@ -2256,19 +2356,16 @@ class WorkflowGUI:
 
     def make_silence_between_marks(self):
         """Make audio silent between mark1 and mark2"""
-        if self.mark1_time is None or self.mark2_time is None:
+        if self.mark1_time is None:
             messagebox.showwarning("警告", "请先设置标记1和标记2")
             return
         
-        mark1 = min(self.mark1_time, self.mark2_time)
-        mark2 = max(self.mark1_time, self.mark2_time)
-        
-        if mark1 >= mark2:
+        if self.mark2_time and self.mark1_time >= self.mark2_time:
             messagebox.showwarning("警告", "标记1和标记2时间相同或无效")
             return
         
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 messagebox.showerror("错误", "没有当前场景")
                 return
@@ -2285,8 +2382,8 @@ class WorkflowGUI:
                 return
             
             # Ensure marks are within audio duration
-            mark1 = max(0.0, min(mark1, total_duration))
-            mark2 = max(mark1, min(mark2, total_duration))
+            mark1 = self.mark1_time
+            mark2 = self.mark2_time if self.mark2_time else total_duration
             
             if mark1 >= mark2:
                 messagebox.showwarning("警告", "标记时间无效")
@@ -2357,7 +2454,7 @@ class WorkflowGUI:
             return
 
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if current_scene:
                 clip_video = get_file_path(current_scene, "clip")
                 if clip_video:
@@ -2379,10 +2476,8 @@ class WorkflowGUI:
 
 
     def clear_scene_fields(self):
-        self.scene_duration.delete(0, tk.END)
-        self.scene_extend_var.set("0.0")
-        
         self.clip_animate.set("")
+        self.narration_ahead.set(False)
         
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaker.set("")
@@ -2394,15 +2489,20 @@ class WorkflowGUI:
 
 
     def first_scene(self):
-        """上一个场景"""
+        """第一个场景"""
+        if hasattr(self, '_save_timer') and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
         self.update_current_scene()
-        
         self.current_scene_index = 0
         self.refresh_gui_scenes()
 
 
     def last_scene(self):
-        """上一个场景"""
+        """最后一个场景"""
+        if hasattr(self, '_save_timer') and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
         self.update_current_scene()
         self.current_scene_index = len(self.workflow.scenes) - 1
         self.refresh_gui_scenes()
@@ -2410,38 +2510,26 @@ class WorkflowGUI:
 
     def prev_scene(self):
         """上一个场景"""
+        if hasattr(self, '_save_timer') and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
         self.update_current_scene()
-        
         self.current_scene_index -= 1
         if self.current_scene_index < 0:
             self.current_scene_index = len(self.workflow.scenes) - 1
-
         self.refresh_gui_scenes()
 
 
     def next_scene(self):
         """下一个场景"""
+        if hasattr(self, '_save_timer') and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
         self.update_current_scene()
-        
         self.current_scene_index += 1
         if self.current_scene_index >= len(self.workflow.scenes):
             self.current_scene_index = 0
-
         self.refresh_gui_scenes()
-
-
-
-    def split_smart_scene(self):
-        """分离当前场景"""
-        current_scene = self.get_current_scene()
-        new_scenes = self.workflow.split_smart_scene(current_scene)
-
-        self.playing_delta = 0.0
-        self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
-        self.refresh_gui_scenes()
-
-        return new_scenes
-
 
 
     def split_scene(self):
@@ -2464,9 +2552,9 @@ class WorkflowGUI:
 
     def start_video_gen_batch(self):
         """启动WAN批生成"""
-        current_scene = self.get_current_scene()
-        previous_scene = self.get_previous_scene()
-        next_scene = self.get_next_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        previous_scene = self.workflow.get_previous_scene(self.current_scene_index)
+        next_scene = self.workflow.get_next_scene(self.current_scene_index)
 
         ss = self.workflow.scenes_in_story(current_scene)
         for scene in ss:
@@ -2501,14 +2589,14 @@ class WorkflowGUI:
 
 
     def copy_story_scene(self):
-        story_level = self.workflow.first_scene_of_story(self.get_current_scene())  or  self.workflow.last_scene_of_story(self.get_current_scene())
+        story_level = self.workflow.first_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))  or  self.workflow.last_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))
 
         if story_level:
             dialog = messagebox.askyesno("场景/故事", "是否要拷贝场景还是故事？")
             if dialog:
                 story_level = False
 
-        dup = self.get_current_scene().copy()
+        dup = self.workflow.get_scene_by_index(self.current_scene_index).copy()
         dup["id"] = self.workflow.max_id(dup) + 1
 
         self.workflow.scenes.insert(self.current_scene_index+1, dup) 
@@ -2518,9 +2606,9 @@ class WorkflowGUI:
 
 
     def append_scene(self):
-        story_level = self.workflow.last_scene_of_story(self.get_current_scene())
+        story_level = self.workflow.last_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))
 
-        self.workflow.add_story_scene( self.current_scene_index, self.get_current_scene(), story_level, True )
+        self.workflow.add_story_scene( self.current_scene_index, self.workflow.get_scene_by_index(self.current_scene_index), story_level, True )
 
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -2528,7 +2616,7 @@ class WorkflowGUI:
 
     def reverse_video(self):
         """翻转视频"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         oldv, newv = refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.reverse_video(oldv), newv)
         self.workflow.save_scenes_to_json()
@@ -2569,7 +2657,7 @@ class WorkflowGUI:
 
     def mirror_video(self):
         """镜像视频"""
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         oldv, newv = refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.mirror_video(oldv), newv)
         self.workflow.save_scenes_to_json()
@@ -2624,8 +2712,8 @@ class WorkflowGUI:
 
     def play_secondary_track(self):
         """播放旁白轨道视频的当前场景时间段（支持从暂停状态和偏移位置恢复）"""
-        narration_video_path = get_file_path(self.get_current_scene(), self.selected_secondary_track)
-        narration_audio_path = get_file_path(self.get_current_scene(), self.selected_secondary_track+'_audio')
+        narration_video_path = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), self.selected_secondary_track)
+        narration_audio_path = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), self.selected_secondary_track+'_audio')
         try:
             if self.secondary_track_cap and self.secondary_track_paused_time:  #is_resuming
                 play_start_time = self.secondary_track_paused_time
@@ -2767,7 +2855,7 @@ class WorkflowGUI:
                     self.secondary_track_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 
                 # 检查是否超过了视频结束时间
-                duration = self.workflow.ffmpeg_audio_processor.get_duration( self.get_current_scene()[self.selected_secondary_track] )
+                duration = self.workflow.ffmpeg_audio_processor.get_duration( self.workflow.get_scene_by_index(self.current_scene_index)[self.selected_secondary_track] )
                 if current_time >= duration:
                     self.stop_secondary_track()
                     return
@@ -2880,7 +2968,7 @@ class WorkflowGUI:
     def play_pip_lr(self):
         """同步播放 narration_left 和 narration_right 视频（支持从暂停恢复）"""
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
             
@@ -3146,12 +3234,13 @@ class WorkflowGUI:
         elif current_tab_index == 1:
             # PIP L/R tab：从起始位置加载第一帧
             self.load_pip_lr_first_frame()
+        self._update_remove_track_btn_state()
 
     
     def load_pip_lr_first_frame(self):
         """加载 PIP L/R 视频的第一帧"""
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
             
@@ -3251,53 +3340,105 @@ class WorkflowGUI:
             return False
 
 
+    def _show_image_action_choice(self, parent, image_type):
+        """弹出图像操作选择对话框，返回用户选择：1-7 或 None(取消)"""
+        choice_var = tk.StringVar(value="")
+        dialog = tk.Toplevel(parent)
+        dialog.title("选择操作")
+        dialog.geometry("420x380")
+        dialog.transient(parent)
+        dialog.grab_set()
+
+        choices = [
+            ("2", "增强现有图"),
+            ("4", "(当前图) 生成视频"),
+            ("5", "增强 → 生成视频"),
+            ("1", "选新图（替换图像）"),
+            ("3", "选新图 → 增强"),
+            ("6", "选新图 → 增强 → 生成视频"),
+            ("7", "选新图 → 生成视频"),
+        ]
+        ttk.Label(dialog, text=f"对 {image_type.replace('_', ' ')} 执行操作：", font=("", 10)).pack(pady=(15, 10))
+        for val, text in choices:
+            ttk.Radiobutton(dialog, text=text, variable=choice_var, value=val).pack(anchor=tk.W, padx=20, pady=2)
+
+        result = [None]
+        def on_ok():
+            result[0] = choice_var.get() or None
+            dialog.destroy()
+        def on_cancel():
+            result[0] = None
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=15)
+        ttk.Button(btn_frame, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        dialog.wait_window()
+        return result[0]
+
     def on_image_canvas_double_click(self, event, image_type):
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not current_scene:
+                return
             source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+            track = image_type.split("_")[0]  # clip_image -> clip, narration_image -> narration, etc.
+
+            choice = self._show_image_action_choice(self.root, image_type)
+            if not choice:
+                return
 
             image_path = None
-            image_files = []
-            for file in os.listdir(source_folder):
-                if file.endswith(('.png', '.jpg', '.jpeg', '.webp')):
-                    image_files.append(os.path.join(source_folder, file))
-            if len(image_files) > 0:
-                dialog = messagebox.askyesno("选择图像", "是否要选择新图像？")
-                if dialog:
-                    image_path = filedialog.askopenfilename(
-                        title="选择图像",
-                        initialdir=source_folder,
-                        filetypes=[
-                            ("图像文件", "*.png;*.jpg;*.jpeg;*.webp")
-                        ]
-                    )
+            need_select = choice in ("1", "3", "6", "7")
+            need_enhance = choice in ("2", "3", "5", "6")
+            need_gen_video = choice in ("4", "5", "6", "7")
 
-            if image_path:
+            if need_select:
+                image_path = filedialog.askopenfilename(
+                    title="选择图像",
+                    initialdir=source_folder if os.path.exists(source_folder) else None,
+                    filetypes=[("图像文件", "*.png;*.jpg;*.jpeg;*.webp")]
+                )
+                if not image_path:
+                    return
                 download_path = config.get_project_path(self.workflow.pid) + "/download"
-                if not os.path.exists(download_path):
-                    os.makedirs(download_path)
+                os.makedirs(download_path, exist_ok=True)
                 image = Path(image_path)
                 rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
                 shutil.move(image_path, rename)
                 image_path = rename
-            else:    
-                image_path = current_scene.get(image_type)
-            if not image_path:
-                messagebox.showwarning("警告", f"场景中没有 {image_type} 图像")
-                return
-            
-            dialog = messagebox.askyesno("增强图像", "是否要增强图像？")
-            if dialog:
-                image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
             else:
+                image_path = current_scene.get(image_type)
+                if not image_path or not os.path.exists(image_path):
+                    messagebox.showwarning("警告", f"场景中没有有效的 {image_type} 图像")
+                    return
+
+            if need_enhance:
+                image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
+                if not image_path:
+                    messagebox.showerror("错误", "图像增强失败")
+                    return
+            elif not need_gen_video:
                 image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
 
-            oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+            if need_gen_video:
+                audio_path = get_file_path(current_scene, track+"_audio") or get_file_path(current_scene, "clip_audio")
+                if not audio_path or not os.path.exists(audio_path):
+                    messagebox.showwarning("警告", f"场景中没有有效的 {track}_audio 或 clip_audio")
+                    return
+                # 未经过增强的图需要先缩放到视频尺寸
+                if not need_enhance:
+                    image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
+                video_path = self.workflow.ffmpeg_processor.image_audio_to_video(image_path, audio_path, 1)
+                refresh_scene_media(current_scene, track, ".mp4", video_path, True)
+                self.media_scanner.last_image_replacement(current_scene, video_path, track)
+            else:
+                oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", image_path)
+                if self.copy_image_to_clipboard(image_path):
+                    messagebox.showinfo("成功", f"已复制 {image_type.replace('_', ' ')} 到剪贴板\n可以在网页工具中粘贴使用")
+
             self.workflow.save_scenes_to_json()
-
-            if self.copy_image_to_clipboard(image_path):
-                messagebox.showinfo("成功", f"已复制 {image_type.replace('_', ' ')} 到剪贴板\n可以在网页工具中粘贴使用")
-
             self.refresh_gui_scenes()
 
         except Exception as e:
@@ -3327,16 +3468,13 @@ class WorkflowGUI:
         file_path = self.workflow.ffmpeg_processor.resize_image_smart(file_path)
         try:
             # 获取当前场景
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 messagebox.showerror("错误", "没有选中场景")
                 return
             
             # 复制图片到项目目录
             oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", file_path, True)
-
-            if image_type == 'clip_image' or image_type == 'clip_image_last':
-                self.workflow.ask_replace_scene_info_from_image(current_scene, image_path)
 
             # 刷新显示
             self.display_image_on_canvas_for_track(image_type)
@@ -3353,7 +3491,7 @@ class WorkflowGUI:
 
     def display_image_on_canvas_for_track(self, image_type):
         try:
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
 
@@ -3518,7 +3656,7 @@ class WorkflowGUI:
         try:
             if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
                 # 如果没有cap，尝试打开视频
-                current_scene = self.get_current_scene()
+                current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
                 if not current_scene:
                     return
                 track_path = get_file_path(current_scene, self.selected_secondary_track)
@@ -3571,7 +3709,7 @@ class WorkflowGUI:
         try:
             if not hasattr(self, 'secondary_track_cap') or not self.secondary_track_cap:
                 # 即使没有cap，也尝试显示帧
-                current_scene = self.get_current_scene()
+                current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
                 if current_scene:
                     self.display_secondary_track_frame_at_time(float(value))
                 return
@@ -3600,7 +3738,7 @@ class WorkflowGUI:
                 try:
                     if pygame.mixer.music.get_busy():
                         pygame.mixer.music.stop()
-                        narration_audio_path = get_file_path(self.get_current_scene(), self.selected_secondary_track+'_audio')
+                        narration_audio_path = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), self.selected_secondary_track+'_audio')
                         if narration_audio_path:
                             pygame.mixer.music.load(narration_audio_path)
                             pygame.mixer.music.play(start=new_time)
@@ -3705,7 +3843,7 @@ class WorkflowGUI:
             messagebox.showinfo("警告", "⚠️ 无场景")
             return
 
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         ss = self.workflow.scenes_in_story(current_scene)
         if len(ss) <= 1:
             result = messagebox.askyesnocancel("警告", "⚠️ 删除唯一场景?")
@@ -3761,7 +3899,7 @@ class WorkflowGUI:
 
 
     def copy_lastimage_to_next(self):
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         next_scene = self.workflow.next_scene_of_story(current_scene)
         if current_scene and next_scene:
             clip_image_last = current_scene.get("clip_image_last", "")
@@ -3776,9 +3914,22 @@ class WorkflowGUI:
             self.refresh_gui_scenes()
 
 
+    def fetch_last_image(self):
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        # fetch last image from clip video, the refresh the clip_image_last field & try to replace next scene['clip_image'] with last_image ? if yes, replace it.
+        clip_video = get_file_path(scene, "clip")
+        if clip_video:
+            last_image = self.workflow.ffmpeg_processor.extract_frame(clip_video, False)
+            if last_image:
+                refresh_scene_media(scene, "clip_image_last", ".webp", last_image, True)
+                next_scene = self.workflow.next_scene_of_story(scene)
+                if next_scene:
+                    refresh_scene_media(next_scene, "clip_image", ".webp", last_image, True)
+
+
     def recreate_clip_image(self, full:bool):
         """重新创建主图，先打开对话框让用户审查和编辑提示词"""
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         
         # 定义创建图像的回调函数
         def create_clip_image(edited_positive, edited_negative):
@@ -3802,7 +3953,7 @@ class WorkflowGUI:
 
     def concise_scene_speak(self, field):
         """精简场景讲话"""
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
@@ -3816,7 +3967,7 @@ class WorkflowGUI:
 
     def _open_scene_content_dialog(self):
         """弹出窗口显示并编辑当前场景的 story_details，可保存回场景"""
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
@@ -3858,7 +4009,7 @@ class WorkflowGUI:
 
 
     def update_current_scene(self, event=None):
-        scene = self.get_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
         
         # 处理 cinematography 字段：尝试解析 JSON 字符串
         #cinematography_text = self.scene_cinematography.get("1.0", tk.END).strip()
@@ -3878,7 +4029,6 @@ class WorkflowGUI:
             "narrator": self.scene_narrator.get(),
             "voiceover": self.scene_voiceover.get("1.0", tk.END).strip(),
             "caption": self.scene_caption.get("1.0", tk.END).strip(),
-            "extend": float(self.scene_extend_var.get()) if self.scene_extend_var.get() != "0.0" else 0.0,
 
             "clip_animation": self.clip_animate.get(),
             "narration_animation": self.narration_animation.get()
@@ -4205,31 +4355,16 @@ class WorkflowGUI:
     def handle_video_replacement(self, video_path, replace_media_audio, media_type):
         """处理音频替换"""
         try:
-            current_scene = self.get_current_scene()
-            previous_scene = self.get_previous_scene()
-            next_scene = self.get_next_scene()
-            scenes_same_story = self.workflow.scenes_in_story(current_scene)
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
 
-            if not video_path:
-                video_path = get_file_path(current_scene, media_type)
-                if media_type != 'clip' and video_path is None:
-                    oldv, video_path = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
-                    refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
-                    refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
-                    current_scene[media_type + "_fps"] = current_scene.get(media_type + "_fps", 24)
-
-                temp_video = config.get_temp_file(self.workflow.pid, "mp4")
-                video_path = safe_copy_overwrite(video_path, temp_video)
-            else:
-                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
-                video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
+            current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
+            video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
             if media_type != "clip" and media_type != "narration":
                 replace_media_audio = "keep"
-            review_dialog = AVReviewDialog(self, video_path, current_scene, previous_scene, next_scene, media_type, replace_media_audio)
-            
-            # 等待对话框关闭
+
+            review_dialog = AVReviewDialog(self, video_path, current_scene, self.workflow.get_previous_scene(self.current_scene_index), self.workflow.get_next_scene(self.current_scene_index), media_type, replace_media_audio)
             self.root.wait_window(review_dialog.dialog)
 
             if (not review_dialog.result) or ('transcribe_way' not in review_dialog.result) or  ('audio_json' not in review_dialog.result):
@@ -4244,19 +4379,12 @@ class WorkflowGUI:
 
             if media_type != "clip" and media_type != "narration":
                 if transcribe_way == "multiple":
+                    scenes_same_story = self.workflow.scenes_in_story(current_scene)
                     for sss in scenes_same_story:
                         sss[media_type] = current_scene.get(media_type, None)
                         sss[media_type+"_audio"]  = current_scene.get(media_type+"_audio", None)
                         sss[media_type+"_image"]  = current_scene.get(media_type+"_image", None)
                         sss[media_type+"_image_last"]  = current_scene.get(media_type+"_image_last", None)
-                        #if "camear_style" in current_scene:
-                        #    sss["camear_style"] = current_scene["camear_style"]
-                        #if "camera_shot" in current_scene:
-                        #    sss["camera_shot"] = current_scene["camera_shot"]
-                        #if "camera_angle" in current_scene:
-                        #    sss["camera_angle"] = current_scene["camera_angle"]
-                        #if "camera_color" in current_scene:
-                        #    sss["camera_color"] = current_scene["camera_color"]
                 self.workflow.save_scenes_to_json()
                 return
 
@@ -4265,21 +4393,13 @@ class WorkflowGUI:
             # media_type == clip
             if len(audio_json) > 1:
                 self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
-                current_scene = self.get_current_scene()
+                current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
                 for sss in audio_json:
                     sss[media_type + "_status"] = "ORIG"
             else:
                 current_scene[media_type + "_status"] = "ORIG"
 
-            # pop up messagebox to ask user if want to repalce image
-            # dialog1 = messagebox.askyesno("替换首帧图像", "是否要替换首帧图像？")
-            dialog2 = messagebox.askyesno("替换末帧图像", "是否要替换末帧图像？")
-            if dialog2:
-                first_image, last_image = self.workflow.ffmpeg_processor.extract_first_last_frame(video_path)
-                #if dialog1:
-                #    refresh_scene_media(current_scene, media_type+"_image", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(first_image))
-                if dialog2:
-                    refresh_scene_media(current_scene, media_type+"_image_last", ".webp", self.workflow.ffmpeg_processor.resize_image_smart(last_image))
+            self.media_scanner.last_image_replacement(current_scene, video_path, media_type)
                 
         except Exception as e:
             messagebox.showerror("错误", f"视频替换失败: {str(e)}")
@@ -4315,7 +4435,7 @@ class WorkflowGUI:
             
             selected_image_path = self.workflow.ffmpeg_processor.resize_image_smart(selected_image_path)
 
-            current_scene = self.get_current_scene()
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             self.workflow.replace_scene_image(current_scene, selected_image_path, vertical_line_position, target_field)
             
             # 刷新GUI显示
@@ -4352,7 +4472,7 @@ class WorkflowGUI:
             return
         
         from gui.media_type_selector import MediaTypeSelector
-        selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.get_current_scene())
+        selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.workflow.get_scene_by_index(self.current_scene_index))
         replace_media_audio, media_type = selector.show()
         if not media_type:
             return  # 用户取消
@@ -4372,38 +4492,58 @@ class WorkflowGUI:
 
 
     def on_video_canvas_double_click(self, event):
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         from gui.media_type_selector import MediaTypeSelector
         selector = MediaTypeSelector(self.root, None, True, current_scene)
         replace_media_audio, media_type = selector.show()
         if not media_type:
             return  # 用户取消
 
-        self.handle_video_replacement(None, replace_media_audio, media_type)
+        video_path = get_file_path(current_scene, media_type)
+        if media_type != 'clip' and video_path is None:
+            oldv, video_path = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
+            refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
+            refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
+
+        temp_video = config.get_temp_file(self.workflow.pid, "mp4")
+        video_path = safe_copy_overwrite(video_path, temp_video)
+
+        self.handle_video_replacement(video_path, replace_media_audio, media_type)
         self.refresh_gui_scenes()
 
 
     def on_clip_animation_change(self, event=None):
-        current_scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         current_scene["clip_animation"] = self.clip_animate.get()
         self.workflow.save_scenes_to_json()
 
 
     def on_scene_field_change(self, field_name, field_value, event=None):
-        self.get_current_scene()[field_name] = field_value 
+        self.workflow.get_scene_by_index(self.current_scene_index)[field_name] = field_value 
         self.workflow.save_scenes_to_json()
 
 
     def on_narration_animation_change(self, event=None):
         """处理图像类型选择变化"""
-        self.get_current_scene()["narration_animation"] = self.narration_animation.get()
+        self.workflow.get_scene_by_index(self.current_scene_index)["narration_animation"] = self.narration_animation.get()
         # 标记配置已更改
         self._config_changed = True
+
+    def _on_narration_ahead_change(self):
+        """旁白提前勾选变化时写入当前场景并保存"""
+        if not self.workflow.scenes or self.current_scene_index >= len(self.workflow.scenes):
+            return
+        self.workflow.get_scene_by_index(self.current_scene_index)["narration_ahead"] = self.narration_ahead.get()
+        self.workflow.save_scenes_to_json()
 
 
     def generate_video(self, scene, previous_scene, next_scene, track):
         image_path = get_file_path(scene, track+"_image")
         image_last_path = get_file_path(scene, track+"_image_last")
+        next_sound_path = get_file_path(next_scene, track+"_audio")
+        sound_path = get_file_path(scene, track+"_audio")
+        if not sound_path:
+            return
 
         animate_mode = scene.get(track+"_animation", "S2V")
         if animate_mode not in config_prompt.ANIMATE_SOURCE or animate_mode.strip() == "":
@@ -4426,27 +4566,29 @@ class WorkflowGUI:
 
         action_path = get_file_path(scene, self.selected_secondary_track)
 
-        sound_path = get_file_path(scene, "clip_audio")
-        next_sound_path = get_file_path(next_scene, "clip_audio")
-
         self.workflow.rebuild_scene_video(scene, track, animate_mode, image_path, image_last_path, sound_path, next_sound_path, action_path, wan_prompt)
         self.workflow.save_scenes_to_json()
 
 
     def regenerate_video(self, track, prompt_only):
         """打开 WAN 提示词编辑对话框并生成主轨道视频"""
-        scene = self.get_current_scene()
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         
         # 定义生成视频的回调函数
         def generate_callback(wan_prompt):
-            scene[track+"_prompt"] = wan_prompt
+            current_scene[track+"_prompt"] = wan_prompt
             # 使用编辑后的 prompt 生成视频
             if not prompt_only:
-                previous_scene = self.get_previous_scene()
-                next_scene = self.get_next_scene()
-                self.generate_video(scene, previous_scene, next_scene, track)
+                if track == "clip":
+                    new_scenes = self.workflow.split_smart_scene(current_scene)
+                previous_scene = self.workflow.get_previous_scene(self.current_scene_index)
+                next_scene = self.workflow.get_next_scene(self.current_scene_index)
+                self.generate_video(current_scene, previous_scene, next_scene, track)
 
             self.workflow.save_scenes_to_json()
+
+            self.playing_delta = 0.0
+            self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
             self.refresh_gui_scenes()
         
         # 显示编辑对话框

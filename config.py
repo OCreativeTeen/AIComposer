@@ -4,6 +4,37 @@ import uuid
 import random
 import glob
 import json
+from utility.file_util import safe_move_overwrite
+
+
+
+def fetch_text_from_json(script_path, output_path=None):
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            segments = json.load(f)
+        text_content = "\n".join([segment["caption"] for segment in segments])
+    except Exception as e:
+        try:
+            with open(script_path, "r", encoding="utf-8") as f:
+                text_content = f.read()
+        except Exception as e:
+            return ""
+
+    c = extract_text_from_srt_content(text_content)
+    if c:
+        text_content = c
+
+    # 如果提供了输出路径，保存到文件
+    if output_path:
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text_content)
+            print(f"✅ 文本已保存: {output_path}")
+        except Exception as e:
+            print(f"⚠️ 保存文本文件失败: {str(e)}")
+    
+    return text_content
+
 
 
 def extract_text_from_srt_content(content):
@@ -15,7 +46,7 @@ def extract_text_from_srt_content(content):
         content: SRT 文件内容字符串
 
     Returns:
-        提取的文本行用换行符拼接；无有效文本时返回 None。
+        提取的文本行用换行符拼接；若非 SRT 格式则原样返回输入；空输入返回 None。
     """
     if not content or not content.strip():
         return None
@@ -55,7 +86,8 @@ def extract_text_from_srt_content(content):
             else:
                 i += 1
 
-    return '\n'.join(text_lines) if text_lines else None
+    # 若未识别为 SRT 格式（如纯文本、转录稿），原样返回输入
+    return '\n'.join(text_lines) if text_lines else content
 
 
 def parse_json_from_text(text):
@@ -337,41 +369,85 @@ def get_background_image_path() -> str:
     """获取背景文件路径"""
     return f"{BASE_PROGRAM_PATH}/background_image"
 
+
+def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor):
+    """获取背景图、背景音乐，并用图+音乐合成背景视频，返回 (background_image, background_video, background_music)。"""
+    prefix, kernel = fetch_resource_prefix("", [])
+    image_dir = get_background_image_path() + "/" + channel
+    music_dir = get_background_music_path() + "/" + channel
+    video_dir = get_background_video_path() + "/" + channel
+
+    # 1. 获取 background_image（按横竖屏选 169_ 或 916_）
+    if ffmpeg_processor.width > ffmpeg_processor.height:
+        background_image = find_matched_file(image_dir, prefix + "/169_", "png", kernel)
+    else:
+        background_image = find_matched_file(image_dir, prefix + "/916_", "png", kernel)
+    if background_image:
+        background_image = ffmpeg_processor.to_webp(background_image)
+
+    # 2. 获取 background_music（转成 wav）
+    background_music = find_matched_file(music_dir, prefix + "/", "mp3", kernel)
+    if background_music:
+        background_music = ffmpeg_audio_processor.to_wav(background_music)
+
+    # 3. 用 图 + 音乐 合成 background_video
+    background_video = None
+    if background_image and background_music:
+        video_name = background_image.replace(".png", "") + "_" + background_music.replace(".mp3", "")
+        video_path = video_dir + "/" + video_name + ".mp4"
+        if os.path.exists(video_path):
+            background_video = video_path
+        else:
+            background_video = ffmpeg_processor.image_audio_to_video(background_image, background_music, 1) 
+            safe_move_overwrite(background_video, video_path)
+
+    return background_image, background_video, background_music
+    
+
 def get_main_summary_path(pid: str, language: str) -> str:
     """获取长文本文件路径"""
     return f"{get_project_path(pid)}/main_summary.txt"
+
 
 def get_main_audio_path(pid: str) -> str:
     """获取主音频文件路径"""
     return f"{get_media_path(pid)}/main.wav"
 
+
 def get_main_video_path(pid: str) -> str:
     """获取主视频文件路径"""
     return f"{get_media_path(pid)}/main.mp4"
+
 
 def get_selected_music_path(pid: str) -> str:
     """获取背景音乐文件路径"""
     return f"{get_media_path(pid)}/selected_music.wav"
 
+
 def get_starting_video_path(pid: str) -> str:
     """获取开始视频文件路径"""
     return f"{get_media_path(pid)}/starting.mp4"
+
 
 def get_ending_video_path(pid: str) -> str:
     """获取结束视频文件路径"""
     return f"{get_media_path(pid)}/ending.mp4"
 
+
 def get_pre_video_path(pid: str) -> str:
     """获取预视频文件路径"""
     return f"{get_media_path(pid)}/pre.mp4"
+
 
 def get_story_audio_path(pid: str) -> str:
     """获取沉浸故事音频文件路径"""
     return f"{get_media_path(pid)}/story.wav"
 
+
 def get_story_video_path(pid: str) -> str:
     """获取沉浸故事视频文件路径"""
     return f"{get_media_path(pid)}/story.mp4"
+
 
 def get_story_json_path(pid: str) -> str:
     """获取沉浸故事JSON文件路径"""

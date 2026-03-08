@@ -8,7 +8,7 @@ import os
 import time
 from utility.file_util import safe_copy_overwrite, get_file_path, build_scene_media_prefix
 from project_manager import refresh_scene_media
-import threading
+import tkinter.messagebox as messagebox
 import config
 
 
@@ -176,7 +176,6 @@ class MediaScanner:
             for pattern, type_suffix in ANIMATE_TYPE_PATTERNS:
                 if re.search(pattern, copy_to):
                     v = self.take_gen_video(copy_to, video_info.video_type, type_suffix, target_scene)
-                    refresh_scene_media(scene, video_info.video_type+"_image_last", ".webp", self.ffmpeg_processor.extract_frame(v, False))
 
         
     
@@ -293,5 +292,42 @@ class MediaScanner:
         else:
             #scene[av_type+"_input"] = original_gen_video
             oldv, gen_video = refresh_scene_media(scene, media_type, ".mp4", gen_video, True)
+            self.last_image_replacement(scene, gen_video, media_type)
 
         return gen_video
+
+
+    def video_simple_replacement(self, current_scene, video_path, replace_audio, media_type):
+        """处理音频替换"""
+        current_scene[media_type + "_fps"] = self.ffmpeg_processor.get_video_fps(video_path)
+        video_path = self.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
+        if replace_audio:
+            audio = current_scene.get(media_type+"_audio", None)
+            if not audio:
+                return
+            video_path = self.ffmpeg_processor.add_audio_to_video(video_path, audio)
+
+        refresh_scene_media(current_scene, media_type, ".mp4", video_path, True)
+        self.last_image_replacement(current_scene, video_path, media_type)
+
+
+    def last_image_replacement(self, current_scene, video_path, media_type):
+        last_image = self.ffmpeg_processor.extract_frame(video_path, False)
+
+        if last_image is None:
+            print("⚠️ 无法提取视频末帧，跳过末帧图像替换")
+            return
+        last_image = self.ffmpeg_processor.resize_image_smart(last_image)
+        if last_image is None:
+            print("⚠️ 末帧图像缩放失败，跳过末帧图像替换")
+            return
+        oldi, last_image = refresh_scene_media(current_scene, media_type+"_image_last", ".webp", last_image)
+        # check if has next scene , if yes,   ask use if want to replace next scene['clip_image'] with last_image ? if yes, replace it.
+
+        next_scene = self.workflow.next_scene_of_story(current_scene)
+        if next_scene:
+            dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
+            if dialog:
+                refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
+
+

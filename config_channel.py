@@ -603,7 +603,7 @@ COUNSELING_INTRO = """
             * don't try to give full story cover, just VERY briefly describe the most important / shocking scene vividly to grab attention.
 
 *** Input:
-    ** story & analysis content provided in the user-prompt >> only focuse on 'content' field (contains content1, content2...etc.), ignore other fields.
+    ** story content provided in the user-prompt >> only focuse on 'content' field, ignore other fields.
         Here is a example:
         [
             {{
@@ -1061,47 +1061,41 @@ CHANNEL_CONFIG = {
             "channel_story_connection": COUNSELING_STORY_CONNECTION,
             "channel_program_init": COUNSELING_INIT,
             "channel_program_debut": COUNSELING_DEBUT,
-            "channel_program_raw": COUNSELING_RAW
+            "channel_program_raw": COUNSELING_RAW,
+            "intro": COUNSELING_INTRO,
+            "development1": COUNSELING_STORY_DEVELOPMENT,
+            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
         },
         "channel_templates": [
             [
                 {
-                    "name": "starting",
-                    "prompt": []
+                    "name": "starting"
                 },
                 {
-                    "name": "intro",
-                    "prompt": [COUNSELING_INTRO]
+                    "name": "intro"
                 },
                 {
-                    "name": "development1",
-                    "prompt": [COUNSELING_STORY_DEVELOPMENT]
+                    "name": "development1"
                 },
                 {
-                    "name": "development2",
-                    "prompt": [COUNSELING_ANALYSIS_DEVELOPMENT]
+                    "name": "development2"
                 },
                 {
-                    "name": "ending",
-                    "prompt": []
+                    "name": "ending"
                 }
             ],
             [
                 {
-                    "name": "starting",
-                    "prompt": [COUNSELING_INIT, COUNSELING_DEBUT]
+                    "name": "starting"
                 },
                 {
-                    "name": "intro",
-                    "prompt": [COUNSELING_INTRO]
+                    "name": "intro"
                 },
                 {
-                    "name": "development1",
-                    "prompt": [COUNSELING_STORY_DEVELOPMENT]
+                    "name": "development1"
                 },
                 {
-                    "name": "ending",
-                    "prompt": []
+                    "name": "ending"
                 }
             ]
         ],

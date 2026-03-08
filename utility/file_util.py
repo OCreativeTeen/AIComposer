@@ -6,6 +6,17 @@ from datetime import datetime
 
 
 
+def safe_move_overwrite(source, destination):
+    try:
+        if os.path.exists(destination):
+            os.remove(destination)
+        shutil.move(source, destination)
+        return destination
+    except Exception as e:
+        print(f"❌ Error moving file: {e}")
+        return None
+
+
 def safe_copy_overwrite(source, destination):
     # shutil.copyfile(left_video.file_path, temp_left_path)
     try:
@@ -126,7 +137,6 @@ def build_scene_media_prefix(pid, scene_id, media_type, animate_type, with_times
         return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type + "_" + timestamp
     else:
         return media_type + "_" + pid  + "_" + scene_id + "_" + animate_type
-
 
 
 def clean_memory(cuda=True, verbose=True):

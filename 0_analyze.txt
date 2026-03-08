@@ -64,6 +64,11 @@ Ctrl-Shift-P
 
 
 
+-----------------------
+PROMPTS
+-----------------------
+listening customer speaking (just listening, NO NO speaking at all)
+
 
 
 

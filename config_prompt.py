@@ -7,6 +7,16 @@ PICTURE_STYLE = """
 """
 
 
+ANALYSIS_VIDEO_LIST = """
+the uploaded txt file is a json list, each item in this list has "content" & "summary", please check "content" carefully, if it has a clearly a "心理冲突story", take the story out as a new field "story" in this item go through all the list, process one by one, and output a downloadable json
+"""
+
+
+RENAME = """
+ls *.json | ren -NewName { $_.BaseName + ".txt" }
+ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
+"""
+
 
 CONCISE_SPEAKING_PROMPT = """
 Condense the spoken content (given in user-prompt) into a clearer and more concise form while preserving the original meaning, personality, emotional tone, and storytelling flow. 
@@ -919,8 +929,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
         Distinguish between Intergenerational Cycles (repeating a parent's tragedy) and Relational PTSD/Unfinished Business (repeating a trauma specifically created by this relationship's history).
 
     * Tag Selection:
-        Problem Tags: Select 1-3 tags from the specific subtype that best capture the "voice" of the conflict. Do not list all available tags.
-        Component Tags: Choose from: case-study, analysis, insight, intervention.
+        Problem Tags: Select 1-3 tags from the specific subtype that best capture the story content (). Do not list all available tags.
 
 *** Output JSON Specification
     {{
@@ -928,41 +937,9 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
         "title": "The name of the story (less than 16 words, in original language)",
         "topic_category": "The primary category from the Classification System",
         "topic_subtype": "The specific sub-type from the Classification System",
-        "tags": "1-3 selected tags, provided as a comma-separated string",
-        "component_tags": "Selected component tags from choices, provided as a comma-separated string"
+        "tags": ["1-3 selected tags, provided as a comma-separated string"]
     }}
 """
-
-
-DEPRECATED = """
-For psychology-related discussion/analysis content (given in user-prompt), you are expert to:
-
-1. give component_tags for the content, choices are :
-    scenario, case-study, analysis, insight, evidence, theory, solution, intervention, exercise, feedback, reflection
-    FYI: give string of tags separated by commas, not list!!
-
-
-2. choose a topic_category & a topic_subtype about the content from following choices (the topic explaination is given),
-{topic_choices}
-
-
-output as json format (strictly follow the format):
-{{
-    "topic_category": "The topic category of the content",
-    "topic_subtype": "The topic subtype of the content",
-    "tags": "The topic tags of the content -- give string of tags separated by commas, not list!!",
-    "component_tags": "The component_tags of the content -- give string of tags separated by commas, not list!!"
-}}
-
-like the example :
-{{
-    "topic_category": "人格形成与早期创伤",
-    "topic_subtype": "原生家庭脚本与角色固化",
-    "tags": "我从小就是那个最懂事的, 我不被偏爱但被需要, 我一反抗就内疚",
-    "component_tags": "case-study, analysis, insight, solution"
-}}
-"""
-
 
 
 
@@ -1118,17 +1095,17 @@ ANIMATION_PROMPTS = [
 
 SPEAKER = [
     "",
-    "man_mature",
     "woman_mature", 
+    "man_mature",
 
-    "man_young",
     "woman_young",
+    "man_young",
 
-    "man_old",
-    "woman_old",
-
-    "teen_boy",
     "teen_girl",
+    "teen_boy",
+
+    "woman_old",
+    "man_old",
 
     "boy",
     "girl"
@@ -1137,26 +1114,26 @@ SPEAKER = [
 
 NARRATOR = [
     "",
+    "woman_mature", 
+    "man_mature",
     "woman_mature_right",
     "woman_mature_left",
-    "woman_mature", 
     "man_mature_right",
     "man_mature_left",
-    "man_mature",
 
+    "woman_young",
+    "man_young",
     "woman_young_right",
     "woman_young_left",
-    "woman_young",
     "man_young_right",
     "man_young_left",
-    "man_young",
 
+    "woman_old",
     "woman_old_right",
     "woman_old_left",
-    "woman_old",
+    "man_old",
     "man_old_right",
-    "man_old_left",
-    "man_old"
+    "man_old_left"
 ]
 
 

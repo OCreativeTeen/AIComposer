@@ -14,7 +14,7 @@ class PictureInPictureDialog:
         
         # Default settings
         if overlay_left_path or overlay_right_path:
-            self.ratio = 0.7
+            self.ratio = 0.6
             if overlay_left_path:
                 self.position = "left"
             if overlay_right_path:
@@ -23,7 +23,7 @@ class PictureInPictureDialog:
                 self.position = "center"
             self.transition_duration = 0.0
         else:
-            self.ratio = 0.5
+            self.ratio = 0.6
             self.position = "right"
             self.transition_duration = 1.2
 
@@ -36,7 +36,7 @@ class PictureInPictureDialog:
         """Create the dialog window"""
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("画中画设置")
-        self.dialog.geometry("400x520")
+        self.dialog.geometry("500x600")
         self.dialog.resizable(False, False)
         self.dialog.grab_set()  # Make dialog modal
         
@@ -53,7 +53,7 @@ class PictureInPictureDialog:
         
         ttk.Label(info_frame, text=f"背景视频: {os.path.basename(self.background_video_path)}").pack(anchor=tk.W)
         ttk.Label(info_frame, text=f"叠加视频: {os.path.basename(self.overlay_video_path)}").pack(anchor=tk.W)
-        
+
         # Settings section
         settings_frame = ttk.LabelFrame(main_frame, text="画中画设置", padding=5)
         settings_frame.pack(fill=tk.X, pady=(0, 10))
