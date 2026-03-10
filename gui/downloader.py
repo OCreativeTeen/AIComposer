@@ -578,17 +578,17 @@ class MediaDownloader:
 
 
     def is_video_new(self, video_data):
-        is_new_video = True
-        if self.channel_videos:
-            for existing_video in self.channel_videos:
-                existing_title = existing_video.get('title', '').lower()
-                existing_view_count = existing_video.get('view_count', 0)
-                existing_upload_date = existing_video.get('upload_date', '')
-                if existing_title == video_data.get('title', '').lower() and existing_view_count == video_data.get('view_count', 0) and existing_upload_date == video_data.get('upload_date', ''):
-                    is_new_video = False
-                    break
-
-        return is_new_video;
+        """判断是否为列表中尚未存在的视频。只要标题一致即视为已有，不重复展示。"""
+        if not self.channel_videos:
+            return True
+        new_title = (video_data.get('title') or '').strip().lower()
+        if not new_title:
+            return True
+        for existing_video in self.channel_videos:
+            existing_title = (existing_video.get('title') or '').strip().lower()
+            if existing_title == new_title:
+                return False
+        return True
 
 
     def make_safe_file_name(self, title, title_length=15):
@@ -726,6 +726,59 @@ class MediaDownloader:
             traceback.print_exc()
             return None
 
+    def fetch_channel_new_videos(self, channel_url, max_videos=200):
+        """抓取频道视频列表，返回当前列表中不存在的新视频列表（不修改 channel_videos）"""
+        self._check_and_update_cookies()
+        try:
+            ydl_opts = self._get_ydl_opts_base(
+                quiet=False,
+                extract_flat='in_playlist',
+                skip_download=True,
+            )
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(channel_url, download=False)
+            if not info or 'entries' not in info:
+                return []
+            channel_name = self.get_channel_name(info)
+            new_videos = []
+            for count, entry in enumerate(info['entries']):
+                if count >= max_videos:
+                    break
+                if not entry:
+                    continue
+                video_url = entry.get('url', '') or entry.get('webpage_url', '') or f"https://www.youtube.com/watch?v={entry.get('id', '')}"
+                video_id = entry.get('id', '')
+                video_data = None
+                if entry.get('view_count') is not None and entry.get('title'):
+                    video_data = {
+                        'title': entry.get('title', 'Unknown Title'),
+                        'url': video_url,
+                        'id': video_id,
+                        'duration': entry.get('duration', 0),
+                        'view_count': entry.get('view_count', 0),
+                        'uploader': entry.get('uploader', channel_name),
+                        'channel': channel_name,
+                        'channel_id': entry.get('channel_id', ''),
+                        'upload_date': entry.get('upload_date', ''),
+                        'thumbnail': entry.get('thumbnail', ''),
+                        'description': entry.get('description', '')[:200] if entry.get('description') else ''
+                    }
+                    print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
+                else:
+                    try:
+                        video_data = self.get_video_detail(video_url, channel_name)
+                        print(f"✓ {count} -- {video_data['title'][:50]} -- {video_data['view_count']:,} 观看")
+                    except Exception as e:
+                        print(f"⚠️ 跳过视频: {e}")
+                        continue
+                if video_data and self.is_video_new(video_data):
+                    new_videos.append(video_data)
+            return new_videos
+        except Exception as e:
+            print(f"❌ 抓取视频列表失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None  # None 表示出错，[] 表示无新视频
 
     def _progress_hook(self, d):
         """下载进度回调函数"""
@@ -1014,17 +1067,52 @@ class MediaGUIManager:
         channel = choice_to_channel[selected_choice]
         self.downloader.channel_list_json = channel['file']
         
-        # 显示频道视频管理对话框
+        # 读出 list：同 title 只保留一条，保留 content + topic_category + topic_subtype 最完整（内容最多）的那条；每条删掉 summary；写回 JSON
         with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
-            self.downloader.channel_videos = json.load(f)
-            self.downloader.latest_date = max(
-                (
-                    datetime.strptime(v["upload_date"], "%Y%m%d")
-                    for v in self.downloader.channel_videos
-                    if v.get("upload_date")
-                ),
-                default=None
-            )
+            channel_videos = json.load(f)
+
+        def _complete_score(v):
+            """有 content+topic_category+topic_subtype 的优先；否则按有无 content 及 content 长度比较（同 title 下都没有 category/subtype 时按 content 保留）"""
+            c = (v.get('content') or '').strip()
+            cat = (v.get('topic_category') or '').strip()
+            sub = (v.get('topic_subtype') or '').strip()
+            content_len = len(c)
+            if cat and sub:
+                # 有分类+子类型：完整项，用大基数保证优先于“只有 content”的项
+                return 1_000_000 + content_len
+            return content_len
+
+        by_title = {}
+        for video in channel_videos:
+            title = (video.get('title') or '').strip()
+            if not title:
+                continue
+            key = title.lower()
+            if key not in by_title:
+                by_title[key] = video
+                continue
+            cur = by_title[key]
+            cur_score = _complete_score(cur)
+            new_score = _complete_score(video)
+            if new_score > cur_score:
+                by_title[key] = video
+
+        cleaned = list(by_title.values())
+        for video in cleaned:
+            video.pop('summary', None)
+
+        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+
+        self.downloader.channel_videos = cleaned
+        self.downloader.latest_date = max(
+            (
+                datetime.strptime(v["upload_date"], "%Y%m%d")
+                for v in self.downloader.channel_videos
+                if v.get("upload_date")
+            ),
+            default=None
+        )
         if not self.downloader.channel_videos:
             messagebox.showwarning("提示", "视频列表为空")
             return
@@ -1151,6 +1239,7 @@ class MediaGUIManager:
             return video_detail
 
         text_content = self.fetch_text_content(video_detail)
+        video_detail["content"] = text_content
         url = video_detail.get('url', '')
 
         # 摘要生成改为后台线程执行（非阻塞）
@@ -1166,22 +1255,21 @@ class MediaGUIManager:
                             print(f"❌ 未找到视频详情: {url}")
                             return
                     
-                    summary = video_detail.get('summary', '')
-                    if not in_background or not summary or not summary.strip():
-                        # LLM API 调用在信号量保护下（已在上层 with 语句中）
-                        result = self.llm_api.generate_text(
-                            config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', max_words=1500 if in_background else 2500), 
-                            text_content
-                        )
-                        if result:
-                            # 使用锁保护，更新视频详情
-                            with self.channel_videos_lock:
-                                video_detail.pop('description', None)
-                                video_detail['summary'] = result
-                        else:
-                            print(f"⚠️ 摘要生成失败: {video_detail.get('title', 'Unknown')[:50]}")
-                            return
-
+                    #summary = video_detail.get('summary', '')
+                    #if not in_background or not summary or not summary.strip():
+                    #    # LLM API 调用在信号量保护下（已在上层 with 语句中）
+                    #    result = self.llm_api.generate_text(
+                    #        config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', max_words=1500 if in_background else 2500), 
+                    #        text_content
+                    #    )
+                    #    if result:
+                    #        # 使用锁保护，更新视频详情
+                    #        with self.channel_videos_lock:
+                    #            video_detail.pop('description', None)
+                    #            video_detail['summary'] = result
+                    #    else:
+                    #        print(f"⚠️ 摘要生成失败: {video_detail.get('title', 'Unknown')[:50]}")
+                    #        return
 
                     self.prepare_category_for_content(video_detail, text_content, self.topic_choices)
 
@@ -1229,8 +1317,13 @@ class MediaGUIManager:
                     video_detail.pop('topic_type', None)
                 if result.get('topic_category', '') and result.get('topic_category', '').strip():
                     video_detail['topic_category'] = result.get('topic_category', '')
-                if result.get('tags', '') and result.get('tags', '').strip():
-                    video_detail['tags'] = result.get('tags', '')
+                raw_tags = result.get('tags')
+                if isinstance(raw_tags, list):
+                    tags_list = [str(t).strip() for t in raw_tags if t and str(t).strip()]
+                    if tags_list:
+                        video_detail['tags'] = tags_list
+                elif isinstance(raw_tags, str) and raw_tags.strip():
+                    video_detail['tags'] = [t.strip() for t in raw_tags.split(',') if t.strip()]
                 # 保存到文件（在锁内，确保数据一致性）
                 try:
                     with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2215,6 +2308,103 @@ class MediaGUIManager:
             messagebox.showinfo("提示", f"已启动 {len(videos_to_process)} 个视频的摘要生成任务，请稍后...", parent=dialog)
 
 
+        def update_video_list():
+            """重新抓取当前频道视频列表，与现有列表比较，将新视频弹窗展示供用户勾选添加"""
+            if not self.downloader.channel_list_json or not self.downloader.channel_videos:
+                messagebox.showwarning("提示", "当前没有加载视频列表", parent=dialog)
+                return
+            channel_id = None
+            for v in self.downloader.channel_videos:
+                cid = (v.get('channel_id') or '').strip()
+                if cid and len(cid) >= 10:
+                    channel_id = cid
+                    break
+            if not channel_id:
+                messagebox.showerror("错误", "无法获取频道ID，请使用「获取热门视频列表」重新导入频道", parent=dialog)
+                return
+            channel_url = f"https://www.youtube.com/channel/{channel_id}/videos"
+
+            def fetch_task():
+                new_videos = self.downloader.fetch_channel_new_videos(channel_url, max_videos=200)
+                dialog.after(0, lambda: _show_new_videos_popup(new_videos))
+
+            def _show_new_videos_popup(new_videos):
+                if new_videos is None:
+                    messagebox.showerror("错误", "抓取视频列表失败", parent=dialog)
+                    return
+                if not new_videos:
+                    messagebox.showinfo("提示", "没有发现新视频", parent=dialog)
+                    return
+
+                popup = tk.Toplevel(dialog)
+                popup.title("新视频 - 选择要添加的视频")
+                popup.geometry("900x500")
+                popup.transient(dialog)
+
+                cols = ("title", "views", "duration", "upload_date")
+                tree_frame = ttk.Frame(popup)
+                tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+                scrollbar = ttk.Scrollbar(tree_frame)
+                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                new_tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
+                                        yscrollcommand=scrollbar.set, selectmode="extended")
+                new_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                scrollbar.config(command=new_tree.yview)
+
+                new_tree.heading("title", text="标题")
+                new_tree.heading("views", text="观看次数")
+                new_tree.heading("duration", text="时长")
+                new_tree.heading("upload_date", text="上传日期")
+                new_tree.column("title", width=450)
+                new_tree.column("views", width=100)
+                new_tree.column("duration", width=80)
+                new_tree.column("upload_date", width=100)
+
+                def fmt_duration(sec):
+                    if not sec:
+                        return "-"
+                    m, s = divmod(int(sec), 60)
+                    h, m = divmod(m, 60)
+                    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+                video_to_iid = {}
+                for i, v in enumerate(new_videos):
+                    view_count = v.get('view_count', 0)
+                    views_str = f"{view_count:,}" if isinstance(view_count, (int, float)) else str(view_count)
+                    duration_str = fmt_duration(v.get('duration', 0))
+                    upload_date = v.get('upload_date', '') or '-'
+                    title = (v.get('title', '') or '')[:120]
+                    iid = new_tree.insert("", tk.END, values=(title, views_str, duration_str, upload_date))
+                    video_to_iid[iid] = v
+
+                def add_selected():
+                    selected = new_tree.selection()
+                    to_add = [video_to_iid[iid] for iid in selected if iid in video_to_iid]
+                    if not to_add:
+                        messagebox.showinfo("提示", "请至少选择一个视频", parent=popup)
+                        return
+                    for v in to_add:
+                        self.downloader.channel_videos.append(v)
+                    self.downloader.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
+                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    popup.destroy()
+                    populate_tree()
+                    messagebox.showinfo("成功", f"已添加 {len(to_add)} 个视频到列表", parent=dialog)
+
+                btn_frame = ttk.Frame(popup)
+                btn_frame.pack(fill=tk.X, padx=10, pady=5)
+                ttk.Button(btn_frame, text="全选", command=lambda: [new_tree.selection_add(item) for item in new_tree.get_children()]).pack(side=tk.LEFT, padx=5)
+                ttk.Button(btn_frame, text="取消全选", command=lambda: new_tree.selection_remove(*new_tree.get_children())).pack(side=tk.LEFT, padx=5)
+                ttk.Button(btn_frame, text="添加选中", command=add_selected).pack(side=tk.RIGHT, padx=5)
+                ttk.Button(btn_frame, text="关闭", command=popup.destroy).pack(side=tk.RIGHT, padx=5)
+
+            messagebox.showinfo("提示", "正在抓取频道视频列表，请稍候...", parent=dialog)
+            thread = threading.Thread(target=fetch_task)
+            thread.daemon = True
+            thread.start()
+
+
         def download_selected():
             selected_items = tree.selection()
             if not selected_items:
@@ -2441,10 +2631,11 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="编辑主题", command=edit_selected_topics).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
+        #ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
+        #ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="转录", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="下载", command=download_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)
 
 
     def fetch_hot_videos(self):

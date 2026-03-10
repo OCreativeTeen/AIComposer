@@ -310,7 +310,7 @@ class WanPromptEditorDialog:
         self.dialog.destroy()
         
         # 调用生成视频回调
-        self.generate_video_callback(wan_prompt)
+        self.generate_video_callback(self.scene, wan_prompt)
     
 
     def _on_cancel(self):

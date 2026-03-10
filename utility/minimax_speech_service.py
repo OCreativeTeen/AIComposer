@@ -148,8 +148,8 @@ VOICES = [
         'name': 'woman_mature',
         'language': 'chinese',
         'volume': 1.0,
-        'speed': 1.05,
-        'pitch': -1,
+        'speed': 1.06,
+        'pitch': 0,
         'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54' #'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
     },
     {

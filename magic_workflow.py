@@ -549,7 +549,7 @@ class MagicWorkflow:
         original_video_clip = get_file_path(current_scene, "clip")
         original_duration = self.find_clip_duration(current_scene)
         if original_duration <= 0 or not original_audio_clip or not original_video_clip:
-            return False
+            return None
 
         s2v_config = None
         for config in [sd_image_processor.GEN_CONFIG["HS2V"], sd_image_processor.GEN_CONFIG["S2V"], sd_image_processor.GEN_CONFIG["FS2V"]]:
@@ -557,7 +557,7 @@ class MagicWorkflow:
             s2v_config["section_duration"] = (s2v_config["max_frames"]-4) * 1.0 / s2v_config["frame_rate"]
             if original_duration - s2v_config["section_duration"] <= 0.0:
                 current_scene["clip_animation"] = "S2V"
-                return False
+                return [current_scene]
 
         ss = int(original_duration / s2v_config["section_duration"])
         remain = original_duration - ss * s2v_config["section_duration"]
@@ -1285,17 +1285,19 @@ class MagicWorkflow:
             if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
                 valid_narrator = s["narrator"]
 
+            ext = float(s.get("extension", 0) or 0)
+
             if valid_narrator and ("left" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":0})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
                 #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
-                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
+                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 
             v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
-            #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":0})
-            video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
+            #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":ext})
+            video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 
             if valid_narrator and (not "left" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":0})
+                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
                 #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
                 #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
 
@@ -1307,9 +1309,18 @@ class MagicWorkflow:
 
         for i, v in enumerate(video_segments):
             video_path = f"{final_video_dir}/{i:04d}.mp4"
-            safe_copy_overwrite(v["path"], video_path)
+            if v["extend"] > 0.0:
+                # create new function to extend the clip (simple extend last frame (if extend > 0.0))
+                v_temp = self.ffmpeg_processor.extend_video(v["path"], v["extend"])
+            else:
+                v_temp = v["path"]
+            safe_copy_overwrite(v_temp, video_path)
+            video_segments[i]["path"] = video_path
 
-        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
+        #video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
+
+        # create new function to simplly concat videos (No extendsion, NO transition at all)
+        video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
         if not add_narration:
             current_zero = None

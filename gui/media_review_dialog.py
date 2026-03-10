@@ -122,6 +122,15 @@ class AVReviewDialog:
             self.image_field = "zero_image"
         elif media_type == "one":
             self.video_field = "one"
+            narration_audio = get_file_path(self.current_scene, "narration_audio")
+            _refresh_scene_media(self.current_scene, "one_audio", ".wav", narration_audio, True)
+
+            one_video = get_file_path(self.current_scene, "one")
+            if not one_video or not os.path.exists(one_video):
+                one_video = video_path
+            one_video = self.workflow.ffmpeg_processor.add_audio_to_video(one_video, narration_audio)
+            _refresh_scene_media(self.current_scene, "one", ".mp4", one_video)
+            
             self.audio_field = "one_audio"
             self.image_field = "one_image"
 
@@ -442,9 +451,6 @@ class AVReviewDialog:
         ttk.Button(fresh_buttons_frame, text="间重建", command=lambda: self.remix_conversation("simple", False)).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="单重建", command=lambda: self.remix_conversation("single", False)).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="多重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
-        
-        ttk.Button(fresh_buttons_frame, text="前接重", command=lambda: self.remix_conversation("connect_prev", False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="后接重", command=lambda: self.remix_conversation("connect_next", False)).pack(side=tk.LEFT)
         # transcribe exsiting conversation (if >>30 sec), then remix multiple conversation
 
         ttk.Button(fresh_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
@@ -1246,10 +1252,7 @@ class AVReviewDialog:
 
 
     def remix_conversation(self, mode, transcribe):
-        if mode == "connect_prev" or mode == "connect_next" :
-            self.transcribe_way = "single"
-        else:
-            self.transcribe_way = mode
+        self.transcribe_way = mode
         self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
         
         if self.media_type != 'clip' and self.media_type != 'narration':
@@ -1276,88 +1279,41 @@ class AVReviewDialog:
 
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
-        if mode == "connect_next":
-            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('channel_story_connection', '')
-            selected_prompt_example_file = self.workflow.channel + "_connection.json"
-            refresh_json = [
-                {
-                    "name": "connection_addon_content",
-                    "speaking": refresh_conversation
-                },
-                {
-                    "name":"previous_scene",
-                    "speaking": self.current_scene.get("speaking", ""),
-                    "speaker": self.current_scene.get("speaker", ""),
-                    "voiceover": self.current_scene.get("voiceover", "")
-                },
-                {
-                    "name":"next_scene",
-                    "speaking": self.next_scene.get("speaking", ""),
-                    "speaker": self.next_scene.get("speaker", ""),
-                    "voiceover": self.next_scene.get("voiceover", "")
-                }
-            ]
-            refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
-
-        elif mode == "connect_prev":
-            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('channel_story_connection', '')
-            selected_prompt_example_file = self.workflow.channel + "_connection.json"
-            refresh_json = [
-                {
-                    "name": "connection_addon_content",
-                    "speaking": refresh_conversation
-                },
-                {
-                    "name":"previous_scene",
-                    "speaking": self.previous_scene.get("speaking", ""),
-                    "speaker": self.previous_scene.get("speaker", ""),
-                    "voiceover": self.previous_scene.get("voiceover", "")
-                },
-                {
-                    "name":"next_scene",
-                    "speaking": self.current_scene.get("speaking", ""),
-                    "speaker": self.current_scene.get("speaker", ""),
-                    "voiceover": self.current_scene.get("voiceover", "")
-                }
-            ]
-            refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
-
-        else:
-            refresh_json = None
-            if refresh_conversation:
-                try:
-                    refresh_json = json.loads(refresh_conversation)
-                    refresh_json_copy = []
-                    for item in refresh_json:
-                        new_item = {
-                            "content": _content,
-                            "speaking": item.get("speaking", ""),
-                            "speaker": item.get("speaker", ""),
-                            "voiceover": item.get("voiceover", "")
-                        }
-                        refresh_json_copy.append(new_item)
-                    refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
-                    refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
-                except:
-                    refresh_json = None
-
-            if not refresh_json:
-                refresh_json = [
-                    {
-                        "name": self.current_scene.get("name", "story"),
+        refresh_json = None
+        if refresh_conversation:
+            try:
+                refresh_json = json.loads(refresh_conversation)
+                refresh_json_copy = []
+                for item in refresh_json:
+                    new_item = {
                         "content": _content,
-                        "speaking": self.current_scene.get("speaking", ""),
-                        "speaker": self.current_scene.get("speaker", ""),
-                        "voiceover": self.current_scene.get("voiceover", "")
+                        "speaking": item.get("speaking", ""),
+                        "speaker": item.get("speaker", ""),
+                        "voiceover": item.get("voiceover", "")
                     }
-                ]
-                refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+                    refresh_json_copy.append(new_item)
+                refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
                 refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+            except:
+                refresh_json = None
 
-            if mode == "simple":
-                selected_prompt_example_file = None
-            else:
-                selected_prompt_example_file = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
+        if not refresh_json:
+            refresh_json = [
+                {
+                    "name": self.current_scene.get("name", "story"),
+                    "content": _content,
+                    "speaking": self.current_scene.get("speaking", ""),
+                    "speaker": self.current_scene.get("speaker", ""),
+                    "voiceover": self.current_scene.get("voiceover", "")
+                }
+            ]
+            refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
+            refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+
+        if self.transcribe_way == "simple":
+            selected_prompt_example_file = None
+        else:
+            selected_prompt_example_file = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
 
 
         if selected_prompt_example_file:

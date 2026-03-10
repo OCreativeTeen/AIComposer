@@ -321,11 +321,14 @@ class MediaScanner:
         if last_image is None:
             print("⚠️ 末帧图像缩放失败，跳过末帧图像替换")
             return
+
         oldi, last_image = refresh_scene_media(current_scene, media_type+"_image_last", ".webp", last_image)
+        next_scene = self.workflow.next_scene_of_story(current_scene)
         # check if has next scene , if yes,   ask use if want to replace next scene['clip_image'] with last_image ? if yes, replace it.
 
-        next_scene = self.workflow.next_scene_of_story(current_scene)
-        if next_scene:
+        if current_scene.get(media_type+"_status", "ORIG") == "ENH2":
+            refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
+        elif next_scene:
             dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
             if dialog:
                 refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)

@@ -255,7 +255,7 @@ class ProgramInitEditorDialog:
         user_prompt = f"On topic of {topic}, the initial story script is : \n{self.init_story.get('raw_content','')}\n\n\n\
                       And the core-insight ('soul') is: \n{self.init_story.get('soul', '')}\n\n\n\
                       And the reference stories are: \n{self.init_story.get('reference_content',{}).get('story','')}"
-        system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('channel_program_init', '')
+        system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('prompt_story_init', '')
         system_prompt = system_prompt.format(language=LANGUAGES[self.init_story['language']], topic=topic)
         # 调用LLM生成内容
         generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
@@ -336,7 +336,7 @@ class DebutEditorDialog:
                         And the reference analysises are: \n{ref_analysis}\n\n\n\
                         And the core-insight ('soul') is: \n{self.debut_story.get('soul')}"
 
-        system_prompt = config_channel.CHANNEL_CONFIG[self.debut_story['channel']]['channel_prompt'].get('channel_program_debut', '')
+        system_prompt = config_channel.CHANNEL_CONFIG[self.debut_story['channel']]['channel_prompt'].get('prompt_program_debut', '')
         system_prompt = system_prompt.format(
             language=LANGUAGES.get(self.debut_story['language']),
             topic=topic
@@ -411,12 +411,9 @@ class ReferenceEditorDialog:
             messagebox.showerror("错误", "请先完成 RAW 内容，再获取参考")
             return
 
-        reference_filter_prompt = self.reference_filter + "\n---------\n" + \
-                                  "Topic-Category: " + self.reference_story['topic_category'] + "\nTopic-Subtype: " + self.reference_story['topic_subtype'] + \
-                                  "\n\n" + self.reference_story['raw_content']
         try:
             self.dialog.clipboard_clear()
-            self.dialog.clipboard_append(reference_filter_prompt)
+            self.dialog.clipboard_append(self.reference_filter  + "\n---------\n" + self.reference_story['raw_content'])
         except tk.TclError:
             pass
 
@@ -567,6 +564,29 @@ class ReferenceEditorDialog:
 
         result = {"story": selected_story, "analysis": selected_analysis}
         self.reference_story['reference_content'] = result
+
+    #  result format is like this:
+    #{
+    #    "story": [
+    #        {
+    #            "content": "the content of the story",
+    #            "transcribed_file": "file name of the transcribed_file",
+    #            "source_name": "the name of source which give the transcribed_file"
+    #            "reason": "Explanation of relevance"
+    #        }
+    #    ]
+    #    "analysis": [
+    #        {
+    #            "content": "the content of the analysis",
+    #            "transcribed_file": "file name of the transcribed_file",
+    #            "source_name": "the name of source which give the transcribed_file"
+    #            "reason": "Explanation of relevance"
+    #        }
+    #    ]
+    #}
+    #
+    #  based on the reference result, you can compose a 'Case-Story' and a 'Analysis' for the 'the reference content for the story and analysis, which is used to generate the story and analysis.
+    #
         self.reference_editor.delete('1.0', tk.END)
         self.reference_editor.insert('1.0', json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -579,7 +599,7 @@ class ReferenceEditorDialog:
 
     def show(self):
         self.dialog.wait_window()
-        return self.reference_story['reference_content']
+        return self.reference_story.get('reference_content', {'story': [], 'analysis': []})
 
 
 
@@ -835,39 +855,13 @@ class ProjectSelectionDialog:
         channel_combo.pack(side=tk.LEFT)
         channel_combo.set(self.default_project_config['default_channel'])
         self.story_result['channel'] = channel_combo.get()
-        channel_template_index_var = tk.IntVar(value=0)  # 当前选中的模板索引
 
-        templates_list, template_labels = config_channel.get_channel_templates(self.story_result['channel'])
-        self.story_result['channel_template'] = templates_list[0]
+        def sync_channel_template(*args):
+            """频道变更时同步单一 channel_template 到 story_result"""
+            templates_list, _ = config_channel.get_channel_templates(self.story_result['channel'])
+            self.story_result['channel_template'] = templates_list[0] if templates_list else None
 
-        template_label = ttk.Label(channel_frame, text="", foreground="gray")
-        template_label.pack(side=tk.LEFT, padx=(10, 0))
-
-        def update_template_ui(*args):
-            templates_list, template_labels = config_channel.get_channel_templates(self.story_result['channel'])
-            if len(templates_list) > 1:
-                choose_template_btn.pack(side=tk.LEFT, padx=(10, 0))
-                template_label.config(text=f"模板 {channel_template_index_var.get() + 1}", foreground="black")
-            else:
-                choose_template_btn.pack_forget()
-                channel_template_index_var.set(0)
-                self.story_result['channel_template'] = templates_list[0]
-                template_label.config(text="", foreground="gray")
-
-        def on_choose_template():
-            from gui.choice_dialog import askchoice
-            templates_list, template_labels = config_channel.get_channel_templates(self.story_result['channel'])
-            if len(templates_list) <= 1:
-                return
-            selected = askchoice("选择频道模板", template_labels, parent=new_project_dialog)
-            if selected is not None:
-                idx = template_labels.index(selected)
-                channel_template_index_var.set(idx)
-                self.story_result['channel_template'] = templates_list[idx]
-                template_label.config(text=f"模板 {idx + 1}", foreground="black")
-
-        choose_template_btn = ttk.Button(channel_frame, text="选择模板", command=on_choose_template)
-        # 是否 pack 由 update_template_ui 根据模板数量决定
+        sync_channel_template()
         row += 1
         
         # 主题分类选择（两级：category 和 subtype，各单选）
@@ -1074,16 +1068,16 @@ class ProjectSelectionDialog:
         # 绑定 combobox 改变事件，即时同步到 story_result
         def on_channel_changed(e=None):
             update_topic_choices()  # 内部会 sync channel/language
-            update_template_ui()
+            sync_channel_template()
 
         def on_language_changed(e=None):
             self.story_result['language'] = language_combo.get()
 
         channel_combo.bind('<<ComboboxSelected>>', on_channel_changed)
         language_combo.bind('<<ComboboxSelected>>', on_language_changed)
-        # 初始化加载主题分类与模板显示
+        # 初始化加载主题分类与模板
         update_topic_choices()
-        update_template_ui()
+        sync_channel_template()
         
         # 标题
         ttk.Label(main_frame, text="标题:").grid(row=row, column=0, sticky='w', pady=5)
@@ -1113,22 +1107,21 @@ class ProjectSelectionDialog:
 
         reference_content_var = tk.StringVar(value="")
 
-        # 第一列：RAW 内容（需先选 topic）
-        raw_label_frame = ttk.LabelFrame(content_panels_frame, text="RAW内容", padding=10)
-        raw_label_frame.grid(row=0, column=0, padx=5, sticky='nsew')
-        raw_preview = ttk.Label(raw_label_frame, text="RAW: (未生成)", foreground="gray", wraplength=200)
-        raw_preview.pack(anchor='w', pady=(0, 10))
-        edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
-        edit_raw_btn.pack(pady=5)
-
         # 第三列：参考内容
         reference_label_frame = ttk.LabelFrame(content_panels_frame, text="参考内容", padding=10)
-        reference_label_frame.grid(row=0, column=1, padx=(5, 0), sticky='nsew')
+        reference_label_frame.grid(row=0, column=0, padx=(5, 0), sticky='nsew')
         reference_preview = ttk.Label(reference_label_frame, text="REF: (未编辑)", foreground="gray", wraplength=200)
         reference_preview.pack(anchor='w', pady=(0, 10))
         edit_reference_btn = ttk.Button(reference_label_frame, text="参考收集", command=lambda: None)
         edit_reference_btn.pack(pady=5)
 
+        # 第一列：RAW 内容（需先选 topic）
+        raw_label_frame = ttk.LabelFrame(content_panels_frame, text="RAW内容", padding=10)
+        raw_label_frame.grid(row=0, column=1, padx=5, sticky='nsew')
+        raw_preview = ttk.Label(raw_label_frame, text="RAW: (未生成)", foreground="gray", wraplength=200)
+        raw_preview.pack(anchor='w', pady=(0, 10))
+        edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
+        edit_raw_btn.pack(pady=5)
 
         # 第二列：INIT 内容
         story_label_frame = ttk.LabelFrame(content_panels_frame, text="INIT内容", padding=10)
@@ -1178,14 +1171,14 @@ class ProjectSelectionDialog:
         # 根据 topic、raw、reference 状态启用/禁用编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
-            has_raw = bool((self.story_result.get('raw_content') or '').strip())
             ref = self.story_result.get('reference_content')
             has_reference = isinstance(ref, dict) and (bool(ref.get('story')) or bool(ref.get('analysis')))
-            has_ref_filter = bool(config_channel.CHANNEL_CONFIG.get(self.story_result.get('channel'), {}).get('channel_prompt', {}).get('channel_reference_filter', ''))
+            # has raw content
+            has_raw = bool(self.story_result.get('raw_content'))
             editor_busy = _editor_open[0]
             edit_raw_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
             # 参考收集：raw_content 不空 且 频道配置了 reference_filter
-            edit_reference_btn.config(state='normal' if has_topic and has_raw and has_ref_filter and not editor_busy else 'disabled')
+            edit_reference_btn.config(state='normal' if has_topic and has_raw and not editor_busy else 'disabled')
             # INIT编辑、DEBUT编辑：需参考收集完成（reference_content 不空），不必等 INIT 完成
             can_edit_after_ref = has_topic and has_reference and not editor_busy
             edit_init_btn.config(state='normal' if can_edit_after_ref else 'disabled')
@@ -1242,9 +1235,9 @@ class ProjectSelectionDialog:
             if case_story_result[0] is None or not case_story_result[0]:
                 return
 
-            raw_story_system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('channel_program_raw', '')
+            raw_story_system_prompt = config_channel.CHANNEL_CONFIG[self.story_result['channel']]['channel_prompt'].get('prompt_program_raw', '')
 
-            raw_story_system_prompt = raw_story_system_prompt.format( topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
+            raw_story_system_prompt = raw_story_system_prompt.format( language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
 
 
             self.story_result['raw_content'] = self.llm_api.generate_text(raw_story_system_prompt, case_story_result[0])
@@ -1337,36 +1330,20 @@ class ProjectSelectionDialog:
             _editor_open[0] = True
             update_buttons_state()
             try:
+                reference_filter_prompt = config_channel.CHANNEL_CONFIG[self.story_result['channel']].get('channel_prompt', {}).get('prompt_reference_filter', '')
+                reference_filter_prompt = reference_filter_prompt.format(topic=self.story_result['topic_category'] + " - " + self.story_result['topic_subtype'])
+
                 editor = ReferenceEditorDialog(
                     new_project_dialog,
                     init_story=self.story_result,
-                    reference_filter=config_channel.CHANNEL_CONFIG[self.story_result['channel']].get('channel_prompt', {}).get('channel_reference_filter', '')
+                    reference_filter=reference_filter_prompt
                 )
 
                 result_json = editor.show()
                 story_list = result_json.get('story', [])
-                # for each item in story_list, get transcribed_file, source_name, reason
-                for item in story_list:
-                    fpath = item.pop('transcribed_file', '')
-                    try:
-                        with open(fpath, 'r', encoding='utf-8') as f:
-                            item['content'] = config.extract_text_from_srt_content(f.read())
-                        item['name'] = fpath[-36:] if len(fpath) > 36 else fpath
-                    except Exception as e:
-                        item['content'] = None
-                # filter out None  content item in story_list        
                 story_list = [item for item in story_list if item['content'] is not None]
 
                 analysis_list = result_json.get('analysis', [])
-                for item in analysis_list:
-                    fpath = item.pop('transcribed_file', '')
-                    try:
-                        with open(fpath, 'r', encoding='utf-8') as f:
-                            item['content'] = config.extract_text_from_srt_content(f.read())
-                        item['name'] = fpath[-36:] if len(fpath) > 36 else fpath
-                    except Exception as e:
-                        item['content'] = None
-                # filter out None  content item in analysis_list
                 analysis_list = [item for item in analysis_list if item['content'] is not None]
 
                 result_json['story'] = story_list

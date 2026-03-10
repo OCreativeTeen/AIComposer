@@ -27,61 +27,169 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 """
 
 
+
 COUNSELING_REFERENCE_FILTER = """
 *** Role & Objective
-    As a "Mental Health Content Research Assistant", cross-reference a "Core-Story" (provided below) against the list of "Document Summaries" in NotebookLM sources, 
-    to identify upto 10 most relevant stories (or case-studies), and  upto 10 most relevant analysis (therapy techniques/research).
+    As a "psychological counselor", for the content of a 'Case-Story' or a 'Analysis' on the psychological topic '{topic}' (provided below), 
+    cross-reference it against all NotebookLM sources (but 'Pasted Text' - which is this prompt) as reference, 
+    to identify upto 5 most relevant stories (or case-studies), and  upto 5 most relevant analysis (therapy techniques/research).
 
 *** Operational Workflow
-    Step 1 — Analyze "Core-Story" (provided below)
+    Step 1 — Analyze the content on a psychological topic (provided below)
             Primary psychological themes
             Mental health challenges (e.g., Avoidant Attachment, PTSD, Caregiver Burnout).
             Therapeutic directions and emotional conflicts.
 
     Step 2 — Semantic Filtering on Summary
-        Scan material list and select the most relevant files based on this priority:
-            Similar psychological patterns or life scenarios.
-            Semantic correlation between story tags and document tags.
-            Topic-Category/Topic-Subtype matching.
+        Scan material list and select the most relevant item based on this priority:
+            item must have full 'content' (of the story or analysis), and between this 'content' and the 'Case-Story' / 'Psychological Analysis':
+                * have similar psychological patterns or life scenarios.
+                * have semantic correlation between story tags and document tags.
+                * have similar Topic-Category/Topic-Subtype matching.
 
 *** Input
-    1. "Case-Story" (+Topic-Category/Subtype; Provided below)
+    1. "Case-Story" or "Psychological Analysis" on the psychological topic '{topic}' (Provided below)
     2. "List of Reference" (with Summary & transcribed_file):
         check all selected sources in current notebooklmproject
 
 *** Output Format
     Pure JSON (not array); 2 sections: each max 10 items; reason in original language & less than 120 words.
-    {
-        "story": [
-            {
-                "transcribed_file": "filepath",
-                "source_name": "the name of source which give the transcribed_file"
-                "reason": "Explanation of relevance"
-            }
-        ]
-        "analysis": [
-            {
-                "transcribed_file": "filepath",
-                "source_name": "the name of source which give the transcribed_file"
-                "reason": "Explanation of relevance"
-            }
-        ]
-    }
+        {{
+            "story": [
+                {{
+                    "content": "the content of the story",
+                    "transcribed_file": "file name of the transcribed_file",
+                    "source_name": "the name of source which give the transcribed_file"
+                    "reason": "Explanation of relevance"
+                }}
+            ]
+            "analysis": [
+                {{
+                    "content": "the content of the analysis",
+                    "transcribed_file": "file name of the transcribed_file",
+                    "source_name": "the name of source which give the transcribed_file"
+                    "reason": "Explanation of relevance"
+                }}
+            ]
+        }}
+
 """
 
 
 
-COUNSELING_RAW = """
+COUNSELING_RAW_FROM_OBSERVATIONS = """
 ROLE
     ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
-    ** Your tasks are processing the case-story (provided in user-prompt):
-        * Transform the psychological trauma case-story into a privacy-safe, emotionally intensified, cinematically powerful narrative — without direct psychological explanation.
-        * Then, EXPAND, INTENSIFY, and DEEPEN the psychological conflict structure of the case-story 
+    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt) on topic of '{topic}', and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
+
+        * Transform the original rough or fragmented psychological observations into a structured / comprehensive coherent psychological analysis (with deepening, and expanding the original content).
+
+        * Make a case-story (in {language}) to show the psychological trauma which the analysis talking about (without direct psychological explanation).
+            * The new case-story should EXPAND, INTENSIFY, and DEEPEN the psychological conflict structures
 
 
 OBJECTIVES
 
-    1️⃣ Extract the ROOT WOUND
+    1. Analyze the original rough psychological observations and expand the analysis to a full psychological analysis, with a clear, structure as:
+        ** Psychological pathology – the core internal dysfunction or conflict
+        ** Possible root causes – childhood factors, relational trauma, attachment issues, identity tension
+        ** Multiple causal pathways – several plausible explanations rather than a single cause
+        ** Observable manifestations – emotional reactions, relationship behaviors, communication patterns, decision tendencies
+        ** Psychological mechanisms – defense mechanisms, emotional regulation problems, trauma reenactment, cognitive distortions
+        ** Escalation patterns – how the issue may intensify or repeat over time
+        ** Guidance for intervention – psychological reframing, communication strategies, boundary adjustments
+        ** Practical actions – concrete behavioral steps (exercise, reflection practices, daily habits, therapy directions)
+
+    2. Based on the full psychological analysis (from step 1), thoroughly scan real-life stories from: the Reddit discussions (such as r/relationship_advice, r/relationships,  or search: site:reddit.com "{topic}")
+        ** Extract story-elements (as reference) like:
+            * emotional neglect
+            * anxious/avoidant attachment cycles
+            * trauma reenactment patterns
+            * silent resentment & withdrawal
+            * pursuit/avoid loops
+            * identity collapse / worthlessness
+            * mood instability (if relevant)
+
+    3. Based on the full psychological analysis (from step 1) & the reference story-elements (from step 2), make a case-story to show the psychological trauma (without direct psychological explanation).
+        ** The new case-story should EXPAND, INTENSIFY, and DEEPEN the psychological conflict structures, showing the following key elements:
+            * The core ROOT WOUND
+            * The central inner conflict & story’s trajectory
+            * Emotional triggers & emotional tone
+            * Repeating relational patterns
+            * Attachment dynamics (anxious vs avoidant, if applicable)
+            * Signs of trauma reenactment
+            * Identity tension or self-worth fractures
+            * Mood instability markers (depressive or bipolar tendencies if present)
+        ** STRUCTURAL ENHANCEMENTS
+            * Strengthen symbolic events
+            * Escalate emotional tension gradually
+            * Introduce subtle attachment polarity (anxious vs avoidant)
+            * Reinforce trauma reenactment cycles
+            * Include micro-details of depressive or manic swings (if relevant)
+            * Reveal internal fracture through behavior, not explanation
+            * The audience should be able to sense the psychological answer without being told.
+
+        ** Integrate reference story-elements to:
+            * Intensify dramatic tension
+            * Deepen root-wound exposure
+            * Strengthen character personality architecture
+            * Increase emotional realism
+            * realistic dialogue tone
+
+    4. Case-Story Construction (Psychological Conflict Narrative)
+        ** Based on the full psychological analysis (Step 1) and the reference story elements (Step 2), construct a dramatic case-story that reveals the psychological trauma through narrative, without direct psychological explanation.
+        ** The audience should sense the psychological truth through the story itself, rather than being explicitly told.
+
+        ** The story should expand and intensify the psychological conflict structure, revealing through events and behavior:
+            * Core root wound and central inner conflict
+            * Narrative trajectory shaped by emotional triggers
+            * Repeating relational patterns and attachment dynamics (e.g., anxious vs avoidant)
+            * Trauma reenactment cycles
+            * Identity tension or self-worth fractures
+            * Mood instability signals (depressive or manic tendencies, if relevant)
+
+        ** Strengthen the story structure by:
+            * Gradually escalate emotional tension
+            * Use symbolic or pivotal events to expose the root wound
+            * Introduce attachment polarity within relationships
+            * Reveal internal fractures through behavior, choices, and dialogue — not explanation
+            * Include subtle behavioral or mood shifts where relevant
+
+        ** Use the provided reference elements to:
+            * increase dramatic tension
+            * deepen root-wound exposure
+            * strengthen character personality structure
+            * enhance emotional realism and natural dialogue
+
+        ** Guidelines
+            * The characters reveal themselves through behavior
+            * Let the audience infer the root wound
+            * Story first. Psychology underneath.
+
+
+OUTPUT:
+    ** Full Psychological Analysis (in {language}) **
+    xxxxxx
+    -----------------
+
+    ** Case-Story (in {language}) **
+    yyyyyy
+"""
+
+
+
+COUNSELING_RAW_FROM_STORY = """
+ROLE
+    ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
+    ** Your task is to take the rough content of the case-story (provided in user-prompt) on topic of '{topic}'
+        * Transform the psychological trauma case-story into a privacy-safe, emotionally intensified, cinematically powerful narrative (in {language}, and without direct psychological explanation).
+            * Then, EXPAND, INTENSIFY, and DEEPEN the psychological conflict structure of the case-story, according to the reference stories
+        * Make a clear, structured, and comprehensive psychological analysis (in {language}, with deepening, and expanding the original content).
+
+
+OBJECTIVES
+
+    1. Extract the ROOT WOUND
 
         Analyze the original case story and identify:
             ** The core ROOT WOUND
@@ -102,7 +210,7 @@ OBJECTIVES
         This step is internal understanding only.
 
 
-    2️⃣ FULL PRIVACY TRANSFORMATION (De-Fingerprinting Principle)
+    2. FULL PRIVACY TRANSFORMATION (De-Fingerprinting Principle)
 
         Rewrite the story to be fully privacy-safe.
 
@@ -126,10 +234,18 @@ OBJECTIVES
         The story must feel real but untraceable.
 
 
-    3️⃣ ENHANCE WITH REDDIT PATTERN MINING (Topic: {topic})
+    3. Enhance the case-story:
 
-        Based on the original case-story & the ROOT WOUND, identify the key psychological themes & patterns.
-        Thoroughly scan real-life stories from: the Reddit discussions (such as r/relationship_advice, r/relationships,  or search: site:reddit.com "{topic}")
+        ** EXPAND, INTENSIFY, and DEEPEN the psychological conflict structure of the case-story:
+            * Strengthen symbolic events
+            * Escalate emotional tension gradually
+            * Introduce subtle attachment polarity (anxious vs avoidant)
+            * Reinforce trauma reenactment cycles
+            * Include micro-details of depressive or manic swings (if relevant)
+            * Reveal internal fracture through behavior, not explanation
+            * The audience should be able to sense the psychological answer without being told.
+
+        ** Thoroughly scan real-life stories from: the Reddit discussions (such as r/relationship_advice, r/relationships,  or search: site:reddit.com "{topic}")
 
             Found out elements like:
                 • emotional neglect
@@ -147,39 +263,27 @@ OBJECTIVES
                 • realistic dialogue tone
 
             Do NOT mention sources (like: reference stories or Reddit) in final output.
-        
-        Then, EXPAND, INTENSIFY, and DEEPEN the psychological conflict structure of the case-story 
 
 
-NARRATIVE RULES (CRITICAL)
-    ❌ No therapist characters
-    ❌ No psychological explanations
-    ❌ No didactic dialogue
-    ❌ No diagnostic language
-    ❌ No overt theory discussion
-
-    ✅ The psychology must be embedded in action
-    ✅ The characters reveal themselves through behavior
-    ✅ Let the audience infer the root wound
-    ✅ Show trauma “sprouts,” not theory
-    ✅ Story first. Psychology underneath.
-
-
-
-STRUCTURAL ENHANCEMENTS
-    ** Strengthen symbolic events
-    ** Escalate emotional tension gradually
-    ** Introduce subtle attachment polarity (anxious vs avoidant)
-    ** Reinforce trauma reenactment cycles
-    ** Include micro-details of depressive or manic swings (if relevant)
-    ** Reveal internal fracture through behavior, not explanation
-    ** The audience should be able to sense the psychological answer without being told.
-
+    4. Based on the enhanced case-story (from step 3), make a full psychological analysis, with a clear, structure as:
+        ** Psychological pathology – the core internal dysfunction or conflict
+        ** Possible root causes – childhood factors, relational trauma, attachment issues, identity tension
+        ** Multiple causal pathways – several plausible explanations rather than a single cause
+        ** Observable manifestations – emotional reactions, relationship behaviors, communication patterns, decision tendencies
+        ** Psychological mechanisms – defense mechanisms, emotional regulation problems, trauma reenactment, cognitive distortions
+        ** Escalation patterns – how the issue may intensify or repeat over time
+        ** Guidance for intervention – psychological reframing, communication strategies, boundary adjustments
+        ** Practical actions – concrete behavioral steps (exercise, reflection practices, daily habits, therapy directions)
 
 
 OUTPUT
 
-    ** Privacy-Safe Rewritten Story (cinematic, emotionally layered, no analysis)
+    ** Full Psychological Analysis (in {language}) **
+    xxxxxx
+    -----------------
+
+    ** Case-Story (in {language}) **
+    yyyyyy
 """
 
 
@@ -192,8 +296,9 @@ COUNSELING_INIT = """
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
-    ** Your task is to EXPAND, INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological conflict structure of the case-story (provided in user-prompt) 
-        * the reference stories are provided in user-prompt's "reference" section, you can use them as inspiration to do the enhancement/extension.
+    ** Your task is to EXPAND, INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological conflict structure of the case-story (provided in user-prompt) by:
+        * Thoroughly scan the reference stories (provided in user-prompt's reference section)
+        * and use them as inspiration to enhance/extend the case-story.
 
     ** then transform the expanded story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. 
         * Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
@@ -201,27 +306,23 @@ COUNSELING_INIT = """
 
 *** OBJECTIVES
 
-    PHASE 0 – Diagnose the Original Story
+    PHASE 1 – Diagnose the Original Story
 
         From the original case-story:
 
-            Identify:
+            Identify the key elements:
                 • The ROOT WOUND (what early unmet need is being replayed?)
                 • The Core Fear (abandonment? engulfment? invisibility?)
                 • The Repetitive Pattern
                 • The Trigger Moment
                 • The Defense Strategy each character uses
 
-            Do not explain these clinically in the story.
-            Instead, embed them through scenes, reactions, and contradictions.
 
+    PHASE 2 – Research & Absorption (Invisible Process)
 
-    PHASE 1 – Research & Absorption (Invisible Process)
+        Based on the the key elements, scan thoroughly the reference stories (provided in user-prompt's reference section), to:
 
-        Based on the original case-story & the ROOT WOUND, identify the key psychological themes & patterns.
-        Thoroughly scan real-life stories from: the reference storiese (in user-prompt's "reference" section)
-
-            Found out elements like:
+            Found out similar elements like:
                 • emotional neglect
                 • anxious/avoidant attachment cycles
                 • trauma reenactment patterns
@@ -229,17 +330,22 @@ COUNSELING_INIT = """
                 • pursuit/avoid loops
                 • identity collapse / worthlessness
                 • mood instability (if relevant)
-            Absorb patterns of:
+
+            Enhance the case-story by absorbing the similar elements:
                 • escalation structure
                 • realistic dialogue tone
                 • behavioral symptoms
                 • subtle emotional triggers
                 • how resentment builds over time
+                • Do NOT mention sources (like: reference stories or Reddit) in final output.
 
-            Do NOT mention sources (like: reference stories or Reddit) in final output.
 
+    PHASE 3 - Deepening the Root Conflict
 
-    PHASE 2 – Structural Expansion Rules
+        Intensify the psychological core by:
+            • Repeating the same emotional wound in different situations
+            • Showing how both characters unknowingly co-create the pattern
+            • Letting resentment accumulate quietly before rupture
 
         Show psychology through:
             • body language
@@ -247,48 +353,9 @@ COUNSELING_INIT = """
             • avoidance behaviors
             • overcompensation
 
-        Expand scenes with:
-            • sensory details
-            • timing gaps
-            • subtle shifts in tone
 
-        Introduce realistic consequences:
-            • distance increasing
-            • emotional shutdown
-            • misinterpretation spiral
-
-
-    PHASE 3 – Deepening the Root Conflict
-
-        Intensify the psychological core by:
-            • Repeating the same emotional wound in different situations
-            • Showing how both characters unknowingly co-create the pattern
-            • Letting resentment accumulate quietly before rupture
-
-        Avoid melodrama.
-        Avoid villainizing either side.
-
-
-    PHASE 4 – Archetypal Resonance
-
-        Make characters:
-            • psychologically believable
-            • internally conflicted
-            • self-justifying yet self-doubting
-
-        Introduce a turning point that:
-            • feels small externally
-            • but shifts something internally
-            • prepares ground for future analysis
-
-        Do NOT resolve everything.
-        Do NOT moralize.
-
-        End at a moment of emotional suspension.
-
-
-    PHASE 5: Generate the Scenes: The Dual-Layer Narrative
-`        Each scene must consist of two intertwined layers that transition smoothly:
+    PHASE 4 - Generate the Scenes: The Dual-Layer Narrative
+`       Each scene must consist of two intertwined layers that transition smoothly:
 
         1️⃣ The Explicit Layer (Visible Storyline)
             Format:
@@ -381,22 +448,20 @@ COUNSELING_INIT = """
 COUNSELING_DEBUT = """
 *** ROLE
     ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt (section 'core-insight'). 
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
     ** Your mission:
-        Generate a deep "profound_analysis" that explains root causes AND guides audience healing.
+        Generate a deep "profound_analysis" that explains the root causes AND guides audience healing.
             Goal: Help every listener recognize themselves and learn how to heal — not just why pain exists.
 
 ---
 
 *** INPUT (provided in user-prompt):
     * Case-Story: original psychological conflict or trauma narrative.
-    * Reference:
-        • Stories: similar cases or emotional patterns.
-        • Analysis: psychological insights (e.g., inner child, defenses, relational dynamics).
     * Core-insight ('soul'): the deep internal philosophical framework of the psychological counselor.
+    * Reference Analysis: the reference analysis (provided in user-prompt's reference section)
 
 ---
 *** OBJECTIVES
@@ -406,12 +471,13 @@ COUNSELING_DEBUT = """
         * Clearly identify the psychological symptoms, psychological causes (sources of trauma)
         * Give guid for Practical life practices for emotion-regulation & cognitive-restructuring
 
-    2. Extract Useful Elements from Reference Analysis (provided in user-prompt's "reference analysis" section)
-        * psychological insights that illustrate similar psychological themes
-        * therapeutic techniques or interventions that are applicable to the augmented story
-        * psychological insights that are applicable to the augmented story
+    2. Extract Useful Elements from Reference Analysis:
+        * Thoroughly scan the Reference Analysis (provided in user-prompt's reference section).
+            * Extract psychological insights that illustrate similar psychological themes
+            * Extract therapeutic techniques or interventions that are applicable to the augmented story
+            * Extract psychological insights that are applicable to the augmented story
 
-    3. Then give a deep analysis of the augmented story, including:
+    3. Then, give a practical psychological analysis & guidance to the audience on the psychological issues introduced by the case-story, which including:
         1) Root Cause:
             Explicit:
                 • Deep root-cause analysis.
@@ -516,8 +582,67 @@ OUTPUT FORMAT (JSON Array)
 """
 
 
-
 COUNSELING_ANALYSIS_DEVELOPMENT = """
+*** Role:
+** 你是一位资深的心理咨询师，擅长“创伤知情关怀”与“系统家庭治疗”。
+** 你的核心洞察力（灵魂）基于用户提供的 {topic} 和 "core-insight"。
+** 你的任务：将深奥的心理学分析转化为温暖、有电影感、且具有高度互动性的直播/沙龙式视频脚本。
+
+*** Core Task:
+** 将提供的心理故事拆解为一系列连贯的“心理分析场景”。
+** 每一个场景都必须包含：【场景回顾】->【深度分析】->【听众互动】->【情感承接】。
+
+*** The Interactive Dialogue Loop (核心互动协议):
+为了确保对话自然流动，你的脚本必须遵循以下逻辑链条：
+1. Acknowledge (承接): 如果不是第一个场景，开头必须先回应上一位听众的分享。例如：“谢谢这位先生刚才分享的那个关于雨天的瞬间，那份孤独感我们都听到了...”
+2. Analyze (分析): 引导大家看当前场景中的细节，用去病理化的语言解释背后的“自我保护机制”。
+3. Call to Action (互动提问): 抛出一个温柔的、关于个人经验的问题。例如：“大家在生活中，是否也曾为了维持一份‘完美’而感到精疲力竭？”
+4. Voiceover (反馈): 此时会出现一位随机听众（男/女）的独白，分享他们受到启发后想到的个人经历。
+
+*** Enhanced Directives:
+** 去病理化语言：严禁使用“患者”、“病态”。将 PTSD、回避型人格等解释为“在特定危机时刻，身体为了保护你而演化出的生存策略”。
+** 行为细节化：通过感官细节（声音、质感、习惯）来识别心理机制，而不是贴标签。
+** 咨询师语气：像一位坐在壁炉边的老友，温和、从容、不带评判。
+
+*** The Separation Protocol (听众与故事的分离):
+** Voiceover (听众独白) 规则：
+* 听众必须是随机的普通人（指定性别：男先生/女女士）。
+* 听众分享的是他们自己生活中的真实片段，而不是对故事角色的评价。
+* 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
+
+*** Output Format (JSON Array):
+每一个 JSON 对象必须包含：
+* speaker: 咨询师性别 (man_mature/woman_mature)。
+* speaking: (中文) 咨询师的台词。
+* 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
+* 注意：第一个场景不需要承接部分。
+* actions: (英文) 咨询师的情绪与肢体动作（如：gentle smile, leans forward）。
+* visual: (英文) 咨询师所在的心灵空间场景描述（光影、天气、环境）。
+* voiceover_gender: (Choice: man/woman) 明确下一段分享听众的性别。
+* voiceover: (中文) 随机听众的个人故事片段（像是电台热线或私密日记的读白）。
+
+*** Input Data Example:
+[
+{
+"content": "故事内容：一个关于无法丢弃旧物导致夫妻争吵的故事...",
+"current_scene": "场景二：旧阁楼里的秘密"
+}
+]
+
+*** Example Output:
+{
+"speaker": "woman_mature",
+"speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
+"actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
+"visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
+"voiceover_gender": "woman",
+"voiceover": "听了刚才的话，我想起我衣柜里那件穿不下的旧裙子。那是十年前我第一次面试时穿的，虽然现在全是褶皱，但我每次想扔掉它，心里就像破了个洞。我发现，我舍不得的不是裙子，是那个还对未来充满期待的自己..."
+}
+"""
+
+
+
+COUNSELING_ANALYSIS_DEVELOPMENT_OLD = """
 *** Role:
     ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
     ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
@@ -623,46 +748,6 @@ COUNSELING_INTRO = """
         {example}
 """
 
-
-
-COUNSELING_STORY_CONNECTION = """
-You are expert to create connection scene to conenct the speaking/voiceover between the previous scene & next scene to smoothly / continuity words transition:
-
-*** Input:
-    ** connection_addon_content, previous scene & next scene content provided in the user-prompt, has 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' hints'
-        Here is a example:
-          [
-            {{
-                "name": "connection_addon_content",
-                "speaking": ""
-            }}
-            {{
-                "name":"previous_scene",
-                "speaking": "我就随便问一句而已。‘你在干嘛？’如果他晚点回，肯定是忙吧，或者手机没电……我不是非要他回，可是为什么心会这么乱。",
-                "voiceover": "她一遍遍为对方寻找理由，也一遍遍说服自己不要太黏人。可亮着的屏幕，始终没有给出她想要的回应。",
-                "speaker": "young_woman"
-            }}
-            {{
-                "name":"next_scene"
-                "speaking": "你说得对，我也觉得可能不太合适。嗯，我明白。没关系的。",
-                "voiceover": "她的声音听起来很平静，像是早就预料到了这个结果。电话那头挂断后，房间里只剩下她一个人的呼吸声。",
-                "speaker": "young_woman"
-            }}
-          ]
-
-*** Objective: 
-    ** According to all input content (connetion_addon_content, previous_scene & next_scene content), create a connection scene to make a smooth transition (specially speaking / voiceover content continuity):
-
-*** Output format: 
-    ** Strictly output in json array, which contain only one single scene element with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * speaking: 1st person dialogue ~~~ conenct 'speaking' between the previous scene & next scene with smoothly / continuity smooth conversation ~~~ in original language)
-        * voiceover: as narrator ~~~ conenct 'voiceover' between the previous scene & next scene with smoothly / continuity smooth conversation  ~~~ in original language)
-
-        Here is a Example:
-            {example}
-"""
 
 
 COUNSELINGFEEDBACK_PROGRAM = """
@@ -885,6 +970,22 @@ OUTPUT
 """
 
 
+MV_REFERENCE_FILTER = """
+"""
+
+
+MV_INTRO = """
+"""
+
+
+MV_STORY_DEVELOPMENT = """
+"""
+
+
+MV_ANALYSIS_DEVELOPMENT = """
+"""
+
+
 MV_INIT = """
 """
 
@@ -1023,14 +1124,20 @@ BROADWAY_STORY = """
 
 def get_channel_templates(channel):
     """
-    获取频道的模板列表。支持 channel_template 为数组或「数组的数组」两种格式。
+    获取频道的模板。优先使用 channel_template（单一列表），兼容 channel_templates（多个模板）。
     返回: (templates_list, template_labels)
-    - templates_list: 实际可用的模板列表，每个元素为 section 数组
-    - template_labels: 用于 UI 显示的模板标题列表，如 ["模板 1: starting → intro → development1 → development2 → ending", ...]
+    - templates_list: 模板列表，通常只有一项（单一 channel_template）
+    - template_labels: 用于 UI 显示的标题列表
     """
     if channel not in CHANNEL_CONFIG:
         return [], []
-    raw = CHANNEL_CONFIG[channel].get("channel_templates", [])
+    # 优先 channel_template（单一列表），否则 channel_templates（兼容：可为单一列表或数组的数组，取第一个模板）
+    raw = CHANNEL_CONFIG[channel].get("channel_template")
+    if raw is None:
+        raw_list = CHANNEL_CONFIG[channel].get("channel_templates", [])
+        if raw_list:
+            first_el = raw_list[0]
+            raw = first_el if isinstance(first_el, list) else raw_list
     if not raw:
         return [], []
     # 判断是否为「数组的数组」：第一项是 list 且其元素为 dict
@@ -1057,104 +1164,95 @@ CHANNEL_CONFIG = {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
         "channel_prompt": {
-            "channel_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "channel_story_connection": COUNSELING_STORY_CONNECTION,
-            "channel_program_init": COUNSELING_INIT,
-            "channel_program_debut": COUNSELING_DEBUT,
-            "channel_program_raw": COUNSELING_RAW,
+            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "prompt_story_init": COUNSELING_INIT,
+            "prompt_program_debut": COUNSELING_DEBUT,
+
             "intro": COUNSELING_INTRO,
             "development1": COUNSELING_STORY_DEVELOPMENT,
             "development2": COUNSELING_ANALYSIS_DEVELOPMENT
         },
-        "channel_templates": [
-            [
-                {
-                    "name": "starting"
-                },
-                {
-                    "name": "intro"
-                },
-                {
-                    "name": "development1"
-                },
-                {
-                    "name": "development2"
-                },
-                {
-                    "name": "ending"
-                }
-            ],
-            [
-                {
-                    "name": "starting"
-                },
-                {
-                    "name": "intro"
-                },
-                {
-                    "name": "development1"
-                },
-                {
-                    "name": "ending"
-                }
-            ]
+        "channel_template": [
+            {
+                "name": "starting"
+            },
+            {
+                "name": "intro"
+            },
+            {
+                "name": "development1"
+            },
+            {
+                "name": "development2"
+            },
+            {
+                "name": "ending"
+            }
         ],
-        "channel_tags": ["默观深省", "冥想", "静心", "心灵成长", "自我探索", "Inner peace", "Meditation", "Self-discovery", "心理咨询", "psychological counseling", "心理成长", "Psychology", "心时代，人人都是故事"],
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
-    "counselingfeedback": {
-        "topic": "Comments & Directions of Case Analysis of Psychological Counseling",
-        "channel_name": "心理故事馆-评论",
-        "channel_templates": [
-            [
-                {
-                    "name": "starting",
-                    "prompt": [COUNSELINGFEEDBACK_PROGRAM]
-                },
-                {
-                    "name": "intro",
-                    "prompt": [COUNSELING_INTRO]
-                },
-                {
-                    "name": "feedback",
-                    "prompt": COUNSELINGFEEDBACK_FEEDBACK
-                },
-                {
-                    "name": "ending",
-                    "prompt": []
-                }
-            ]
+
+    "counseling_story": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_prompt": {
+            "prompt_program_raw": COUNSELING_RAW_FROM_STORY,
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "prompt_story_init": COUNSELING_INIT,
+            "prompt_program_debut": COUNSELING_DEBUT,
+
+            "intro": COUNSELING_INTRO,
+            "development1": COUNSELING_STORY_DEVELOPMENT,
+            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
+        },
+        "channel_template": [
+            {
+                "name": "starting"
+            },
+            {
+                "name": "intro"
+            },
+            {
+                "name": "development1"
+            },
+            {
+                "name": "development2"
+            },
+            {
+                "name": "ending"
+            }
         ],
-        "channel_tags": ["默观深省", "冥想", "静心", "心灵成长", "自我探索", "Inner peace", "Meditation", "Self-discovery", "心理咨询", "psychological counseling", "心理成长", "Psychology", "心时代，人人都是故事"],
         "channel_key": "config/client_secret_creative4teen.json"
     },
+
 
     "mv": {
         "topic": "Musical myths and legends",
         "channel_name": "音乐故事",
         "channel_prompt": {
-            "channel_program_init": MV_INIT,
-            "channel_program_debut": MV_DEBUT,
-            "channel_program_raw": MV_RAW
+            "prompt_program_raw": MV_RAW,
+            "prompt_reference_filter": MV_REFERENCE_FILTER,
+            "prompt_story_init": MV_INIT,
+            "prompt_program_debut": MV_DEBUT,
+
+            "intro": MV_INTRO,
+            "development1": MV_STORY_DEVELOPMENT,
+            "development2": MV_ANALYSIS_DEVELOPMENT
+
         },
-        "channel_templates": [
-            [
-                {
-                    "name": "starting",
-                    "prompt": []
-                },
-                {
-                    "name": "development1",
-                    "prompt": [MV_STORY]
-                },
-                {
-                    "name": "ending",
-                    "prompt": []
-                }
-            ]
+        "channel_template": [
+            {
+                "name": "starting"
+            },
+            {
+                "name": "development1"
+            },
+            {
+                "name": "ending"
+            }
         ],
-        "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
         "channel_key": "config/client_secret_main.json"
     },
 
@@ -1162,29 +1260,31 @@ CHANNEL_CONFIG = {
     "broadway": {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
+        "channel_prompt": {
+            "prompt_program_raw": MV_RAW,
+            "prompt_reference_filter": MV_REFERENCE_FILTER,
+            "prompt_story_init": MV_INIT,
+            "prompt_program_debut": MV_DEBUT,
+
+            "intro": BROADWAY_INTRO,
+            "development1": BROADWAY_STORY
+
+        },
         "channel_templates": [
-            [
-                {
-                    "name": "starting",
-                    "prompt": [BROADWAY_PROGRAM]
-                },
-                {
-                    "name": "intro",
-                    "prompt": [BROADWAY_INTRO]
-                },
-                {
-                    "name": "story",
-                    "prompt": [BROADWAY_STORY]
-                },
-                {
-                    "name": "ending",
-                    "prompt": []
-                }
-            ]
+            {
+                "name": "starting"
+            },
+            {
+                "name": "intro"
+            },
+            {
+                "name": "story"
+            },
+            {
+                "name": "ending"
+            }
         ],
-        "channel_tags": ["religion", "bible", "musical", "music", "story", "broadway", "bible stories"],
-        "channel_key": "config/client_secret_main.json",
-        "channel_list": ""
+        "channel_key": "config/client_secret_main.json"
     }
 
 }

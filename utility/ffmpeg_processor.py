@@ -644,6 +644,36 @@ class FfmpegProcessor:
         return output_path
 
 
+    def extend_video(self, video_path, extend_duration):
+        """
+        用最后一帧克隆延长视频末尾 extend_duration 秒。
+        Args:
+            video_path: 输入视频路径
+            extend_duration: 延长秒数 (<=0 则直接返回原路径)
+        Returns:
+            延长后的视频路径（临时文件），失败或 extend_duration<=0 则返回原路径
+        """
+        if not video_path or extend_duration <= 0:
+            return video_path
+        try:
+            output_path = config.get_temp_file(self.pid, "mp4")
+            cmd = self._ffmpeg_input_args(video_path)
+            has_audio = self.has_audio_stream(video_path)
+            if has_audio:
+                cmd.extend(["-af", f"apad=pad_dur={extend_duration:.5f}"])
+                cmd.extend(self._get_audio_encode_args())
+            cmd.extend(self._get_video_output_args(keyframe_interval=True))
+            cmd.extend(self._get_output_optimization_args())
+            cmd.extend([
+                "-vf", f"tpad=stop_duration={extend_duration:.5f}:stop_mode=clone",
+                output_path
+            ])
+            self.run_ffmpeg_command(cmd)
+            return output_path if os.path.exists(output_path) else video_path
+        except Exception as e:
+            print(f"❌ extend_video 出错: {e}")
+            return video_path
+
     def extend_video_with_last_frame(self, video_path, audio_path, output_path):
         """
         Extend video by cloning the last frame to match audio duration.
@@ -1228,12 +1258,14 @@ class FfmpegProcessor:
                     # CRITICAL FIX: Each video needs to be extended by the NEXT transition duration
                     # video_segments[i]["duration"] is the transition TO this video (from previous)
                     # But we need to extend for the transition FROM this video (to next)
+                    # "extend" = user's scene extension (clone last frame), applies to THIS video
+                    seg_extend = float(video_seg.get("extend", 0) or 0)
                     if i < n_videos - 1:
-                        # Not the last video - extend by next transition duration
-                        extension_needed = video_segments[i + 1]["duration"] + video_segments[i + 1]["extend"]  # added
+                        # Not the last video - extend by next transition duration + this segment's extend
+                        extension_needed = video_segments[i + 1]["duration"] + seg_extend
                     else:
-                        # Last video - no extension needed (no next transition)
-                        extension_needed = 0
+                        # Last video - no transition overlap, but may need extend (clone last frame)
+                        extension_needed = seg_extend
                     
                     temp_extended_path = os.path.join(self.temp_dir, f"ext_{i:03d}_{hash(video_seg['path']) % 10000}.mp4")
                     
@@ -1953,8 +1985,8 @@ class FfmpegProcessor:
             input_duration = self.get_duration(input_video_path)
             width, height = self.get_resolution(input_video_path)
             
-            # Build ffmpeg command with tpad filter to extend
-            # tpad adds padding at the end by repeating the last frame
+            # Build ffmpeg command: tpad first (clone last frame) then scale/pad for standardization
+            # Order matters: tpad on original preserves correct last frame; scale/pad can corrupt if done first
             cmd = self._ffmpeg_input_args(input_video_path)
             
             # Add audio parameters if video has audio
@@ -1968,8 +2000,10 @@ class FfmpegProcessor:
             # Add standard output parameters
             cmd.extend(self._get_video_output_args(keyframe_interval=True))
             cmd.extend(self._get_output_optimization_args())
+            # tpad=stop_duration:stop_mode=clone (match extend_video_with_last_frame)
+            scale_pad = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
             cmd.extend([
-                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,tpad=stop_mode=clone:stop_duration={extension_duration:.3f}",
+                "-vf", f"tpad=stop_duration={extension_duration:.5f}:stop_mode=clone,{scale_pad}",
                 output_path
             ])
             

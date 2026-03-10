@@ -14,8 +14,13 @@ wan22 3 frames
 
 
 
+Follow the instructions in the source "Pasted Text" 
 
+生成表达"寄语"的图
 
+replace the logo of "NotebookLM" at the right / bottom  with this url:
+www.mindspringwellness.ca
+(bigger font)
 --------------------------
 
 
@@ -44,6 +49,7 @@ nvidia-smi
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
         pip install -r requirements.txt
 
+.\venv\Scripts\python.exe -m pip install --upgrade yt_dlp
 
 --------------------------
 

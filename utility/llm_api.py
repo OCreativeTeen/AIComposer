@@ -10,8 +10,8 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
 
 
-OLLAMA = "gemma3:12b-it-qat"
-# OLLAMA2 = "gemma3:12b-it-qat 2"
+#OLLAMA = "gemma3:12b-it-qat"
+OLLAMA = "qwen3.5:9b"
 
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"
@@ -193,6 +193,9 @@ class LLMApi:
         content_string = content_string.strip()
         
         # Step 2.5: 修复常见的 JSON 错误（如缺少逗号）
+        # JSON 合法的转义：\" \\ \/ \b \f \n \r \t \uXXXX
+        _VALID_ESCAPE_NEXT = frozenset('"\\/bfnrtu')
+
         def fix_common_json_errors(text: str) -> str:
             """修复常见的 JSON 格式错误，特别是 LLM 生成的错误"""
             # 使用字符级解析来安全地修复错误（保护字符串内容）
@@ -200,18 +203,26 @@ class LLMApi:
             i = 0
             in_string = False
             escape_next = False
-            
+
             while i < len(text):
                 char = text[i]
-                
+
                 # 处理转义字符
                 if escape_next:
                     result.append(char)
                     escape_next = False
                     i += 1
                     continue
-                
+
                 if char == '\\':
+                    if in_string and i + 1 < len(text):
+                        next_ch = text[i + 1]
+                        if next_ch not in _VALID_ESCAPE_NEXT:
+                            # 无效转义（如路径中的 \0 \D 等），将 \ 转义为 \\ 使下一字符为字面量
+                            result.append('\\')
+                            result.append('\\')
+                            i += 1
+                            continue
                     result.append(char)
                     escape_next = True
                     i += 1
