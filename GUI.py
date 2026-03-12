@@ -373,7 +373,7 @@ class WorkflowGUI:
             messagebox.showwarning("警告", "背景视频文件不存在")
             return
 
-        paths = back.split(',')
+        paths = back.split(',') 
         back_path = None
         for i in range(len(paths)):
             back_path = paths[i]

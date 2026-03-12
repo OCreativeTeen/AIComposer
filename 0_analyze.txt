@@ -22,6 +22,10 @@ replace the logo of "NotebookLM" at the right / bottom  with this url:
 www.mindspringwellness.ca
 (bigger font)
 --------------------------
+keep Chinese words unchange
+
+
+talking the content
 
 
 

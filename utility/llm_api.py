@@ -10,8 +10,9 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
 
 
-#OLLAMA = "gemma3:12b-it-qat"
-OLLAMA = "qwen3.5:9b"
+LM_STUDIO = "qwen/qwen3.5-9b"
+#OLLAMA = "qwen3.5:9b"
+OLLAMA = "gemma3:12b-it-qat"
 
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"
@@ -29,9 +30,9 @@ MODELS = {
     OLLAMA : {
         "url": "http://10.0.0.216:11434/v1"
     },
-    #OLLAMA2 : {
-    #    "url": "http://10.0.0.231:11434/v1"
-    #},
+    LM_STUDIO : {
+        "url": "http://10.0.0.216:1234/v1"
+    },
     MANUAL: {
         "url": "http://10.0.0.238:11434/v1"
     }
@@ -58,6 +59,11 @@ class LLMApi:
             base_url =  MODELS[OLLAMA]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
+        self.lm_studio_client = OpenAI(
+            api_key="ollama",
+            base_url =  MODELS[LM_STUDIO]["url"],
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
+        )
         #self.ollama_client_2 = OpenAI(
         #    api_key="ollama",
         #    base_url =  MODELS[OLLAMA2]["url"],
@@ -72,8 +78,18 @@ class LLMApi:
 
     def parse_response(self, response: Any) -> str:
         try:
-            return response.choices[0].message.content
+            if not response or not getattr(response, 'choices', None):
+                print("⚠️ LLM 响应无 choices 字段")
+                return None
+            if not response.choices:
+                print("⚠️ LLM 响应 choices 为空")
+                return None
+            content = response.choices[0].message.content
+            if content is None or (isinstance(content, str) and not content.strip()):
+                print("⚠️ LLM 响应 content 为空")
+            return content
         except (AttributeError, IndexError) as e:
+            print(f"⚠️ 解析 LLM 响应失败: {e}")
             return None
     
 
@@ -427,7 +443,7 @@ class LLMApi:
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
-                    "max_completion_tokens": 64000,
+                    "max_completion_tokens": 262144,
                     "stream": False
                 }
                 response = self.openai_client.chat.completions.create(**request_params)
@@ -440,10 +456,29 @@ class LLMApi:
                     "messages": messages,
                     "temperature": 0.5, # Low (0.0–0.3) predictable;  Medium (0.4–0.7) creativity & reliability;  High (0.8–1.0) very creative
                     "top_p": 0.9,
-                    "max_tokens": 64000,
+                    "max_tokens": 262144,
                     "stream": False
                 }
                 response = self.google_client.chat.completions.create(**request_params)
+                return self.parse_response(response)
+
+            elif model == LM_STUDIO:
+
+                request_params = {
+                    "model": model,  # 使用确定的模型名称
+                    "messages": messages,
+                    "max_tokens": 262144,
+                    "stream": False
+                }
+                # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
+                #with open("ollama_request_params.json", "w", encoding="utf-8") as f:
+                #    json.dump(request_params, f, ensure_ascii=False, indent=2)
+
+                print(f"🔄 使用 LM Studio 模型 ({model}) 生成文本...")
+                #if model == OLLAMA2:
+                #    response = self.ollama_client_2.chat.completions.create(**request_params)
+                #else:
+                response = self.lm_studio_client.chat.completions.create(**request_params)
                 return self.parse_response(response)
 
             else: # model == OLLAMA or model == "gemma3:27b-it-qat":
@@ -451,7 +486,7 @@ class LLMApi:
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
-                    "max_tokens": 256000,
+                    "max_tokens": 262144,
                     "stream": False
                 }
                 # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
@@ -466,6 +501,9 @@ class LLMApi:
                 return self.parse_response(response)
 
         except Exception as e:
+            print(f"❌ LLM API 调用失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 

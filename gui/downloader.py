@@ -983,7 +983,7 @@ class MediaGUIManager:
         self.log_to_output = log_to_output_func
         self.download_output = download_output
         
-        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
+        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, self.youtube_dir)
@@ -1071,6 +1071,12 @@ class MediaGUIManager:
         with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
             channel_videos = json.load(f)
 
+        # filter out the videos that have content length less than 100
+        channel_videos = [v for v in channel_videos if len(v.get('content', '')) < 180000]
+        # save back to the file
+        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+            json.dump(channel_videos, f, ensure_ascii=False, indent=2)
+
         def _complete_score(v):
             """有 content+topic_category+topic_subtype 的优先；否则按有无 content 及 content 长度比较（同 title 下都没有 category/subtype 时按 content 保留）"""
             c = (v.get('content') or '').strip()
@@ -1098,8 +1104,6 @@ class MediaGUIManager:
                 by_title[key] = video
 
         cleaned = list(by_title.values())
-        for video in cleaned:
-            video.pop('summary', None)
 
         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
             json.dump(cleaned, f, ensure_ascii=False, indent=2)
@@ -1255,21 +1259,21 @@ class MediaGUIManager:
                             print(f"❌ 未找到视频详情: {url}")
                             return
                     
-                    #summary = video_detail.get('summary', '')
-                    #if not in_background or not summary or not summary.strip():
-                    #    # LLM API 调用在信号量保护下（已在上层 with 语句中）
-                    #    result = self.llm_api.generate_text(
-                    #        config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', max_words=1500 if in_background else 2500), 
-                    #        text_content
-                    #    )
-                    #    if result:
-                    #        # 使用锁保护，更新视频详情
-                    #        with self.channel_videos_lock:
-                    #            video_detail.pop('description', None)
-                    #            video_detail['summary'] = result
-                    #    else:
-                    #        print(f"⚠️ 摘要生成失败: {video_detail.get('title', 'Unknown')[:50]}")
-                    #        return
+                    summary = video_detail.get('summary', '')
+                    if not in_background or not summary or not summary.strip():
+                        # LLM API 调用在信号量保护下（已在上层 with 语句中）
+                        result = self.llm_api.generate_text(
+                            config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic=video_detail.get('topic_category', '') + " - " + video_detail.get('topic_subtype', '')), 
+                            text_content
+                        )
+                        if result:
+                            # 使用锁保护，更新视频详情
+                            with self.channel_videos_lock:
+                                video_detail.pop('description', None)
+                                video_detail['summary'] = result
+                        else:
+                            print(f"⚠️ 摘要生成失败: {video_detail.get('title', 'Unknown')[:50]}")
+                            return
 
                     self.prepare_category_for_content(video_detail, text_content, self.topic_choices)
 
@@ -1424,6 +1428,36 @@ class MediaGUIManager:
         
         topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
         
+        # 标注选择：对选中视频设置 status 为 "", "1", "2", "3"
+        ttk.Label(control_frame, text="标注:").pack(side=tk.LEFT, padx=(10, 5))
+        status_var = tk.StringVar(value="")
+        status_combo = ttk.Combobox(control_frame, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=6)
+        status_combo.pack(side=tk.LEFT, padx=(0, 5))
+        def on_status_selected(event=None):
+            val = status_var.get()
+            selected_items = tree.selection()
+            if not selected_items:
+                messagebox.showwarning("提示", "请先选择要标注的视频", parent=dialog)
+                return
+            selected_urls = set()
+            for item in selected_items:
+                item_tags = tree.item(item, "tags")
+                if item_tags:
+                    url = item_tags[0]
+                    selected_urls.add(url)
+                    video_detail = self.get_video_detail(url)
+                    if video_detail:
+                        video_detail['status'] = val
+            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            populate_tree()
+            # 重新选中之前选中的行（按 url 匹配）
+            for item in tree.get_children():
+                item_tags = tree.item(item, "tags")
+                if item_tags and item_tags[0] in selected_urls:
+                    tree.selection_add(item)
+        status_combo.bind('<<ComboboxSelected>>', on_status_selected)
+        
         def smart_select():
             """根据输入文本智能选择匹配的视频"""
             search_text = smart_select_var.get().strip().lower()
@@ -1459,7 +1493,7 @@ class MediaGUIManager:
         smart_select_entry.bind('<Return>', lambda e: smart_select())
         
         # 创建Treeview显示视频列表
-        columns = ("title", "views", "duration", "upload_date", "status", "topic_category", "topic_subtype", "tags")
+        columns = ("title", "views", "duration", "upload_date", "status", "topic_category", "topic_subtype", "tags", "mark")
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -1482,6 +1516,7 @@ class MediaGUIManager:
         tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
         tree.heading("tags", text="问题标签")
+        tree.heading("mark", text="标注")
         
         tree.column("#0", width=20, anchor="center")
         tree.column("title", width=400, anchor="w")
@@ -1492,6 +1527,7 @@ class MediaGUIManager:
         tree.column("topic_category", width=120, anchor="w")
         tree.column("topic_subtype", width=150, anchor="w")
         tree.column("tags", width=200, anchor="w")
+        tree.column("mark", width=50, anchor="center")
         
 
         def populate_tree():
@@ -1600,6 +1636,10 @@ class MediaGUIManager:
                 elif not isinstance(problem_tags, str):
                     problem_tags = str(problem_tags) if problem_tags else ''
                 
+                # video_detail 的 status 字段：用户可编辑的标注，默认 ""，可选 "", "1", "2", "3"
+                user_status = video.get('status', '')
+                if user_status not in ('', '1', '2', '3'):
+                    user_status = ''
                 tree.insert("", tk.END, text=str(idx), 
                            values=(
                                video.get('title', 'Unknown')[:60],
@@ -1609,7 +1649,8 @@ class MediaGUIManager:
                                status_str,
                                topic_category[:30] if topic_category else '',
                                topic_subtype[:30] if topic_subtype else '',
-                               problem_tags[:50] if problem_tags else ''
+                               problem_tags[:50] if problem_tags else '',
+                               user_status
                            ),
                            tags=(   video.get('url', ''), 
                                     video.get('title', 'Unknown'), 
@@ -1732,6 +1773,9 @@ class MediaGUIManager:
             # 获取当前值
             current_category = video_detail.get('topic_category', '')
             current_subtype = video_detail.get('topic_subtype', '')
+            current_status = video_detail.get('status', '')
+            if current_status not in ('', '1', '2', '3'):
+                current_status = ''
             current_tags_raw = video_detail.get('tags', '')
             if isinstance(current_tags_raw, list):
                 current_tags = ', '.join(str(t) for t in current_tags_raw)
@@ -1752,6 +1796,12 @@ class MediaGUIManager:
             subtype_combo = ttk.Combobox(edit_dialog, textvariable=subtype_var, values=[], state="readonly", width=50)
             subtype_combo.grid(row=1, column=1, padx=10, pady=5, sticky='ew')
             
+            # 标注选择 (status: "", "1", "2", "3")
+            ttk.Label(edit_dialog, text="标注:").grid(row=2, column=0, sticky='w', padx=10, pady=5)
+            status_var = tk.StringVar(value=current_status)
+            status_combo = ttk.Combobox(edit_dialog, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=10)
+            status_combo.grid(row=2, column=1, padx=10, pady=5, sticky='w')
+            
             # 辅助：解析标签为 analysis(无=) 与 manual(name=value)
             def _parse_tags_to_parts(tags_text):
                 parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
@@ -1760,14 +1810,14 @@ class MediaGUIManager:
                 return analysis, manual
             
             # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
-            ttk.Label(edit_dialog, text="主题标签 (可编辑, 用 , 或 | 分隔):").grid(row=2, column=0, sticky='nw', padx=10, pady=5)
+            ttk.Label(edit_dialog, text="主题标签 (可编辑, 用 , 或 | 分隔):").grid(row=3, column=0, sticky='nw', padx=10, pady=5)
             tags_var = tk.StringVar(value=current_tags)
             tags_entry = ttk.Entry(edit_dialog, textvariable=tags_var, width=60)
-            tags_entry.grid(row=2, column=1, padx=10, pady=5, sticky='ew')
+            tags_entry.grid(row=3, column=1, padx=10, pady=5, sticky='ew')
             
             # tag_choices 多选组（来自 tags.json，如 GENRE=、Rhythm=，值用/连接）
             tag_radio_refs = []
-            row_tag_radios = 3
+            row_tag_radios = 4
             if self.tag_choices:
                 tag_radios_frame = ttk.LabelFrame(edit_dialog, text="标签选择 (name=value，可多选，值用/连接)", padding=5)
                 tag_radios_frame.grid(row=row_tag_radios, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
@@ -1917,6 +1967,13 @@ class MediaGUIManager:
                 else:
                     video_detail.pop('tags', None)
                 
+                # 保存标注 (status)
+                st = status_var.get()
+                if st in ('', '1', '2', '3'):
+                    video_detail['status'] = st
+                else:
+                    video_detail.pop('status', None)
+                
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                     json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
@@ -1980,6 +2037,9 @@ class MediaGUIManager:
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
+            topic_status = video_detail.get('status', '')
+            if topic_status not in ('', '1', '2', '3'):
+                topic_status = ''
             topic_tags = video_detail.get('tags', '')
             if isinstance(topic_tags, list):
                 topic_tags = ' | '.join(topic_tags)
@@ -2025,16 +2085,22 @@ class MediaGUIManager:
             subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=40)
             subtype_combo.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
             
+            # 标注选择 (status: "", "1", "2", "3")
+            ttk.Label(topic_frame, text="标注:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky='w', padx=5, pady=5)
+            status_var = tk.StringVar(value=topic_status)
+            status_combo = ttk.Combobox(topic_frame, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=10)
+            status_combo.grid(row=2, column=1, padx=5, pady=5, sticky='w')
+            
             # 主题标签输入
-            ttk.Label(topic_frame, text="主题标签 (用 | 分隔):", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky='nw', padx=5, pady=5)
+            ttk.Label(topic_frame, text="主题标签 (用 | 分隔):", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
             tags_var = tk.StringVar(value=topic_tags)
             tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=40)
-            tags_entry.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
+            tags_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
             
             # 可选标签列表（用于快速选择）
-            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
+            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky='nw', padx=5, pady=5)
             tags_listbox_frame = ttk.Frame(topic_frame)
-            tags_listbox_frame.grid(row=3, column=1, padx=5, pady=5, sticky='nsew')
+            tags_listbox_frame.grid(row=4, column=1, padx=5, pady=5, sticky='nsew')
             
             tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=6)
             tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
@@ -2129,7 +2195,7 @@ class MediaGUIManager:
             
             # 按钮框架
             button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
+            button_frame.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
             
             # 添加标签按钮
             add_tags_btn = ttk.Button(button_frame, text="添加选中标签", command=add_selected_tags)
@@ -2148,6 +2214,7 @@ class MediaGUIManager:
                 category = category_var.get().strip()
                 subtype = subtype_var.get().strip()
                 tags_text = tags_var.get().strip()
+                st = status_var.get()
                 
                 # 解析标签（用逗号分隔）
                 if tags_text:
@@ -2162,6 +2229,8 @@ class MediaGUIManager:
                     video_detail['topic_subtype'] = subtype
                 if tags_list:
                     video_detail['problem_tags'] = tags_list
+                if st in ('', '1', '2', '3'):
+                    video_detail['status'] = st
                 
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2180,7 +2249,7 @@ class MediaGUIManager:
             
             # 配置网格权重
             topic_frame.columnconfigure(1, weight=1)
-            topic_frame.rowconfigure(3, weight=1)  # 标签列表在第3行
+            topic_frame.rowconfigure(4, weight=1)  # 标签列表在第4行
             
             # 初始化子类型和标签选项
             if topic_category:
@@ -2203,6 +2272,14 @@ class MediaGUIManager:
             # 插入摘要内容
             text_widget.insert(tk.END, summary)
             text_widget.config(state=tk.DISABLED)  # 设置为只读
+            # 自动拷贝到剪贴板，便于粘贴到其他应用
+            if summary and summary.strip():
+                try:
+                    summary_window.clipboard_clear()
+                    summary_window.clipboard_append(summary.strip())
+                    summary_window.update()
+                except Exception:
+                    pass
             
             # 添加关闭按钮
             button_frame = ttk.Frame(main_frame)
@@ -2230,55 +2307,8 @@ class MediaGUIManager:
             tree.selection_remove(*tree.get_children())
             update_selection_count()
 
- 
-        def re_summarize_selected():
-            selected_items = tree.selection()
-            if not selected_items:
-                return
 
-            # 收集所有需要处理的视频详情
-            videos_to_process = []
-            for item in selected_items:
-                item_tags = tree.item(item, "tags")
-                video_detail = self.get_video_detail(item_tags[0])
-                if video_detail:
-                    videos_to_process.append(video_detail)
-
-            if not videos_to_process:
-                return
-
-            total = len(videos_to_process)
-            completed = [0]
-
-            def summarize_task():
-                """在后台线程中处理摘要生成，使用信号量控制并发"""
-                for idx, video_detail in enumerate(videos_to_process, 1):
-                    try:
-                        print(f"[{idx}/{total}] 重新生成摘要: {video_detail.get('title', 'Unknown')[:50]}")
-                        # update_text_content 内部会使用信号量控制 LLM API 调用
-                        self.update_text_content(video_detail, in_background=False)
-                        completed[0] += 1
-                    except Exception as e:
-                        print(f"❌ 错误: {video_detail.get('title', 'Unknown')[:50]} - {str(e)}")
-                
-                # 处理完成
-                print(f"\n{'='*50}")
-                print(f"批量摘要生成完成！")
-                print(f"成功: {completed[0]} 个")
-                
-                # 在主线程中刷新列表
-                dialog.after(0, populate_tree)
-                dialog.after(0, lambda: messagebox.showinfo("提示", f"摘要生成完成！\n成功: {completed[0]} 个", parent=dialog))
-
-            # 在后台线程中处理
-            thread = threading.Thread(target=summarize_task)
-            thread.daemon = True
-            thread.start()
-            
-            messagebox.showinfo("提示", f"正在为 {total} 个视频重新生成摘要，请稍后...", parent=dialog)
-
-
-        def summarize_selected():
+        def summarize_selected(force=False):
             selected_items = tree.selection()
             if not selected_items:
                 return
@@ -2293,7 +2323,7 @@ class MediaGUIManager:
                 topic_type = video_detail.get('topic_subtype', '')
                 topic_category = video_detail.get('topic_category', '')
                 tags = video_detail.get('tags', '')
-                if summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags and tags.strip():
+                if not force and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags:
                     continue
                 videos_to_process.append(video_detail)
             
@@ -2630,6 +2660,9 @@ class MediaGUIManager:
 
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="编辑主题", command=edit_selected_topics).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
+
         ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
         #ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
         #ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
