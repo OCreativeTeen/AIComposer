@@ -36,19 +36,22 @@ Image generation instruction:
             * Style: Realistic, Cartoon, Pixar Cartoon Style
             * This character must stay consistent across all scenes !!!!!!!!!!!
 
-        ** 2️⃣ Host Character (if appearing)
+        ** 2️⃣ Host(Narrator) Character (if appearing)
             * From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"
             * Style: Realistic, Cartoon, Pixar Cartoon Style
 
 --------------
 
 Video generation instruction: 
-    *** Specail-Case 1: if start-image not have the speaker or host image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host is What we want in this case!!!,  Even json content below may has "speaker" or "host" description, only use these as guide to choose voice **
+    *** Specail-Case 1: if start-image not have the speaker or host(Narrator) image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host(Narrator) is What we want in this case!!!,  Even json content below may has "speaker" or "host"(Narrator) description, only use these as guide to choose voice **
 
 --------------
 
 Audio generation instruction: 
-	** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
+    ** Speaker's voice / Host(Narrator)'s voice: parse from 'Speaker' or 'host' field (content after 'xxx-style | ') 
+    ** Format: gender_age_race, e.g. woman_middle-aged_chinese, man_young_caucasian, girl_chinese    
+    ** 'voiceover' is the Host(Narrator)'s voiceover content (Host/Narrator-speaking)
+    ** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
     ** If the json content below has no 'speaking' & 'voiceover' content, the audio should be the host breifly speak about the content of the image (like main text message in the image) **
 
 --------------

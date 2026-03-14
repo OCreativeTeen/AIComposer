@@ -3995,15 +3995,15 @@ class WorkflowGUI:
         main_f = ttk.Frame(opts_dialog, padding=15)
         main_f.pack(fill=tk.BOTH, expand=True)
 
-        # Host 选项：(value, display_label) -> value 用于 prompt
+        # Host 选项：(value, display_label) -> value 格式 style + gender_age_race
         HOST_OPTIONS = [
             ("", "不包含 Host"),
-            ("realistic middle-aged woman", "真实形象-中年女性"),
-            ("realistic middle-aged man", "真实形象-中年男性"),
-            ("cartoon middle-aged woman", "卡通(普通)-中年女性"),
-            ("cartoon middle-aged man", "卡通(普通)-中年男性"),
-            ("pixar-art cartoon middle-aged woman", "卡通(皮克斯)-中年女性"),
-            ("pixar-art cartoon middle-aged man", "卡通(皮克斯)-中年男性"),
+            ("realistic woman_middle-aged_chinese", "真实形象-中年女性"),
+            ("realistic man_middle-aged_chinese", "真实形象-中年男性"),
+            ("cartoon woman_middle-aged_chinese", "卡通(普通)-中年女性"),
+            ("cartoon man_middle-aged_chinese", "卡通(普通)-中年男性"),
+            ("pixar-art cartoon woman_middle-aged_chinese", "卡通(皮克斯)-中年女性"),
+            ("pixar-art cartoon man_middle-aged_chinese", "卡通(皮克斯)-中年男性"),
         ]
         host_values = [h[0] for h in HOST_OPTIONS]
         host_labels = [h[1] for h in HOST_OPTIONS]
@@ -4264,27 +4264,38 @@ class WorkflowGUI:
 
     HOST_NOT_SHOW = "不显示在画面中"
 
-    # Host 单一定义：(中文, 英文) - 顺序即用户选择顺序，避免多处定义导致不一致
+    # Host 单一定义：(中文, 英文) - 英文格式: gender_age_race 便于 AI 解析
     HOST_OPTIONS_DATA = [
         ("不显示在画面中", "voice-only"),
-        ("中国中年女性", "chinese middle-aged woman"),
-        ("中国中年男性", "chinese middle-aged man"),
-        ("中国青年女性", "chinese young woman"),
-        ("中国青年男性", "chinese young man"),
-        ("中国老年女性", "chinese senior woman"),
-        ("中国老年男性", "chinese senior man"),
-        ("中国女孩", "chinese girl"),
-        ("中国男孩", "chinese boy"),
-        ("白人中年女性", "caucasian middle-aged woman"),
-        ("白人中年男性", "caucasian middle-aged man"),
-        ("白人青年女性", "caucasian young woman"),
-        ("白人青年男性", "caucasian young man"),
-        ("白人老年女性", "caucasian senior woman"),
-        ("白人老年男性", "caucasian senior man"),
-        ("白人女孩", "caucasian girl"),
-        ("白人男孩", "caucasian boy"),
+        ("中国中年女性", "woman_middle-aged_chinese"),
+        ("中国中年男性", "man_middle-aged_chinese"),
+        ("中国青年女性", "woman_young_chinese"),
+        ("中国青年男性", "man_young_chinese"),
+        ("中国老年女性", "woman_senior_chinese"),
+        ("中国老年男性", "man_senior_chinese"),
+        ("中国女孩", "girl_chinese"),
+        ("中国男孩", "boy_chinese"),
+        ("白人中年女性", "woman_middle-aged_caucasian"),
+        ("白人中年男性", "man_middle-aged_caucasian"),
+        ("白人青年女性", "woman_young_caucasian"),
+        ("白人青年男性", "man_young_caucasian"),
+        ("白人老年女性", "woman_senior_caucasian"),
+        ("白人老年男性", "man_senior_caucasian"),
+        ("白人女孩", "girl_caucasian"),
+        ("白人男孩", "boy_caucasian"),
     ]
     HOST_EN_MAP = dict(HOST_OPTIONS_DATA)
+    # 旧格式 → 中文，用于解析历史 JSON（race-age-gender 格式）
+    HOST_LEGACY_EN_TO_CN = {
+        "chinese middle-aged woman": "中国中年女性", "chinese middle-aged man": "中国中年男性",
+        "chinese young woman": "中国青年女性", "chinese young man": "中国青年男性",
+        "chinese senior woman": "中国老年女性", "chinese senior man": "中国老年男性",
+        "chinese girl": "中国女孩", "chinese boy": "中国男孩",
+        "caucasian middle-aged woman": "白人中年女性", "caucasian middle-aged man": "白人中年男性",
+        "caucasian young woman": "白人青年女性", "caucasian young man": "白人青年男性",
+        "caucasian senior woman": "白人老年女性", "caucasian senior man": "白人老年男性",
+        "caucasian girl": "白人女孩", "caucasian boy": "白人男孩",
+    }
     HOST_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA]  # (value, label) - 含不显示，用于兼容
     # Host 人物（仅人物，不含不显示）
     HOST_PERSON_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA if cn != "不显示在画面中"]
@@ -4320,13 +4331,11 @@ class WorkflowGUI:
                     break
             sp = f"{style_prefix}{sp}" if sp else style_prefix.rstrip(" |")
 
-            # host：不显示时，voiceover 有内容用 voice-only，否则用 not-in-scene（场景中不出现、无旁白）
-            if is_host_not_show:
-                vo = (s.get("voiceover", "") or "").strip() if include_voiceover else ""
-                host_suffix = "voice-only" if vo else "not-in-scene"
-                host_str = f"{host_style_prefix} | {host_suffix}"
-            else:
-                host_str = f"{host_style_prefix} | {host_en_default}"
+            # host：始终用人物标识（供声音选择），不显示时由 host_display=not-in-scene 控制是否出现在画面
+            # 当 host=不显示 时，默认用中国中年女性的声音
+            host_person_for_voice = host_cn if not is_host_not_show else "中国中年女性"
+            host_en = self.HOST_EN_MAP.get(host_person_for_voice, "woman_middle-aged_chinese")
+            host_str = f"{host_style_prefix} | {host_en}"
 
             item = {
                 "speaker": sp,
@@ -4384,11 +4393,11 @@ class WorkflowGUI:
         include_voiceover_chk_var = tk.BooleanVar(value=False)
 
         def _do_build(speaker_s, host_s, host_display_cn, host_person_cn, inc_speak, inc_vis, inc_vo):
-            """构建 JSON：host_display 控制显示方式，host_person 为人物（仅在显示时用）"""
+            """构建 JSON：host 始终含人物（供声音选择），host_display 控制是否显示在画面中"""
             scenes_data = []
             h_style = host_s.replace(' ', '-') + "-style"
-            is_not_show = (host_display_cn == "不显示在画面中")
             host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == host_display_cn), "not-in-scene")
+            h_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
             sp_prefix = f"{speaker_s.replace(' ', '-')}-style | "
             for s in current_story_scenes:
                 sp = str(s.get("speaker", "")).strip()
@@ -4397,22 +4406,17 @@ class WorkflowGUI:
                         sp = sp[len(prefix):].strip()
                         break
                 sp = f"{sp_prefix}{sp}" if sp else sp_prefix.rstrip(" |")
-                if is_not_show:
-                    vo = (s.get("voiceover", "") or "").strip() if inc_vo else ""
-                    host_suffix = "voice-only" if vo else "not-in-scene"
-                    h_str = f"{h_style} | {host_suffix}"
-                else:
-                    h_en = self.HOST_EN_MAP.get(host_person_cn, "chinese middle-aged woman")
-                    h_str = f"{h_style} | {h_en}"
-                item = {"speaker": sp, "host": h_str, "actions": s.get("actions", "")}
+                h_str = f"{h_style} | {h_en}"
+                item = {"actions": s.get("actions", "")}
                 if inc_speak:
+                    item["speaker"] = sp
                     item["speaking"] = s.get("speaking", "")
                 if inc_vis:
                     item["visual"] = s.get("visual", "")
+                item["host"] = h_str
                 if inc_vo:
                     item["voiceover"] = s.get("voiceover", "")
-                if not is_not_show:
-                    item["host_display"] = host_display_en
+                item["host_display"] = host_display_en
                 scenes_data.append(item)
             return json.dumps({"scenes": scenes_data}, indent=2, ensure_ascii=False)
 
@@ -4546,16 +4550,34 @@ class WorkflowGUI:
             return
 
         def _parse_host_to_person(h):
-            """从 host 字符串解析出 host_person（如 不显示在画面中、中国中年女性）"""
+            """从 host 字符串解析出 host_person（如 中国中年女性），仅当 host 为人物时"""
             if not h or " | " not in h:
-                return self.HOST_NOT_SHOW
+                return "中国中年女性"
             suffix = h.split(" | ", 1)[1].strip()
-            if suffix in ("voice-only", "not-in-scene & no voice"):
-                return self.HOST_NOT_SHOW
+            if suffix in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
+                return "中国中年女性"
             for cn, en in self.HOST_EN_MAP.items():
                 if cn != self.HOST_NOT_SHOW and en == suffix:
                     return cn
-            return self.HOST_NOT_SHOW
+            # 兼容旧格式 (race-age-gender)
+            if suffix in self.HOST_LEGACY_EN_TO_CN:
+                return self.HOST_LEGACY_EN_TO_CN[suffix]
+            return "中国中年女性"
+
+        def _parse_host_display_from_scene(s):
+            """从 scene 的 host/host_display 解析 Host 显示方式"""
+            hd_en = s.get("host_display")
+            if hd_en:
+                for cn, en in self.HOST_DISPLAY_OPTIONS:
+                    if en == hd_en:
+                        return cn
+            host_str = s.get("host", "")
+            if not host_str or " | " not in host_str:
+                return "不显示在画面中"
+            suffix = host_str.split(" | ", 1)[1].strip()
+            if suffix in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
+                return "不显示在画面中"
+            return "出现在画面角落"  # 有人物时默认
 
         def _parse_prefix_to_style(pref):
             """从 prefix 如 'realistic-style | ' 解析出 style 如 'realistic'"""
@@ -4570,8 +4592,27 @@ class WorkflowGUI:
                 return "pixar-art cartoon"
             return "realistic"
 
+        def _parse_host_style_from_host(host_str):
+            """从 host 字符串解析 host_style（声音风格）"""
+            if not host_str or " | " not in host_str:
+                return "pixar-art cartoon"
+            p = host_str.split(" | ", 1)[0].strip()
+            if p == "realistic-style":
+                return "realistic"
+            if p == "cartoon-style":
+                return "cartoon"
+            if p == "pixar-art-cartoon-style":
+                return "pixar-art cartoon"
+            return "pixar-art cartoon"
+
+        def _style_to_prefix(st):
+            """style 如 'pixar-art cartoon' -> prefix 如 'pixar-art-cartoon-style'"""
+            if not st:
+                return "pixar-art-cartoon-style"
+            return st.replace(" ", "-") + "-style"
+
         def _scene_defaults(s):
-            """从 scene 提取默认：host_person/speaker_style 等"""
+            """从 scene 提取默认：host_style/host_display/host_person/speaker_style 等"""
             sp = str(s.get("speaker", "")).strip()
             style = "realistic"
             for pref in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
@@ -4580,9 +4621,14 @@ class WorkflowGUI:
                     break
             host_str = s.get("host", "")
             host_person = _parse_host_to_person(host_str)
+            host_display = _parse_host_display_from_scene(s)
+            host_style = _parse_host_style_from_host(host_str)
             return {
+                "host_style": host_style,
+                "host_display": host_display,
                 "host_person": host_person,
                 "speaker_style": style,
+                "include_speaking": "speaking" in s and bool(s.get("speaking")),
                 "include_visual": "visual" in s and bool(s.get("visual")),
                 "include_voiceover": "voiceover" in s and bool(s.get("voiceover")),
             }
@@ -4605,8 +4651,8 @@ class WorkflowGUI:
             i = idx_var[0]
             if i not in overrides:
                 overrides[i] = _scene_defaults(scenes_arr[i]) if i < len(scenes_arr) else {
-                    "host_person": self.HOST_NOT_SHOW, "speaker_style": "realistic",
-                    "include_visual": True, "include_voiceover": True,
+                    "host_style": "pixar-art cartoon", "host_display": "不显示在画面中", "host_person": "中国中年女性",
+                    "speaker_style": "realistic", "include_speaking": True, "include_visual": True, "include_voiceover": True,
                 }
             return overrides[i]
 
@@ -4623,27 +4669,42 @@ class WorkflowGUI:
         chk_f.pack(side=tk.LEFT, padx=(20, 0))
         ttk.Separator(chk_f, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=5)
         first_def = _scene_defaults(scenes_arr[0]) if scenes_arr else {}
-        host_person_var = tk.StringVar(value=first_def.get("host_person", self.HOST_NOT_SHOW))
+        host_style_var = tk.StringVar(value=first_def.get("host_style", "pixar-art cartoon"))
+        host_display_var = tk.StringVar(value=first_def.get("host_display", "不显示在画面中"))
+        host_person_var = tk.StringVar(value=first_def.get("host_person", "中国中年女性"))
         speaker_style_var = tk.StringVar(value=first_def.get("speaker_style", "realistic"))
+        include_speaking_var = tk.BooleanVar(value=first_def.get("include_speaking", True))
         include_visual_var = tk.BooleanVar(value=first_def.get("include_visual", True))
         include_voiceover_var = tk.BooleanVar(value=first_def.get("include_voiceover", True))
 
         def _on_override_change(*args):
             o = _get_overrides()
+            o["host_style"] = host_style_var.get()
+            o["host_display"] = host_display_var.get()
             o["host_person"] = host_person_var.get()
             o["speaker_style"] = speaker_style_var.get()
+            o["include_speaking"] = include_speaking_var.get()
             o["include_visual"] = include_visual_var.get()
             o["include_voiceover"] = include_voiceover_var.get()
             _refresh_display()
 
-        ttk.Label(chk_f, text="Host:").pack(side=tk.LEFT, padx=(0, 2))
-        host_combo = ttk.Combobox(chk_f, textvariable=host_person_var, values=[h[1] for h in self.HOST_OPTIONS], state="readonly", width=14)
-        host_combo.pack(side=tk.LEFT, padx=(0, 5))
-        host_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
+        ttk.Label(chk_f, text="Host style:").pack(side=tk.LEFT, padx=(0, 2))
+        host_style_combo = ttk.Combobox(chk_f, textvariable=host_style_var, values=[s[0] for s in SPEAKER_STYLE_OPTS], state="readonly", width=10)
+        host_style_combo.pack(side=tk.LEFT, padx=(0, 5))
+        host_style_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
+        ttk.Label(chk_f, text="Host 显示:").pack(side=tk.LEFT, padx=(0, 2))
+        host_display_combo = ttk.Combobox(chk_f, textvariable=host_display_var, values=[d[0] for d in self.HOST_DISPLAY_OPTIONS], state="readonly", width=12)
+        host_display_combo.pack(side=tk.LEFT, padx=(0, 5))
+        host_display_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
+        ttk.Label(chk_f, text="Host 人物:").pack(side=tk.LEFT, padx=(0, 2))
+        host_person_combo = ttk.Combobox(chk_f, textvariable=host_person_var, values=[h[1] for h in self.HOST_PERSON_OPTIONS], state="readonly", width=10)
+        host_person_combo.pack(side=tk.LEFT, padx=(0, 5))
+        host_person_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
         ttk.Label(chk_f, text="Speaker:").pack(side=tk.LEFT, padx=(0, 2))
         speaker_combo = ttk.Combobox(chk_f, textvariable=speaker_style_var, values=[s[0] for s in SPEAKER_STYLE_OPTS], state="readonly", width=12)
         speaker_combo.pack(side=tk.LEFT, padx=(0, 5))
         speaker_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
+        ttk.Checkbutton(chk_f, text="Speaking", variable=include_speaking_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Checkbutton(chk_f, text="Visual", variable=include_visual_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Checkbutton(chk_f, text="Voiceover", variable=include_voiceover_var, command=_on_override_change).pack(side=tk.LEFT)
 
@@ -4662,26 +4723,23 @@ class WorkflowGUI:
                     break
             if o["speaker_style"]:
                 sp = f"{o['speaker_style']}-style | {sp}" if sp else f"{o['speaker_style']}-style | "
-            host_raw = scene_raw.get("host", "")
-            host_style_prefix = "pixar-art-cartoon-style"
-            if host_raw and " | " in host_raw:
-                host_style_prefix = host_raw.split(" | ", 1)[0].strip()
-            host_p = o.get("host_person", self.HOST_NOT_SHOW)
-            if host_p == self.HOST_NOT_SHOW:
-                vo = (scene_raw.get("voiceover", "") or "").strip() if o["include_voiceover"] else ""
-                host_suffix = "voice-only" if vo else "not-in-scene"
-                host_str = f"{host_style_prefix} | {host_suffix}"
-            else:
-                host_en = self.HOST_EN_MAP.get(host_p, "voice-only")
-                host_str = f"{host_style_prefix} | {host_en}"
-            disp_scene = {
-                "speaker": sp,
-                "host": host_str,
-                "speaking": scene_raw.get("speaking", ""),
-                "actions": scene_raw.get("actions", ""),
-                "visual": scene_raw.get("visual", "") if o["include_visual"] else "",
-                "voiceover": scene_raw.get("voiceover", "") if o["include_voiceover"] else ""
-            }
+            host_style_val = o.get("host_style", "pixar-art cartoon")
+            host_style_prefix = host_style_val.replace(" ", "-") + "-style"
+            is_not_show = (o.get("host_display") == "不显示在画面中")
+            host_person_cn = o.get("host_person", "中国中年女性")
+            host_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
+            host_str = f"{host_style_prefix} | {host_en}"
+            disp_scene = {"actions": scene_raw.get("actions", "")}
+            if o.get("include_speaking", True):
+                disp_scene["speaker"] = sp
+                disp_scene["speaking"] = scene_raw.get("speaking", "")
+            if o["include_visual"]:
+                disp_scene["visual"] = scene_raw.get("visual", "")
+            disp_scene["host"] = host_str
+            if o["include_voiceover"]:
+                disp_scene["voiceover"] = scene_raw.get("voiceover", "")
+            host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == o.get("host_display")), "not-in-scene")
+            disp_scene["host_display"] = host_display_en
             return json.dumps(disp_scene, indent=2, ensure_ascii=False)
 
         def _copy_and_refresh():
@@ -4701,8 +4759,11 @@ class WorkflowGUI:
 
         def _sync_ui_from_overrides():
             o = _get_overrides()
-            host_person_var.set(o.get("host_person", self.HOST_NOT_SHOW))
+            host_style_var.set(o.get("host_style", "pixar-art cartoon"))
+            host_display_var.set(o.get("host_display", "不显示在画面中"))
+            host_person_var.set(o.get("host_person", "中国中年女性"))
             speaker_style_var.set(o["speaker_style"])
+            include_speaking_var.set(o.get("include_speaking", True))
             include_visual_var.set(o["include_visual"])
             include_voiceover_var.set(o["include_voiceover"])
 
