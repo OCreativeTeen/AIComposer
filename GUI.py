@@ -4147,10 +4147,12 @@ class WorkflowGUI:
         return scene_video_desc
 
 
-    def concise_scene_speak(self, field):
-        """精简场景讲话"""
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        speaking = scene.get(field)
+    def concise_scene_speak(self, field, content=None):
+        """精简场景讲话。content 若提供则直接使用（如从逐场景预览传入），否则从主编辑环境当前场景取"""
+        if content is None:
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            content = scene.get(field, "") if scene else ""
+        speaking = (content or "").strip()
         if speaking:
             content = self.llm_api.generate_text(config_prompt.CONCISE_SPEAKING_PROMPT, speaking)
             try:
@@ -4303,13 +4305,8 @@ class WorkflowGUI:
         host_style = host_style or "pixar-art cartoon"
         host_cn = host or self.HOST_NOT_SHOW
         is_host_not_show = (host_cn == self.HOST_NOT_SHOW)
-        host_en = self.HOST_EN_MAP.get(host_cn, "voice-only")
-        if is_host_not_show:
-            host_str = f"{host_style.replace(' ', '-')}-style | {host_en}"
-            host_show_image = False
-        else:
-            host_str = f"{host_style.replace(' ', '-')}-style | {host_en}"
-            host_show_image = host_show_image
+        host_style_prefix = host_style.replace(' ', '-') + "-style"
+        host_en_default = self.HOST_EN_MAP.get(host_cn, "voice-only")
         style_prefix = f"{speaker_style.replace(' ', '-')}-style | "
 
         for s in current_story_scenes:
@@ -4320,6 +4317,14 @@ class WorkflowGUI:
                     sp = sp[len(prefix):].strip()
                     break
             sp = f"{style_prefix}{sp}" if sp else style_prefix.rstrip(" |")
+
+            # host：不显示时，voiceover 有内容用 voice-only，否则用 not-in-scene（场景中不出现、无旁白）
+            if is_host_not_show:
+                vo = (s.get("voiceover", "") or "").strip() if include_voiceover else ""
+                host_suffix = "voice-only" if vo else "not-in-scene"
+                host_str = f"{host_style_prefix} | {host_suffix}"
+            else:
+                host_str = f"{host_style_prefix} | {host_en_default}"
 
             item = {
                 "speaker": sp,
@@ -4372,11 +4377,12 @@ class WorkflowGUI:
         include_voiceover_chk_var = tk.BooleanVar(value=True)
 
         def _do_build(speaker_s, host_s, host_p, inc_vis, inc_vo):
-            """根据参数构建 JSON 字符串（host 字段已包含 voice-only 表示不显示）"""
+            """根据参数构建 JSON 字符串（host 不显示时：voiceover 有内容用 voice-only，否则用 not-in-scene）"""
             scenes_data = []
             h_cn = host_p
-            h_en = self.HOST_EN_MAP.get(h_cn, "voice-only")
-            h_str = f"{host_s.replace(' ', '-')}-style | {h_en}"
+            h_style = host_s.replace(' ', '-') + "-style"
+            is_not_show = (h_cn == self.HOST_NOT_SHOW)
+            h_en_default = self.HOST_EN_MAP.get(h_cn, "voice-only")
             sp_prefix = f"{speaker_s.replace(' ', '-')}-style | "
             for s in current_story_scenes:
                 sp = str(s.get("speaker", "")).strip()
@@ -4385,6 +4391,12 @@ class WorkflowGUI:
                         sp = sp[len(prefix):].strip()
                         break
                 sp = f"{sp_prefix}{sp}" if sp else sp_prefix.rstrip(" |")
+                if is_not_show:
+                    vo = (s.get("voiceover", "") or "").strip() if inc_vo else ""
+                    host_suffix = "voice-only" if vo else "not-in-scene"
+                    h_str = f"{h_style} | {host_suffix}"
+                else:
+                    h_str = f"{h_style} | {h_en_default}"
                 item = {"speaker": sp, "host": h_str, "speaking": s.get("speaking", ""), "actions": s.get("actions", ""), "audio_generation": self.GENERATION_INSTRUCTION}
                 if inc_vis:
                     item["visual"] = s.get("visual", "")
@@ -4498,7 +4510,6 @@ class WorkflowGUI:
         ttk.Button(btn_f, text="逐场景预览", command=on_review).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="保存", command=on_save).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
-        ttk.Button(btn_f, text="讲解", command=self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
 
 
     def _open_story_scene_review_window(self, payload):
@@ -4512,7 +4523,7 @@ class WorkflowGUI:
             if not h or " | " not in h:
                 return self.HOST_NOT_SHOW
             suffix = h.split(" | ", 1)[1].strip()
-            if suffix == "voice-only":
+            if suffix in ("voice-only", "not-in-scene & no voice"):
                 return self.HOST_NOT_SHOW
             for cn, en in self.HOST_EN_MAP.items():
                 if cn != self.HOST_NOT_SHOW and en == suffix:
@@ -4551,13 +4562,14 @@ class WorkflowGUI:
 
         review_win = tk.Toplevel(self.root)
         review_win.title("逐场景预览")
-        review_win.geometry("720x520")
+        rw_w, rw_h = int(720 * 1.5), int(520 * 1.3)  # 加宽50%, 加高30%
+        review_win.geometry(f"{rw_w}x{rw_h}")
         review_win.transient(self.root)
         review_win.grab_set()
         review_win.update_idletasks()
-        x = (review_win.winfo_screenwidth() - 520) // 2
-        y = (review_win.winfo_screenheight() - 520) // 2
-        review_win.geometry(f"520x520+{x}+{y}")
+        x = (review_win.winfo_screenwidth() - rw_w) // 2
+        y = (review_win.winfo_screenheight() - rw_h) // 2
+        review_win.geometry(f"{rw_w}x{rw_h}+{x}+{y}")
 
         idx_var = [0]
         overrides = {}
@@ -4628,8 +4640,13 @@ class WorkflowGUI:
             if host_raw and " | " in host_raw:
                 host_style_prefix = host_raw.split(" | ", 1)[0].strip()
             host_p = o.get("host_person", self.HOST_NOT_SHOW)
-            host_en = self.HOST_EN_MAP.get(host_p, "voice-only")
-            host_str = f"{host_style_prefix} | {host_en}"
+            if host_p == self.HOST_NOT_SHOW:
+                vo = (scene_raw.get("voiceover", "") or "").strip() if o["include_voiceover"] else ""
+                host_suffix = "voice-only" if vo else "not-in-scene"
+                host_str = f"{host_style_prefix} | {host_suffix}"
+            else:
+                host_en = self.HOST_EN_MAP.get(host_p, "voice-only")
+                host_str = f"{host_style_prefix} | {host_en}"
             disp_scene = {
                 "speaker": sp,
                 "host": host_str,
@@ -4675,6 +4692,21 @@ class WorkflowGUI:
         btn_f = ttk.Frame(review_win)
         btn_f.pack(pady=10)
         ttk.Button(btn_f, text="关闭", command=review_win.destroy).pack(side=tk.LEFT)
+
+        def _on_concise():
+            """从逐场景预览当前场景取 voiceover 进行精简（非主编辑环境场景）"""
+            i = idx_var[0]
+            if 0 <= i < len(scenes_arr):
+                vo = (scenes_arr[i].get("voiceover", "") or "").strip()
+                if not vo:
+                    messagebox.showwarning("提示", "当前场景无 voiceover 内容", parent=review_win)
+                    return
+                self.concise_scene_speak("voiceover", content=vo)
+            else:
+                messagebox.showwarning("提示", "无当前场景", parent=review_win)
+
+        ttk.Button(btn_f, text="讲解", command=_on_concise).pack(side=tk.LEFT)
+
 
     def current_story_content(self):
         """直接使用默认值生成 Story Content（不再弹出选项对话框）"""
