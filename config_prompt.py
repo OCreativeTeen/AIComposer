@@ -21,6 +21,41 @@ ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
 """
 
 
+
+GENERATION_INSTRUCTION = """
+Image generation instruction:
+    *** Goal
+        ** Generate images for story scenes.
+            * 1 image = 1 scene
+            * Multiple scenes = slideshow
+
+    *** Character Sources
+        ** 1️⃣ Story Character (Main Character)
+            * From NotebookLM resource:  named "Story-Character:xxx", like "Story-Character: 中国中年"
+            * Gender: Female, Male 
+            * Style: Realistic, Cartoon, Pixar Cartoon Style
+            * This character must stay consistent across all scenes !!!!!!!!!!!
+
+        ** 2️⃣ Host Character (if appearing)
+            * From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"
+            * Style: Realistic, Cartoon, Pixar Cartoon Style
+
+--------------
+
+Video generation instruction: 
+    *** Specail-Case 1: if start-image not have the speaker or host image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host is What we want in this case!!!,  Even json content below may has "speaker" or "host" description, only use these as guide to choose voice **
+
+--------------
+
+Audio generation instruction: 
+	** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
+    ** If the json content below has no 'speaking' & 'voiceover' content, the audio should be the host breifly speak about the content of the image (like main text message in the image) **
+
+--------------
+
+"""
+
+
 IMAGE_DESCRIPTION_SYSTEM_PROMPT = """
 You are a professional expert who is good at analyzing & describing the image (attached in the user-prompt) as a Scene, in English.
 

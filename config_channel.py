@@ -31,7 +31,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 COUNSELING_REFERENCE_FILTER = """
 *** Role & Objective
     As a "psychological counselor", for the content of a 'Case-Story' or a 'Analysis' on the psychological topic '{topic}' (provided below), 
-    cross-reference it against all NotebookLM sources (but 'Pasted Text' - which is this prompt) as reference, 
+    cross-reference it against all NotebookLM sources (but 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
     to identify upto 5 most relevant stories (or case-studies), and  upto 5 most relevant analysis (therapy techniques/research).
 
 *** Operational Workflow
@@ -1085,7 +1085,7 @@ Do NOT output this step.
 STEP 2 — Retrieve Supporting References
 --------------------------------------------------
 
-Search the NotebookLM Sources (EXCLUDING the "Pasted Text" source).
+Search the NotebookLM Sources (EXCLUDING the "Pasted Text/粘贴的文字" source).
 
 Find **5–8 highly relevant reference materials** that share similar:
 
@@ -1231,7 +1231,7 @@ Do not output this step.
 STEP 2 — Retrieve Reference Materials from NotebookLM Sources
 --------------------------------------------------
 
-Search the NotebookLM Sources (EXCLUDING the "Pasted Text" source).
+Search the NotebookLM Sources (EXCLUDING the "Pasted Text/粘贴的文字" source).
 
 Find **5–8 highly relevant reference pieces** that share similar:
 

@@ -2117,11 +2117,82 @@ class MediaGUIManager:
                 ttk.Button(btn_f, text="确认保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
                 ttk.Button(btn_f, text="取消", command=paste_dialog.destroy).pack(side=tk.LEFT)
 
+            def _do_start_project_with_content(content):
+                """用 content 启动创建新项目（作为 RAW 材料），关闭当前对话框"""
+                def _close():
+                    try:
+                        dialog.destroy()
+                    except Exception:
+                        pass
+                self.root.after(0, _close)
+                from project_manager import create_project_with_initial_raw
+                ch = os.path.basename(self.channel_path)
+                lang = getattr(self, 'language', 'tw') or 'tw'
+                result, selected_config = create_project_with_initial_raw(self.root, content, ch, lang)
+                if result == 'new' and selected_config:
+                    _pid = selected_config.get('pid', '')
+                    if not _pid:
+                        return
+                    def _open_main_in_same_process():
+                        _tk_root = None
+                        try:
+                            _tk_root = self.root
+                            while getattr(_tk_root, 'master', None):
+                                _tk_root = _tk_root.master
+                            try:
+                                self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+                            except Exception:
+                                pass
+                            try:
+                                self.root.destroy()
+                            except Exception:
+                                pass
+                            _tk_root.deiconify()
+                            import sys
+                            _gui_mod = sys.modules.get('GUI') or sys.modules.get('__main__')
+                            WorkflowGUI = getattr(_gui_mod, 'WorkflowGUI', None)
+                            if WorkflowGUI:
+                                WorkflowGUI(_tk_root, initial_pid=_pid)
+                            else:
+                                messagebox.showerror("错误", "无法加载主界面模块", parent=_tk_root)
+                        except Exception as ex:
+                            import traceback
+                            traceback.print_exc()
+                            try:
+                                _parent = _tk_root if (_tk_root and _tk_root.winfo_exists()) else None
+                                messagebox.showerror("错误", f"打开主界面失败: {ex}", parent=_parent)
+                            except Exception:
+                                pass
+                    self.root.after(100, _open_main_in_same_process)
+
+            def on_paste_and_start_project():
+                """从剪贴板读取 NotebookLM 结果，保存到当前视频项，并启动新项目"""
+                try:
+                    content = summary_window.clipboard_get()
+                except tk.TclError:
+                    content = ""
+                content = (content or "").strip()
+                if not content:
+                    messagebox.showwarning("提示", "剪贴板为空，请先复制 NotebookLM 生成的内容", parent=summary_window)
+                    return
+                video_detail["story"] = content
+                try:
+                    with open(self.downloader.channel_list_json, "w", encoding="utf-8") as fp:
+                        json.dump(self.downloader.channel_videos, fp, ensure_ascii=False, indent=2)
+                except Exception as ex:
+                    messagebox.showerror("错误", f"保存失败: {ex}", parent=summary_window)
+                    return
+                try:
+                    populate_tree()
+                except Exception:
+                    pass
+                _do_start_project_with_content(content)
+
             def on_start_project_with_story():
                 """用当前 video_detail['story'] 启动创建新项目（作为 RAW 材料）"""
                 content = video_detail.get("story", "").strip()
                 if not content:
-                    messagebox.showwarning("提示", "请先通过「粘贴 NotebookLM 结果」粘贴并保存 Story 后再使用", parent=summary_window)
+                    messagebox.showwarning("提示", "请先通过「粘贴 NotebookLM 结果启动新项目」粘贴并保存 Story 后再使用", parent=summary_window)
                     return
                 ch = os.path.basename(self.channel_path)
                 lang = getattr(self, 'language', 'tw') or 'tw'
@@ -2177,11 +2248,10 @@ class MediaGUIManager:
                     # 延迟执行，确保当前回调完成、对话框已关闭
                     self.root.after(100, _open_main_in_same_process)
 
-            # 右侧按钮组：用 Story 启动新项目、粘贴 NotebookLM 结果、保存主题信息（紧挨显示）
+            # 右侧按钮组：粘贴 NotebookLM 结果启动新项目（从剪贴板读取→保存→启动）、保存主题信息
             right_btns = ttk.Frame(button_frame)
             right_btns.pack(side=tk.RIGHT)
-            ttk.Button(right_btns, text="用 Story 启动新项目", command=on_start_project_with_story).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(right_btns, text="粘贴 NotebookLM 结果", command=open_paste_notebooklm_result).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="粘贴 NotebookLM 结果启动新项目", command=on_paste_and_start_project).pack(side=tk.LEFT, padx=(0, 5))
             ttk.Button(right_btns, text="保存主题信息", command=save_topic_info).pack(side=tk.LEFT)
             
             # 配置网格权重

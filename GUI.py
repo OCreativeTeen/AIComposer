@@ -4262,20 +4262,6 @@ class WorkflowGUI:
         ttk.Button(btn_f, text="生成", command=on_confirm).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="取消", command=opts_dialog.destroy).pack(side=tk.LEFT)
 
-# Audio-speaking without showing the speaker or host is What we want!!! 
-    GENERATION_INSTRUCTION = """
-Video generation instruction: 
-    ** Specail-Case 1: if start-image not have the speaker or host image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host is What we want in this case!!!,  Even json content below may has "speaker" or "host" description, only use these as guide to choose voice **
-
-    ||||  
-
-Audio generation instruction: 
-	** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
-    ** If the json content below has no 'speaking' & 'voiceover' content, the audio should be the host breifly speak about the content of the image (like main text message in the image) **
-
---------------------------------
-
-"""
     HOST_NOT_SHOW = "不显示在画面中"
 
     # Host 单一定义：(中文, 英文) - 顺序即用户选择顺序，避免多处定义导致不一致
@@ -4460,7 +4446,7 @@ Audio generation instruction:
             text_widget.insert("1.0", new_text)
             try:
                 self.root.clipboard_clear()
-                self.root.clipboard_append(new_text.strip())
+                self.root.clipboard_append(config_prompt.GENERATION_INSTRUCTION + "\n\n" + new_text.strip())
                 self.root.update()
             except Exception:
                 pass
@@ -4471,11 +4457,20 @@ Audio generation instruction:
 
         text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=85, height=24)
         text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        def _on_double_click_paste_hint(e):
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append("generate according to the instructions inside source 'Pasted Text / 粘贴的文字'")
+                self.root.update()
+            except Exception:
+                pass
+        text_widget.bind("<Double-1>", _on_double_click_paste_hint)
         text_widget.insert("1.0", initial_text)
         _rebuild_all()  # 根据当前 Speaker/Host 选项与三复选框同步 JSON 显示
         try:
             self.root.clipboard_clear()
-            self.root.clipboard_append(text_widget.get("1.0", tk.END).strip())
+            txt = config_prompt.GENERATION_INSTRUCTION + "\n\n" + text_widget.get("1.0", tk.END).strip()
+            self.root.clipboard_append(txt.strip())
             self.root.update()
         except Exception:
             pass
@@ -4694,7 +4689,7 @@ Audio generation instruction:
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", txt)
             try:
-                txt = self.GENERATION_INSTRUCTION + "\n--------------------\n" + txt
+                txt = config_prompt.GENERATION_INSTRUCTION + "\n\n" + txt
                 self.root.clipboard_clear()
                 self.root.clipboard_append(txt.strip())
                 self.root.update()
