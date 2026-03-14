@@ -1407,7 +1407,6 @@ class WorkflowGUI:
 
         ttk.Button(duration_promo_frame, text="故事", width=5, command=self.current_story_content).pack(side=tk.LEFT)
         ttk.Button(duration_promo_frame, text="图像", width=5, command=lambda: self._open_describe_scene_options_dialog()).pack(side=tk.LEFT)
-        ttk.Button(duration_promo_frame, text="讲解", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
         #ttk.Button(duration_promo_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
 
         # extension: 场景末尾延长秒数 (0=不写字段, 0.5/1.0/1.5/2.0 秒)，用于 finalize 时每段视频末尾克隆最后一帧延长
@@ -4341,13 +4340,13 @@ class WorkflowGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Story Content")
-        dialog.geometry("750x550")
+        dialog.geometry("850x650")
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 750) // 2
-        y = (dialog.winfo_screenheight() - 550) // 2
-        dialog.geometry(f"750x550+{x}+{y}")
+        x = (dialog.winfo_screenwidth() - 850) // 2
+        y = (dialog.winfo_screenheight() - 650) // 2
+        dialog.geometry(f"850x650+{x}+{y}")
 
         ttk.Label(dialog, text="Story Content（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
         # Speaker / Host 选项（放在三个 checkbox 之前）
@@ -4499,6 +4498,8 @@ class WorkflowGUI:
         ttk.Button(btn_f, text="逐场景预览", command=on_review).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="保存", command=on_save).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
+        ttk.Button(btn_f, text="讲解", command=self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
+
 
     def _open_story_scene_review_window(self, payload):
         """逐场景预览窗口：Prev/Next 浏览每个场景，显示 scene 的 JSON（用于视频生成）"""
