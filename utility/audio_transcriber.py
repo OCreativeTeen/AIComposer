@@ -14,19 +14,7 @@ import gc
 import math
 import torch
 import requests
-
-
-LANGUAGES = {
-    "zh": "Chinese",
-    "tw": "Chinese",
-    "en": "English",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "fr": "French",
-    "de": "German",
-    "es": "Spanish",
-}
-
+import config
 
 
 VOICE_TEMP_PATH = "/AI_MEDIA/voice"
@@ -42,7 +30,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.device = device
         self.api_url = "http://10.0.0.222:9001/transcribe"
-        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
+        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
 
@@ -121,12 +109,12 @@ class AudioTranscriber:
             return self.chinese_convert(text, target_language)
         
         system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
-            source_language=LANGUAGES[source_language],
-            target_language=LANGUAGES[target_language]
+            source_language=config.LANGUAGES[source_language],
+            target_language=config.LANGUAGES[target_language]
         )
         prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
-            source_language=LANGUAGES[source_language],
-            target_language=LANGUAGES[target_language],
+            source_language=config.LANGUAGES[source_language],
+            target_language=config.LANGUAGES[target_language],
             text=text
         )
 

@@ -420,7 +420,7 @@ class LLMApi:
     def generate_text(self, system_prompt, user_prompt) -> str:
         if user_prompt is None:
             messages=[
-                self.create_message("system", system_prompt)
+                self.create_message("user", system_prompt)
             ]
         else:
             messages=[

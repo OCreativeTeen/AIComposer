@@ -1,6 +1,9 @@
 import config_prompt
 
 
+CONCISE_SPEAKING_PROMPT = """
+Condense the spoken content (given in user-prompt) into a clearer and VERY concise form while preserving the 1-2 key points from the content.
+"""
 
 PICTURE_STYLE = """
         **** FYI **** Generally, video/image is in '{style}' style &  '{color}' colors; the camera using '{shot}' shot, in '{angle}' angle.
@@ -16,13 +19,6 @@ RENAME = """
 ls *.json | ren -NewName { $_.BaseName + ".txt" }
 ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
 """
-
-
-CONCISE_SPEAKING_PROMPT = """
-Condense the spoken content (given in user-prompt) into a clearer and more concise form while preserving the original meaning, personality, emotional tone, and storytelling flow. 
-Remove repetition and filler words, and slightly strengthen the emotional impact if appropriate.
-"""
-
 
 
 IMAGE_DESCRIPTION_SYSTEM_PROMPT = """
@@ -939,61 +935,6 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
         "topic_subtype": "The specific sub-type from the Classification System",
         "tags": ["1-3 selected tags, provided as a comma-separated string"]
     }}
-"""
-
-
-
-
-SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT = """
-    You are a psychological counselor and reflective storyteller.
-
-    Your task is NOT to summarize the content.
-    Instead, you must extract the core psychological insight from the provided discussion, story, or analysis in the user prompt (given in user-prompt), 
-    and transform it into a short counseling message followed by a small illustrative story (on the topic of '{topic}').
-
-    The goal is to gently guide the reader toward emotional understanding and self-reflection.
-
-    Output Structure (STRICT FORMAT):
-        ---------------------
-        {language} section:
-        ---------------------
-        [Title] (in {language} - no extra stuff like Phonetic notation, etc.)
-            A short title that captures the psychological theme.
-
-        [Heart Message] (in {language} - no extra stuff like Phonetic notation, etc.)
-            Write 2–4 short sentences that function like a gentle counseling message or reflective life guidance.
-            The tone should be calm, warm, and insightful.
-            It should express the core psychological truth revealed by the content.
-
-        [Psychological Micro-Story] (in {language} - no extra stuff like Phonetic notation, etc.)
-            Write a very short story (5–8 sentences) that illustrates or confirms the message above.
-            The story should feel simple, human, and relatable (often involving a child, a small life moment, or a quiet realization).
-            The story must demonstrate the psychological insight indirectly.
-
-        ---------------------
-        English section:
-        ---------------------
-        [Title] (in English)
-            A short title that captures the psychological theme.
-
-        [Heart Message] (in English)
-            Write 2–4 short sentences that function like a gentle counseling message or reflective life guidance.
-            The tone should be calm, warm, and insightful.
-            It should express the core psychological truth revealed by the content.
-
-        [Psychological Micro-Story] (in English)
-            Write a very short story (5–8 sentences) that illustrates or confirms the message above.
-            The story should feel simple, human, and relatable (often involving a child, a small life moment, or a quiet realization).
-            The story must demonstrate the psychological insight indirectly.
-
-
-    Guidelines:
-    - Focus on emotional insight rather than factual summary.
-    - Avoid technical psychology language.
-    - Write in a simple, warm, reflective tone.
-    - The story must clearly embody the message.
-    - Do NOT mention the original text or say "according to the content".
-    - Do NOT add analysis or explanation outside the structure.
 """
 
 

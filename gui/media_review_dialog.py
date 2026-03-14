@@ -1267,15 +1267,16 @@ class AVReviewDialog:
         selected_prompt = ""
         if _name == "development2":
             _content = project_manager.PROJECT_CONFIG.get('debut_content', "")
-            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('development2', '')
+            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development2', '')
         elif _name == "development1":
             _content = project_manager.PROJECT_CONFIG.get('init_content', "")
-            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('development2', '')
+            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development1', '')
         elif _name == "intro":
             _content = project_manager.PROJECT_CONFIG.get('init_content', "")
-            selected_prompt = config_channel.PROJECT_CONFIG['prompts'].get('intro', '')
-        else:
-            return
+            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('intro', '')
+
+        if not _content:
+            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
 
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 

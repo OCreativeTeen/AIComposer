@@ -1,4 +1,5 @@
 import os
+import sys
 import yt_dlp
 import subprocess
 import shutil
@@ -9,6 +10,7 @@ import glob
 
 import config
 import config_prompt
+import config_channel
 from datetime import datetime
 
 import google_auth_oauthlib.flow
@@ -309,6 +311,46 @@ class MediaDownloader:
         else:
             return None
 
+    def try_download_caption_only(self, video_detail, target_lang):
+        """仅尝试下载字幕（不下载音频、不转录），成功返回路径，失败返回 None"""
+        if not target_lang or not self.cookie_file:
+            return None
+        video_url = video_detail.get('url', '')
+        if not video_url:
+            return None
+        download_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
+        ydl_opts = self._get_ydl_opts_base(
+            skip_download=True,
+            writesubtitles=True,
+            writeautomaticsub=True,
+            subtitleslangs=[target_lang],
+            subtitlesformat="srt",
+            outtmpl=download_prefix,
+            quiet=True,
+            no_warnings=True,
+        )
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+        except Exception as e:
+            print(f"❌ 下载字幕失败: {e}")
+            return None
+        src_path = f"{download_prefix}.{target_lang}.srt"
+        return src_path if os.path.exists(src_path) else None
+
+    def pick_best_caption_language(self, all_languages):
+        """从可用语言中优先选中文，其次英文，否则返回 None"""
+        if not all_languages:
+            return None
+        zh_pattern = re.compile(r'^zh', re.I)  # zh, zh-CN, zh-TW, zh-Hans...
+        en_pattern = re.compile(r'^en', re.I)  # en, en-US, en-GB...
+        zh_langs = [l for l in all_languages if zh_pattern.match(l)]
+        en_langs = [l for l in all_languages if en_pattern.match(l)]
+        if zh_langs:
+            return zh_langs[0]
+        if en_langs:
+            return en_langs[0]
+        return None
 
     def download_audio_only(self, video_detail, sleep_interval=2):
         video_url = video_detail.get('url', '')
@@ -946,6 +988,47 @@ class MediaDownloader:
         return response["id"]
 
 
+    def pick_best_caption_language(self, all_languages):
+        """优先选择中文，其次英文；若无则返回 None"""
+        if not all_languages:
+            return None
+        zh_langs = [l for l in all_languages if l and (l.startswith('zh') or l in ('zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW'))]
+        en_langs = [l for l in all_languages if l and l.startswith('en')]
+        if zh_langs:
+            return zh_langs[0]
+        if en_langs:
+            return en_langs[0]
+        return all_languages[0]
+
+    def try_download_caption_only(self, video_detail, target_lang):
+        """仅尝试下载字幕，不 fallback 到音频转录；成功返回路径，失败返回 None"""
+        if not target_lang or not self.cookie_file:
+            return None
+        video_url = video_detail.get('url', '')
+        if not video_url:
+            return None
+        download_prefix = self.youtube_dir + "/__" + self.generate_video_prefix(video_detail)
+        ydl_opts = self._get_ydl_opts_base(
+            skip_download=True,
+            writesubtitles=True,
+            writeautomaticsub=True,
+            subtitleslangs=[target_lang],
+            subtitlesformat="srt",
+            outtmpl=download_prefix,
+            quiet=True,
+            no_warnings=True,
+        )
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+            src_path = f"{download_prefix}.{target_lang}.srt"
+            if os.path.exists(src_path):
+                print(f"✅ 已下载字幕：语言 {target_lang}")
+                return src_path
+        except Exception as e:
+            print(f"⚠️ 字幕下载失败: {e}")
+        return None
+
     def select_language(self, video_detail):
         basic_info = self.find_video_basic(video_detail)
         if not basic_info:
@@ -969,7 +1052,7 @@ class MediaDownloader:
 class MediaGUIManager:
     """YouTube GUI管理器 - 处理所有YouTube相关的GUI对话框"""
     
-    def __init__(self, root, channel_path, pid, tasks, log_to_output_func, download_output):
+    def __init__(self, root, channel_path, pid, tasks, log_to_output_func, download_output, language=None):
         self.root = root
         self.channel_path = channel_path
         self.youtube_dir = f"{channel_path}/Download"
@@ -982,17 +1065,12 @@ class MediaGUIManager:
         self.tasks = tasks
         self.log_to_output = log_to_output_func
         self.download_output = download_output
+        self.language = language  # 从首层传入，后续 YT 功能可复用
         
         self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, self.youtube_dir)
-        
-        # 添加线程锁，保护 channel_videos 的并发访问
-        self.channel_videos_lock = threading.Lock()
-        
-        # LLM API 并发控制：限制同时进行的 API 调用数量（默认3个）
-        self.llm_api_semaphore = threading.Semaphore(3)
         
         # 跟踪活跃的摘要生成线程，确保对话框关闭时不会丢失数据
         self.active_summary_threads = []
@@ -1192,12 +1270,6 @@ class MediaGUIManager:
         else:
             status_parts.append("⬜ 未转录")
         
-        # 检查是否已生成摘要 - 检查 video_detail 中是否有非空的 'summary' 字段
-        summary = video_detail.get('summary', '')
-        if summary and summary.strip():
-            status_parts.append("✅ 已摘要")
-        else:
-            status_parts.append("⬜ 未摘要")
         
         return " ".join(status_parts), video_file, audio_file
 
@@ -1224,86 +1296,28 @@ class MediaGUIManager:
         return None
 
 
-    def update_text_content(self, video_detail=None, transcribed_file=None, tag_again=False, in_background=True):
+    def update_text_content(self, video_detail, transcribed_file=None):
         if not video_detail:
             return None
 
-        if transcribed_file:
-            video_detail['transcribed_file'] = transcribed_file
-        else:    
-            transcribed_file = video_detail.get('transcribed_file', '')
-            if not transcribed_file:
-                return video_detail
+        text_content = video_detail.get('content', '')
+        if not text_content or not text_content.strip():
+            if transcribed_file:
+                video_detail['transcribed_file'] = transcribed_file
+            else:    
+                transcribed_file = video_detail.get('transcribed_file', '')
+                if not transcribed_file:
+                    return video_detail
+            text_content = self.fetch_text_content(video_detail)
+            video_detail["content"] = text_content
 
-        summary = video_detail.get('summary', '')
         topic_type = video_detail.get('topic_subtype', '')
         topic_category = video_detail.get('topic_category', '')
         problem_tags = video_detail.get('tags', '')
-        if in_background and not tag_again and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and problem_tags and problem_tags.strip():
-            return video_detail
-
-        text_content = self.fetch_text_content(video_detail)
-        video_detail["content"] = text_content
-        url = video_detail.get('url', '')
-
-        # 摘要生成改为后台线程执行（非阻塞）
-        def generate_summary_background(url, text_content):
-            """在后台线程中生成摘要，使用信号量控制并发"""
-            # 使用信号量限制并发 LLM API 调用
-            with self.llm_api_semaphore:
-                try:
-                    # 使用锁保护，获取视频详情
-                    with self.channel_videos_lock:
-                        video_detail = self.get_video_detail(url)
-                        if not video_detail:
-                            print(f"❌ 未找到视频详情: {url}")
-                            return
-                    
-                    summary = video_detail.get('summary', '')
-                    if not in_background or not summary or not summary.strip():
-                        # LLM API 调用在信号量保护下（已在上层 with 语句中）
-                        result = self.llm_api.generate_text(
-                            config_prompt.SUMMERIZE_ONLY_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic=video_detail.get('topic_category', '') + " - " + video_detail.get('topic_subtype', '')), 
-                            text_content
-                        )
-                        if result:
-                            # 使用锁保护，更新视频详情
-                            with self.channel_videos_lock:
-                                video_detail.pop('description', None)
-                                video_detail['summary'] = result
-                        else:
-                            print(f"⚠️ 摘要生成失败: {video_detail.get('title', 'Unknown')[:50]}")
-                            return
-
-                    self.prepare_category_for_content(video_detail, text_content, self.topic_choices)
-
-                except Exception as e:
-                    print(f"❌ 后台摘要生成出错: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-        
-        
-        if in_background:
-            # 创建一个包装函数来清理线程引用
-            def cleanup_thread():
-                current_thread = threading.current_thread()
-                try:
-                    generate_summary_background(url, text_content)
-                finally:
-                    with self.active_threads_lock:
-                        if current_thread in self.active_summary_threads:
-                            self.active_summary_threads.remove(current_thread)
-            
-            thread = threading.Thread(target=cleanup_thread)
-            thread.daemon = False  # 改为非 daemon 线程，确保数据保存完成，不依赖对话框
-            with self.active_threads_lock:
-                self.active_summary_threads.append(thread)
-            thread.start()
-        else:
-            generate_summary_background(url, text_content)
+        if not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() or not problem_tags or not problem_tags.strip():
+            self.prepare_category_for_content(video_detail, text_content, self.topic_choices)
 
         return video_detail
-
 
 
     def prepare_category_for_content(self, video_detail, text_content, topic_choices):
@@ -1314,27 +1328,25 @@ class MediaGUIManager:
             expect_list=False
         )
         if result:
-            # 使用锁保护，更新主题信息
-            with self.channel_videos_lock:
-                if result.get('topic_subtype', '') and result.get('topic_subtype', '').strip():
-                    video_detail['topic_subtype'] = result.get('topic_subtype', '')
-                    video_detail.pop('topic_type', None)
-                if result.get('topic_category', '') and result.get('topic_category', '').strip():
-                    video_detail['topic_category'] = result.get('topic_category', '')
-                raw_tags = result.get('tags')
-                if isinstance(raw_tags, list):
-                    tags_list = [str(t).strip() for t in raw_tags if t and str(t).strip()]
-                    if tags_list:
-                        video_detail['tags'] = tags_list
-                elif isinstance(raw_tags, str) and raw_tags.strip():
-                    video_detail['tags'] = [t.strip() for t in raw_tags.split(',') if t.strip()]
-                # 保存到文件（在锁内，确保数据一致性）
-                try:
-                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                    print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
-                except Exception as e:
-                    print(f"❌ 保存 channel_list_json 失败: {e}")
+            if result.get('topic_subtype', '') and result.get('topic_subtype', '').strip():
+                video_detail['topic_subtype'] = result.get('topic_subtype', '')
+                video_detail.pop('topic_type', None)
+            if result.get('topic_category', '') and result.get('topic_category', '').strip():
+                video_detail['topic_category'] = result.get('topic_category', '')
+            raw_tags = result.get('tags')
+            if isinstance(raw_tags, list):
+                tags_list = [str(t).strip() for t in raw_tags if t and str(t).strip()]
+                if tags_list:
+                    video_detail['tags'] = tags_list
+            elif isinstance(raw_tags, str) and raw_tags.strip():
+                video_detail['tags'] = [t.strip() for t in raw_tags.split(',') if t.strip()]
+            # 保存到文件（在锁内，确保数据一致性）
+            try:
+                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                print(f"✅ 摘要生成完成并已保存: {video_detail.get('title', 'Unknown')[:50]}")
+            except Exception as e:
+                print(f"❌ 保存 channel_list_json 失败: {e}")
 
 
 
@@ -1583,10 +1595,7 @@ class MediaGUIManager:
             hottest_degree = 0.0
             
             for idx, video in enumerate(filtered_videos, 1):
-                video.pop('text_content', None)
-                summary = video.get('summary', None)
-                if summary:
-                    video.pop('description', None)
+                #video.pop('text_content', None)
                 # 格式化时长
                 duration_sec = video.get('duration', 0)
                 # 确保 duration_sec 是数字类型，并转换为整数
@@ -1762,248 +1771,6 @@ class MediaGUIManager:
         tree.bind('<Button-1>', lambda e: tree.focus_set())
 
 
-        def edit_topic_info(video_detail):
-            """编辑视频的主题信息对话框"""
-            edit_dialog = tk.Toplevel(dialog)
-            edit_dialog.title("编辑主题信息")
-            edit_dialog.geometry("700x550")
-            edit_dialog.transient(dialog)
-            edit_dialog.grab_set()
-            
-            # 获取当前值
-            current_category = video_detail.get('topic_category', '')
-            current_subtype = video_detail.get('topic_subtype', '')
-            current_status = video_detail.get('status', '')
-            if current_status not in ('', '1', '2', '3'):
-                current_status = ''
-            current_tags_raw = video_detail.get('tags', '')
-            if isinstance(current_tags_raw, list):
-                current_tags = ', '.join(str(t) for t in current_tags_raw)
-            elif isinstance(current_tags_raw, str):
-                current_tags = current_tags_raw
-            else:
-                current_tags = str(current_tags_raw) if current_tags_raw else ''
-            
-            # 主题分类选择
-            ttk.Label(edit_dialog, text="主题分类:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
-            category_var = tk.StringVar(value=current_category)
-            category_combo = ttk.Combobox(edit_dialog, textvariable=category_var, values=self.topic_categories, state="readonly", width=50)
-            category_combo.grid(row=0, column=1, padx=10, pady=5, sticky='ew')
-            
-            # 主题子类型选择
-            ttk.Label(edit_dialog, text="主题子类型:").grid(row=1, column=0, sticky='w', padx=10, pady=5)
-            subtype_var = tk.StringVar(value=current_subtype)
-            subtype_combo = ttk.Combobox(edit_dialog, textvariable=subtype_var, values=[], state="readonly", width=50)
-            subtype_combo.grid(row=1, column=1, padx=10, pady=5, sticky='ew')
-            
-            # 标注选择 (status: "", "1", "2", "3")
-            ttk.Label(edit_dialog, text="标注:").grid(row=2, column=0, sticky='w', padx=10, pady=5)
-            status_var = tk.StringVar(value=current_status)
-            status_combo = ttk.Combobox(edit_dialog, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=10)
-            status_combo.grid(row=2, column=1, padx=10, pady=5, sticky='w')
-            
-            # 辅助：解析标签为 analysis(无=) 与 manual(name=value)
-            def _parse_tags_to_parts(tags_text):
-                parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
-                analysis = [p for p in parts if '=' not in p]
-                manual = [p for p in parts if '=' in p]
-                return analysis, manual
-            
-            # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
-            ttk.Label(edit_dialog, text="主题标签 (可编辑, 用 , 或 | 分隔):").grid(row=3, column=0, sticky='nw', padx=10, pady=5)
-            tags_var = tk.StringVar(value=current_tags)
-            tags_entry = ttk.Entry(edit_dialog, textvariable=tags_var, width=60)
-            tags_entry.grid(row=3, column=1, padx=10, pady=5, sticky='ew')
-            
-            # tag_choices 多选组（来自 tags.json，如 GENRE=、Rhythm=，值用/连接）
-            tag_radio_refs = []
-            row_tag_radios = 4
-            if self.tag_choices:
-                tag_radios_frame = ttk.LabelFrame(edit_dialog, text="标签选择 (name=value，可多选，值用/连接)", padding=5)
-                tag_radios_frame.grid(row=row_tag_radios, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
-                tag_radios_frame.columnconfigure(0, weight=1)
-                existing_manual = {t.split('=', 1)[0]: t.split('=', 1)[-1] for t in _parse_tags_to_parts(current_tags)[1]}
-                for tag_item in self.tag_choices:
-                    if not isinstance(tag_item, dict):
-                        continue
-                    tag_type = tag_item.get('tag_type', '')
-                    tags_list = tag_item.get('tags') or []
-                    if not tags_list:
-                        continue
-                    r = ttk.LabelFrame(tag_radios_frame, text=f"{tag_type}:", padding=3)
-                    r.pack(fill=tk.X, pady=3)
-                    existing_vals = existing_manual.get(tag_type, '').split('/') if existing_manual.get(tag_type) else []
-                    existing_set = {v.strip() for v in existing_vals if v.strip()}
-                    check_vars = []
-                    inner = ttk.Frame(r)
-                    inner.pack(fill=tk.X, expand=True)
-                    n_cols = 10
-                    for col_idx, val in enumerate(sorted(tags_list)):
-                        ri, ci = col_idx // n_cols, col_idx % n_cols
-                        cb_var = tk.BooleanVar(value=val in existing_set)
-                        cb = ttk.Checkbutton(inner, text=val, variable=cb_var, command=lambda: _sync_tags_from_radios())
-                        cb.grid(row=ri, column=ci, sticky='w', padx=(0, 8), pady=1)
-                        check_vars.append((val, cb_var))
-                    for c in range(n_cols):
-                        inner.columnconfigure(c, weight=1)
-                    tag_radio_refs.append((tag_type, check_vars))
-                row_tag_radios += 1
-            
-            def _sync_tags_from_radios():
-                """从多选组更新 tags_var：保留分析标签 + 手动 name=value（多选用/连接）"""
-                analysis, _ = _parse_tags_to_parts(tags_var.get())
-                manual = []
-                for tag_type, check_vars in tag_radio_refs:
-                    vals = [v for v, cb_var in check_vars if cb_var.get()]
-                    if vals:
-                        manual.append(f"{tag_type}={'/'.join(vals)}")
-                combined = analysis + manual
-                tags_var.set(', '.join(combined))
-            
-            
-            # 标签选择列表（来自 topics 子类型的可选标签）
-            ttk.Label(edit_dialog, text="可选标签:").grid(row=row_tag_radios, column=0, sticky='nw', padx=10, pady=5)
-            tags_listbox_frame = ttk.Frame(edit_dialog)
-            tags_listbox_frame.grid(row=row_tag_radios, column=1, padx=10, pady=5, sticky='nsew')
-            
-            tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=8)
-            tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
-            tags_listbox.configure(yscrollcommand=tags_listbox_scrollbar.set)
-            tags_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            tags_listbox_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            
-            def update_subtypes(*args):
-                """根据选择的分类更新子类型选项"""
-                selected_category = category_var.get()
-                subtypes = []
-                if selected_category and self.topic_choices:
-                    for item in self.topic_choices:
-                        if isinstance(item, dict) and item.get('topic_category') == selected_category:
-                            for subtype_item in item.get('topic_subtypes', []):
-                                if isinstance(subtype_item, dict):
-                                    # 从 topic_subtypes 数组中获取每个项的 topic_subtype 字段
-                                    subtype_name = subtype_item.get('topic_subtype', '')
-                                    if subtype_name and subtype_name not in subtypes:
-                                        subtypes.append(subtype_name)
-                subtype_combo['values'] = subtypes
-                if current_subtype in subtypes:
-                    subtype_var.set(current_subtype)
-                else:
-                    subtype_var.set('')
-                update_tags()
-            
-            def update_tags(*args):
-                """根据选择的子类型更新标签选项"""
-                selected_category = category_var.get()
-                selected_subtype = subtype_var.get()
-                tags = []
-                if selected_category and selected_subtype and self.topic_choices:
-                    for item in self.topic_choices:
-                        if isinstance(item, dict) and item.get('topic_category') == selected_category:
-                            for subtype_item in item.get('topic_subtypes', []):
-                                # 匹配选中的 topic_subtype
-                                if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
-                                    # tags 为字符串数组，直接使用
-                                    for tag in subtype_item.get('tags', []):
-                                        if tag not in tags:
-                                            tags.append(tag)
-                tags_listbox.delete(0, tk.END)
-                for tag in tags:
-                    tags_listbox.insert(tk.END, tag)
-            
-            def add_selected_tags():
-                """将选中的标签添加到输入框"""
-                selected_indices = tags_listbox.curselection()
-                if selected_indices:
-                    current_tags_text = tags_var.get().strip()
-                    selected_tags = [tags_listbox.get(i) for i in selected_indices]
-                    new_part = ', '.join(selected_tags)
-                    if current_tags_text:
-                        tags_var.set(f"{current_tags_text}, {new_part}")
-                    else:
-                        tags_var.set(new_part)
-
-            # 绑定事件
-            category_combo.bind('<<ComboboxSelected>>', update_subtypes)
-            subtype_combo.bind('<<ComboboxSelected>>', update_tags)
-            
-            # 添加标签按钮
-            add_tags_btn = ttk.Button(edit_dialog, text="添加选中标签", command=add_selected_tags)
-            add_tags_btn.grid(row=row_tag_radios + 1, column=1, padx=10, pady=5, sticky='w')
-
-            # 初始化
-            if current_category:
-                update_subtypes()
-            
-            # 按钮框架
-            button_frame = ttk.Frame(edit_dialog)
-            button_frame.grid(row=row_tag_radios + 2, column=0, columnspan=2, pady=20)
-            
-            def save_changes():
-                """保存更改"""
-                category = category_var.get().strip()
-                subtype = subtype_var.get().strip()
-                tags_text = tags_var.get().strip()
-                
-                # 解析标签（支持 , 或 | 分隔，保留 GENRE=xxx 等格式）
-                if tags_text:
-                    tags_list = [tag.strip() for tag in re.split(r'[|,]', tags_text) if tag.strip()]
-                else:
-                    tags_list = []
-                
-                # 更新视频详情
-                if category:
-                    video_detail['topic_category'] = category
-                else:
-                    video_detail.pop('topic_category', None)
-                
-                if subtype:
-                    video_detail['topic_subtype'] = subtype
-                else:
-                    video_detail.pop('topic_subtype', None)
-                
-                if tags_list:
-                    video_detail['tags'] = tags_list
-                else:
-                    video_detail.pop('tags', None)
-                
-                # 保存标注 (status)
-                st = status_var.get()
-                if st in ('', '1', '2', '3'):
-                    video_detail['status'] = st
-                else:
-                    video_detail.pop('status', None)
-                
-                # 保存到文件
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                
-                # 刷新树视图
-                populate_tree()
-                edit_dialog.destroy()
-            
-            ttk.Button(button_frame, text="保存", command=save_changes).pack(side=tk.LEFT, padx=5)
-            ttk.Button(button_frame, text="取消", command=edit_dialog.destroy).pack(side=tk.LEFT, padx=5)
-            
-            # 配置网格权重
-            edit_dialog.columnconfigure(1, weight=1)
-            edit_dialog.rowconfigure(row_tag_radios, weight=1)
-        
-        def edit_selected_topics():
-            """编辑选中视频的主题信息"""
-            selected_items = tree.selection()
-            if not selected_items:
-                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
-                return
-            
-            # 只编辑第一个选中的视频
-            item = selected_items[0]
-            item_tags = tree.item(item, "tags")
-            if item_tags:
-                video_detail = self.get_video_detail(item_tags[0])
-                if video_detail:
-                    edit_topic_info(video_detail)
-        
         def on_enter_key(event):
             on_focus(event, low_priority=False)
 
@@ -2033,7 +1800,6 @@ class MediaGUIManager:
             if not video_detail:
                 return
 
-            summary = video_detail.get('summary', '')
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
@@ -2045,10 +1811,10 @@ class MediaGUIManager:
                 topic_tags = ' | '.join(topic_tags)
             elif not isinstance(topic_tags, str):
                 topic_tags = str(topic_tags) if topic_tags else ''
-            if not low_priority or not summary or not summary.strip() or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() :
+            if not low_priority or not topic_type or not topic_type.strip() or not topic_category or not topic_category.strip() :
                 # show a messagebox to let user know the summary is generating (non-blocking)
                 # self.root.after(0, lambda: messagebox.showinfo("提示", "摘要生成中，请稍后...", parent=self.root))
-                self.update_text_content(video_detail, in_background=low_priority)
+                self.update_text_content(video_detail)
                 topic_type = video_detail.get('topic_subtype', '')
                 topic_category = video_detail.get('topic_category', '')
                 topic_subtype = video_detail.get('topic_subtype', '')
@@ -2057,7 +1823,6 @@ class MediaGUIManager:
                     topic_tags = ' | '.join(topic_tags)
                 elif not isinstance(topic_tags, str):
                     topic_tags = str(topic_tags) if topic_tags else ''
-                summary = video_detail.get('summary', '')
 
             # show the summary in a new window
             summary_window = tk.Toplevel(dialog)
@@ -2091,16 +1856,65 @@ class MediaGUIManager:
             status_combo = ttk.Combobox(topic_frame, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=10)
             status_combo.grid(row=2, column=1, padx=5, pady=5, sticky='w')
             
-            # 主题标签输入
-            ttk.Label(topic_frame, text="主题标签 (用 | 分隔):", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
+            # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
+            def _parse_tags_to_parts(tags_text):
+                parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
+                return [p for p in parts if '=' not in p], [p for p in parts if '=' in p]
+            
+            ttk.Label(topic_frame, text="主题标签 (可编辑, 用 , 或 | 分隔):", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
             tags_var = tk.StringVar(value=topic_tags)
             tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=40)
             tags_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
             
-            # 可选标签列表（用于快速选择）
-            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=4, column=0, sticky='nw', padx=5, pady=5)
+            # tag_choices 多选组（来自 tags.json，如 GENRE=、Rhythm=，值用/连接）
+            tag_combo_refs = []
+            row_tag_radios = 4
+            if self.tag_choices:
+                tag_radios_frame = ttk.LabelFrame(topic_frame, text="标签选择 (name=value，可多选，值用/连接)", padding=5)
+                tag_radios_frame.grid(row=row_tag_radios, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+                tag_radios_frame.columnconfigure(0, weight=1)
+                existing_manual = {t.split('=', 1)[0]: t.split('=', 1)[-1] for t in _parse_tags_to_parts(topic_tags)[1]}
+                for tag_item in self.tag_choices:
+                    if not isinstance(tag_item, dict):
+                        continue
+                    tag_type = tag_item.get('tag_type', '')
+                    tags_list = tag_item.get('tags') or []
+                    if not tags_list:
+                        continue
+                    r = ttk.LabelFrame(tag_radios_frame, text=f"{tag_type}:", padding=3)
+                    r.pack(fill=tk.X, pady=3)
+                    existing_vals = existing_manual.get(tag_type, '').split('/') if existing_manual.get(tag_type) else []
+                    existing_set = {v.strip() for v in existing_vals if v.strip()}
+                    check_vars = []
+                    inner = ttk.Frame(r)
+                    inner.pack(fill=tk.X, expand=True)
+                    n_cols = 10
+                    for col_idx, val in enumerate(sorted(tags_list)):
+                        ri, ci = col_idx // n_cols, col_idx % n_cols
+                        cb_var = tk.BooleanVar(value=val in existing_set)
+                        cb = ttk.Checkbutton(inner, text=val, variable=cb_var, command=lambda: _sync_tags_from_radios())
+                        cb.grid(row=ri, column=ci, sticky='w', padx=(0, 8), pady=1)
+                        check_vars.append((val, cb_var))
+                    for c in range(n_cols):
+                        inner.columnconfigure(c, weight=1)
+                    tag_combo_refs.append((tag_type, check_vars))
+                row_tag_radios += 1
+            
+            def _sync_tags_from_radios():
+                """从多选组更新 tags_var：保留分析标签 + 手动 name=value（多选用/连接）"""
+                analysis, _ = _parse_tags_to_parts(tags_var.get())
+                manual = []
+                for tag_type, check_vars in tag_combo_refs:
+                    vals = [v for v, cb_var in check_vars if cb_var.get()]
+                    if vals:
+                        manual.append(f"{tag_type}={'/'.join(vals)}")
+                combined = analysis + manual
+                tags_var.set(', '.join(combined))
+            
+            # 可选标签列表（来自 topics 子类型的可选标签）
+            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=row_tag_radios, column=0, sticky='nw', padx=5, pady=5)
             tags_listbox_frame = ttk.Frame(topic_frame)
-            tags_listbox_frame.grid(row=4, column=1, padx=5, pady=5, sticky='nsew')
+            tags_listbox_frame.grid(row=row_tag_radios, column=1, padx=5, pady=5, sticky='nsew')
             
             tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=6)
             tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
@@ -2195,7 +2009,7 @@ class MediaGUIManager:
             
             # 按钮框架
             button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
+            button_frame.grid(row=row_tag_radios + 1, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
             
             # 添加标签按钮
             add_tags_btn = ttk.Button(button_frame, text="添加选中标签", command=add_selected_tags)
@@ -2216,21 +2030,29 @@ class MediaGUIManager:
                 tags_text = tags_var.get().strip()
                 st = status_var.get()
                 
-                # 解析标签（用逗号分隔）
+                # 解析标签（支持 , 或 | 分隔，保留 GENRE=xxx 等格式）
                 if tags_text:
-                    tags_list = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                    tags_list = [tag.strip() for tag in re.split(r'[|,]', tags_text) if tag.strip()]
                 else:
                     tags_list = []
                 
                 # 更新视频详情
                 if category:
                     video_detail['topic_category'] = category
+                else:
+                    video_detail.pop('topic_category', None)
                 if subtype:
                     video_detail['topic_subtype'] = subtype
+                else:
+                    video_detail.pop('topic_subtype', None)
                 if tags_list:
-                    video_detail['problem_tags'] = tags_list
+                    video_detail['tags'] = tags_list
+                else:
+                    video_detail.pop('tags', None)
                 if st in ('', '1', '2', '3'):
                     video_detail['status'] = st
+                else:
+                    video_detail.pop('status', None)
                 
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2244,8 +2066,123 @@ class MediaGUIManager:
                 
                 messagebox.showinfo("成功", "主题信息已保存", parent=summary_window)
             
-            save_btn = ttk.Button(button_frame, text="保存主题信息", command=save_topic_info)
-            save_btn.pack(side=tk.RIGHT, padx=5)
+            def open_paste_notebooklm_result():
+                """弹窗：用户将 NotebookLM 生成的故事/消息粘贴回，保存到 video_detail['story']"""
+                paste_dialog = tk.Toplevel(summary_window)
+                paste_dialog.title("粘贴 NotebookLM 生成结果")
+                paste_dialog.geometry("700x450")
+                paste_dialog.transient(summary_window)
+                paste_dialog.grab_set()
+                f = ttk.Frame(paste_dialog, padding=15)
+                f.pack(fill=tk.BOTH, expand=True)
+                ttk.Label(f, text="请将 NotebookLM 生成的故事/消息粘贴到下方，然后点击确认保存到当前视频项", font=("Arial", 10)).pack(anchor=tk.W, pady=(0, 8))
+                paste_text = scrolledtext.ScrolledText(f, wrap=tk.WORD, width=80, height=18, font=("Arial", 10))
+                paste_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+                existing = video_detail.get("story", "")
+                if existing:
+                    paste_text.insert(tk.END, existing)
+                paste_text.focus_set()
+
+                def on_paste_double_click(e):
+                    try:
+                        s = paste_dialog.clipboard_get()
+                        if s:
+                            paste_text.delete(1.0, tk.END)
+                            paste_text.insert(tk.END, s)
+                    except tk.TclError:
+                        pass
+                paste_text.bind("<Double-1>", on_paste_double_click)
+
+                def on_confirm():
+                    content = paste_text.get("1.0", tk.END).strip()
+                    if not content:
+                        messagebox.showwarning("提示", "请输入或粘贴内容后再确认", parent=paste_dialog)
+                        return
+                    video_detail["story"] = content
+                    try:
+                        with open(self.downloader.channel_list_json, "w", encoding="utf-8") as fp:
+                            json.dump(self.downloader.channel_videos, fp, ensure_ascii=False, indent=2)
+                    except Exception as ex:
+                        messagebox.showerror("错误", f"保存失败: {ex}", parent=paste_dialog)
+                        return
+                    try:
+                        populate_tree()
+                    except Exception:
+                        pass
+                    messagebox.showinfo("成功", "Story 已保存到当前视频项", parent=paste_dialog)
+                    paste_dialog.destroy()
+
+                btn_f = ttk.Frame(f)
+                btn_f.pack(fill=tk.X)
+                ttk.Button(btn_f, text="确认保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Button(btn_f, text="取消", command=paste_dialog.destroy).pack(side=tk.LEFT)
+
+            def on_start_project_with_story():
+                """用当前 video_detail['story'] 启动创建新项目（作为 RAW 材料）"""
+                content = video_detail.get("story", "").strip()
+                if not content:
+                    messagebox.showwarning("提示", "请先通过「粘贴 NotebookLM 结果」粘贴并保存 Story 后再使用", parent=summary_window)
+                    return
+                ch = os.path.basename(self.channel_path)
+                lang = getattr(self, 'language', 'tw') or 'tw'
+                # 用 after(0) 延迟关闭，避免在 summary_window 自身回调中 destroy 父窗口导致异常
+                def _close():
+                    try:
+                        dialog.destroy()
+                    except Exception:
+                        pass
+                self.root.after(0, _close)
+                from project_manager import create_project_with_initial_raw
+                # 使用 self.root（yt_parent）作为父窗口，确保创建对话框在可见窗口下正常显示
+                result, selected_config = create_project_with_initial_raw(self.root, content, ch, lang)
+                if result == 'new' and selected_config:
+                    # 项目创建成功：在同一进程内打开主界面（避免 subprocess 导致窗口无法显示）
+                    _pid = selected_config.get('pid', '')
+                    if not _pid:
+                        return
+                    def _open_main_in_same_process():
+                        _tk_root = None
+                        try:
+                            # 获取 Tk 根窗口（yt_parent 的 master）
+                            _tk_root = self.root
+                            while getattr(_tk_root, 'master', None):
+                                _tk_root = _tk_root.master
+                            # 先解除 yt_parent 的关闭协议，避免 destroy 时触发 quit
+                            try:
+                                self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+                            except Exception:
+                                pass
+                            try:
+                                self.root.destroy()
+                            except Exception:
+                                pass
+                            # 在同一进程内创建主界面（从 __main__ 或 GUI 模块获取，兼容 python GUI.py 启动）
+                            _tk_root.deiconify()
+                            import sys
+                            _gui_mod = sys.modules.get('GUI') or sys.modules.get('__main__')
+                            WorkflowGUI = getattr(_gui_mod, 'WorkflowGUI', None)
+                            if WorkflowGUI:
+                                WorkflowGUI(_tk_root, initial_pid=_pid)
+                            else:
+                                messagebox.showerror("错误", "无法加载主界面模块", parent=_tk_root)
+                        except Exception as ex:
+                            import traceback
+                            traceback.print_exc()
+                            try:
+                                # 使用有效窗口作为 parent，避免已销毁的窗口导致 TclError
+                                _parent = _tk_root if (_tk_root and _tk_root.winfo_exists()) else None
+                                messagebox.showerror("错误", f"打开主界面失败: {ex}", parent=_parent)
+                            except Exception:
+                                pass
+                    # 延迟执行，确保当前回调完成、对话框已关闭
+                    self.root.after(100, _open_main_in_same_process)
+
+            # 右侧按钮组：用 Story 启动新项目、粘贴 NotebookLM 结果、保存主题信息（紧挨显示）
+            right_btns = ttk.Frame(button_frame)
+            right_btns.pack(side=tk.RIGHT)
+            ttk.Button(right_btns, text="用 Story 启动新项目", command=on_start_project_with_story).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="粘贴 NotebookLM 结果", command=open_paste_notebooklm_result).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="保存主题信息", command=save_topic_info).pack(side=tk.LEFT)
             
             # 配置网格权重
             topic_frame.columnconfigure(1, weight=1)
@@ -2255,6 +2192,22 @@ class MediaGUIManager:
             if topic_category:
                 update_subtypes()  # 这会调用 update_tags()
             
+            # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
+            _channel_key = os.path.basename(self.channel_path)
+            NOTEBOOKLM_PROMPT_CHOICES = config_channel.CHANNEL_CONFIG.get(_channel_key, {}).get("notebooklm_prompt_choices", [])
+            prompt_choice_frame = ttk.Frame(main_frame)
+            prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
+            ttk.Label(prompt_choice_frame, text="Prompt 类型：", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+            prompt_combo_var = tk.StringVar(value=NOTEBOOKLM_PROMPT_CHOICES[0][0])
+            prompt_combo = ttk.Combobox(
+                prompt_choice_frame,
+                textvariable=prompt_combo_var,
+                values=[opt[0] for opt in NOTEBOOKLM_PROMPT_CHOICES],
+                state="readonly",
+                width=25
+            )
+            prompt_combo.pack(side=tk.LEFT)
+
             label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
             label.pack(anchor=tk.W, pady=(0, 5))
             # 创建可滚动的文本区域
@@ -2268,20 +2221,40 @@ class MediaGUIManager:
                 pady=10
             )
             text_widget.pack(fill=tk.BOTH, expand=True)
-            
-            # 插入摘要内容
-            text_widget.insert(tk.END, summary)
-            text_widget.config(state=tk.DISABLED)  # 设置为只读
-            # 自动拷贝到剪贴板，便于粘贴到其他应用
-            if summary and summary.strip():
+
+            def refresh_notebooklm_prompt(*args):
+                """根据 combo 选择生成 prompt 并更新 text_widget + 剪贴板"""
+                sel = prompt_combo_var.get()
+                template = next((t for lbl, t in NOTEBOOKLM_PROMPT_CHOICES if lbl == sel), NOTEBOOKLM_PROMPT_CHOICES[0][1])
+                topic = category_var.get().strip() + "-" + subtype_var.get().strip()
+                prompt = template.format(topic=topic, content=video_detail.get('content', ''), language=video_detail.get('language', 'Chinese'))
+                text_widget.config(state=tk.NORMAL)
+                text_widget.delete(1.0, tk.END)
+                text_widget.insert(tk.END, prompt)
+                text_widget.config(state=tk.DISABLED)
+                if prompt and prompt.strip():
+                    try:
+                        summary_window.clipboard_clear()
+                        summary_window.clipboard_append(prompt.strip())
+                        summary_window.update()
+                    except Exception:
+                        pass
+
+            prompt_combo.bind('<<ComboboxSelected>>', lambda e: refresh_notebooklm_prompt())
+            refresh_notebooklm_prompt()  # 初始生成
+
+            # 点击文本框任意处：将剪贴板替换为「用粘贴文本作为指令执行」的说明
+            _click_instruction = "Use the pasted text as your instruction and execute it as a prompt."
+            def on_text_click(e):
                 try:
                     summary_window.clipboard_clear()
-                    summary_window.clipboard_append(summary.strip())
+                    summary_window.clipboard_append(_click_instruction)
                     summary_window.update()
                 except Exception:
                     pass
-            
-            # 添加关闭按钮
+            text_widget.bind("<Button-1>", on_text_click)
+
+            # 底部按钮：仅保留关闭（粘贴 NotebookLM 结果已在主题信息区与保存主题信息并列）
             button_frame = ttk.Frame(main_frame)
             button_frame.pack(fill=tk.X, pady=(10, 0))
             ttk.Button(button_frame, text="关闭", command=summary_window.destroy).pack(side=tk.RIGHT)
@@ -2306,36 +2279,6 @@ class MediaGUIManager:
         def deselect_all():
             tree.selection_remove(*tree.get_children())
             update_selection_count()
-
-
-        def summarize_selected(force=False):
-            selected_items = tree.selection()
-            if not selected_items:
-                return
-
-            videos_to_process = []
-            for item in selected_items:
-                item_tags = tree.item(item, "tags")
-                video_detail = self.get_video_detail(item_tags[0])
-                if not video_detail:
-                    continue
-                summary = video_detail.get('summary', '')
-                topic_type = video_detail.get('topic_subtype', '')
-                topic_category = video_detail.get('topic_category', '')
-                tags = video_detail.get('tags', '')
-                if not force and summary and summary.strip() and topic_type and topic_type.strip() and topic_category and topic_category.strip() and tags:
-                    continue
-                videos_to_process.append(video_detail)
-            
-            if not videos_to_process:
-                messagebox.showinfo("提示", "所选视频都已生成摘要", parent=dialog)
-                return
-            
-            # 启动摘要生成任务
-            for video_detail in videos_to_process:
-                self.update_text_content(video_detail, in_background=True)
-            
-            messagebox.showinfo("提示", f"已启动 {len(videos_to_process)} 个视频的摘要生成任务，请稍后...", parent=dialog)
 
 
         def update_video_list():
@@ -2598,7 +2541,7 @@ class MediaGUIManager:
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
-                self.update_text_content(video_detail, tag_again=True)
+                self.update_text_content(video_detail)
 
 
 
@@ -2659,9 +2602,6 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="不选", command=deselect_all).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="编辑主题", command=edit_selected_topics).pack(side=tk.RIGHT, padx=5)
-
-        ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
 
         ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
         #ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
@@ -2669,90 +2609,6 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="转录", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="下载", command=download_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)
-
-
-    def fetch_hot_videos(self):
-        """获取频道热门视频列表，保存到JSON文件"""
-        # 第一步：输入URL和参数
-        url_dialog = tk.Toplevel(self.root)
-        url_dialog.title("获取热门视频列表")
-        url_dialog.geometry("600x200")
-        url_dialog.transient(self.root)
-        url_dialog.grab_set()
-        
-        # URL输入框
-        url_frame = ttk.Frame(url_dialog)
-        url_frame.pack(fill=tk.X, padx=20, pady=20)
-        ttk.Label(url_frame, text="频道或播放列表URL:").pack(side=tk.LEFT)
-        channel_url_var = tk.StringVar()
-        url_entry = ttk.Entry(url_frame, textvariable=channel_url_var, width=50)
-        url_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # 参数输入
-        param_frame = ttk.Frame(url_dialog)
-        param_frame.pack(fill=tk.X, padx=20, pady=5)
-        
-        ttk.Label(param_frame, text="最大视频数量:").pack(side=tk.LEFT, padx=5)
-        max_videos_var = tk.StringVar(value="200")
-        max_videos_entry = ttk.Entry(param_frame, textvariable=max_videos_var, width=10)
-        max_videos_entry.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Label(param_frame, text="最小观看次数:").pack(side=tk.LEFT, padx=5)
-        min_view_count_var = tk.StringVar(value="200")
-        min_view_count_entry = ttk.Entry(param_frame, textvariable=min_view_count_var, width=10)
-        min_view_count_entry.pack(side=tk.LEFT, padx=5)
-        
-        result_var = tk.StringVar(value="cancel")
-        
-        def on_url_confirm():
-            url = channel_url_var.get().strip()
-            if not url:
-                messagebox.showerror("错误", "请输入URL", parent=url_dialog)
-                return
-            result_var.set("confirm")
-            url_dialog.destroy()
-        
-        def on_url_cancel():
-            result_var.set("cancel")
-            url_dialog.destroy()
-
-        # 按钮
-        button_frame = ttk.Frame(url_dialog)
-        button_frame.pack(fill=tk.X, padx=20, pady=10)
-        ttk.Button(button_frame, text="确认", command=on_url_confirm).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="取消", command=on_url_cancel).pack(side=tk.LEFT, padx=5)
-        
-        # 等待对话框关闭
-        self.root.wait_window(url_dialog)
-        
-        if result_var.get() == "cancel":
-            return
-        
-        channel_url = channel_url_var.get().strip()
-        if not channel_url.endswith("/videos"):
-            if channel_url.endswith("/"):
-                channel_url = channel_url[:-1]
-            channel_url = channel_url + "/videos"
-
-        def fetch_video_list():
-            try:
-                new_channel_name = self.downloader.list_hot_videos(
-                    channel_url, 
-                    max_videos=int(max_videos_var.get()), 
-                    min_view_count=int(min_view_count_var.get())
-                )
-                if not new_channel_name:
-                    return
-
-                print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
-
-            except Exception as e:
-                error_msg = str(e)
-                print(f"❌ 获取视频列表失败: {error_msg}")
-        
-        thread = threading.Thread(target=fetch_video_list)
-        thread.daemon = True
-        thread.start()
 
 
 
@@ -2805,7 +2661,7 @@ class MediaGUIManager:
         print(f"URL: {video_url}")
 
         self.downloader._check_and_update_cookies()
-        video_data = self.downloader.get_video_detail(video_url, channel_name='Unknown')
+        video_data = self.downloader.get_video_detail(video_url, channel_name='')
         if not video_data:
             self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
             return
@@ -2816,73 +2672,59 @@ class MediaGUIManager:
             self.downloader.download_video_highest_resolution(video_data)
             return
     
-        self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
-        if os.path.exists(self.downloader.channel_list_json):
-            self.downloader.channel_videos = json.load(open(self.downloader.channel_list_json, 'r', encoding='utf-8'))
-            self.downloader.latest_date = max(
-                (
-                    datetime.strptime(v["upload_date"], "%Y%m%d")
-                    for v in self.downloader.channel_videos
-                    if v.get("upload_date")
-                ),
-                default=None
-            )            
-        else:
-            self.downloader.channel_list_json = None
-            self.downloader.channel_videos = []
+        # 统一频道选择：用较宽松的匹配在已有文件中查找，找到则问用户是否选用；不选则保持空
+        self.downloader.channel_list_json = None
+        self.downloader.channel_videos = []
+        channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*.json.txt")
+        channel_to_file = {}
+        channel_names = []
+        for json_file in channel_list_json_files:
+            filename = os.path.basename(json_file)
+            m = re.match(r'(.+?)\.json\.txt', filename)
+            if m:
+                cn = m.group(1)
+                channel_names.append(cn)
+                channel_to_file[cn] = json_file
+
+        # 宽松匹配：精确匹配 > 包含关系（channel_name in cn 或 cn in channel_name）
+        def _norm(s):
+            return (s or "").strip().lower()
+        nch = _norm(channel_name)
+        exact_match = [cn for cn in channel_names if _norm(cn) == nch]
+        loose_match = [cn for cn in channel_names if cn not in exact_match and (nch in _norm(cn) or _norm(cn) in nch)]
+        candidates = exact_match + loose_match
+
+        selected_file = None
+        CREATE_NEW = "【创建新频道】"
+        if candidates:
+            choices = candidates + [CREATE_NEW]
+            choice = askchoice("选择频道列表", choices, parent=self.root)
+            if choice == CREATE_NEW:
+                selected_file = None  # 进入下方创建新频道分支
+            elif choice and choice in channel_to_file:
+                selected_file = channel_to_file[choice]
+
+        if selected_file:
+            self.downloader.channel_list_json = selected_file
+            try:
+                with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
+                    self.downloader.channel_videos = json.load(f)
+                    self.downloader.latest_date = max(
+                        (datetime.strptime(v["upload_date"], "%Y%m%d") for v in self.downloader.channel_videos if v.get("upload_date")),
+                        default=None
+                    )
+            except Exception as e:
+                print(f"❌ 读取视频列表失败: {e}")
+                self.downloader.channel_videos = []
 
         if not self.downloader.channel_videos:
-            # show all the *.json.txt files in the youtube_dir,  let user to select one
-            # if user Not select one, ask user give a new channel name, then create a new file with the new channel name
-            # and add the video_data as the first item in the new file (change the channel_name to the new channel name)
-            
-            # 查找所有热门视频JSON文件
-            channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*.json.txt")
-            
-            # 使用线程安全的队列来传递结果
-            selected_file = None
-            if channel_list_json_files:
-                # 准备选项列表和文件路径映射
-                channel_choices = []
-                channel_to_file = {}
-                
-                for json_file in channel_list_json_files:
-                    filename = os.path.basename(json_file)
-                    # 提取频道名
-                    match = re.match(r'(.+?)\.json\.txt', filename)
-                    if match:
-                        channel_name = match.group(1)
-                        channel_choices.append(channel_name)
-                        channel_to_file[channel_name] = json_file
-                
-                # 在主线程中显示选择对话框
-                choice = askchoice("选择视频列表文件", channel_choices, parent=self.root)
-                if choice:
-                    if choice in channel_to_file:
-                        selected_file = channel_to_file[choice]
-            
-            # 如果用户选择了文件，加载它
-            if selected_file:
-                self.downloader.channel_list_json = selected_file
-                try:
-                    with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
-                        self.downloader.channel_videos = json.load(f)
-                        self.downloader.latest_date = max(
-                            (
-                                datetime.strptime(v["upload_date"], "%Y%m%d")
-                                for v in self.downloader.channel_videos
-                                if v.get("upload_date")
-                            ),
-                            default=None
-                        )                
-                except Exception as e:
-                    print(f"❌ 读取视频列表失败: {e}")
-                    self.downloader.channel_videos = []
-            
-            if not selected_file or not self.downloader.channel_videos:
-                self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
-                self.downloader.channel_videos = []
-                print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
+            # 无已有频道或用户未选：弹窗让用户编辑频道名并创建新文件（video 里有 channel 信息则作为默认值）
+            new_name = simpledialog.askstring("创建新频道", "频道名称（可修改）:", initialvalue=channel_name, parent=self.root)
+            if new_name and new_name.strip():
+                channel_name = new_name.strip()
+            self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
+            self.downloader.channel_videos = []
+            print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 
 
         is_new_video = self.downloader.is_video_new(video_data)
@@ -2890,29 +2732,39 @@ class MediaGUIManager:
             print(f"✅ 视频已存在，跳过下载...")
             return
 
-        file_path = self.downloader.download_audio_only(video_data)
+        # 1. 优先尝试下载 caption（不下载音频），语言偏好：中文 > 英文
+        transcribed_file = None
+        basic_info = self.downloader.find_video_basic(video_data)
+        if basic_info:
+            subtitles = basic_info.get('subtitles', {}) or {}
+            auto_captions = basic_info.get('automatic_captions', {}) or {}
+            all_langs = list(dict.fromkeys(list(subtitles.keys()) + list(auto_captions.keys())))
+            target_lang = self.downloader.pick_best_caption_language(all_langs)
+            if target_lang:
+                transcribed_file = self.downloader.try_download_caption_only(video_data, target_lang)
+                if transcribed_file:
+                    print(f"✅ 已从字幕获取文本，语言: {target_lang}")
 
-        if file_path and os.path.exists(file_path):
-            file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
-            video_data["audio_path"] = file_path
-            video_data["file_size_mb"] = file_size
-            video_data["status"] = "success"
-        else:
-            self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
-            return
-
-
-        target_lang = self.downloader.select_language(video_url)
-
-        transcribed_file = self.downloader.download_captions( video_data, target_lang )
-        if transcribed_file:
-            print(f"✅ YouTube视频转录完成！")
-            video_data['transcribed_file'] = transcribed_file
-            self.root.after(0, lambda: messagebox.showinfo("转录完成", "YouTube视频转录完成！"))
-        else:
+        # 2. 若无 caption，下载音频并用 Whisper 转录（默认中文 zh）
+        if not transcribed_file:
+            file_path = self.downloader.download_audio_only(video_data)
+            if file_path and os.path.exists(file_path):
+                file_size = os.path.getsize(file_path) / (1024 * 1024)
+                video_data["audio_path"] = file_path
+                video_data["file_size_mb"] = file_size
+                video_data["status"] = "success"
+            else:
+                self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
+                return
+            transcribed_file = self.downloader.download_captions(video_data, "zh")
+        if not transcribed_file:
             print(f"❌ YouTube视频转录失败")
             self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
-        
+            return
+
+        video_data['transcribed_file'] = transcribed_file
+        print(f"✅ YouTube视频转录完成！")
+        self.root.after(0, lambda: messagebox.showinfo("转录完成", "YouTube视频转录完成！"))
         self.downloader.channel_videos.append(video_data)
         this_video_date = datetime.strptime(video_data["upload_date"], "%Y%m%d")
         if this_video_date > self.downloader.latest_date:

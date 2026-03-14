@@ -8,6 +8,20 @@ from utility.file_util import safe_move_overwrite
 
 
 
+LANGUAGES = {
+    "zh": "Chinese",
+    "tw": "Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+}
+
+
+
+
 def fetch_text_from_json(script_path, output_path=None):
     try:
         with open(script_path, "r", encoding="utf-8") as f:
@@ -383,23 +397,26 @@ def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor
     else:
         background_image = find_matched_file(image_dir, prefix + "/916_", "png", kernel)
     if background_image:
+        img_stem = os.path.splitext(os.path.basename(background_image))[0]
         background_image = ffmpeg_processor.to_webp(background_image)
 
     # 2. 获取 background_music（转成 wav）
     background_music = find_matched_file(music_dir, prefix + "/", "mp3", kernel)
     if background_music:
+        music_stem = os.path.splitext(os.path.basename(background_music))[0]
         background_music = ffmpeg_audio_processor.to_wav(background_music)
 
     # 3. 用 图 + 音乐 合成 background_video
     background_video = None
     if background_image and background_music:
-        video_name = background_image.replace(".png", "") + "_" + background_music.replace(".mp3", "")
-        video_path = video_dir + "/" + video_name + ".mp4"
+        video_path = video_dir + "/" + img_stem + "_" + music_stem + ".mp4"
+        os.makedirs(video_dir, exist_ok=True)  # 确保目标目录存在
         if os.path.exists(video_path):
             background_video = video_path
         else:
             background_video = ffmpeg_processor.image_audio_to_video(background_image, background_music, 1) 
             safe_move_overwrite(background_video, video_path)
+            background_video = video_path
 
     return background_image, background_video, background_music
     

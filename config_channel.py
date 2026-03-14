@@ -534,19 +534,55 @@ COUNSELING_DEBUT = """
 """
 
 
-
-COUNSELING_STORY_DEVELOPMENT = """
+COUNSELING_CASE_SUMMARY = """
 ROLE: Senior Psychological Counselor & TV Host
     ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
     ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-    ** Your task is to transform the provided raw case-story into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
-    ** From the raw case-story, you will deconstruct each original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+    ** Your task is to transform the provided raw case+analysis content into a single scene (with voiceover or character dialogue), which present a immersive journey.
 
 
 SCENE STRUCTURE & CONSTRAINTS
-    ** Deconstruct the original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+    ** Structure like following:
+        * speaker: One Character in the story
+        * speaking: Character dialogue (1st person). This must feel like a natural, coherent conversation. 
+        * voiceover: Host's narration, provide psychological "piercing" insights.
+
+    ** Language Rules: 
+        * visual, actions, speaker (metadata): Always English.
+        * speaking, voiceover: in {language}.
+
+
+RULES:
+    ** In the expression, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
+        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
+        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
+
+
+OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array, which has ONLY one object with these fields:
+        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (In English).
+        * speaking: The Character's dialogue (In {language}).
+        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
+
+"""
+
+
+COUNSELING_CASE_DEVELOPMENT = """
+ROLE: Senior Psychological Counselor & TV Host
+    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+    ** Your task is to transform the provided raw case+analysis content into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
+    ** From the raw case+analysis, you will deconstruct each original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+
+
+SCENE STRUCTURE & CONSTRAINTS
+    ** Deconstruct the original raw case+analysis content and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
     ** Structure like following:
         * speaker: One Character in the story
         * speaking: Character dialogue (1st person). This must feel like a natural, coherent conversation. 
@@ -555,89 +591,121 @@ SCENE STRUCTURE & CONSTRAINTS
 
     ** Language Rules: 
         * visual, actions, speaker (metadata): Always English.
-        * speaking, voiceover: Match the User's Input Language.
+        * speaking, voiceover: in {language}.
 
 
 RULES:
-        ** Narrative Grounding: To prevent the story from feeling abrupt, the character must . Characters should 
-        ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
-        ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
-        ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
-        ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-            * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-            * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-            * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-            * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
+    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
+    ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
+    ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
+    ** In the expression, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
+        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
+        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
+        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
+        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
 
 
 OUTPUT FORMAT (JSON Array)
     ** Strictly output a JSON array of objects with these fields:
-        * speaker: [Gender/Age/Name/Key Features] (In English).
-        * speaking: The Character's dialogue (In original language).
-        * actions: [Mood (Happy/Sad/Angry/etc.)] + specific physical movements or expressions (In English).
+        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (In English).
+        * speaking: The Character's dialogue (In {language}).
         * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
-        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In original language).
-    ** Here is a Example:  
-         {example}
+        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
+"""
+
+
+
+COUNSELING_STORY_DEVELOPMENT = """
+ROLE: Senior Psychological Counselor & TV Host
+    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+    ** Your task is to transform the "raw case-story content" (provided in user-prompt) into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
+    ** From the raw case-story, you will deconstruct each original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+
+
+SCENE STRUCTURE & CONSTRAINTS
+    ** Deconstruct the original raw case-story content and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+    ** Structure like following:
+        * speaker: One Character in the story
+        * speaking: Character dialogue (1st person). This must feel like a natural, coherent conversation. 
+            - In early scenes, Characters must explain their background, include "Exposition through Dialogue" (naturally weave their identity profession, status, history of the conflict, and their current situation to others so the audience understands the "ins and outs" (来龙去脉).
+        * voiceover: Host's narration, give background description about current scene & connections if need. CRITICAL: The VO must connect the current scene to the previous one and provide psychological "piercing" insights.
+
+    ** Language Rules: 
+        * visual, actions, speaker (metadata): Always English.
+        * speaking, voiceover: in {language}.
+
+
+RULES:
+    ** Narrative Grounding: To prevent the story from feeling abrupt, the character must . Characters should 
+    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
+    ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
+    ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
+    ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
+        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
+        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
+        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
+        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
+
+
+OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array of objects with these fields:
+        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (In English).
+        * speaking: The Character's dialogue (In {language}).
+        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
 """
 
 
 COUNSELING_ANALYSIS_DEVELOPMENT = """
 *** Role:
-** 你是一位资深的心理咨询师，擅长“创伤知情关怀”与“系统家庭治疗”。
-** 你的核心洞察力（灵魂）基于用户提供的 {topic} 和 "core-insight"。
-** 你的任务：将深奥的心理学分析转化为温暖、有电影感、且具有高度互动性的直播/沙龙式视频脚本。
+    ** 你是一位资深的心理咨询师，擅长“创伤知情关怀”与“系统家庭治疗”。
+    ** 你的核心洞察力（灵魂）基于用户提供的 {topic} 和 "core-insight" (在用户提供的 user-prompt 中，有 "core-insight" 章节)。
+    ** 你的任务：将 "raw case+analysis content" (provided in user-prompt) 转化为温暖、有电影感、且具有高度互动性的直播/沙龙式 心理案例分析 视频脚本。
 
 *** Core Task:
-** 将提供的心理故事拆解为一系列连贯的“心理分析场景”。
-** 每一个场景都必须包含：【场景回顾】->【深度分析】->【听众互动】->【情感承接】。
+    ** 将提供的心理故事拆解为一系列连贯的“心理分析场景”。
+    ** 每一个场景都必须包含：【场景回顾】->【深度分析】->【听众互动】->【情感承接】。
 
-*** The Interactive Dialogue Loop (核心互动协议):
-为了确保对话自然流动，你的脚本必须遵循以下逻辑链条：
-1. Acknowledge (承接): 如果不是第一个场景，开头必须先回应上一位听众的分享。例如：“谢谢这位先生刚才分享的那个关于雨天的瞬间，那份孤独感我们都听到了...”
-2. Analyze (分析): 引导大家看当前场景中的细节，用去病理化的语言解释背后的“自我保护机制”。
-3. Call to Action (互动提问): 抛出一个温柔的、关于个人经验的问题。例如：“大家在生活中，是否也曾为了维持一份‘完美’而感到精疲力竭？”
-4. Voiceover (反馈): 此时会出现一位随机听众（男/女）的独白，分享他们受到启发后想到的个人经历。
+*** The Interactive Dialogue Loop (确保对话自然流动):
+    1. Acknowledge (承接): 如果不是第一个场景，开头必须先回应上一位听众的分享。例如：“谢谢这位先生刚才分享的那个关于雨天的瞬间，那份孤独感我们都听到了...”
+    2. Analyze (分析): 引导大家看当前场景中的细节，用去病理化的语言解释背后的“自我保护机制”。
+    3. Call to Action (互动提问): 抛出一个温柔的、关于个人经验的问题。例如：“大家在生活中，是否也曾为了维持一份‘完美’而感到精疲力竭？”
+    4. Voiceover (反馈): 此时会出现一位随机听众（男/女）的独白，分享他们受到启发后想到的个人经历。
 
 *** Enhanced Directives:
-** 去病理化语言：严禁使用“患者”、“病态”。将 PTSD、回避型人格等解释为“在特定危机时刻，身体为了保护你而演化出的生存策略”。
-** 行为细节化：通过感官细节（声音、质感、习惯）来识别心理机制，而不是贴标签。
-** 咨询师语气：像一位坐在壁炉边的老友，温和、从容、不带评判。
+    ** 去病理化语言：严禁使用“患者”、“病态”。将 PTSD、回避型人格等解释为“在特定危机时刻，身体为了保护你而演化出的生存策略”。
+    ** 行为细节化：通过感官细节（声音、质感、习惯）来识别心理机制，而不是贴标签。
+    ** 咨询师语气：像一位坐在壁炉边的老友，温和、从容、不带评判。
 
-*** The Separation Protocol (听众与故事的分离):
-** Voiceover (听众独白) 规则：
-* 听众必须是随机的普通人（指定性别：男先生/女女士）。
-* 听众分享的是他们自己生活中的真实片段，而不是对故事角色的评价。
-* 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
+*** Voiceover (听众独白) 规则 -- The Separation Protocol (听众与故事的分离):
+    ** 听众必须是随机的普通人（指定性别：男先生/女女士）。
+    ** 听众分享的是他们自己生活中的真实片段，而不是对故事角色的评价。
+    * 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
 
-*** Output Format (JSON Array):
-每一个 JSON 对象必须包含：
-* speaker: 咨询师性别 (man_mature/woman_mature)。
-* speaking: (中文) 咨询师的台词。
-* 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
-* 注意：第一个场景不需要承接部分。
-* actions: (英文) 咨询师的情绪与肢体动作（如：gentle smile, leans forward）。
-* visual: (英文) 咨询师所在的心灵空间场景描述（光影、天气、环境）。
-* voiceover_gender: (Choice: man/woman) 明确下一段分享听众的性别。
-* voiceover: (中文) 随机听众的个人故事片段（像是电台热线或私密日记的读白）。
+*** Output Format (JSON Array - each object is a scene with fields):
+    ** speaker: 咨询师性别 (man_mature/woman_mature)。
+    ** speaking: (中文) 咨询师的台词。
+        * 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
+        * 注意：第一个场景不需要承接部分。
+    ** actions: (英文) 咨询师的情绪与肢体动作（如：gentle smile, leans forward）。
+    ** visual: (英文) 咨询师所在的心灵空间场景描述（光影、天气、环境）。
+    ** voiceover_gender: (Choice: man/woman) 明确下一段分享听众的性别。
+    ** voiceover: (中文) 随机听众的个人故事片段（像是电台热线或私密日记的读白）。
 
-*** Input Data Example:
-[
-{
-"content": "故事内容：一个关于无法丢弃旧物导致夫妻争吵的故事...",
-"current_scene": "场景二：旧阁楼里的秘密"
-}
-]
 
 *** Example Output:
-{
-"speaker": "woman_mature",
-"speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
-"actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
-"visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
-"voiceover_gender": "woman",
-"voiceover": "听了刚才的话，我想起我衣柜里那件穿不下的旧裙子。那是十年前我第一次面试时穿的，虽然现在全是褶皱，但我每次想扔掉它，心里就像破了个洞。我发现，我舍不得的不是裙子，是那个还对未来充满期待的自己..."
-}
+    {
+        "speaker": "woman_mature",
+        "speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
+        "actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
+        "visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
+        "voiceover": "听了刚才的话，我想起我衣柜里那件穿不下的旧裙子。那是十年前我第一次面试时穿的，虽然现在全是褶皱，但我每次想扔掉它，心里就像破了个洞。我发现，我舍不得的不是裙子，是那个还对未来充满期待的自己..."
+    }
 """
 
 
@@ -986,6 +1054,344 @@ MV_ANALYSIS_DEVELOPMENT = """
 """
 
 
+
+NOTEBOOKLM_PROMPT__COUNSELING_STORY = """
+You are a psychological counselor, narrative case writer, and reflective analyst.
+
+The content at the bottom of this prompt is a psychological discussion, counseling case, or emotional conflict analysis on topic of '{topic}'.
+
+Your task is to transform the psychological insight into:
+
+1) a vivid, emotionally intense story that illustrates the psychological struggle
+2) a deep psychological analysis explaining the root causes and possible interventions
+
+Before writing, you must first retrieve relevant materials from the NotebookLM Sources.
+
+--------------------------------------------------
+STEP 1 — Identify the Psychological Core
+--------------------------------------------------
+
+From the provided case content, internally identify:
+
+• the central psychological conflict  
+• the emotional pain or unmet need  
+• the psychological root cause  
+• the behavioral pattern that results  
+• the relational dynamics involved  
+
+Do NOT output this step.
+
+--------------------------------------------------
+STEP 2 — Retrieve Supporting References
+--------------------------------------------------
+
+Search the NotebookLM Sources (EXCLUDING the "Pasted Text" source).
+
+Find **5–8 highly relevant reference materials** that share similar:
+
+• psychological root causes  
+• emotional struggles  
+• behavioral patterns  
+• relationship conflicts  
+
+The references may include:
+
+• counseling cases  
+• reflective essays  
+• psychological discussions  
+• illustrative life stories  
+
+Prefer references that contain:
+
+• strong emotional tension  
+• vivid life situations  
+• meaningful realizations  
+
+Use these references only as **inspiration and reinforcement**.
+
+Do NOT quote or mention the sources.
+
+--------------------------------------------------
+STEP 3 — Create the Psychological Story
+--------------------------------------------------
+
+Write a **vivid and emotionally detailed story** illustrating the psychological struggle.
+
+Requirements:
+
+• The story must feel realistic and human  
+• Include concrete scenes and emotional tension  
+• Show inner conflict and relational conflict  
+• Include dialogue or interaction when appropriate  
+• Show the character’s psychological struggle clearly  
+• Reveal the psychological root gradually through the story  
+
+The story should read like a **short psychological drama**.
+
+--------------------------------------------------
+STEP 4 — Provide Deep Psychological Analysis
+--------------------------------------------------
+
+After the story, provide a clear psychological analysis explaining:
+
+1) the psychological root cause  
+2) how the behavior pattern forms  
+3) the emotional mechanism behind the conflict  
+4) possible psychological guidance or intervention  
+
+The analysis should be insightful but written in clear, accessible language.
+
+Avoid heavy academic jargon.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------------------------
+
+[Story] (in {language})
+
+Write a vivid, emotionally rich psychological story.
+
+Length guideline:
+12–18 sentences.
+
+The story should contain:
+
+• detailed scenes  
+• emotional tension  
+• internal psychological struggle  
+• interpersonal conflict  
+• a moment that reveals the deeper emotional root
+
+--------------------------------------------------
+
+[Analysis] (in {language})
+
+Explain the psychology behind the story.
+
+Structure the analysis into clear sections:
+
+Psychological Root  
+Explain the deeper psychological cause.
+
+Behavioral Pattern  
+Describe how the psychological wound leads to specific behaviors.
+
+Emotional Mechanism  
+Explain the inner emotional dynamics.
+
+Guidance & Intervention  
+Provide thoughtful suggestions for healing or change.
+This may include emotional awareness, communication changes, or psychological practices.
+
+--------------------------------------------------
+
+WRITING GUIDELINES
+
+• Focus on emotional truth rather than abstract theory  
+• Avoid technical psychological terminology when possible  
+• Make the story vivid and cinematic  
+• Make the analysis insightful and compassionate  
+• Do NOT mention the original case or NotebookLM sources  
+• Do NOT add anything outside the required structure
+
+
+--------------------------------------------------
+Content (discussion, story, or analysis) :
+--------------------------------------------------
+{content}
+"""
+
+
+
+NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF = """
+You are a psychological counselor and reflective storyteller.
+
+The content at the bottom of this prompt is a psychological case discussion or story analysis on topic of '{topic}'.
+Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
+
+However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
+
+--------------------------------------------------
+STEP 1 — Identify the Psychological Core
+--------------------------------------------------
+
+From the provided case content at the bottom:
+
+Identify and summarize internally:
+
+• the core psychological theme
+• the emotional conflict
+• the possible psychological root (fear, attachment pattern, shame, control, abandonment, etc.)
+• the typical behavioral manifestation
+• the emotional turning point (if present)
+
+Do not output this step.
+
+--------------------------------------------------
+STEP 2 — Retrieve Reference Materials from NotebookLM Sources
+--------------------------------------------------
+
+Search the NotebookLM Sources (EXCLUDING the "Pasted Text" source).
+
+Find **5–8 highly relevant reference pieces** that share similar:
+
+• psychological root cause
+• emotional conflict
+• behavioral pattern
+• symbolic or illustrative story pattern
+
+The references may include:
+
+• psychological discussions
+• counseling cases
+• illustrative life stories
+• reflective essays
+
+Select the references that are:
+
+• the most emotionally revealing
+• the most psychologically insightful
+• the most illustrative or vivid
+
+Use them only as **inspiration and psychological reinforcement**, not for direct quoting.
+
+Do NOT mention the sources in the final output.
+
+--------------------------------------------------
+STEP 3 — Synthesize the Insight
+--------------------------------------------------
+
+Combine:
+
+• the psychological insight from the provided case
+• the deeper patterns revealed by the references
+
+Extract the **one essential psychological truth** behind the situation.
+
+This truth should feel universal, simple, and emotionally resonant.
+
+--------------------------------------------------
+STEP 4 — Create the Reflective Output
+--------------------------------------------------
+
+Based on the synthesized insight, produce a gentle counseling reflection consisting of:
+
+1) A short title
+2) A heart message
+3) A micro-story
+
+The story should indirectly illustrate the psychological truth.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------------------------
+
+[Title] (in {language})
+A short title capturing the psychological theme.
+
+[Heart Message] (in {language})
+2–4 short sentences.
+Warm, calm, reflective tone.
+Express the psychological insight as gentle life guidance.
+
+[Psychological Micro-Story] (in {language})
+5–8 sentences.
+A simple, human story that indirectly illustrates the message.
+Often involving a small life moment, a quiet realization, or a child/adult interaction.
+
+--------------------------------------------------
+WRITING GUIDELINES
+--------------------------------------------------
+
+• Avoid technical psychology terminology.
+• Focus on emotional truth and self-reflection.
+• Keep language simple and human.
+• The story should feel natural and relatable.
+• Do NOT mention the original case or sources.
+• Do NOT add explanations outside the required structure.
+
+
+--------------------------------------------------
+Content (discussion, story, or analysis) :
+--------------------------------------------------
+{content}
+"""
+
+
+
+NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE = """
+You are a psychological counselor and reflective storyteller.
+
+The content at the bottom of this prompt is a psychological case discussion or story analysis on topic of '{topic}'.
+Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
+
+However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
+
+--------------------------------------------------
+STEP 1 — Identify the Psychological Core
+--------------------------------------------------
+
+From the provided case content at the bottom:
+
+Identify and summarize internally:
+
+• the core psychological theme
+• the emotional conflict
+• the possible psychological root (fear, attachment pattern, shame, control, abandonment, etc.)
+• the typical behavioral manifestation
+• the emotional turning point (if present)
+• Extract the **one essential psychological truth** behind the situation.
+      * This truth should feel universal, simple, and emotionally resonant.
+
+--------------------------------------------------
+STEP 2 — Create the Reflective Output
+--------------------------------------------------
+
+Based on the synthesized insight, produce a gentle counseling reflection consisting of:
+
+1) A short title
+2) A heart message
+3) A micro-story
+
+The story should indirectly illustrate the psychological truth.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------------------------
+
+[Title] (in {language})
+A short title capturing the psychological theme.
+
+[Heart Message] (in {language})
+2–4 short sentences.
+Warm, calm, reflective tone.
+Express the psychological insight as gentle life guidance.
+
+[Psychological Micro-Story] (in {language})
+5–8 sentences.
+A simple, human story that indirectly illustrates the message.
+Often involving a small life moment, a quiet realization, or a child/adult interaction.
+
+--------------------------------------------------
+WRITING GUIDELINES
+--------------------------------------------------
+
+• Avoid technical psychology terminology.
+• Focus on emotional truth and self-reflection.
+• Keep language simple and human.
+• The story should feel natural and relatable.
+• Do NOT mention the original case or sources.
+• Do NOT add explanations outside the required structure.
+
+
+--------------------------------------------------
+Content (discussion, story, or analysis) :
+--------------------------------------------------
+{content}
+"""
+
+
+
 MV_INIT = """
 """
 
@@ -1163,28 +1569,66 @@ CHANNEL_CONFIG = {
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
+        # NotebookLM Prompt 类型选择（可扩展）
+        "notebooklm_prompt_choices": [
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
+            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
+            ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+        ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "prompt_story_init": COUNSELING_INIT,
             "prompt_program_debut": COUNSELING_DEBUT,
+        },
+        "channel_template": [
+            {
+                "name": "starting",
+                "mode": "raw_single",
+                "prompt": COUNSELING_CASE_SUMMARY
+            },
+            {
+                "name": "story",
+                "mode": "init_multiple",
+                "prompt": COUNSELING_CASE_DEVELOPMENT
+            },
+        ],
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
 
-            "intro": COUNSELING_INTRO,
-            "development1": COUNSELING_STORY_DEVELOPMENT,
-            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
+    "counseling_full": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        # NotebookLM Prompt 类型选择（可扩展）
+        "notebooklm_prompt_choices": [
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
+            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
+            ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+        ],
+        "channel_prompt": {
+            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "prompt_story_init": COUNSELING_INIT,
+            "prompt_program_debut": COUNSELING_DEBUT
         },
         "channel_template": [
             {
                 "name": "starting"
             },
             {
-                "name": "intro"
+                "name": "intro",
+                "mode": "init_single",
+                "prompt": COUNSELING_INTRO
             },
             {
-                "name": "development1"
+                "name": "story",
+                "mode": "init_multiple",
+                "prompt": COUNSELING_STORY_DEVELOPMENT
             },
             {
-                "name": "development2"
+                "name": "analysis",
+                "mode": "debut_multiple",
+                "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
             },
             {
                 "name": "ending"
@@ -1193,32 +1637,38 @@ CHANNEL_CONFIG = {
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
-
     "counseling_story": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
+        "notebooklm_prompt_choices": [
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
+            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
+            ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+        ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_STORY,
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "prompt_story_init": COUNSELING_INIT,
-            "prompt_program_debut": COUNSELING_DEBUT,
-
-            "intro": COUNSELING_INTRO,
-            "development1": COUNSELING_STORY_DEVELOPMENT,
-            "development2": COUNSELING_ANALYSIS_DEVELOPMENT
+            "prompt_program_debut": COUNSELING_DEBUT
         },
         "channel_template": [
             {
                 "name": "starting"
             },
             {
-                "name": "intro"
+                "name": "intro",
+                "mode": "init_single",
+                "prompt": COUNSELING_INTRO
             },
             {
-                "name": "development1"
+                "name": "story",
+                "mode": "init_multiple",
+                "prompt": COUNSELING_STORY_DEVELOPMENT
             },
             {
-                "name": "development2"
+                "name": "analysis",
+                "mode": "debut_multiple",
+                "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
             },
             {
                 "name": "ending"
@@ -1237,9 +1687,7 @@ CHANNEL_CONFIG = {
             "prompt_story_init": MV_INIT,
             "prompt_program_debut": MV_DEBUT,
 
-            "intro": MV_INTRO,
-            "development1": MV_STORY_DEVELOPMENT,
-            "development2": MV_ANALYSIS_DEVELOPMENT
+            "story_multiple": MV_STORY_DEVELOPMENT
 
         },
         "channel_template": [
@@ -1247,7 +1695,7 @@ CHANNEL_CONFIG = {
                 "name": "starting"
             },
             {
-                "name": "development1"
+                "name": "story_multiple"
             },
             {
                 "name": "ending"

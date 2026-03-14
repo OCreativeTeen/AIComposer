@@ -758,59 +758,81 @@ class MagicWorkflow:
             self.scenes = loaded_scenes
 
             #background_image, background_video, background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
-            for scene in self.scenes:
+            for story_scene in self.scenes:
                 #refresh_scene_media(scene, "zero_image", ".png", background_image, True)
                 #refresh_scene_media(scene, "zero", ".mp4", background_video, True)
                 #refresh_scene_media(scene, "zero_audio", ".wav", background_music, True)
-                if not scene.get("speaker"):
-                    scene["speaker"] = "woman_mature"
-                if not scene.get("narrator"):
-                    scene["narrator"] = "woman_mature"
-                if not scene.get("caption"):
-                    scene["caption"] = config_channel.CHANNEL_CONFIG[self.channel]["channel_name"]
+                if not story_scene.get("speaker"):
+                    story_scene["speaker"] = "woman_mature"
+                if not story_scene.get("narrator"):
+                    story_scene["narrator"] = "woman_mature"
+                if not story_scene.get("caption"):
+                    story_scene["caption"] = config_channel.CHANNEL_CONFIG[self.channel]["channel_name"]
             self.save_scenes_to_json()
             return
 
         self.scenes = []
-        background_image, background_video, background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
         stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
+        topic = project_manager.PROJECT_CONFIG.get('topic_category', '') + "-" + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
         # 
-        zero_image = None
-        zero_video = None
-        zero_audio = None
-        for i, element in enumerate(stories_template):
-            element["speaker"] = "woman_mature"
-            element["narrator"] = "woman_mature"
+        for story_index, element in enumerate(stories_template):
             element["caption"] = config_channel.CHANNEL_CONFIG[channel]["channel_name"]
+            self.add_story_scene(story_index, element, True, is_append=False)
 
-            if not zero_image:
-                zero_image = refresh_scene_media(element, "zero_image", ".png", background_image)
-            else:
-                element["zero_image"] = zero_image
-            if not zero_video:
-                zero_video = refresh_scene_media(element, "zero", ".mp4", background_video)
-            else:
-                element["zero"] = zero_video
-            if not zero_audio:
-                zero_audio = refresh_scene_media(element, "zero_audio", ".wav", background_music)
-            else:
-                element["zero_audio"] = zero_audio
+        for index, story_scene in enumerate(self.scenes):
+            scene_mode = story_scene.get("mode", "")
+            mode = "multiple" if scene_mode.endswith("_multiple") else "single"
+            selected_prompt = story_scene.get("prompt", "")
+            selected_prompt = selected_prompt.format(topic=topic, language=config.LANGUAGES[self.language])
 
-        # popup dialog to select the story level
-        #story_level = tk.messagebox.askyesno("Story Level", "Do you want to create every scence as seperated story?")
-        #if story_level:
-        #    story_level = True
-        #else:
-        #    story_level = False
+            _content = None
+            if scene_mode.startswith("init_"):
+                _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            elif scene_mode.startswith("debut_"):
+                _content = project_manager.PROJECT_CONFIG.get('debut_content', "")
 
-        for story_index, story in enumerate(stories_template):
-            self.add_story_scene(story_index, story, True, is_append=False)
+            if not _content:
+                _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
+
+            if not _content:
+                continue
+
+            new_scenes = self.remix_conversation(story_scene, mode, _content, selected_prompt)
+            if new_scenes:
+                for new_scene in new_scenes:
+                    new_scene["name"] = story_scene.get("name", "story")
+                    new_scene["mode"] = story_scene.get("mode", "")
+                    new_scene["caption"] = story_scene.get("caption", "")
+                    new_scene["zero"] = story_scene.get("zero", "")
+                    new_scene["zero_image"] = story_scene.get("zero_image", "")
+                    new_scene["zero_audio"] = story_scene.get("zero_audio", "")
+                    new_scene["clip"] = story_scene.get("clip", "")
+                    new_scene["clip_image"] = story_scene.get("clip_image", "")
+                    new_scene["clip_audio"] = story_scene.get("clip_audio", "")
+
+                self.replace_scene_with_others(index, new_scenes)
 
         self.save_scenes_to_json()
 
-    
+
+    def remix_conversation(self, current_scene, mode, _content, selected_prompt):
+        refresh_conversation = "content:\n" + _content + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+        new_scenes = self.llm_api.generate_json(
+            system_prompt=selected_prompt,
+            user_prompt=refresh_conversation,
+            expect_list=True
+        )
+        if not new_scenes or len(new_scenes) == 0:
+            return
+
+        start_id = current_scene.get("id", 0)
+        for i, scene in enumerate(new_scenes):
+            scene["id"] = start_id + 1
+            start_id = scene["id"]
+        return new_scenes
+
 
     def get_image_main_scenes(self):
         """获取所有标记为IMAGE_MAIN的场景，用于制作缩略图"""

@@ -18,9 +18,10 @@ import config
 import config_prompt
 from config import parse_json_from_text
 import config_channel
-from utility.llm_api import LLMApi, OLLAMA
+from utility.llm_api import LLMApi, LM_STUDIO
 from utility.file_util import safe_copy_overwrite, safe_remove
-from utility.audio_transcriber import LANGUAGES
+from config import LANGUAGES
+from gui.downloader import MediaGUIManager
 
 
 
@@ -33,7 +34,8 @@ pid = None
 
 def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make_replacement_copy=False):
     global media_count, pid, PROJECT_CONFIG
-    new_media_stem = media_type + "_" + str(scene["id"]) + "_" + str(int(datetime.now().timestamp()*100 + media_count%100))
+    scene_id = scene.get("id", int(datetime.now().timestamp() * 1000) + media_count)
+    new_media_stem = media_type + "_" + str(scene_id) + "_" + str(int(datetime.now().timestamp()*100 + media_count%100))
     media_count = (media_count + 1) % 100
 
     old_media_path = scene.get(media_type, None)
@@ -182,7 +184,7 @@ class ProgramInitEditorDialog:
         self.init_story = reference_story
         # 初始化LLM API
         self.llm_api = LLMApi()
-        self.llm_api_local = LLMApi(OLLAMA)
+        self.llm_api_local = LLMApi(LM_STUDIO)
         
         self.create_dialog()
     
@@ -433,17 +435,9 @@ class ReferenceEditorDialog:
         paste_text = scrolledtext.ScrolledText(paste_dialog, wrap=tk.WORD, width=80, height=12)
         paste_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
 
-
         def paste_on_double_click(e):
-            try:
-                clipboard_content = paste_dialog.clipboard_get()
-                json_content = self.llm_api.parse_json(clipboard_content, expect_list=True)
-                if json_content:
-                    paste_text.insert(tk.INSERT, json.dumps(json_content, indent=2, ensure_ascii=False))
-                else:
-                    paste_text.insert(tk.INSERT, clipboard_content)
-            except tk.TclError:
-                pass
+            clipboard_content = paste_dialog.clipboard_get()
+            paste_text.insert(tk.INSERT, clipboard_content)
 
         paste_text.bind('<Double-1>', paste_on_double_click)
 
@@ -607,26 +601,33 @@ class ReferenceEditorDialog:
 class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
     
-    def __init__(self, parent, config_manager):
+    def __init__(self, parent, config_manager, youtube_gui=None, create_only=False, selection_only=False, initial_channel=None, initial_language=None, initial_raw_content=None):
         """
         初始化项目选择对话框
         
         Args:
             parent: 父窗口
             config_manager: ProjectConfigManager实例
-            project_config: 项目配置字典，用于自定义新项目的默认值和选项
+            youtube_gui: 可选，YT 相关功能的 GUI 管理器（下载/寻找/管理）
+            create_only: 若为 True，直接打开创建新项目窗口，不显示项目列表
+            selection_only: 若为 True，只显示项目列表，不显示「新建项目」按钮
+            initial_channel: 首层选择的频道（用于创建新项目预填、YT 等）
+            initial_language: 首层选择的语言
+            initial_raw_content: 预设的 RAW 内容（用于从 NotebookLM Story 启动新项目）
         """
         self.parent = parent
         self.config_manager = config_manager
+        self.youtube_gui = youtube_gui
         self.selected_config = None
         self.llm_api = LLMApi()
-        self.llm_api_local = LLMApi(OLLAMA)
+        self.llm_api_local = LLMApi(LM_STUDIO)
 
         available_channels = list(config_channel.CHANNEL_CONFIG.keys())
-        default_channel = available_channels[0] if available_channels else 'default'
+        default_channel = initial_channel or (available_channels[0] if available_channels else 'default')
+        default_lang = initial_language or 'tw'
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
-            'default_language': 'tw',
+            'default_language': default_lang,
             'channels': available_channels,
             'default_channel': default_channel,
             'default_title': '新项目',
@@ -635,7 +636,7 @@ class ProjectSelectionDialog:
         }
         self.story_result = {
             'channel': default_channel,
-            'language': self.default_project_config['default_language'],
+            'language': default_lang,
             'channel_template': None,
             'topic_category': None,
             'topic_subtype': None,
@@ -644,7 +645,17 @@ class ProjectSelectionDialog:
             'content': None,
             'action': None,
         }
-        self.create_dialog()
+        self.initial_raw_content = initial_raw_content
+        if create_only:
+            # 创建隐藏的父窗口（用于后续销毁），创建表单必须挂在可见的 parent 下否则会白屏
+            self.dialog = tk.Toplevel(parent)
+            self.dialog.withdraw()
+            self._form_parent = parent  # 创建新项目窗口的父窗口须为可见
+            self.create_new_project()
+            if self.story_result.get('action') != 'new' and self.dialog.winfo_exists():
+                self.dialog.destroy()
+        else:
+            self.create_dialog(selection_only=selection_only)
 
     def build_soul(self, channel, topic_category, topic_subtype, topics_data):
         """从 topics_data 根据 topic_category/topic_subtype 加载并组合 soul（支持文件路径或内联文本）"""
@@ -683,8 +694,12 @@ class ProjectSelectionDialog:
         parts = [p for p in (category_soul, subtype_soul) if p]
         return ' | '.join(parts) if parts else None
 
-    def create_dialog(self):
-        """创建对话框"""
+    def create_dialog(self, selection_only=False):
+        """创建对话框
+
+        Args:
+            selection_only: 若为 True，不显示「新建项目」按钮（该入口已移至启动首屏）
+        """
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("选择项目")
         self.dialog.geometry("1000x600")
@@ -757,7 +772,8 @@ class ProjectSelectionDialog:
         right_buttons.pack(side=tk.RIGHT)
         
         ttk.Button(right_buttons, text="打开选中", command=self.open_selected).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(right_buttons, text="新建项目", command=self.create_new_project).pack(side=tk.LEFT, padx=(0, 10))
+        if not selection_only:
+            ttk.Button(right_buttons, text="新建项目", command=self.create_new_project).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(right_buttons, text="取消", command=self.cancel).pack(side=tk.LEFT)
         
         # 加载项目列表
@@ -811,11 +827,12 @@ class ProjectSelectionDialog:
 
     def create_new_project(self):
         """创建新项目"""
-        # 创建新项目配置对话框
-        new_project_dialog = tk.Toplevel(self.dialog)
+        # 创建新项目配置对话框；create_only 时父窗口须为可见的 parent，否则会白屏
+        form_parent = getattr(self, '_form_parent', self.dialog)
+        new_project_dialog = tk.Toplevel(form_parent)
         new_project_dialog.title("创建新项目")
         new_project_dialog.geometry("1600x1000")
-        new_project_dialog.transient(self.dialog)
+        new_project_dialog.transient(form_parent)
         new_project_dialog.grab_set()
         
         # 居中显示
@@ -839,22 +856,13 @@ class ProjectSelectionDialog:
         pid_entry.insert(0, auto_pid)
         row += 1
         
-        # 语言选择
-        ttk.Label(main_frame, text="语言:").grid(row=row, column=0, sticky='w', pady=5)
-        language_combo = ttk.Combobox(main_frame, values=self.default_project_config['languages'], state="readonly", width=80)
-        language_combo.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
-        language_combo.set(self.default_project_config['default_language'])
-        self.story_result['language'] = language_combo.get()
-        row += 1
-        
-        # 频道选择
+        # 频道、语言已从首层选择框传入，显示为只读（不可在此修改）
         ttk.Label(main_frame, text="频道:").grid(row=row, column=0, sticky='w', pady=5)
-        channel_frame = ttk.Frame(main_frame)
-        channel_frame.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
-        channel_combo = ttk.Combobox(channel_frame, values=self.default_project_config['channels'], state="readonly", width=60)
-        channel_combo.pack(side=tk.LEFT)
-        channel_combo.set(self.default_project_config['default_channel'])
-        self.story_result['channel'] = channel_combo.get()
+        ttk.Label(main_frame, text=self.story_result['channel'], foreground="gray").grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        row += 1
+        ttk.Label(main_frame, text="语言:").grid(row=row, column=0, sticky='w', pady=5)
+        ttk.Label(main_frame, text=self.story_result['language'], foreground="gray").grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
+        row += 1
 
         def sync_channel_template(*args):
             """频道变更时同步单一 channel_template 到 story_result"""
@@ -862,8 +870,7 @@ class ProjectSelectionDialog:
             self.story_result['channel_template'] = templates_list[0] if templates_list else None
 
         sync_channel_template()
-        row += 1
-        
+
         # 主题分类选择（两级：category 和 subtype，各单选）
         topics_data = []  # 存储完整的 topics.json 数据
         tag_choices_data = []  # 存储 tags.json 数据 [{tag_type, tags}, ...]
@@ -1032,10 +1039,8 @@ class ProjectSelectionDialog:
         
         # 绑定事件在下方内容区域统一设置（含 update_buttons_state）
 
-        # 加载主题分类选项的函数（从 topics.json）
+        # 加载主题分类选项的函数（从 topics.json）；channel/language 已从首层传入，不再从 UI 同步
         def update_topic_choices(*args):
-            self.story_result['channel'] = channel_combo.get()
-            self.story_result['language'] = language_combo.get()
             topics_data.clear()  # 清空旧数据
             tag_choices_data.clear()
             topic_category_combo.set('')  # 清空选择
@@ -1065,17 +1070,7 @@ class ProjectSelectionDialog:
             except NameError:
                 pass
 
-        # 绑定 combobox 改变事件，即时同步到 story_result
-        def on_channel_changed(e=None):
-            update_topic_choices()  # 内部会 sync channel/language
-            sync_channel_template()
-
-        def on_language_changed(e=None):
-            self.story_result['language'] = language_combo.get()
-
-        channel_combo.bind('<<ComboboxSelected>>', on_channel_changed)
-        language_combo.bind('<<ComboboxSelected>>', on_language_changed)
-        # 初始化加载主题分类与模板
+        # 频道/语言已从首层传入，无需绑定变更事件；初始化加载主题分类与模板
         update_topic_choices()
         sync_channel_template()
         
@@ -1143,7 +1138,14 @@ class ProjectSelectionDialog:
         _editor_open = [False]  # 用 list 以便在闭包中修改；同一时刻只允许打开一个编辑器
 
         def update_previews():
-            """根据 story_result 更新 INIT/REF/DEBUT 预览文本"""
+            """根据 story_result 更新 RAW/INIT/REF/DEBUT 预览文本"""
+            # RAW
+            raw_str = (self.story_result.get('raw_content') or '').strip()
+            if raw_str:
+                preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
+                raw_preview.config(text=f"RAW: {preview}", foreground="black")
+            else:
+                raw_preview.config(text="RAW: (未生成)", foreground="gray")
             # INIT
             init_str = (self.story_result.get('init_content') or '').strip()
             if init_str:
@@ -1197,8 +1199,53 @@ class ProjectSelectionDialog:
         topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
         topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
 
-        def open_raw_editor():
-            """输入 raw case-story，生成 system_prompt 并复制到剪贴板"""
+        def _apply_category_result_to_ui(category_result, raw_preview_widget):
+            """根据 category_result 更新 topic/title/tags 等 UI"""
+            if not category_result:
+                return
+            cat = category_result.get('topic_category')
+            sub = category_result.get('topic_subtype')
+            if cat and sub:
+                self.story_result['topic_category'] = cat
+                topic_category_combo.set(cat)
+                update_topic_subtype()
+                self.story_result['topic_subtype'] = sub
+                topic_subtype_combo.set(sub)
+                topic_choices, _, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+                self.story_result['soul'] = self.build_soul(self.story_result['channel'], cat, sub, topic_choices)
+                update_explanation()
+            title = category_result.get('title', '')
+            if title:
+                title_entry.delete(0, tk.END)
+                title_entry.insert(0, title)
+                self.story_result['title'] = title
+            analysis_logic = category_result.get('analysis_logic', '')
+            if analysis_logic:
+                self.story_result['analysis_logic'] = analysis_logic
+            problem_tags = category_result.get('tags', '')
+            if problem_tags:
+                analysis_tags = _tags_analysis_part(problem_tags)
+                manual_tags = _tags_manual_part(self.story_result.get('tags'))
+                self.story_result['tags'] = (analysis_tags + manual_tags) if (analysis_tags or manual_tags) else None
+                tags_var.set(', '.join(self.story_result['tags'] or []))
+            story_str = json.dumps(category_result, indent=2, ensure_ascii=False)
+            new_project_dialog.clipboard_clear()
+            new_project_dialog.clipboard_append(story_str)
+            # RAW 预览显示 raw_content（原始故事），不显示 category_result JSON
+            raw_str = (self.story_result.get('raw_content') or '').strip()
+            if raw_str:
+                preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
+                raw_preview_widget.config(text=f"RAW: {preview}", foreground="black")
+
+        def open_raw_editor(initial_text=None):
+            """输入 raw case-story，生成 system_prompt 并复制到剪贴板。initial_text 为预填内容时显示「直接使用」按钮；否则从 story_result['raw_content'] 读取"""
+            # 未显式传入时，从 story_result 或 project config 读取已有 raw_content
+            if initial_text is None:
+                initial_text = self.story_result.get('raw_content') or ''
+            if isinstance(initial_text, str) and initial_text.strip():
+                initial_text = initial_text.strip()
+            else:
+                initial_text = None
             raw_dialog = tk.Toplevel(new_project_dialog)
             raw_dialog.title("RAW Case-Story 输入")
             raw_dialog.geometry("700x400")
@@ -1213,32 +1260,63 @@ class ProjectSelectionDialog:
             ttk.Label(frame, text="请输入 Raw Case-Story 内容:", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
             case_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=12)
             case_text.pack(fill=tk.BOTH, expand=True)
+            # 预填：优先用 initial_text，否则从 story_result 读取（如从 project config 加载或从 NotebookLM 传入）
+            _prefill = (initial_text if initial_text is not None else '') or (self.story_result.get('raw_content') or '')
+            if _prefill:
+                case_text.insert(tk.END, _prefill)
             def paste_on_double_click(e):
                 try:
                     s = raw_dialog.clipboard_get()
                     if s:
-                        case_text.insert(tk.INSERT, s)
+                        case_text.delete(1.0, tk.END)
+                        case_text.insert(tk.END, s)
                 except tk.TclError:
                     pass
             case_text.bind('<Double-1>', paste_on_double_click)
             case_story_result = [None]
+            use_directly_result = [False]
             def on_ok():
                 case_story_result[0] = case_text.get('1.0', tk.END).strip()
+                raw_dialog.destroy()
+            def on_use_directly():
+                """直接使用文本框内容作为 raw_content，不调 LLM"""
+                txt = case_text.get('1.0', tk.END).strip()
+                if not txt:
+                    messagebox.showwarning("提示", "请输入或粘贴内容", parent=raw_dialog)
+                    return
+                use_directly_result[0] = True
+                case_story_result[0] = txt
                 raw_dialog.destroy()
             def on_cancel():
                 raw_dialog.destroy()
             btn_f = ttk.Frame(frame)
             btn_f.pack(fill=tk.X, pady=(10, 0))
+            if _prefill:
+                ttk.Button(btn_f, text="直接使用", command=on_use_directly).pack(side=tk.LEFT, padx=5)
             ttk.Button(btn_f, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
             ttk.Button(btn_f, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
             raw_dialog.wait_window()
             if case_story_result[0] is None or not case_story_result[0]:
                 return
+            raw_input = case_story_result[0]
+            if use_directly_result[0]:
+                self.story_result['raw_content'] = raw_input
+                update_buttons_state()
+                #topic_choices, _, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+                #category_result = self.llm_api_local.generate_json(
+                #    config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(
+                #        language=LANGUAGES.get(self.story_result['language'], self.story_result['language']),
+                #        topic_choices=topic_choices
+                #    ),
+                #    raw_input,
+                #    expect_list=False
+                #)
+                #_apply_category_result_to_ui(category_result, raw_preview)
+                #update_buttons_state()
+                return
 
             raw_story_system_prompt = config_channel.CHANNEL_CONFIG[self.story_result['channel']]['channel_prompt'].get('prompt_program_raw', '')
-
             raw_story_system_prompt = raw_story_system_prompt.format( language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
-
 
             self.story_result['raw_content'] = self.llm_api.generate_text(raw_story_system_prompt, case_story_result[0])
             # raw_content 就绪后立即刷新按钮状态（参考收集应立即可用）
@@ -1290,7 +1368,29 @@ class ProjectSelectionDialog:
         # RAW 生成后刷新按钮状态（参考收集、DEBUT 等需 raw_content 不为空）
         update_buttons_state()
 
-        edit_raw_btn.config(command=open_raw_editor)
+        edit_raw_btn.config(command=lambda: open_raw_editor())
+
+        # 若有预设 RAW（如从 NotebookLM Story 启动），预填并自动打开 RAW 编辑器
+        _init_raw = getattr(self, 'initial_raw_content', None)
+        if _init_raw and _init_raw.strip():
+            self.story_result['raw_content'] = _init_raw.strip()
+            update_previews()  # RAW 面板显示传入的内容
+            update_buttons_state()
+            try:
+                topic_choices, _, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+                category_result = self.llm_api_local.generate_json(
+                    config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(
+                        language=LANGUAGES.get(self.story_result['language'], self.story_result['language']),
+                        topic_choices=topic_choices
+                    ),
+                    _init_raw.strip(),
+                    expect_list=False
+                )
+                _apply_category_result_to_ui(category_result, raw_preview)
+            except Exception:
+                pass
+            update_buttons_state()
+            new_project_dialog.after(300, lambda: open_raw_editor(initial_text=_init_raw.strip()))
 
 
         def open_init_editor():
@@ -1367,7 +1467,6 @@ class ProjectSelectionDialog:
         # 按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row, column=0, columnspan=2, pady=20)
-        
 
         def on_create():
             pid = pid_entry.get().strip()
@@ -1381,7 +1480,12 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            if not self.story_result['init_content'] or not self.story_result['debut_content'] or not self.story_result['raw_content']:
+            if not self.story_result.get('init_content', None):
+                self.story_result['init_content'] = ""
+            if not self.story_result.get('debut_content', None):
+                self.story_result['debut_content'] = ""
+
+            if not self.story_result['raw_content']:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
             
@@ -1417,7 +1521,7 @@ class ProjectSelectionDialog:
         
         ttk.Button(button_frame, text="创建", command=on_create).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
-        
+
         # 等待对话框关闭
         new_project_dialog.wait_window()
     
@@ -1453,13 +1557,178 @@ class ProjectSelectionDialog:
         return self.story_result.get('action', 'cancel'), self.selected_config
 
 
-def create_project_dialog(parent):
+def show_initial_choice_dialog(parent):
+    """GUI 启动时首先显示的选择：频道、语言 + 创建新项目/选择项目/YT 操作"""
+    result = {'choice': 'cancel', 'channel': '', 'language': ''}
+
+    dialog = tk.Toplevel(parent)
+    dialog.title("欢迎")
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+
+    main_frame = ttk.Frame(dialog, padding=30)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+
+    # 顶部：频道、语言（从创建新项目移至此处，供所有后续操作使用）
+    available_channels = list(config_channel.CHANNEL_CONFIG.keys())
+    default_channel = available_channels[0] if available_channels else 'default'
+    languages = ['tw', 'zh', 'en']
+    default_lang = 'tw'
+
+    opt_frame = ttk.Frame(main_frame)
+    opt_frame.pack(fill=tk.X, pady=(0, 15))
+    ttk.Label(opt_frame, text="频道：", font=('TkDefaultFont', 10)).pack(side=tk.LEFT, padx=(0, 5))
+    channel_var = tk.StringVar(value=default_channel)
+    channel_combo = ttk.Combobox(opt_frame, textvariable=channel_var, values=available_channels, state="readonly", width=18)
+    channel_combo.pack(side=tk.LEFT, padx=(0, 15))
+    ttk.Label(opt_frame, text="语言：", font=('TkDefaultFont', 10)).pack(side=tk.LEFT, padx=(0, 5))
+    language_var = tk.StringVar(value=default_lang)
+    language_combo = ttk.Combobox(opt_frame, textvariable=language_var, values=languages, state="readonly", width=10)
+    language_combo.pack(side=tk.LEFT)
+
+    ttk.Label(main_frame, text="请选择操作", font=('TkDefaultFont', 14, 'bold')).pack(pady=(0, 25))
+
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.pack(pady=15)
+
+    def on_new():
+        result['choice'] = 'new'
+        result['channel'] = channel_var.get().strip()
+        result['language'] = language_var.get().strip()
+        dialog.destroy()
+
+    def on_open():
+        result['choice'] = 'open'
+        result['channel'] = channel_var.get().strip()
+        result['language'] = language_var.get().strip()
+        dialog.destroy()
+
+    def on_cancel():
+        result['choice'] = 'cancel'
+        dialog.destroy()
+
+    def _create_yt_gui_and_run(yt_method, *args):
+        """按当前 channel/language 创建 MediaGUIManager 并执行 YT 方法"""
+        ch = channel_var.get().strip()
+        lang = language_var.get().strip()
+        if not ch:
+            messagebox.showwarning("提示", "请先选择频道", parent=dialog)
+            return
+        result['choice'] = 'yt'  # 标记为 YT 操作，避免调用方误判为取消而退出 App
+        dialog.destroy()  # YT 操作时先关闭欢迎窗口
+        # 使用独立 Toplevel 作为 YT 父窗口（无 parent），避免主窗口 withdraw 导致 YT 子窗被隐藏
+        yt_parent = tk.Toplevel()
+        yt_parent.title("YT 管理")
+        yt_parent.geometry("300x80+100+100")  # 小窗口，用户可见且可关闭以退出应用
+        yt_parent.lift()  # 确保显示在最前
+        yt_parent.focus_force()
+        def _on_yt_parent_close():
+            yt_parent.destroy()
+            try:
+                parent.quit()
+            except Exception:
+                pass
+        yt_parent.protocol("WM_DELETE_WINDOW", _on_yt_parent_close)
+        yt_parent.lift()
+        yt_parent.focus_force()
+        # 不在此处 withdraw(parent)，否则 Windows 下可能导致所有窗口消失；等 YT 方法返回后再隐藏
+        channel_path = config.get_channel_path(ch)
+        _yt_log = tk.Text(yt_parent, height=1)
+        def _yt_log_fn(w, m):
+            try:
+                w.insert(tk.END, m + '\n')
+            except Exception:
+                pass
+        yt_gui = MediaGUIManager(yt_parent, channel_path, 'temp', {}, _yt_log_fn, _yt_log, language=lang)
+        getattr(yt_gui, yt_method)(*args)
+        # YT 方法返回后再隐藏主窗口（若提前 withdraw 可能导致 YT 子窗被一起隐藏）
+        parent.withdraw()
+
+    # 按钮垂直排列
+    ttk.Button(btn_frame, text="选择项目", command=on_open, width=18).pack(fill=tk.X, pady=8)
+    ttk.Button(btn_frame, text="创建新项目", command=on_new, width=18).pack(fill=tk.X, pady=8)
+
+    yt_frame = ttk.Frame(btn_frame)
+    yt_frame.pack(fill=tk.X, pady=(8, 0))
+    ttk.Button(yt_frame, text="YT管理", command=lambda: _create_yt_gui_and_run('manage_hot_videos'), width=18).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(yt_frame, text="YT文字", command=lambda: _create_yt_gui_and_run('download_youtube', True), width=18).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(yt_frame, text="YT視頻", command=lambda: _create_yt_gui_and_run('download_youtube', False), width=18).pack(side=tk.LEFT)
+
+    ttk.Button(btn_frame, text="取消", command=on_cancel, width=18).pack(fill=tk.X, pady=8)
+
+    dialog.update_idletasks()
+    w, h = 450, 420
+    x = (dialog.winfo_screenwidth() - w) // 2
+    y = (dialog.winfo_screenheight() - h) // 2
+    dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+    dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+    dialog.wait_window()
+    return result['choice'], result['channel'] or default_channel, result['language'] or default_lang
+
+
+def create_project_dialog(parent, youtube_gui=None):
     global PROJECT_CONFIG
+    # 首先显示初始选择：频道、语言 + 创建新项目 / 选择项目 / YT
+    choice, initial_channel, initial_language = show_initial_choice_dialog(parent)
+    if choice == 'cancel':
+        return 'cancel', None
+    if choice == 'yt':
+        # YT 操作已打开独立窗口，不创建/打开项目，但需让 App 保持运行
+        return 'yt', None
+
     config_manager = ProjectConfigManager()
-    dialog = ProjectSelectionDialog(parent, config_manager)
-    result, selected_config = dialog.show()
+
+    if choice == 'new':
+        # 直接打开创建新项目窗口，传入首层选择的 channel/language
+        dialog = ProjectSelectionDialog(
+            parent, config_manager, youtube_gui=youtube_gui, create_only=True,
+            initial_channel=initial_channel, initial_language=initial_language
+        )
+        result = dialog.story_result.get('action', 'cancel')
+        selected_config = dialog.selected_config
+        if dialog.dialog.winfo_exists():
+            dialog.dialog.destroy()
+    else:
+        # 选择项目：显示项目列表（不含「新建项目」按钮），传入 channel/language
+        dialog = ProjectSelectionDialog(
+            parent, config_manager, youtube_gui=youtube_gui, selection_only=True,
+            initial_channel=initial_channel, initial_language=initial_language
+        )
+        result, selected_config = dialog.show()
+
     # 确保在返回前 PROJECT_CONFIG 仍然有效
     if PROJECT_CONFIG is None and selected_config is not None:
         PROJECT_CONFIG = selected_config.copy()
+    return result, selected_config
+
+
+def create_project_with_initial_raw(parent, raw_content, channel, language):
+    """用现有 RAW 材料（如 NotebookLM Story）直接启动创建新项目，跳过初始选择"""
+    global PROJECT_CONFIG
+    if not raw_content or not raw_content.strip():
+        return 'cancel', None
+    config_manager = ProjectConfigManager()
+    dialog = ProjectSelectionDialog(
+        parent, config_manager, youtube_gui=None, create_only=True,
+        initial_channel=channel, initial_language=language,
+        initial_raw_content=raw_content.strip()
+    )
+    result = dialog.story_result.get('action', 'cancel')
+    selected_config = dialog.selected_config
+    if dialog.dialog.winfo_exists():
+        dialog.dialog.destroy()
+    if PROJECT_CONFIG is None and selected_config is not None:
+        PROJECT_CONFIG = selected_config.copy()
+    # 创建成功时保存项目配置，确保重启后能在项目列表中看到
+    if result == 'new' and selected_config:
+        pid = selected_config.get('pid')
+        if pid:
+            try:
+                config_manager.pid = pid
+                config_manager.save_project_config(selected_config)
+            except Exception:
+                pass
     return result, selected_config
 

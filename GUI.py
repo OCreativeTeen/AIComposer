@@ -31,7 +31,7 @@ from gui.image_prompts_review_dialog import open_image_prompt_dialog, IMAGE_PROM
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
-from utility.llm_api import LLMApi, GPT_MINI
+import utility.llm_api as llm_api
 from gui.downloader import MediaGUIManager
 from gui.suno_music_prompt_gui import SunoMusicPromptGUI
 import cv2
@@ -48,7 +48,7 @@ STANDARD_FPS = 60  # Match FfmpegProcessor.STANDARD_FPS
 class WorkflowGUI:
     # Standardized framerate to match video processing
 
-    def __init__(self, root):
+    def __init__(self, root, initial_pid=None):
         # 如果拖拽支持可用，则使用TkinterDnD根窗口
         self.root = TkinterDnD.Tk() if not isinstance(root, TkinterDnD.Tk) else root
         # 如果传入的root不是TkinterDnD.Tk，需要重新创建
@@ -75,11 +75,28 @@ class WorkflowGUI:
         self._loading_config = False
         self.current_scene_index = 0
 
-        self.llm_api = LLMApi()
+        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
 
-        # 显示项目选择对话框
-        if not self.show_project_selection():
+        # 显示项目选择对话框（或 --open-pid 时直接加载指定项目）
+        if initial_pid:
+            # 从 YT「用Story启动新项目」创建后启动：跳过欢迎屏，直接加载项目
+            config_manager = ProjectConfigManager()
+            selected_config = config_manager.load_config(initial_pid)
+            if not selected_config:
+                messagebox.showerror("错误", f"无法加载项目 {initial_pid} 的配置", parent=self.root)
+                self.root.destroy()
+                return
+            ProjectConfigManager.set_global_config(selected_config)
+            selection_result = True  # 视为已选择项目
+        else:
+            selection_result = self.show_project_selection()
+
+        if selection_result is False:
             self.root.destroy()
+            return
+        if selection_result == 'yt':
+            # 用户选择了 YT 管理/下载，主界面不打开，只保留根窗口供 YT 子窗口使用
+            self.root.withdraw()  # 隐藏根窗口，仅显示 YT 子窗口
             return
         
         # 首先初始化任务状态跟踪 - 增强版
@@ -142,14 +159,15 @@ class WorkflowGUI:
         # 立即创建工作流实例（不再使用懒加载）
         self.create_workflow_instance()
         
-        # 初始化媒体扫描器（必须在启动后台线程之前）
-        self.media_scanner = MediaScanner(self.workflow, 10)
+        # 初始化媒体扫描器（必须在启动后台线程之前），未选择项目时（如 YT 管理）跳过
+        self.media_scanner = MediaScanner(self.workflow, 10) if self.workflow else None
         
         # 启动单例后台视频检查线程
         self.start_video_check_thread()
         # 绑定窗口关闭事件
 
-        self.workflow.load_scenes()
+        if self.workflow:
+            self.workflow.load_scenes()
         self.on_tab_changed(None)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -159,7 +177,7 @@ class WorkflowGUI:
     pid = None
 
     def get_pid(self):
-        if self.pid is None:
+        if self.pid is None and project_manager.PROJECT_CONFIG:
             self.pid = project_manager.PROJECT_CONFIG.get('pid')
         return self.pid
     
@@ -167,6 +185,10 @@ class WorkflowGUI:
 
     def create_workflow_instance(self):
         """立即创建工作流实例（非懒加载）"""
+        # 用户选择 YT 管理/下载时尚未创建或选择项目，PROJECT_CONFIG 为空是正常的
+        if project_manager.PROJECT_CONFIG is None:
+            self.workflow = None
+            return
         try:
             # Get video dimensions from project config
             video_width = project_manager.PROJECT_CONFIG.get('video_width')
@@ -199,10 +221,13 @@ class WorkflowGUI:
 
     def show_project_selection(self):
         # 使用新的项目管理器
-        result, selected_config = create_project_dialog(self.root)
+        result, selected_config = create_project_dialog(self.root, youtube_gui=getattr(self, 'youtube_gui', None))
         
         if result == 'cancel':
             return False
+        elif result == 'yt':
+            # 用户选择了 YT 管理/下载，主界面不打开，只保留根窗口供 YT 子窗口使用
+            return 'yt'
         elif result == 'new':
             # 立即创建ProjectConfigManager并保存新项目配置
             pid = selected_config.get('pid')
@@ -305,14 +330,6 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
-
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        ttk.Button(row1_frame, text="YT視頻",  command=lambda:self.youtube_gui.download_youtube(False)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="YT音頻",  command=lambda:self.youtube_gui.download_youtube(True)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="YT寻找",  command=lambda:self.youtube_gui.fetch_hot_videos()).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="YT管理",  command=lambda:self.youtube_gui.manage_hot_videos()).pack(side=tk.LEFT)
 
    
     def _open_suno_gui(self):
@@ -1388,9 +1405,10 @@ class WorkflowGUI:
         self.enhance_level.pack(side=tk.LEFT, padx=2)
         self.enhance_level.set("30")
 
-        ttk.Button(duration_promo_frame, text="故事", width=5, command=self._open_scene_content_dialog).pack(side=tk.LEFT)
-        ttk.Button(duration_promo_frame, text="精讲", width=5, command=lambda: self.concise_scene_speak("speaking")).pack(side=tk.LEFT)
-        ttk.Button(duration_promo_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="故事", width=5, command=self.current_story_content).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="图像", width=5, command=lambda: self._open_describe_scene_options_dialog()).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="讲解", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
+        #ttk.Button(duration_promo_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
 
         # extension: 场景末尾延长秒数 (0=不写字段, 0.5/1.0/1.5/2.0 秒)，用于 finalize 时每段视频末尾克隆最后一帧延长
         ttk.Label(duration_promo_frame, text="延长:").pack(side=tk.LEFT)
@@ -1591,9 +1609,8 @@ class WorkflowGUI:
 
 
     def start_video_check_thread(self):
-        if not hasattr(self, 'workflow'):
-            print("⚠️ 工作流实例未创建")
-            return
+        if not hasattr(self, 'workflow') or self.workflow is None:
+            return  # 未选择项目时（如 YT 管理）工作流为空是正常的，静默跳过
 
         if self.video_check_running:
             print("⚠️ 后台检查线程已在运行")
@@ -1663,6 +1680,8 @@ class WorkflowGUI:
 
     def check_generated_videos_background(self):
         """定时器调用此方法，但不再创建新线程（单例线程已在运行）"""
+        if not hasattr(self, 'workflow') or self.workflow is None:
+            return  # 未选择项目时（如 YT 管理）静默跳过
         # 检查单例线程是否还在运行，如果没有则重启
         if not self.video_check_running or not self.video_check_thread or not self.video_check_thread.is_alive():
             print("⚠️ 检测到后台线程未运行，正在重启...")
@@ -3957,36 +3976,157 @@ class WorkflowGUI:
         open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
 
 
-    def concise_scene_speak(self, field):
-        """精简场景讲话"""
+    def _open_describe_scene_options_dialog(self, default_visual=None):
+        """弹出选项对话框，用户选择 Host、Speaker 风格、Visual、Motion 后生成场景描述"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
-        speaking = scene.get(field)
-        if speaking:
-            content = self.llm_api.generate_text(config_prompt.CONCISE_SPEAKING_PROMPT, speaking)
-            scene[field] = content
-            self.workflow.save_scenes_to_json()
-            self.refresh_gui_scenes()
 
+        opts_dialog = tk.Toplevel(self.root)
+        opts_dialog.title("场景描述选项")
+        opts_dialog.geometry("480x420")
+        opts_dialog.transient(self.root)
+        opts_dialog.grab_set()
+        opts_dialog.update_idletasks()
+        x = (opts_dialog.winfo_screenwidth() - 480) // 2
+        y = (opts_dialog.winfo_screenheight() - 420) // 2
+        opts_dialog.geometry(f"480x420+{x}+{y}")
 
-    def _open_scene_content_dialog(self):
-        """弹出窗口显示并编辑当前场景的 story_details，可保存回场景"""
+        main_f = ttk.Frame(opts_dialog, padding=15)
+        main_f.pack(fill=tk.BOTH, expand=True)
+
+        # Host 选项：(value, display_label) -> value 用于 prompt
+        HOST_OPTIONS = [
+            ("", "不包含 Host"),
+            ("realistic middle-aged woman", "真实形象-中年女性"),
+            ("realistic middle-aged man", "真实形象-中年男性"),
+            ("cartoon middle-aged woman", "卡通(普通)-中年女性"),
+            ("cartoon middle-aged man", "卡通(普通)-中年男性"),
+            ("pixar-art cartoon middle-aged woman", "卡通(皮克斯)-中年女性"),
+            ("pixar-art cartoon middle-aged man", "卡通(皮克斯)-中年男性"),
+        ]
+        host_values = [h[0] for h in HOST_OPTIONS]
+        host_labels = [h[1] for h in HOST_OPTIONS]
+
+        ttk.Label(main_f, text="Host 旁白:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        host_var = tk.StringVar(value=host_labels[1])  # 默认真实形象-中年女性
+        host_combo = ttk.Combobox(main_f, textvariable=host_var, values=host_labels, state="readonly", width=28)
+        host_combo.pack(anchor=tk.W, pady=(0, 5))
+        # Host 形象是否显示在视频中（仅当选了 Host 时生效）
+        ttk.Label(main_f, text="Host 形象:", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 3))
+        host_show_var = tk.BooleanVar(value=False)  # 默认不显示，仅旁白
+        host_show_frame = ttk.Frame(main_f)
+        host_show_frame.pack(anchor=tk.W, pady=(0, 15))
+        ttk.Radiobutton(host_show_frame, text="显示在视频中（呈现为所选形象）", variable=host_show_var, value=True).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Radiobutton(host_show_frame, text="不显示（仅旁白）", variable=host_show_var, value=False).pack(side=tk.LEFT)
+
+        # Speaker 形象：说话角色呈现为真实/卡通/像素卡通
+        SPEAKER_STYLE_OPTIONS = [
+            ("realistic", "真实形象"),
+            ("cartoon", "卡通(普通)"),
+            ("pixar-art cartoon", "卡通(皮克斯)"),
+        ]
+        ttk.Label(main_f, text="Speaker 形象:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        speaker_style_var = tk.StringVar(value="真实形象")
+        speaker_style_combo = ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in SPEAKER_STYLE_OPTIONS], state="readonly", width=28)
+        speaker_style_combo.pack(anchor=tk.W, pady=(0, 15))
+
+        # Visual：是否包含 visual 描述
+        ttk.Label(main_f, text="Visual 描述:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        visual_var = tk.BooleanVar(value=default_visual if default_visual is not None else False)
+        visual_frame = ttk.Frame(main_f)
+        visual_frame.pack(anchor=tk.W, pady=(0, 15))
+        ttk.Radiobutton(visual_frame, text="包含 visual 描述", variable=visual_var, value=True).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(visual_frame, text="不包含", variable=visual_var, value=False).pack(side=tk.LEFT)
+
+        # Motion：动态感
+        MOTION_OPTIONS = [
+            ("strong dynamic motion", "强动态感"),
+            ("minimal motion, mostly static", "画面基本静止"),
+        ]
+        ttk.Label(main_f, text="画面动态:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        motion_var = tk.StringVar(value="强动态感")
+        motion_combo = ttk.Combobox(main_f, textvariable=motion_var, values=[m[1] for m in MOTION_OPTIONS], state="readonly", width=28)
+        motion_combo.pack(anchor=tk.W, pady=(0, 15))
+
+        def on_generate():
+            # 解析选择
+            host_label = host_var.get()
+            host_val = ""
+            for v, lbl in HOST_OPTIONS:
+                if lbl == host_label:
+                    host_val = v
+                    break
+
+            speaker_label = speaker_style_var.get()
+            speaker_val = "realistic"
+            for v, lbl in SPEAKER_STYLE_OPTIONS:
+                if lbl == speaker_label:
+                    speaker_val = v
+                    break
+
+            motion_label = motion_var.get()
+            motion_val = "strong dynamic motion"
+            for v, lbl in MOTION_OPTIONS:
+                if lbl == motion_label:
+                    motion_val = v
+                    break
+
+            opts_dialog.destroy()
+            self.describe_scene(host=host_val or None, visual=visual_var.get(), speaker_style=speaker_val, motion=motion_val,
+                               host_show_image=host_show_var.get())
+
+        btn_f = ttk.Frame(main_f)
+        btn_f.pack(pady=(20, 0))
+        ttk.Button(btn_f, text="生成描述", command=on_generate).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="取消", command=opts_dialog.destroy).pack(side=tk.LEFT)
+
+    def describe_scene(self, host=None, visual=False, speaker_style=None, motion=None, host_show_image=False):
+        """生成场景视频描述（由选项对话框调用，或直接传参）
+
+        host_show_image: 仅当 host 有值时生效。True=Host 形象显示在视频中；False=不显示 Host 画面，仅旁白"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
-        content = scene.get("content")
-        if content is None:
-            content = {}
-        if isinstance(content, (dict, list)):
-            initial_text = json.dumps(content, indent=2, ensure_ascii=False)
+
+        if visual:
+            scene_video_desc = f"""
+                Make a visual scene like below (use this just as a reference, to help express the speaking & voiceover content): 
+                {scene.get("visual", "")}
+            """
         else:
-            initial_text = str(content)
+            scene_video_desc = "Make a video to express the speaking & voiceover content\n\n"
 
+        # Speaker 形象提示
+        scene_video_desc += f"""
+            the speaker is character (appears as {speaker_style} style) of the story - {scene.get("speaker", "")} - {scene.get("actions", "")}
+            speaking like below (use this just as a reference, please make a very concise version):  
+            {scene.get("speaking", "")}
+
+        """
+
+        if host:
+            if host_show_image:
+                # Host 形象显示在视频中，呈现为所选形象
+                host_hint = f"The host appears as {host} style in the video."
+            else:
+                # 不显示 Host 画面，仅旁白
+                host_hint = "Don't show host's image in the video, just use voiceover."
+            scene_video_desc += f"""
+                the host-{host}  ({host_hint})
+                give voiceover for this scene like below (use this just as a reference, please make a very concise version): 
+                {scene.get("voiceover", "")}
+
+            """
+
+        if motion:
+            scene_video_desc += f"\nThe scene should have: {motion}.\n"
+
+        # pop up a dialog to show the scene_video_desc & copy to clipboard
         dialog = tk.Toplevel(self.root)
-        dialog.title("Scene Content - 当前场景")
+        dialog.title("Scene Video Description")
         dialog.geometry("700x500")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -3994,24 +4134,457 @@ class WorkflowGUI:
         x = (dialog.winfo_screenwidth() - 700) // 2
         y = (dialog.winfo_screenheight() - 500) // 2
         dialog.geometry(f"700x500+{x}+{y}")
-
-        ttk.Label(dialog, text="可编辑 Scene Content，保存后将写回当前场景", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(scene_video_desc.strip())
+            self.root.update()
+        except Exception:
+            pass
+        ttk.Label(dialog, text="Scene Video Description（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
         text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=22)
         text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        text_widget.insert("1.0", scene_video_desc.strip())
+        ttk.Button(dialog, text="关闭", command=dialog.destroy).pack(pady=10)
+        return scene_video_desc
+
+
+    def concise_scene_speak(self, field):
+        """精简场景讲话"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        speaking = scene.get(field)
+        if speaking:
+            content = self.llm_api.generate_text(config_prompt.CONCISE_SPEAKING_PROMPT, speaking)
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(content.strip())
+                self.root.update()
+            except Exception:
+                pass
+            # pop up a dialog to show the content & copy to clipboard
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Scene Speaking")
+            dialog.geometry("700x500")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() - 700) // 2
+            y = (dialog.winfo_screenheight() - 500) // 2
+            dialog.geometry(f"700x500+{x}+{y}")
+            ttk.Label(dialog, text="Scene Speaking（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
+            text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=22)
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+            text_widget.insert("1.0", content.strip())
+            ttk.Button(dialog, text="关闭", command=dialog.destroy).pack(pady=10)
+            return content
+        return None
+
+
+    def _open_story_content_options_dialog(self):
+        """弹出选项对话框，用户选择 Speaker 风格、Host、Visual、Voiceover 后生成 Story Content"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("提示", "没有当前场景")
+            return
+        current_story_scenes = self.workflow.scenes_in_story(scene)
+        if not current_story_scenes:
+            messagebox.showwarning("提示", "当前故事无场景")
+            return
+
+        opts_dialog = tk.Toplevel(self.root)
+        opts_dialog.title("Story Content 选项")
+        opts_dialog.geometry("480x480")
+        opts_dialog.transient(self.root)
+        opts_dialog.grab_set()
+        opts_dialog.update_idletasks()
+        x = (opts_dialog.winfo_screenwidth() - 480) // 2
+        y = (opts_dialog.winfo_screenheight() - 480) // 2
+        opts_dialog.geometry(f"480x480+{x}+{y}")
+
+        main_f = ttk.Frame(opts_dialog, padding=15)
+        main_f.pack(fill=tk.BOTH, expand=True)
+
+        # Speaker 形象
+        SPEAKER_STYLE_OPTIONS = [
+            ("realistic", "真实形象"),
+            ("cartoon", "卡通(普通)"),
+            ("pixar-art cartoon", "卡通(皮克斯)"),
+        ]
+        ttk.Label(main_f, text="Speaker 形象:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        speaker_style_var = tk.StringVar(value="真实形象")
+        ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in SPEAKER_STYLE_OPTIONS], state="readonly", width=28).pack(anchor=tk.W, pady=(0, 15))
+
+        # Host 选项（必选）：中国/白人 青年/中年/老年 男女 + 儿童
+        HOST_OPTIONS = [
+            ("中国中年女性", "中国中年女性"),
+            ("中国中年男性", "中国中年男性"),
+            ("中国青年女性", "中国青年女性"),
+            ("中国青年男性", "中国青年男性"),
+            ("中国老年女性", "中国老年女性"),
+            ("中国老年男性", "中国老年男性"),
+            ("白人中年女性", "白人中年女性"),
+            ("白人中年男性", "白人中年男性"),
+            ("白人青年女性", "白人青年女性"),
+            ("白人青年男性", "白人青年男性"),
+            ("白人老年女性", "白人老年女性"),
+            ("白人老年男性", "白人老年男性"),
+            ("中国女孩", "中国女孩"),
+            ("中国男孩", "中国男孩"),
+            ("白人女孩", "白人女孩"),
+            ("白人男孩", "白人男孩"),
+        ]
+        ttk.Label(main_f, text="Host 旁白（必选）:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        host_var = tk.StringVar(value="中国中年女性")
+        ttk.Combobox(main_f, textvariable=host_var, values=[h[1] for h in HOST_OPTIONS], state="readonly", width=28).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(main_f, text="Host 形象:", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 3))
+        host_show_var = tk.BooleanVar(value=False)
+        host_show_f = ttk.Frame(main_f)
+        host_show_f.pack(anchor=tk.W, pady=(0, 15))
+        ttk.Radiobutton(host_show_f, text="显示在视频中", variable=host_show_var, value=True).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Radiobutton(host_show_f, text="不显示（仅旁白）", variable=host_show_var, value=False).pack(side=tk.LEFT)
+
+        # Visual / Voiceover 初始不选，生成后在结果对话框中用 checkbox 控制
+        ttk.Label(main_f, text="包含字段（初始不选，生成后可勾选）:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        include_frame = ttk.Frame(main_f)
+        include_frame.pack(anchor=tk.W, pady=(0, 15))
+        include_visual_var = tk.BooleanVar(value=False)
+        include_voiceover_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(include_frame, text="visual", variable=include_visual_var).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Checkbutton(include_frame, text="voiceover", variable=include_voiceover_var).pack(side=tk.LEFT)
+
+        def on_confirm():
+            host_label = host_var.get()
+            host_val = ""
+            for v, lbl in HOST_OPTIONS:
+                if lbl == host_label:
+                    host_val = v
+                    break
+            speaker_label = speaker_style_var.get()
+            speaker_val = "realistic"
+            for v, lbl in SPEAKER_STYLE_OPTIONS:
+                if lbl == speaker_label:
+                    speaker_val = v
+                    break
+            opts_dialog.destroy()
+            self._build_and_show_story_content(
+                current_story_scenes,
+                speaker_style=speaker_val,
+                host=host_val or None,
+                host_show_image=host_show_var.get(),
+                include_visual=include_visual_var.get(),
+                include_voiceover=include_voiceover_var.get(),
+            )
+
+        btn_f = ttk.Frame(main_f)
+        btn_f.pack(pady=(20, 0))
+        ttk.Button(btn_f, text="生成", command=on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="取消", command=opts_dialog.destroy).pack(side=tk.LEFT)
+
+    GENERATION_INSTRUCTION = (
+        "Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. "
+        "Target 5-6 seconds of speech. Focus on key points. "
+        "If the scene has a title/graphic with text, speak the title prominently. "
+        "Omit detailed specifics; use questions or concise expressions for secondary details."
+    )
+
+    def _build_and_show_story_content(self, current_story_scenes, speaker_style=None, host=None, host_show_image=False, include_visual=True, include_voiceover=True):
+        """根据选项构建 Story Content JSON，选项写入每个 scene 元素（无 meta）"""
+        scenes_data = []
+        host = host or "中国中年女性"
+        speaker_style = speaker_style or "realistic"
+
+        for s in current_story_scenes:
+            sp = str(s.get("speaker", "")).strip()
+            # 去掉已有 "xxx - , " 前缀再追加新 style
+            for prefix in ["realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
+                if sp.startswith(prefix):
+                    sp = sp[len(prefix):].strip()
+                    break
+            sp = f"{speaker_style} - , {sp}" if sp else speaker_style
+
+            item = {
+                "speaker": sp,
+                "host": host,
+                "host_show_image": host_show_image,
+                "speaking": s.get("speaking", ""),
+                "actions": s.get("actions", ""),
+                "generation_instruction": self.GENERATION_INSTRUCTION,
+            }
+            if include_visual:
+                item["visual"] = s.get("visual", "")
+            if include_voiceover:
+                item["voiceover"] = s.get("voiceover", "")
+
+            scenes_data.append(item)
+
+        payload = {"scenes": scenes_data}
+        initial_text = json.dumps(payload, indent=2, ensure_ascii=False)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Story Content")
+        dialog.geometry("750x550")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 750) // 2
+        y = (dialog.winfo_screenheight() - 550) // 2
+        dialog.geometry(f"750x550+{x}+{y}")
+
+        ttk.Label(dialog, text="Story Content（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
+        # 生成结果后的复选框：Host 在画面中显示、Visual、Voiceover（勾选时从原始场景取回并填入）
+        chk_frame = ttk.Frame(dialog)
+        chk_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
+        host_in_video_var = tk.BooleanVar(value=host_show_image)
+        include_visual_chk_var = tk.BooleanVar(value=include_visual)
+        include_voiceover_chk_var = tk.BooleanVar(value=include_voiceover)
+
+        def _apply_checkboxes():
+            """根据复选框状态重建 JSON：Host 在画面中、Visual、Voiceover"""
+            try:
+                parsed = json.loads(text_widget.get("1.0", tk.END).strip())
+            except json.JSONDecodeError:
+                return
+            scenes_arr = parsed.get("scenes", [])
+            if len(scenes_arr) != len(current_story_scenes):
+                return
+            for i, row in enumerate(scenes_arr):
+                row["host_show_image"] = host_in_video_var.get()
+                if include_visual_chk_var.get():
+                    row["visual"] = current_story_scenes[i].get("visual", "")
+                elif "visual" in row:
+                    del row["visual"]
+                if include_voiceover_chk_var.get():
+                    row["voiceover"] = current_story_scenes[i].get("voiceover", "")
+                elif "voiceover" in row:
+                    del row["voiceover"]
+            new_text = json.dumps({"scenes": scenes_arr}, indent=2, ensure_ascii=False)
+            text_widget.delete("1.0", tk.END)
+            text_widget.insert("1.0", new_text)
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(new_text.strip())
+                self.root.update()
+            except Exception:
+                pass
+
+        ttk.Checkbutton(chk_frame, text="Host 在画面中显示", variable=host_in_video_var, command=_apply_checkboxes).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Checkbutton(chk_frame, text="Visual", variable=include_visual_chk_var, command=_apply_checkboxes).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Checkbutton(chk_frame, text="Voiceover", variable=include_voiceover_chk_var, command=_apply_checkboxes).pack(side=tk.LEFT)
+
+        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=85, height=24)
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         text_widget.insert("1.0", initial_text)
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(initial_text.strip())
+            self.root.update()
+        except Exception:
+            pass
+
+        def _get_parsed_payload():
+            raw = text_widget.get("1.0", tk.END).strip()
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+
+        def on_review():
+            """打开逐场景预览窗口"""
+            parsed = _get_parsed_payload()
+            if not parsed:
+                messagebox.showwarning("提示", "请先确保 JSON 格式正确", parent=dialog)
+                return
+            scenes_arr = parsed.get("scenes", [])
+            if not scenes_arr:
+                messagebox.showwarning("提示", "没有场景数据", parent=dialog)
+                return
+            self._open_story_scene_review_window(parsed)
 
         def on_save():
             raw = text_widget.get("1.0", tk.END).strip()
-            if raw:
-                scene["content"] = raw
-                self.workflow.save_scenes_to_json()
+            if not raw:
+                return
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as e:
+                messagebox.showerror("错误", f"JSON 解析失败: {e}", parent=dialog)
+                return
+            scenes_arr = parsed.get("scenes", [])
+            if len(scenes_arr) != len(current_story_scenes):
+                messagebox.showerror("错误", f"场景数量不匹配（预期 {len(current_story_scenes)}，实际 {len(scenes_arr)}）", parent=dialog)
+                return
+            for i, sc in enumerate(current_story_scenes):
+                if i >= len(scenes_arr):
+                    break
+                row = scenes_arr[i]
+                sp = str(row.get("speaker", "")).strip()
+                # 去掉 "xxx - , " 前缀再写回
+                for prefix in ["realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
+                    if sp.startswith(prefix):
+                        sp = sp[len(prefix):].strip()
+                        break
+                sc["speaker"] = sp
+                sc["speaking"] = str(row.get("speaking", "")).strip()
+                sc["actions"] = str(row.get("actions", "")).strip()
+                # visual/voiceover 在 scene 中则更新，否则保留原值
+                if "visual" in row:
+                    sc["visual"] = str(row.get("visual", "")).strip()
+                if "voiceover" in row:
+                    sc["voiceover"] = str(row.get("voiceover", "")).strip()
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
             dialog.destroy()
-            messagebox.showinfo("成功", "已保存到当前场景")
+            messagebox.showinfo("成功", "已保存到当前故事场景")
 
         btn_f = ttk.Frame(dialog)
         btn_f.pack(pady=10)
+        ttk.Button(btn_f, text="逐场景预览", command=on_review).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="保存", command=on_save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_f, text="取消", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
+
+    def _open_story_scene_review_window(self, payload):
+        """逐场景预览窗口：Prev/Next 浏览每个场景，显示 scene 的 JSON（用于视频生成）"""
+        scenes_arr = payload.get("scenes", [])
+        if not scenes_arr:
+            return
+
+        def _scene_defaults(s):
+            """从 scene 提取默认：host/speaker_style 等（无 meta 时从 scene 读取）"""
+            sp = str(s.get("speaker", "")).strip()
+            style = "realistic"
+            for pref in ["realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
+                if sp.startswith(pref):
+                    style = pref.split(" - , ")[0]
+                    break
+            return {
+                "include_host": bool(s.get("host")),
+                "speaker_style": style,
+                "include_visual": "visual" in s and bool(s.get("visual")),
+                "include_voiceover": "voiceover" in s and bool(s.get("voiceover")),
+            }
+
+        review_win = tk.Toplevel(self.root)
+        review_win.title("逐场景预览")
+        review_win.geometry("720x520")
+        review_win.transient(self.root)
+        review_win.grab_set()
+        review_win.update_idletasks()
+        x = (review_win.winfo_screenwidth() - 720) // 2
+        y = (review_win.winfo_screenheight() - 520) // 2
+        review_win.geometry(f"720x520+{x}+{y}")
+
+        idx_var = [0]
+        overrides = {}
+
+        def _get_overrides():
+            i = idx_var[0]
+            if i not in overrides:
+                overrides[i] = _scene_defaults(scenes_arr[i]) if i < len(scenes_arr) else {
+                    "include_host": True, "speaker_style": "realistic",
+                    "include_visual": True, "include_voiceover": True,
+                }
+            return overrides[i]
+
+        nav_f = ttk.Frame(review_win)
+        nav_f.pack(fill=tk.X, padx=15, pady=(15, 5))
+        ttk.Button(nav_f, text="◀ 上一场景", width=12, command=lambda: _go(-1)).pack(side=tk.LEFT, padx=(0, 8))
+        idx_label = ttk.Label(nav_f, text=f"场景 1 / {len(scenes_arr)}", font=("TkDefaultFont", 10, "bold"))
+        idx_label.pack(side=tk.LEFT, padx=8)
+        ttk.Button(nav_f, text="下一场景 ▶", width=12, command=lambda: _go(1)).pack(side=tk.LEFT, padx=8)
+
+        # 每场景输出选项（仅影响显示与复制内容）
+        SPEAKER_STYLE_OPTS = [("realistic", "真实形象"), ("cartoon", "卡通(普通)"), ("pixar-art cartoon", "卡通(皮克斯)")]
+        chk_f = ttk.Frame(nav_f)
+        chk_f.pack(side=tk.LEFT, padx=(20, 0))
+        ttk.Separator(chk_f, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        first_def = _scene_defaults(scenes_arr[0]) if scenes_arr else {}
+        include_host_var = tk.BooleanVar(value=first_def.get("include_host", True))
+        speaker_style_var = tk.StringVar(value=first_def.get("speaker_style", "realistic"))
+        include_visual_var = tk.BooleanVar(value=first_def.get("include_visual", True))
+        include_voiceover_var = tk.BooleanVar(value=first_def.get("include_voiceover", True))
+
+        def _on_override_change(*args):
+            o = _get_overrides()
+            o["include_host"] = include_host_var.get()
+            o["speaker_style"] = speaker_style_var.get()
+            o["include_visual"] = include_visual_var.get()
+            o["include_voiceover"] = include_voiceover_var.get()
+            _refresh_display()
+
+        ttk.Checkbutton(chk_f, text="Host", variable=include_host_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(chk_f, text="Speaker:").pack(side=tk.LEFT, padx=(0, 2))
+        speaker_combo = ttk.Combobox(chk_f, textvariable=speaker_style_var, values=[s[0] for s in SPEAKER_STYLE_OPTS], state="readonly", width=12)
+        speaker_combo.pack(side=tk.LEFT, padx=(0, 5))
+        speaker_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
+        ttk.Checkbutton(chk_f, text="Visual", variable=include_visual_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Checkbutton(chk_f, text="Voiceover", variable=include_voiceover_var, command=_on_override_change).pack(side=tk.LEFT)
+
+        ttk.Label(review_win, text="当前场景（用于视频生成，变更选项后自动复制到剪贴板）", font=("TkDefaultFont", 9)).pack(anchor=tk.W, padx=15, pady=(5, 2))
+        text_widget = scrolledtext.ScrolledText(review_win, wrap=tk.WORD, width=88, height=20)
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        def _build_current_display():
+            i = idx_var[0]
+            scene_raw = scenes_arr[i] if i < len(scenes_arr) else {}
+            o = _get_overrides()
+            sp = str(scene_raw.get("speaker", "")).strip()
+            for prefix in ["realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
+                if sp.startswith(prefix):
+                    sp = sp[len(prefix):].strip()
+                    break
+            if o["speaker_style"]:
+                sp = f"{o['speaker_style']} - , {sp}" if sp else o["speaker_style"]
+            disp_scene = {
+                "speaker": sp,
+                "host": scene_raw.get("host", "") if o["include_host"] else "",
+                "host_show_image": scene_raw.get("host_show_image", False) if o["include_host"] else False,
+                "speaking": scene_raw.get("speaking", ""),
+                "actions": scene_raw.get("actions", ""),
+                "visual": scene_raw.get("visual", "") if o["include_visual"] else "",
+                "voiceover": scene_raw.get("voiceover", "") if o["include_voiceover"] else "",
+                "generation_instruction": scene_raw.get("generation_instruction", ""),
+            }
+            return json.dumps(disp_scene, indent=2, ensure_ascii=False)
+
+        def _copy_and_refresh():
+            txt = _build_current_display()
+            text_widget.delete("1.0", tk.END)
+            text_widget.insert("1.0", txt)
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(txt.strip())
+                self.root.update()
+            except Exception:
+                pass
+
+        def _refresh_display():
+            _copy_and_refresh()
+
+        def _sync_ui_from_overrides():
+            o = _get_overrides()
+            include_host_var.set(o["include_host"])
+            speaker_style_var.set(o["speaker_style"])
+            include_visual_var.set(o["include_visual"])
+            include_voiceover_var.set(o["include_voiceover"])
+
+        def _go(delta):
+            new_idx = idx_var[0] + delta
+            if 0 <= new_idx < len(scenes_arr):
+                idx_var[0] = new_idx
+                idx_label.config(text=f"场景 {new_idx + 1} / {len(scenes_arr)}")
+                _sync_ui_from_overrides()
+                _copy_and_refresh()
+
+        _copy_and_refresh()
+
+        btn_f = ttk.Frame(review_win)
+        btn_f.pack(pady=10)
+        ttk.Button(btn_f, text="关闭", command=review_win.destroy).pack(side=tk.LEFT)
+
+    def current_story_content(self):
+        """弹出选项对话框，选择后生成并显示 Story Content"""
+        self._open_story_content_options_dialog()
 
 
     def update_current_scene(self, event=None):
@@ -4053,11 +4626,9 @@ class WorkflowGUI:
     def load_config(self):
         """加载当前项目的配置"""
         try:
-            # 检查 project_manager.PROJECT_CONFIG 是否已设置
+            # 用户选择 YT 管理/下载时尚未创建或选择项目，PROJECT_CONFIG 为空是正常的
             if project_manager.PROJECT_CONFIG is None:
-                print("❌ 错误：project_manager.PROJECT_CONFIG 未设置！请确保已选择项目。")
-                print(f"   调试信息：show_project_selection 应该已经设置了 project_manager.PROJECT_CONFIG")
-                exit()
+                return
             
             # 临时禁用自动保存，避免加载过程中触发保存
             self._loading_config = True
@@ -4626,10 +5197,25 @@ class WorkflowGUI:
 
 
 def main():
+    import sys
     root = TkinterDnD.Tk()
 
-    app = WorkflowGUI(root)
-    root.mainloop()
+    # 支持 --open-pid <pid> 参数：跳过欢迎屏，直接打开指定项目（用于从 YT「用Story启动新项目」创建后启动）
+    initial_pid = None
+    if len(sys.argv) >= 3 and sys.argv[1] == '--open-pid':
+        initial_pid = sys.argv[2]
+
+    try:
+        app = WorkflowGUI(root, initial_pid=initial_pid)
+        root.mainloop()
+    except Exception as e:
+        import traceback
+        try:
+            messagebox.showerror("启动错误", f"启动失败: {e}\n\n详见终端输出")
+        except Exception:
+            pass
+        print(traceback.format_exc())
+        raise
 
 if __name__ == "__main__":
     main()
