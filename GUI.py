@@ -4262,14 +4262,20 @@ class WorkflowGUI:
         ttk.Button(btn_f, text="生成", command=on_confirm).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="取消", command=opts_dialog.destroy).pack(side=tk.LEFT)
 
-    GENERATION_INSTRUCTION = (
-        "Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. "
-        "Target 5-6 seconds of speech total time. Focus on key points. "
-        "If the scene has a title/graphic with text, speak the title prominently. "
-        "Omit detailed specifics; use questions or concise expressions for secondary details."
-        "May add sound-effects to enhance the scene, but don't add music."
-    )
+# Audio-speaking without showing the speaker or host is What we want!!! 
+    GENERATION_INSTRUCTION = """
+Video generation instruction: 
+    ** Specail-Case 1: if start-image not have the speaker or host image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host is What we want in this case!!!,  Even json content below may has "speaker" or "host" description, only use these as guide to choose voice **
 
+    ||||  
+
+Audio generation instruction: 
+	** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
+    ** If the json content below has no 'speaking' & 'voiceover' content, the audio should be the host breifly speak about the content of the image (like main text message in the image) **
+
+--------------------------------
+
+"""
     HOST_NOT_SHOW = "不显示在画面中"
 
     # Host 单一定义：(中文, 英文) - 顺序即用户选择顺序，避免多处定义导致不一致
@@ -4293,7 +4299,17 @@ class WorkflowGUI:
         ("白人男孩", "caucasian boy"),
     ]
     HOST_EN_MAP = dict(HOST_OPTIONS_DATA)
-    HOST_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA]  # (value, label) for Combobox
+    HOST_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA]  # (value, label) - 含不显示，用于兼容
+    # Host 人物（仅人物，不含不显示）
+    HOST_PERSON_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA if cn != "不显示在画面中"]
+    # Host 显示方式（与人物分离的单独字段）
+    HOST_DISPLAY_OPTIONS = [
+        ("不显示在画面中", "not-in-scene"),
+        ("出现在画面角落", "corner"),
+        ("出现在主角旁边", "beside-protagonist"),
+        ("主角说完后主持人出现补充", "supplement-after-protagonist"),
+        ("主持人先介绍，再由主角说话", "introduce-first"),
+    ]
 
     # Speaker/Host 风格选项（顺序：皮克斯第一）
     SPEAKER_STYLE_OPTIONS = [("pixar-art cartoon", "卡通(皮克斯)"), ("realistic", "真实形象"), ("cartoon", "卡通(普通)")]
@@ -4330,8 +4346,7 @@ class WorkflowGUI:
                 "speaker": sp,
                 "host": host_str,
                 "speaking": s.get("speaking", ""),
-                "actions": s.get("actions", ""),
-                "audio_generation": self.GENERATION_INSTRUCTION,
+                "actions": s.get("actions", "")
             }
             if include_visual:
                 item["visual"] = s.get("visual", "")
@@ -4345,21 +4360,22 @@ class WorkflowGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Story Content")
-        dialog.geometry("850x650")
+        dialog.geometry("1000x800")
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 850) // 2
-        y = (dialog.winfo_screenheight() - 650) // 2
-        dialog.geometry(f"850x650+{x}+{y}")
+        x = (dialog.winfo_screenwidth() - 1000) // 2
+        y = (dialog.winfo_screenheight() - 800) // 2
+        dialog.geometry(f"1000x800+{x}+{y}")
 
         ttk.Label(dialog, text="Story Content（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
         # Speaker / Host 选项（放在三个 checkbox 之前）
         opts_frame = ttk.Frame(dialog)
         opts_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
-        speaker_style_var = tk.StringVar(value="卡通(皮克斯)")
-        host_style_var = tk.StringVar(value="卡通(皮克斯)")
-        host_person_var = tk.StringVar(value=self.HOST_NOT_SHOW)
+        speaker_style_var = tk.StringVar(value="真实形象")
+        host_style_var = tk.StringVar(value="真实形象")
+        host_display_var = tk.StringVar(value="不显示在画面中")
+        host_person_var = tk.StringVar(value="中国中年女性")
         ttk.Label(opts_frame, text="Speaker:").pack(side=tk.LEFT, padx=(0, 5))
         speaker_cb = ttk.Combobox(opts_frame, textvariable=speaker_style_var, values=[s[1] for s in self.SPEAKER_STYLE_OPTIONS], state="readonly", width=10)
         speaker_cb.pack(side=tk.LEFT, padx=(0, 12))
@@ -4368,21 +4384,25 @@ class WorkflowGUI:
         host_style_cb = ttk.Combobox(opts_frame, textvariable=host_style_var, values=[s[1] for s in self.SPEAKER_STYLE_OPTIONS], state="readonly", width=10)
         host_style_cb.pack(side=tk.LEFT, padx=(0, 12))
         host_style_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
+        ttk.Label(opts_frame, text="Host 显示:").pack(side=tk.LEFT, padx=(0, 5))
+        host_display_cb = ttk.Combobox(opts_frame, textvariable=host_display_var, values=[d[0] for d in self.HOST_DISPLAY_OPTIONS], state="readonly", width=18)
+        host_display_cb.pack(side=tk.LEFT, padx=(0, 12))
+        host_display_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
         ttk.Label(opts_frame, text="Host 人物:").pack(side=tk.LEFT, padx=(0, 5))
-        host_person_cb = ttk.Combobox(opts_frame, textvariable=host_person_var, values=[h[1] for h in self.HOST_OPTIONS], state="readonly", width=14)
+        host_person_cb = ttk.Combobox(opts_frame, textvariable=host_person_var, values=[h[1] for h in self.HOST_PERSON_OPTIONS], state="readonly", width=10)
         host_person_cb.pack(side=tk.LEFT, padx=(0, 12))
         host_person_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
-        # 两个 checkbox：Visual、Voiceover（host 是否在画面中已由 host 字段的 voice-only 表达）
+        # 三个 checkbox：Speaking、Visual、Voiceover
+        include_speaking_chk_var = tk.BooleanVar(value=True)
         include_visual_chk_var = tk.BooleanVar(value=True)
-        include_voiceover_chk_var = tk.BooleanVar(value=True)
+        include_voiceover_chk_var = tk.BooleanVar(value=False)
 
-        def _do_build(speaker_s, host_s, host_p, inc_vis, inc_vo):
-            """根据参数构建 JSON 字符串（host 不显示时：voiceover 有内容用 voice-only，否则用 not-in-scene）"""
+        def _do_build(speaker_s, host_s, host_display_cn, host_person_cn, inc_speak, inc_vis, inc_vo):
+            """构建 JSON：host_display 控制显示方式，host_person 为人物（仅在显示时用）"""
             scenes_data = []
-            h_cn = host_p
             h_style = host_s.replace(' ', '-') + "-style"
-            is_not_show = (h_cn == self.HOST_NOT_SHOW)
-            h_en_default = self.HOST_EN_MAP.get(h_cn, "voice-only")
+            is_not_show = (host_display_cn == "不显示在画面中")
+            host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == host_display_cn), "not-in-scene")
             sp_prefix = f"{speaker_s.replace(' ', '-')}-style | "
             for s in current_story_scenes:
                 sp = str(s.get("speaker", "")).strip()
@@ -4396,12 +4416,17 @@ class WorkflowGUI:
                     host_suffix = "voice-only" if vo else "not-in-scene"
                     h_str = f"{h_style} | {host_suffix}"
                 else:
-                    h_str = f"{h_style} | {h_en_default}"
-                item = {"speaker": sp, "host": h_str, "speaking": s.get("speaking", ""), "actions": s.get("actions", ""), "audio_generation": self.GENERATION_INSTRUCTION}
+                    h_en = self.HOST_EN_MAP.get(host_person_cn, "chinese middle-aged woman")
+                    h_str = f"{h_style} | {h_en}"
+                item = {"speaker": sp, "host": h_str, "actions": s.get("actions", "")}
+                if inc_speak:
+                    item["speaking"] = s.get("speaking", "")
                 if inc_vis:
                     item["visual"] = s.get("visual", "")
                 if inc_vo:
                     item["voiceover"] = s.get("voiceover", "")
+                if not is_not_show:
+                    item["host_display"] = host_display_en
                 scenes_data.append(item)
             return json.dumps({"scenes": scenes_data}, indent=2, ensure_ascii=False)
 
@@ -4418,13 +4443,19 @@ class WorkflowGUI:
                 if lbl == host_s_lbl:
                     host_s_val = v
                     break
-            host_p_lbl = host_person_var.get()
-            host_p_val = self.HOST_NOT_SHOW
-            for v, lbl in self.HOST_OPTIONS:
-                if lbl == host_p_lbl:
-                    host_p_val = v
+            host_display_lbl = host_display_var.get()
+            host_display_val = "不显示在画面中"
+            for cn, en in self.HOST_DISPLAY_OPTIONS:
+                if cn == host_display_lbl:
+                    host_display_val = cn
                     break
-            new_text = _do_build(speaker_val, host_s_val, host_p_val, include_visual_chk_var.get(), include_voiceover_chk_var.get())
+            host_person_lbl = host_person_var.get()
+            host_person_val = "中国中年女性"
+            for cn, _ in self.HOST_PERSON_OPTIONS:
+                if cn == host_person_lbl:
+                    host_person_val = cn
+                    break
+            new_text = _do_build(speaker_val, host_s_val, host_display_val, host_person_val, include_speaking_chk_var.get(), include_visual_chk_var.get(), include_voiceover_chk_var.get())
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", new_text)
             try:
@@ -4434,7 +4465,8 @@ class WorkflowGUI:
             except Exception:
                 pass
 
-        ttk.Checkbutton(opts_frame, text="Visual", variable=include_visual_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(50, 20))
+        ttk.Checkbutton(opts_frame, text="Speaking", variable=include_speaking_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(20, 20))
+        ttk.Checkbutton(opts_frame, text="Visual", variable=include_visual_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Checkbutton(opts_frame, text="Voiceover", variable=include_voiceover_chk_var, command=_rebuild_all).pack(side=tk.LEFT)
 
         text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=85, height=24)
@@ -4653,8 +4685,7 @@ class WorkflowGUI:
                 "speaking": scene_raw.get("speaking", ""),
                 "actions": scene_raw.get("actions", ""),
                 "visual": scene_raw.get("visual", "") if o["include_visual"] else "",
-                "voiceover": scene_raw.get("voiceover", "") if o["include_voiceover"] else "",
-                "audio_generation": scene_raw.get("audio_generation", ""),
+                "voiceover": scene_raw.get("voiceover", "") if o["include_voiceover"] else ""
             }
             return json.dumps(disp_scene, indent=2, ensure_ascii=False)
 
@@ -4663,6 +4694,7 @@ class WorkflowGUI:
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", txt)
             try:
+                txt = self.GENERATION_INSTRUCTION + "\n--------------------\n" + txt
                 self.root.clipboard_clear()
                 self.root.clipboard_append(txt.strip())
                 self.root.update()

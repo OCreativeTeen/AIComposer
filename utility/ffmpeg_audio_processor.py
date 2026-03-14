@@ -1,10 +1,11 @@
-import os, json
+import os
 import subprocess
-from pathlib import Path
-from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
 import config
 from utility.file_util import safe_copy_overwrite
 
+
+ffmpeg_path = "ffmpeg"
+ffprobe_path = "ffprobe"
 
 
 class FfmpegAudioProcessor:
@@ -13,10 +14,10 @@ class FfmpegAudioProcessor:
     # Class-level cache for CUDA availability
     _cuda_available = None
 
+
     def __init__(self, pid):
         self.pid = pid
-        self.ffmpeg_path = ffmpeg_path
-        self.ffprobe_path = ffprobe_path
+
         self.effect_path = config.get_effect_path()
 
     @classmethod
@@ -54,7 +55,7 @@ class FfmpegAudioProcessor:
         try:
             # 1st part: from start (0) to position
             subprocess.run([
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", original_clip,
                 "-t", str(position),   # duration = position sec
                 "-c:a", "pcm_s16le",
@@ -65,7 +66,7 @@ class FfmpegAudioProcessor:
 
             # 2nd part: from position to end
             subprocess.run([
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", original_clip,
                 "-ss", str(position),  # start from position
                 "-c:a", "pcm_s16le",
@@ -85,7 +86,7 @@ class FfmpegAudioProcessor:
         output_audio_path = config.get_temp_file(self.pid, "wav")
         try:
             subprocess.run([
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", input_audio_path,
                 "-c:a", "pcm_s16le",
                 "-ar", "44100", 
@@ -101,7 +102,7 @@ class FfmpegAudioProcessor:
     def to_mp3(self, input_audio_path):
         output_audio_path = config.get_temp_file(self.pid, "mp3")
         try:
-            cmd = [self.ffmpeg_path, "-y"]
+            cmd = [ffmpeg_path, "-y"]
             
             # 如果 CUDA 可用，添加硬件加速参数（用于加速输入解码）
             if self._check_cuda_availability():
@@ -138,7 +139,7 @@ class FfmpegAudioProcessor:
         try:
             # Check if video has audio streams using ffprobe
             result = subprocess.run([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "a",
                 "-show_entries", "stream=codec_type",
@@ -157,7 +158,7 @@ class FfmpegAudioProcessor:
         try:
             if output_format == "mp3":
                 subprocess.run([
-                    self.ffmpeg_path, "-y",
+                    ffmpeg_path, "-y",
                     "-i", video_path,
                     "-vn",
                     "-c:a", "libmp3lame",
@@ -168,7 +169,7 @@ class FfmpegAudioProcessor:
                 ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
             else: # wav
                 subprocess.run([
-                    self.ffmpeg_path, "-y",
+                    ffmpeg_path, "-y",
                     "-i", video_path,
                     "-vn",
                     "-c:a", "pcm_s16le",
@@ -193,7 +194,7 @@ class FfmpegAudioProcessor:
         output_path = config.get_temp_file(self.pid, "wav")
         
         try:
-            cmd = [self.ffmpeg_path, '-y']
+            cmd = [ffmpeg_path, '-y']
             
             for audio_file in audio_list:
                 if audio_file and os.path.exists(audio_file):
@@ -266,7 +267,7 @@ class FfmpegAudioProcessor:
 
             # Concatenate the audio files
             concat_cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", audio_list_path,
@@ -342,7 +343,7 @@ class FfmpegAudioProcessor:
             print(f"混音文件时长: {mix_sound_duration:.2f}s, 混音音量: {mix_volume}")
             
             subprocess.run([
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", audio_path,
                 "-i", mix_sound_path,
                 "-filter_complex", filter_complex,
@@ -413,7 +414,7 @@ class FfmpegAudioProcessor:
             
             # 将裁剪后的音频与静音连接
             subprocess.run([
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", cut_audio_path,
                 "-f", "lavfi",
                 "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100:duration={silence_duration}",
@@ -476,7 +477,7 @@ class FfmpegAudioProcessor:
             
             # Build FFmpeg command
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-ss", str(start_time),      # Start from the specified time
                 "-i", raw_auddio_path,       # Input audio file
                 "-t", str(output_length),    # Trim the audio to the specified output length
@@ -521,7 +522,7 @@ class FfmpegAudioProcessor:
         
         try:    
             result = subprocess.run([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",

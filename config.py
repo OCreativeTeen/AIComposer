@@ -4,7 +4,7 @@ import uuid
 import random
 import glob
 import json
-from utility.file_util import safe_move_overwrite
+import shutil
 
 
 
@@ -415,7 +415,7 @@ def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor
             background_video = video_path
         else:
             background_video = ffmpeg_processor.image_audio_to_video(background_image, background_music, 1) 
-            safe_move_overwrite(background_video, video_path)
+            shutil.move(background_video, video_path)
             background_video = video_path
 
     return background_image, background_video, background_music
@@ -524,6 +524,7 @@ def fetch_story_extract_text_content(pid: str, language: str):
 
 VIDEO_DURATION_DEFAULT = 59.0
 
+
 # =============================================================================
 # 字体配置
 # =============================================================================
@@ -578,17 +579,6 @@ azure_region = "eastus"
 # ElevenLabs 配置
 elevenlabs_api_key = ""
 elevenlabs_base_url = "https://api.elevenlabs.io/v1"
-
-# =============================================================================
-# FFmpeg配置
-# =============================================================================
-ffmpeg_path = "ffmpeg" 
-ffprobe_path = "ffprobe"
-
-# =============================================================================
-# 语音配置
-# =============================================================================
-
 
 
 

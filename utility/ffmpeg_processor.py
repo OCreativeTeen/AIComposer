@@ -1,15 +1,10 @@
 import os
 import subprocess
 import shutil
-import glob
 import uuid
-from pathlib import Path
 
-from mpmath import rational
-from config import ffmpeg_path, ffprobe_path, FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
+from config import FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
 import config
-from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.file_util import safe_copy_overwrite
 import random
 import unicodedata
 
@@ -24,6 +19,10 @@ NVENC_MAX_WIDTH = 4096
 NVENC_MAX_HEIGHT = 4096
 NVENC_MAX_PIXELS = 8192 * 8192  # Maximum total pixels
 
+ffmpeg_path = "ffmpeg" 
+ffprobe_path = "ffprobe"
+
+
 
 class FfmpegProcessor:
     # Class-level cache for duration values (shared across all instances)
@@ -31,15 +30,9 @@ class FfmpegProcessor:
 
     def __init__(self, pid, language, video_width=None, video_height=None):
         self.pid = pid
-        self.ffmpeg_path = ffmpeg_path
-        self.ffprobe_path = ffprobe_path
-        
         # Get video dimensions from parameters or use defaults (1920x1080)
         self.width = int(video_width) if video_width else 1920
         self.height = int(video_height) if video_height else 1080
-        
-        self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
-
         # Calculate common overlay dimensions based on main dimensions
         self.overlay_width_large = self.width // 2  # For center video overlay
         self.overlay_height_large = self.height // 2
@@ -74,7 +67,7 @@ class FfmpegProcessor:
             return self.nvenc_available
 
         try:
-            cmd = [self.ffmpeg_path, "-encoders"]
+            cmd = [ffmpeg_path, "-encoders"]
             result = self.run_ffmpeg_command(cmd)
             self.nvenc_available = "h264_nvenc" in result.stdout
             return self.nvenc_available
@@ -162,7 +155,7 @@ class FfmpegProcessor:
     
     def _ffmpeg_input_args(self, input, input2=None, input3=None):
         args = [
-            self.ffmpeg_path, "-y",
+            ffmpeg_path, "-y",
         ]
         args.extend(self._get_input_args())
         args.extend([
@@ -290,7 +283,7 @@ class FfmpegProcessor:
             output_path = config.get_temp_file(self.pid, "mp4")
 
             cmd = [
-                self.ffmpeg_path,
+                ffmpeg_path,
                 "-i", video_path,
                 "-vf", "fps="+str(fps),
                 "-c:v", "libx264",
@@ -458,7 +451,7 @@ class FfmpegProcessor:
 
             # -loop 1 必须作为图片的【输入选项】放在 -i image_path 前，否则图片只算一帧，-shortest 会按最短流截断导致输出只有一帧
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
             ]
             cmd.extend(self._get_input_args())
             cmd.extend([
@@ -619,7 +612,7 @@ class FfmpegProcessor:
             else:
                 af_filter = f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS[a]"
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", audio_path,
                 "-filter_complex", af_filter,
                 "-map", "[a]",
@@ -637,7 +630,7 @@ class FfmpegProcessor:
     def to_webp(self, image_path):
         output_path = config.get_temp_file(self.pid, "webp")
         self.run_ffmpeg_command([
-            self.ffmpeg_path, "-y",
+            ffmpeg_path, "-y",
             "-i", image_path,
             output_path
         ])
@@ -891,7 +884,7 @@ class FfmpegProcessor:
         """检测视频文件是否包含音频轨道"""
         try:
             result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "a:0",
                 "-show_entries", "stream=codec_type",
@@ -912,7 +905,7 @@ class FfmpegProcessor:
         """Get the FPS of a video"""
         try:
             result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "quiet",
                 "-select_streams", "v",
                 "-show_entries", "stream=r_frame_rate",
@@ -971,7 +964,7 @@ class FfmpegProcessor:
                     print(f"⚠️ 警告：fade_out_length ({fade_out_length}) 太长，可能覆盖整个视频!")
             
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-hwaccel", "cuda",
                 "-i", video_path
             ]
@@ -1025,7 +1018,7 @@ class FfmpegProcessor:
         try:
             if first:
                 self.run_ffmpeg_command([
-                    self.ffmpeg_path, "-y",
+                    ffmpeg_path, "-y",
                     "-i", video_path,
                     "-vframes", "1",  # 只提取一帧（第一帧）
                     "-c:v", "libwebp",  # 使用 WebP 编码器
@@ -1035,7 +1028,7 @@ class FfmpegProcessor:
                 ])
             else:
                 self.run_ffmpeg_command([
-                    self.ffmpeg_path, "-y",
+                    ffmpeg_path, "-y",
                     "-sseof", "-0.1",  # 从文件末尾前0.015秒开始（足够短以确保获取最后一帧）
                     "-i", video_path,
                     "-vframes", "1",  # 只提取一帧
@@ -1083,7 +1076,7 @@ class FfmpegProcessor:
                     print(f"⚠️ 警告：fade_out_length ({fade_out_length}) 太长，可能覆盖整个视频!")
             
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-hwaccel", "cuda",
                 "-i", video_path,
                 "-vf", ",".join(vf_parts)
@@ -1137,7 +1130,7 @@ class FfmpegProcessor:
         try:
             # Get width
             width_result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=width",
@@ -1147,7 +1140,7 @@ class FfmpegProcessor:
             
             # Get height
             height_result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=height",
@@ -1482,7 +1475,7 @@ class FfmpegProcessor:
                 print(f"      Final audio output: [audio_out]")
             
             # Build FFmpeg command with HIGH QUALITY settings
-            cmd = [self.ffmpeg_path, "-y"] + input_args + [
+            cmd = [ffmpeg_path, "-y"] + input_args + [
                 # NOTE: Removed "-hwaccel", "cuda" to avoid conflicts with filter_complex operations
                 # GPU acceleration is still used via h264_nvenc encoder
                 "-filter_complex", filter_complex,
@@ -1633,7 +1626,7 @@ class FfmpegProcessor:
         try:
             # Get image dimensions first
             probe_cmd = [
-                self.ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_streams", image_path
+                ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_streams", image_path
             ]
             result = self.run_ffmpeg_command(probe_cmd)
             
@@ -1661,7 +1654,7 @@ class FfmpegProcessor:
             
             # Extract left part (from 0 to vertical_line_position)
             left_cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", image_path,
                 "-vf", f"crop={left_width}:{height}:0:0",
                 left_image
@@ -1669,7 +1662,7 @@ class FfmpegProcessor:
             
             # Extract right part (from vertical_line_position to end)
             right_cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", image_path,
                 "-vf", f"crop={right_width}:{height}:{vertical_line_position}:0",
                 right_image
@@ -1692,7 +1685,7 @@ class FfmpegProcessor:
 
         video_out_path = config.get_temp_file(self.pid, "mp4")
         if len(video_paths) == 1:
-            safe_copy_overwrite(video_paths[0], video_out_path)
+            shutil.copy2(video_paths[0], video_out_path)
             return video_out_path
         
         try:
@@ -1704,7 +1697,7 @@ class FfmpegProcessor:
             
             # build ffmpeg concat command with re-encoding for consistency
             concat_cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_file_path,
@@ -1760,7 +1753,7 @@ class FfmpegProcessor:
                     f.write(f"file '{abs_path}'\n")
             
             concat_cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_file_path,
@@ -1884,7 +1877,7 @@ class FfmpegProcessor:
         
         try:    
             result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
@@ -1916,7 +1909,7 @@ class FfmpegProcessor:
         """Get the resolution (width, height) of an image or video file"""
         try:
             result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=width,height",
@@ -2239,7 +2232,7 @@ class FfmpegProcessor:
             
         output_path = config.get_temp_file(self.pid, "webp")
         self.run_ffmpeg_command([
-            self.ffmpeg_path, "-y",
+            ffmpeg_path, "-y",
             "-i", input_image,
             "-c:v", "libwebp",
             "-compression_level", "4",  # 压缩级别 (0-6, 4为平衡速度和质量)
@@ -2675,7 +2668,7 @@ class FfmpegProcessor:
             
             # Build FFmpeg command
             cmd = [
-                self.ffmpeg_path, "-y",
+                ffmpeg_path, "-y",
                 "-i", input_image_path,
                 "-vf", drawtext_filter,
                 "-q:v", "2",  # High quality for images
@@ -2872,7 +2865,7 @@ class FfmpegProcessor:
             print(f"🎬 Adjusting video speed, speed factor: {speed_factor:.3f}x")
             # Get original video framerate
             result = self.run_ffmpeg_command([
-                self.ffprobe_path,
+                ffprobe_path,
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=r_frame_rate",
