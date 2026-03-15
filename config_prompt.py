@@ -44,6 +44,8 @@ Image generation instruction:
 
 Video generation instruction: 
     *** Specail-Case 1: if start-image not have the speaker or host(Narrator) image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host(Narrator) is What we want in this case!!!,  Even json content below may has "speaker" or "host"(Narrator) description, only use these as guide to choose voice **
+    *** if the start-image has Realistic style person image, and the 'speaker' or 'host' field asks 'Cartoon/Pixar-Cartoon' style, then please show the transition animation of the person from realistic style to cartoon/pixar-cartoon style at the beginning of the video  **
+    *** if the start-image has 'Cartoon/Pixar Cartoon' style person image, and the 'speaker' or 'host' field asks 'Realistic' style, then please show the transition animation of the person from cartoon/pixar-cartoon style to realistic style at the beginning of the video  **
 
 --------------
 
@@ -52,7 +54,8 @@ Audio generation instruction:
     ** Format: gender_age_race, e.g. woman_middle-aged_chinese, man_young_caucasian, girl_chinese    
     ** 'voiceover' is the Host(Narrator)'s voiceover content (Host/Narrator-speaking)
     ** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
-    ** If the json content below has no 'speaking' & 'voiceover' content, the audio should be the host breifly speak about the content of the image (like main text message in the image) **
+    ** If the json content below has host (narrator) info, but no speaker,  and NO 'voiceover' content, then the host should breifly speak about the content of the image (like main text message in the image) **
+    ** If the json content below has NO 'speaker' & 'host' info, can add some smooth music (+ sound-effects) to lead audience read the visual content **
 
 --------------
 

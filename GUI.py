@@ -4156,8 +4156,9 @@ class WorkflowGUI:
         if speaking:
             content = self.llm_api.generate_text(config_prompt.CONCISE_SPEAKING_PROMPT, speaking)
             try:
+                content = "https://www.mindspringwellness.ca/ \n" + content.strip()
                 self.root.clipboard_clear()
-                self.root.clipboard_append(content.strip())
+                self.root.clipboard_append(content)
                 self.root.update()
             except Exception:
                 pass
@@ -4301,6 +4302,7 @@ class WorkflowGUI:
     HOST_PERSON_OPTIONS = [(cn, cn) for cn, _ in HOST_OPTIONS_DATA if cn != "不显示在画面中"]
     # Host 显示方式（与人物分离的单独字段）
     HOST_DISPLAY_OPTIONS = [
+        ("无 Host（纯场景）", "no-host"),  # 无 Host，纯背景+文字，视频生成会加音乐/音效
         ("不显示在画面中", "not-in-scene"),
         ("出现在画面角落", "corner"),
         ("出现在主角旁边", "beside-protagonist"),
@@ -4355,13 +4357,14 @@ class WorkflowGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Story Content")
-        dialog.geometry("1000x800")
+        sw, sh = int(1000 * 1.3), 800  # 加宽约30%
+        dialog.geometry(f"{sw}x{sh}")
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 1000) // 2
-        y = (dialog.winfo_screenheight() - 800) // 2
-        dialog.geometry(f"1000x800+{x}+{y}")
+        x = (dialog.winfo_screenwidth() - sw) // 2
+        y = (dialog.winfo_screenheight() - sh) // 2
+        dialog.geometry(f"{sw}x{sh}+{x}+{y}")
 
         ttk.Label(dialog, text="Story Content（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
         # Speaker / Host 选项（放在三个 checkbox 之前）
@@ -4387,14 +4390,16 @@ class WorkflowGUI:
         host_person_cb = ttk.Combobox(opts_frame, textvariable=host_person_var, values=[h[1] for h in self.HOST_PERSON_OPTIONS], state="readonly", width=10)
         host_person_cb.pack(side=tk.LEFT, padx=(0, 12))
         host_person_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
-        # 三个 checkbox：Speaking、Visual、Voiceover
+        # 四个 checkbox：Speaking、Visual、Voiceover、Actions
         include_speaking_chk_var = tk.BooleanVar(value=True)
         include_visual_chk_var = tk.BooleanVar(value=True)
         include_voiceover_chk_var = tk.BooleanVar(value=False)
+        include_actions_chk_var = tk.BooleanVar(value=True)
 
-        def _do_build(speaker_s, host_s, host_display_cn, host_person_cn, inc_speak, inc_vis, inc_vo):
-            """构建 JSON：host 始终含人物（供声音选择），host_display 控制是否显示在画面中"""
+        def _do_build(speaker_s, host_s, host_display_cn, host_person_cn, inc_speak, inc_vis, inc_vo, inc_act):
+            """构建 JSON：host_display=无 Host 时省略 host，纯场景（视频会加音乐/音效）"""
             scenes_data = []
+            is_no_host = (host_display_cn == "无 Host（纯场景）")
             h_style = host_s.replace(' ', '-') + "-style"
             host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == host_display_cn), "not-in-scene")
             h_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
@@ -4407,18 +4412,21 @@ class WorkflowGUI:
                         break
                 sp = f"{sp_prefix}{sp}" if sp else sp_prefix.rstrip(" |")
                 h_str = f"{h_style} | {h_en}"
-                item = {"actions": s.get("actions", "")}
+                item = {}
+                if inc_act:
+                    item["actions"] = s.get("actions", "")
                 if inc_speak:
                     item["speaker"] = sp
                     item["speaking"] = s.get("speaking", "")
                 if inc_vis:
                     item["visual"] = s.get("visual", "")
-                item["host"] = h_str
+                if not is_no_host:
+                    item["host"] = h_str
+                    item["host_display"] = host_display_en
                 if inc_vo:
                     item["voiceover"] = s.get("voiceover", "")
-                item["host_display"] = host_display_en
                 scenes_data.append(item)
-            return json.dumps({"scenes": scenes_data}, indent=2, ensure_ascii=False)
+            return json.dumps({"scenes": scenes_data}, indent=2, ensure_ascii=False), sp if inc_speak else None, h_str if inc_vo else None
 
         def _rebuild_all():
             speaker_lbl = speaker_style_var.get()
@@ -4445,26 +4453,32 @@ class WorkflowGUI:
                 if cn == host_person_lbl:
                     host_person_val = cn
                     break
-            new_text = _do_build(speaker_val, host_s_val, host_display_val, host_person_val, include_speaking_chk_var.get(), include_visual_chk_var.get(), include_voiceover_chk_var.get())
+            new_text, speaker, host = _do_build(speaker_val, host_s_val, host_display_val, host_person_val, include_speaking_chk_var.get(), include_visual_chk_var.get(), include_voiceover_chk_var.get(), include_actions_chk_var.get())
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", new_text)
             try:
                 self.root.clipboard_clear()
-                self.root.clipboard_append(config_prompt.GENERATION_INSTRUCTION + "\n\n" + new_text.strip())
+                if speaker:
+                    self.root.clipboard_append("Voice: " + speaker + "------\n\n"+config_prompt.GENERATION_INSTRUCTION + "\n\n" + new_text.strip())
+                elif host:
+                    self.root.clipboard_append("Voice: " + host + "------\nKeep Image frame unchanged------\n"+config_prompt.GENERATION_INSTRUCTION + "\n\n" + new_text.strip())
+                else:
+                    self.root.clipboard_append(config_prompt.GENERATION_INSTRUCTION + "\n\n" + new_text.strip())
                 self.root.update()
             except Exception:
                 pass
 
         ttk.Checkbutton(opts_frame, text="Speaking", variable=include_speaking_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(20, 20))
         ttk.Checkbutton(opts_frame, text="Visual", variable=include_visual_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Checkbutton(opts_frame, text="Voiceover", variable=include_voiceover_chk_var, command=_rebuild_all).pack(side=tk.LEFT)
+        ttk.Checkbutton(opts_frame, text="Voiceover", variable=include_voiceover_chk_var, command=_rebuild_all).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Checkbutton(opts_frame, text="Actions", variable=include_actions_chk_var, command=_rebuild_all).pack(side=tk.LEFT)
 
-        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=85, height=24)
+        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=110, height=24)
         text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         def _on_double_click_paste_hint(e):
             try:
                 self.root.clipboard_clear()
-                self.root.clipboard_append("generate according to the instructions inside source 'Pasted Text / 粘贴的文字'")
+                self.root.clipboard_append("generate the Story (may with Voiceover Narration) according to the instructions inside source 'Pasted Text / 粘贴的文字'")
                 self.root.update()
             except Exception:
                 pass
@@ -4498,7 +4512,7 @@ class WorkflowGUI:
             if not scenes_arr:
                 messagebox.showwarning("提示", "没有场景数据", parent=dialog)
                 return
-            self._open_story_scene_review_window(parsed)
+            self._open_story_scene_review_window(parsed, original_scenes=current_story_scenes)
 
         def on_save():
             raw = text_widget.get("1.0", tk.END).strip()
@@ -4533,21 +4547,47 @@ class WorkflowGUI:
                     sc["voiceover"] = str(row.get("voiceover", "")).strip()
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
+            story_dirty[0] = False
             dialog.destroy()
             messagebox.showinfo("成功", "已保存到当前故事场景")
+
+        story_dirty = [False]
+        story_initial_done = [False]
+
+        def _mark_story_dirty():
+            if story_initial_done[0]:
+                story_dirty[0] = True
+
+        def on_close():
+            if story_dirty[0]:
+                if messagebox.askyesno("未保存的修改", "有未保存的修改，是否保存到当前故事场景？", parent=dialog):
+                    on_save()
+                    return  # on_save 会 destroy
+            dialog.destroy()
 
         btn_f = ttk.Frame(dialog)
         btn_f.pack(pady=10)
         ttk.Button(btn_f, text="逐场景预览", command=on_review).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="保存", command=on_save).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_f, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
+        ttk.Button(btn_f, text="关闭", command=on_close).pack(side=tk.LEFT)
 
 
-    def _open_story_scene_review_window(self, payload):
-        """逐场景预览窗口：Prev/Next 浏览每个场景，显示 scene 的 JSON（用于视频生成）"""
+    def _open_story_scene_review_window(self, payload, original_scenes=None):
+        """逐场景预览窗口：Prev/Next 浏览每个场景，显示 scene 的 JSON（用于视频生成）
+        original_scenes: 原始场景列表（来自 workflow），用于合并缺失字段及保存回写"""
         scenes_arr = payload.get("scenes", [])
         if not scenes_arr:
             return
+        # 若有原始场景则合并：以原始为底，用 payload 覆盖，使每场景都有完整数据可编辑/恢复
+        if original_scenes and len(original_scenes) == len(scenes_arr):
+            merged = []
+            for i, orig in enumerate(original_scenes):
+                m = dict(orig) if isinstance(orig, dict) else {}
+                m.update(scenes_arr[i] if i < len(scenes_arr) else {})
+                merged.append(m)
+            scenes_arr = merged
+        else:
+            original_scenes = None  # 无法对应时不可保存回写
 
         def _parse_host_to_person(h):
             """从 host 字符串解析出 host_person（如 中国中年女性），仅当 host 为人物时"""
@@ -4573,7 +4613,7 @@ class WorkflowGUI:
                         return cn
             host_str = s.get("host", "")
             if not host_str or " | " not in host_str:
-                return "不显示在画面中"
+                return "无 Host（纯场景）"  # 无 host 字段即纯背景场景
             suffix = host_str.split(" | ", 1)[1].strip()
             if suffix in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
                 return "不显示在画面中"
@@ -4631,11 +4671,12 @@ class WorkflowGUI:
                 "include_speaking": "speaking" in s and bool(s.get("speaking")),
                 "include_visual": "visual" in s and bool(s.get("visual")),
                 "include_voiceover": "voiceover" in s and bool(s.get("voiceover")),
+                "include_actions": "actions" in s and bool(s.get("actions")),
             }
 
         review_win = tk.Toplevel(self.root)
         review_win.title("逐场景预览")
-        rw_w, rw_h = int(720 * 1.5), int(520 * 1.3)  # 加宽50%, 加高30%
+        rw_w, rw_h = int(720 * 1.5 * 1.3), int(520 * 1.3)  # 加宽约95%(50%+30%), 加高30%
         review_win.geometry(f"{rw_w}x{rw_h}")
         review_win.transient(self.root)
         review_win.grab_set()
@@ -4652,7 +4693,7 @@ class WorkflowGUI:
             if i not in overrides:
                 overrides[i] = _scene_defaults(scenes_arr[i]) if i < len(scenes_arr) else {
                     "host_style": "pixar-art cartoon", "host_display": "不显示在画面中", "host_person": "中国中年女性",
-                    "speaker_style": "realistic", "include_speaking": True, "include_visual": True, "include_voiceover": True,
+                    "speaker_style": "realistic", "include_speaking": True, "include_visual": True, "include_voiceover": True, "include_actions": True,
                 }
             return overrides[i]
 
@@ -4676,6 +4717,7 @@ class WorkflowGUI:
         include_speaking_var = tk.BooleanVar(value=first_def.get("include_speaking", True))
         include_visual_var = tk.BooleanVar(value=first_def.get("include_visual", True))
         include_voiceover_var = tk.BooleanVar(value=first_def.get("include_voiceover", True))
+        include_actions_var = tk.BooleanVar(value=first_def.get("include_actions", True))
 
         def _on_override_change(*args):
             o = _get_overrides()
@@ -4686,6 +4728,7 @@ class WorkflowGUI:
             o["include_speaking"] = include_speaking_var.get()
             o["include_visual"] = include_visual_var.get()
             o["include_voiceover"] = include_voiceover_var.get()
+            o["include_actions"] = include_actions_var.get()
             _refresh_display()
 
         ttk.Label(chk_f, text="Host style:").pack(side=tk.LEFT, padx=(0, 2))
@@ -4706,10 +4749,11 @@ class WorkflowGUI:
         speaker_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
         ttk.Checkbutton(chk_f, text="Speaking", variable=include_speaking_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Checkbutton(chk_f, text="Visual", variable=include_visual_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Checkbutton(chk_f, text="Voiceover", variable=include_voiceover_var, command=_on_override_change).pack(side=tk.LEFT)
+        ttk.Checkbutton(chk_f, text="Voiceover", variable=include_voiceover_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Checkbutton(chk_f, text="Actions", variable=include_actions_var, command=_on_override_change).pack(side=tk.LEFT)
 
         ttk.Label(review_win, text="当前场景（用于视频生成，变更选项后自动复制到剪贴板）", font=("TkDefaultFont", 9)).pack(anchor=tk.W, padx=15, pady=(5, 2))
-        text_widget = scrolledtext.ScrolledText(review_win, wrap=tk.WORD, width=88, height=20)
+        text_widget = scrolledtext.ScrolledText(review_win, wrap=tk.WORD, width=115, height=20)
         text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
 
         def _build_current_display():
@@ -4725,31 +4769,39 @@ class WorkflowGUI:
                 sp = f"{o['speaker_style']}-style | {sp}" if sp else f"{o['speaker_style']}-style | "
             host_style_val = o.get("host_style", "pixar-art cartoon")
             host_style_prefix = host_style_val.replace(" ", "-") + "-style"
-            is_not_show = (o.get("host_display") == "不显示在画面中")
+            is_no_host = (o.get("host_display") == "无 Host（纯场景）")
             host_person_cn = o.get("host_person", "中国中年女性")
             host_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
             host_str = f"{host_style_prefix} | {host_en}"
-            disp_scene = {"actions": scene_raw.get("actions", "")}
+            disp_scene = {}
+            if o.get("include_actions", True):
+                disp_scene["actions"] = scene_raw.get("actions", "")
             if o.get("include_speaking", True):
                 disp_scene["speaker"] = sp
                 disp_scene["speaking"] = scene_raw.get("speaking", "")
             if o["include_visual"]:
                 disp_scene["visual"] = scene_raw.get("visual", "")
-            disp_scene["host"] = host_str
+            if not is_no_host:
+                disp_scene["host"] = host_str
+                host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == o.get("host_display")), "not-in-scene")
+                disp_scene["host_display"] = host_display_en
             if o["include_voiceover"]:
                 disp_scene["voiceover"] = scene_raw.get("voiceover", "")
-            host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == o.get("host_display")), "not-in-scene")
-            disp_scene["host_display"] = host_display_en
-            return json.dumps(disp_scene, indent=2, ensure_ascii=False)
+            return json.dumps(disp_scene, indent=2, ensure_ascii=False), disp_scene.get("speaker", ""), disp_scene.get("host", "")
 
         def _copy_and_refresh():
-            txt = _build_current_display()
+            txt, speaker, host = _build_current_display()
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", txt)
             try:
                 txt = config_prompt.GENERATION_INSTRUCTION + "\n\n" + txt
                 self.root.clipboard_clear()
-                self.root.clipboard_append(txt.strip())
+                if speaker:
+                    self.root.clipboard_append("Voice: " + speaker + " ------\n\n"+txt.strip())
+                elif host:
+                    self.root.clipboard_append("Voice: " + host + " ------\nKeep Image frame unchanged------\n"+txt.strip())
+                else:
+                    self.root.clipboard_append(txt.strip())
                 self.root.update()
             except Exception:
                 pass
@@ -4766,6 +4818,7 @@ class WorkflowGUI:
             include_speaking_var.set(o.get("include_speaking", True))
             include_visual_var.set(o["include_visual"])
             include_voiceover_var.set(o["include_voiceover"])
+            include_actions_var.set(o.get("include_actions", True))
 
         def _go(delta):
             new_idx = idx_var[0] + delta
@@ -4777,9 +4830,65 @@ class WorkflowGUI:
 
         _copy_and_refresh()
 
+        def _on_save_scene():
+            """将当前场景的编辑内容存回原始场景列表"""
+            if not original_scenes:
+                messagebox.showwarning("提示", "无原始场景数据，无法保存", parent=review_win)
+                return
+            i = idx_var[0]
+            if i >= len(original_scenes):
+                return
+            try:
+                raw = text_widget.get("1.0", tk.END).strip()
+                row = json.loads(raw)
+            except json.JSONDecodeError as e:
+                messagebox.showerror("错误", f"JSON 解析失败: {e}", parent=review_win)
+                return
+            sc = original_scenes[i]
+            sp = str(row.get("speaker", "")).strip()
+            for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
+                if sp.startswith(prefix):
+                    sp = sp[len(prefix):].strip()
+                    break
+            if "speaker" in row:
+                sc["speaker"] = sp
+            if "speaking" in row:
+                sc["speaking"] = str(row.get("speaking", "")).strip()
+            if "actions" in row:
+                sc["actions"] = str(row.get("actions", "")).strip()
+            if "visual" in row:
+                sc["visual"] = str(row.get("visual", "")).strip()
+            if "voiceover" in row:
+                sc["voiceover"] = str(row.get("voiceover", "")).strip()
+            if i < len(scenes_arr):
+                scenes_arr[i].update(sc)
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            review_dirty[0] = False
+            messagebox.showinfo("成功", "已保存当前场景到原始场景列表", parent=review_win)
+
+        review_dirty = [False]
+        _suppress_dirty = [False]
+
+        def _mark_dirty():
+            if not _suppress_dirty[0]:
+                review_dirty[0] = True
+
+        def _on_close():
+            if review_dirty[0] and original_scenes:
+                if messagebox.askyesno("未保存的修改", "有未保存的修改，是否保存到原始场景？", parent=review_win):
+                    _on_save_scene()
+            review_win.destroy()
+
+        _on_override_change()  # 绑定后，后续改动会触发 _refresh_display，需标记 dirty
+        for v in [include_speaking_var, include_visual_var, include_voiceover_var, include_actions_var]:
+            v.trace_add("write", lambda *a: _mark_dirty())
+
         btn_f = ttk.Frame(review_win)
         btn_f.pack(pady=10)
-        ttk.Button(btn_f, text="关闭", command=review_win.destroy).pack(side=tk.LEFT)
+        if original_scenes:
+            ttk.Button(btn_f, text="保存", command=_on_save_scene).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="关闭", command=_on_close).pack(side=tk.LEFT)
 
         def _on_concise():
             """从逐场景预览当前场景取 voiceover 进行精简（非主编辑环境场景）"""

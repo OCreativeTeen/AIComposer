@@ -30,7 +30,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
 COUNSELING_REFERENCE_FILTER = """
 *** Role & Objective
-    As a "psychological counselor", for the content of a 'Case-Story' or a 'Analysis' on the psychological topic '{topic}' (provided below), 
+    As a "psychological counselor", for the content of psychological 'Case-Story' or 'Analysis' (provided below), 
     cross-reference it against all NotebookLM sources (but 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
     to identify upto 5 most relevant stories (or case-studies), and  upto 5 most relevant analysis (therapy techniques/research).
 
@@ -42,13 +42,13 @@ COUNSELING_REFERENCE_FILTER = """
 
     Step 2 — Semantic Filtering on Summary
         Scan material list and select the most relevant item based on this priority:
-            item must have full 'content' (of the story or analysis), and between this 'content' and the 'Case-Story' / 'Psychological Analysis':
+            item must have full 'content' (of the story or analysis), and between this 'content' and the provided 'Case-Story' / 'Psychological Analysis':
                 * have similar psychological patterns or life scenarios.
                 * have semantic correlation between story tags and document tags.
                 * have similar Topic-Category/Topic-Subtype matching.
 
 *** Input
-    1. "Case-Story" or "Psychological Analysis" on the psychological topic '{topic}' (Provided below)
+    1. "Psychological Case-Story" or "Psychological Analysis" (Provided below)
     2. "List of Reference" (with Summary & transcribed_file):
         check all selected sources in current notebooklmproject
 
@@ -80,7 +80,7 @@ COUNSELING_REFERENCE_FILTER = """
 COUNSELING_RAW_FROM_OBSERVATIONS = """
 ROLE
     ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
-    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt) on topic of '{topic}', and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
+    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt), and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
 
         * Transform the original rough or fragmented psychological observations into a structured / comprehensive coherent psychological analysis (with deepening, and expanding the original content).
 
@@ -181,7 +181,7 @@ OUTPUT:
 COUNSELING_RAW_FROM_STORY = """
 ROLE
     ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
-    ** Your task is to take the rough content of the case-story (provided in user-prompt) on topic of '{topic}'
+    ** Your task is to take the rough content of the case-story (provided in user-prompt)
         * Transform the psychological trauma case-story into a privacy-safe, emotionally intensified, cinematically powerful narrative (in {language}, and without direct psychological explanation).
             * Then, EXPAND, INTENSIFY, and DEEPEN the psychological conflict structure of the case-story, according to the reference stories
         * Make a clear, structured, and comprehensive psychological analysis (in {language}, with deepening, and expanding the original content).
@@ -663,8 +663,7 @@ OUTPUT FORMAT (JSON Array)
 
 COUNSELING_ANALYSIS_DEVELOPMENT = """
 *** Role:
-    ** 你是一位资深的心理咨询师，擅长“创伤知情关怀”与“系统家庭治疗”。
-    ** 你的核心洞察力（灵魂）基于用户提供的 {topic} 和 "core-insight" (在用户提供的 user-prompt 中，有 "core-insight" 章节)。
+    ** 你是一位资深的心理咨询师，你的核心洞察力（灵魂/core-insight) 在user-prompt 中的 "core-insight" 章节中。
     ** 你的任务：将 "raw case+analysis content" (provided in user-prompt) 转化为温暖、有电影感、且具有高度互动性的直播/沙龙式 心理案例分析 视频脚本。
 
 *** Core Task:
@@ -1206,7 +1205,7 @@ Content (discussion, story, or analysis) :
 NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF = """
 You are a psychological counselor and reflective storyteller.
 
-The content at the bottom of this prompt is a psychological case discussion or story analysis on topic of '{topic}'.
+The content at the bottom of this prompt is a psychological case discussion or story analysis.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
 
 However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
@@ -1322,7 +1321,7 @@ Content (discussion, story, or analysis) :
 NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE = """
 You are a psychological counselor and reflective storyteller.
 
-The content at the bottom of this prompt is a psychological case discussion or story analysis on topic of '{topic}'.
+The content at the bottom of this prompt is a psychological case discussion or story analysis.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
 
 However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
