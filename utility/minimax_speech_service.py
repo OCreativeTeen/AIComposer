@@ -131,13 +131,32 @@ class MinimaxSpeechService:
         return code
 
 
-    def get_voice(self, speaker: str, language: str) -> str:
+    def get_voice(self, speaker: str, language: str) -> dict:
+        """根据 speaker 字符串选择语音。支持新格式 gender/age/race | style 和旧格式。"""
+        person_part = config.parse_speaker_host_for_voice(speaker or "")
+        person_norm = (person_part or "").replace("/", "_").lower()
+        age_map = {"middle-aged": "mature", "middle_aged": "mature", "young": "young", "senior": "old"}
+        voice_key = None
+        for gender in ("woman", "man"):
+            for age_raw, age_v in age_map.items():
+                if f"{gender}_{age_raw}" in person_norm or f"{gender}/{age_raw.replace('_', '-')}" in person_part:
+                    voice_key = f"{gender}_{age_v}"
+                    break
+            if voice_key:
+                break
+        if not voice_key:
+            for k in ("girl", "boy", "teen_boy", "teen_girl"):
+                if k in person_norm or k.replace("_", "/") in (person_part or ""):
+                    voice_key = k
+                    break
         for voice in VOICES:
             if voice["language"] != language:
                 continue
-            if voice["name"].lower() in speaker.lower():
+            if voice_key and voice["name"] == voice_key:
                 return voice
-            if voice["voice"].lower() in speaker.lower():
+            if voice["name"].lower() in (speaker or "").lower():
+                return voice
+            if voice["voice"].lower() in (speaker or "").lower():
                 return voice
         return VOICES[0]
 

@@ -19,6 +19,74 @@ LANGUAGES = {
     "es": "Spanish",
 }
 
+# =============================================================================
+# Speaker/Host 角色与风格定义 - 供 GUI、downloader 等模块共享
+# 格式: gender/age/race | style（如 woman/middle-aged/chinese | realistic）
+# =============================================================================
+VISUAL_STYLE_OPTIONS = [
+    ("pixar-art cartoon + realistic", "真实卡通(皮克斯)"),
+    ("pixar-art cartoon", "卡通(皮克斯)"),
+    ("realistic", "真实形象"),
+    ("cartoon", "卡通(普通)"),
+]
+# 人物选项 (value: gender/age/race, label: 中文显示) - 与 GUI HOST_OPTIONS_DATA 一致
+CHARACTER_PERSON_OPTIONS = [
+    ("woman/young/chinese", "中国青年女性"),
+    ("woman/middle-aged/chinese", "中国中年女性"),
+    ("man/young/chinese", "中国青年男性"),
+    ("man/middle-aged/chinese", "中国中年男性"),
+    ("girl/chinese", "中国女孩"),
+    ("boy/chinese", "中国男孩"),
+    ("woman/senior/chinese", "中国老年女性"),
+    ("man/senior/chinese", "中国老年男性"),
+    ("woman/young/caucasian", "白人青年女性"),
+    ("man/young/caucasian", "白人青年男性"),
+    ("woman/middle-aged/caucasian", "白人中年女性"),
+    ("man/middle-aged/caucasian", "白人中年男性"),
+    ("girl/caucasian", "白人女孩"),
+    ("boy/caucasian", "白人男孩"),
+    ("woman/senior/caucasian", "白人老年女性"),
+    ("man/senior/caucasian", "白人老年男性"),
+]
+
+
+def _build_describe_host_options():
+    """场景描述 Host 组合选项：(value, label)。由 CHARACTER_PERSON_OPTIONS + SPEAKER_STYLE_OPTIONS 生成"""
+    opts = [("", "不包含 Host")]
+    for style_val, style_lbl in VISUAL_STYLE_OPTIONS:
+        for char_val, char_lbl in CHARACTER_PERSON_OPTIONS:
+            if char_val in ("woman/middle-aged/chinese", "man/middle-aged/chinese"):
+                from config import build_speaker_host_string  # 避免循环
+                combined = build_speaker_host_string(char_val, style_val)
+                short = char_lbl.replace("中国", "")
+                opts.append((combined, f"{style_lbl}-{short}"))
+    return opts
+
+
+DESCRIBE_HOST_OPTIONS = None  # 延迟初始化，见下
+
+
+def get_describe_host_options():
+    """获取场景描述 Host 选项列表"""
+    global DESCRIBE_HOST_OPTIONS
+    if DESCRIBE_HOST_OPTIONS is None:
+        DESCRIBE_HOST_OPTIONS = _build_describe_host_options()
+    return DESCRIBE_HOST_OPTIONS
+
+
+# =============================================================================
+# Host 显示方式 - 供 downloader、GUI 等模块共享
+# 旁白（Host）在画面中的出现方式：无/仅声音/有声音有图像（多种布局）
+# =============================================================================
+HOST_DISPLAY_OPTIONS_DOWNLOADER = [
+    ("无 Host", "no-host"),           # 无 Host：无声音无图像，主角表演陈述
+    ("有声音无图像", "voice-only"),    # 有声音无图像：画面以 Host 旁白为主，主角为辅
+    ("有声音有图像-左下角小图", "voice-image-bottom-left"),
+    ("有声音有图像-右下角小图", "voice-image-bottom-right"),
+    ("有声音有图像-左大右小", "voice-image-left-large-right-small"),
+    ("有声音有图像-右大左小", "voice-image-right-large-left-small"),
+]
+
 
 
 
@@ -286,7 +354,7 @@ def find_matched_files(folder, prefix, post, kernel=None):
 
 
 def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
-    best_matches = find_matched_files(folder, prefix, post, kernel)
+    best_matches = find_matched_files(folder, prefix, post, kernel) 
     if not best_matches or len(best_matches) == 0:
         return None
     
@@ -382,6 +450,97 @@ def get_background_music_path() -> str:
 def get_background_image_path() -> str:
     """获取背景文件路径"""
     return f"{BASE_PROGRAM_PATH}/background_image"
+
+
+def format_gender_age_race_slash(s):
+    """将 gender_age_race（下划线分隔）转为 gender/age/race（斜杠分隔），便于 AI 区分。"""
+    if not s or not isinstance(s, str):
+        return s or ""
+    s = s.strip()
+    if s in ("voice-only", "not-in-scene", "no-host"):
+        return s
+    return "/".join(s.split("_"))
+
+
+def parse_speaker_host_for_voice(s):
+    """从 speaker/host 字符串解析出 gender/age/race 部分（用于语音匹配）。支持新旧格式：
+    新格式: woman/middle-aged/chinese | realistic  -> woman/middle-aged/chinese
+    旧格式: realistic-style | woman_middle-aged_chinese -> woman_middle-aged_chinese"""
+    if not s or not isinstance(s, str):
+        return ""
+    s = s.strip()
+    if " | " not in s:
+        return s
+    before, after = s.split(" | ", 1)
+    before, after = before.strip(), after.strip()
+    if before.endswith("-style"):
+        return after
+    return before
+
+
+def parse_speaker_host_parts(s):
+    """从 speaker/host 字符串解析出 (person_part, style_part)。person 为斜杠格式；style 为 realistic/cartoon/pixar-art cartoon。
+    支持新旧格式：新格式 person | style；旧格式 style-prefix | person。"""
+    if not s or not isinstance(s, str):
+        return "", "realistic"
+    s = s.strip()
+    if " | " not in s:
+        return s, "realistic"
+    before, after = s.split(" | ", 1)
+    before, after = before.strip(), after.strip()
+    if before.endswith("-style"):
+        person_raw = after
+        style_raw = before
+        if style_raw == "realistic-style":
+            st = "realistic"
+        elif style_raw == "cartoon-style":
+            st = "cartoon"
+        elif style_raw == "pixar-art-cartoon-style":
+            st = "pixar-art cartoon"
+        else:
+            st = "realistic"
+        p = format_gender_age_race_slash(person_raw) if "_" in person_raw and "/" not in person_raw else person_raw
+        return p, st
+    person_part = before
+    style_map = {"realistic": "realistic", "cartoon": "cartoon", "pixar-art cartoon": "pixar-art cartoon", "pixar-art cartoon": "pixar-art cartoon"}
+    st = style_map.get(after, "realistic") if after in style_map else (after if after in ("realistic", "cartoon") else "realistic")
+    return person_part, st
+
+
+def build_speaker_host_string(gender_age_race, style):
+    """按新格式构建: gender/age/race | style。gender_age_race 可为下划线或斜杠格式。"""
+    g = format_gender_age_race_slash(gender_age_race) if "/" not in str(gender_age_race or "") else (gender_age_race or "")
+    style = (style or "").strip()
+    if not g:
+        return style or ""
+    if not style:
+        return g
+    return f"{g} | {style}"
+
+
+# 场景描述对话框的 Host 选项（中年中国男女 x 三风格）- 由共享定义生成
+DESCRIBE_HOST_OPTIONS = [("", "不包含 Host")] + [
+    (build_speaker_host_string(cv, sv), f"{sl}-{cl.replace('中国', '')}")
+    for sv, sl in VISUAL_STYLE_OPTIONS
+    for cv, cl in CHARACTER_PERSON_OPTIONS
+    if cv in ("woman/middle-aged/chinese", "man/middle-aged/chinese")
+]
+
+
+def get_fallback_background_image(channel, width, height):
+    """当 extract_frame 失败时，从当前 channel 的 background_image 目录取一张图作为备用。
+    参考 make_backgroud_medias 的选图逻辑，按横竖屏选 169_ 或 916_。"""
+    if not channel:
+        return None
+    prefix, kernel = fetch_resource_prefix("", [])
+    image_dir = get_background_image_path() + "/" + channel
+    if not os.path.isdir(image_dir):
+        return None
+    if width > height:
+        img = find_matched_file(image_dir, prefix + "/169_", "png", kernel)
+    else:
+        img = find_matched_file(image_dir, prefix + "/916_", "png", kernel)
+    return img
 
 
 def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor):

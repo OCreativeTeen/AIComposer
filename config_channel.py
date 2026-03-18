@@ -1053,11 +1053,113 @@ MV_ANALYSIS_DEVELOPMENT = """
 """
 
 
+NOTEBOOKLM_PROMPT__COUNSELING_TALK = """
+You are a professional podcast writer specializing in psychology and human behavior.
+And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+
+Your task is to transform the following source material into a **podcast-style conversation** between two hosts discussing the topic.
+
+The source text may contain theory, analysis, examples, and scattered ideas. Your job is to **restructure the ideas into a smooth, engaging podcast dialogue** that listeners can easily follow.
+
+The final output should feel like a real episode of a thoughtful psychology podcast.
+
+--------------------------------
+
+PODCAST FORMAT
+
+Two hosts:
+
+Host A — curious, reflective, often introduces real-life situations or questions.
+
+Host B — insightful, analytical, gradually explains the deeper psychological patterns.
+
+Both hosts should sound natural, thoughtful, and conversational.
+
+--------------------------------
+
+CONVERSATION FLOW
+
+Organize the discussion in a clear progression:
+
+1. Opening Hook  
+Start with a relatable observation, story, or everyday situation that captures attention.
+
+Example:
+- a confusing behavior in relationships
+- a common emotional pattern
+- a surprising reaction people have
+
+2. Shared Curiosity  
+The hosts begin exploring the question together.
+
+Host A often says things like:
+"I’ve noticed something interesting..."
+"Why do people do this?"
+
+3. Real-Life Examples  
+Introduce concrete situations or behaviors people experience.
+
+4. Emotional Layer  
+Discuss the feelings behind the behavior (fear, anxiety, attachment, avoidance, validation, etc.)
+
+5. Psychological Explanation  
+Gradually introduce the psychological theory or concept from the source material.
+
+Avoid sounding like a lecture. The explanation should emerge naturally through the conversation.
+
+6. Metaphors and Analogies  
+Use simple metaphors or vivid comparisons to help listeners understand the concept.
+
+7. Insight Moment  
+Lead toward a deeper realization or perspective shift.
+
+8. Closing Reflection  
+End with a thoughtful reflection, question, or takeaway for the listener.
+
+--------------------------------
+
+STYLE REQUIREMENTS
+
+The conversation should be:
+
+• natural and conversational  
+• thoughtful and reflective  
+• emotionally engaging  
+• intellectually stimulating  
+• easy to understand for a general audience
+
+Avoid academic language unless it is explained simply.
+
+Use storytelling, examples, and metaphors to make the ideas vivid.
+
+The hosts should sometimes pause, react, or build on each other's ideas.
+
+--------------------------------
+
+OUTPUT FORMAT
+(in {language} as the content in the user-prompt -- 中文)
+Write the result as a dialogue script.
+
+Host A: ...
+Host B: ...
+
+Include natural conversational rhythm.
+
+--------------------------------
+SOURCE TEXT:
+--------------------------------
+"""
+
 
 NOTEBOOKLM_PROMPT__COUNSELING_STORY = """
 You are a psychological counselor, narrative case writer, and reflective analyst.
+And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
-The content at the bottom of this prompt is a psychological discussion, counseling case, or emotional conflict analysis on topic of '{topic}'.
+The content at the bottom of this prompt is a psychological discussion, counseling case, or emotional conflict analysis.
 
 Your task is to transform the psychological insight into:
 
@@ -1192,18 +1294,15 @@ WRITING GUIDELINES
 • Make the analysis insightful and compassionate  
 • Do NOT mention the original case or NotebookLM sources  
 • Do NOT add anything outside the required structure
-
-
---------------------------------------------------
-Content (discussion, story, or analysis) :
---------------------------------------------------
-{content}
 """
 
 
 
 NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF = """
 You are a psychological counselor and reflective storyteller.
+And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
 The content at the bottom of this prompt is a psychological case discussion or story analysis.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
@@ -1308,23 +1407,18 @@ WRITING GUIDELINES
 • The story should feel natural and relatable.
 • Do NOT mention the original case or sources.
 • Do NOT add explanations outside the required structure.
-
-
---------------------------------------------------
-Content (discussion, story, or analysis) :
---------------------------------------------------
-{content}
 """
 
 
 
 NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE = """
 You are a psychological counselor and reflective storyteller.
+And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
 The content at the bottom of this prompt is a psychological case discussion or story analysis.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
-
-However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
 
 --------------------------------------------------
 STEP 1 — Identify the Psychological Core
@@ -1381,12 +1475,6 @@ WRITING GUIDELINES
 • The story should feel natural and relatable.
 • Do NOT mention the original case or sources.
 • Do NOT add explanations outside the required structure.
-
-
---------------------------------------------------
-Content (discussion, story, or analysis) :
---------------------------------------------------
-{content}
 """
 
 
@@ -1526,6 +1614,27 @@ BROADWAY_STORY = """
 """
 
 
+def get_channel_config(channel_id_or_key):
+    """
+    根据 channel_id 或 config key 获取频道配置。
+    支持 project config 中 channel 字段存 channel_id（多个 config key 可对应同一 channel_id）。
+    先按 config key 查找，否则按 channel_id 查找（优先返回 key==channel_id 的主配置）。
+    """
+    if not channel_id_or_key:
+        return {}
+    if channel_id_or_key in CHANNEL_CONFIG:
+        return CHANNEL_CONFIG[channel_id_or_key]
+    for key, cfg in CHANNEL_CONFIG.items():
+        if cfg.get("channel_id") == channel_id_or_key:
+            return cfg
+    return {}
+
+
+def get_channel_id(channel_id_or_key):
+    """返回用于路径、project config 的 channel_id。支持 config key 或 channel_id 输入。"""
+    cfg = get_channel_config(channel_id_or_key)
+    return cfg.get("channel_id", channel_id_or_key) if cfg else channel_id_or_key
+
 
 def get_channel_templates(channel):
     """
@@ -1534,12 +1643,13 @@ def get_channel_templates(channel):
     - templates_list: 模板列表，通常只有一项（单一 channel_template）
     - template_labels: 用于 UI 显示的标题列表
     """
-    if channel not in CHANNEL_CONFIG:
+    cfg = get_channel_config(channel)
+    if not cfg:
         return [], []
     # 优先 channel_template（单一列表），否则 channel_templates（兼容：可为单一列表或数组的数组，取第一个模板）
-    raw = CHANNEL_CONFIG[channel].get("channel_template")
+    raw = cfg.get("channel_template")
     if raw is None:
-        raw_list = CHANNEL_CONFIG[channel].get("channel_templates", [])
+        raw_list = cfg.get("channel_templates", [])
         if raw_list:
             first_el = raw_list[0]
             raw = first_el if isinstance(first_el, list) else raw_list
@@ -1568,11 +1678,13 @@ CHANNEL_CONFIG = {
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
+        "channel_id": "counseling",
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
@@ -1595,14 +1707,40 @@ CHANNEL_CONFIG = {
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
+    "counseling_talk": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_id": "counseling",
+        # NotebookLM Prompt 类型选择（可扩展）
+        "notebooklm_prompt_choices": [
+            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
+        ],
+        "channel_prompt": {
+            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "prompt_story_init": COUNSELING_INIT,
+            "prompt_program_debut": COUNSELING_DEBUT,
+        },
+        "channel_template": [
+            {
+                "name": "starting",
+                "mode": "raw_single",
+                "prompt": COUNSELING_CASE_SUMMARY
+            }
+        ],
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
+
     "counseling_full": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
+        "channel_id": "counseling",
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
@@ -1639,10 +1777,12 @@ CHANNEL_CONFIG = {
     "counseling_story": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
+        "channel_id": "counseling",
         "notebooklm_prompt_choices": [
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_STORY,
@@ -1680,6 +1820,7 @@ CHANNEL_CONFIG = {
     "mv": {
         "topic": "Musical myths and legends",
         "channel_name": "音乐故事",
+        "channel_id": "mv",
         "channel_prompt": {
             "prompt_program_raw": MV_RAW,
             "prompt_reference_filter": MV_REFERENCE_FILTER,
@@ -1707,6 +1848,7 @@ CHANNEL_CONFIG = {
     "broadway": {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
+        "channel_id": "broadway",
         "channel_prompt": {
             "prompt_program_raw": MV_RAW,
             "prompt_reference_filter": MV_REFERENCE_FILTER,

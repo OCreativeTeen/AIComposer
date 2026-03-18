@@ -1027,9 +1027,14 @@ class FfmpegProcessor:
                     frame_path
                 ])
             else:
+                # 用 duration 计算最后一帧位置，避免 -sseof -0.1 在极短视频上失败
+                duration = self.get_duration(video_path)
+                if duration < 0.2:  # 视频极短，直接取第一帧
+                    return self.extract_frame(video_path, True)
+                seek_pos = max(0, duration - 0.15)  # 末尾前 0.15 秒
                 self.run_ffmpeg_command([
                     ffmpeg_path, "-y",
-                    "-sseof", "-0.1",  # 从文件末尾前0.015秒开始（足够短以确保获取最后一帧）
+                    "-ss", str(seek_pos),
                     "-i", video_path,
                     "-vframes", "1",  # 只提取一帧
                     "-c:v", "libwebp",  # 使用 WebP 编码器

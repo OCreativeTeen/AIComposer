@@ -58,7 +58,7 @@ class MagicWorkflow:
         # Create project paths
         self.publish_path = config.PUBLISH_PATH + "/"
         self.project_path = config.get_project_path(pid)
-        self.channel_path = config.get_channel_path(channel)
+        self.channel_path = config.get_channel_path(config_channel.get_channel_id(channel))
         self.effect_path = config.get_effect_path()
 
         self.negative_prompt = NEGATIVE_PROMPT_OPTIONS[0]
@@ -767,7 +767,7 @@ class MagicWorkflow:
                 if not story_scene.get("narrator"):
                     story_scene["narrator"] = "woman_mature"
                 if not story_scene.get("caption"):
-                    story_scene["caption"] = config_channel.CHANNEL_CONFIG[self.channel]["channel_name"]
+                    story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
             self.save_scenes_to_json()
             return
 
@@ -778,7 +778,7 @@ class MagicWorkflow:
         topic = project_manager.PROJECT_CONFIG.get('topic_category', '') + "-" + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
         # 
         for story_index, element in enumerate(stories_template):
-            element["caption"] = config_channel.CHANNEL_CONFIG[channel]["channel_name"]
+            element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
             self.add_story_scene(story_index, element, True, is_append=False)
 
         for index, story_scene in enumerate(self.scenes):
@@ -1122,7 +1122,7 @@ class MagicWorkflow:
 
         sums = config.fetch_main_summary_content(self.pid, self.language)
         if not sums:
-            sums = "《"+config_channel.CHANNEL_CONFIG[self.channel]["channel_name"]+"》 "+self.title
+            sums = "《"+config_channel.get_channel_config(self.channel)["channel_name"]+"》 "+self.title
         sums = self.transcriber.chinese_convert(sums, self.language)
 
         final_srt_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.srt"
@@ -1133,10 +1133,10 @@ class MagicWorkflow:
                                      description=sums, 
                                      language=self.language, 
                                      script_path=final_srt_path, 
-                                     secret_key=config_channel.CHANNEL_CONFIG[self.channel]["channel_key"],
+                                     secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
                                      channel_id=self.channel,
-                                     categoryId=config_channel.CHANNEL_CONFIG[self.channel]["channel_category_id"][0], 
-                                     tags=config_channel.CHANNEL_CONFIG[self.channel]["channel_tags"], 
+                                     categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"][0], 
+                                     tags=config_channel.get_channel_config(self.channel)["channel_tags"], 
                                      privacy="unlisted")
         # save video_id to the project_manager.PROJECT_CONFIG
         try:
@@ -1167,17 +1167,17 @@ class MagicWorkflow:
 
         promo_video_path = f"{self.publish_path}/{title.replace(' ', '_')}_promo.mp4"
         if os.path.exists(promo_video_path):
-            channel_name = self.transcriber.chinese_convert(config_channel.CHANNEL_CONFIG[self.channel]["channel_name"], self.language)
+            channel_name = self.transcriber.chinese_convert(config_channel.get_channel_config(self.channel)["channel_name"], self.language)
             self.downloader.upload_video(promo_video_path, 
                             None, 
                             title=f"《{channel_name}》：{title}", 
                             description=channel_name,
                             language=self.language, 
                             script_path=None, 
-                            secret_key=config_channel.CHANNEL_CONFIG[self.channel]["channel_key"],
+                            secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
                             channel_id=self.channel,
-                            categoryId=config_channel.CHANNEL_CONFIG[self.channel]["channel_category_id"][0],
-                            tags=config_channel.CHANNEL_CONFIG[self.channel]["channel_tags"], 
+                            categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"][0],
+                            tags=config_channel.get_channel_config(self.channel)["channel_tags"], 
                             privacy="unlisted")
         return promo_video_path
 

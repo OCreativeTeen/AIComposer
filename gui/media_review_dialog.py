@@ -1074,7 +1074,9 @@ class AVReviewDialog:
         # 使用音频转录器转录
         audio_json = self.transcriber.transcribe_with_whisper(
             self.source_audio_path, 
-            self.workflow.language
+            self.workflow.language,
+            9,
+            22
         )
 
         if not audio_json or len(audio_json) == 0:
@@ -1318,7 +1320,7 @@ class AVReviewDialog:
 
 
         if selected_prompt_example_file:
-            channel_name = config_channel.CHANNEL_CONFIG[self.workflow.channel]["channel_name"]
+            channel_name = config_channel.get_channel_config(self.workflow.channel).get("channel_name", "")
             topic_type = project_manager.PROJECT_CONFIG.get('topic_category', '') + " - " + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
             # read file from media folder
             example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
@@ -1393,6 +1395,8 @@ class AVReviewDialog:
 
 
     def align_json_to_current_scene(self, json_array):
+        """将转录/输入的 JSON 片段对齐到场景结构。若 item 有 start/end（来自转录），
+        不继承 clip_audio/clip 等媒体字段，这些段需从 source_audio_path 切割得到。"""
         new_json_array = []
         for item in json_array:
             new_item = self.current_scene.copy()
@@ -1416,10 +1420,17 @@ class AVReviewDialog:
                 new_item["end"] = item["end"]
             if "caption" in item:
                 new_item["caption"] = item["caption"]
-            if "speaking" in item:
-                new_item["speaking"] = item["speaking"]
-            if "voiceover" in item:
-                new_item["voiceover"] = item["voiceover"]
+            # caption 只复制到当前 media_type 对应的 SPEAKING_KEY（speaking 或 voiceover 二选一），不复制到另一个
+            new_item[self.SPEAKING_KEY] = item.get(self.SPEAKING_KEY, item.get("caption", new_item.get(self.SPEAKING_KEY, "")))
+            if "start" in item and "end" in item:
+                # 转录产生的段：清除另一字段，避免继承 current_scene 的旧值
+                other_key = "voiceover" if self.SPEAKING_KEY == "speaking" else "speaking"
+                new_item[other_key] = ""
+            # 转录产生的段有 start/end，需从 source_audio_path 切割，不继承旧的 clip_audio
+            if "start" in item and "end" in item:
+                new_item.pop(self.SPEAKER_KEY+"_audio", None)
+                new_item.pop(self.media_type+"_audio", None)
+                new_item.pop(self.media_type, None)
             new_json_array.append(new_item)
         return new_json_array
 
@@ -1443,7 +1454,7 @@ class AVReviewDialog:
             return
 
         #self.audio_json, self.source_audio_path = self.parent.workflow.regenerate_audio(self.audio_json, self.workflow.language)
-        lang = "chinese" if self.workflow.language == "zh" or self.workflow.language == "tw" else "english"
+        lang = config.LANGUAGES[self.workflow.language]
         start_time = 0.0
         for json_item in self.audio_json:
             speaker = json_item[self.SPEAKER_KEY]
@@ -1695,10 +1706,12 @@ class AVReviewDialog:
             if v:
                 first_image = self.current_scene.get(self.image_field, None)
                 if not first_image or not os.path.exists(first_image):
-                    first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
-                    _refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
-                last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
-                _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
+                    first_image = self._extract_or_fallback_frame(v, True)
+                    if first_image:
+                        _refresh_scene_media(self.current_scene, self.image_field, ".webp", first_image)
+                last_image = self._extract_or_fallback_frame(v, False)
+                if last_image:
+                    _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
 
         elif self.clip_multiple_audio_changed():
             print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
@@ -1713,10 +1726,12 @@ class AVReviewDialog:
                 _refresh_scene_media(item, "clip", ".mp4", v)
                 first_image = item.get(self.image_field, None)
                 if  not first_image or not os.path.exists(first_image):
-                    first_image = self.workflow.ffmpeg_processor.extract_frame(v, True)
-                    _refresh_scene_media(item, self.image_field, ".webp", first_image)
-                last_image = self.workflow.ffmpeg_processor.extract_frame(v, False)
-                _refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
+                    first_image = self._extract_or_fallback_frame(v, True)
+                    if first_image:
+                        _refresh_scene_media(item, self.image_field, ".webp", first_image)
+                last_image = self._extract_or_fallback_frame(v, False)
+                if last_image:
+                    _refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
 
             print(f"✓ 音视频切割完成")
         else:
@@ -1728,6 +1743,30 @@ class AVReviewDialog:
         }
         self.close_dialog()
 
+
+    def _get_fallback_frame_image(self):
+        """extract_frame 失败时，从当前 channel 的 background_image 取备用图（参考 config.make_backgroud_medias）"""
+        try:
+            ch = project_manager.PROJECT_CONFIG.get("channel") if project_manager.PROJECT_CONFIG else None
+            ch = ch or getattr(self.workflow, "channel", None)
+            if not ch:
+                return None
+            fp = self.workflow.ffmpeg_processor
+            fallback = config.get_fallback_background_image(ch, fp.width, fp.height)
+            if fallback and os.path.exists(fallback):
+                return fp.to_webp(fallback)
+        except Exception as e:
+            print(f"⚠️ 获取备用图失败: {e}")
+        return None
+
+    def _extract_or_fallback_frame(self, video_path, first):
+        """提取帧，若失败则用 channel 备用图"""
+        img = self.workflow.ffmpeg_processor.extract_frame(video_path, first)
+        if not img:
+            img = self._get_fallback_frame_image()
+            if img:
+                print(f"ℹ️ 使用 channel 备用图替代 extract_frame 失败")
+        return img
 
     def clip_multiple_audio_changed(self):
         if self.media_type != "clip" or len(self.audio_json) == 1:

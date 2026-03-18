@@ -52,6 +52,67 @@ def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make
     return old_media_path, scene[media_type]
 
 
+def _load_soul_content(channel_path, soul_spec):
+    """将 soul 规格（文件路径或内联文本）转为实际内容。"""
+    if not soul_spec or not isinstance(soul_spec, str):
+        return ''
+    soul = soul_spec.strip()
+    if channel_path and soul and (soul.endswith('.md') or ('.' in soul and '\n' not in soul and len(soul) < 200)):
+        file_path = os.path.join(channel_path, soul)
+        if os.path.isfile(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+    return soul
+
+
+def get_soul_for_topic(channel_path, topic_category, topic_subtype, topics_data):
+    """从 topics_data 根据 topic_category/topic_subtype 查找 soul，支持文件路径或内联文本。
+
+    流程：先按 topic_category 找到主题，加载 category 级 soul；若有 topic_subtype 再加载 subtype 级 soul；
+    两者都存在时用 --- 分隔拼接返回；仅 category 存在则只返回 category；都不存在则返回空字符串。
+
+    Args:
+        channel_path: 频道目录路径（soul 文件所在目录）
+        topic_category: 主题分类
+        topic_subtype: 主题子类型
+        topics_data: 从 config.load_topics 返回的 topic_choices 列表
+
+    Returns:
+        加载的 soul 文本，未找到则返回空字符串
+    """
+    if not topics_data or not isinstance(topics_data, list):
+        return ''
+    topic_category = (topic_category or '').strip()
+    topic_subtype = (topic_subtype or '').strip()
+
+    for topic in topics_data:
+        if not isinstance(topic, dict):
+            continue
+        cat = topic.get('topic_category') or topic.get('category') or ''
+        if cat.strip() != topic_category:
+            continue
+        # 先加载 category 级 soul
+        cat_soul_spec = topic.get('soul') or ''
+        category_soul = _load_soul_content(channel_path, cat_soul_spec) if cat_soul_spec else ''
+        # 若有 subtype，再找并加载 subtype 级 soul
+        subtype_soul = ''
+        if topic_subtype:
+            for st in topic.get('topic_subtypes') or []:
+                if not isinstance(st, dict):
+                    continue
+                if (st.get('topic_subtype') or '').strip() == topic_subtype:
+                    sub_spec = st.get('soul') or ''
+                    subtype_soul = _load_soul_content(channel_path, sub_spec) if sub_spec else ''
+                    break
+        # 组合：两者都有则 category + --- + subtype；仅 category 有则只返回 category；都无则返回空
+        parts = [p for p in (category_soul, subtype_soul) if p]
+        return '\n---\n'.join(parts) if parts else ''
+
+    return ''  # 未找到匹配的 topic_category
+
 
 class ProjectConfigManager:
     """管理每个项目的配置文件 - 可重用的项目配置管理器"""
@@ -257,7 +318,7 @@ class ProgramInitEditorDialog:
         user_prompt = f"On topic of {topic}, the initial story script is : \n{self.init_story.get('raw_content','')}\n\n\n\
                       And the core-insight ('soul') is: \n{self.init_story.get('soul', '')}\n\n\n\
                       And the reference stories are: \n{self.init_story.get('reference_content',{}).get('story','')}"
-        system_prompt = config_channel.CHANNEL_CONFIG[self.init_story['channel']]['channel_prompt'].get('prompt_story_init', '')
+        system_prompt = config_channel.get_channel_config(self.init_story['channel']).get('channel_prompt', {}).get('prompt_story_init', '')
         system_prompt = system_prompt.format(language=LANGUAGES[self.init_story['language']], topic=topic)
         # 调用LLM生成内容
         generated_content = self.llm_api.generate_text(system_prompt, user_prompt)
@@ -338,7 +399,7 @@ class DebutEditorDialog:
                         And the reference analysises are: \n{ref_analysis}\n\n\n\
                         And the core-insight ('soul') is: \n{self.debut_story.get('soul')}"
 
-        system_prompt = config_channel.CHANNEL_CONFIG[self.debut_story['channel']]['channel_prompt'].get('prompt_program_debut', '')
+        system_prompt = config_channel.get_channel_config(self.debut_story['channel']).get('channel_prompt', {}).get('prompt_program_debut', '')
         system_prompt = system_prompt.format(
             language=LANGUAGES.get(self.debut_story['language']),
             topic=topic
@@ -659,40 +720,8 @@ class ProjectSelectionDialog:
 
     def build_soul(self, channel, topic_category, topic_subtype, topics_data):
         """从 topics_data 根据 topic_category/topic_subtype 加载并组合 soul（支持文件路径或内联文本）"""
-        if not channel or not topic_category or not topics_data:
-            return None
-        category_soul = ''
-        subtype_soul = ''
-        channel_path = config.get_channel_path(channel)
-        for topic in topics_data:
-            if topic.get('topic_category') == topic_category:
-                cs = topic.get('soul', '')
-                try:
-                    fp = os.path.join(channel_path, cs)
-                    if os.path.isfile(fp):
-                        with open(fp, 'r', encoding='utf-8') as f:
-                            category_soul = f.read()
-                    else:
-                        category_soul = cs if cs else ''
-                except (OSError, TypeError):
-                    category_soul = cs if isinstance(cs, str) else ''
-                if topic_subtype:
-                    for st in topic.get('topic_subtypes', []):
-                        if isinstance(st, dict) and st.get('topic_subtype') == topic_subtype:
-                            ss = st.get('soul', '')
-                            try:
-                                fp = os.path.join(channel_path, ss)
-                                if os.path.isfile(fp):
-                                    with open(fp, 'r', encoding='utf-8') as f:
-                                        subtype_soul = f.read()
-                                else:
-                                    subtype_soul = ss if ss else ''
-                            except (OSError, TypeError):
-                                subtype_soul = ss if isinstance(ss, str) else ''
-                            break
-                break
-        parts = [p for p in (category_soul, subtype_soul) if p]
-        return ' | '.join(parts) if parts else None
+        channel_path = config.get_channel_path(config_channel.get_channel_id(channel)) if channel else None
+        return get_soul_for_topic(channel_path, topic_category, topic_subtype, topics_data)
 
     def create_dialog(self, selection_only=False):
         """创建对话框
@@ -705,30 +734,23 @@ class ProjectSelectionDialog:
         self.dialog.geometry("1000x600")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
-        
-        # 使对话框居中
+
         self.dialog.update_idletasks()
         x = (self.dialog.winfo_screenwidth() // 2) - (1000 // 2)
         y = (self.dialog.winfo_screenheight() // 2) - (600 // 2)
         self.dialog.geometry(f"1000x600+{x}+{y}")
-        
-        # 主框架
+
         main_frame = ttk.Frame(self.dialog)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        # 标题
+
         title_label = ttk.Label(main_frame, text="选择要打开的项目", font=('TkDefaultFont', 14, 'bold'))
         title_label.pack(pady=(0, 20))
-        
-        # 项目列表框架
+
         list_frame = ttk.LabelFrame(main_frame, text="现有项目", padding=10)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
-        
-        # 创建Treeview显示项目列表
+
         columns = ('PID', '标题', '类型', '语言', '频道', '尺寸', '最后修改')
         self.project_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=12)
-        
-        # 设置列
         self.project_tree.heading('PID', text='项目ID')
         self.project_tree.heading('标题', text='标题')
         self.project_tree.heading('类型', text='项目类型')
@@ -736,8 +758,6 @@ class ProjectSelectionDialog:
         self.project_tree.heading('频道', text='频道')
         self.project_tree.heading('尺寸', text='尺寸')
         self.project_tree.heading('最后修改', text='最后修改时间')
-        
-        # 设置列宽
         self.project_tree.column('PID', width=120)
         self.project_tree.column('标题', width=150)
         self.project_tree.column('类型', width=80)
@@ -745,54 +765,35 @@ class ProjectSelectionDialog:
         self.project_tree.column('频道', width=100)
         self.project_tree.column('尺寸', width=80)
         self.project_tree.column('最后修改', width=130)
-        
-        # 滚动条
+
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.project_tree.yview)
         self.project_tree.configure(yscrollcommand=scrollbar.set)
-        
         self.project_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # 绑定双击事件
         self.project_tree.bind('<Double-1>', self.on_double_click)
-        
-        # 按钮框架
+
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
-        
-        # 左侧按钮（项目操作）
         left_buttons = ttk.Frame(button_frame)
         left_buttons.pack(side=tk.LEFT)
-        
         ttk.Button(left_buttons, text="刷新列表", command=self.refresh_projects).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(left_buttons, text="删除项目", command=self.delete_project).pack(side=tk.LEFT, padx=(0, 10))
-        
-        # 右侧按钮（对话框操作）
         right_buttons = ttk.Frame(button_frame)
         right_buttons.pack(side=tk.RIGHT)
-        
         ttk.Button(right_buttons, text="打开选中", command=self.open_selected).pack(side=tk.LEFT, padx=(0, 10))
         if not selection_only:
             ttk.Button(right_buttons, text="新建项目", command=self.create_new_project).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(right_buttons, text="取消", command=self.cancel).pack(side=tk.LEFT)
-        
-        # 加载项目列表
+
         self.refresh_projects()
-        
-        # 如果有项目，选中第一个
         if self.project_tree.get_children():
             self.project_tree.selection_set(self.project_tree.get_children()[0])
-    
 
     def refresh_projects(self):
         """刷新项目列表"""
-        # 清空现有项目
         for item in self.project_tree.get_children():
             self.project_tree.delete(item)
-        
-        # 加载项目
         projects = self.config_manager.list_projects()
-        
         for project in projects:
             self.project_tree.insert('', tk.END, values=(
                 project['pid'],
@@ -802,28 +803,25 @@ class ProjectSelectionDialog:
                 project['video_size'],
                 project['last_modified']
             ), tags=(project['config_file'],))
-    
+
     def on_double_click(self, event):
         """双击打开项目"""
         self.open_selected()
-    
+
     def delete_project(self):
         """删除选中的项目"""
         selection = self.project_tree.selection()
         if not selection:
             messagebox.showwarning("警告", "请选择要删除的项目")
             return
-        
         item = selection[0]
         config_file = self.project_tree.item(item)['tags'][0]
         pid = self.project_tree.item(item)['values'][0]
         title = self.project_tree.item(item)['values'][1]
-        
         if messagebox.askyesno("确认删除", f"确定要删除项目 '{pid} - {title}' 吗？\n\n这将删除项目配置文件，但不会删除项目数据。"):
             if self.config_manager.delete_project_config(config_file):
                 self.refresh_projects()
                 messagebox.showinfo("成功", "项目配置已删除")
-    
 
     def create_new_project(self):
         """创建新项目"""
@@ -1055,7 +1053,7 @@ class ProjectSelectionDialog:
             tags_var.set('')
             
             if self.story_result['channel']:
-                channel_path = config.get_channel_path(self.story_result['channel'])
+                channel_path = config.get_channel_path(config_channel.get_channel_id(self.story_result['channel']))
                 loaded_choices, loaded_categories, loaded_tags = config.load_topics(channel_path)
                 topics_data.extend(loaded_choices)
                 tag_choices_data.extend(loaded_tags)
@@ -1086,7 +1084,7 @@ class ProjectSelectionDialog:
         resolution_frame = ttk.Frame(main_frame)
         resolution_frame.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='w')
         
-        resolution_var = tk.StringVar(value="1080x1920")  # 默认横向
+        resolution_var = tk.StringVar(value="1920x1080")  # 默认横向
         ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
@@ -1211,7 +1209,7 @@ class ProjectSelectionDialog:
                 update_topic_subtype()
                 self.story_result['topic_subtype'] = sub
                 topic_subtype_combo.set(sub)
-                topic_choices, _, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+                topic_choices, _, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
                 self.story_result['soul'] = self.build_soul(self.story_result['channel'], cat, sub, topic_choices)
                 update_explanation()
             title = category_result.get('title', '')
@@ -1291,9 +1289,8 @@ class ProjectSelectionDialog:
                 raw_dialog.destroy()
             btn_f = ttk.Frame(frame)
             btn_f.pack(fill=tk.X, pady=(10, 0))
-            if _prefill:
-                ttk.Button(btn_f, text="直接使用", command=on_use_directly).pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_f, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_f, text="直接使用（不处理）", command=on_use_directly).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_f, text="用AI处理", command=on_ok).pack(side=tk.LEFT, padx=5)
             ttk.Button(btn_f, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
             raw_dialog.wait_window()
             if case_story_result[0] is None or not case_story_result[0]:
@@ -1315,14 +1312,14 @@ class ProjectSelectionDialog:
                 #update_buttons_state()
                 return
 
-            raw_story_system_prompt = config_channel.CHANNEL_CONFIG[self.story_result['channel']]['channel_prompt'].get('prompt_program_raw', '')
+            raw_story_system_prompt = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {}).get('prompt_program_raw', '')
             raw_story_system_prompt = raw_story_system_prompt.format( language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic=self.story_result['topic_category'] + "|" + self.story_result['topic_subtype'] )
 
             self.story_result['raw_content'] = self.llm_api.generate_text(raw_story_system_prompt, case_story_result[0])
             # raw_content 就绪后立即刷新按钮状态（参考收集应立即可用）
             update_buttons_state()
 
-            topic_choices, topic_categories, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+            topic_choices, topic_categories, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
 
             category_result = self.llm_api_local.generate_json(
                 config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic_choices=topic_choices),
@@ -1368,7 +1365,33 @@ class ProjectSelectionDialog:
         # RAW 生成后刷新按钮状态（参考收集、DEBUT 等需 raw_content 不为空）
         update_buttons_state()
 
-        edit_raw_btn.config(command=lambda: open_raw_editor())
+        def on_paste_from_clipboard():
+            """从剪贴板直接粘贴到 raw，不弹窗，不调 LLM"""
+            try:
+                s = new_project_dialog.clipboard_get()
+            except tk.TclError:
+                s = ''
+            if not s or not s.strip():
+                messagebox.showwarning("提示", "剪贴板为空或无可读内容", parent=new_project_dialog)
+                return
+            self.story_result['raw_content'] = s.strip()
+            update_previews()
+            update_buttons_state()
+
+        def on_raw_btn_click():
+            """RAW 按钮点击时先弹出选择菜单"""
+            menu = tk.Menu(new_project_dialog, tearoff=0)
+            menu.add_command(label="手动输入/粘贴 + AI处理", command=open_raw_editor)
+            menu.add_command(label="从剪贴板直接粘贴", command=on_paste_from_clipboard)
+            # 在按钮附近弹出菜单
+            try:
+                x = edit_raw_btn.winfo_rootx()
+                y = edit_raw_btn.winfo_rooty() + edit_raw_btn.winfo_height()
+                menu.post(x, y)
+            except tk.TclError:
+                menu.post(0, 0)
+
+        edit_raw_btn.config(command=on_raw_btn_click)
 
         # 若有预设 RAW（如从 NotebookLM Story 启动），预填并自动打开 RAW 编辑器
         _init_raw = getattr(self, 'initial_raw_content', None)
@@ -1377,7 +1400,7 @@ class ProjectSelectionDialog:
             update_previews()  # RAW 面板显示传入的内容
             update_buttons_state()
             try:
-                topic_choices, _, _ = config.load_topics(config.get_channel_path(self.story_result['channel']))
+                topic_choices, _, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
                 category_result = self.llm_api_local.generate_json(
                     config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(
                         language=LANGUAGES.get(self.story_result['language'], self.story_result['language']),
@@ -1430,7 +1453,7 @@ class ProjectSelectionDialog:
             _editor_open[0] = True
             update_buttons_state()
             try:
-                reference_filter_prompt = config_channel.CHANNEL_CONFIG[self.story_result['channel']].get('channel_prompt', {}).get('prompt_reference_filter', '')
+                reference_filter_prompt = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {}).get('prompt_reference_filter', '')
                 reference_filter_prompt = reference_filter_prompt.format(topic=self.story_result['topic_category'] + " - " + self.story_result['topic_subtype'])
 
                 editor = ReferenceEditorDialog(
@@ -1508,8 +1531,9 @@ class ProjectSelectionDialog:
             self.story_result['video_height'] = video_height
 
             self.story_result['action'] = 'new'
-
-            self.story_result['prompts'] = config_channel.CHANNEL_CONFIG[self.story_result['channel']]['channel_prompt']
+            # 保存 channel_id（多个 config key 可对应同一 channel_id）
+            self.story_result['channel'] = config_channel.get_channel_id(self.story_result['channel'])
+            self.story_result['prompts'] = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {})
 
             self.selected_config = self.story_result
 
@@ -1633,7 +1657,7 @@ def show_initial_choice_dialog(parent):
         yt_parent.lift()
         yt_parent.focus_force()
         # 不在此处 withdraw(parent)，否则 Windows 下可能导致所有窗口消失；等 YT 方法返回后再隐藏
-        channel_path = config.get_channel_path(ch)
+        channel_path = config.get_channel_path(config_channel.get_channel_id(ch))
         _yt_log = tk.Text(yt_parent, height=1)
         def _yt_log_fn(w, m):
             try:

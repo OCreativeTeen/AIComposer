@@ -16,6 +16,7 @@ import pygame
 import uuid
 from magic_workflow import MagicWorkflow
 import config
+import config_channel
 import config_prompt
 from PIL import Image, ImageTk
 from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media
@@ -205,7 +206,7 @@ class WorkflowGUI:
             # 初始化YouTube GUI管理器
             self.youtube_gui = MediaGUIManager(
                 self.root, 
-                config.get_channel_path(channel),  # 传入项目路径而不是workflow
+                config.get_channel_path(config_channel.get_channel_id(channel)),  # 传入项目路径（按 channel_id）
                 self.get_pid(), 
                 self.tasks, 
                 self.log_to_output, 
@@ -463,7 +464,7 @@ class WorkflowGUI:
 
             channel = project_manager.PROJECT_CONFIG.get('channel')
             scene_name = self.workflow.get_scene_by_index(self.current_scene_index)['name']
-            source_folder = f"{config.get_background_video_path()}/{channel}/{scene_name}"
+            source_folder = f"{config.get_background_video_path()}/{config_channel.get_channel_id(channel)}/{scene_name}"
 
             video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
             video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
@@ -3995,16 +3996,8 @@ class WorkflowGUI:
         main_f = ttk.Frame(opts_dialog, padding=15)
         main_f.pack(fill=tk.BOTH, expand=True)
 
-        # Host 选项：(value, display_label) -> value 格式 style + gender_age_race
-        HOST_OPTIONS = [
-            ("", "不包含 Host"),
-            ("realistic woman_middle-aged_chinese", "真实形象-中年女性"),
-            ("realistic man_middle-aged_chinese", "真实形象-中年男性"),
-            ("cartoon woman_middle-aged_chinese", "卡通(普通)-中年女性"),
-            ("cartoon man_middle-aged_chinese", "卡通(普通)-中年男性"),
-            ("pixar-art cartoon woman_middle-aged_chinese", "卡通(皮克斯)-中年女性"),
-            ("pixar-art cartoon man_middle-aged_chinese", "卡通(皮克斯)-中年男性"),
-        ]
+        # Host 选项：使用 config 共享定义
+        HOST_OPTIONS = config.DESCRIBE_HOST_OPTIONS
         host_values = [h[0] for h in HOST_OPTIONS]
         host_labels = [h[1] for h in HOST_OPTIONS]
 
@@ -4020,12 +4013,8 @@ class WorkflowGUI:
         ttk.Radiobutton(host_show_frame, text="显示在视频中（呈现为所选形象）", variable=host_show_var, value=True).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Radiobutton(host_show_frame, text="不显示（仅旁白）", variable=host_show_var, value=False).pack(side=tk.LEFT)
 
-        # Speaker 形象：说话角色呈现为真实/卡通/像素卡通
-        SPEAKER_STYLE_OPTIONS = [
-            ("realistic", "真实形象"),
-            ("cartoon", "卡通(普通)"),
-            ("pixar-art cartoon", "卡通(皮克斯)"),
-        ]
+        # Speaker 形象：使用 config 共享定义
+        SPEAKER_STYLE_OPTIONS = config.SPEAKER_STYLE_OPTIONS
         ttk.Label(main_f, text="Speaker 形象:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         speaker_style_var = tk.StringVar(value="真实形象")
         speaker_style_combo = ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in SPEAKER_STYLE_OPTIONS], state="readonly", width=28)
@@ -4156,9 +4145,8 @@ class WorkflowGUI:
         if speaking:
             content = self.llm_api.generate_text(config_prompt.CONCISE_SPEAKING_PROMPT, speaking)
             try:
-                content = "https://www.mindspringwellness.ca/ \n" + content.strip()
                 self.root.clipboard_clear()
-                self.root.clipboard_append(content)
+                self.root.clipboard_append("https://www.mindspringwellness.ca/ \n" + content.strip())
                 self.root.update()
             except Exception:
                 pass
@@ -4265,27 +4253,10 @@ class WorkflowGUI:
 
     HOST_NOT_SHOW = "不显示在画面中"
 
-    # Host 单一定义：(中文, 英文) - 英文格式: gender_age_race 便于 AI 解析
-    HOST_OPTIONS_DATA = [
-        ("不显示在画面中", "voice-only"),
-        ("中国中年女性", "woman_middle-aged_chinese"),
-        ("中国中年男性", "man_middle-aged_chinese"),
-        ("中国青年女性", "woman_young_chinese"),
-        ("中国青年男性", "man_young_chinese"),
-        ("中国老年女性", "woman_senior_chinese"),
-        ("中国老年男性", "man_senior_chinese"),
-        ("中国女孩", "girl_chinese"),
-        ("中国男孩", "boy_chinese"),
-        ("白人中年女性", "woman_middle-aged_caucasian"),
-        ("白人中年男性", "man_middle-aged_caucasian"),
-        ("白人青年女性", "woman_young_caucasian"),
-        ("白人青年男性", "man_young_caucasian"),
-        ("白人老年女性", "woman_senior_caucasian"),
-        ("白人老年男性", "man_senior_caucasian"),
-        ("白人女孩", "girl_caucasian"),
-        ("白人男孩", "boy_caucasian"),
-    ]
+    # Host 单一定义：从 config 共享 (中文, 英文) - 英文格式: gender/age/race
+    HOST_OPTIONS_DATA = [("不显示在画面中", "voice-only")] + [(lb, val) for val, lb in config.CHARACTER_PERSON_OPTIONS]
     HOST_EN_MAP = dict(HOST_OPTIONS_DATA)
+    HOST_EN_REVERSE = {v: k for k, v in HOST_EN_MAP.items()}  # 英文 -> 中文，用于解析 host/speaker
     # 旧格式 → 中文，用于解析历史 JSON（race-age-gender 格式）
     HOST_LEGACY_EN_TO_CN = {
         "chinese middle-aged woman": "中国中年女性", "chinese middle-aged man": "中国中年男性",
@@ -4310,8 +4281,8 @@ class WorkflowGUI:
         ("主持人先介绍，再由主角说话", "introduce-first"),
     ]
 
-    # Speaker/Host 风格选项（顺序：皮克斯第一）
-    SPEAKER_STYLE_OPTIONS = [("pixar-art cartoon", "卡通(皮克斯)"), ("realistic", "真实形象"), ("cartoon", "卡通(普通)")]
+    # Speaker/Host 风格选项：从 config 共享
+    SPEAKER_STYLE_OPTIONS = config.VISUAL_STYLE_OPTIONS
 
     def _build_and_show_story_content(self, current_story_scenes, speaker_style=None, host_style=None, host=None, host_show_image=False, include_visual=True, include_voiceover=True):
         """根据选项构建 Story Content JSON，选项写入每个 scene 元素（无 meta）"""
@@ -4320,24 +4291,18 @@ class WorkflowGUI:
         host_style = host_style or "pixar-art cartoon"
         host_cn = host or self.HOST_NOT_SHOW
         is_host_not_show = (host_cn == self.HOST_NOT_SHOW)
-        host_style_prefix = host_style.replace(' ', '-') + "-style"
         host_en_default = self.HOST_EN_MAP.get(host_cn, "voice-only")
-        style_prefix = f"{speaker_style.replace(' ', '-')}-style | "
 
         for s in current_story_scenes:
             sp = str(s.get("speaker", "")).strip()
-            # 去掉已有 "xxx-style | " 或 "xxx - , " 前缀再追加新 style
-            for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | ", "realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
-                if sp.startswith(prefix):
-                    sp = sp[len(prefix):].strip()
-                    break
-            sp = f"{style_prefix}{sp}" if sp else style_prefix.rstrip(" |")
+            sp_person, _ = config.parse_speaker_host_parts(sp)
+            sp = config.build_speaker_host_string(sp_person, speaker_style) if sp_person else config.build_speaker_host_string("woman/middle-aged/chinese", speaker_style)
 
             # host：始终用人物标识（供声音选择），不显示时由 host_display=not-in-scene 控制是否出现在画面
             # 当 host=不显示 时，默认用中国中年女性的声音
             host_person_for_voice = host_cn if not is_host_not_show else "中国中年女性"
-            host_en = self.HOST_EN_MAP.get(host_person_for_voice, "woman_middle-aged_chinese")
-            host_str = f"{host_style_prefix} | {host_en}"
+            host_en = self.HOST_EN_MAP.get(host_person_for_voice, "woman/middle-aged/chinese")
+            host_str = config.build_speaker_host_string(host_en, host_style)
 
             item = {
                 "speaker": sp,
@@ -4400,18 +4365,13 @@ class WorkflowGUI:
             """构建 JSON：host_display=无 Host 时省略 host，纯场景（视频会加音乐/音效）"""
             scenes_data = []
             is_no_host = (host_display_cn == "无 Host（纯场景）")
-            h_style = host_s.replace(' ', '-') + "-style"
             host_display_en = next((en for cn, en in self.HOST_DISPLAY_OPTIONS if cn == host_display_cn), "not-in-scene")
-            h_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
-            sp_prefix = f"{speaker_s.replace(' ', '-')}-style | "
+            h_en = self.HOST_EN_MAP.get(host_person_cn, "woman/middle-aged/chinese")
             for s in current_story_scenes:
                 sp = str(s.get("speaker", "")).strip()
-                for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | ", "realistic - , ", "cartoon - , ", "pixar-art cartoon - , "]:
-                    if sp.startswith(prefix):
-                        sp = sp[len(prefix):].strip()
-                        break
-                sp = f"{sp_prefix}{sp}" if sp else sp_prefix.rstrip(" |")
-                h_str = f"{h_style} | {h_en}"
+                sp_person, _ = config.parse_speaker_host_parts(sp)
+                sp = config.build_speaker_host_string(sp_person, speaker_s) if sp_person else config.build_speaker_host_string("woman/middle-aged/chinese", speaker_s)
+                h_str = config.build_speaker_host_string(h_en, host_s)
                 item = {}
                 if inc_act:
                     item["actions"] = s.get("actions", "")
@@ -4532,12 +4492,8 @@ class WorkflowGUI:
                     break
                 row = scenes_arr[i]
                 sp = str(row.get("speaker", "")).strip()
-                # 去掉 "xxx - , " 前缀再写回
-                for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
-                    if sp.startswith(prefix):
-                        sp = sp[len(prefix):].strip()
-                        break
-                sc["speaker"] = sp
+                sp_person, sp_style = config.parse_speaker_host_parts(sp)
+                sc["speaker"] = config.build_speaker_host_string(sp_person, sp_style) if sp_person else sp
                 sc["speaking"] = str(row.get("speaking", "")).strip()
                 sc["actions"] = str(row.get("actions", "")).strip()
                 # visual/voiceover 在 scene 中则更新，否则保留原值
@@ -4590,18 +4546,19 @@ class WorkflowGUI:
             original_scenes = None  # 无法对应时不可保存回写
 
         def _parse_host_to_person(h):
-            """从 host 字符串解析出 host_person（如 中国中年女性），仅当 host 为人物时"""
+            """从 host 字符串解析出 host_person（如 中国中年女性）。支持新格式 person | style 和旧格式 style | person"""
             if not h or " | " not in h:
                 return "中国中年女性"
-            suffix = h.split(" | ", 1)[1].strip()
-            if suffix in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
+            before, after = h.split(" | ", 1)
+            before, after = before.strip(), after.strip()
+            person_part = after if before.endswith("-style") else before
+            if person_part in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
                 return "中国中年女性"
-            for cn, en in self.HOST_EN_MAP.items():
-                if cn != self.HOST_NOT_SHOW and en == suffix:
-                    return cn
-            # 兼容旧格式 (race-age-gender)
-            if suffix in self.HOST_LEGACY_EN_TO_CN:
-                return self.HOST_LEGACY_EN_TO_CN[suffix]
+            person_slash = config.format_gender_age_race_slash(person_part) if "/" not in person_part else person_part
+            if person_slash in self.HOST_EN_REVERSE:
+                return self.HOST_EN_REVERSE[person_slash]
+            if person_part in self.HOST_LEGACY_EN_TO_CN:
+                return self.HOST_LEGACY_EN_TO_CN[person_part]
             return "中国中年女性"
 
         def _parse_host_display_from_scene(s):
@@ -4613,11 +4570,15 @@ class WorkflowGUI:
                         return cn
             host_str = s.get("host", "")
             if not host_str or " | " not in host_str:
-                return "无 Host（纯场景）"  # 无 host 字段即纯背景场景
-            suffix = host_str.split(" | ", 1)[1].strip()
-            if suffix in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
+                return "无 Host（纯场景）"
+            before, after = host_str.split(" | ", 1)
+            before, after = before.strip(), after.strip()
+            second_part = after if before.endswith("-style") else after
+            if second_part in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
                 return "不显示在画面中"
-            return "出现在画面角落"  # 有人物时默认
+            if before.endswith("-style") and after in ("voice-only", "not-in-scene", "not-in-scene & no voice"):
+                return "不显示在画面中"
+            return "出现在画面角落"
 
         def _parse_prefix_to_style(pref):
             """从 prefix 如 'realistic-style | ' 解析出 style 如 'realistic'"""
@@ -4633,17 +4594,20 @@ class WorkflowGUI:
             return "realistic"
 
         def _parse_host_style_from_host(host_str):
-            """从 host 字符串解析 host_style（声音风格）"""
+            """从 host 字符串解析 host_style。支持新格式 person | style 和旧格式 style | person"""
             if not host_str or " | " not in host_str:
                 return "pixar-art cartoon"
-            p = host_str.split(" | ", 1)[0].strip()
-            if p == "realistic-style":
+            before, after = host_str.split(" | ", 1)
+            before, after = before.strip(), after.strip()
+            if before.endswith("-style"):
+                if before == "realistic-style":
+                    return "realistic"
+                if before == "cartoon-style":
+                    return "cartoon"
+                if before == "pixar-art-cartoon-style":
+                    return "pixar-art cartoon"
                 return "realistic"
-            if p == "cartoon-style":
-                return "cartoon"
-            if p == "pixar-art-cartoon-style":
-                return "pixar-art cartoon"
-            return "pixar-art cartoon"
+            return after if after in ("realistic", "cartoon", "pixar-art cartoon") else "pixar-art cartoon"
 
         def _style_to_prefix(st):
             """style 如 'pixar-art cartoon' -> prefix 如 'pixar-art-cartoon-style'"""
@@ -4654,11 +4618,7 @@ class WorkflowGUI:
         def _scene_defaults(s):
             """从 scene 提取默认：host_style/host_display/host_person/speaker_style 等"""
             sp = str(s.get("speaker", "")).strip()
-            style = "realistic"
-            for pref in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
-                if sp.startswith(pref):
-                    style = _parse_prefix_to_style(pref)
-                    break
+            _, style = config.parse_speaker_host_parts(sp)
             host_str = s.get("host", "")
             host_person = _parse_host_to_person(host_str)
             host_display = _parse_host_display_from_scene(s)
@@ -4761,18 +4721,12 @@ class WorkflowGUI:
             scene_raw = scenes_arr[i] if i < len(scenes_arr) else {}
             o = _get_overrides()
             sp = str(scene_raw.get("speaker", "")).strip()
-            for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
-                if sp.startswith(prefix):
-                    sp = sp[len(prefix):].strip()
-                    break
-            if o["speaker_style"]:
-                sp = f"{o['speaker_style']}-style | {sp}" if sp else f"{o['speaker_style']}-style | "
-            host_style_val = o.get("host_style", "pixar-art cartoon")
-            host_style_prefix = host_style_val.replace(" ", "-") + "-style"
+            sp_person, _ = config.parse_speaker_host_parts(sp)
+            sp = config.build_speaker_host_string(sp_person or "woman/middle-aged/chinese", o.get("speaker_style", "realistic"))
             is_no_host = (o.get("host_display") == "无 Host（纯场景）")
             host_person_cn = o.get("host_person", "中国中年女性")
-            host_en = self.HOST_EN_MAP.get(host_person_cn, "woman_middle-aged_chinese")
-            host_str = f"{host_style_prefix} | {host_en}"
+            host_en = self.HOST_EN_MAP.get(host_person_cn, "woman/middle-aged/chinese")
+            host_str = config.build_speaker_host_string(host_en, o.get("host_style", "pixar-art cartoon"))
             disp_scene = {}
             if o.get("include_actions", True):
                 disp_scene["actions"] = scene_raw.get("actions", "")
@@ -4846,10 +4800,8 @@ class WorkflowGUI:
                 return
             sc = original_scenes[i]
             sp = str(row.get("speaker", "")).strip()
-            for prefix in ["realistic-style | ", "cartoon-style | ", "pixar-art-cartoon-style | "]:
-                if sp.startswith(prefix):
-                    sp = sp[len(prefix):].strip()
-                    break
+            sp_person, sp_style = config.parse_speaker_host_parts(sp)
+            sp = config.build_speaker_host_string(sp_person, sp_style) if sp_person else sp
             if "speaker" in row:
                 sc["speaker"] = sp
             if "speaking" in row:
@@ -4890,19 +4842,24 @@ class WorkflowGUI:
             ttk.Button(btn_f, text="保存", command=_on_save_scene).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_f, text="关闭", command=_on_close).pack(side=tk.LEFT)
 
-        def _on_concise():
-            """从逐场景预览当前场景取 voiceover 进行精简（非主编辑环境场景）"""
+        def _on_concise(speak_field):
+            """从逐场景预览当前场景取 speak_field 进行精简（非主编辑环境场景）"""
             i = idx_var[0]
             if 0 <= i < len(scenes_arr):
-                vo = (scenes_arr[i].get("voiceover", "") or "").strip()
+                vo = (scenes_arr[i].get(speak_field, "") or "").strip()
                 if not vo:
-                    messagebox.showwarning("提示", "当前场景无 voiceover 内容", parent=review_win)
+                    messagebox.showwarning("提示", f"当前场景无 {speak_field} 内容", parent=review_win)
                     return
-                self.concise_scene_speak("voiceover", content=vo)
+                vo = self.concise_scene_speak(speak_field, content=vo)
+                # put vo value back to scenes_arr[i][speak_field]
+                scenes_arr[i][speak_field] = vo
+                # refresh the review window
+                _refresh_display()
             else:
                 messagebox.showwarning("提示", "无当前场景", parent=review_win)
 
-        ttk.Button(btn_f, text="讲解", command=_on_concise).pack(side=tk.LEFT)
+        ttk.Button(btn_f, text="讲解", command=lambda: _on_concise("voiceover")).pack(side=tk.LEFT)
+        ttk.Button(btn_f, text="精简", command=lambda: _on_concise("speaking")).pack(side=tk.LEFT)
 
 
     def current_story_content(self):

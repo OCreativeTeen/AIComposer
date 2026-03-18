@@ -34,7 +34,7 @@ class AudioTranscriber:
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
 
-    def transcribe_with_whisper(self, audio_path, language) -> List[Dict[str, Any]]:
+    def transcribe_with_whisper(self, audio_path, language, min_duration, max_duration) -> List[Dict[str, Any]]:
         """
         api call to do transcribe audio, curl like:
         curl -X POST "http://10.0.0.231:9001/transcribe" -F "audio_file=@/path/to/your/audio.mp3" -F "language=en"
@@ -69,7 +69,7 @@ class AudioTranscriber:
         try:
             with open(audio_path, 'rb') as f:
                 files = {'audio_file': f}
-                data = {'language': lang}
+                data = {'language': lang, 'min_duration': min_duration, 'max_duration': max_duration}
                 response = requests.post(self.api_url, files=files, data=data, timeout=600)
             
             if response.status_code == 200:
