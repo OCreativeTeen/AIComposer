@@ -545,7 +545,7 @@ class WorkflowGUI:
                     initialdir=download_path,
                     filetypes=[("视频文件", "*"+media_post)]
                 )
-                if not media_path:
+                if not media_path: 
                     return
                 rename = media_path
 

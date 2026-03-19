@@ -355,7 +355,7 @@ class MagicWorkflow:
         if introduction_story and introduction_story.strip() != "":
             if introduction_story.endswith(".mp3") or introduction_story.endswith(".wav"):
                 introduction_path = f"{config.get_project_path(self.pid)}/{Path(introduction_story).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh")
+                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", 9, 22)
                 write_json(introduction_path, script_json)  
 
             if not introduction_story:
@@ -376,7 +376,7 @@ class MagicWorkflow:
         if previous_dialogue and previous_dialogue.strip() != "":
             if previous_dialogue.endswith(".mp3") or previous_dialogue.endswith(".wav"):
                 previous_path = f"{config.get_project_path(self.pid)}/{Path(previous_dialogue).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh")
+                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", 9, 22)
                 write_json(previous_path, script_json)  
 
             if not previous_dialogue:

@@ -1384,15 +1384,30 @@ The story should indirectly illustrate the psychological truth.
 OUTPUT FORMAT (STRICT)
 --------------------------------------------------
 
-[Title] (in {language})
+[Title] (in English)
 A short title capturing the psychological theme.
 
-[Heart Message] (in {language})
+[Heart Message] (in English)
 2–4 short sentences.
 Warm, calm, reflective tone.
 Express the psychological insight as gentle life guidance.
 
-[Psychological Micro-Story] (in {language})
+[Psychological Micro-Story] (in English)
+5–8 sentences.
+A simple, human story that indirectly illustrates the message.
+Often involving a small life moment, a quiet realization, or a child/adult interaction.
+
+++++++++++++++++++
+
+[Title] (in Chinese)
+A short title capturing the psychological theme.
+
+[Heart Message] (in Chinese)
+2–4 short sentences.
+Warm, calm, reflective tone.
+Express the psychological insight as gentle life guidance.
+
+[Psychological Micro-Story] (in Chinese)
 5–8 sentences.
 A simple, human story that indirectly illustrates the message.
 Often involving a small life moment, a quiet realization, or a child/adult interaction.
@@ -1452,18 +1467,34 @@ The story should indirectly illustrate the psychological truth.
 OUTPUT FORMAT (STRICT)
 --------------------------------------------------
 
-[Title] (in {language})
+[Title] (in English)
 A short title capturing the psychological theme.
 
-[Heart Message] (in {language})
+[Heart Message] (in English)
 2–4 short sentences.
 Warm, calm, reflective tone.
 Express the psychological insight as gentle life guidance.
 
-[Psychological Micro-Story] (in {language})
+[Psychological Micro-Story] (in English)
 5–8 sentences.
 A simple, human story that indirectly illustrates the message.
 Often involving a small life moment, a quiet realization, or a child/adult interaction.
+
++++++++++++++++++
+
+[Title] (in Chinese)
+A short title capturing the psychological theme.
+
+[Heart Message] (in Chinese)
+2–4 short sentences.
+Warm, calm, reflective tone.
+Express the psychological insight as gentle life guidance.
+
+[Psychological Micro-Story] (in Chinese)
+5–8 sentences.
+A simple, human story that indirectly illustrates the message.
+Often involving a small life moment, a quiet realization, or a child/adult interaction.
+
 
 --------------------------------------------------
 WRITING GUIDELINES
