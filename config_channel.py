@@ -1377,40 +1377,10 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
 1) A short title
 2) A heart message
 3) A micro-story
+4) A 9 seconds concise caption speaking (based on 2 & 3)
 
 The story should indirectly illustrate the psychological truth.
 
---------------------------------------------------
-OUTPUT FORMAT (STRICT)
---------------------------------------------------
-
-[Title] (in English)
-A short title capturing the psychological theme.
-
-[Heart Message] (in English)
-2–4 short sentences.
-Warm, calm, reflective tone.
-Express the psychological insight as gentle life guidance.
-
-[Psychological Micro-Story] (in English)
-5–8 sentences.
-A simple, human story that indirectly illustrates the message.
-Often involving a small life moment, a quiet realization, or a child/adult interaction.
-
-++++++++++++++++++
-
-[Title] (in Chinese)
-A short title capturing the psychological theme.
-
-[Heart Message] (in Chinese)
-2–4 short sentences.
-Warm, calm, reflective tone.
-Express the psychological insight as gentle life guidance.
-
-[Psychological Micro-Story] (in Chinese)
-5–8 sentences.
-A simple, human story that indirectly illustrates the message.
-Often involving a small life moment, a quiet realization, or a child/adult interaction.
 
 --------------------------------------------------
 WRITING GUIDELINES
@@ -1422,6 +1392,30 @@ WRITING GUIDELINES
 • The story should feel natural and relatable.
 • Do NOT mention the original case or sources.
 • Do NOT add explanations outside the required structure.
+
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------------------------
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+    {{
+        "english": {{
+            "title": "A short title capturing the psychological theme. In English.",
+            "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+            "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
+            "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In English."
+        }}  ,
+        "chinese": {{    
+            "title": "A short title capturing the psychological theme. In Chinese.",
+            "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
+            "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
+            "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese."
+        }}
+    }}
+
 """
 
 
@@ -1460,40 +1454,9 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
 1) A short title
 2) A heart message
 3) A micro-story
+4) A 9 seconds concise caption speaking (based on 2 & 3)
 
 The story should indirectly illustrate the psychological truth.
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT)
---------------------------------------------------
-
-[Title] (in English)
-A short title capturing the psychological theme.
-
-[Heart Message] (in English)
-2–4 short sentences.
-Warm, calm, reflective tone.
-Express the psychological insight as gentle life guidance.
-
-[Psychological Micro-Story] (in English)
-5–8 sentences.
-A simple, human story that indirectly illustrates the message.
-Often involving a small life moment, a quiet realization, or a child/adult interaction.
-
-+++++++++++++++++
-
-[Title] (in Chinese)
-A short title capturing the psychological theme.
-
-[Heart Message] (in Chinese)
-2–4 short sentences.
-Warm, calm, reflective tone.
-Express the psychological insight as gentle life guidance.
-
-[Psychological Micro-Story] (in Chinese)
-5–8 sentences.
-A simple, human story that indirectly illustrates the message.
-Often involving a small life moment, a quiet realization, or a child/adult interaction.
 
 
 --------------------------------------------------
@@ -1506,6 +1469,26 @@ WRITING GUIDELINES
 • The story should feel natural and relatable.
 • Do NOT mention the original case or sources.
 • Do NOT add explanations outside the required structure.
+
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": {{
+        "title": "A short title capturing the psychological theme. In English.",
+        "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+        "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
+        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In English."
+    }}  ,
+    "chinese": {{    
+        "title": "A short title capturing the psychological theme. In Chinese.",
+        "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
+        "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
+        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese."
+    }}
+}}
+
 """
 
 

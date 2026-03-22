@@ -378,7 +378,7 @@ def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
 # 基础路径配置
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
-INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input_mp4"
+INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"

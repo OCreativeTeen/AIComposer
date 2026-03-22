@@ -22,7 +22,7 @@ from google.oauth2.credentials import Credentials
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
-from utility.file_util import write_json, safe_copy_overwrite, safe_remove
+from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json
 from gui.choice_dialog import askchoice
 import project_manager
         
@@ -33,7 +33,47 @@ import tkinter.messagebox as messagebox
 import tkinter.scrolledtext as scrolledtext
 import tkinter.simpledialog as simpledialog
 
-        
+
+def _treeview_item_tags_safe(tree, item):
+    """读取 Treeview 行的 tags。populate_tree 会删行重建，旧 iid 失效，必须先 exists。"""
+    try:
+        if tree.exists(item):
+            return tree.item(item, "tags")
+    except tk.TclError:
+        pass
+    return ()
+
+
+# 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
+_STORY_LANG_BRANCH_KEYS = ("concise_speaking", "heart_message", "psychological_micro_story")
+
+
+def _normalize_channel_videos_story_field_to_str(videos):
+    """将每条 video['story'] 规范为 str（JSON 字符串），不把结构直接挂在 dict 上。"""
+    if not videos:
+        return
+    for v in videos:
+        if not isinstance(v, dict):
+            continue
+        s = v.get("story")
+        if s is None:
+            continue
+        if isinstance(s, (dict, list)):
+            v["story"] = json.dumps(s, ensure_ascii=False, indent=2)
+
+
+def _lang_story_dict_for_editor(story_json):
+    """当前语言分支下供编辑的 3 字段对象。"""
+    out = {}
+    if isinstance(story_json, dict):
+        for k in _STORY_LANG_BRANCH_KEYS:
+            val = story_json.get(k)
+            out[k] = "" if val is None else str(val)
+    else:
+        for k in _STORY_LANG_BRANCH_KEYS:
+            out[k] = ""
+    return out
+
 
 class MediaDownloader:
 
@@ -730,7 +770,7 @@ class MediaDownloader:
             return "untitled"
         
         # 将空格替换为下划线
-        safe_title = title.replace(' ', '_')
+        safe_title = title.replace(' ', '_').replace('.', '_')
         
         # 移除 Windows 和 Unix 系统不允许的字符
         # Windows: < > : " / \ | ? *
@@ -838,6 +878,7 @@ class MediaDownloader:
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
+                    _normalize_channel_videos_story_field_to_str(self.channel_videos)
                     self.latest_date = max(
                                             (
                                                 datetime.strptime(v["upload_date"], "%Y%m%d")
@@ -1395,6 +1436,7 @@ class MediaGUIManager:
         # 读出 list：同 title 只保留一条，保留 content + topic_category + topic_subtype 最完整（内容最多）的那条；每条删掉 summary；写回 JSON
         with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
             channel_videos = json.load(f)
+        _normalize_channel_videos_story_field_to_str(channel_videos)
 
         # filter out the videos that have content length less than 100
         channel_videos = [v for v in channel_videos if len(v.get('content', '')) < 180000]
@@ -1606,7 +1648,7 @@ class MediaGUIManager:
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
         dialog.title(f"热门视频管理 - {self.downloader.channel_name}")
-        dialog.geometry("1500x650")
+        dialog.geometry("1600x650")
         dialog.transient(self.root)
         
         # 顶部信息和控制栏
@@ -1708,7 +1750,7 @@ class MediaGUIManager:
                 return
             selected_urls = set()
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
                 if item_tags:
                     url = item_tags[0]
                     selected_urls.add(url)
@@ -1720,7 +1762,7 @@ class MediaGUIManager:
             populate_tree()
             # 重新选中之前选中的行（按 url 匹配）
             for item in tree.get_children():
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
                 if item_tags and item_tags[0] in selected_urls:
                     tree.selection_add(item)
         status_combo.bind('<<ComboboxSelected>>', on_status_selected)
@@ -1736,7 +1778,7 @@ class MediaGUIManager:
             # 在 title 和 content 中搜索关键字，匹配则选中
             matched_count = 0
             for item in tree.get_children():
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
                 if not item_tags:
                     continue
                 url = item_tags[0]
@@ -1793,17 +1835,17 @@ class MediaGUIManager:
         tree.heading("tags", text="问题标签")
         tree.heading("mark", text="标注")
         
-        tree.column("#0", width=40, anchor="center")
-        tree.column("title", width=380, anchor="w")
-        tree.column("views", width=60, anchor="e")
-        tree.column("duration", width=40, anchor="center")
-        tree.column("upload_date", width=60, anchor="center")
-        tree.column("status", width=120, anchor="center")
-        tree.column("summary", width=30, anchor="center")
-        tree.column("story", width=30, anchor="center")
-        tree.column("topic_category", width=120, anchor="w")
-        tree.column("topic_subtype", width=160, anchor="w")
-        tree.column("tags", width=120, anchor="w")
+        tree.column("#0", width=30, anchor="center")
+        tree.column("title", width=360, anchor="w")
+        tree.column("views", width=50, anchor="e")
+        tree.column("duration", width=30, anchor="center")
+        tree.column("upload_date", width=50, anchor="center")
+        tree.column("status", width=110, anchor="center")
+        tree.column("summary", width=20, anchor="center")
+        tree.column("story", width=20, anchor="center")
+        tree.column("topic_category", width=150, anchor="w")
+        tree.column("topic_subtype", width=100, anchor="w")
+        tree.column("tags", width=80, anchor="w")
         tree.column("mark", width=20, anchor="center")
         
 
@@ -1993,7 +2035,7 @@ class MediaGUIManager:
             files_to_delete = []
             
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
                 if not item_tags:
                     continue
                 
@@ -2077,11 +2119,15 @@ class MediaGUIManager:
             if item not in tree.selection():
                 tree.selection_set(item)
             
-            item_tags = tree.item(item, "tags")
+            item_tags = _treeview_item_tags_safe(tree, item)
+            if not item_tags:
+                return
             video_detail = self.get_video_detail(item_tags[0])
             if not video_detail:
                 return
 
+            # get index of the selected item & save to a variable
+            selected_index = tree.item(item, "text").split(".")[0]
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
@@ -2108,8 +2154,8 @@ class MediaGUIManager:
 
             # show the summary in a new window
             summary_window = tk.Toplevel(dialog)
-            summary_window.title(f"{video_detail['title']} - 摘要")
-            summary_window.geometry("1200x1000")
+            summary_window.title(f"{selected_index} - {video_detail['title']} - 摘要")
+            summary_window.geometry("1300x1000")
             summary_window.resizable(True, True)
             summary_window.transient(dialog)
             # 创建主框架
@@ -2143,7 +2189,7 @@ class MediaGUIManager:
                 parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
                 return [p for p in parts if '=' not in p], [p for p in parts if '=' in p]
             
-            ttk.Label(topic_frame, text="主题标签 (可编辑, 用 , 或 | 分隔):", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
+            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
             tags_var = tk.StringVar(value=topic_tags)
             tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=40)
             tags_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
@@ -2275,6 +2321,7 @@ class MediaGUIManager:
                 tags_var.set(", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list or ""))
                 update_subtypes()
                 update_tags()
+                refresh_notebooklm_prompt()
                 try:
                     populate_tree()
                 except Exception:
@@ -2282,13 +2329,12 @@ class MediaGUIManager:
 
 
             def do_content_summary():
-                """内容概括：重写原文生成 summary，重新分类，保存回 video_detail 并持久化"""
-                # 1. 如果 summary 不为空，则不重新生成
                 if video_detail.get("summary", "").strip():
                     self.root.clipboard_clear()
                     self.root.clipboard_append(video_detail.get("summary", ""))
                     self.root.update()
                     messagebox.showinfo("提示", "summary 已存在，不重新生成", parent=summary_window)
+                    do_re_category()
                     return
 
                 text_content = self.fetch_text_content(video_detail)
@@ -2300,32 +2346,13 @@ class MediaGUIManager:
                 rewritten = self.llm_api.generate_text(prompt, text_content)
                 if rewritten and rewritten.strip():
                     video_detail["summary"] = rewritten.strip()
-                    content_for_category = rewritten
-                else:
-                    content_for_category = text_content
-                # 2. 重新分类（更新 topic_category, topic_subtype, tags）
-                do_re_category()
                 # 4. 弹窗展示概括结果
                 self.root.clipboard_clear()
                 self.root.clipboard_append(video_detail.get("summary", ""))
                 self.root.update()
-
-                msg = "内容概括完成，summary 与分类已保存到当前视频项"
-                result_dialog = tk.Toplevel(summary_window)
-                result_dialog.title("内容概括")
-                result_dialog.geometry("1000x800")
-                result_dialog.transient(summary_window)
-                result_dialog.grab_set()
-                result_dialog.update_idletasks()
-                x = (result_dialog.winfo_screenwidth() - 1000) // 2
-                y = (result_dialog.winfo_screenheight() - 800) // 2
-                result_dialog.geometry(f"1000x800+{x}+{y}")
-                ttk.Label(result_dialog, text="内容概括（已保存到 summary 并已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
-                text_widget = scrolledtext.ScrolledText(result_dialog, wrap=tk.WORD, width=80, height=22)
-                text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-                text_widget.insert("1.0", video_detail.get("summary", "") or "(无概括内容)")
-                ttk.Button(result_dialog, text="关闭", command=result_dialog.destroy).pack(pady=10)
-                messagebox.showinfo("成功", msg, parent=summary_window)
+                messagebox.showinfo("提示", "summary 已存生成", parent=summary_window)
+                # 2. 重新分类（更新 topic_category, topic_subtype, tags）
+                do_re_category()
 
 
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
@@ -2334,22 +2361,13 @@ class MediaGUIManager:
             category_var.trace_add('write', _on_category_var_write)
             subtype_var.trace_add('write', lambda *a: update_tags())
             
-            # 按钮框架（内容概括、重新分类、粘贴结果、拷贝 LM 指令、关闭 等同排）
             button_frame = ttk.Frame(topic_frame)
-            topic_btn_frame = button_frame  # 供后续添加 粘贴结果、拷贝 LM 指令 等
             button_frame.grid(row=row_tag_radios + 1, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
             
             # 添加标签按钮
             add_tags_btn = ttk.Button(button_frame, text="添加选中标签", command=add_selected_tags)
             add_tags_btn.pack(side=tk.LEFT, padx=5)
-            content_summary_btn = ttk.Button(button_frame, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(10, 5))
-            re_category_btn = ttk.Button(button_frame, text="重新分类", command=do_re_category).pack(side=tk.LEFT, padx=(10, 5))
-
-            # 主题信息区域同一行：粘贴结果 <-> 拷贝 LM 指令（轮替在按钮点击时处理）
-            ttk.Label(button_frame, text=" | ").pack(side=tk.LEFT, padx=(5, 5))
-            ttk.Button(button_frame, text="粘贴结果", command=lambda: paste_result_into_text()).pack(side=tk.LEFT, padx=(0, 5))
-            copy_lm_btn = ttk.Button(button_frame, text="拷贝 (上次: -)", command=lambda: copy_lm_instruction())
-            copy_lm_btn.pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(button_frame, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(10, 5))
 
 
             # 保存按钮
@@ -2547,7 +2565,7 @@ class MediaGUIManager:
             NOTEBOOKLM_PROMPT_CHOICES = config_channel.get_channel_config(_channel_key).get("notebooklm_prompt_choices", [])
             prompt_choice_frame = ttk.Frame(main_frame)
             prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
-            ttk.Label(prompt_choice_frame, text="选择PROMPT", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+            ttk.Label(prompt_choice_frame, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
             prompt_combo_var = tk.StringVar(value=NOTEBOOKLM_PROMPT_CHOICES[0][0])
             prompt_combo = ttk.Combobox(
                 prompt_choice_frame,
@@ -2559,12 +2577,12 @@ class MediaGUIManager:
             prompt_combo.pack(side=tk.LEFT)
 
 
-            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(20, 20))
+            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
 
             style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
             visual_style_var = tk.StringVar(value=style_labels[0])
-            visual_style_combo = ttk.Combobox(prompt_choice_frame, textvariable=visual_style_var, values=style_labels, state="readonly", width=10)
-            visual_style_combo.pack(side=tk.LEFT, padx=(0, 8))
+            visual_style_combo = ttk.Combobox(prompt_choice_frame, textvariable=visual_style_var, values=style_labels, state="readonly", width=15)
+            visual_style_combo.pack(side=tk.LEFT, padx=(0, 5))
             visual_style_combo.current(0)
 
             ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
@@ -2573,7 +2591,7 @@ class MediaGUIManager:
             char_labels = [lb for _, lb in config.CHARACTER_PERSON_OPTIONS]
             character_var = tk.StringVar(value=char_labels[0])
             character_combo = ttk.Combobox(prompt_choice_frame, textvariable=character_var, values=char_labels, state="readonly", width=12)
-            character_combo.pack(side=tk.LEFT, padx=(0, 15))
+            character_combo.pack(side=tk.LEFT, padx=(0, 5))
             character_combo.current(0)
 
             ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
@@ -2582,14 +2600,14 @@ class MediaGUIManager:
             ttk.Label(prompt_choice_frame, text="旁白声音").pack(side=tk.LEFT, padx=(0, 5))
             host_voice_var = tk.StringVar(value=char_labels[0])
             host_voice_combo = ttk.Combobox(prompt_choice_frame, textvariable=host_voice_var, values=char_labels, state="readonly", width=12)
-            host_voice_combo.pack(side=tk.LEFT, padx=(0, 8))
+            host_voice_combo.pack(side=tk.LEFT, padx=(0, 5))
             host_voice_combo.current(0)
 
             ttk.Label(prompt_choice_frame, text="Host 显示").pack(side=tk.LEFT, padx=(0, 5))
             host_display_labels = [lb for lb, _ in config.HOST_DISPLAY_OPTIONS_DOWNLOADER]
             host_display_var = tk.StringVar(value=host_display_labels[0])
             host_display_combo = ttk.Combobox(prompt_choice_frame, textvariable=host_display_var, values=host_display_labels, state="readonly", width=18)
-            host_display_combo.pack(side=tk.LEFT, padx=(0, 8))
+            host_display_combo.pack(side=tk.LEFT, padx=(0, 5))
             host_display_combo.current(0)
 
             def _get_style_value():
@@ -2633,11 +2651,102 @@ class MediaGUIManager:
                 return layout_map.get(hd, "Host appears in the scene.")
 
             # add a button to copy the visual style and character and host to the clipboard
-            def copy_style_character(for_video=False):
-                content_from_text = video_detail.get('story', '')
-                if not content_from_text:
-                    messagebox.showwarning("提示", "生成的故事为空，无法复制风格和人物", parent=summary_window)
+            def copy_style_character(language):
+                try:
+                    content = summary_window.clipboard_get()
+                except Exception:
+                    content = ""
+                story_text = video_detail.get('story', '')
+
+                if content:
+                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
+                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
+                        story_text = content
+                        # clean the clipboard
+                        summary_window.clipboard_clear()
+                        summary_window.update()
+                        video_detail['story'] = story_text
+                        try:
+                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                            dialog.after(0, populate_tree)
+                        except Exception:
+                            pass
+
+                if not story_text:
+                    messagebox.showwarning("提示", "故事内容为空，无法复制风格和人物", parent=summary_window)
                     return
+
+                try:
+                    full_story = parse_json(story_text, expect_list=False)
+                    lang_key = "english" if language == "en" else "chinese"
+                    story_json = full_story.get(lang_key)
+                    lang_branch = _lang_story_dict_for_editor(story_json)
+
+                    lang_editor_title = "编辑故事 JSON（English）" if lang_key == "english" else "编辑故事 JSON（中文）"
+                    concise_win = tk.Toplevel(summary_window)
+                    concise_win.title(lang_editor_title)
+                    concise_win.geometry("720x620")
+                    concise_win.transient(summary_window)
+                    concise_win.grab_set()
+                    concise_win.update_idletasks()
+                    x = (concise_win.winfo_screenwidth() - 720) // 2
+                    y = (concise_win.winfo_screenheight() - 620) // 2
+                    concise_win.geometry(f"720x620+{x}+{y}")
+                    ttk.Label(
+                        concise_win,
+                        text=f"{lang_editor_title}\n（concise_speaking / heart_message / psychological_micro_story；须为合法 JSON 对象后再保存）",
+                        font=("TkDefaultFont", 10),
+                    ).pack(anchor="w", padx=15, pady=(15, 5))
+                    concise_text_widget = scrolledtext.ScrolledText(concise_win, wrap=tk.WORD, width=88, height=26)
+                    concise_text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+                    concise_text_widget.insert("1.0", json.dumps(lang_branch, ensure_ascii=False, indent=2))
+
+                    btn_row = ttk.Frame(concise_win)
+                    btn_row.pack(pady=10)
+
+                    def _save_lang_story_branch():
+                        raw = (concise_text_widget.get("1.0", tk.END) or "").strip()
+                        try:
+                            parsed = json.loads(raw)
+                        except json.JSONDecodeError as e:
+                            messagebox.showerror("JSON 无效", f"请修正后再保存：\n{e}", parent=concise_win)
+                            return
+
+                        merged = {k: ("" if parsed.get(k) is None else str(parsed[k])) for k in _STORY_LANG_BRANCH_KEYS}
+                        try:
+                            fs = parse_json(story_text, expect_list=False)
+                            fs[lang_key] = merged
+                            video_detail["story"] = json.dumps(fs, ensure_ascii=False, indent=2)
+                            with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                            dialog.after(0, populate_tree)
+                        except Exception:
+                            messagebox.showerror("错误", "保存失败。", parent=concise_win)
+                            return
+                        concise_win.destroy()
+
+                    ttk.Button(btn_row, text="确定", command=_save_lang_story_branch).pack(side=tk.LEFT, padx=(0, 8))
+                    ttk.Button(btn_row, text="取消", command=concise_win.destroy).pack(side=tk.LEFT)
+
+                    summary_window.wait_window(concise_win)
+
+                    full_story = parse_json(video_detail.get("story", "") or "", expect_list=False)
+                    if not isinstance(full_story, dict):
+                        full_story = {}
+                    story_json = full_story.get(lang_key)
+
+                except Exception:
+                    messagebox.showwarning("提示", "故事内容格式错误，无法复制风格和人物", parent=summary_window)
+                    video_detail.pop('story', None)
+                    try:
+                        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                        dialog.after(0, populate_tree)
+                    except Exception:
+                        pass
+                    return
+
 
                 header_parts = []
                 header_parts.append(f"Main Character: {_get_speaker_str()}")
@@ -2648,27 +2757,27 @@ class MediaGUIManager:
                     header_parts.append(f"Host display: {host_display_desc}")
                 else:
                     header_parts.append(f"Host display: {host_display_desc}")
-                if for_video:
-                    if host_str:
-                        header_parts.append(
-                            "\n\nIf the image contains a Host(Narrator) figure → use Host to speak about the content of the image. "
-                            "If the image has only a main character (no Host) → use the main character to speak about the content of the image."
-                        )
-                    else:
-                        header_parts.append("\n\nNo Host. Use the main character to speak about the content of the image.")
 
-                header_parts.append(
-                    "DO NOT read the content or content int the image (just as reference; do NOT try to cover all details, speak out the key points very very concisely (激发人心灵深处) !!!!)"
-                )
+                if host_str:
+                    header_parts.append(
+                        "\n\nIn Video generation:"
+                        "** If the image contains a Host(Narrator) figure → use Host to speak about the content of the scene. "
+                        "** If the image has only a main character (no Host) → use the main character to speak about the content of the scene."
+                    )
+                else:
+                    header_parts.append("\n\nIn Video generation:"
+                        "** No Host. Use the main character to speak about the content of scene."
+                    )
 
-                # 主题信息（与「主题信息」区当前选择一致，用 - 连接分类与子类型）
-                _cat = (category_var.get() or "").strip()
-                _sub = (subtype_var.get() or "").strip()
-                _topic_bits = [x for x in (_cat, _sub) if x]
-                if _topic_bits:
-                    header_parts.append("\n\nTopic:\n" + " - ".join(_topic_bits))
+                if story_json.get('concise_speaking', ''):
+                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('concise_speaking', '')}")
+                else:
+                    header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
 
-                header_parts.append(f"\n\nContent: \n{content_from_text}")
+                header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                header_parts.append(f"** Heart_Message: {story_json.get('heart_message', '')}")
+                header_parts.append(f"** Psychological_Story: {story_json.get('psychological_micro_story', '')}")
 
                 try:
                     summary_window.clipboard_clear()
@@ -2677,22 +2786,56 @@ class MediaGUIManager:
                 except Exception:
                     pass
 
+                header_parts.append(f"\n\n\n\n")
+                header_parts.append(f"\nCase-Study Summary: \n{video_detail.get('summary', '')}")
+
+                input_media_path = config.INPUT_MEDIA_PATH
+                _cat_raw = (category_var.get() or "").strip()
+                if _cat_raw:
+                    _cat = self.downloader.make_safe_file_name(_cat_raw, title_length=6)
+                else:
+                    _cat = ""
+
+                filename = self.downloader.make_safe_file_name(video_detail.get('title', '').strip(), title_length=20) + '_'
+                file_path = os.path.join(input_media_path, '__' + selected_index + '__' + _cat + '__' + filename + '.txt')
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(header_parts))
+
+
 
             ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
 
-            image_style_btn = ttk.Button(prompt_choice_frame, text="图像风格", command=lambda: copy_style_character(for_video=False))
+            image_style_btn = ttk.Button(prompt_choice_frame, text="图像提示", command=lambda: copy_style_character(self.language))
             image_style_btn.pack(side=tk.LEFT, padx=(0, 5))
-            video_style_btn = ttk.Button(prompt_choice_frame, text="视频风格", command=lambda: copy_style_character(for_video=True))
-            video_style_btn.pack(side=tk.LEFT, padx=(0, 5))
 
 
-            def update_style_buttons_state():
-                """根据 video_detail 是否有 story 启用/禁用图像风格、视频风格按钮"""
-                has_story = bool((video_detail.get('story') or '').strip())
-                state = tk.NORMAL if has_story else tk.DISABLED
-                image_style_btn.config(state=state)
-                video_style_btn.config(state=state)
-            update_style_buttons_state()
+            copy_lm_btn = ttk.Button(prompt_choice_frame, text="无拷贝", command=lambda: copy_lm_instruction())
+            copy_lm_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+
+            def _update_copy_btn_text():
+                t = last_copied[0]
+                copy_lm_btn.config(text=f"已拷 {'LM' if t == 'lm_instruction' else '提示词' if t == 'text_content' else '-'}")
+
+            def copy_lm_instruction():
+                """轮替拷贝：上次是 LM 指令则本次拷文本框内容，反之则拷 LM 指令；按钮显示上次拷的内容"""
+                try:
+                    summary_window.clipboard_clear()
+                    if last_copied[0] in (None, "text_content"):
+                        summary_window.clipboard_append(LM_INSTRUCTION_STR)
+                        last_copied[0] = "lm_instruction"
+                    else:
+                        content = (text_widget.get(1.0, tk.END) or '').strip()
+                        summary_window.clipboard_append(content or '')
+                        last_copied[0] = "text_content"
+                    summary_window.update()
+                    _update_copy_btn_text()
+                except Exception:
+                    pass
+
+
 
             label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
             label.pack(anchor=tk.W, pady=(0, 5))
@@ -2750,52 +2893,8 @@ And the core-insight ('soul') :
             subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
             refresh_notebooklm_prompt()  # 初始生成
 
-            # 底部按钮
-            def paste_result_into_text():
-                """将剪贴板内容粘贴到视频摘要文本框，替换当前内容，并写入 video_detail['story'] 保存列表"""
-                try:
-                    content = summary_window.clipboard_get()
-                except tk.TclError:
-                    content = ''
-                content = content or ''
-                text_widget.config(state=tk.NORMAL)
-                text_widget.delete(1.0, tk.END)
-                text_widget.insert(tk.END, content)
-                text_widget.config(state=tk.NORMAL)
-                video_detail['story'] = content
-                try:
-                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                update_style_buttons_state()
-                try:
-                    dialog.after(0, populate_tree)
-                except Exception:
-                    pass
-
             LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
             last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...
-
-            def _update_copy_btn_text():
-                t = last_copied[0]
-                copy_lm_btn.config(text=f"拷贝 (上次: {'LM指令' if t == 'lm_instruction' else '文本框' if t == 'text_content' else '-'})")
-
-            def copy_lm_instruction():
-                """轮替拷贝：上次是 LM 指令则本次拷文本框内容，反之则拷 LM 指令；按钮显示上次拷的内容"""
-                try:
-                    summary_window.clipboard_clear()
-                    if last_copied[0] in (None, "text_content"):
-                        summary_window.clipboard_append(LM_INSTRUCTION_STR)
-                        last_copied[0] = "lm_instruction"
-                    else:
-                        content = (text_widget.get(1.0, tk.END) or '').strip()
-                        summary_window.clipboard_append(content or '')
-                        last_copied[0] = "text_content"
-                    summary_window.update()
-                    _update_copy_btn_text()
-                except Exception:
-                    pass
 
             summary_window.focus_set()
         
@@ -2982,7 +3081,9 @@ And the core-insight ('soul') :
                 return
             videos = []
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
                 video_detail = self.get_video_detail(item_tags[0])
                 if video_detail and not (video_detail.get('upload_date') or '').strip():
                     videos.append(video_detail)
@@ -3039,7 +3140,9 @@ And the core-insight ('soul') :
             # 获取选中视频的信息
             selected_videos = []
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
                 video_detail = self.get_video_detail(item_tags[0])
                 if video_detail:
                     selected_videos.append(video_detail)
@@ -3136,7 +3239,9 @@ And the core-insight ('soul') :
             videos_already_transcribed = []
             
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
@@ -3212,7 +3317,6 @@ And the core-insight ('soul') :
             threading.Thread(target=transcribe_task, daemon=True).start()
 
 
-
         def tag_selected():
             selected_items = tree.selection()
             if not selected_items:
@@ -3220,7 +3324,9 @@ And the core-insight ('soul') :
                 return
 
             for item in selected_items:
-                item_tags = tree.item(item, "tags")
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
@@ -3229,7 +3335,52 @@ And the core-insight ('soul') :
                 if not content or not content.strip():
                     continue
                 self.prepare_category_for_content(video_detail, content, self.topic_choices)
-                populate_tree()
+            populate_tree()
+
+
+        def summarize_selected():
+            selected_items = tree.selection()
+            if not selected_items:
+                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
+                return
+
+            summary_content = []
+            for item in selected_items:
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
+                video_detail = self.get_video_detail(item_tags[0])
+                if not video_detail:
+                    continue
+
+                text_content = self.fetch_text_content(video_detail)
+                summary_content = video_detail.get('summary', '')
+                summary_content.append(summary_content)
+                if summary_content and summary_content.strip() and (not text_content or len(text_content) < 100):
+                    continue
+
+                # 1. 用 LLM 重写原文
+                prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
+                rewritten = self.llm_api.generate_text(prompt, text_content)
+                if rewritten and rewritten.strip():
+                    video_detail["summary"] = rewritten.strip()
+                    summary_content.append(rewritten.strip())
+                    self.prepare_category_for_content(video_detail, rewritten.strip(), self.topic_choices)
+
+            if summary_content:
+                summaries = ""
+                for i, summary in enumerate(summary_content):
+                    summaries += f"----------------------\nCase-Story {i+1}:\n {summary}\n\n"
+
+                input_media_path = config.INPUT_MEDIA_PATH
+                file_path = os.path.join(input_media_path, 'case_study_summary.txt')
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(summaries)
+
+            populate_tree()
+
 
         # 在所有函数定义后创建按钮
         ttk.Button(bottom_frame, text="全选", command=select_all).pack(side=tk.LEFT, padx=5)
@@ -3237,9 +3388,9 @@ And the core-insight ('soul') :
 
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
         #ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
-        #ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="分类", command=tag_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="转录", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="下载", command=download_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="信息", command=fetch_info_selected).pack(side=tk.RIGHT, padx=5)
@@ -3344,6 +3495,7 @@ And the core-insight ('soul') :
             try:
                 with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
                     self.downloader.channel_videos = json.load(f)
+                    _normalize_channel_videos_story_field_to_str(self.downloader.channel_videos)
                     self.downloader.latest_date = max(
                         (datetime.strptime(v["upload_date"], "%Y%m%d") for v in self.downloader.channel_videos if v.get("upload_date")),
                         default=None
