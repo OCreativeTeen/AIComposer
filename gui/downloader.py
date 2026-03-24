@@ -2300,7 +2300,7 @@ class MediaGUIManager:
             # show the summary in a new window
             summary_window = tk.Toplevel(dialog)
             summary_window.title(f"{selected_index} - {video_detail['title']} - 摘要")
-            summary_window.geometry("1300x1000")
+            summary_window.geometry("1400x1000")
             summary_window.resizable(True, True)
             summary_window.transient(dialog)
             # 创建主框架
@@ -2314,86 +2314,25 @@ class MediaGUIManager:
             # 主题分类选择
             ttk.Label(topic_frame, text="主题分类:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky='w', padx=5, pady=5)
             category_var = tk.StringVar(value=topic_category)
-            category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=40)
+            category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=30)
             category_combo.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
             
             # 主题子类型选择
-            ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='w', padx=5, pady=5)
+            ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=0, column=2, sticky='w', padx=5, pady=5)
             subtype_var = tk.StringVar(value=topic_subtype)
-            subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=40)
-            subtype_combo.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+            subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=30)
+            subtype_combo.grid(row=0, column=3, padx=5, pady=5, sticky='ew')
             
-            # 关联视频 ID（| 分隔，网状关系；与列表「关联ID」列同一字段）
-            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky='w', padx=5, pady=5)
-            status_var = tk.StringVar(value=topic_status)
-            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=52)
-            status_entry.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
-            
-            # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
-            def _parse_tags_to_parts(tags_text):
-                parts = [t.strip() for t in re.split(r'[|,]', tags_text or '') if t.strip()]
-                return [p for p in parts if '=' not in p], [p for p in parts if '=' in p]
-            
-            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=3, column=0, sticky='nw', padx=5, pady=5)
+            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='nw', padx=5, pady=5)
             tags_var = tk.StringVar(value=topic_tags)
-            tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=40)
-            tags_entry.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
-            
-            # tag_choices 多选组（来自 tags.json，如 GENRE=、Rhythm=，值用/连接）
-            tag_combo_refs = []
-            row_tag_radios = 4
-            if self.tag_choices:
-                tag_radios_frame = ttk.LabelFrame(topic_frame, text="标签选择 (name=value，可多选，值用/连接)", padding=5)
-                tag_radios_frame.grid(row=row_tag_radios, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
-                tag_radios_frame.columnconfigure(0, weight=1)
-                existing_manual = {t.split('=', 1)[0]: t.split('=', 1)[-1] for t in _parse_tags_to_parts(topic_tags)[1]}
-                for tag_item in self.tag_choices:
-                    if not isinstance(tag_item, dict):
-                        continue
-                    tag_type = tag_item.get('tag_type', '')
-                    tags_list = tag_item.get('tags') or []
-                    if not tags_list:
-                        continue
-                    r = ttk.LabelFrame(tag_radios_frame, text=f"{tag_type}:", padding=3)
-                    r.pack(fill=tk.X, pady=3)
-                    existing_vals = existing_manual.get(tag_type, '').split('/') if existing_manual.get(tag_type) else []
-                    existing_set = {v.strip() for v in existing_vals if v.strip()}
-                    check_vars = []
-                    inner = ttk.Frame(r)
-                    inner.pack(fill=tk.X, expand=True)
-                    n_cols = 10
-                    for col_idx, val in enumerate(sorted(tags_list)):
-                        ri, ci = col_idx // n_cols, col_idx % n_cols
-                        cb_var = tk.BooleanVar(value=val in existing_set)
-                        cb = ttk.Checkbutton(inner, text=val, variable=cb_var, command=lambda: _sync_tags_from_radios())
-                        cb.grid(row=ri, column=ci, sticky='w', padx=(0, 8), pady=1)
-                        check_vars.append((val, cb_var))
-                    for c in range(n_cols):
-                        inner.columnconfigure(c, weight=1)
-                    tag_combo_refs.append((tag_type, check_vars))
-                row_tag_radios += 1
-            
-            def _sync_tags_from_radios():
-                """从多选组更新 tags_var：保留分析标签 + 手动 name=value（多选用/连接）"""
-                analysis, _ = _parse_tags_to_parts(tags_var.get())
-                manual = []
-                for tag_type, check_vars in tag_combo_refs:
-                    vals = [v for v, cb_var in check_vars if cb_var.get()]
-                    if vals:
-                        manual.append(f"{tag_type}={'/'.join(vals)}")
-                combined = analysis + manual
-                tags_var.set(', '.join(combined))
-            
-            # 可选标签列表（来自 topics 子类型的可选标签）
-            ttk.Label(topic_frame, text="可选标签:", font=("Arial", 10, "bold")).grid(row=row_tag_radios, column=0, sticky='nw', padx=5, pady=5)
-            tags_listbox_frame = ttk.Frame(topic_frame)
-            tags_listbox_frame.grid(row=row_tag_radios, column=1, padx=5, pady=5, sticky='nsew')
-            
-            tags_listbox = tk.Listbox(tags_listbox_frame, selectmode=tk.EXTENDED, height=6)
-            tags_listbox_scrollbar = ttk.Scrollbar(tags_listbox_frame, orient=tk.VERTICAL, command=tags_listbox.yview)
-            tags_listbox.configure(yscrollcommand=tags_listbox_scrollbar.set)
-            tags_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            tags_listbox_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=30)
+            tags_entry.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+
+            # 关联视频 ID（| 分隔，网状关系；与列表「关联ID」列同一字段）
+            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=1, column=2, sticky='w', padx=5, pady=5)
+            status_var = tk.StringVar(value=topic_status)
+            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=30)
+            status_entry.grid(row=1, column=3, padx=5, pady=5, sticky='ew')
             
             def update_subtypes(*args):
                 """根据选择的分类更新子类型选项"""
@@ -2433,23 +2372,8 @@ class MediaGUIManager:
                                     for tag in subtype_item.get('tags', []) or subtype_item.get('problem_tags', []):
                                         if tag not in tags:
                                             tags.append(tag)
-                tags_listbox.delete(0, tk.END)
-                for tag in tags:
-                    tags_listbox.insert(tk.END, tag)
-            
-            def add_selected_tags():
-                """将选中的标签添加到输入框"""
-                selected_indices = tags_listbox.curselection()
-                if selected_indices:
-                    current_tags_text = tags_var.get()
-                    selected_tags = [tags_listbox.get(i) for i in selected_indices]
-                    new_tags = ','.join(selected_tags)
-                    if current_tags_text:
-                        tags_var.set(f"{current_tags_text},{new_tags}")
-                    else:
-                        tags_var.set(new_tags)
 
-            
+
             def do_re_category():
                 """重新分类：重新分类，保存回 video_detail 并持久化"""
                 content = video_detail.get("summary", "")
@@ -2506,15 +2430,6 @@ class MediaGUIManager:
             category_var.trace_add('write', _on_category_var_write)
             subtype_var.trace_add('write', lambda *a: update_tags())
             
-            button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=row_tag_radios + 1, column=0, columnspan=2, padx=5, pady=5, sticky='ew')
-            
-            # 添加标签按钮
-            add_tags_btn = ttk.Button(button_frame, text="添加选中标签", command=add_selected_tags)
-            add_tags_btn.pack(side=tk.LEFT, padx=5)
-            ttk.Button(button_frame, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(10, 5))
-
-
             # 保存按钮
             def save_topic_info():
                 """保存主题信息"""
@@ -2631,97 +2546,6 @@ class MediaGUIManager:
                     pass
                 _do_start_project_with_content(content)
 
-            def on_start_project_with_story():
-                """用当前 video_detail['story'] 启动创建新项目（作为 RAW 材料）"""
-                content = video_detail.get("story", "").strip()
-                if not content:
-                    messagebox.showwarning("提示", "请先通过「粘贴 NotebookLM 结果启动新项目」粘贴并保存 Story 后再使用", parent=summary_window)
-                    return
-                ch = os.path.basename(self.channel_path)
-                lang = getattr(self, 'language', 'tw') or 'tw'
-                # 用 after(0) 延迟关闭，避免在 summary_window 自身回调中 destroy 父窗口导致异常
-                def _close():
-                    try:
-                        dialog.destroy()
-                    except Exception:
-                        pass
-                self.root.after(0, _close)
-                from project_manager import create_project_with_initial_raw
-                # 使用 self.root（yt_parent）作为父窗口，确保创建对话框在可见窗口下正常显示
-                result, selected_config = create_project_with_initial_raw(self.root, content, ch, lang)
-                if result == 'new' and selected_config:
-                    # 项目创建成功：在同一进程内打开主界面（避免 subprocess 导致窗口无法显示）
-                    _pid = selected_config.get('pid', '')
-                    if not _pid:
-                        return
-                    def _open_main_in_same_process():
-                        _tk_root = None
-                        try:
-                            # 获取 Tk 根窗口（yt_parent 的 master）
-                            _tk_root = self.root
-                            while getattr(_tk_root, 'master', None):
-                                _tk_root = _tk_root.master
-                            # 先解除 yt_parent 的关闭协议，避免 destroy 时触发 quit
-                            try:
-                                self.root.protocol("WM_DELETE_WINDOW", lambda: None)
-                            except Exception:
-                                pass
-                            try:
-                                self.root.destroy()
-                            except Exception:
-                                pass
-                            # 在同一进程内创建主界面（从 __main__ 或 GUI 模块获取，兼容 python GUI.py 启动）
-                            _tk_root.deiconify()
-                            import sys
-                            _gui_mod = sys.modules.get('GUI') or sys.modules.get('__main__')
-                            WorkflowGUI = getattr(_gui_mod, 'WorkflowGUI', None)
-                            if WorkflowGUI:
-                                WorkflowGUI(_tk_root, initial_pid=_pid)
-                            else:
-                                messagebox.showerror("错误", "无法加载主界面模块", parent=_tk_root)
-                        except Exception as ex:
-                            import traceback
-                            traceback.print_exc()
-                            try:
-                                # 使用有效窗口作为 parent，避免已销毁的窗口导致 TclError
-                                _parent = _tk_root if (_tk_root and _tk_root.winfo_exists()) else None
-                                messagebox.showerror("错误", f"打开主界面失败: {ex}", parent=_parent)
-                            except Exception:
-                                pass
-                    # 延迟执行，确保当前回调完成、对话框已关闭
-                    self.root.after(100, _open_main_in_same_process)
-
-            # 右侧按钮组：粘贴 NotebookLM 结果启动新项目（从剪贴板读取→保存→启动）、保存主题信息
-            right_btns = ttk.Frame(button_frame)
-            right_btns.pack(side=tk.RIGHT)
-            ttk.Button(right_btns, text="粘贴LM结果启动新项目", command=on_paste_and_start_project).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(right_btns, text="保存主题信息", command=save_topic_info).pack(side=tk.LEFT)
-            ttk.Button(right_btns, text="关闭", command=summary_window.destroy).pack(side=tk.LEFT)
-            
-            # 配置网格权重
-            topic_frame.columnconfigure(1, weight=1)
-            topic_frame.rowconfigure(4, weight=1)  # 标签列表在第4行
-            
-            # 初始化子类型和标签选项
-            if topic_category:
-                update_subtypes()  # 这会调用 update_tags()
-            
-            # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
-            _channel_key = os.path.basename(self.channel_path)
-            NOTEBOOKLM_PROMPT_CHOICES = config_channel.get_channel_config(_channel_key).get("notebooklm_prompt_choices", [])
-            prompt_choice_frame = ttk.Frame(main_frame)
-            prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
-            ttk.Label(prompt_choice_frame, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
-            prompt_combo_var = tk.StringVar(value=NOTEBOOKLM_PROMPT_CHOICES[0][0])
-            prompt_combo = ttk.Combobox(
-                prompt_choice_frame,
-                textvariable=prompt_combo_var,
-                values=[opt[0] for opt in NOTEBOOKLM_PROMPT_CHOICES],
-                state="readonly",
-                width=16
-            )
-            prompt_combo.pack(side=tk.LEFT)
-
             def on_find_similar_cases():
                 cur_id = _video_youtube_id(video_detail)
                 if not cur_id:
@@ -2786,21 +2610,74 @@ class MediaGUIManager:
 
                 dialog.after(0, _after_find_similar)
 
+            # 右侧按钮组：粘贴 NotebookLM 结果启动新项目（从剪贴板读取→保存→启动）、保存主题信息
+            button_frame = ttk.Frame(topic_frame)
+            button_frame.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
+            right_btns = ttk.Frame(button_frame)
+            right_btns.pack(side=tk.RIGHT)
+            # 添加标签按钮
 
+            ttk.Button(right_btns, text="粘贴LM结果启动新项目", command=on_paste_and_start_project).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="保存主题信息", command=save_topic_info).pack(side=tk.LEFT, padx=(0, 5))
 
-            ttk.Button(prompt_choice_frame, text="找类似案例", command=on_find_similar_cases).pack(
-                side=tk.LEFT, padx=(10, 0)
+            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+
+            ttk.Button(right_btns, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(5, 5))
+
+            ttk.Button(right_btns, text="找类似案例", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
+
+            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+
+            image_en_btn = ttk.Button(right_btns, text="EN图", command=lambda: copy_style_character("en"))
+            image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+            image_zh_btn = ttk.Button(right_btns, text="ZH图", command=lambda: copy_style_character("zh"))
+            image_zh_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+
+            short_story_btn = ttk.Button(right_btns, text="短剧", command=lambda: short_story_prompt("zh"))
+            short_story_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+            copy_lm_btn = ttk.Button(right_btns, text="无拷贝", command=lambda: copy_lm_instruction())
+            copy_lm_btn.pack(side=tk.LEFT, padx=(5, 5))
+
+            
+            # 两列输入区同宽：第 1、3 列均分扩展：仅配 weight=1 会让多余宽度只进第 1 列，导致分类/标签 比 子类型/关联ID 更宽
+            topic_frame.columnconfigure(1, weight=1, uniform='topic_inputs')
+            topic_frame.columnconfigure(3, weight=1, uniform='topic_inputs')
+            
+            # 初始化子类型和标签选项
+            if topic_category:
+                update_subtypes()  # 这会调用 update_tags()
+            
+            # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
+            _channel_key = os.path.basename(self.channel_path)
+            NOTEBOOKLM_PROMPT_CHOICES = config_channel.get_channel_config(_channel_key).get("notebooklm_prompt_choices", [])
+            prompt_choice_frame = ttk.Frame(main_frame)
+            prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
+            ttk.Label(prompt_choice_frame, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
+            prompt_combo_var = tk.StringVar(value=NOTEBOOKLM_PROMPT_CHOICES[0][0])
+            prompt_combo = ttk.Combobox(
+                prompt_choice_frame,
+                textvariable=prompt_combo_var,
+                values=[opt[0] for opt in NOTEBOOKLM_PROMPT_CHOICES],
+                state="readonly",
+                width=16
             )
+            prompt_combo.pack(side=tk.LEFT)
 
-            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
+            # label for visual style
+            ttk.Label(prompt_choice_frame, text="画面风格:").pack(side=tk.LEFT, padx=(0, 5))
             style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
             visual_style_var = tk.StringVar(value=style_labels[0])
             visual_style_combo = ttk.Combobox(prompt_choice_frame, textvariable=visual_style_var, values=style_labels, state="readonly", width=15)
             visual_style_combo.pack(side=tk.LEFT, padx=(0, 5))
             visual_style_combo.current(0)
 
-            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
             ttk.Label(prompt_choice_frame, text="主角").pack(side=tk.LEFT, padx=(0, 5))
             char_labels = [lb for _, lb in config.CHARACTER_PERSON_OPTIONS]
@@ -2809,7 +2686,7 @@ class MediaGUIManager:
             character_combo.pack(side=tk.LEFT, padx=(0, 5))
             character_combo.current(0)
 
-            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
             # 旁白：声音（与主角同选项）+ 显示方式（无/有声音无图像/有声音有图像-布局）
             ttk.Label(prompt_choice_frame, text="旁白声音").pack(side=tk.LEFT, padx=(0, 5))
@@ -2866,14 +2743,79 @@ class MediaGUIManager:
                 return layout_map.get(hd, "Host appears in the scene.")
 
 
-            def short_story_prompt():
+            def short_story_prompt(language):
                 try:
                     content = summary_window.clipboard_get()
-                    content = "Visual-Style: pixar-art cartoon + realistic\n\ngenerate according to the scenes structure (keep simple, focus more on story, less narrator interrupt, try to avoid psychological terminology):\n\n" + content
-                    summary_window.clipboard_clear()
-                    summary_window.clipboard_append(content)
                 except Exception:
+                    content = ""
+                story_text = video_detail.get('raw_content', '')
+
+                if content:
+                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
+                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
+                        story_text = content
+                        # clean the clipboard
+                        summary_window.clipboard_clear()
+                        summary_window.update()
+                        video_detail['raw_content'] = story_text
+                        try:
+                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                            dialog.after(0, populate_tree)
+                        except Exception:
+                            pass
+
+                if not story_text:
+                    messagebox.showwarning("提示", "RAW故事内容为空，无法复制风格和人物", parent=summary_window)
                     return
+
+                header_parts = []
+                style_value = _get_style_value()
+                header_parts.append(f"Visual-Style: {style_value}")
+                header_parts.append("Generate according to the scenes structure (keep simple, focus more on story, less narrator interrupt, try to avoid psychological terminology):\n")
+
+                host_str = _get_host_str()
+                host_display_desc = _get_host_display_prompt_text()
+                if host_str:
+                    header_parts.append(f"Host (voice): {host_str}")
+                if host_display_desc:
+                    header_parts.append(f"Host display: {host_display_desc}")
+
+                if host_str:
+                    header_parts.append(
+                        "\n\nIn Video generation:"
+                        "** If the image contains a Host(Narrator) figure → use Host to speak about the content of the scene. "
+                        "** If the image has only a main character (no Host) → use the main character to speak about the content of the scene."
+                    )
+                else:
+                    header_parts.append("\n\nIn Video generation:"
+                        "** No Host. Use the main character to speak about the content of scene."
+                    )
+
+                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)\n\n")
+
+                header_parts.append(f"** Story Content:\n {story_text}")
+
+                try:
+                    summary_window.clipboard_clear()
+                    summary_window.clipboard_append("\n".join(header_parts))
+                    summary_window.update()
+                except Exception:
+                    pass
+
+                input_media_path = config.INPUT_MEDIA_PATH
+                _cat_raw = (category_var.get() or "").strip()
+                if _cat_raw:
+                    _cat = self.downloader.make_safe_file_name(_cat_raw, title_length=6)
+                else:
+                    _cat = ""
+
+                filename = self.downloader.make_safe_file_name(video_detail.get('title', '').strip(), title_length=20) + '_'
+                file_path = os.path.join(input_media_path, 'raw__' + selected_index + '__' + _cat + '__' + filename + '.txt')
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(header_parts))
 
 
             def copy_style_character(language):
@@ -2917,7 +2859,7 @@ class MediaGUIManager:
                     concise_win.geometry(f"720x620+{x}+{y}")
                     ttk.Label(
                         concise_win,
-                        text=f"{lang_editor_title}\n（concise_speaking / heart_message / psychological_micro_story；须为合法 JSON 对象后再保存）",
+                        text=f"{lang_editor_title}\n（Story；须为合法 JSON 对象后再保存）",
                         font=("TkDefaultFont", 10),
                     ).pack(anchor="w", padx=15, pady=(15, 5))
                     concise_text_widget = scrolledtext.ScrolledText(concise_win, wrap=tk.WORD, width=88, height=26)
@@ -2960,8 +2902,7 @@ class MediaGUIManager:
                 host_display_desc = _get_host_display_prompt_text()
                 if host_str:
                     header_parts.append(f"Host (voice): {host_str}")
-                    header_parts.append(f"Host display: {host_display_desc}")
-                else:
+                if host_display_desc:
                     header_parts.append(f"Host display: {host_display_desc}")
 
                 if host_str:
@@ -3047,22 +2988,6 @@ class MediaGUIManager:
                     os.remove(file_path)
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write("\n".join(header_parts))
-
-
-
-            ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
-
-            image_en_btn = ttk.Button(prompt_choice_frame, text="EN图", command=lambda: copy_style_character("en"))
-            image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-            image_zh_btn = ttk.Button(prompt_choice_frame, text="ZH图", command=lambda: copy_style_character("zh"))
-            image_zh_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-            short_story_btn = ttk.Button(prompt_choice_frame, text="短剧", command=lambda: short_story_prompt())
-            short_story_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-            copy_lm_btn = ttk.Button(prompt_choice_frame, text="无拷贝", command=lambda: copy_lm_instruction())
-            copy_lm_btn.pack(side=tk.LEFT, padx=(0, 5))
 
 
             def _update_copy_btn_text():
