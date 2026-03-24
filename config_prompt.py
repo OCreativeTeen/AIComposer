@@ -1,6 +1,81 @@
 import config_prompt
 
 
+BUILD_CLEAR_STORIES_ON_CASE_STUDY_SUMMARIES_SYSTEM_PROMPT = """
+ROLE:
+    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
+    ** Input-below are ONE original psychotherapy case-study material + several reference case-studies which are similar with it. Your task is to: start from the original case-study, refer all reference case-studies, to build a new fully developed, emotionally immersive, multi-scene psychological case-study.
+
+OVERALL INSTRUCTIONS:
+    ** Internally identify different psychological patterns across all case-studies.
+	** Write like a compelling natural / vivid / detailed / immersive / emotionally engaging narrative, not a summary, that illustrates the psychological struggle
+	** output in {language}
+
+REQUIREMENTS FOR EACH STORY
+	** New case-study must be a fully reconstructed, original story synthesized from orginal & reference case-studies (may with added creative detail). 
+	** New Case-Study is NOT short-form content, SHOULD include multiple (3-5) scenes (progression, and emotional escalation), for example:
+	   - Scene 1: Everyday life or relationship setup, and with a striking emotional moment, contradiction, or revealing behavior
+	   - Scene 2: First conflict or tension
+	   - Scene 3: Escalation (argument, avoidance, breakdown, or crisis)
+	   - Scene 4: Key turning point or realization
+	   - Scene 5 (optional): Aftermath or unresolved ending
+
+	   * The tension must build across scenes, show how small patterns turn into bigger problems
+
+	** Each scene should feel concrete and cinematic, not summarized, has rich Scene Details:
+	   - Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
+		   ** "Explicit Layer" (storyline): may include visual description, and the story character's speaking. 
+		   ** "Implicit Layer" (insight): may include the narrator (psychological counselor)'s voiceover, to real: Core-issue /Root-causes /emotional triggers ( What truly afraid of) /Behavioral patterns (Why repeats?) /possible direction for change /etc
+	   - Include specific environments (e.g., late-night apartment, office meeting, family dinner)
+	   - Show actions, body language, silence, and emotional reactions
+	   - Use brief dialogue where helpful
+	   - Avoid jumping too quickly between ideas
+
+	** Deep Characterization
+	   - Clearly show personality traits, fears, desires, and contradictions
+	   - Make the character feel psychologically real
+	   - Highlight what the character wants vs. what they do
+	   - Show repeated patterns (self-sabotage, avoidance, dependency, etc.)
+
+OUTPUT FORMAT:
+
+    Case-Study Title: [Emotionally compelling title]
+
+            -----
+            "scene": "Title (like: Break point)"
+                    "explicit": 
+                            "[Setting, atmosphere, story/dialogue, in {language}]"
+                    "implicit": 
+                            "[Counselor's voiceover]"
+
+            -----
+            "scene": "Title (like: Specific prominent event)"
+                    "explicit": 
+                            "[Setting, atmosphere, story/dialogue, in {language}]"
+                    "implicit": 
+                            "[Counselor's voiceover]"
+
+            -----
+            ...
+
+---
+
+
+Below are: 
+    Original Case-Study: 
+	--------------------
+	    Title: {title}
+		Summary: {story}
+		
+	Reference Case-Studies:
+	-----------------------
+	    {reference}
+	...	
+
+"""
+
+
+
 REWRITE_MATERIAL_SYSTEM_PROMPT = """
 Role:
     - You are an expert editor, narrative organizer, and information architect.

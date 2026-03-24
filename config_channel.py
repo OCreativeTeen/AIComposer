@@ -30,48 +30,40 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
 COUNSELING_REFERENCE_FILTER = """
 *** Role & Objective
-    As a "psychological counselor", for the content of psychological 'Case-Story' or 'Analysis' (provided below), 
-    cross-reference it against all NotebookLM sources (but 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
-    to identify upto 5 most relevant stories (or case-studies), and  upto 5 most relevant analysis (therapy techniques/research).
+    As a "psychological counselor", for the content of psychological 'Current Psychological Case-Study', 
+    cross-reference it against all NotebookLM sources (except 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
+    to identify upto 10 most relevant case-studies (compare the 'summary', then the topic-category/topic-subtype)
 
 *** Operational Workflow
-    Step 1 — Analyze the content on a psychological topic (provided below)
-            Primary psychological themes
-            Mental health challenges (e.g., Avoidant Attachment, PTSD, Caregiver Burnout).
-            Therapeutic directions and emotional conflicts.
+    Step 1 — Analyze the summary of the current psychological case-study (provided below), find out:
+            * Primary psychological themes
+            * Mental health challenges (e.g., Avoidant Attachment, PTSD, Caregiver Burnout).
+            * Therapeutic directions and emotional conflicts.
 
     Step 2 — Semantic Filtering on Summary
-        Scan material list and select the most relevant item based on this priority:
-            item must have full 'content' (of the story or analysis), and between this 'content' and the provided 'Case-Story' / 'Psychological Analysis':
-                * have similar psychological patterns or life scenarios.
-                * have semantic correlation between story tags and document tags.
-                * have similar Topic-Category/Topic-Subtype matching.
+        Scan reference material list and select the most relevant reference item (must have full 'summary') based on this priority:
+            * its 'summary' has similar psychological patterns or life scenarios with the summary of the provided 'Current Psychological Case-Study'.
+            *  (less important) it has similar Topic-Category/Topic-Subtype with the provided 'Current Psychological Case-Study'.
 
 *** Input
-    1. "Psychological Case-Story" or "Psychological Analysis" (Provided below)
-    2. "List of Reference" (with Summary & transcribed_file):
-        check all selected sources in current notebooklmproject
+    1. "Current Psychological Case-Study" (Provided below), on topic of '{topic}'
+    2. "List of Case-Study References" (with Summary):
+        check all selected sources in current notebooklm project (except 'Pasted Text/粘贴的文字' - which is this prompt, only check the items with full 'summary')
 
 *** Output Format
-    Pure JSON (not array); 2 sections: each max 10 items; reason in original language & less than 120 words.
-        {{
-            "story": [
+    Pure JSON array with max 10 items; reason in original language & less than 120 words.
+            [
                 {{
-                    "content": "the content of the story",
-                    "transcribed_file": "file name of the transcribed_file",
-                    "source_name": "the name of source which give the transcribed_file"
-                    "reason": "Explanation of relevance"
-                }}
+                    "summary": "the summary copy from the reference item (in original language)",
+                    "topic-category": "the topic-category copy from the reference item info",
+                    "topic-subtype": "the topic-subtype copy from the reference item info",
+                    "id": "the id copy from the reference item info",
+                    "url": "the youtube url copy from the reference item info",
+                    "title": "the title copy from the reference item info (in original language)",
+                    "reason": "Explanation of relevance (in original language as summary)"
+                }},
+                ...
             ]
-            "analysis": [
-                {{
-                    "content": "the content of the analysis",
-                    "transcribed_file": "file name of the transcribed_file",
-                    "source_name": "the name of source which give the transcribed_file"
-                    "reason": "Explanation of relevance"
-                }}
-            ]
-        }}
 
 """
 
@@ -1298,123 +1290,83 @@ WRITING GUIDELINES
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF = """
+NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF = """
 You are a psychological counselor and reflective storyteller.
 And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
-The content at the bottom of this prompt is a psychological case discussion or story analysis.
-Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
+ROLE:
+    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
+    ** Input-below are ONE original psychotherapy case-study material + several reference case-studies which are similar with it. Your task is to: start from the original case-study, refer all reference case-studies, to build a new fully developed, emotionally immersive, multi-scene psychological case-study.
 
-However, before writing, you must first retrieve and synthesize relevant materials from the NotebookLM Sources.
+OVERALL INSTRUCTIONS:
+    ** Internally identify different psychological patterns across all case-studies.
+	** Write like a compelling natural / vivid / detailed / immersive / emotionally engaging narrative, not a summary, that illustrates the psychological struggle
+	** output in {language}
 
---------------------------------------------------
-STEP 1 — Identify the Psychological Core
---------------------------------------------------
+REQUIREMENTS FOR EACH STORY
+	** New case-study must be a fully reconstructed, original story synthesized from orginal & reference case-studies (may with added creative detail). 
+	** New Case-Study is NOT short-form content, SHOULD include multiple (3-5) scenes (progression, and emotional escalation), for example:
+	   - Scene 1: Everyday life or relationship setup, and with a striking emotional moment, contradiction, or revealing behavior
+	   - Scene 2: First conflict or tension
+	   - Scene 3: Escalation (argument, avoidance, breakdown, or crisis)
+	   - Scene 4: Key turning point or realization
+	   - Scene 5 (optional): Aftermath or unresolved ending
 
-From the provided case content at the bottom:
+	   * The tension must build across scenes, show how small patterns turn into bigger problems
 
-Identify and summarize internally:
+	** Each scene should feel concrete and cinematic, not summarized, has rich Scene Details:
+	   - Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
+		   ** "Explicit Layer" (storyline): may include visual description, and the story character's speaking. 
+		   ** "Implicit Layer" (insight): may include the narrator (psychological counselor)'s voiceover, to real: Core-issue /Root-causes /emotional triggers ( What truly afraid of) /Behavioral patterns (Why repeats?) /possible direction for change /etc
+	   - Include specific environments (e.g., late-night apartment, office meeting, family dinner)
+	   - Show actions, body language, silence, and emotional reactions
+	   - Use brief dialogue where helpful
+	   - Avoid jumping too quickly between ideas
 
-• the core psychological theme
-• the emotional conflict
-• the possible psychological root (fear, attachment pattern, shame, control, abandonment, etc.)
-• the typical behavioral manifestation
-• the emotional turning point (if present)
+	** Deep Characterization
+	   - Clearly show personality traits, fears, desires, and contradictions
+	   - Make the character feel psychologically real
+	   - Highlight what the character wants vs. what they do
+	   - Show repeated patterns (self-sabotage, avoidance, dependency, etc.)
 
-Do not output this step.
+OUTPUT FORMAT:
 
---------------------------------------------------
-STEP 2 — Retrieve Reference Materials from NotebookLM Sources
---------------------------------------------------
+    Case-Study Title: [Emotionally compelling title]
 
-Search the NotebookLM Sources (EXCLUDING the "Pasted Text/粘贴的文字" source).
+            -----
+            "scene": "Title (like: Break point)"
+                    "explicit": 
+                            "[Setting, atmosphere, story/dialogue, in {language}]"
+                    "implicit": 
+                            "[Counselor's voiceover]"
 
-Find **5–8 highly relevant reference pieces** that share similar:
+            -----
+            "scene": "Title (like: Specific prominent event)"
+                    "explicit": 
+                            "[Setting, atmosphere, story/dialogue, in {language}]"
+                    "implicit": 
+                            "[Counselor's voiceover]"
 
-• psychological root cause
-• emotional conflict
-• behavioral pattern
-• symbolic or illustrative story pattern
+            -----
+            ...
 
-The references may include:
-
-• psychological discussions
-• counseling cases
-• illustrative life stories
-• reflective essays
-
-Select the references that are:
-
-• the most emotionally revealing
-• the most psychologically insightful
-• the most illustrative or vivid
-
-Use them only as **inspiration and psychological reinforcement**, not for direct quoting.
-
-Do NOT mention the sources in the final output.
-
---------------------------------------------------
-STEP 3 — Synthesize the Insight
---------------------------------------------------
-
-Combine:
-
-• the psychological insight from the provided case
-• the deeper patterns revealed by the references
-
-Extract the **one essential psychological truth** behind the situation.
-
-This truth should feel universal, simple, and emotionally resonant.
-
---------------------------------------------------
-STEP 4 — Create the Reflective Output
---------------------------------------------------
-
-Based on the synthesized insight, produce a gentle counseling reflection consisting of:
-
-1) A short title
-2) A heart message
-3) A micro-story
-4) A 9 seconds concise caption speaking (based on 2 & 3)
-
-The story should indirectly illustrate the psychological truth.
+---
 
 
---------------------------------------------------
-WRITING GUIDELINES
---------------------------------------------------
+BELOW ARE INPUT: 
+...
 
-• Avoid technical psychology terminology.
-• Focus on emotional truth and self-reflection.
-• Keep language simple and human.
-• The story should feel natural and relatable.
-• Do NOT mention the original case or sources.
-• Do NOT add explanations outside the required structure.
+Original Case-Study:
+=======================
+Title: {story_title}
+Summary: {story_summary}
 
 
---------------------------------------------------
-OUTPUT FORMAT (STRICT)
---------------------------------------------------
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-    {{
-        "english": {{
-            "title": "A short title capturing the psychological theme. In English.",
-            "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
-            "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In English."
-        }}  ,
-        "chinese": {{    
-            "title": "A short title capturing the psychological theme. In Chinese.",
-            "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
-            "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
-            "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese."
-        }}
-    }}
+Reference Case-Studies: 
+=======================
+{reference}
 
 """
 
@@ -1488,6 +1440,17 @@ OUTPUT FORMAT (STRICT JSON)
         "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese."
     }}
 }}
+
+
+----------------------------------------------------
+Input Content:
+----------------------------------------------------
+{content}
+
+----------------------------------------------------
+Core-insight ('soul'):
+----------------------------------------------------
+{soul}
 
 """
 
@@ -1696,9 +1659,9 @@ CHANNEL_CONFIG = {
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
+            ("Story with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
@@ -1754,7 +1717,7 @@ CHANNEL_CONFIG = {
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
@@ -1796,7 +1759,7 @@ CHANNEL_CONFIG = {
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_WITH_REF),
+            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_STORY,

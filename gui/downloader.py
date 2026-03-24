@@ -24,6 +24,7 @@ from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
 from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json
 from gui.choice_dialog import askchoice
+from gui.reference_editor_dialog import ReferenceEditorDialog
 import project_manager
         
 # 导入所需模块
@@ -62,17 +63,144 @@ def _normalize_channel_videos_story_field_to_str(videos):
             v["story"] = json.dumps(s, ensure_ascii=False, indent=2)
 
 
-def _lang_story_dict_for_editor(story_json):
-    """当前语言分支下供编辑的 3 字段对象。"""
-    out = {}
-    if isinstance(story_json, dict):
-        for k in _STORY_LANG_BRANCH_KEYS:
-            val = story_json.get(k)
-            out[k] = "" if val is None else str(val)
-    else:
-        for k in _STORY_LANG_BRANCH_KEYS:
-            out[k] = ""
-    return out
+def _video_youtube_id(v):
+    """从频道视频项解析 YouTube 视频 id（11 位）。"""
+    if not isinstance(v, dict):
+        return ""
+    vid = (v.get("id") or "").strip()
+    if vid:
+        return vid
+    url = (v.get("url") or "").strip()
+    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _merge_related_id_status(existing, new_id):
+    new_id = (new_id or "").strip()
+    if not new_id:
+        return (existing or "").strip()
+    parts = [p.strip() for p in str(existing or "").split("|") if p.strip()]
+    if new_id not in parts:
+        parts.append(new_id)
+    return "|".join(parts)
+
+
+def _find_video_by_youtube_id(channel_videos, yid):
+    yid = (yid or "").strip()
+    if not yid:
+        return None
+    for v in channel_videos or []:
+        if _video_youtube_id(v) == yid:
+            return v
+    return None
+
+
+def _reference_item_youtube_id(item):
+    """从 NotebookLM 参考项 dict 中解析 YouTube id（优先 id 字段，其次 url）。"""
+    if not isinstance(item, dict):
+        return ""
+    return _video_youtube_id(item)
+
+
+def _norm_path_compare(a, b):
+    """比较两条路径是否指向同一文件（规范化 +  basename 兜底）。"""
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if not a or not b:
+        return False
+    try:
+        na, nb = os.path.normcase(os.path.normpath(os.path.abspath(a))), os.path.normcase(
+            os.path.normpath(os.path.abspath(b))
+        )
+        if na == nb:
+            return True
+    except Exception:
+        pass
+    return os.path.basename(a).lower() == os.path.basename(b).lower()
+
+
+def _find_channel_video_for_reference_item(item, channel_videos):
+    """
+    将参考列表中的单项与 channel_videos 中的 video 对应：
+    优先 YouTube id，其次 transcribed_file 路径，再试 url。
+    """
+    if not isinstance(item, dict):
+        return None
+    yid = _reference_item_youtube_id(item)
+    if yid:
+        v = _find_video_by_youtube_id(channel_videos, yid)
+        if v:
+            return v
+    tfp = (item.get("transcribed_file") or "").strip()
+    if tfp:
+        for v in channel_videos or []:
+            vtf = (v.get("transcribed_file") or "").strip()
+            if vtf and _norm_path_compare(tfp, vtf):
+                return v
+    url = (item.get("url") or "").strip()
+    if url:
+        for v in channel_videos or []:
+            if (v.get("url") or "").strip() == url:
+                return v
+    return None
+
+
+def _status_display_for_related_field(raw):
+    """树与表单展示：忽略历史下载占用的 status。"""
+    s = raw if isinstance(raw, str) else str(raw or "")
+    if s in ("success", "failed"):
+        return ""
+    return s
+
+
+_SIMILAR_SUMMARY_MATCH_SYSTEM = """你是心理咨询类视频摘要的相似度分析助手。
+给定一条「参考摘要」和若干「候选视频」（每条含 YouTube id、标题、摘要片段），请判断哪些候选与参考在**心理问题主题、案例结构、临床叙事**上足够接近，可视为「类似案例」。
+只输出严格 JSON 对象，不要其它文字。格式：
+{"matches":[{"id":"<候选中的 youtube id>","confidence":0.0-1.0,"reason":"一句中文说明相似点"}]}
+规则：matches 按 confidence 降序；最多 18 条；id 必须完全来自候选列表；若无合适候选则 {"matches":[]}。"""
+
+
+def _run_similar_summary_matches(llm_api, ref_title, ref_summary, prepared_candidates):
+    """prepared_candidates: [{id,title,summary_excerpt}, ...]，可分批调用 LLM 再合并。"""
+    if not prepared_candidates:
+        return []
+    chunk_size = 22
+    merged_by_id = {}
+    ref_title = (ref_title or "")[:300]
+    ref_summary = (ref_summary or "")[:8000]
+    for off in range(0, len(prepared_candidates), chunk_size):
+        chunk = prepared_candidates[off : off + chunk_size]
+        user_payload = json.dumps(
+            {"reference": {"title": ref_title, "summary": ref_summary}, "candidates": chunk},
+            ensure_ascii=False,
+        )
+        res = llm_api.generate_json(_SIMILAR_SUMMARY_MATCH_SYSTEM, user_payload, expect_list=False)
+        if not isinstance(res, dict):
+            continue
+        rows = res.get("matches")
+        if not isinstance(rows, list):
+            continue
+        for m in rows:
+            if not isinstance(m, dict):
+                continue
+            oid = (m.get("id") or "").strip()
+            if not oid:
+                continue
+            try:
+                conf = float(m.get("confidence", 0))
+            except (TypeError, ValueError):
+                conf = 0.0
+            reason = m.get("reason", "") or ""
+            if oid not in merged_by_id or conf > merged_by_id[oid][0]:
+                merged_by_id[oid] = (conf, reason)
+    out = [{"id": oid, "confidence": t[0], "reason": t[1]} for oid, t in merged_by_id.items()]
+    out.sort(key=lambda x: -x["confidence"])
+    return out[:24]
 
 
 class MediaDownloader:
@@ -1265,7 +1393,8 @@ class MediaGUIManager:
         self._input_language = (language or 'zh').strip().lower()
         self.language = 'en' if self._input_language == 'en' else 'zh'  # 从首层传入，后续 YT 功能可复用
         
-        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
+        self.llm_api_local = llm_api.LLMApi(llm_api.LM_STUDIO)
+        self.llm_api = llm_api.LLMApi()
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, self.youtube_dir, self.language)
@@ -1475,7 +1604,6 @@ class MediaGUIManager:
         for video_detail in cleaned:
             video_detail.pop('description', '')
             video_detail.pop('thumbnail', '')
-            video_detail.pop('status', '')
             video_detail.pop('uploader', '')
 
         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -1616,7 +1744,7 @@ class MediaGUIManager:
 
     def prepare_category_for_content(self, video_detail, text_content, topic_choices):
         # LLM API 调用在信号量保护下（已在上层 with 语句中）
-        result = self.llm_api.generate_json(
+        result = self.llm_api_local.generate_json(
             config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic_choices=topic_choices), 
             text_content,
             expect_list=False
@@ -1737,16 +1865,17 @@ class MediaGUIManager:
         
         topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
         
-        # 标注选择：对选中视频设置 status 为 "", "1", "2", "3"
-        ttk.Label(control_frame, text="标注:").pack(side=tk.LEFT, padx=(10, 5))
-        status_var = tk.StringVar(value="")
-        status_combo = ttk.Combobox(control_frame, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=6)
-        status_combo.pack(side=tk.LEFT, padx=(0, 5))
-        def on_status_selected(event=None):
-            val = status_var.get()
+        # 关联视频 ID（| 分隔，与摘要窗口「标注」同一字段；双向关联由「找类似案例」写入）
+        ttk.Label(control_frame, text="关联ID:").pack(side=tk.LEFT, padx=(10, 5))
+        batch_related_var = tk.StringVar(value="")
+        batch_related_entry = ttk.Entry(control_frame, textvariable=batch_related_var, width=26)
+        batch_related_entry.pack(side=tk.LEFT, padx=(0, 4))
+
+        def on_apply_related_batch():
+            val = (batch_related_var.get() or "").strip()
             selected_items = tree.selection()
             if not selected_items:
-                messagebox.showwarning("提示", "请先选择要标注的视频", parent=dialog)
+                messagebox.showwarning("提示", "请先选择要设置关联 ID 的视频", parent=dialog)
                 return
             selected_urls = set()
             for item in selected_items:
@@ -1754,19 +1883,37 @@ class MediaGUIManager:
                 if item_tags:
                     url = item_tags[0]
                     selected_urls.add(url)
-                    video_detail = self.get_video_detail(url)
-                    if video_detail:
-                        video_detail['status'] = val
-            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                    vd = self.get_video_detail(url)
+                    if vd:
+                        vd["status"] = val
+            with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             populate_tree()
-            # 重新选中之前选中的行（按 url 匹配）
             for item in tree.get_children():
                 item_tags = _treeview_item_tags_safe(tree, item)
                 if item_tags and item_tags[0] in selected_urls:
                     tree.selection_add(item)
-        status_combo.bind('<<ComboboxSelected>>', on_status_selected)
-        
+
+        ttk.Button(control_frame, text="应用到选中", command=on_apply_related_batch).pack(side=tk.LEFT, padx=(0, 5))
+
+        # 画面风格（config.VISUAL_STYLE_OPTIONS；供「摘要」导出 build_clear_stories_on_case_study_summaries 等使用）
+        ttk.Label(control_frame, text="画面风格:").pack(side=tk.LEFT, padx=(10, 5))
+        _main_visual_style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
+        visual_style_var = tk.StringVar(value=_main_visual_style_labels[0])
+        visual_style_combo_main = ttk.Combobox(
+            control_frame,
+            textvariable=visual_style_var,
+            values=_main_visual_style_labels,
+            state="readonly",
+            width=18,
+        )
+        visual_style_combo_main.pack(side=tk.LEFT, padx=(0, 5))
+        visual_style_combo_main.current(0)
+
+        def _channel_dialog_visual_style_value():
+            st_lbl = (visual_style_var.get() or "").strip()
+            return next((v for v, lb in config.VISUAL_STYLE_OPTIONS if lb == st_lbl), config.VISUAL_STYLE_OPTIONS[0][0])
+
         def smart_select():
             """根据输入文本智能选择匹配的视频（在 title 和 content 中搜索关键字）"""
             search_text = smart_select_var.get().strip().lower()
@@ -1833,7 +1980,7 @@ class MediaGUIManager:
         tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
         tree.heading("tags", text="问题标签")
-        tree.heading("mark", text="标注")
+        tree.heading("mark", text="关联ID")
         
         tree.column("#0", width=30, anchor="center")
         tree.column("title", width=360, anchor="w")
@@ -1846,7 +1993,7 @@ class MediaGUIManager:
         tree.column("topic_category", width=150, anchor="w")
         tree.column("topic_subtype", width=100, anchor="w")
         tree.column("tags", width=80, anchor="w")
-        tree.column("mark", width=20, anchor="center")
+        tree.column("mark", width=120, anchor="w")
         
 
         def populate_tree():
@@ -1965,10 +2112,10 @@ class MediaGUIManager:
                 elif not isinstance(problem_tags, str):
                     problem_tags = str(problem_tags) if problem_tags else ''
                 
-                # video_detail 的 status 字段：用户可编辑的标注，默认 ""，可选 "", "1", "2", "3"
-                user_status = video.get('status', '')
-                if user_status not in ('', '1', '2', '3'):
-                    user_status = ''
+                # status：用户可编辑的关联视频 ID，| 分隔（旧版 1/2/3 或下载 success/failed 仍显示为可读）
+                user_status = _status_display_for_related_field(video.get("status", ""))
+                if len(user_status) > 80:
+                    user_status = user_status[:77] + "..."
                 summary_mark = "✓" if (video.get('summary') or '').strip() else ""
                 story_mark = "✓" if (video.get('story') or '').strip() else ""
                 tree.insert("", tk.END, text=str(idx), 
@@ -2131,9 +2278,7 @@ class MediaGUIManager:
             topic_type = video_detail.get('topic_subtype', '')
             topic_category = video_detail.get('topic_category', '')
             topic_subtype = video_detail.get('topic_subtype', '')
-            topic_status = video_detail.get('status', '')
-            if topic_status not in ('', '1', '2', '3'):
-                topic_status = ''
+            topic_status = _status_display_for_related_field(video_detail.get("status", ""))
             topic_tags = video_detail.get('tags', '')
             if isinstance(topic_tags, list):
                 topic_tags = ' | '.join(topic_tags)
@@ -2178,11 +2323,11 @@ class MediaGUIManager:
             subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=40)
             subtype_combo.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
             
-            # 标注选择 (status: "", "1", "2", "3")
-            ttk.Label(topic_frame, text="标注:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky='w', padx=5, pady=5)
+            # 关联视频 ID（| 分隔，网状关系；与列表「关联ID」列同一字段）
+            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=2, column=0, sticky='w', padx=5, pady=5)
             status_var = tk.StringVar(value=topic_status)
-            status_combo = ttk.Combobox(topic_frame, textvariable=status_var, values=("", "1", "2", "3"), state="readonly", width=10)
-            status_combo.grid(row=2, column=1, padx=5, pady=5, sticky='w')
+            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=52)
+            status_entry.grid(row=2, column=1, padx=5, pady=5, sticky='ew')
             
             # 主题标签（可编辑，支持 a,b, GENRE=Jazz 格式）
             def _parse_tags_to_parts(tags_text):
@@ -2343,7 +2488,7 @@ class MediaGUIManager:
                     return
                 # 1. 用 LLM 重写原文
                 prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api.generate_text(prompt, text_content)
+                rewritten = self.llm_api_local.generate_text(prompt, text_content)
                 if rewritten and rewritten.strip():
                     video_detail["summary"] = rewritten.strip()
                 # 4. 弹窗展示概括结果
@@ -2397,10 +2542,11 @@ class MediaGUIManager:
                     video_detail['tags'] = tags_list
                 else:
                     video_detail.pop('tags', None)
-                if st in ('', '1', '2', '3'):
-                    video_detail['status'] = st
+                st = (st or "").strip()
+                if st:
+                    video_detail["status"] = st
                 else:
-                    video_detail.pop('status', None)
+                    video_detail.pop("status", None)
                 
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2576,6 +2722,75 @@ class MediaGUIManager:
             )
             prompt_combo.pack(side=tk.LEFT)
 
+            def on_find_similar_cases():
+                cur_id = _video_youtube_id(video_detail)
+                if not cur_id:
+                    messagebox.showwarning("提示", "当前视频缺少 YouTube id，无法建立关联", parent=summary_window)
+                    return
+                ref_sum = (video_detail.get("summary") or "").strip()
+                if not ref_sum:
+                    messagebox.showwarning("提示", "当前视频摘要为空，请先完成摘要后再找类似案例", parent=summary_window)
+                    return
+
+                _channel_key = os.path.basename(self.channel_path)
+
+                reference_filter_prompt = config_channel.get_channel_config(_channel_key).get('channel_prompt', {}).get('prompt_reference_filter', '')
+                reference_filter_prompt = reference_filter_prompt.format(topic=video_detail['topic_category'] + " - " + video_detail['topic_subtype'])
+
+                editor = ReferenceEditorDialog(
+                    summary_window,
+                    current_story=video_detail['summary'],
+                    reference_filter=reference_filter_prompt
+                )
+
+                prepared = editor.show()
+                if not prepared:
+                    return
+                ch_list = self.downloader.channel_videos
+                # 当前视频：把每条参考对应的 YouTube id 合并进 status（| 分隔、去重）
+                # 每条参考在 channel_videos 里对应一条：把当前视频 cur_id 合并进其 status
+                urls_to_select = []
+                for item in prepared:
+                    if not isinstance(item, dict):
+                        continue
+                    ref_v = _find_channel_video_for_reference_item(item, ch_list)
+                    ref_yid = ""
+                    if ref_v:
+                        ref_yid = _video_youtube_id(ref_v)
+                        ref_v["status"] = _merge_related_id_status(ref_v.get("status"), cur_id)
+                        u = (ref_v.get("url") or "").strip()
+                        if u:
+                            urls_to_select.append(u)
+                    if not ref_yid:
+                        ref_yid = _reference_item_youtube_id(item)
+                    if ref_yid:
+                        video_detail["status"] = _merge_related_id_status(video_detail.get("status"), ref_yid)
+
+                # save the video_detail to the channel_list_json
+                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                # populate the tree, and select the current video & matched reference rows
+                _urls = urls_to_select
+
+                def _after_find_similar():
+                    populate_tree()
+                    try:
+                        tree.selection_set(video_detail["url"])
+                    except Exception:
+                        pass
+                    if _urls:
+                        try:
+                            tree.selection_add(*_urls)
+                        except Exception:
+                            pass
+
+                dialog.after(0, _after_find_similar)
+
+
+
+            ttk.Button(prompt_choice_frame, text="找类似案例", command=on_find_similar_cases).pack(
+                side=tk.LEFT, padx=(10, 0)
+            )
 
             ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
 
@@ -2678,12 +2893,9 @@ class MediaGUIManager:
                     return
 
                 try:
-                    full_story = parse_json(story_text, expect_list=False)
-                    lang_key = "english" if language == "en" else "chinese"
-                    story_json = full_story.get(lang_key)
-                    lang_branch = _lang_story_dict_for_editor(story_json)
+                    story_json = parse_json(story_text, expect_list=False)
 
-                    lang_editor_title = "编辑故事 JSON（English）" if lang_key == "english" else "编辑故事 JSON（中文）"
+                    lang_editor_title = "编辑故事 JSON"
                     concise_win = tk.Toplevel(summary_window)
                     concise_win.title(lang_editor_title)
                     concise_win.geometry("720x620")
@@ -2700,51 +2912,35 @@ class MediaGUIManager:
                     ).pack(anchor="w", padx=15, pady=(15, 5))
                     concise_text_widget = scrolledtext.ScrolledText(concise_win, wrap=tk.WORD, width=88, height=26)
                     concise_text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-                    concise_text_widget.insert("1.0", json.dumps(lang_branch, ensure_ascii=False, indent=2))
+                    concise_text_widget.insert("1.0", json.dumps(story_json, ensure_ascii=False, indent=2))
 
                     btn_row = ttk.Frame(concise_win)
                     btn_row.pack(pady=10)
 
-                    def _save_lang_story_branch():
+                    def _save_story():
                         raw = (concise_text_widget.get("1.0", tk.END) or "").strip()
                         try:
                             parsed = json.loads(raw)
-                        except json.JSONDecodeError as e:
-                            messagebox.showerror("JSON 无效", f"请修正后再保存：\n{e}", parent=concise_win)
-                            return
-
-                        merged = {k: ("" if parsed.get(k) is None else str(parsed[k])) for k in _STORY_LANG_BRANCH_KEYS}
-                        try:
-                            fs = parse_json(story_text, expect_list=False)
-                            fs[lang_key] = merged
-                            video_detail["story"] = json.dumps(fs, ensure_ascii=False, indent=2)
+                            video_detail["story"] = json.dumps(parsed, ensure_ascii=False, indent=2)
                             with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                             dialog.after(0, populate_tree)
-                        except Exception:
-                            messagebox.showerror("错误", "保存失败。", parent=concise_win)
+                        except json.JSONDecodeError as e:
+                            messagebox.showerror("JSON 无效", f"请修正后再保存：\n{e}", parent=concise_win)
                             return
+                        merged = {k: ("" if parsed.get(k) is None else str(parsed[k])) for k in _STORY_LANG_BRANCH_KEYS}
+
                         concise_win.destroy()
 
-                    ttk.Button(btn_row, text="确定", command=_save_lang_story_branch).pack(side=tk.LEFT, padx=(0, 8))
+                    ttk.Button(btn_row, text="确定", command=_save_story).pack(side=tk.LEFT, padx=(0, 8))
                     ttk.Button(btn_row, text="取消", command=concise_win.destroy).pack(side=tk.LEFT)
 
                     summary_window.wait_window(concise_win)
 
-                    full_story = parse_json(video_detail.get("story", "") or "", expect_list=False)
-                    if not isinstance(full_story, dict):
-                        full_story = {}
-                    story_json = full_story.get(lang_key)
+                    story_json = parse_json(video_detail.get("story", "") or "", expect_list=False)
 
                 except Exception:
                     messagebox.showwarning("提示", "故事内容格式错误，无法复制风格和人物", parent=summary_window)
-                    video_detail.pop('story', None)
-                    try:
-                        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                        dialog.after(0, populate_tree)
-                    except Exception:
-                        pass
                     return
 
 
@@ -2769,15 +2965,28 @@ class MediaGUIManager:
                         "** No Host. Use the main character to speak about the content of scene."
                     )
 
-                if story_json.get('concise_speaking', ''):
-                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('concise_speaking', '')}")
+                if story_json.get('english', {}).get('concise_speaking', ''):
+                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
                 else:
                     header_parts.append(f"** Generate the speaking words based on : the content in the image")
                 header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
 
                 header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                header_parts.append(f"** Heart_Message: {story_json.get('heart_message', '')}")
-                header_parts.append(f"** Psychological_Story: {story_json.get('psychological_micro_story', '')}")
+                header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
+                header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
+
+                header_parts.append(f"\n\n\n----------------------------------------------------------\n")
+
+                if story_json.get('chinese', {}).get('concise_speaking', ''):
+                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
+                else:
+                    header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+
+                header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
+                header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
+
 
                 try:
                     summary_window.clipboard_clear()
@@ -2786,7 +2995,7 @@ class MediaGUIManager:
                 except Exception:
                     pass
 
-                header_parts.append(f"\n\n\n\n")
+                header_parts.append(f"\n\n\n\n----------------------------------------------------------\n")
                 header_parts.append(f"\nCase-Study Summary: \n{video_detail.get('summary', '')}")
 
                 input_media_path = config.INPUT_MEDIA_PATH
@@ -2856,19 +3065,27 @@ class MediaGUIManager:
                 sel = prompt_combo_var.get()
                 template = next((t for lbl, t in NOTEBOOKLM_PROMPT_CHOICES if lbl == sel), NOTEBOOKLM_PROMPT_CHOICES[0][1])
                 topic = category_var.get().strip() + "-" + subtype_var.get().strip()
-                prompt = template.format(topic=topic, language=config.LANGUAGES[self.language])
-               
-                prompt = prompt + f"""
---------------------------------------------------
-"Content (discussion, story, or analysis) :
---------------------------------------------------
-{video_detail.get('content', '')}
---------------------------------------------------
-
-And the core-insight ('soul') :
---------------------------------------------------
-{project_manager.get_soul_for_topic(self.channel_path, category_var.get().strip(), subtype_var.get().strip(), self.topic_choices) or ''}
-"""
+                # status 中为关联视频的 YouTube id（| 分隔）；在 channel_videos 列表中按 id 查找，拼标题与摘要
+                reference_parts = []
+                for i, seg in enumerate( (video_detail.get("status") or "").split("|")):
+                    yid = (seg or "").strip()
+                    if not yid or yid in ("success", "failed"):
+                        continue
+                    ref_v = _find_video_by_youtube_id(self.downloader.channel_videos, yid)
+                    if not ref_v:
+                        continue
+                    title = (ref_v.get("title") or "").strip()
+                    summary = (ref_v.get("summary") or "").strip()
+                    reference_parts.append(
+                        f"Reference {i+1}: Title: {title}\nReference {i+1}: Summary: {summary}"
+                    )
+                reference = "\n\n\n----------------------------------------------------------\n".join(reference_parts) if reference_parts else ""
+                story_title = video_detail.get('title', '').strip()
+                story_summary = video_detail.get('summary', '').strip()
+                content = video_detail.get('content', '').strip()
+                soul = project_manager.get_soul_for_topic(self.channel_path, category_var.get().strip(), subtype_var.get().strip(), self.topic_choices) or ''
+                prompt = template.format( topic=topic, language=config.LANGUAGES[self.language], reference=reference, soul=soul,
+                                          story_title=story_title, story_summary=story_summary, content=content )
 
                 text_widget.config(state=tk.NORMAL)
                 text_widget.delete(1.0, tk.END)
@@ -3174,7 +3391,7 @@ And the core-insight ('soul') :
                         mp3_path = f"{self.youtube_dir}/media/{prefix}.mp3"
                         if os.path.exists(mp3_path):
                             video_detail['audio_path'] = mp3_path
-                            video_detail["status"] = "success"
+                            video_detail["audio_download_status"] = "success"
                             completed[0] += 1
                             print(f"[{idx}/{total}] 跳过（已存在）: {video_detail['title']}")
                             try:
@@ -3197,7 +3414,7 @@ And the core-insight ('soul') :
                         if file_path and os.path.exists(file_path):
                             file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
                             print(f"✅ 完成: {os.path.basename(file_path)} ({file_size:.1f} MB)")
-                            video_detail["status"] = "success"
+                            video_detail["audio_download_status"] = "success"
                             completed[0] += 1
                             try:
                                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -3206,12 +3423,12 @@ And the core-insight ('soul') :
                                 pass
                         else:
                             print(f"❌ 失败: {video_detail['title']}")
-                            video_detail["status"] = "failed"
+                            video_detail["audio_download_status"] = "failed"
                             failed[0] += 1
                         
                     except Exception as e:
                         print(f"❌ 错误: {video_detail['title']} - {str(e)}")
-                        video_detail["status"] = "failed"
+                        video_detail["audio_download_status"] = "failed"
                         failed[0] += 1
                 
                 # 下载完成
@@ -3338,46 +3555,79 @@ And the core-insight ('soul') :
             populate_tree()
 
 
-        def summarize_selected():
-            selected_items = tree.selection()
-            if not selected_items:
-                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
-                return
-
-            summary_content = []
-            for item in selected_items:
+        def list_summary():
+            # new list for items in the list, only item with summary,  include fields :  summary, title, url, topic_category, topic_subtype, tags
+            summary_list = []
+            for item in tree.get_children():
                 item_tags = _treeview_item_tags_safe(tree, item)
                 if not item_tags:
                     continue
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
+                if video_detail.get('summary', ''):
+                    summary_list.append({
+                        'summary': video_detail.get('summary', ''),
+                        'title': video_detail.get('title', ''),
+                        'url': video_detail.get('url', ''),
+                        'id': video_detail.get('id', ''),
+                        'topic_category': video_detail.get('topic_category', ''),
+                        'topic_subtype': video_detail.get('topic_subtype', ''),
+                        'tags': video_detail.get('tags', ''),
+                    })
+            if not summary_list:
+                messagebox.showwarning("提示", "没有可简表的视频", parent=dialog)
+                return
 
-                text_content = self.fetch_text_content(video_detail)
-                summary_content = video_detail.get('summary', '')
-                summary_content.append(summary_content)
-                if summary_content and summary_content.strip() and (not text_content or len(text_content) < 100):
+            # save the summary_list to windows Download folder, file name same as channel_list_json, but with _summary.txt suffix
+            with open(os.path.join(os.path.expanduser("~"), "Downloads", os.path.basename(self.downloader.channel_list_json)+"_summary.txt"), "w", encoding="utf-8") as f:
+                json.dump(summary_list, f, ensure_ascii=False, indent=2)
+
+
+        def summarize_selected():
+            selected_items = tree.selection()
+            if not selected_items:
+                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
+                return
+
+            summary_list = []
+            for item in selected_items:
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
                     continue
 
-                # 1. 用 LLM 重写原文
+                video_detail = self.get_video_detail(item_tags[0])
+                if not video_detail:
+                    continue
+
+                text_content = self.fetch_text_content(video_detail)
+                if not text_content or len(text_content) < 100:
+                    continue
+
+                summary_content = video_detail.get('summary', '')
+                summary_list.append(summary_content)
+                if summary_content and summary_content.strip():
+                    continue
+
                 prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api.generate_text(prompt, text_content)
+                rewritten = self.llm_api_local.generate_text(prompt, text_content)
                 if rewritten and rewritten.strip():
                     video_detail["summary"] = rewritten.strip()
-                    summary_content.append(rewritten.strip())
+                    summary_list.append(rewritten.strip())
                     self.prepare_category_for_content(video_detail, rewritten.strip(), self.topic_choices)
 
-            if summary_content:
+            if summary_list:
                 summaries = ""
-                for i, summary in enumerate(summary_content):
-                    summaries += f"----------------------\nCase-Story {i+1}:\n {summary}\n\n"
+                for i, summary_content in enumerate(summary_list):
+                    summaries += f"----------------------\nCase-Story {i+1}:\n {summary_content}\n\n"
 
                 input_media_path = config.INPUT_MEDIA_PATH
-                file_path = os.path.join(input_media_path, 'case_study_summary.txt')
+                file_path = os.path.join(input_media_path, 'adjust_classification_on_case_study_summaries.txt')
                 if os.path.exists(file_path):
                     os.remove(file_path)
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(summaries)
+                    classification_prompt = "Attached is the existing topics classification, each topic has a subtype. Below are some new case-study content, please adjust the existing topics, and then classify the new content clearly (find non-confusing category/subtype). These are typical psychological consultation problem case-studies:\n\n"
+                    f.write(classification_prompt + summaries)
 
             populate_tree()
 
@@ -3387,6 +3637,8 @@ And the core-insight ('soul') :
         ttk.Button(bottom_frame, text="不选", command=deselect_all).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(bottom_frame, text="简表", command=list_summary).pack(side=tk.RIGHT, padx=5)
 
         ttk.Button(bottom_frame, text="摘要", command=summarize_selected).pack(side=tk.RIGHT, padx=5)
         #ttk.Button(bottom_frame, text="重摘", command=re_summarize_selected).pack(side=tk.RIGHT, padx=5)
@@ -3531,7 +3783,7 @@ And the core-insight ('soul') :
                 file_size = os.path.getsize(file_path) / (1024 * 1024)
                 video_data["audio_path"] = file_path
                 video_data["file_size_mb"] = file_size
-                video_data["status"] = "success"
+                video_data["audio_download_status"] = "success"
             else:
                 self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
                 return

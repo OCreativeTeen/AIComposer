@@ -4013,11 +4013,9 @@ class WorkflowGUI:
         ttk.Radiobutton(host_show_frame, text="显示在视频中（呈现为所选形象）", variable=host_show_var, value=True).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Radiobutton(host_show_frame, text="不显示（仅旁白）", variable=host_show_var, value=False).pack(side=tk.LEFT)
 
-        # Speaker 形象：使用 config 共享定义
-        SPEAKER_STYLE_OPTIONS = config.SPEAKER_STYLE_OPTIONS
         ttk.Label(main_f, text="Speaker 形象:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         speaker_style_var = tk.StringVar(value="真实形象")
-        speaker_style_combo = ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in SPEAKER_STYLE_OPTIONS], state="readonly", width=28)
+        speaker_style_combo = ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=28)
         speaker_style_combo.pack(anchor=tk.W, pady=(0, 15))
 
         # Visual：是否包含 visual 描述
@@ -4049,7 +4047,7 @@ class WorkflowGUI:
 
             speaker_label = speaker_style_var.get()
             speaker_val = "realistic"
-            for v, lbl in SPEAKER_STYLE_OPTIONS:
+            for v, lbl in config.VISUAL_STYLE_OPTIONS:
                 if lbl == speaker_label:
                     speaker_val = v
                     break
@@ -4193,15 +4191,9 @@ class WorkflowGUI:
         main_f = ttk.Frame(opts_dialog, padding=15)
         main_f.pack(fill=tk.BOTH, expand=True)
 
-        # Speaker 形象
-        SPEAKER_STYLE_OPTIONS = [
-            ("realistic", "真实形象"),
-            ("cartoon", "卡通(普通)"),
-            ("pixar-art cartoon", "卡通(皮克斯)"),
-        ]
         ttk.Label(main_f, text="Speaker 形象:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        speaker_style_var = tk.StringVar(value="真实形象")
-        ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in SPEAKER_STYLE_OPTIONS], state="readonly", width=28).pack(anchor=tk.W, pady=(0, 15))
+        speaker_style_var = tk.StringVar(value="真实卡通(皮克斯)")
+        ttk.Combobox(main_f, textvariable=speaker_style_var, values=[s[1] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=28).pack(anchor=tk.W, pady=(0, 15))
 
         # Host 选项（必选）：使用统一的 self.HOST_OPTIONS
         ttk.Label(main_f, text="Host 旁白（必选）:", font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
@@ -4232,7 +4224,7 @@ class WorkflowGUI:
                     break
             speaker_label = speaker_style_var.get()
             speaker_val = "realistic"
-            for v, lbl in SPEAKER_STYLE_OPTIONS:
+            for v, lbl in config.VISUAL_STYLE_OPTIONS:
                 if lbl == speaker_label:
                     speaker_val = v
                     break
@@ -4280,9 +4272,6 @@ class WorkflowGUI:
         ("主角说完后主持人出现补充", "supplement-after-protagonist"),
         ("主持人先介绍，再由主角说话", "introduce-first"),
     ]
-
-    # Speaker/Host 风格选项：从 config 共享
-    SPEAKER_STYLE_OPTIONS = config.VISUAL_STYLE_OPTIONS
 
     def _build_and_show_story_content(self, current_story_scenes, speaker_style=None, host_style=None, host=None, host_show_image=False, include_visual=True, include_voiceover=True):
         """根据选项构建 Story Content JSON，选项写入每个 scene 元素（无 meta）"""
@@ -4340,11 +4329,11 @@ class WorkflowGUI:
         host_display_var = tk.StringVar(value="不显示在画面中")
         host_person_var = tk.StringVar(value="中国中年女性")
         ttk.Label(opts_frame, text="Speaker:").pack(side=tk.LEFT, padx=(0, 5))
-        speaker_cb = ttk.Combobox(opts_frame, textvariable=speaker_style_var, values=[s[1] for s in self.SPEAKER_STYLE_OPTIONS], state="readonly", width=10)
+        speaker_cb = ttk.Combobox(opts_frame, textvariable=speaker_style_var, values=[s[1] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=10)
         speaker_cb.pack(side=tk.LEFT, padx=(0, 12))
         speaker_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
         ttk.Label(opts_frame, text="Host style:").pack(side=tk.LEFT, padx=(0, 5))
-        host_style_cb = ttk.Combobox(opts_frame, textvariable=host_style_var, values=[s[1] for s in self.SPEAKER_STYLE_OPTIONS], state="readonly", width=10)
+        host_style_cb = ttk.Combobox(opts_frame, textvariable=host_style_var, values=[s[1] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=10)
         host_style_cb.pack(side=tk.LEFT, padx=(0, 12))
         host_style_cb.bind("<<ComboboxSelected>>", lambda e: _rebuild_all())
         ttk.Label(opts_frame, text="Host 显示:").pack(side=tk.LEFT, padx=(0, 5))
@@ -4391,13 +4380,13 @@ class WorkflowGUI:
         def _rebuild_all():
             speaker_lbl = speaker_style_var.get()
             speaker_val = "pixar-art cartoon"
-            for v, lbl in self.SPEAKER_STYLE_OPTIONS:
+            for v, lbl in config.VISUAL_STYLE_OPTIONS:
                 if lbl == speaker_lbl:
                     speaker_val = v
                     break
             host_s_lbl = host_style_var.get()
             host_s_val = "pixar-art cartoon"
-            for v, lbl in self.SPEAKER_STYLE_OPTIONS:
+            for v, lbl in config.VISUAL_STYLE_OPTIONS:
                 if lbl == host_s_lbl:
                     host_s_val = v
                     break
@@ -4664,8 +4653,6 @@ class WorkflowGUI:
         idx_label.pack(side=tk.LEFT, padx=8)
         ttk.Button(nav_f, text="下一场景 ▶", width=12, command=lambda: _go(1)).pack(side=tk.LEFT, padx=8)
 
-        # 每场景输出选项（仅影响显示与复制内容）
-        SPEAKER_STYLE_OPTS = [("realistic", "真实形象"), ("cartoon", "卡通(普通)"), ("pixar-art cartoon", "卡通(皮克斯)")]
         chk_f = ttk.Frame(nav_f)
         chk_f.pack(side=tk.LEFT, padx=(20, 0))
         ttk.Separator(chk_f, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -4692,7 +4679,7 @@ class WorkflowGUI:
             _refresh_display()
 
         ttk.Label(chk_f, text="Host style:").pack(side=tk.LEFT, padx=(0, 2))
-        host_style_combo = ttk.Combobox(chk_f, textvariable=host_style_var, values=[s[0] for s in SPEAKER_STYLE_OPTS], state="readonly", width=10)
+        host_style_combo = ttk.Combobox(chk_f, textvariable=host_style_var, values=[s[0] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=10)
         host_style_combo.pack(side=tk.LEFT, padx=(0, 5))
         host_style_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
         ttk.Label(chk_f, text="Host 显示:").pack(side=tk.LEFT, padx=(0, 2))
@@ -4704,7 +4691,7 @@ class WorkflowGUI:
         host_person_combo.pack(side=tk.LEFT, padx=(0, 5))
         host_person_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
         ttk.Label(chk_f, text="Speaker:").pack(side=tk.LEFT, padx=(0, 2))
-        speaker_combo = ttk.Combobox(chk_f, textvariable=speaker_style_var, values=[s[0] for s in SPEAKER_STYLE_OPTS], state="readonly", width=12)
+        speaker_combo = ttk.Combobox(chk_f, textvariable=speaker_style_var, values=[s[0] for s in config.VISUAL_STYLE_OPTIONS], state="readonly", width=12)
         speaker_combo.pack(side=tk.LEFT, padx=(0, 5))
         speaker_combo.bind("<<ComboboxSelected>>", lambda e: _on_override_change())
         ttk.Checkbutton(chk_f, text="Speaking", variable=include_speaking_var, command=_on_override_change).pack(side=tk.LEFT, padx=(0, 5))
