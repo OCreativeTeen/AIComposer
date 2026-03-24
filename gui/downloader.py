@@ -2865,7 +2865,17 @@ class MediaGUIManager:
                 }
                 return layout_map.get(hd, "Host appears in the scene.")
 
-            # add a button to copy the visual style and character and host to the clipboard
+
+            def short_story_prompt():
+                try:
+                    content = summary_window.clipboard_get()
+                    content = "Visual-Style: pixar-art cartoon + realistic\n\ngenerate according to the scenes structure (keep simple, focus more on story, less narrator interrupt, try to avoid psychological terminology):\n\n" + content
+                    summary_window.clipboard_clear()
+                    summary_window.clipboard_append(content)
+                except Exception:
+                    return
+
+
             def copy_style_character(language):
                 try:
                     content = summary_window.clipboard_get()
@@ -2965,27 +2975,28 @@ class MediaGUIManager:
                         "** No Host. Use the main character to speak about the content of scene."
                     )
 
-                if story_json.get('english', {}).get('concise_speaking', ''):
-                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
-                else:
-                    header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+                if language == "en":
+                    if story_json.get('english', {}).get('concise_speaking', ''):
+                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
+                    else:
+                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
 
-                header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
-                header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
+                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                    header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
+                    header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
 
-                header_parts.append(f"\n\n\n----------------------------------------------------------\n")
 
-                if story_json.get('chinese', {}).get('concise_speaking', ''):
-                    header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
-                else:
-                    header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+                if language == "zh":
+                    if story_json.get('chinese', {}).get('concise_speaking', ''):
+                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
+                    else:
+                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
 
-                header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
-                header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
+                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                    header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
+                    header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
 
 
                 try:
@@ -2994,6 +3005,31 @@ class MediaGUIManager:
                     summary_window.update()
                 except Exception:
                     pass
+
+                header_parts.append(f"\n\n\n----------------------------------------------------------\n")
+
+                if language == "zh":
+                    if story_json.get('english', {}).get('concise_speaking', ''):
+                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
+                    else:
+                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+
+                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                    header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
+                    header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
+
+
+                if language == "en":
+                    if story_json.get('chinese', {}).get('concise_speaking', ''):
+                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
+                    else:
+                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
+                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+
+                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
+                    header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
+                    header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
 
                 header_parts.append(f"\n\n\n\n----------------------------------------------------------\n")
                 header_parts.append(f"\nCase-Study Summary: \n{video_detail.get('summary', '')}")
@@ -3016,9 +3052,14 @@ class MediaGUIManager:
 
             ttk.Label(prompt_choice_frame, text=" | ").pack(side=tk.LEFT, padx=(10, 10))
 
-            image_style_btn = ttk.Button(prompt_choice_frame, text="图像提示", command=lambda: copy_style_character(self.language))
-            image_style_btn.pack(side=tk.LEFT, padx=(0, 5))
+            image_en_btn = ttk.Button(prompt_choice_frame, text="EN图", command=lambda: copy_style_character("en"))
+            image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
 
+            image_zh_btn = ttk.Button(prompt_choice_frame, text="ZH图", command=lambda: copy_style_character("zh"))
+            image_zh_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+            short_story_btn = ttk.Button(prompt_choice_frame, text="短剧", command=lambda: short_story_prompt())
+            short_story_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             copy_lm_btn = ttk.Button(prompt_choice_frame, text="无拷贝", command=lambda: copy_lm_instruction())
             copy_lm_btn.pack(side=tk.LEFT, padx=(0, 5))
