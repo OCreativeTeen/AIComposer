@@ -330,11 +330,12 @@ COUNSELING_INIT = """
 
 *** OUTPUT (JSON Array)
     ** Strictly output a JSON array of scene objects , and each scene with these fields:
-        * actor: Story Character (Gender/Age/Name/Tone/Race-{language}) | only show this field if current scene has actor; if current scene has both actor & narrator, narrator is the speaker, and the actor only act/no speaking (In English).
+        * actor: Story Character (Gender/Age/Name/Tone/Race-{language}) | only show this field if current scene has actor; if current scene has both actor & narrator, narrator is the speaker, and the actor only act/not speak (In English).
         * actions: only show this field if current scene has actor; show the 'actor's Emotion or physical movements or expressions] (In English).
-        * narrator: Narrator (Psychological Counselor), value as 'Narrator - {narrator}'  | only show this field if current scene has narrator to give narration (In English).
+        * narrator: Narrator (Psychological Counselor), value as '{narrator}'  | only show this field if current scene has narrator to give narration (In English).
         * speaking: The Story Character's Very-Natural dialogue (In {language}) / Narrator's Very-Natural dialogue, to reveals what beneath the surface & connections if need (No psychological labels) (In {language}).
         * visual: Detailed cinematic setting of current scene(environment - Time, season, weather, architecture, lighting, noise) to enhance the "short film" feel.
+            - if current scene is 'narrator' speaking to give narration about the previous scene, normally should keep the previous scene image in current scene's background, and pop the narrator at front.
 
 
 """

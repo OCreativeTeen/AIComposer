@@ -509,7 +509,7 @@ class WorkflowGUI:
     def choose_from_download(self, track, media_post):
         media_path = None
 
-        for folder in ["L:", "M:", "N:"]:
+        for folder in ["L:"]:
             if check_folder_files(folder, media_post):
                 matching = [f for f in os.listdir(folder)
                             if f.lower().endswith(media_post) and os.path.isfile(os.path.join(folder, f))]
@@ -551,11 +551,19 @@ class WorkflowGUI:
                 rename = media_path
 
         if media_post == ".mp4":
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if track == "clip" or track == "narration":
-                audio_choice = "replace"
+                use_scene_audio = messagebox.askyesno(
+                    "音频",
+                    "是否用本场景已有的「{}」音频轨道替换新视频中的音频？\n\n"
+                    "是：使用场景里已保存的 {}_audio（旧音频）\n"
+                    "否：保留所选新视频文件里的音频".format(track, track),
+                    parent=self.root,
+                )
+                audio_choice = "replace" if use_scene_audio else "keep"
             else:
                 audio_choice = "keep"
-            self.media_scanner.video_simple_replacement(self.workflow.get_scene_by_index(self.current_scene_index), rename, audio_choice, track)
+            self.media_scanner.video_simple_replacement(scene, rename, audio_choice, track)
         else: # audio
             olda, newa = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
             vtrack = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), track)
@@ -578,13 +586,13 @@ class WorkflowGUI:
             return
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if track == "clip":
-            voice_values = config_prompt.SPEAKER
+            voice_values = config_prompt.CHARACTOR
             content_field = "speaking"
             role_field = "actor"
             track_label = "Clip"
             role_label = "人物"
         else:  # narration
-            voice_values = config_prompt.NARRATOR
+            voice_values = config_prompt.CHARACTOR
             content_field = "voiceover"
             role_field = "narrator"
             track_label = "Narration"
@@ -1463,7 +1471,7 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.SPEAKER)
+        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.CHARACTOR)
         self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
@@ -1480,7 +1488,7 @@ class WorkflowGUI:
         _nar_host_row = ttk.Frame(self.video_edit_frame)
         _nar_host_row.grid(row=row_number, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Label(_nar_host_row, text="讲员:").pack(side=tk.LEFT, padx=(0, 4))
-        self.scene_narrator = ttk.Combobox(_nar_host_row, width=22, values=config_prompt.NARRATOR)
+        self.scene_narrator = ttk.Combobox(_nar_host_row, width=22, values=config_prompt.CHARACTOR)
         self.scene_narrator.pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(_nar_host_row, text="出镜:").pack(side=tk.LEFT, padx=(0, 4))
         self.scene_host_display = ttk.Combobox(
@@ -1514,7 +1522,7 @@ class WorkflowGUI:
         self.scene_language.set(self.shared_language.cget('text'))
 
         ttk.Label(self.video_edit_frame, text="画面风格:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        _vs_labels = [lbl for _, lbl in config.VISUAL_STYLE_OPTIONS]
+        _vs_labels = list(config.VISUAL_STYLE_OPTIONS)
         self.scene_visual_style = ttk.Combobox(
             self.video_edit_frame,
             width=32,
@@ -1523,11 +1531,7 @@ class WorkflowGUI:
         )
         self.scene_visual_style.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
-        self.scene_visual_style.set(
-            project_manager._visual_style_label_for_result(
-                (project_manager.PROJECT_CONFIG or {}).get("visual_style")
-            )
-        )
+        self.scene_visual_style.set(project_manager.LAST_VISUAL_STYLE)
 
         # 旁白轨道播放状态
         self.secondary_track_playing = False
@@ -2339,24 +2343,15 @@ class WorkflowGUI:
         self.scene_visual.delete("1.0", tk.END)
         self.scene_visual.insert("1.0", scene_data.get("visual", ""))
 
-        _nar = (scene_data.get("narrator") or "").strip()
-        if not _nar:
-            _pc = project_manager.PROJECT_CONFIG
-            _nar = (_pc.get("narrator") if _pc else None) or project_manager.LAST_NARRATOR or "woman_mature"
-        self.scene_narrator.set(_nar)
-        _hd_en = scene_data.get("host_display") or (project_manager.PROJECT_CONFIG or {}).get("host_display") or ""
-        self.scene_host_display.set(project_manager._host_display_label_for_result(_hd_en))
-
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_voiceover.insert("1.0", scene_data.get("voiceover", ""))
 
         self.scene_caption.delete("1.0", tk.END)
         self.scene_caption.insert("1.0", scene_data.get("caption", ""))
 
-        if hasattr(self, "scene_visual_style"):
-            self.scene_visual_style.set(
-                project_manager._visual_style_label_for_result(scene_data.get("visual_style", ""))
-            )
+        self.scene_narrator.set(scene_data.get("narrator", project_manager.PROJECT_CONFIG.get("narrator")))
+        self.scene_host_display.set(scene_data.get("host_display", project_manager.PROJECT_CONFIG.get("host_display")))
+        self.scene_visual_style.set(scene_data.get("visual_style", project_manager.PROJECT_CONFIG.get("visual_style")))
 
         #self.scene_cinematography.delete("1.0", tk.END)
         # 如果 cinematography 是字典，格式化显示；如果是字符串，直接显示
@@ -2549,21 +2544,9 @@ class WorkflowGUI:
         self.scene_actions.delete("1.0", tk.END)
         self.scene_visual.delete("1.0", tk.END)
         _pc = project_manager.PROJECT_CONFIG
-        self.scene_narrator.set(
-            (_pc.get("narrator") if _pc else None) or project_manager.LAST_NARRATOR or "woman_mature"
-        )
-        if hasattr(self, "scene_host_display"):
-            self.scene_host_display.set(
-                project_manager._host_display_label_for_result(
-                    (_pc.get("host_display") if _pc else None) or project_manager.LAST_HOST_DISPLAY
-                )
-            )
-        if hasattr(self, "scene_visual_style"):
-            self.scene_visual_style.set(
-                project_manager._visual_style_label_for_result(
-                    (_pc.get("visual_style") if _pc else None) or project_manager.LAST_VISUAL_STYLE
-                )
-            )
+        self.scene_narrator.set(_pc.get("narrator") or project_manager.LAST_NARRATOR)
+        self.scene_host_display.set(_pc.get("host_display") or project_manager.LAST_HOST_DISPLAY)
+        self.scene_visual_style.set(_pc.get("visual_style") or project_manager.LAST_VISUAL_STYLE)
         self.scene_voiceover.delete("1.0", tk.END)
         self.scene_caption.delete("1.0", tk.END)
 
@@ -3375,52 +3358,52 @@ class WorkflowGUI:
             print(f"❌ 加载 PIP L/R 第一帧失败: {e}")
     
     
-    def copy_image_to_clipboard(self, image_path):
-        """将图像复制到 Windows 剪贴板
-        
+    def copy_image_to_clipboard(self, image_path, *, silent=False):
+        """将图像复制到 Windows 剪贴板（CF_DIB，供其他应用粘贴）。
+
         Args:
             image_path: 图像文件路径
+            silent: 为 True 时不弹窗（仅 print），用于双击预览时与对话框同时复制
         """
         try:
             if not image_path or not os.path.exists(image_path):
-                messagebox.showwarning("警告", "图像文件不存在")
+                if not silent:
+                    messagebox.showwarning("警告", "图像文件不存在")
                 return False
-            
-            # 尝试使用 win32clipboard
+
             try:
                 import win32clipboard  # type: ignore
-                
-                # 打开图像
+
                 img = Image.open(image_path)
-                
-                # 转换为 RGB 模式（如果需要）
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
-                
-                # 将图像保存到内存中的 BMP 格式（Windows 剪贴板需要）
+
                 output = BytesIO()
                 img.save(output, 'BMP')
-                data = output.getvalue()[14:]  # 移除 BMP 文件头
+                data = output.getvalue()[14:]
                 output.close()
-                
-                # 复制到剪贴板
+
                 win32clipboard.OpenClipboard()
                 win32clipboard.EmptyClipboard()
                 win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
                 win32clipboard.CloseClipboard()
-                
+
                 print(f"✅ 已复制图像到剪贴板: {os.path.basename(image_path)}")
                 return True
-                
+
             except ImportError:
-                # 如果没有安装 pywin32，尝试使用其他方法
-                messagebox.showwarning("警告", "需要安装 pywin32 才能复制图像到剪贴板\n请运行: pip install pywin32")
+                msg = "需要安装 pywin32 才能复制图像到剪贴板\n请运行: pip install pywin32"
+                if not silent:
+                    messagebox.showwarning("警告", msg)
+                else:
+                    print(f"⚠️ {msg}")
                 return False
-                
+
         except Exception as e:
             error_msg = f"复制图像到剪贴板失败: {str(e)}"
             print(f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
+            if not silent:
+                messagebox.showerror("错误", error_msg)
             return False
 
 
@@ -3466,6 +3449,11 @@ class WorkflowGUI:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
+            # 与选择对话框同时：先把当前槽位已有图片复制到剪贴板，便于其他应用粘贴处理
+            _preview_path = current_scene.get(image_type)
+            if _preview_path and os.path.exists(_preview_path):
+                self.copy_image_to_clipboard(_preview_path, silent=True)
+
             source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
             track = image_type.split("_")[0]  # clip_image -> clip, narration_image -> narration, etc.
 
@@ -4044,7 +4032,6 @@ class WorkflowGUI:
 
         if visual_style is None:
             visual_style = scene.get("visual_style") or (project_manager.PROJECT_CONFIG or {}).get("visual_style")
-        visual_style = project_manager._normalize_visual_style_value(visual_style)
 
         if visual:
             scene_video_desc = f"""
@@ -4107,15 +4094,17 @@ class WorkflowGUI:
         """根据选项构建 Story Content JSON。Speaker/Host 共用 visual_style；narrator 为 NARRATOR id；host_display 为英文 value。"""
         scenes_data = []
         for s in current_story_scenes:
-            hs_display = s.get("host_display", host_display)
-
             item = {
                 "visual_style": s.get("visual_style", visual_style),
                 "actor": str(s.get("actor", "")).strip(),
                 "speaking": s.get("speaking", ""),
                 "actions": s.get("actions", "")
             }
-            item["narrator"] = "N/A" if hs_display == "N/A" else s.get("narrator", narrator) + " | " + hs_display
+
+            nar = s.get("narrator", None)
+            if nar:
+                item["narrator"] = nar + " | " + s.get("host_display", host_display)
+
             if include_visual:
                 item["visual"] = s.get("visual", "")
             if include_voiceover:
@@ -4168,8 +4157,8 @@ class WorkflowGUI:
                 if include_voiceover_chk_var.get():
                     item["voiceover"] = s.get("voiceover", "")
 
-                if item["narrator"] != "N/A":
-                    if hs_display == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]: # voice-only
+                if item.get("narrator"):
+                    if hs_display == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
                         item["narrator"] = "Narrator - " + item["narrator"] + " - not show in the screen, only speaking"
                     else:
                         item["narrator"] = "Narrator - " + item["narrator"] + " - pop up in the screen (if has previous scene, try keep its image back to background, while actor (if has) in previous image not speaking)"
@@ -4234,8 +4223,8 @@ class WorkflowGUI:
             messagebox.showwarning("提示", "当前故事无场景")
             return
 
-        visual_style = project_manager.PROJECT_CONFIG.get("visual_style", config.VISUAL_STYLE_OPTIONS[0][0])
-        narrator = project_manager.PROJECT_CONFIG.get("narrator", config_prompt.NARRATOR[0])
+        visual_style = project_manager.PROJECT_CONFIG.get("visual_style", config.VISUAL_STYLE_OPTIONS[0])
+        narrator = project_manager.PROJECT_CONFIG.get("narrator", config_prompt.CHARACTOR[0])
         host_display = project_manager.PROJECT_CONFIG.get("host_display", config_prompt.HARRATOR_DISPLAY_OPTIONS[0])
 
         self._build_and_show_story_content(
@@ -4249,25 +4238,31 @@ class WorkflowGUI:
 
 
     def describe_scene_content(self):
+        self.root.update_idletasks()
+        self.update_current_scene()
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
             return
-         
-        visual_style = project_manager.PROJECT_CONFIG.get("visual_style", config.VISUAL_STYLE_OPTIONS[0][0])
-        narrator = project_manager.PROJECT_CONFIG.get("narrator", config_prompt.NARRATOR[0])
-        host_display = project_manager.PROJECT_CONFIG.get("host_display", config_prompt.HARRATOR_DISPLAY_OPTIONS[0])
+
+        visual_style = scene.get("visual_style") or project_manager.PROJECT_CONFIG.get("visual_style")
+        host_display = scene.get("host_display") or project_manager.PROJECT_CONFIG.get("host_display")
 
         item = {
-            "visual_style": scene.get("visual_style", visual_style),
-            "actor": str(scene.get("actor", "")).strip(),
-            "speaking": scene.get("speaking", ""),
-            "actions": scene.get("actions", ""),
-            "visual": scene.get("visual", ""),
-            "narrator": scene.get("narrator", narrator)
+            "visual_style": visual_style,
+            "visual": scene.get("visual", "")
         }
-        if item["narrator"] != "N/A":
-            item["narrator"] = item["narrator"] + " | " + host_display
+
+        if scene.get("actor"):
+            item["actor"] = scene.get("actor")
+            item["actions"] = scene.get("actions")
+
+        if scene.get("narrator"):
+            item["narrator"] = scene.get("narrator") + " | " + host_display
+            item["visual"] = "the video image should keep stable as the starting image (keep the narrator in same position), not jump to other background because of the content narration | " + item["visual"]
+
+        if scene.get("speaking"):  
+            item["speaking"] = scene.get("speaking")
 
         scene_video_desc = config_prompt.SCENE_VIDEO_INSTRUCTION.format(visual_style=visual_style) + "\n\n" + json.dumps(item, indent=2, ensure_ascii=False)
 
@@ -4315,13 +4310,18 @@ class WorkflowGUI:
         else:
             scene["extension"] = ext_val
 
-        _hd_en = project_manager._normalize_host_display_value((self.scene_host_display.get() or "").strip())
-        _vs_lbl = (self.scene_visual_style.get() or "").strip() if hasattr(self, "scene_visual_style") else ""
-        _vs_en = next(
-            (v for v, lbl in config.VISUAL_STYLE_OPTIONS if lbl == _vs_lbl),
-            config.VISUAL_STYLE_OPTIONS[0][0],
-        )
-        _vs_en = project_manager._normalize_visual_style_value(_vs_en)
+        # 焦点移到模态框时 ttk.Combobox.get() 可能暂时为空，勿用默认值覆盖已选 host_display
+        _hd_en = self.scene_host_display.get() or scene.get("host_display")
+        _vs_lbl = (self.scene_visual_style.get() or "").strip()
+        if _vs_lbl:
+            _vs_en = _vs_lbl
+        else:
+            _vs_en = (
+                scene.get("visual_style")
+                or (project_manager.PROJECT_CONFIG or {}).get("visual_style")
+                or config.VISUAL_STYLE_OPTIONS[0]
+            )
+
         scene.update({
             "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
             "actor": self.scene_speaker.get().strip(),
@@ -4628,10 +4628,14 @@ class WorkflowGUI:
 
     def on_scene_field_focus_out(self, event=None):
         """当场景编辑字段失去焦点时的回调"""
-        # 延迟保存以避免频繁操作
-        if hasattr(self, '_save_timer'):
-            self.root.after_cancel(self._save_timer)
-        self._save_timer = self.root.after(500, lambda: self.update_current_scene())  # 500ms延迟
+        # 延迟保存以避免频繁操作（仅取消有效的 after id，避免 None/已失效 id 触发 ValueError）
+        tid = getattr(self, '_save_timer', None)
+        if tid:
+            try:
+                self.root.after_cancel(tid)
+            except (ValueError, tk.TclError):
+                pass
+        self._save_timer = self.root.after(500, lambda: self.update_current_scene())
 
 
     def on_volume_change(self, *args):

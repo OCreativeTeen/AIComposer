@@ -132,23 +132,26 @@ Scene-Image generation instruction:
     ** Visual-Style
         ** General Visual-Style:  {visual_style};  Detailed visual-style follows the scene json field "visual_style".
 
-    ** DO NOT put any scene instruction / information (like content in json structure) in the image, only show the visual content of the scene!!!!!!!!!!!!!!
-    ** DO NOT include any info of this prompt / instruction in the image, only express the content describing the scenes (the 'Story Json-Content' at end) !!!!!!!!!!!!!!
+    ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and show 'narrator' as talking-avatar at front.
 
 --------------
-
-
 Video generation instruction: 
-    *** if scene-image not have the actor or narrator : DO NOT add it in video generation, Audio-speaking without figure is perfect in this case!!! (Even json content may has 'actor/narrator', only use it to choose voice) **
+	*** if current scene image has 'narrator' talking-avatar;
+        ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
+        ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
 
 --------------
 
 Audio generation / Words-in-image generation instruction: 
-    ** Speaker: if both current scene has both 'narrator' & 'actor' fields, the narrator is the speaker, and the actor only act (not speak).
-    ** Speaker: if current scene has 'actor' but no 'narrator' field, actor is the speaker
-    ** Speaker: if current scene has no 'actor' & 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene).
-    ** If current scene has 'actor' or 'narrator' field, but 'speaking' is empty, then the speaker should breifly speak about the content of the image (i.e., text message in the image)
-    ** Use current scene['speaking'] as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. 
+    ** Speaker:
+        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender_age_race' (i.e, 'woman_young_chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
+        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman_young_chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
+	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
+        * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
+        * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
+        * if current scene has both 'narrator' & 'actor', 'narrator' is the talking_avatar (lip_sync), and 'actor' only act (not speak); No interaction between 'narrator' & any 'actor'!!!!!
+    ** If 'speaking' is empty, but has 'actor' or 'narrator' field, then speaker should breifly speak about the content of image (i.e., text message in the image)
+    ** Use 'speaking' content as reference only. Concisify target max 10 seconds speech. 
     ** May add sound-effects to enhance the scene, but no music.
     ** For Word-in-image generation, try to make very very concise (no details, just key points in titles)
 
@@ -174,25 +177,31 @@ Slide-Show generation instruction:
 	** Narrator Character (only show in image, if current scene has 'narrator' field)
 		* From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"; Follow visual-style & gender to choose.
 
+    ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and pop-up the 'narrator' as talking-avatar at front.
     ** DO NOT put any scene instruction / information (like content in json structure) in the image, only show the visual content of the scene!!!!!!!!!!!!!!
     ** DO NOT include any info of this prompt / instruction in the image, only express the content describing the scenes (the 'Story Json-Content' at end) !!!!!!!!!!!!!!
+
 
 
 --------------
 
 Video generation instruction: 
-    *** if scene-image not have the actor or narrator : DO NOT add it in video generation, Audio-speaking without figure is perfect in this case!!! (Even json content may has 'actor/narrator', only use it to choose voice) **
-	*** if current scene has 'narrator' field, pop up the narrator in the screen (to give narration speaking);
-        ** if the narrator's speaking is based on the previous scene, then keep the previous image in current scene as background (which actor should not speaking)
+	*** if current scene image has 'narrator' talking-avatar;
+        ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
+        ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
 
 --------------
 
 Audio generation / Words-in-image generation instruction: 
-    ** Speaker: if both current scene has both 'narrator' & 'actor' fields, the narrator is the speaker, and the actor only act (not speak).
-    ** Speaker: if current scene has 'actor' but no 'narrator' field, actor is the speaker
-    ** Speaker: if current scene has no 'actor' & 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene).
-    ** If current scene has 'actor' or 'narrator' field, but 'speaking' is empty, then the speaker should breifly speak about the content of the image (i.e., text message in the image)
-    ** Use current scene['speaking'] as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. 
+    ** Speaker:
+        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender_age_race' (i.e, 'woman_young_chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
+        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman_young_chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
+	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
+        * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
+        * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
+        * if current scene has both 'narrator' & 'actor', 'narrator' is the talking_avatar (lip_sync), and 'actor' only act (not speak); No interaction between 'narrator' & any 'actor'!!!!!
+    ** If 'speaking' is empty, but has 'actor' or 'narrator' field, then speaker should breifly speak about the content of image (i.e., text message in the image)
+    ** Use 'speaking' content as reference only. Concisify target max 10 seconds speech. 
     ** May add sound-effects to enhance the scene, but no music.
     ** For Word-in-image generation, try to make very very concise (no details, just key points in titles)
 
@@ -1261,26 +1270,8 @@ ANIMATION_PROMPTS = [
 
 
 
-SPEAKER = [
+CHARACTOR = [
     "",
-    "woman_mature", 
-    "man_mature",
-
-    "woman_young",
-    "man_young",
-
-    "teen_girl",
-    "teen_boy",
-
-    "woman_old",
-    "man_old",
-
-    "boy",
-    "girl"
-]
-
-
-NARRATOR = [
     "woman_young_chinese",
     "man_young_chinese",
     "woman_mature_chinese",
@@ -1300,10 +1291,9 @@ NARRATOR = [
 # Host 显示方式（英文 value，UI 与 JSON 一致）- 供 downloader、GUI、project_manager 共享
 # =============================================================================
 HARRATOR_DISPLAY_OPTIONS = [
-    "voice-image-left",
-    "voice-image-right",
-    "N/A",
-    "voice-only"
+    "speaking-at-image-left",
+    "speaking-at-image-right",
+    ""
 ]
 
 

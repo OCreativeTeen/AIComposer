@@ -24,41 +24,39 @@ LANGUAGES = {
 # 格式: gender/age/race | style（如 woman/middle-aged/chinese | realistic）
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
-    ("pixar-art cartoon + realistic", "真实卡通(皮克斯)"),
-    ("pixar-art cartoon", "卡通(皮克斯)"),
-    ("realistic", "真实形象"),
-    ("cartoon", "卡通(普通)"),
+    "pixar-art cartoon + realistic",
+    "pixar-art cartoon",
+    "realistic",
+    "cartoon",
 ]
-# 人物选项 (value: gender/age/race, label: 中文显示) - 与 GUI HOST_OPTIONS_DATA 一致
+
 CHARACTER_PERSON_OPTIONS = [
-    ("woman/young/chinese", "中国青年女性"),
-    ("woman/middle-aged/chinese", "中国中年女性"),
-    ("man/young/chinese", "中国青年男性"),
-    ("man/middle-aged/chinese", "中国中年男性"),
-    ("girl/chinese", "中国女孩"),
-    ("boy/chinese", "中国男孩"),
-    ("woman/senior/chinese", "中国老年女性"),
-    ("man/senior/chinese", "中国老年男性"),
-    ("woman/young/caucasian", "白人青年女性"),
-    ("man/young/caucasian", "白人青年男性"),
-    ("woman/middle-aged/caucasian", "白人中年女性"),
-    ("man/middle-aged/caucasian", "白人中年男性"),
-    ("girl/caucasian", "白人女孩"),
-    ("boy/caucasian", "白人男孩"),
-    ("woman/senior/caucasian", "白人老年女性"),
-    ("man/senior/caucasian", "白人老年男性"),
+    "woman/young/chinese",
+    "woman/middle-aged/chinese",
+    "man/young/chinese",
+    "man/middle-aged/chinese",
+    "girl/chinese",
+    "boy/chinese",
+    "woman/senior/chinese",
+    "man/senior/chinese",
+    "woman/young/caucasian",
+    "man/young/caucasian",
+    "woman/middle-aged/caucasian",
+    "man/middle-aged/caucasian",
+    "girl/caucasian",
+    "boy/caucasian",
+    "woman/senior/caucasian",
+    "man/senior/caucasian",
 ]
 
 
 def _build_describe_host_options():
-    """场景描述 Host 组合选项：(value, label)。由 CHARACTER_PERSON_OPTIONS + SPEAKER_STYLE_OPTIONS 生成"""
-    opts = [("", "不包含 Host")]
-    for style_val, style_lbl in VISUAL_STYLE_OPTIONS:
-        for char_val, char_lbl in CHARACTER_PERSON_OPTIONS:
+    """场景描述 Host 组合选项：(value, label)。中年中国男女 × 各画面风格。"""
+    opts = [("", "no host")]
+    for style_val in VISUAL_STYLE_OPTIONS:
+        for char_val in CHARACTER_PERSON_OPTIONS:
             if char_val in ("woman/middle-aged/chinese", "man/middle-aged/chinese"):
-                combined = char_val
-                short = char_lbl.replace("中国", "")
-                opts.append((combined, f"{style_lbl}-{short}"))
+                opts.append((char_val, f"{style_val} | {char_val}"))
     return opts
 
 
@@ -450,15 +448,6 @@ def parse_speaker_host_for_voice(s):
     if before.endswith("-style"):
         return after
     return before
-
-
-# 场景描述对话框的 Host 选项（中年中国男女 x 三风格）- 由共享定义生成
-DESCRIBE_HOST_OPTIONS = [("", "不包含 Host")] + [
-    (cv, f"{sl}-{cl.replace('中国', '')}")
-    for sv, sl in VISUAL_STYLE_OPTIONS
-    for cv, cl in CHARACTER_PERSON_OPTIONS
-    if cv in ("woman/middle-aged/chinese", "man/middle-aged/chinese")
-]
 
 
 def get_fallback_background_image(channel, width, height):

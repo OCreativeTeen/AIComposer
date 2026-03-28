@@ -101,11 +101,11 @@ class AVReviewDialog:
         if self.media_type == "clip":
             self.SPEAKER_KEY = "actor"
             self.SPEAKING_KEY = "speaking"
-            self.ACTORS = config_prompt.SPEAKER
+            self.ACTORS = config_prompt.CHARACTOR
         else:
             self.SPEAKER_KEY = "narrator"
             self.SPEAKING_KEY = "voiceover"
-            self.ACTORS = config_prompt.NARRATOR
+            self.ACTORS = config_prompt.CHARACTOR
         
         # 媒体字段名映射
         if media_type == "clip":

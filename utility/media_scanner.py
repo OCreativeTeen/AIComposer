@@ -105,7 +105,6 @@ class MediaScanner:
 
     def __init__(self, workflow, stability_duration: int):
         self.workflow = workflow
-        self.ffmpeg_processor = workflow.ffmpeg_processor
         self.stability_duration = stability_duration
 
 
@@ -167,7 +166,7 @@ class MediaScanner:
                 target_scene[video_info.video_type + "_status"] = "ENH2"
             else:
                 target_scene[video_info.video_type + "_status"] = "ORIG"
-                target_scene[video_info.video_type + "_fps"] = self.ffmpeg_processor.get_video_fps(copy_to)
+                target_scene[video_info.video_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(copy_to)
 
             #if video_info.image_path:
             #    i = self.ffmpeg_processor.image_to_webp(video_info.image_path)
@@ -268,17 +267,17 @@ class MediaScanner:
 
         print(f"Pair processing completed : {left_video.get_pair_key()}")
 
-        self.ffmpeg_processor._combine_left_right_videos(temp_left_path, right_work_path, gen_folder + "/" + left_video.get_output_name())
+        self.workflow.ffmpeg_processor._combine_left_right_videos(temp_left_path, right_work_path, gen_folder + "/" + left_video.get_output_name())
         os.remove(temp_left_path)
         os.remove(right_work_path)
 
 
     def take_gen_video(self, gen_video, media_type, type_suffix, scene):
-        gen_video = self.ffmpeg_processor.resize_video(gen_video, width=None, height=self.ffmpeg_processor.height)
+        gen_video = self.workflow.ffmpeg_processor.resize_video(gen_video, width=None, height=self.workflow.ffmpeg_processor.height)
 
         audio = get_file_path(scene, media_type + "_audio")
         if audio: # always cut to the same duration as the audio
-            gen_video = self.ffmpeg_processor.add_audio_to_video(gen_video, audio, True)
+            gen_video = self.workflow.ffmpeg_processor.add_audio_to_video(gen_video, audio, True)
         #else :
         #    audio = self.ffmpeg_audio_processor.extract_audio_from_video(enhanced_video)
         #    olda, audio = refresh_scene_media(scene, av_type + "_audio", ".wav", audio)
@@ -299,25 +298,32 @@ class MediaScanner:
 
     def video_simple_replacement(self, current_scene, video_path, replace_audio, media_type):
         """处理音频替换"""
-        current_scene[media_type + "_fps"] = self.ffmpeg_processor.get_video_fps(video_path)
-        video_path = self.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
-        if replace_audio:
+        current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
+        current_scene[media_type + "_status"] = "ORIG"
+        video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
+        # 仅当显式为 "replace" 时用场景已有 *_audio 替换；字符串 "keep" 须为假（勿用 if replace_audio: 非空串皆真）
+        if replace_audio == "replace":
             audio = current_scene.get(media_type+"_audio", None)
             if not audio:
                 return
-            video_path = self.ffmpeg_processor.add_audio_to_video(video_path, audio)
+            video_path = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, audio)
+        else:
+            audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(video_path)
+            if audio:
+                refresh_scene_media(current_scene, media_type+"_audio", ".wav", audio)
 
         refresh_scene_media(current_scene, media_type, ".mp4", video_path, True)
+        
         self.last_image_replacement(current_scene, video_path, media_type)
 
 
     def last_image_replacement(self, current_scene, video_path, media_type):
-        last_image = self.ffmpeg_processor.extract_frame(video_path, False)
+        last_image = self.workflow.ffmpeg_processor.extract_frame(video_path, False)
 
         if last_image is None:
             print("⚠️ 无法提取视频末帧，跳过末帧图像替换")
             return
-        last_image = self.ffmpeg_processor.resize_image_smart(last_image)
+        last_image = self.workflow.ffmpeg_processor.resize_image_smart(last_image)
         if last_image is None:
             print("⚠️ 末帧图像缩放失败，跳过末帧图像替换")
             return

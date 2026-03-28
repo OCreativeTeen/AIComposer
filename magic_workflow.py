@@ -748,9 +748,9 @@ class MagicWorkflow:
 
     def _defaults_from_project_config(self):
         """欢迎屏 / 新建项目写入 PROJECT_CONFIG 的 narrator、host_display、visual_style，用于场景缺省补全。"""
-        narr = "woman_mature"
+        narr = config_prompt.CHARACTOR[0]
         host_en = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
-        visual_style = config.VISUAL_STYLE_OPTIONS[0][0]
+        visual_style = config.VISUAL_STYLE_OPTIONS[0]
         try:
             pc = project_manager.PROJECT_CONFIG
             if pc:
@@ -759,10 +759,10 @@ class MagicWorkflow:
                     narr = n
                 h = pc.get("host_display")
                 if h:
-                    host_en = project_manager._normalize_host_display_value(h)
-                vs = pc.get("visual_style")
-                if vs:
-                    visual_style = project_manager._normalize_visual_style_value(vs)
+                    host_en = h
+                v = pc.get("visual_style")
+                if v:
+                    visual_style = v
         except Exception:
             pass
         return narr, host_en, visual_style
@@ -784,10 +784,6 @@ class MagicWorkflow:
                 #refresh_scene_media(scene, "zero_image", ".png", background_image, True)
                 #refresh_scene_media(scene, "zero", ".mp4", background_video, True)
                 #refresh_scene_media(scene, "zero_audio", ".wav", background_music, True)
-                if not story_scene.get("actor"):
-                    story_scene["actor"] = "N/A"
-                if not story_scene.get("narrator"):
-                    story_scene["narrator"] = _narr_default
                 if not story_scene.get("host_display"):
                     story_scene["host_display"] = _host_display_default
                 if not story_scene.get("visual_style"):
@@ -833,10 +829,6 @@ class MagicWorkflow:
                 self.replace_scene_with_others(index, new_scenes)
 
         for story_scene in self.scenes:
-            if not story_scene.get("actor"):
-                story_scene["actor"] = "N/A"
-            if not story_scene.get("narrator"):
-                story_scene["narrator"] = _narr_default
             if not story_scene.get("host_display"):
                 story_scene["host_display"] = _host_display_default
             if not story_scene.get("visual_style"):
@@ -1372,18 +1364,20 @@ class MagicWorkflow:
         #video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
         # create new function to simplly concat videos (No extendsion, NO transition at all)
-        video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
+        #video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
-        if not add_narration:
-            current_zero = None
-            audio_segments = []
-            for s in self.scenes:
-                if not current_zero or current_zero != s["zero_audio"]:
-                    current_zero = s["zero_audio"]
-                    audio_segments.append(current_zero)
-            if audio_segments and len(audio_segments) > 0:
-                audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
-                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
+        video_temp = self.ffmpeg_processor.concat_videos_simple_transitions(video_segments, keep_audio_if_has=True)
+
+        #if not add_narration:
+        #    current_zero = None
+        #    audio_segments = []
+        #    for s in self.scenes:
+        #        if not current_zero or current_zero != s["zero_audio"]:
+        #            current_zero = s["zero_audio"]
+        #            audio_segments.append(current_zero)
+        #    if audio_segments and len(audio_segments) > 0:
+        #        audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
+        #        video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
 
         final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
         os.replace(video_temp, final_video_path)

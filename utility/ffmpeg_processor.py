@@ -1683,6 +1683,11 @@ class FfmpegProcessor:
             print(f"❌ Error splitting image: {str(e)}")
             return None, None
 
+    @staticmethod
+    def _concat_demuxer_path_line(video_path):
+        """concat demuxer 的 file 行：路径中单引号必须写成 ''（FFmpeg 文档）。"""
+        abs_path = os.path.abspath(video_path).replace("\\", "/").replace("'", "''")
+        return f"file '{abs_path}'\n"
 
     def concat_videos(self, video_paths, keep_audio):
         if len(video_paths) == 0:
@@ -1697,8 +1702,7 @@ class FfmpegProcessor:
             concat_file_path = os.path.join(self.temp_dir, "chunk_concat_list.txt")
             with open(concat_file_path, "w", encoding="utf-8") as f:
                 for video_path in video_paths:
-                    abs_path = os.path.abspath(video_path).replace("\\", "/")
-                    f.write(f"file '{abs_path}'\n")
+                    f.write(self._concat_demuxer_path_line(video_path))
             
             # build ffmpeg concat command with re-encoding for consistency
             concat_cmd = [
@@ -1742,6 +1746,163 @@ class FfmpegProcessor:
             raise RuntimeError(f"Simple demuxer concatenation failed: {e}") from e
 
 
+    def concat_videos_simple_transitions(self, video_segments, keep_audio_if_has=False, extend_sec=1.0, transition_sec=0.5):
+        """将多段视频先各延长 extend_sec（末帧定格），再经 xfade 的 **fade** 过渡拼接。
+
+        **稳定性说明**（相对其它过渡）：
+        - `xfade=transition=fade` 是 FFmpeg 内置的最基础淡入淡出，文档与社区用例最多；分辨率与帧率一致时行为可预期。
+        - 不使用 `fadeblack`/`slide*` 等依赖更多像素语义的效果，以减少边界问题。
+        - 所有片段先 **统一分辨率 + fps**（scale+pad+fps），再进 xfade，与 `_concat_videos_with_transitions` 一致。
+        - **filter_complex** 路径统一用 **libx264**（避免 NVENC 与长 filter 链的兼容问题）。
+
+        **音频**：与视频 **xfade** 对称，使用 **acrossfade** 链（同 transition_sec）；勿用 concat+atrim，否则与 xfade 重叠时长不一致会导致逐段漂移。
+
+        :param video_segments: list of dict，至少含 ``path`` 键
+        :param extend_sec: 每段末尾延长秒数（末帧克隆），需 >= transition_sec
+        :param transition_sec: 每处 xfade 过渡时长，应 < 每段延长后时长
+        """
+        if not video_segments:
+            return None
+        paths = []
+        for seg in video_segments:
+            p = seg.get("path") if isinstance(seg, dict) else seg
+            if not p or not os.path.isfile(p):
+                raise ValueError(f"Invalid video segment path: {p!r}")
+            paths.append(p)
+
+        transition_sec = float(transition_sec)
+        extend_sec = float(extend_sec)
+        if transition_sec <= 0 or extend_sec <= 0:
+            raise ValueError("extend_sec and transition_sec must be positive")
+        if transition_sec > extend_sec:
+            transition_sec = extend_sec * 0.5
+            print(f"⚠️ transition_sec capped to {transition_sec:.3f}s (<= extend_sec)")
+
+        video_out_path = config.get_temp_file(self.pid, "mp4")
+        n = len(paths)
+        if n == 1:
+            shutil.copy2(paths[0], video_out_path)
+            return video_out_path
+
+        temp_extended = []
+        extended_durations = []
+        try:
+            # 1) 每段：末帧延长 + 统一输出分辨率与帧率（xfade 前提）
+            for i, src in enumerate(paths):
+                out_ext = os.path.join(self.temp_dir, f"simple_xfade_ext_{i:03d}_{uuid.uuid4().hex[:8]}.mp4")
+                temp_extended.append(out_ext)
+                w, h = self.width, self.height
+                vf = (
+                    f"tpad=stop_duration={extend_sec:.5f}:stop_mode=clone,"
+                    f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,fps={STANDARD_FPS}"
+                )
+                cmd = [ffmpeg_path, "-y", "-i", src]
+                if self.has_audio_stream(src):
+                    cmd.extend(["-af", f"apad=pad_dur={extend_sec:.5f}"])
+                    cmd.extend(self._get_audio_encode_args())
+                else:
+                    cmd.append("-an")
+                cmd.extend(self._get_video_output_args(keyframe_interval=True))
+                cmd.extend(self._get_output_optimization_args())
+                cmd.extend(["-vf", vf, out_ext])
+                self.run_ffmpeg_command(cmd)
+                if not os.path.exists(out_ext):
+                    raise RuntimeError(f"Extended clip not created: {out_ext}")
+                d = self.get_duration(out_ext)
+                if d <= 0:
+                    raise RuntimeError(f"Invalid duration after extend: {out_ext}")
+                extended_durations.append(d)
+
+            # 2) xfade 链：transition=fade（最常用、参数最少）
+            input_args = []
+            for p in temp_extended:
+                input_args.extend(["-i", p])
+
+            video_filters = []
+            for i in range(n):
+                # 已在临时文件中统一分辨率与 fps，此处仅重置时间戳
+                video_filters.append(f"[{i}:v]setpts=PTS-STARTPTS[vv{i}]")
+
+            cur_label = "vv0"
+            for t in range(n - 1):
+                off = sum(extended_durations[: t + 1]) - (t + 1) * transition_sec
+                off = self._align_time_to_frame(off, STANDARD_FPS)
+                next_in = f"vv{t + 1}"
+                out_lab = f"vx{t + 1}" if t < n - 2 else "vout"
+                video_filters.append(
+                    f"[{cur_label}][{next_in}]xfade=transition=fade:duration={transition_sec:.6f}:offset={off:.6f}[{out_lab}]"
+                )
+                cur_label = out_lab
+
+            if keep_audio_if_has:
+                audio_filters = []
+                for i in range(n):
+                    if self.has_audio_stream(temp_extended[i]):
+                        audio_filters.append(
+                            f"[{i}:a]aresample={STANDARD_AUDIO_RATE},aformat=sample_fmts=fltp:sample_rates={STANDARD_AUDIO_RATE}:channel_layouts=stereo,"
+                            f"atrim=0:{extended_durations[i]:.6f},asetpts=PTS-STARTPTS[pa{i}]"
+                        )
+                    else:
+                        audio_filters.append(
+                            f"anullsrc=channel_layout=stereo:sample_rate={STANDARD_AUDIO_RATE}:duration={extended_durations[i]:.6f}[pa{i}]"
+                        )
+                # 与 xfade 对称：链式 acrossfade，输出时长 = sum(E_i)-(n-1)*T，与 [vout] 一致（concat+atrim 会破坏对齐）
+                cur_a = "pa0"
+                td = transition_sec
+                for t in range(n - 1):
+                    next_a = f"pa{t + 1}"
+                    out_a = f"afx{t}" if t < n - 2 else "audio_out"
+                    audio_filters.append(
+                        f"[{cur_a}][{next_a}]acrossfade=d={td:.6f}:c1=tri:c2=tri[{out_a}]"
+                    )
+                    cur_a = out_a
+                filter_complex = ";".join(video_filters + audio_filters)
+                cmd = [ffmpeg_path, "-y"] + input_args + [
+                    "-filter_complex", filter_complex,
+                    "-map", "[vout]", "-map", "[audio_out]",
+                    "-c:v", "libx264",
+                    "-preset", "medium",
+                    "-crf", "18",
+                ]
+                cmd.extend(self._get_video_output_args(keyframe_interval=False))
+                cmd.extend(self._get_audio_encode_args())
+                cmd.extend(self._get_output_optimization_args())
+                cmd.append(video_out_path)
+            else:
+                filter_complex = ";".join(video_filters)
+                cmd = [ffmpeg_path, "-y"] + input_args + [
+                    "-filter_complex", filter_complex,
+                    "-map", "[vout]", "-an",
+                    "-c:v", "libx264",
+                    "-preset", "medium",
+                    "-crf", "18",
+                ]
+                cmd.extend(self._get_video_output_args(keyframe_interval=False))
+                cmd.extend(self._get_output_optimization_args())
+                cmd.append(video_out_path)
+
+            print(f"🔨 concat_videos_simple_transitions: {n} clips, extend={extend_sec}s, fade={transition_sec}s (libx264)")
+            self.run_ffmpeg_command(cmd)
+
+            if not os.path.exists(video_out_path):
+                raise RuntimeError("Output not created")
+            fd = self.get_duration(video_out_path)
+            print(f"✅ simple xfade concat: {video_out_path} ({fd:.2f}s)")
+            return video_out_path
+
+        except Exception as e:
+            print(f"❌ concat_videos_simple_transitions: {e}")
+            raise
+
+        finally:
+            for p in temp_extended:
+                try:
+                    if p and os.path.isfile(p):
+                        os.remove(p)
+                except OSError:
+                    pass
+
     def concat_videos_demuxer(self, video_segments, keep_audio_if_has=False):
         if len(video_segments) == 1:
             return video_segments[0]["path"]
@@ -1754,8 +1915,7 @@ class FfmpegProcessor:
             concat_file_path = os.path.join(self.temp_dir, "chunk_concat_list.txt")
             with open(concat_file_path, "w", encoding="utf-8") as f:
                 for video_path in video_paths:
-                    abs_path = os.path.abspath(video_path).replace("\\", "/")
-                    f.write(f"file '{abs_path}'\n")
+                    f.write(self._concat_demuxer_path_line(video_path))
             
             concat_cmd = [
                 ffmpeg_path, "-y",
@@ -1779,7 +1939,7 @@ class FfmpegProcessor:
             concat_cmd.append(video_out_path)
             
             print(f"🔨 Executing FFmpeg concat command...")
-            result = self.run_ffmpeg_command(concat_cmd)
+            self.run_ffmpeg_command(concat_cmd)
             
             final_duration = self.get_duration(video_out_path)
             print(f"✅ Successfully concatenated {len(video_paths)} chunks using simple demuxer : {video_out_path}")

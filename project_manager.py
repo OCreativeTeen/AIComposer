@@ -27,50 +27,12 @@ from gui.downloader import MediaGUIManager
 PROJECT_CONFIG = None
 
 # 欢迎屏选择的旁白 narrator，供 YT → RAW 启动新项目 等路径复用（与 config_prompt.NARRATOR 一致）
-LAST_NARRATOR = config_prompt.NARRATOR[0]
+LAST_NARRATOR = config_prompt.CHARACTOR[0]
 
-# 欢迎屏选择的画面风格（VISUAL_STYLE_OPTIONS 的 value），供 YT → RAW 启动新项目 等路径复用
-LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0][0]
+# 欢迎屏选择的画面风格（英文，与 config.VISUAL_STYLE_OPTIONS 一致）
+LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
-
-def _normalize_visual_style_value(val):
-    """将值规范为 config.VISUAL_STYLE_OPTIONS 中存在的 value。"""
-    allowed = {v for v, _ in config.VISUAL_STYLE_OPTIONS}
-    if val in allowed:
-        return val
-    return config.VISUAL_STYLE_OPTIONS[0][0]
-
-
-# Host 显示方式（与 HARRATOR_DISPLAY_OPTIONS 一致，英文）
 LAST_HOST_DISPLAY = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
-
-
-
-def _normalize_host_display_value(val):
-    """将值规范为 HARRATOR_DISPLAY_OPTIONS 中的英文 value。"""
-    allowed = set(config_prompt.HARRATOR_DISPLAY_OPTIONS)
-    if val in allowed:
-        return val
-    return config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
-
-
-def _visual_style_label_for_result(val):
-    """visual_style value → 中文 label（创建项目窗只读展示）。"""
-    v = _normalize_visual_style_value(val)
-    for x, lbl in config.VISUAL_STYLE_OPTIONS:
-        if x == v:
-            return lbl
-    return config.VISUAL_STYLE_OPTIONS[0][1]
-
-
-def _host_display_label_for_result(val):
-    """host_display 英文 value（与 UI 一致）。"""
-    return _normalize_host_display_value(val)
-
-
-# 兼容旧调用名
-_host_display_cn_for_result = _host_display_label_for_result
-
 
 
 media_count = 0
@@ -313,18 +275,11 @@ class ProjectSelectionDialog:
         available_channels = list(config_channel.CHANNEL_CONFIG.keys())
         default_channel = initial_channel or (available_channels[0] if available_channels else 'default')
         default_lang = initial_language or 'tw'
-        if initial_narrator is not None:
-            _nar = (initial_narrator if isinstance(initial_narrator, str) else str(initial_narrator)).strip()
-        else:
-            _nar = LAST_NARRATOR
-        if _nar not in config_prompt.NARRATOR:
-            _nar = config_prompt.NARRATOR[0]
-        _vs = _normalize_visual_style_value(
-            initial_visual_style if initial_visual_style is not None else LAST_VISUAL_STYLE
-        )
-        _hd = _normalize_host_display_value(
-            initial_host_display if initial_host_display is not None else LAST_HOST_DISPLAY
-        )
+
+        _nar = initial_narrator or LAST_NARRATOR
+        _vs = initial_visual_style or LAST_VISUAL_STYLE
+        _hd = initial_host_display or LAST_HOST_DISPLAY
+        
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
             'default_language': default_lang,
@@ -337,7 +292,7 @@ class ProjectSelectionDialog:
         self.story_result = {
             'channel': default_channel,
             'language': default_lang,
-            'narrator': (_nar if _nar else config_prompt.NARRATOR[0]),
+            'narrator': _nar,
             'visual_style': _vs,
             'host_display': _hd,
             'channel_template': None,
@@ -509,22 +464,44 @@ class ProjectSelectionDialog:
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
 
-        # 频道、语言与欢迎屏选项（画面风格、HOST 显示、旁白）同一行只读
+        # 频道、语言只读；画面风格 / HOST / 旁白 与欢迎屏一致，此处用 Combobox 可改，创建时从控件写入 story_result
         welcome_info_row = ttk.Frame(main_frame)
         welcome_info_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
-        _vs_lbl = _visual_style_label_for_result(self.story_result.get('visual_style'))
-        _hd_lbl = _host_display_cn_for_result(self.story_result.get('host_display'))
-        _nar_show = str(self.story_result.get('narrator') or '')
+        _np_styles = list(config.VISUAL_STYLE_OPTIONS)
+        _vs_cur = self.story_result.get('visual_style')
+        _hd_init = self.story_result.get('host_display')
+        _nar_init = self.story_result.get('narrator')
+        new_project_visual_style_var = tk.StringVar(value=_vs_cur)
+        new_project_host_display_var = tk.StringVar(value=_hd_init)
+        new_project_narrator_var = tk.StringVar(value=_nar_init)
         ttk.Label(welcome_info_row, text="频道:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(welcome_info_row, text=str(self.story_result.get('channel', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(welcome_info_row, text="语言:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(welcome_info_row, text=str(self.story_result.get('language', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(welcome_info_row, text="画面风格:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(welcome_info_row, text=_vs_lbl, foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
-        ttk.Label(welcome_info_row, text="HOST显示:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(welcome_info_row, text=_hd_lbl, foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
+        ttk.Combobox(
+            welcome_info_row,
+            textvariable=new_project_visual_style_var,
+            values=_np_styles,
+            state="readonly",
+            width=14,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(welcome_info_row, text="HOST:").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Combobox(
+            welcome_info_row,
+            textvariable=new_project_host_display_var,
+            values=list(config_prompt.HARRATOR_DISPLAY_OPTIONS),
+            state="readonly",
+            width=16,
+        ).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(welcome_info_row, text="旁白:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(welcome_info_row, text=_nar_show, foreground="gray").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(
+            welcome_info_row,
+            textvariable=new_project_narrator_var,
+            values=config_prompt.CHARACTOR,
+            state="readonly",
+            width=18,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         row += 1
 
         def sync_channel_template(*args):
@@ -883,7 +860,7 @@ class ProjectSelectionDialog:
             user_prompt = f"On topic of {topic}, the initial story script is : \n{self.story_result.get('raw_content','')}\n\n\n\
                         And the core-insight ('soul') is: \n{self.story_result.get('soul', '')}"
             system_prompt = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {}).get('prompt_story_init', '')
-            narrator = self.story_result.get('narrator') or config_prompt.NARRATOR[0]
+            narrator = self.story_result.get('narrator') or config_prompt.CHARACTOR[0]
             system_prompt = system_prompt.format(
                 language=LANGUAGES[self.story_result['language']],
                 topic=topic,
@@ -940,8 +917,14 @@ class ProjectSelectionDialog:
             self.story_result['video_title'] = title
             self.story_result['video_width'] = video_width
             self.story_result['video_height'] = video_height
-            self.story_result['narrator'] = self.story_result.get('narrator') or config_prompt.NARRATOR[0]
-            self.story_result['host_display'] = _normalize_host_display_value(self.story_result.get('host_display'))
+            self.story_result['visual_style'] = new_project_visual_style_var.get()
+            self.story_result['host_display'] = new_project_host_display_var.get()
+            self.story_result['narrator'] = new_project_narrator_var.get()
+
+            global LAST_NARRATOR, LAST_HOST_DISPLAY, LAST_VISUAL_STYLE
+            LAST_VISUAL_STYLE = self.story_result['visual_style']
+            LAST_HOST_DISPLAY = self.story_result['host_display']
+            LAST_NARRATOR = self.story_result['narrator']
 
             self.story_result['action'] = 'new'
             # 保存 channel_id（多个 config key 可对应同一 channel_id）
@@ -1001,8 +984,8 @@ def show_initial_choice_dialog(parent):
         'channel': '',
         'language': '',
         'narrator': LAST_NARRATOR,
-        'visual_style': _normalize_visual_style_value(LAST_VISUAL_STYLE),
-        'host_display': _normalize_host_display_value(LAST_HOST_DISPLAY),
+        'visual_style': LAST_VISUAL_STYLE,
+        'host_display': LAST_HOST_DISPLAY
     }
 
     dialog = tk.Toplevel(parent)
@@ -1032,20 +1015,18 @@ def show_initial_choice_dialog(parent):
     language_combo = ttk.Combobox(opt_frame, textvariable=language_var, values=languages, state="readonly", width=3)
     language_combo.pack(side=tk.LEFT, padx=(0, 5))
 
-    _style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
-    _style_values = [v for v, _ in config.VISUAL_STYLE_OPTIONS]
-    _vs_cur = _normalize_visual_style_value(LAST_VISUAL_STYLE)
+    _styles = list(config.VISUAL_STYLE_OPTIONS)
     try:
-        _style_default_lbl = _style_labels[_style_values.index(_vs_cur)]
+        _style_default = _styles[_styles.index(LAST_VISUAL_STYLE)]
     except ValueError:
-        _style_default_lbl = _style_labels[0]
+        _style_default = _styles[0]
 
     ttk.Label(opt_frame, text="风格").pack(side=tk.LEFT)
-    visual_style_var = tk.StringVar(value=_style_default_lbl)
+    visual_style_var = tk.StringVar(value=_style_default)
     visual_style_combo = ttk.Combobox(
         opt_frame,
         textvariable=visual_style_var,
-        values=_style_labels,
+        values=_styles,
         state="readonly",
         width=16,
     )
@@ -1060,13 +1041,13 @@ def show_initial_choice_dialog(parent):
     narrator_combo = ttk.Combobox(
         opt_frame2,
         textvariable=narrator_var,
-        values=config_prompt.NARRATOR,
+        values=config_prompt.CHARACTOR,
         state="readonly",
         width=20,
     )
     narrator_combo.pack(side=tk.LEFT, padx=(0, 5))
 
-    _hd_cur = _normalize_host_display_value(LAST_HOST_DISPLAY)
+    _hd_cur = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
     _host_opts = list(config_prompt.HARRATOR_DISPLAY_OPTIONS)
     _host_default = _hd_cur if _hd_cur in _host_opts else _host_opts[0]
 
@@ -1088,30 +1069,17 @@ def show_initial_choice_dialog(parent):
 
     def _sync_result_narrator():
         global LAST_NARRATOR
-        nar = narrator_var.get()
-        nar = nar if isinstance(nar, str) else str(nar or "")
-        nar = nar.strip()
-        if nar not in config_prompt.NARRATOR:
-            nar = config_prompt.NARRATOR[0]
-        result['narrator'] = nar if nar else config_prompt.NARRATOR[0]
+        result['narrator'] = narrator_var.get()
         LAST_NARRATOR = result['narrator']
 
     def _sync_result_visual_style():
         global LAST_VISUAL_STYLE
-        lbl = visual_style_var.get()
-        if lbl not in _style_labels:
-            lbl = _style_labels[0]
-        idx = _style_labels.index(lbl)
-        val = _style_values[idx]
-        result['visual_style'] = _normalize_visual_style_value(val)
+        result['visual_style'] = visual_style_var.get()
         LAST_VISUAL_STYLE = result['visual_style']
 
     def _sync_result_host_display():
         global LAST_HOST_DISPLAY
-        v = host_display_var.get()
-        if v not in (config_prompt.HARRATOR_DISPLAY_OPTIONS):
-            v = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
-        result['host_display'] = _normalize_host_display_value(v)
+        result['host_display'] = host_display_var.get()
         LAST_HOST_DISPLAY = result['host_display']
 
     def _sync_welcome_choices():
@@ -1201,7 +1169,7 @@ def show_initial_choice_dialog(parent):
         result['language'] or default_lang,
         result.get('narrator') or LAST_NARRATOR,
         result.get('visual_style') or LAST_VISUAL_STYLE,
-        result.get('host_display') or LAST_HOST_DISPLAY,
+        result.get('host_display') or config_prompt.HARRATOR_DISPLAY_OPTIONS[-1],
     )
 
 
@@ -1255,7 +1223,7 @@ def create_project_with_initial_raw(parent, raw_content, channel, language, init
     config_manager = ProjectConfigManager()
     _nar = initial_narrator if initial_narrator is not None else LAST_NARRATOR
     _vs = initial_visual_style if initial_visual_style is not None else LAST_VISUAL_STYLE
-    _hd = initial_host_display if initial_host_display is not None else LAST_HOST_DISPLAY
+    _hd = initial_host_display if initial_host_display is not None else config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
     dialog = ProjectSelectionDialog(
         parent, config_manager, youtube_gui=None, create_only=True,
         initial_channel=channel, initial_language=language,

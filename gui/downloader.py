@@ -46,17 +46,14 @@ def _treeview_item_tags_safe(tree, item):
 
 
 def _welcome_visual_style_label():
-    """欢迎屏/项目配置中的画面风格 value → 中文 label（只读展示）。"""
+    """欢迎屏/项目配置中的画面风格（英文，只读展示）。"""
     v = project_manager.LAST_VISUAL_STYLE
-    for val, lbl in config.VISUAL_STYLE_OPTIONS:
-        if val == v:
-            return lbl
-    return config.VISUAL_STYLE_OPTIONS[0][1]
+    return v if v else config.VISUAL_STYLE_OPTIONS[0]
 
 
 def _welcome_host_display_label():
     """欢迎屏 Host 显示（英文，只读展示）。"""
-    return project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
+    return config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
 
 
 # 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
@@ -2472,8 +2469,7 @@ class MediaGUIManager:
                 from project_manager import (
                     create_project_with_initial_raw,
                     LAST_NARRATOR,
-                    LAST_VISUAL_STYLE,
-                    LAST_HOST_DISPLAY,
+                    LAST_VISUAL_STYLE
                 )
                 ch = os.path.basename(self.channel_path)
                 lang = getattr(self, 'language', 'tw') or 'tw'
@@ -2484,7 +2480,7 @@ class MediaGUIManager:
                     lang,
                     LAST_NARRATOR,
                     LAST_VISUAL_STYLE,
-                    LAST_HOST_DISPLAY,
+                    config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
                 )
                 if result == 'new' and selected_config:
                     _pid = selected_config.get('pid', '')
@@ -2644,7 +2640,7 @@ class MediaGUIManager:
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
             ttk.Label(prompt_choice_frame, text="主角").pack(side=tk.LEFT, padx=(0, 5))
-            char_labels = [lb for _, lb in config.CHARACTER_PERSON_OPTIONS]
+            char_labels = list(config.CHARACTER_PERSON_OPTIONS)
             character_var = tk.StringVar(value=char_labels[0])
             character_combo = ttk.Combobox(prompt_choice_frame, textvariable=character_var, values=char_labels, state="readonly", width=12)
             character_combo.pack(side=tk.LEFT, padx=(0, 5))
@@ -2667,24 +2663,12 @@ class MediaGUIManager:
             ttk.Label(prompt_choice_frame, text="HOST").pack(side=tk.LEFT, padx=(0, 5))
             ttk.Label(prompt_choice_frame, text=_welcome_host_display_label(), width=18, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
-            def _get_style_value():
-                """画面风格 value（与欢迎屏 LAST_VISUAL_STYLE 一致）"""
-                return project_manager._normalize_visual_style_value(project_manager.LAST_VISUAL_STYLE)
-
             def _get_speaker_str():
                 """根据选择构建 Speaker 字符串：gender/age/race | style"""
-                ch_lbl = (character_var.get() or "").strip()
-                ch_val = next((v for v, lb in config.CHARACTER_PERSON_OPTIONS if lb == ch_lbl), "woman/middle-aged/chinese")
+                ch_val = (character_var.get() or "").strip()
+                if ch_val not in config.CHARACTER_PERSON_OPTIONS:
+                    ch_val = "woman/middle-aged/chinese"
                 return ch_val
-
-            def _get_host_str():
-                """Host 旁白身份：欢迎屏 narrator + 画面风格；无 Host 时返回空"""
-                hd = project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
-                if hd == "N/A":
-                    return ""
-                nar = str(project_manager.LAST_NARRATOR or "").strip()
-                st = _get_style_value()
-                return f"{nar} | {st}" if nar else ""
 
             def copy_style_character(language):
                 try:
@@ -2766,13 +2750,13 @@ class MediaGUIManager:
 
                 header_parts = []
                 header_parts.append(f"Main Character: {_get_speaker_str()}")
-                host_str = _get_host_str()
+                host_str = project_manager.LAST_NARRATOR
 
                 # host display description
-                hd = project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
-                if hd == "N/A":
+                hd = config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
+                if hd == "":
                     host_display_desc = "No Host. The main character performs and narrates. No Host voice, no Host image."
-                elif hd == "voice-only":
+                elif hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
                     host_display_desc = "Host has voice only, no image. The screen is dominated by Host narration; main character is secondary."
                 else:
                     host_display_desc = "Host appears in the scene."
