@@ -22,7 +22,7 @@ from google.oauth2.credentials import Credentials
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
-from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json
+from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json, make_safe_file_name
 from gui.choice_dialog import askchoice
 from gui.reference_editor_dialog import ReferenceEditorDialog
 import project_manager
@@ -43,6 +43,20 @@ def _treeview_item_tags_safe(tree, item):
     except tk.TclError:
         pass
     return ()
+
+
+def _welcome_visual_style_label():
+    """欢迎屏/项目配置中的画面风格 value → 中文 label（只读展示）。"""
+    v = project_manager.LAST_VISUAL_STYLE
+    for val, lbl in config.VISUAL_STYLE_OPTIONS:
+        if val == v:
+            return lbl
+    return config.VISUAL_STYLE_OPTIONS[0][1]
+
+
+def _welcome_host_display_label():
+    """欢迎屏 Host 显示（英文，只读展示）。"""
+    return project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
 
 
 # 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
@@ -767,7 +781,7 @@ class MediaDownloader:
         else:
             date_str = "00000000"
         # 清理标题中的非法字符，并限制长度
-        safe_title = self.make_safe_file_name(title, title_length)
+        safe_title = make_safe_file_name(title, title_length)
         # 构建文件名前缀（用于匹配）
         return f"{view_count_str}_{date_str}_{safe_title}"
 
@@ -779,13 +793,13 @@ class MediaDownloader:
         for key in ('channel', 'uploader', 'creator'):
             v = (video_detail.get(key) or '').strip()
             if v and v.lower() not in ('unknown', ''):
-                r = self.make_safe_file_name(v)
+                r = make_safe_file_name(v)
                 if r != "untitled":
                     print(f"📺 频道名称: {r}")
                     return r
         cid = (video_detail.get('channel_id') or '').strip()
         if cid and len(cid) >= 10:
-            r = self.make_safe_file_name(cid)
+            r = make_safe_file_name(cid)
             if r != "untitled":
                 return r
         print(f"📺 频道名称: YouTubeChannel (fallback)")
@@ -892,40 +906,6 @@ class MediaDownloader:
                 return False
         return True
 
-
-    def make_safe_file_name(self, title, title_length=15):
-        if not title:
-            return "untitled"
-        
-        # 将空格替换为下划线
-        safe_title = title.replace(' ', '_').replace('.', '_')
-        
-        # 移除 Windows 和 Unix 系统不允许的字符
-        # Windows: < > : " / \ | ? *
-        # Unix: / (以及控制字符)
-        safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '_', safe_title)
-        
-        # 移除 Windows 保留名称（CON, PRN, AUX, NUL, COM1-9, LPT1-9）
-        reserved_names = ['CON', 'PRN', 'AUX', 'NUL'] + \
-                        [f'COM{i}' for i in range(1, 10)] + \
-                        [f'LPT{i}' for i in range(1, 10)]
-        if safe_title.upper() in reserved_names:
-            safe_title = '_' + safe_title
-        
-        # 移除尾随空格和点（Windows 不允许）
-        safe_title = safe_title.rstrip(' .')
-        
-        # 如果清理后为空，使用默认名称
-        if not safe_title.strip():
-            safe_title = "untitled"
-        
-        # 限制长度
-        safe_title = safe_title[:title_length] if title_length > 0 else safe_title
-        
-        # 再次移除尾随空格和点（可能在截断后产生）
-        safe_title = safe_title.rstrip(' .')
-        
-        return safe_title
 
     def _parse_relative_time_to_yyyymmdd(self, s):
         """从相对时间字符串解析出近似 YYYYMMDD。如 "1 day ago"->昨天, "2 weeks ago"->14天前, "3 months ago"->90天前。
@@ -1896,23 +1876,10 @@ class MediaGUIManager:
 
         ttk.Button(control_frame, text="应用到选中", command=on_apply_related_batch).pack(side=tk.LEFT, padx=(0, 5))
 
-        # 画面风格（config.VISUAL_STYLE_OPTIONS；供「摘要」导出 build_clear_stories_on_case_study_summaries 等使用）
+        # 画面风格：与欢迎屏一致，只读展示（LAST_VISUAL_STYLE）
         ttk.Label(control_frame, text="画面风格:").pack(side=tk.LEFT, padx=(10, 5))
-        _main_visual_style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
-        visual_style_var = tk.StringVar(value=_main_visual_style_labels[0])
-        visual_style_combo_main = ttk.Combobox(
-            control_frame,
-            textvariable=visual_style_var,
-            values=_main_visual_style_labels,
-            state="readonly",
-            width=18,
-        )
-        visual_style_combo_main.pack(side=tk.LEFT, padx=(0, 5))
-        visual_style_combo_main.current(0)
+        ttk.Label(control_frame, text=_welcome_visual_style_label(), width=22, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
-        def _channel_dialog_visual_style_value():
-            st_lbl = (visual_style_var.get() or "").strip()
-            return next((v for v, lb in config.VISUAL_STYLE_OPTIONS if lb == st_lbl), config.VISUAL_STYLE_OPTIONS[0][0])
 
         def smart_select():
             """根据输入文本智能选择匹配的视频（在 title 和 content 中搜索关键字）"""
@@ -2475,18 +2442,50 @@ class MediaGUIManager:
                 
                 messagebox.showinfo("成功", "主题信息已保存", parent=summary_window)
 
-            def _do_start_project_with_content(content):
-                """用 content 启动创建新项目（作为 RAW 材料），关闭当前对话框"""
-                def _close():
-                    try:
-                        dialog.destroy()
-                    except Exception:
-                        pass
-                self.root.after(0, _close)
-                from project_manager import create_project_with_initial_raw
+
+            def on_raw_start_project():
+                try:
+                    content = summary_window.clipboard_get()
+                except Exception:
+                    content = ""
+                story_text = video_detail.get('raw_content', '')
+
+                if content:
+                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
+                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
+                        story_text = content
+                        # clean the clipboard
+                        summary_window.clipboard_clear()
+                        summary_window.update()
+                        video_detail['raw_content'] = story_text
+                        try:
+                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                            dialog.after(0, populate_tree)
+                        except Exception:
+                            pass
+
+                if not story_text:
+                    messagebox.showwarning("提示", "RAW故事内容为空，无法复制风格和人物", parent=summary_window)
+                    return
+
+                from project_manager import (
+                    create_project_with_initial_raw,
+                    LAST_NARRATOR,
+                    LAST_VISUAL_STYLE,
+                    LAST_HOST_DISPLAY,
+                )
                 ch = os.path.basename(self.channel_path)
                 lang = getattr(self, 'language', 'tw') or 'tw'
-                result, selected_config = create_project_with_initial_raw(self.root, content, ch, lang)
+                result, selected_config = create_project_with_initial_raw(
+                    self.root,
+                    story_text,
+                    ch,
+                    lang,
+                    LAST_NARRATOR,
+                    LAST_VISUAL_STYLE,
+                    LAST_HOST_DISPLAY,
+                )
                 if result == 'new' and selected_config:
                     _pid = selected_config.get('pid', '')
                     if not _pid:
@@ -2523,28 +2522,6 @@ class MediaGUIManager:
                                 pass
                     self.root.after(100, _open_main_in_same_process)
 
-            def on_paste_and_start_project():
-                """从剪贴板读取 NotebookLM 结果，保存到当前视频项，并启动新项目"""
-                try:
-                    content = summary_window.clipboard_get()
-                except tk.TclError:
-                    content = ""
-                content = (content or "").strip()
-                if not content:
-                    messagebox.showwarning("提示", "剪贴板为空，请先复制 NotebookLM 生成的内容", parent=summary_window)
-                    return
-                video_detail["story"] = content
-                try:
-                    with open(self.downloader.channel_list_json, "w", encoding="utf-8") as fp:
-                        json.dump(self.downloader.channel_videos, fp, ensure_ascii=False, indent=2)
-                except Exception as ex:
-                    messagebox.showerror("错误", f"保存失败: {ex}", parent=summary_window)
-                    return
-                try:
-                    populate_tree()
-                except Exception:
-                    pass
-                _do_start_project_with_content(content)
 
             def on_find_similar_cases():
                 cur_id = _video_youtube_id(video_detail)
@@ -2617,8 +2594,8 @@ class MediaGUIManager:
             right_btns.pack(side=tk.RIGHT)
             # 添加标签按钮
 
-            ttk.Button(right_btns, text="粘贴LM结果启动新项目", command=on_paste_and_start_project).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(right_btns, text="保存主题信息", command=save_topic_info).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="启动项目", command=on_raw_start_project).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="保存信息", command=save_topic_info).pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
 
@@ -2635,9 +2612,6 @@ class MediaGUIManager:
             image_zh_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
-
-            short_story_btn = ttk.Button(right_btns, text="短剧", command=lambda: short_story_prompt("zh"))
-            short_story_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             copy_lm_btn = ttk.Button(right_btns, text="无拷贝", command=lambda: copy_lm_instruction())
             copy_lm_btn.pack(side=tk.LEFT, padx=(5, 5))
@@ -2669,16 +2643,6 @@ class MediaGUIManager:
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
-            # label for visual style
-            ttk.Label(prompt_choice_frame, text="画面风格:").pack(side=tk.LEFT, padx=(0, 5))
-            style_labels = [lb for _, lb in config.VISUAL_STYLE_OPTIONS]
-            visual_style_var = tk.StringVar(value=style_labels[0])
-            visual_style_combo = ttk.Combobox(prompt_choice_frame, textvariable=visual_style_var, values=style_labels, state="readonly", width=15)
-            visual_style_combo.pack(side=tk.LEFT, padx=(0, 5))
-            visual_style_combo.current(0)
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
-
             ttk.Label(prompt_choice_frame, text="主角").pack(side=tk.LEFT, padx=(0, 5))
             char_labels = [lb for _, lb in config.CHARACTER_PERSON_OPTIONS]
             character_var = tk.StringVar(value=char_labels[0])
@@ -2688,135 +2652,39 @@ class MediaGUIManager:
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
-            # 旁白：声音（与主角同选项）+ 显示方式（无/有声音无图像/有声音有图像-布局）
-            ttk.Label(prompt_choice_frame, text="旁白声音").pack(side=tk.LEFT, padx=(0, 5))
-            host_voice_var = tk.StringVar(value=char_labels[0])
-            host_voice_combo = ttk.Combobox(prompt_choice_frame, textvariable=host_voice_var, values=char_labels, state="readonly", width=12)
-            host_voice_combo.pack(side=tk.LEFT, padx=(0, 5))
-            host_voice_combo.current(0)
+            # 画面风格 / 旁白 / Host 显示：与欢迎屏一致，只读（LAST_*）
+            ttk.Label(prompt_choice_frame, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(prompt_choice_frame, text=_welcome_visual_style_label(), width=16, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
-            ttk.Label(prompt_choice_frame, text="Host 显示").pack(side=tk.LEFT, padx=(0, 5))
-            host_display_labels = [lb for lb, _ in config.HOST_DISPLAY_OPTIONS_DOWNLOADER]
-            host_display_var = tk.StringVar(value=host_display_labels[0])
-            host_display_combo = ttk.Combobox(prompt_choice_frame, textvariable=host_display_var, values=host_display_labels, state="readonly", width=18)
-            host_display_combo.pack(side=tk.LEFT, padx=(0, 5))
-            host_display_combo.current(0)
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
+
+            # 旁白：欢迎屏 narrator；Host 显示：欢迎屏选择
+            ttk.Label(prompt_choice_frame, text="旁白").pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(prompt_choice_frame, text=str(project_manager.LAST_NARRATOR or ""), width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
+
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
+
+            ttk.Label(prompt_choice_frame, text="HOST").pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(prompt_choice_frame, text=_welcome_host_display_label(), width=18, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
             def _get_style_value():
-                """从风格标签解析出 style value（realistic/cartoon/pixar-art cartoon）"""
-                st_lbl = (visual_style_var.get() or "").strip()
-                return next((v for v, lb in config.VISUAL_STYLE_OPTIONS if lb == st_lbl), "realistic")
+                """画面风格 value（与欢迎屏 LAST_VISUAL_STYLE 一致）"""
+                return project_manager._normalize_visual_style_value(project_manager.LAST_VISUAL_STYLE)
 
             def _get_speaker_str():
                 """根据选择构建 Speaker 字符串：gender/age/race | style"""
                 ch_lbl = (character_var.get() or "").strip()
                 ch_val = next((v for v, lb in config.CHARACTER_PERSON_OPTIONS if lb == ch_lbl), "woman/middle-aged/chinese")
-                return config.build_speaker_host_string(ch_val, _get_style_value())
+                return ch_val
 
             def _get_host_str():
-                """根据选择构建 Host/Narrator 字符串；无 Host 时返回空"""
-                hd = (host_display_var.get() or "").strip()
-                if hd == "无 Host":
+                """Host 旁白身份：欢迎屏 narrator + 画面风格；无 Host 时返回空"""
+                hd = project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
+                if hd == "N/A":
                     return ""
-                ch_lbl = (host_voice_var.get() or "").strip()
-                ch_val = next((v for v, lb in config.CHARACTER_PERSON_OPTIONS if lb == ch_lbl), "woman/middle-aged/chinese")
-                return config.build_speaker_host_string(ch_val, _get_style_value())
-
-            def _get_host_display_value():
-                """返回 host_display 的英文 value"""
-                hd_cn = (host_display_var.get() or "").strip()
-                return next((v for lb, v in config.HOST_DISPLAY_OPTIONS_DOWNLOADER if lb == hd_cn), "no-host")
-
-            def _get_host_display_prompt_text():
-                """返回 Host 显示方式的 prompt 描述，用于图像/视频生成"""
-                hd = _get_host_display_value()
-                if hd == "no-host":
-                    return "No Host. The main character performs and narrates. No Host voice, no Host image."
-                if hd == "voice-only":
-                    return "Host has voice only, no image. The screen is dominated by Host narration; main character is secondary."
-                layout_map = {
-                    "voice-image-bottom-left": "Host appears as small figure in bottom-left corner.",
-                    "voice-image-bottom-right": "Host appears as small figure in bottom-right corner.",
-                    "voice-image-left-large-right-small": "Host: large figure on left, small icon on right.",
-                    "voice-image-right-large-left-small": "Host: large figure on right, small icon on left.",
-                }
-                return layout_map.get(hd, "Host appears in the scene.")
-
-
-            def short_story_prompt(language):
-                try:
-                    content = summary_window.clipboard_get()
-                except Exception:
-                    content = ""
-                story_text = video_detail.get('raw_content', '')
-
-                if content:
-                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
-                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
-                        story_text = content
-                        # clean the clipboard
-                        summary_window.clipboard_clear()
-                        summary_window.update()
-                        video_detail['raw_content'] = story_text
-                        try:
-                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                            dialog.after(0, populate_tree)
-                        except Exception:
-                            pass
-
-                if not story_text:
-                    messagebox.showwarning("提示", "RAW故事内容为空，无法复制风格和人物", parent=summary_window)
-                    return
-
-                header_parts = []
-                style_value = _get_style_value()
-                header_parts.append(f"Visual-Style: {style_value}")
-                header_parts.append("Generate according to the scenes structure (keep simple, focus more on story, less narrator interrupt, try to avoid psychological terminology):\n")
-
-                host_str = _get_host_str()
-                host_display_desc = _get_host_display_prompt_text()
-                if host_str:
-                    header_parts.append(f"Host (voice): {host_str}")
-                if host_display_desc:
-                    header_parts.append(f"Host display: {host_display_desc}")
-
-                if host_str:
-                    header_parts.append(
-                        "\n\nIn Video generation:"
-                        "** If the image contains a Host(Narrator) figure → use Host to speak about the content of the scene. "
-                        "** If the image has only a main character (no Host) → use the main character to speak about the content of the scene."
-                    )
-                else:
-                    header_parts.append("\n\nIn Video generation:"
-                        "** No Host. Use the main character to speak about the content of scene."
-                    )
-
-                header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)\n\n")
-
-                header_parts.append(f"** Story Content:\n {story_text}")
-
-                try:
-                    summary_window.clipboard_clear()
-                    summary_window.clipboard_append("\n".join(header_parts))
-                    summary_window.update()
-                except Exception:
-                    pass
-
-                input_media_path = config.INPUT_MEDIA_PATH
-                _cat_raw = (category_var.get() or "").strip()
-                if _cat_raw:
-                    _cat = self.downloader.make_safe_file_name(_cat_raw, title_length=6)
-                else:
-                    _cat = ""
-
-                filename = self.downloader.make_safe_file_name(video_detail.get('title', '').strip(), title_length=20) + '_'
-                file_path = os.path.join(input_media_path, 'raw__' + selected_index + '__' + _cat + '__' + filename + '.txt')
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(header_parts))
-
+                nar = str(project_manager.LAST_NARRATOR or "").strip()
+                st = _get_style_value()
+                return f"{nar} | {st}" if nar else ""
 
             def copy_style_character(language):
                 try:
@@ -2899,7 +2767,16 @@ class MediaGUIManager:
                 header_parts = []
                 header_parts.append(f"Main Character: {_get_speaker_str()}")
                 host_str = _get_host_str()
-                host_display_desc = _get_host_display_prompt_text()
+
+                # host display description
+                hd = project_manager._normalize_host_display_value(project_manager.LAST_HOST_DISPLAY)
+                if hd == "N/A":
+                    host_display_desc = "No Host. The main character performs and narrates. No Host voice, no Host image."
+                elif hd == "voice-only":
+                    host_display_desc = "Host has voice only, no image. The screen is dominated by Host narration; main character is secondary."
+                else:
+                    host_display_desc = "Host appears in the scene."
+
                 if host_str:
                     header_parts.append(f"Host (voice): {host_str}")
                 if host_display_desc:

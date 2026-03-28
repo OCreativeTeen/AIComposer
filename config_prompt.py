@@ -127,44 +127,77 @@ ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
 
 
 
-GENERATION_INSTRUCTION = """
-Image generation instruction:
-    *** Goal
-        ** Generate images for story scenes.
-            * 1 image = 1 scene
-            * Multiple scenes = slideshow
+SCENE_VIDEO_INSTRUCTION = """
+Scene-Image generation instruction:
+    ** Visual-Style
+        ** General Visual-Style:  {visual_style};  Detailed visual-style follows the scene json field "visual_style".
 
-    *** Character Sources
-        ** 1️⃣ Story Character (Main Character)
-            * From NotebookLM resource:  named "Story-Character:xxx", like "Story-Character: 中国中年"
-            * Gender: Female, Male 
-            * Style: Realistic, Cartoon, Pixar Cartoon Style
-            * This character must stay consistent across all scenes !!!!!!!!!!!
+    ** DO NOT put any scene instruction / information (like content in json structure) in the image, only show the visual content of the scene!!!!!!!!!!!!!!
+    ** DO NOT include any info of this prompt / instruction in the image, only express the content describing the scenes (the 'Story Json-Content' at end) !!!!!!!!!!!!!!
 
-        ** 2️⃣ Host(Narrator) Character (if appearing)
-            * From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"
-            * Style: Realistic, Cartoon, Pixar Cartoon Style
+--------------
+
+
+Video generation instruction: 
+    *** if scene-image not have the actor or narrator : DO NOT add it in video generation, Audio-speaking without figure is perfect in this case!!! (Even json content may has 'actor/narrator', only use it to choose voice) **
+
+--------------
+
+Audio generation / Words-in-image generation instruction: 
+    ** Speaker: if both current scene has both 'narrator' & 'actor' fields, the narrator is the speaker, and the actor only act (not speak).
+    ** Speaker: if current scene has 'actor' but no 'narrator' field, actor is the speaker
+    ** Speaker: if current scene has no 'actor' & 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene).
+    ** If current scene has 'actor' or 'narrator' field, but 'speaking' is empty, then the speaker should breifly speak about the content of the image (i.e., text message in the image)
+    ** Use current scene['speaking'] as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. 
+    ** May add sound-effects to enhance the scene, but no music.
+    ** For Word-in-image generation, try to make very very concise (no details, just key points in titles)
+
+--------------
+Story Json-Content:
+"""
+
+
+SLIDESHOW_GENERATION_INSTRUCTION = """
+Slide-Show generation instruction:
+    *** Goal: Generate images for story scenes.
+        ** 1 image = 1 scene
+        ** Multiple scenes = slideshow
+
+    ** Visual-Style
+        ** Keep the visual style '{visual_style}' consistent throughout all the scenes of the story !!!!!!!!!!!.
+		** Consider visual_style of each scene as more details.
+
+	** Story Characters (only show in image, if current scene has 'actor' field)
+		* From NotebookLM resource:  named "Story-Character:xxx", like "Story-Character: 中国中年"; Follow visual-style & gender to choose.
+		* This character must stay consistent across all scenes !!!!!!!!!!!
+
+	** Narrator Character (only show in image, if current scene has 'narrator' field)
+		* From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"; Follow visual-style & gender to choose.
+
+    ** DO NOT put any scene instruction / information (like content in json structure) in the image, only show the visual content of the scene!!!!!!!!!!!!!!
+    ** DO NOT include any info of this prompt / instruction in the image, only express the content describing the scenes (the 'Story Json-Content' at end) !!!!!!!!!!!!!!
+
 
 --------------
 
 Video generation instruction: 
-    *** Specail-Case 1: if start-image not have the speaker or host(Narrator) image: DO NOT add them to the generated video, Audio-speaking without showing the speaker or host(Narrator) is What we want in this case!!!,  Even json content below may has "speaker" or "host"(Narrator) description, only use these as guide to choose voice **
-    *** if the start-image has Realistic style person image, and the 'speaker' or 'host' field asks 'Cartoon/Pixar-Cartoon' style, then please show the transition animation of the person from realistic style to cartoon/pixar-cartoon style at the beginning of the video  **
-    *** if the start-image has 'Cartoon/Pixar Cartoon' style person image, and the 'speaker' or 'host' field asks 'Realistic' style, then please show the transition animation of the person from cartoon/pixar-cartoon style to realistic style at the beginning of the video  **
+    *** if scene-image not have the actor or narrator : DO NOT add it in video generation, Audio-speaking without figure is perfect in this case!!! (Even json content may has 'actor/narrator', only use it to choose voice) **
+	*** if current scene has 'narrator' field, pop up the narrator in the screen (to give narration speaking);
+        ** if the narrator's speaking is based on the previous scene, then keep the previous image in current scene as background (which actor should not speaking)
 
 --------------
 
-Audio generation instruction: 
-    ** Speaker's voice / Host(Narrator)'s voice: parse from 'Speaker' or 'host' field
-    ** Format: gender/age/race | style, e.g. woman/middle-aged/chinese | realistic, man/young/caucasian | cartoon
-    ** Voice is chosen from the part before '|' (gender/age/race); style (realistic/cartoon/pixar-art cartoon) is after '|'    
-    ** 'voiceover' is the Host(Narrator)'s voiceover content (Host/Narrator-speaking)
-    ** Use speaking/voiceover as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. If the scene has a title/graphic with text, speak the title prominently. Omit detailed specifics; use questions or concise expressions for secondary details. May add sound-effects to enhance the scene, but don't add music. **
-    ** If the json content below has host (narrator) info, but no speaker,  and NO 'voiceover' content, then the host should breifly speak about the content of the image (like main text message in the image) **
-    ** If the json content below has NO 'speaker' & 'host' info, can add some smooth music (+ sound-effects) to lead audience read the visual content **
+Audio generation / Words-in-image generation instruction: 
+    ** Speaker: if both current scene has both 'narrator' & 'actor' fields, the narrator is the speaker, and the actor only act (not speak).
+    ** Speaker: if current scene has 'actor' but no 'narrator' field, actor is the speaker
+    ** Speaker: if current scene has no 'actor' & 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene).
+    ** If current scene has 'actor' or 'narrator' field, but 'speaking' is empty, then the speaker should breifly speak about the content of the image (i.e., text message in the image)
+    ** Use current scene['speaking'] as reference only. Simplify and concisify - avoid verbosity. Target max 10 seconds of speech total time. Focus on key points. 
+    ** May add sound-effects to enhance the scene, but no music.
+    ** For Word-in-image generation, try to make very very concise (no details, just key points in titles)
 
 --------------
-
+Story Json-Content:
 """
 
 
@@ -437,7 +470,7 @@ Based on the raw-story-outline provided in the user prompt, write a '{story_styl
 
 **Role setting**:
   - Language: {language}
-  - Speaker: {speaker_style}
+  - Visual style: {visual_style}
   - Hosts give background & hint (don't say 'listeners, blah blah', etc), may maintain a narrative arc: curiosity → tension → surprise → reflection.
   - Actors'speaking are like playing inside the story
   - Use pauses, shifts, or playful exchanges between hosts/actors for smooth pacing.
@@ -1248,30 +1281,30 @@ SPEAKER = [
 
 
 NARRATOR = [
-    "",
-    "woman_mature", 
-    "man_mature",
-    "woman_mature_right",
-    "woman_mature_left",
-    "man_mature_right",
-    "man_mature_left",
-
-    "woman_young",
-    "man_young",
-    "woman_young_right",
-    "woman_young_left",
-    "man_young_right",
-    "man_young_left",
-
-    "woman_old",
-    "woman_old_right",
-    "woman_old_left",
-    "man_old",
-    "man_old_right",
-    "man_old_left"
+    "woman_young_chinese",
+    "man_young_chinese",
+    "woman_mature_chinese",
+    "man_mature_chinese",
+    "boy_chinese",
+    "girl_chinese",
+    "woman_young_caucasian",
+    "man_young_caucasian",
+    "woman_mature_caucasian",
+    "man_mature_caucasian",
+    "boy_caucasian",
+    "girl_caucasian",
 ]
 
 
+# =============================================================================
+# Host 显示方式（英文 value，UI 与 JSON 一致）- 供 downloader、GUI、project_manager 共享
+# =============================================================================
+HARRATOR_DISPLAY_OPTIONS = [
+    "voice-image-left",
+    "voice-image-right",
+    "N/A",
+    "voice-only"
+]
 
 
 

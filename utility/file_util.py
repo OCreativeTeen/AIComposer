@@ -8,6 +8,44 @@ import re
 
 
 
+def make_safe_file_name(title, title_length=15):
+    if not title:
+        return "untitled"
+    
+    # 将空格替换为下划线
+    safe_title = title.replace(' ', '_').replace('.', '_')
+    
+    # 移除 Windows 和 Unix 系统不允许的字符
+    # Windows: < > : " / \ | ? *
+    # Unix: / (以及控制字符)
+    safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', '_', safe_title)
+    
+    # 移除 Windows 保留名称（CON, PRN, AUX, NUL, COM1-9, LPT1-9）
+    reserved_names = ['CON', 'PRN', 'AUX', 'NUL'] + \
+                    [f'COM{i}' for i in range(1, 10)] + \
+                    [f'LPT{i}' for i in range(1, 10)]
+    if safe_title.upper() in reserved_names:
+        safe_title = '_' + safe_title
+    
+    # 移除尾随空格和点（Windows 不允许）
+    safe_title = safe_title.rstrip(' .')
+    
+    # 如果清理后为空，使用默认名称
+    if not safe_title.strip():
+        safe_title = "untitled"
+    
+    # 限制长度
+    safe_title = safe_title[:title_length] if title_length > 0 else safe_title
+    
+    # 再次移除尾随空格和点（可能在截断后产生）
+    safe_title = safe_title.rstrip(' .')
+    
+    return safe_title
+
+
+
+
+
 def parse_json(content_string: str, expect_list: bool = False) -> Union[Dict, List]:
     """
     解析JSON字符串，支持多种格式和清理操作

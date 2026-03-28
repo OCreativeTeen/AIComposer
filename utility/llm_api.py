@@ -263,22 +263,32 @@ class LLMApi:
 
     def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
         """弹出对话框让用户选择模型并查看/编辑请求和响应"""
-        # 创建根窗口（如果不存在）
-        root = None
+        # 选择一个“可见的父窗口”作为 parent，避免对话框挂到 withdraw 的 root 上导致不显示/跑到后台
+        parent = None
         try:
-            root = tk._default_root
-            if root is None:
-                root = tk.Tk()
-                root.withdraw()  # 隐藏主窗口
-        except:
-            root = tk.Tk()
-            root.withdraw()
-        
+            parent = tk._default_root
+        except Exception:
+            parent = None
+
+        # 优先使用当前焦点所在的顶层窗口作为父窗口（最符合用户预期）
+        try:
+            if parent is not None:
+                w = parent.focus_get()
+                if w is not None:
+                    parent = w.winfo_toplevel()
+        except Exception:
+            pass
+
+        # 如果还没有 root，则创建一个隐藏 root 兜底（CLI/无 GUI 场景）
+        if parent is None:
+            parent = tk.Tk()
+            parent.withdraw()
+
         # 创建对话框
-        dialog = tk.Toplevel(root)
+        dialog = tk.Toplevel(parent)
         dialog.title("选择 LLM 模型")
         dialog.geometry("1000x800")
-        dialog.transient(root)
+        dialog.transient(parent)
         dialog.grab_set()
         
         # 居中显示
@@ -286,6 +296,12 @@ class LLMApi:
         x = (dialog.winfo_screenwidth() - 1000) // 2
         y = (dialog.winfo_screenheight() - 800) // 2
         dialog.geometry(f"1000x800+{x}+{y}")
+        # 置顶/聚焦，避免被其它 Toplevel 压住看不到
+        try:
+            dialog.lift()
+            dialog.focus_force()
+        except Exception:
+            pass
         
         # 主框架
         main_frame = ttk.Frame(dialog, padding=10)

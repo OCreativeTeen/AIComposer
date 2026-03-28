@@ -99,7 +99,7 @@ class AVReviewDialog:
         self.replace_media_audio = replace_media_audio
 
         if self.media_type == "clip":
-            self.SPEAKER_KEY = "speaker"
+            self.SPEAKER_KEY = "actor"
             self.SPEAKING_KEY = "speaking"
             self.ACTORS = config_prompt.SPEAKER
         else:
@@ -1268,7 +1268,7 @@ class AVReviewDialog:
         _content = ""
         selected_prompt = ""
         if _name == "development2":
-            _content = project_manager.PROJECT_CONFIG.get('debut_content', "")
+            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development2', '')
         elif _name == "development1":
             _content = project_manager.PROJECT_CONFIG.get('init_content', "")
@@ -1291,7 +1291,7 @@ class AVReviewDialog:
                     new_item = {
                         "content": _content,
                         "speaking": item.get("speaking", ""),
-                        "speaker": item.get("speaker", ""),
+                        "actor": item.get("actor", ""),
                         "voiceover": item.get("voiceover", "")
                     }
                     refresh_json_copy.append(new_item)
@@ -1306,7 +1306,7 @@ class AVReviewDialog:
                     "name": self.current_scene.get("name", "story"),
                     "content": _content,
                     "speaking": self.current_scene.get("speaking", ""),
-                    "speaker": self.current_scene.get("speaker", ""),
+                    "actor": self.current_scene.get("actor", ""),
                     "voiceover": self.current_scene.get("voiceover", "")
                 }
             ]
@@ -2783,7 +2783,7 @@ class AVReviewDialog:
         # 字段名称映射
         field_labels = {
             "speaking": "内容",
-            "speaker": "主体",
+            "actor": "主体",
             "visual": "画面",
             "action": "动作",
             "voiceover": "旁白"

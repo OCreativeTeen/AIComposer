@@ -49,7 +49,7 @@ class MagicWorkflow:
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
-        self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid))
+        self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid), language)
         self.llm_api = LLMApi()
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
 
@@ -245,7 +245,7 @@ class MagicWorkflow:
     def build_prompt(self, scene_data, extra, track, av_type):
         prompt_dict = {}
         # 提取当前场景的关键信息
-        speaker = scene_data.get("speaker", "")
+        actor = scene_data.get("actor", "")
         speaking = scene_data.get("speaking", "")
         actions = scene_data.get("actions", "")
         visual = scene_data.get("visual", "")
@@ -268,11 +268,11 @@ class MagicWorkflow:
                     else:
                         prompt_dict["NARRATOR"] = f"the person ({narrator}), {actions}."
                 elif speaking:
-                    prompt_dict["SPEAKER"] = f"the person ({speaker}), {actions}."
+                    prompt_dict["SPEAKER"] = f"the person ({actor}), {actions}."
                     prompt_dict["SPEAKING"] = speaking
 
         if "clip" in track or "zero" in track:
-            person_lower = speaker
+            person_lower = actor
             if person_lower:
                 has_negative_pattern = (
                     re.search(r'\bno\b.*\bpersons?\b', person_lower) or  # matches "no person", "no persons", "no specific person"
@@ -282,7 +282,7 @@ class MagicWorkflow:
                     re.search(r'\bnone\b', person_lower)  # matches "none"
                 )
                 if not has_negative_pattern:
-                    prompt_dict["SPEAKER"] = f"the speaker ({speaker}), {actions}."
+                    prompt_dict["SPEAKER"] = f"the speaker ({actor}), {actions}."
                     prompt_dict["SPEAKING"] = speaking
 
         prompt_dict["visual"] = visual
@@ -746,8 +746,30 @@ class MagicWorkflow:
         self.sd_processor.save_image(hd_image_data, new_image_path)
 
 
+    def _defaults_from_project_config(self):
+        """欢迎屏 / 新建项目写入 PROJECT_CONFIG 的 narrator、host_display、visual_style，用于场景缺省补全。"""
+        narr = "woman_mature"
+        host_en = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
+        visual_style = config.VISUAL_STYLE_OPTIONS[0][0]
+        try:
+            pc = project_manager.PROJECT_CONFIG
+            if pc:
+                n = pc.get("narrator")
+                if n:
+                    narr = n
+                h = pc.get("host_display")
+                if h:
+                    host_en = project_manager._normalize_host_display_value(h)
+                vs = pc.get("visual_style")
+                if vs:
+                    visual_style = project_manager._normalize_visual_style_value(vs)
+        except Exception:
+            pass
+        return narr, host_en, visual_style
+
 
     def load_scenes(self):
+        _narr_default, _host_display_default, _visual_style_default = self._defaults_from_project_config()
         scenes_file = config.get_scenes_path(self.pid)
         if os.path.exists(scenes_file):
             # 先读取文件到局部变量再赋值，避免先清空 self.scenes 导致在 make_backgroud_medias 期间若触发 save 会覆盖成空列表
@@ -762,10 +784,14 @@ class MagicWorkflow:
                 #refresh_scene_media(scene, "zero_image", ".png", background_image, True)
                 #refresh_scene_media(scene, "zero", ".mp4", background_video, True)
                 #refresh_scene_media(scene, "zero_audio", ".wav", background_music, True)
-                if not story_scene.get("speaker"):
-                    story_scene["speaker"] = "woman_mature"
+                if not story_scene.get("actor"):
+                    story_scene["actor"] = "N/A"
                 if not story_scene.get("narrator"):
-                    story_scene["narrator"] = "woman_mature"
+                    story_scene["narrator"] = _narr_default
+                if not story_scene.get("host_display"):
+                    story_scene["host_display"] = _host_display_default
+                if not story_scene.get("visual_style"):
+                    story_scene["visual_style"] = _visual_style_default
                 if not story_scene.get("caption"):
                     story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
             self.save_scenes_to_json()
@@ -783,36 +809,40 @@ class MagicWorkflow:
 
         for index, story_scene in enumerate(self.scenes):
             scene_mode = story_scene.get("mode", "")
-            mode = "multiple" if scene_mode.endswith("_multiple") else "single"
-            selected_prompt = story_scene.get("prompt", "")
-            selected_prompt = selected_prompt.format(topic=topic, language=config.LANGUAGES[self.language])
+            #selected_prompt = story_scene.get("prompt", "")
+            #selected_prompt = selected_prompt.format(topic=topic, language=config.LANGUAGES[self.language])
+            if scene_mode == "init_multiple":
+                new_scenes = project_manager.PROJECT_CONFIG.get('init_content', "")
+                if not new_scenes:
+                    continue
 
-            _content = None
-            if scene_mode.startswith("init_"):
-                _content = project_manager.PROJECT_CONFIG.get('init_content', "")
-            elif scene_mode.startswith("debut_"):
-                _content = project_manager.PROJECT_CONFIG.get('debut_content', "")
-
-            if not _content:
-                _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
-
-            if not _content:
-                continue
-
-            new_scenes = self.remix_conversation(story_scene, mode, _content, selected_prompt)
-            if new_scenes:
-                for new_scene in new_scenes:
-                    new_scene["name"] = story_scene.get("name", "story")
-                    new_scene["mode"] = story_scene.get("mode", "")
-                    new_scene["caption"] = story_scene.get("caption", "")
-                    new_scene["zero"] = story_scene.get("zero", "")
-                    new_scene["zero_image"] = story_scene.get("zero_image", "")
-                    new_scene["zero_audio"] = story_scene.get("zero_audio", "")
-                    new_scene["clip"] = story_scene.get("clip", "")
-                    new_scene["clip_image"] = story_scene.get("clip_image", "")
-                    new_scene["clip_audio"] = story_scene.get("clip_audio", "")
+                start_id = story_scene.get("id", 0)
+                for i, scene in enumerate(new_scenes):
+                    scene["id"] = start_id + 1
+                    start_id = scene["id"]
+                    scene["name"] = story_scene.get("name", "story")
+                    scene["mode"] = story_scene.get("mode", "")
+                    scene["caption"] = story_scene.get("caption", "")
+                    scene["zero"] = story_scene.get("zero", "")
+                    scene["zero_image"] = story_scene.get("zero_image", "")
+                    scene["zero_audio"] = story_scene.get("zero_audio", "")
+                    scene["clip"] = story_scene.get("clip", "")
+                    scene["clip_image"] = story_scene.get("clip_image", "")
+                    scene["clip_audio"] = story_scene.get("clip_audio", "")
 
                 self.replace_scene_with_others(index, new_scenes)
+
+        for story_scene in self.scenes:
+            if not story_scene.get("actor"):
+                story_scene["actor"] = "N/A"
+            if not story_scene.get("narrator"):
+                story_scene["narrator"] = _narr_default
+            if not story_scene.get("host_display"):
+                story_scene["host_display"] = _host_display_default
+            if not story_scene.get("visual_style"):
+                story_scene["visual_style"] = _visual_style_default
+            if not story_scene.get("caption"):
+                story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
 
         self.save_scenes_to_json()
 

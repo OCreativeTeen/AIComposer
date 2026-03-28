@@ -6,13 +6,13 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
             {{
                 "name": "story",
                 "speaking": "xxxxxx",
-                "speaker": "zzzzz"
+                "actor": "zzzzz"
             }}
 
 
 *** Output format: 
     ** Strictly output in json array, which contain only one single scene element with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
+        * actor : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
         * speaking: rephrase as first person dialogue, the original conversation content in a fluent and logical, ounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.  ~~~ in original language)
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -20,7 +20,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
         Here is a Example:
             {{
                 "speaking": "xxxxxx",
-                "speaker": "zzzzz",
+                "actor": "zzzzz",
                 "actions": "happy",
                 "visual": "yyyyy"
             }}
@@ -279,162 +279,115 @@ OUTPUT
 """
 
 
+COUNSELING_SLIDESHOW = """
+***
+Generate slides according to the scenes structure in the 'scenes' source of this project.
+    ** For each scene, show the image for the case-study-story content (speaker/actions/speaking/visual)
+    ** if the speaker is the Charater (in case-story), do not show the Narrator (Psychological Counselor),  for characters image, refer the 'Story-Character' source of this project (choose according to the gender /age),
+    ** if the speaker is the Narrator (Psychological Counselor), may show the Character (in case-story) in the background (like move the previous image at background, and pop the Narrator at front), for Narrator image, refer the 'Host' source of this project 
+    ** Keep the visual style consistent throughout all the scenes of the story.
+
+"""
+
+
+COUNSELING_SLIDESHOW_2LAYER = """
+***
+Generate slides according to the scenes structure in the 'scenes' source of this project.
+    ** For each Scene, show one image for the story content (speaker/actions/speaking/visual) and for characters image, refer the 'Story-Character' source of this project, then show another image, whcih push the 1st image back, and pop the host (refer the 'Host' source of this project) at front (to give 'voiceover' content on top of the 1st image) 
+    ** Keep the visual style consistent throughout all the scenes of the story.
+"""
 
 COUNSELING_INIT = """
 *** ROLE
     ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
 
     ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * This is not reference material, but your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+		* In the story enhancement, may involve deep internal philosophical framework from this. 
 
-    ** Your task is to EXPAND, INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological conflict structure of the case-story (provided in user-prompt) by:
-        * Thoroughly scan the reference stories (provided in user-prompt's reference section)
-        * and use them as inspiration to enhance/extend the case-story.
-
-    ** then transform the expanded story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. 
-        * Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
+    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological case-study-story (provided in user-prompt).
+	
+    ** then transform the enhanced case-study-story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
+		* Narrative Continuity: Ensure the case-study-story flows smoothly. If there are jumps in time or location, need Narrator explain the transition so the audience never feels lost.
+		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
 
 
 *** OBJECTIVES
 
-    PHASE 1 – Diagnose the Original Story
-
-        From the original case-story:
-
-            Identify the key elements:
-                • The ROOT WOUND (what early unmet need is being replayed?)
-                • The Core Fear (abandonment? engulfment? invisibility?)
-                • The Repetitive Pattern
-                • The Trigger Moment
-                • The Defense Strategy each character uses
-
-
-    PHASE 2 – Research & Absorption (Invisible Process)
-
-        Based on the the key elements, scan thoroughly the reference stories (provided in user-prompt's reference section), to:
-
-            Found out similar elements like:
-                • emotional neglect
-                • anxious/avoidant attachment cycles
-                • trauma reenactment patterns
-                • silent resentment & withdrawal
-                • pursuit/avoid loops
-                • identity collapse / worthlessness
-                • mood instability (if relevant)
-
-            Enhance the case-story by absorbing the similar elements:
-                • escalation structure
-                • realistic dialogue tone
-                • behavioral symptoms
-                • subtle emotional triggers
-                • how resentment builds over time
-                • Do NOT mention sources (like: reference stories or Reddit) in final output.
-
-
-    PHASE 3 - Deepening the Root Conflict
-
-        Intensify the psychological core by:
-            • Repeating the same emotional wound in different situations
-            • Showing how both characters unknowingly co-create the pattern
-            • Letting resentment accumulate quietly before rupture
-
+    PHASE 1 - Deepening the original case-study-story :
+        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
         Show psychology through:
             • body language
-            • unfinished sentences
             • avoidance behaviors
             • overcompensation
 
+    PHASE 2 - Generate the Scenes: 
+        ** Each scene may consist of two intertwined layers that transition smoothly.
+        ** Try to keep the scene content concise & short: make speach in the scene within 10 seconds. 
+            * May need to split scenes more to meet the speaking time limit, to let the Story Characters or Narrator's speech/conversation naturally & expressive completely, and the transition between Characters or Character & Narrator should be very smoothly, not sudden jump)
+            * So the scene structure may be like : Story Character may speak in multiple scenes, then Narrator starts to reveal the issue, or vice versa.
 
-    PHASE 4 - Generate the Scenes: The Dual-Layer Narrative
-`       Each scene must consist of two intertwined layers that transition smoothly:
-
-        1️⃣ The Explicit Layer (Visible Storyline)
-            Format:
-                ** First-person monologue or natural dialogue
-                ** Raw, grounded, emotionally authentic
-
-            Execution Rules:
-                ** Show, don’t explain
-                ** No moral commentary
-                ** No psychological labels
-                ** Reveal emotion through physical action
-
-            Instead of stating feelings, describe behavior.
-
-            Example:
-                ** Not: “I was anxious.”
-                ** Write: “I checked the lock again. The metal felt warm in my palm.”
-
-            Opening Requirement:
-                ** Start with a brief sensory scene heading in brackets.
-                ** Example:   [Cold kitchen tiles, the clock ticking too loud]
-
-            Anchor Rule:
-                ** Each scene must center around one concrete object that triggers the conflict (key, cup, letter, light, door, etc.).
-                ** The object must be physically present and interacted with.
-
-        2️⃣ The Implicit Layer (Counselor’s Perspective)
-            Role:
-                ** A calm, observant voice that provides background context and reveals what changed beneath the surface.
-                ** Not philosophy.  Not diagnosis.  Not advice.
-                ** It quietly exposes: What shifted, What broke, What contradiction is visible
-
-            Execution Rules:
-                ** No psychological jargon
-                ** No labels (no “trauma,” “attachment,” etc.)
-                ** Describe inner states as physical sensations or patterns
-                ** Instead of diagnosing, reveal the pattern.
-                ** Example:
-                    * Not: “He fears abandonment.”
-                    * Write: “When the room empties, he loses the outline of himself.”
-
-            Function:
-                ** Highlight the hidden tension
-                ** Reveal contradictions between words and actions
-                ** Subtly surface the real pain point
-                ** The Implicit Layer does not resolve the conflict. It sharpens it.
-
-            Core Principle:
-                ** The Explicit Layer shows what happens.
-                ** The Implicit Layer reveals what cracked.
-                ** The Explicit Layer holds the object.
-                ** The Implicit Layer shows why it cannot be put down.
-`
-
-*** Quality Standards
-    ** Tension: Create a contrast between the layers. The calmer the Explicit Layer, the more turbulent the Implicit Layer should be.
-    ** Atmospheric Immersion: Include specific details about the season, weather, lighting, or background noise to enhance the "short film" feel.
-    ** Emotional Arc: Sequence the scenes to follow this flow: [Triggering the Trauma] -> [Explosion of Conflict] -> [The Lingering Aftermath] -> [Revealing the Subconscious] -> [Reflective Insight].
-    ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
+*** OUTPUT (JSON Array)
+    ** Strictly output a JSON array of scene objects , and each scene with these fields:
+        * actor: Story Character (Gender/Age/Name/Tone/Race-{language}) | only show this field if current scene has actor; if current scene has both actor & narrator, narrator is the speaker, and the actor only act/no speaking (In English).
+        * actions: only show this field if current scene has actor; show the 'actor's Emotion or physical movements or expressions] (In English).
+        * narrator: Narrator (Psychological Counselor), value as 'Narrator - {narrator}'  | only show this field if current scene has narrator to give narration (In English).
+        * speaking: The Story Character's Very-Natural dialogue (In {language}) / Narrator's Very-Natural dialogue, to reveals what beneath the surface & connections if need (No psychological labels) (In {language}).
+        * visual: Detailed cinematic setting of current scene(environment - Time, season, weather, architecture, lighting, noise) to enhance the "short film" feel.
 
 
-*** Output Format:
-
-    Return the final script in format of sections, each section describe a scene, the explicit & implicit content should be in original language:
-            ...
-            -----
-            "scene": "Title (like: Break point)"
-                    "explicit": 
-                            "[Setting, atmosphere, and 1st-person story/dialogue]"
-                    "implicit": 
-                            "[Counselor's non-jargon hints and the hidden psychological contradictions]"
-
-            -----
-            "scene": "Title (like: Specific prominent event)"
-                    "explicit": 
-                            "[Detailed narrative of a specific prominent event]"
-                    "implicit": 
-                            "[Counselor's non-jargon hints, Underlying emotional patterns and invisible trauma clues]"
-
-            -----
-            ...
 """
 
+
+
+COUNSELING_INIT_2LAYER = """
+*** ROLE
+    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
+
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
+        * This is not reference material, but your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+		* In the story enhancement, may involve deep internal philosophical framework from this. 
+
+    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological case-story (provided in user-prompt).
+	
+    ** then transform the enhanced story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
+		* Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
+		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
+
+
+*** OBJECTIVES
+
+    PHASE 1 - Deepening the original story :
+        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
+        Show psychology through:
+            • body language
+            • avoidance behaviors
+            • overcompensation
+
+    PHASE 2 - Generate the Scenes: The Dual-Layer Narrative
+        ** Each scene may consist of two intertwined layers that transition smoothly:
+            * The Explicit Layer (Visible Storyline)
+                - speaker: One Character in the story
+                - speaking: Character Very-Natural dialogue, to show the story (background, conflict, development/changes, etc; No psychological labels)
+                - actions: Emotion or Reveal emotion through physical action.
+                - visual: Detailed cinematic setting (environment - Time, season, weather, architecture, lighting, noise) to enhance the "short film" feel.
+            * Implicit Layer" (Psychological Counselor’s Perspective/Insight).
+                - voiceover: Counselor's narration - reveals what beneath the surface & connections if need; No psychological jargon, No labels.
+        ** Try to keep the scene content concise & short: make both speach (Explicit layer's speaking & Implicit layer's voiceover)  within 10 seconds. So may need to split the scenes more to fit. 
+
+        
+
+*** OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array of objects with these fields:
+        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (In English).
+        * speaking: The Character's Very-Natural dialogue (In {language}).
+        * visual: Detailed cinematic setting (In English).
+        * voiceover: The Counselor's narration (In {language}).
+
+"""
 
 
 COUNSELING_DEBUT = """
@@ -679,7 +632,7 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
     * 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
 
 *** Output Format (JSON Array - each object is a scene with fields):
-    ** speaker: 咨询师性别 (man_mature/woman_mature)。
+    ** narrator: 咨询师性别 (man_mature/woman_mature)。
     ** speaking: (中文) 咨询师的台词。
         * 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
         * 注意：第一个场景不需要承接部分。
@@ -691,7 +644,7 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
 
 *** Example Output:
     {
-        "speaker": "woman_mature",
+        "narrator": "woman_mature",
         "speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
         "actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
         "visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
@@ -743,13 +696,13 @@ COUNSELING_ANALYSIS_DEVELOPMENT_OLD = """
 
 
 *** Input Data:** 
-    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), may already have existing 'speaking' script & 'speaker' + voiceover content.
+    ** analysis content provided in the user-prompt >> include 'content' (duplicate in all json elements), may already have existing 'speaking' script & 'actor' + voiceover content.
         Here is the example:
         [
             {{
                 "content": "心理治愈系短片剧本：《碎掉的灯影》\\n\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。]\\n女：“（语气疲惫但强硬）你不明白，那个颜色跟地板根本不搭！为什么这种事你都要敷衍我？”\\n男：“（压抑着怒火）我不是敷衍...",
                 "speaking": "zzzz",
-                "speaker": "aaaa",
+                "actor": "aaaa",
                 "voiceover": "bbbb"
             }}
         ]
@@ -813,7 +766,7 @@ COUNSELINGFEEDBACK_PROGRAM = """
 You are an expert in designing a feedback program following a story-anaylysis episode on psychological counseling and self-healing.
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           [
@@ -867,7 +820,7 @@ COUNSELINGFEEDBACK_FEEDBACK = """
 You are an expert to split feedback content (provide in user-prompt) into scenses .
 
 *** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
+    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
         Here is a example:
           The explicit & implicit of the story & the analysis content:
@@ -877,7 +830,7 @@ You are an expert to split feedback content (provide in user-prompt) into scense
                 "implicit": "在故事中，反复浮现的是一些非常基本、也非常人性的需要：安全、被看见、被肯定、以及在关系中保有一点掌控感。很多强烈的情绪反应——警觉、依附、逃离、羞耻——并不说明你脆弱，而恰恰说明你曾经很努力地适应环境。这里我们刻意不做自我诊断，而是邀请一种更温和的理解：当某个反应出现时，也许可以好奇地问一句，‘它是在帮我防御什么？’而不是立刻评判或压制。自我理解并不等于纵容痛苦，而是为内在经验留出空间。疗愈往往不是一次性的顿悟，而是无数个微小的时刻：意识到紧张正在发生、允许情绪存在几分钟、在关系中慢一点回应。请记住，带着好奇和善意观察自己，本身就是一种真实而有效的自我修复方式。你不需要立刻变好，你已经在被看见、也在学着看见自己。",
                 "speaking": "xxxxxx",
                 "voiceover": "yyyyy",
-                "speaker": "zzzzz",
+                "actor": "zzzzz",
                 "content": "ttttt"
             }}
           ]
@@ -1514,7 +1467,7 @@ MV_STORY = """
 You are expert to extend & split the story (in a song) into scenes: 
 
 *** Input:
-    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'speaker' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
+    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
         Here is a example:
         [
             {{
@@ -1523,7 +1476,7 @@ You are expert to extend & split the story (in a song) into scenes:
                 "implicit": "这不仅仅是一场错过的爱恋，而是一个关于‘受虐式依恋’与‘自我解构’的心理隐喻。霓虹与雨滴代表了记忆的不可靠性与流动性，暗示主人公沉溺于一种被美化了的痛苦中。剧院与舞台的意象揭示了两人关系的本质：一场明知是虚假的表演，一方甘愿作为‘观众’去配合另一方的‘剧本’，以此来确认自己依然存在。‘撕裂的勇敢’与‘圆满的碎裂’通过光影的剧烈反差得以具象化，表达了人在面对注定失败的感情时，通过主动拥抱痛苦来获得某种病态的圣洁感。最后的模糊海报象征着执念的最终消解——我们所爱上的往往不是那个人，而是自己笔下那个被粉饰过的幻影。这种‘浪漫的灾难’是灵魂在荒原中唯一能感受到的剧烈波动，哪怕它是毁灭性的。",
                 "speaking": "xxxxxx",
                 "voiceover": "yyyyy",
-                "speaker": "zzzzz",
+                "actor": "zzzzz",
                 "content": "ttttt"
             }}
         ]
@@ -1668,13 +1621,9 @@ CHANNEL_CONFIG = {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "prompt_story_init": COUNSELING_INIT,
             "prompt_program_debut": COUNSELING_DEBUT,
+            "prompt_slide_show": COUNSELING_SLIDESHOW,
         },
         "channel_template": [
-            {
-                "name": "starting",
-                "mode": "raw_single",
-                "prompt": COUNSELING_CASE_SUMMARY
-            },
             {
                 "name": "story",
                 "mode": "init_multiple",
@@ -1726,6 +1675,11 @@ CHANNEL_CONFIG = {
             "prompt_program_debut": COUNSELING_DEBUT
         },
         "channel_template": [
+            {
+                "name": "starting",
+                "mode": "raw_single",
+                "prompt": COUNSELING_CASE_SUMMARY
+            },
             {
                 "name": "starting"
             },
