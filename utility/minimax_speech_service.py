@@ -160,11 +160,11 @@ class MinimaxSpeechService:
                 return voice
         return VOICES[0]
 
-# man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl
+# man/mature/chinese, woman/mature/chinese, man/young/chinese, woman/young/chinese, man/old/chinese, woman/old/chinese, teen_boy/chinese, teen_girl/chinese, boy/chinese, girl/chinese
 # Common Chinese voices and moods
 VOICES = [
     {
-        'name': 'woman_mature',
+        'name': 'woman/mature/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.06,
@@ -172,7 +172,7 @@ VOICES = [
         'voice': 'moss_audio_9edd8a0f-9743-11f0-b659-7a84e7f91f54' #'Chinese (Mandarin)_Kind-hearted_Antie' # female-yujie   female-chengshu   presenter_female
     },
     {
-        'name': 'man_mature',
+        'name': 'man/mature/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -180,7 +180,7 @@ VOICES = [
         'voice': 'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
-        'name': 'man_mature',
+        'name': 'man/mature/english',
         'language': 'english',
         'volume': 1.0,
         'speed': 1.0,
@@ -188,7 +188,7 @@ VOICES = [
         'voice': 'moss_audio_b37dc4b3-9691-11f0-aeab-4aec103046b8' #'Chinese (Mandarin)_Stubborn_Friend' #moss_audio_9c223de9-7ce1-11f0-9b9f-463feaa3106a  moss_audio_ce44fc67-7ce3-11f0-8de5-96e35d26fb85    'male-qn-jingying-jingpin' # male-qn-jingying  presenter_male
     },
     {
-        'name': 'woman_young',
+        'name': 'woman/young/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -196,7 +196,7 @@ VOICES = [
         'voice': 'Ukrainian_CalmWoman' # 'Chinese (Mandarin)_Warm_Bestie' # female-shaonv  female-tianmei-jingpin    Russian_Dramatic_Speaker_v1
     },
     {
-        'name': 'man_young',
+        'name': 'man/young/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -205,7 +205,7 @@ VOICES = [
     },
 
     {
-        'name': 'girl',
+        'name': 'girl/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -213,7 +213,7 @@ VOICES = [
         'voice': 'Chinese (Mandarin)_Warm_Girl' #Chinese (Mandarin)_Cute_Spirit' 'BritishChild_female_1_v1'
     },
     {
-        'name': 'boy',
+        'name': 'boy/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -222,7 +222,7 @@ VOICES = [
     },
 
     {
-        'name': 'teen_boy',
+        'name': 'teen_boy/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -230,13 +230,13 @@ VOICES = [
         'voice': 'Chinese (Mandarin)_Southern_man_young'  
     },
     {
-        'name': 'teen_girl',
+        'name': 'teen_girl/chinese',
         'language': 'chinese',
         'voice': 'moss_audio_ad5baf92-735f-11f0-8263-fe5a2fe98ec8'  #'Chinese (Mandarin)_Warm_Girl'
     },
 
     {
-        'name': 'man_old',
+        'name': 'man/old/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -244,7 +244,7 @@ VOICES = [
         'voice': 'Chinese (Mandarin)_Humorous_Elder'
     },
     {
-        'name': 'woman_old',
+        'name': 'woman/old/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -254,7 +254,7 @@ VOICES = [
 
 
     {
-        'name': 'trump',
+        'name': 'trump/english',
         'language': 'english',
         'volume': 1.0,
         'speed': 1.0,
@@ -262,7 +262,7 @@ VOICES = [
         'voice': 'moss_audio_b37dc4b3-9691-11f0-aeab-4aec103046b8'
     },
     {
-        'name': 'wwj',
+        'name': 'wwj/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,
@@ -270,7 +270,7 @@ VOICES = [
         'voice': 'moss_audio_73fe2657-9743-11f0-aeab-4aec103046b8'
     },
     {
-        'name': 'qin',
+        'name': 'qin/chinese',
         'language': 'chinese',
         'volume': 1.0,
         'speed': 1.0,

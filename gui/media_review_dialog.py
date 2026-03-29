@@ -15,7 +15,8 @@ from config import parse_json_from_text
 from utility.file_util import is_audio_file, is_video_file, is_image_file
 import config_prompt
 import project_manager
-from utility.minimax_speech_service import MinimaxSpeechService
+#from utility.minimax_speech_service import MinimaxSpeechService
+from utility.voicebox_speech_service import VoiceboxService
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 
 
@@ -83,7 +84,8 @@ class AVReviewDialog:
         video_height = self.workflow.ffmpeg_processor.height
         self.transcriber = AudioTranscriber(self.workflow.pid, model_size="small", device="cuda")
         self.llm_api = LLMApi()
-        self.speech_service = MinimaxSpeechService(self.workflow.pid)
+        #self.speech_service = MinimaxSpeechService(self.workflow.pid)
+        self.speech_service = VoiceboxService(self.workflow.pid)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(self.workflow.pid)
 
         self.media_type_names = {
@@ -101,11 +103,11 @@ class AVReviewDialog:
         if self.media_type == "clip":
             self.SPEAKER_KEY = "actor"
             self.SPEAKING_KEY = "speaking"
-            self.ACTORS = config_prompt.CHARACTOR
+            self.ACTORS = config.CHARACTER_PERSON_OPTIONS
         else:
             self.SPEAKER_KEY = "narrator"
             self.SPEAKING_KEY = "voiceover"
-            self.ACTORS = config_prompt.CHARACTOR
+            self.ACTORS = config.CHARACTER_PERSON_OPTIONS
         
         # 媒体字段名映射
         if media_type == "clip":
@@ -1462,6 +1464,9 @@ class AVReviewDialog:
             actions = json_item["actions"]
 
             voice = self.speech_service.get_voice(speaker, lang)
+            if not voice:
+                messagebox.showerror("错误", f"无法找到语音: {speaker}")
+                return
             ssml = self.speech_service.create_ssml(text=content, voice=voice, actions=actions, language=lang)
             audio_file = self.speech_service.synthesize_speech(ssml)
             if audio_file:  # 只添加成功生成的音频文件

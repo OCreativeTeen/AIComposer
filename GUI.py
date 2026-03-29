@@ -26,9 +26,9 @@ import cv2
 import os
 from utility.file_util import get_file_path, is_video_file, check_folder_files, safe_copy_overwrite, make_safe_file_name
 from gui.media_review_dialog import AVReviewDialog
-from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
+#from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
+from utility.voicebox_speech_service import VoiceboxService, EXPRESSION_STYLES
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
-from gui.image_prompts_review_dialog import open_image_prompt_dialog, IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
@@ -162,13 +162,16 @@ class WorkflowGUI:
         
         # 初始化媒体扫描器（必须在启动后台线程之前），未选择项目时（如 YT 管理）跳过
         self.media_scanner = MediaScanner(self.workflow, 10) if self.workflow else None
-        
+
+        # 必须先 load_scenes，再启动后台线程：否则 _perform_video_check 里 save_scenes_to_json 会在
+        # self.scenes 未就绪时执行，报「无 scenes」或把空列表写盘覆盖项目。
+        if self.workflow:
+            self.workflow.load_scenes()
+
         # 启动单例后台视频检查线程
         self.start_video_check_thread()
         # 绑定窗口关闭事件
 
-        if self.workflow:
-            self.workflow.load_scenes()
         self.on_tab_changed(None)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -198,7 +201,8 @@ class WorkflowGUI:
             channel = project_manager.PROJECT_CONFIG.get('channel')
 
             self.workflow = MagicWorkflow(self.get_pid(), language, channel, video_width, video_height)
-            self.speech_service = MinimaxSpeechService(self.get_pid())
+            #self.speech_service = MinimaxSpeechService(self.get_pid())
+            self.speech_service = VoiceboxService(self.get_pid())
             
             current_gui_title = self.video_title.get().strip()
             self.workflow.post_init(current_gui_title)
@@ -465,7 +469,9 @@ class WorkflowGUI:
 
             channel = project_manager.PROJECT_CONFIG.get('channel')
             scene_name = self.workflow.get_scene_by_index(self.current_scene_index)['name']
-            source_folder = f"{config.get_background_video_path()}/{config_channel.get_channel_id(channel)}/{scene_name}"
+            source_folder = f"{config.get_channel_path(channel)}/video/{scene_name}"
+            if not os.path.exists(source_folder):
+                source_folder = f"{config.get_channel_path(channel)}/video/default"
 
             video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
             video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
@@ -586,13 +592,13 @@ class WorkflowGUI:
             return
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if track == "clip":
-            voice_values = config_prompt.CHARACTOR
+            voice_values = config.CHARACTER_PERSON_OPTIONS
             content_field = "speaking"
             role_field = "actor"
             track_label = "Clip"
             role_label = "人物"
         else:  # narration
-            voice_values = config_prompt.CHARACTOR
+            voice_values = config.CHARACTER_PERSON_OPTIONS
             content_field = "voiceover"
             role_field = "narrator"
             track_label = "Narration"
@@ -1069,7 +1075,7 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="末帧", width=7, command=lambda: self.fetch_last_image()).pack(side=tk.LEFT, padx=(0, 10))
 
-        ttk.Button(visual_button_frame, text="提示词", width=7, command=lambda: self.recreate_clip_image(False)).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(visual_button_frame, text="提示词", width=7, command=lambda: self.copy_clip_to_download(False)).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Button(visual_button_frame, text="生场景", width=7, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=1)
 
@@ -1352,6 +1358,16 @@ class WorkflowGUI:
         ttk.Button(video_control_frame, text="反转", command=self.reverse_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="镜像", command=self.mirror_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="标题", command=self.print_title, width=5).pack(side=tk.LEFT, padx=1)
+        # 前插：仅当前为「本故事第一个场景」时可点；后插：仅当前为「本故事最后一个场景」时可点
+        self.btn_add_scene_before = ttk.Button(
+            video_control_frame, text="前插", command=self.add_scene_before, width=5
+        )
+        self.btn_add_scene_before.pack(side=tk.LEFT, padx=1)
+        self.btn_add_scene_after = ttk.Button(
+            video_control_frame, text="后插", command=self.add_scene_after, width=5
+        )
+        self.btn_add_scene_after.pack(side=tk.LEFT, padx=1)
+
         #ttk.Button(video_control_frame, text="背起", command=self.zero_start, width=5).pack(side=tk.LEFT, padx=1)
         #ttk.Button(video_control_frame, text="背继", command=self.zero_continue, width=5).pack(side=tk.LEFT, padx=1)
         #ttk.Button(video_control_frame, text="背终", command=self.zero_end, width=5).pack(side=tk.LEFT, padx=1)
@@ -1471,7 +1487,7 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config_prompt.CHARACTOR)
+        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config.CHARACTER_PERSON_OPTIONS)
         self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
@@ -1488,7 +1504,7 @@ class WorkflowGUI:
         _nar_host_row = ttk.Frame(self.video_edit_frame)
         _nar_host_row.grid(row=row_number, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Label(_nar_host_row, text="讲员:").pack(side=tk.LEFT, padx=(0, 4))
-        self.scene_narrator = ttk.Combobox(_nar_host_row, width=22, values=config_prompt.CHARACTOR)
+        self.scene_narrator = ttk.Combobox(_nar_host_row, width=22, values=config.CHARACTER_PERSON_OPTIONS)
         self.scene_narrator.pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(_nar_host_row, text="出镜:").pack(side=tk.LEFT, padx=(0, 4))
         self.scene_host_display = ttk.Combobox(
@@ -2174,6 +2190,8 @@ class WorkflowGUI:
         # 延迟加载第一帧，确保canvas已完全渲染
         self.load_all_images_preview()
 
+        self.update_add_scene_insert_buttons_state()
+
     
     def cleanup_track_video_captures(self):
         if hasattr(self, 'secondary_track_cap') and self.secondary_track_cap:
@@ -2650,6 +2668,45 @@ class WorkflowGUI:
         
         self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
 
+
+    def update_add_scene_insert_buttons_state(self):
+        """前插仅在本故事首场景可用，后插仅在本故事尾场景可用。"""
+        if not getattr(self, "btn_add_scene_before", None) or not getattr(self, "btn_add_scene_after", None):
+            return
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            self.btn_add_scene_before.config(state=tk.DISABLED)
+            self.btn_add_scene_after.config(state=tk.DISABLED)
+            return
+        self.btn_add_scene_before.config(
+            state=tk.NORMAL if self.workflow.first_scene_of_story(scene) else tk.DISABLED
+        )
+        self.btn_add_scene_after.config(
+            state=tk.NORMAL if self.workflow.last_scene_of_story(scene) else tk.DISABLED
+        )
+
+    def add_scene_before(self):
+        """在本故事第一个场景前插入一个复制场景（仅首场景时可操作）。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene or not self.workflow.first_scene_of_story(scene):
+            return
+        dup = scene.copy()
+        dup["id"] = self.workflow.max_id(dup) + 1
+        self.workflow.scenes.insert(self.current_scene_index, dup)
+        self.workflow.save_scenes_to_json()
+        self.current_scene_index += 1
+        self.refresh_gui_scenes()
+
+    def add_scene_after(self):
+        """在本故事最后一个场景后插入一个复制场景（仅尾场景时可操作）。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene or not self.workflow.last_scene_of_story(scene):
+            return
+        dup = scene.copy()
+        dup["id"] = self.workflow.max_id(dup) + 1
+        self.workflow.scenes.insert(self.current_scene_index + 1, dup)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
 
     def copy_story_scene(self):
         story_level = self.workflow.first_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))  or  self.workflow.last_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))
@@ -3999,28 +4056,25 @@ class WorkflowGUI:
                     refresh_scene_media(next_scene, "clip_image", ".webp", last_image, True)
 
 
-    def recreate_clip_image(self, full:bool):
+    def copy_clip_to_download(self, full:bool):
         """重新创建主图，先打开对话框让用户审查和编辑提示词"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        
-        # 定义创建图像的回调函数
-        def create_clip_image(edited_positive, edited_negative):
-            pass
-            #oldi, newi = refresh_scene_media(scene, "clip_image", ".webp")
-            #self.workflow._create_image(self.workflow.sd_processor.gen_config["Story"], 
-            #                                    newi,
-            #                                    None,
-            #                                    newi,
-            #                                    edited_positive,
-            #                                    edited_negative,
-            #                                    int(time.time())
-            #                                )
-            #self.workflow.save_scenes_to_json()
-            #self.refresh_gui_scenes()
-            #print("✅ 主图已重新创建")
-        
-        # 构建正面提示词预览
-        open_image_prompt_dialog(self, self.workflow, create_clip_image, scene, "clip", self.workflow.language)
+
+        clip_video = get_file_path(scene, "clip")
+        if clip_video:
+            download_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+            shutil.copy(clip_video, download_path)
+
+        if full:
+            clip_image = get_file_path(scene, "clip_image")
+            if clip_image:
+                download_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+                shutil.copy(clip_image, download_path)
+            #copy the clip_audio to download folder
+            clip_audio = get_file_path(scene, "clip_audio")
+            if clip_audio:
+                download_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+                shutil.copy(clip_audio, download_path)
 
 
     def describe_scene(self, host=None, visual=False, visual_style=None, motion=None, host_show_image=False):
@@ -4224,7 +4278,7 @@ class WorkflowGUI:
             return
 
         visual_style = project_manager.PROJECT_CONFIG.get("visual_style", config.VISUAL_STYLE_OPTIONS[0])
-        narrator = project_manager.PROJECT_CONFIG.get("narrator", config_prompt.CHARACTOR[0])
+        narrator = project_manager.PROJECT_CONFIG.get("narrator", config.CHARACTER_PERSON_OPTIONS[0])
         host_display = project_manager.PROJECT_CONFIG.get("host_display", config_prompt.HARRATOR_DISPLAY_OPTIONS[0])
 
         self._build_and_show_story_content(

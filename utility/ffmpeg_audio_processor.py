@@ -45,7 +45,7 @@ class FfmpegAudioProcessor:
 
 
     def make_silence(self, duration):
-        noise_wav_path = config.get_background_music_path()+"/noise.wav"
+        noise_wav_path = config.BASE_PROGRAM_PATH+"/noise.wav"
         return self.audio_cut_fade(noise_wav_path, 0, duration, 0, 1.0)
 
 

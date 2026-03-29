@@ -21,7 +21,7 @@ LANGUAGES = {
 
 # =============================================================================
 # Speaker/Host 角色与风格定义 - 供 GUI、downloader 等模块共享
-# 格式: gender/age/race | style（如 woman/middle-aged/chinese | realistic）
+# 格式: gender/age/race | style（如 man/mature/chinese | realistic）
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
     "pixar-art cartoon + realistic",
@@ -31,45 +31,116 @@ VISUAL_STYLE_OPTIONS = [
 ]
 
 CHARACTER_PERSON_OPTIONS = [
+    "",
+    "woman/mature/chinese",
+    "man/mature/chinese",
     "woman/young/chinese",
-    "woman/middle-aged/chinese",
     "man/young/chinese",
-    "man/middle-aged/chinese",
-    "girl/chinese",
-    "boy/chinese",
-    "woman/senior/chinese",
-    "man/senior/chinese",
-    "woman/young/caucasian",
-    "man/young/caucasian",
-    "woman/middle-aged/caucasian",
-    "man/middle-aged/caucasian",
-    "girl/caucasian",
-    "boy/caucasian",
-    "woman/senior/caucasian",
-    "man/senior/caucasian",
+    "woman/mature/english",
+    "man/mature/english",
+    "woman/young/english",
+    "man/young/english",
+
+    "woman/grok/chinese",
+    "man/grok/chinese",
+    "woman/grok/english",
+    "man/grok/english",
+    "man/narrator/chinese",
+    "woman/qin/chinese",
+    "woman/qin-fast/chinese",
+    "man/wj/chinese",
+    "man/elon/english",
+    "man/trump/english"
 ]
 
 
-def _build_describe_host_options():
-    """场景描述 Host 组合选项：(value, label)。中年中国男女 × 各画面风格。"""
-    opts = [("", "no host")]
-    for style_val in VISUAL_STYLE_OPTIONS:
-        for char_val in CHARACTER_PERSON_OPTIONS:
-            if char_val in ("woman/middle-aged/chinese", "man/middle-aged/chinese"):
-                opts.append((char_val, f"{style_val} | {char_val}"))
-    return opts
+
+#
+IMAGE_STYLES = [
+    "ultra-realistic, cinematic lighting, dramatic shading",
+
+    "watercolor painting",
+    "watercolor painting with postcard border",
+    "watercolor painting with golden ornate photo frame",
+    "watercolor painting with Rococo picture frame",
+    "watercolor painting with vintage photo frame",
+
+    "ukiyo-e style",
+    "ukiyo-e with vintage photo frame",
+    "ukiyo-e with postcard border",
+    "ukiyo-e with golden ornate photo frame",
+    "ukiyo-e with Rococo picture frame"
+]
+
+IMAGE_STYLES_2 = [
+    #"ultra-realistic, cinematic lighting, dramatic shading",
+    { "style": "vintage postcard look", "frame": "vintage photo frame" },
+    { "style": "vintage postcard look", "frame": "postcard border" },
+    { "style": "vintage postcard look", "frame": "golden ornate photo frame" },
+    { "style": "vintage postcard look", "frame": "baroque frame" },
+    { "style": "vintage postcard look", "frame": "Rococo picture frame" },
+    { "style": "graphite drawing", "frame": "vintage photo frame" },
+    { "style": "graphite drawing", "frame": "postcard border" },
+    { "style": "graphite drawing", "frame": "golden ornate photo frame" },
+    { "style": "graphite drawing", "frame": "baroque frame" },
+    { "style": "graphite drawing", "frame": "Rococo picture frame" },
+    { "style": "watercolor painting", "frame": "gallery frame" },
+    { "style": "watercolor painting", "frame": "postcard border" },
+    { "style": "watercolor painting", "frame": "golden ornate photo frame" },
+    { "style": "watercolor painting", "frame": "baroque frame" },
+    { "style": "watercolor painting", "frame": "Rococo picture frame" },
+    { "style": "rococo painting (baroque art)", "frame": "baroque frame" },
+    { "style": "rococo painting (baroque art)", "frame": "postcard border" },
+    { "style": "rococo painting (baroque art)", "frame": "golden ornate photo frame" },
+    { "style": "rococo painting (baroque art)", "frame": "Rococo picture frame" },
+    { "style": "ukiyo-e style", "frame": "ukiyo-e frame" },
+    { "style": "ukiyo-e style", "frame": "postcard border" },
+    { "style": "ukiyo-e style", "frame": "golden ornate photo frame" },
+    { "style": "ukiyo-e style", "frame": "baroque frame" },
+    { "style": "ukiyo-e style", "frame": "Rococo picture frame" },
+    { "style": "crayon art (pastel drawing)", "frame": "postcard border" },
+    { "style": "crayon art (pastel drawing)", "frame": "golden ornate photo frame" },
+    { "style": "crayon art (pastel drawing)", "frame": "baroque frame" },
+    { "style": "crayon art (pastel drawing)", "frame": "Rococo picture frame" }
+]
+
+# 图像提示词预设选项
+IMAGE_PROMPT_OPTIONS = [
+    "",
+    "Ancient Middle-Eastern (story, clothing/head-coverings, tent)",
+    "Chinese person (black hair) with traditional chinese dressing, Song-dynasty traditional chinese culture/architecture",
+    "Modern Chinese person in business suit, contemporary urban cityscape background",
+    "Japanese person in traditional kimono, traditional Japanese temple and garden",
+    "Modern Japanese person in casual street fashion, Tokyo neon lights background",
+    "Korean person in traditional hanbok, ancient Korean palace architecture",
+    "Modern Korean person in K-pop style fashion, Seoul city skyline",
+    "European person in medieval clothing, Gothic cathedral and castle",
+    "Modern European person in elegant fashion, Paris street café scene",
+    "American person in western cowboy attire, wild west desert landscape",
+    "Modern American person in casual wear, New York skyscrapers background",
+    "Indian person in traditional sari/kurta, Taj Mahal and traditional architecture",
+    "Modern Indian person in contemporary dress, Mumbai modern cityscape",
+    "Middle Eastern person in traditional robes, ancient desert city architecture",
+    "Modern Middle Eastern person in business attire, Dubai futuristic skyline",
+    "African person in traditional tribal clothing, savanna and acacia trees",
+    "Modern African person in stylish fashion, Lagos or Cape Town cityscape",
+    "Russian person in traditional folk costume, Red Square and onion domes",
+    "Modern Russian person in winter fashion, Moscow snowy streets",
+    "Brazilian person in carnival costume, Rio de Janeiro beach and mountains",
+    "Modern Brazilian person in beach wear, São Paulo urban landscape",
+    "cozy warm tones, calm atmosphere, subtle textures, psychological wellness, emotional warmth, a heartwarming lifestyle"    
+]
 
 
-DESCRIBE_HOST_OPTIONS = None  # 延迟初始化，见下
-
-
-def get_describe_host_options():
-    """获取场景描述 Host 选项列表"""
-    global DESCRIBE_HOST_OPTIONS
-    if DESCRIBE_HOST_OPTIONS is None:
-        DESCRIBE_HOST_OPTIONS = _build_describe_host_options()
-    return DESCRIBE_HOST_OPTIONS
-
+# 负面提示词预设选项
+NEGATIVE_PROMPT_OPTIONS = [
+    "words explaination in the image, low quality, distorted, overly cartoonish, text, watermark, deformed, ugly, duplicate faces",
+    "modern clothing/t-shirt, glasses/watches, guns/rifles/pistols/tactical-outfit, cars, phones, neon-lights",
+    "drawing, painting, sketch, illustration",
+    "nsfw, nude, sexual, adult content, violence, gore, blood",
+    "extra limbs, extra fingers, extra arms, extra legs, missing limbs"
+    "crowd, too many people"
+]
 
 
 
@@ -422,22 +493,10 @@ def get_effect_path() -> str:
     os.makedirs(path, exist_ok=True)
     return path
 
-def get_background_video_path() -> str:
-    """获取视频文件路径"""
-    return f"{BASE_PROGRAM_PATH}/background_video"
-
-def get_background_music_path() -> str:
-    """获取音乐文件路径"""
-    return f"{BASE_PROGRAM_PATH}/background_music"
-
-def get_background_image_path() -> str:
-    """获取背景文件路径"""
-    return f"{BASE_PROGRAM_PATH}/background_image"
-
 def parse_speaker_host_for_voice(s):
     """从 speaker/host 字符串解析出 gender/age/race 部分（用于语音匹配）。支持新旧格式：
     新格式: woman/middle-aged/chinese | realistic  -> woman/middle-aged/chinese
-    旧格式: realistic-style | woman_middle-aged_chinese -> woman_middle-aged_chinese"""
+    旧格式: realistic-style | woman/middle-aged/chinese -> woman/middle-aged/chinese"""
     if not s or not isinstance(s, str):
         return ""
     s = s.strip()
@@ -456,7 +515,7 @@ def get_fallback_background_image(channel, width, height):
     if not channel:
         return None
     prefix, kernel = fetch_resource_prefix("", [])
-    image_dir = get_background_image_path() + "/" + channel
+    image_dir = get_channel_path(channel) + "/image"
     if not os.path.isdir(image_dir):
         return None
     if width > height:
@@ -469,9 +528,9 @@ def get_fallback_background_image(channel, width, height):
 def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor):
     """获取背景图、背景音乐，并用图+音乐合成背景视频，返回 (background_image, background_video, background_music)。"""
     prefix, kernel = fetch_resource_prefix("", [])
-    image_dir = get_background_image_path() + "/" + channel
-    music_dir = get_background_music_path() + "/" + channel
-    video_dir = get_background_video_path() + "/" + channel
+    image_dir = get_channel_path(channel) + "/image"
+    music_dir = get_channel_path(channel) + "/music"
+    video_dir = get_channel_path(channel) + "/video"
 
     # 1. 获取 background_image（按横竖屏选 169_ 或 916_）
     if ffmpeg_processor.width > ffmpeg_processor.height:

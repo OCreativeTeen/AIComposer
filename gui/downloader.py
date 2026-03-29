@@ -45,17 +45,6 @@ def _treeview_item_tags_safe(tree, item):
     return ()
 
 
-def _welcome_visual_style_label():
-    """欢迎屏/项目配置中的画面风格（英文，只读展示）。"""
-    v = project_manager.LAST_VISUAL_STYLE
-    return v if v else config.VISUAL_STYLE_OPTIONS[0]
-
-
-def _welcome_host_display_label():
-    """欢迎屏 Host 显示（英文，只读展示）。"""
-    return config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
-
-
 # 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
 _STORY_LANG_BRANCH_KEYS = ("concise_speaking", "heart_message", "psychological_micro_story")
 
@@ -1875,7 +1864,7 @@ class MediaGUIManager:
 
         # 画面风格：与欢迎屏一致，只读展示（LAST_VISUAL_STYLE）
         ttk.Label(control_frame, text="画面风格:").pack(side=tk.LEFT, padx=(10, 5))
-        ttk.Label(control_frame, text=_welcome_visual_style_label(), width=22, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(control_frame, text=project_manager.LAST_VISUAL_STYLE, width=22, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
 
         def smart_select():
@@ -2650,7 +2639,7 @@ class MediaGUIManager:
 
             # 画面风格 / 旁白 / Host 显示：与欢迎屏一致，只读（LAST_*）
             ttk.Label(prompt_choice_frame, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Label(prompt_choice_frame, text=_welcome_visual_style_label(), width=16, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(prompt_choice_frame, text=project_manager.LAST_VISUAL_STYLE, width=16, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
@@ -2661,14 +2650,8 @@ class MediaGUIManager:
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
             ttk.Label(prompt_choice_frame, text="HOST").pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Label(prompt_choice_frame, text=_welcome_host_display_label(), width=18, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Label(prompt_choice_frame, text=project_manager.LAST_HOST_DISPLAY, width=18, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
-            def _get_speaker_str():
-                """根据选择构建 Speaker 字符串：gender/age/race | style"""
-                ch_val = (character_var.get() or "").strip()
-                if ch_val not in config.CHARACTER_PERSON_OPTIONS:
-                    ch_val = "woman/middle-aged/chinese"
-                return ch_val
 
             def copy_style_character(language):
                 try:
@@ -2749,32 +2732,29 @@ class MediaGUIManager:
 
 
                 header_parts = []
-                header_parts.append(f"Main Character: {_get_speaker_str()}")
+                
+                header_parts.append(f"Visual Style: {project_manager.LAST_VISUAL_STYLE}")
+
+                if character_var.get():
+                    header_parts.append(f"Main Character: {character_var.get()}")
+
                 host_str = project_manager.LAST_NARRATOR
-
-                # host display description
-                hd = config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
-                if hd == "":
-                    host_display_desc = "No Host. The main character performs and narrates. No Host voice, no Host image."
-                elif hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
-                    host_display_desc = "Host has voice only, no image. The screen is dominated by Host narration; main character is secondary."
-                else:
-                    host_display_desc = "Host appears in the scene."
-
                 if host_str:
                     header_parts.append(f"Host (voice): {host_str}")
-                if host_display_desc:
-                    header_parts.append(f"Host display: {host_display_desc}")
+                    hd = project_manager.LAST_HOST_DISPLAY
+                    if hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
+                        host_display_desc = "No Host. The main character performs and narrates."
+                    else:
+                        header_parts.append(f"Host display: {hd}")
 
-                if host_str:
                     header_parts.append(
                         "\n\nIn Video generation:"
-                        "** If the image contains a Host(Narrator) figure → use Host to speak about the content of the scene. "
-                        "** If the image has only a main character (no Host) → use the main character to speak about the content of the scene."
+                        "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
+                        "** If scene-image has only a main character (no Host) → use the main character as talking-avatar to speak about the content of the scene."
                     )
                 else:
                     header_parts.append("\n\nIn Video generation:"
-                        "** No Host. Use the main character to speak about the content of scene."
+                        "** No Host (Narrator). Use the main character as talking-avatar to speak about the content of scene."
                     )
 
                 if language == "en":
@@ -2839,11 +2819,11 @@ class MediaGUIManager:
                 input_media_path = config.INPUT_MEDIA_PATH
                 _cat_raw = (category_var.get() or "").strip()
                 if _cat_raw:
-                    _cat = self.downloader.make_safe_file_name(_cat_raw, title_length=6)
+                    _cat = make_safe_file_name(_cat_raw, title_length=6)
                 else:
                     _cat = ""
 
-                filename = self.downloader.make_safe_file_name(video_detail.get('title', '').strip(), title_length=20) + '_'
+                filename = make_safe_file_name(video_detail.get('title', '').strip(), title_length=20) + '_'
                 file_path = os.path.join(input_media_path, '__' + selected_index + '__' + _cat + '__' + filename + '.txt')
                 if os.path.exists(file_path):
                     os.remove(file_path)

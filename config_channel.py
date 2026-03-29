@@ -12,7 +12,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
 *** Output format: 
     ** Strictly output in json array, which contain only one single scene element with fields like: 
-        * actor : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
+        * actor : gender/age/race, choices: (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese) ~~~ in English language) 
         * speaking: rephrase as first person dialogue, the original conversation content in a fluent and logical, ounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.  ~~~ in original language)
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -633,7 +633,7 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
     * 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
 
 *** Output Format (JSON Array - each object is a scene with fields):
-    ** narrator: 咨询师性别 (man_mature/woman_mature)。
+    ** narrator: 咨询师性别 (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)。
     ** speaking: (中文) 咨询师的台词。
         * 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
         * 注意：第一个场景不需要承接部分。
@@ -645,7 +645,7 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
 
 *** Example Output:
     {
-        "narrator": "woman_mature",
+        "narrator": "woman/mature/chinese",
         "speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
         "actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
         "visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
@@ -711,7 +711,7 @@ COUNSELING_ANALYSIS_DEVELOPMENT_OLD = """
 
 *** Output Format (JSON Array):
     ** Each object must contain:
-        * speaker: (Choice: man_mature/woman_mature).
+        * speaker: (Choice: man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese).
         * speaking: (In original language) The counselor's dialogue. Identify symptoms as "survival strategies."
         * actions: (In English) Mood + physical cues (e.g., "calm / leans toward the hearth").
         * visual: (In English) Cinematic description of the Counselor's Mindscape (Weather, architecture, lighting).
@@ -847,7 +847,7 @@ You are an expert to split feedback content (provide in user-prompt) into scense
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /key-features (like: woman_mature/Professional counselor) ~~~ in English language) 
+        * speaker : gender/age/race (choices (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)) /key-features (like: woman/mature/chinese/Professional counselor) ~~~ in English language) 
         * speaking: As professional counselor, host to speak about the psychological symptom / cause / response to viewers, on the basis of the analysis content, and try to engage the audience ~~~ all scenes' speaking content should connect coherently like a smooth conversation / natural complete narrative ~~~ in original language)
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
@@ -1489,7 +1489,7 @@ You are expert to extend & split the story (in a song) into scenes:
 
 *** Output format: 
     ** Strictly output in ({json}), which contain scene with fields like: 
-        * speaker : gender_age (choices (man_mature/woman_mature/man_young/woman_young/man_old/woman_old/teen_boy/teen_girl/boy/girl)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
+        * speaker : gender/age/race (choices (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
         * speaking: 1st person dialogue ~~~ all scenes' speaking should connect coherently like a smooth conversation / natural complete narrative;  between adjacent scenes, add connection info to make all scenes to give a whole story smoothly (if need, add transition info like time/age/location change etc) ~~~ in original language)
         * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
         * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 

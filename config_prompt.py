@@ -144,8 +144,8 @@ Video generation instruction:
 
 Audio generation / Words-in-image generation instruction: 
     ** Speaker:
-        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender_age_race' (i.e, 'woman_young_chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
-        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman_young_chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
+        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
+        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/young/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
 	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
         * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
         * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
@@ -194,8 +194,8 @@ Video generation instruction:
 
 Audio generation / Words-in-image generation instruction: 
     ** Speaker:
-        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender_age_race' (i.e, 'woman_young_chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
-        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman_young_chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
+        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
+        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/young/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
 	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
         * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
         * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
@@ -1266,24 +1266,6 @@ ANIMATION_PROMPTS = [
         "name": "神圣",
         "prompt": "The still image awakens with motion: golden rays descend through the mist, touching sacred symbols. The camera ascends slowly, as if carried by gentle divine wind. A clear, majestic, and tranquil revelation — cinematic holiness in stillness."
     }
-]
-
-
-
-CHARACTOR = [
-    "",
-    "woman_young_chinese",
-    "man_young_chinese",
-    "woman_mature_chinese",
-    "man_mature_chinese",
-    "boy_chinese",
-    "girl_chinese",
-    "woman_young_caucasian",
-    "man_young_caucasian",
-    "woman_mature_caucasian",
-    "man_mature_caucasian",
-    "boy_caucasian",
-    "girl_caucasian",
 ]
 
 

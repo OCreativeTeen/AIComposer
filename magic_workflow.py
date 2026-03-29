@@ -16,7 +16,6 @@ import config_prompt
 import config_channel
 from io import BytesIO
 from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation, safe_copy_overwrite
-from gui.image_prompts_review_dialog import IMAGE_PROMPT_OPTIONS, NEGATIVE_PROMPT_OPTIONS
 from utility.llm_api import LLMApi
 import project_manager
 from project_manager import refresh_scene_media
@@ -61,8 +60,6 @@ class MagicWorkflow:
         self.channel_path = config.get_channel_path(config_channel.get_channel_id(channel))
         self.effect_path = config.get_effect_path()
 
-        self.negative_prompt = NEGATIVE_PROMPT_OPTIONS[0]
-
         self.font_size = 14
         self.language = language
         if language == "tw":
@@ -96,7 +93,9 @@ class MagicWorkflow:
         self.background_music = None
         self.background_video = None
 
- 
+        # load_scenes() 之前若有代码路径调用 save_scenes_to_json，需有默认列表（GUI 启动顺序已保证先 load）
+        self.scenes: list = []
+
     def post_init(self, title):
         if title:
             self.title = self.transcriber.translate_text(title, self.language, self.language)
@@ -748,7 +747,7 @@ class MagicWorkflow:
 
     def _defaults_from_project_config(self):
         """欢迎屏 / 新建项目写入 PROJECT_CONFIG 的 narrator、host_display、visual_style，用于场景缺省补全。"""
-        narr = config_prompt.CHARACTOR[0]
+        narr = config.CHARACTER_PERSON_OPTIONS[0]
         host_en = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
         visual_style = config.VISUAL_STYLE_OPTIONS[0]
         try:

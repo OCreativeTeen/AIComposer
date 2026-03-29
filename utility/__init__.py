@@ -5,6 +5,6 @@ from .sd_image_processor import SDProcessor
 from .audio_transcriber import AudioTranscriber
 from .llm_api import LLMApi
 from .media_scanner import MediaScanner
-
+from .voicebox_speech_service import VoiceboxService
 
 

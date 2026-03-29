@@ -27,7 +27,7 @@ from gui.downloader import MediaGUIManager
 PROJECT_CONFIG = None
 
 # 欢迎屏选择的旁白 narrator，供 YT → RAW 启动新项目 等路径复用（与 config_prompt.NARRATOR 一致）
-LAST_NARRATOR = config_prompt.CHARACTOR[0]
+LAST_NARRATOR = config.CHARACTER_PERSON_OPTIONS[0]
 
 # 欢迎屏选择的画面风格（英文，与 config.VISUAL_STYLE_OPTIONS 一致）
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
@@ -498,7 +498,7 @@ class ProjectSelectionDialog:
         ttk.Combobox(
             welcome_info_row,
             textvariable=new_project_narrator_var,
-            values=config_prompt.CHARACTOR,
+            values=config.CHARACTER_PERSON_OPTIONS,
             state="readonly",
             width=18,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -860,7 +860,7 @@ class ProjectSelectionDialog:
             user_prompt = f"On topic of {topic}, the initial story script is : \n{self.story_result.get('raw_content','')}\n\n\n\
                         And the core-insight ('soul') is: \n{self.story_result.get('soul', '')}"
             system_prompt = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {}).get('prompt_story_init', '')
-            narrator = self.story_result.get('narrator') or config_prompt.CHARACTOR[0]
+            narrator = self.story_result.get('narrator') or config.CHARACTER_PERSON_OPTIONS[0]
             system_prompt = system_prompt.format(
                 language=LANGUAGES[self.story_result['language']],
                 topic=topic,
@@ -896,7 +896,7 @@ class ProjectSelectionDialog:
             if not self.story_result.get('init_content', None):
                 self.story_result['init_content'] = ""
 
-            if not self.story_result['raw_content']:
+            if not self.story_result.get('raw_content', None):
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
             
@@ -1041,7 +1041,7 @@ def show_initial_choice_dialog(parent):
     narrator_combo = ttk.Combobox(
         opt_frame2,
         textvariable=narrator_var,
-        values=config_prompt.CHARACTOR,
+        values=config.CHARACTER_PERSON_OPTIONS,
         state="readonly",
         width=20,
     )

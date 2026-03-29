@@ -1,6 +1,7 @@
 import os
 import subprocess
 import shutil
+import time
 import uuid
 
 from config import FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
@@ -3013,16 +3014,39 @@ class FfmpegProcessor:
         return "\n".join(all_processed_lines)  # Use actual newlines for text file
 
 
+    def _copy_file_with_retry(self, src: str, dst: str, max_attempts: int = 12) -> None:
+        """
+        复制到新的临时路径。Windows 下预览等进程占用源文件时，os.replace 常报 WinError 32；
+        以只读方式 copy2 并短暂重试通常可成功。
+        """
+        last_err = None
+        for attempt in range(max_attempts):
+            try:
+                shutil.copy2(src, dst)
+                return
+            except OSError as e:
+                last_err = e
+                time.sleep(0.08 * (1 + attempt))
+        if last_err is not None:
+            raise last_err
+        raise OSError("_copy_file_with_retry: no attempts made")
+
     def adjust_video_to_duration(self, input_video_path, target_duration):
         output_video_path = config.get_temp_file(self.pid, "mp4")
 
         segment_duration = self.get_duration(input_video_path)
         if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
-            os.replace(input_video_path, output_video_path)
+            self._copy_file_with_retry(input_video_path, output_video_path)
             return output_video_path
         elif segment_duration > target_duration:
             new_clip_v = self.trim_video(input_video_path, 0, target_duration)
-            os.replace(new_clip_v, output_video_path)
+            if not new_clip_v:
+                return input_video_path
+            self._copy_file_with_retry(new_clip_v, output_video_path)
+            try:
+                os.remove(new_clip_v)
+            except OSError:
+                pass
             return output_video_path
 
         try:
