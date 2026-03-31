@@ -931,7 +931,7 @@ class ProjectSelectionDialog:
             self.story_result['channel'] = config_channel.get_channel_id(self.story_result['channel'])
             self.story_result['prompts'] = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {})
             self.story_result['scene_min_length'] = config_channel.get_channel_config(self.story_result['channel']).get('scene_min_length', 9)
-
+            self.story_result['watermark'] = config_channel.get_channel_config(self.story_result['channel']).get('watermark', {})
             self.selected_config = self.story_result
 
             new_project_dialog.destroy()

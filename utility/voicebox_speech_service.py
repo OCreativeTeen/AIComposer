@@ -123,17 +123,9 @@ class VoiceboxService:
     def create_ssml(self, text: str, voice: Dict[str, Any], actions: str, language: str) -> str:
         """返回 JSON 字符串；synthesize_speech 解析后 POST /generate。"""
         escaped_text = html.escape(text)
-        escaped_text = re.sub(r"[\n\t]", ". ", escaped_text)
-        escaped_text = re.sub(r" {2,}", ". ", escaped_text)
-        escaped_text = re.sub(r"([,.!，。？，；：]) ", r". ", escaped_text)
-        if language == "chinese":
-            content = config.chinese_convert(content, "zh")
-            escaped_text = escaped_text.replace(" ", ", ")
-            escaped_text = escaped_text.replace("。", "。\n")
-            escaped_text = escaped_text.replace("？", "？\n")
-            escaped_text = escaped_text.replace("！", "！\n")
-            escaped_text = escaped_text.replace("；", "；\n")
-            escaped_text = escaped_text.replace("：", "：\n")
+        escaped_text = re.sub(r" {2,}", ", ", escaped_text)
+        escaped_text = re.sub(r"([,.!，。？，；：]) ", r"\n", escaped_text)
+        content = config.chinese_convert(content, "zh")
 
         profile_id = voice.get("voice") or voice.get("profile_id") or self.default_profile_id
         payload = {

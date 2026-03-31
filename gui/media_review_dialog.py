@@ -1068,7 +1068,7 @@ class AVReviewDialog:
 
     def _transcribe_recorded_audio(self):
         """转录录制的音频"""
-        if self.audio_duration <= 10:
+        if self.audio_duration <= 3:
             return False
 
         print("🔄 开始转录录音...")
@@ -1478,7 +1478,7 @@ class AVReviewDialog:
             if tts_wav:
                 olda, a = _refresh_scene_media(json_item, self.SPEAKER_KEY+"_audio", ".wav", tts_wav, True)
                 _refresh_scene_media(json_item, self.media_type+"_audio", ".wav", a, True)
-                v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, json_item[self.media_type+"_audio"])
+                v = self.workflow.ffmpeg_processor.add_audio_to_video(self.source_video_path, json_item[self.media_type+"_audio"], True, True)
                 _refresh_scene_media(json_item, self.media_type, ".mp4", v)
                 if self.media_type == "clip":
                     json_item["duration"] = self.workflow.ffmpeg_audio_processor.get_duration(json_item[self.media_type+"_audio"])

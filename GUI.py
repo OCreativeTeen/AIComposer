@@ -472,7 +472,12 @@ class WorkflowGUI:
             scene_name = self.workflow.get_scene_by_index(self.current_scene_index)['name']
             source_folder = f"{config.get_channel_path(channel)}/video/{scene_name}"
             if not os.path.exists(source_folder):
-                source_folder = f"{config.get_channel_path(channel)}/video/default"
+                # check current style , then if is pixar-art cartoon, then use "cartoon" folder, otherwise use "realistic" folder
+                current_style = project_manager.PROJECT_CONFIG.get('visual_style')
+                if "cartoon" in current_style.lower():
+                    source_folder = f"{config.get_channel_path(channel)}/video/cartoon"
+                else:
+                    source_folder = f"{config.get_channel_path(channel)}/video/realistic"
 
             video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
             video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
@@ -1184,7 +1189,7 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="生场视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
 
-        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
+        # ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
 
@@ -1462,6 +1467,10 @@ class WorkflowGUI:
         ttk.Button(video_control_frame, text="反转", command=self.reverse_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="镜像", command=self.mirror_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="标题", command=self.print_title, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="LOGO", command=self.add_watermark, width=5).pack(side=tk.LEFT, padx=1)
+
+        separator = ttk.Separator(video_control_frame, orient='vertical')
+        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
         # 前插：仅当前为「本故事第一个场景」时可点；后插：仅当前为「本故事最后一个场景」时可点
         self.btn_add_scene_before = ttk.Button(
             video_control_frame, text="前插", command=self.add_scene_before, width=5
@@ -2906,6 +2915,97 @@ class WorkflowGUI:
         os.replace(self.workflow.ffmpeg_processor.mirror_video(oldv), newv)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
+
+
+    def _resolve_watermark_config(self):
+        """解析水印 PNG 路径与选项（与 NotebookLM add_watermark_cli 的 config.watermark 一致）。"""
+        base = os.path.dirname(os.path.abspath(__file__))
+        pc = project_manager.PROJECT_CONFIG or {}
+        wm = pc.get("watermark") or {}
+        rel = wm.get("path", "media/watermark.png")
+        pid = pc.get("pid")
+        candidates = []
+        if os.path.isabs(rel):
+            candidates.append(rel)
+        else:
+            if pid:
+                candidates.append(os.path.join(config.get_project_path(pid), rel))
+            candidates.append(os.path.join(base, rel))
+        candidates.append(os.path.join(base, "media", "watermark.png"))
+        seen = set()
+        for p in candidates:
+            if not p or p in seen:
+                continue
+            seen.add(p)
+            if os.path.isfile(p):
+                opts = {
+                    "margin_x": wm.get("margin_x", 20),
+                    "margin_y": wm.get("margin_y", 20),
+                    "max_width": wm.get("max_width"),
+                    "max_height": wm.get("max_height"),
+                }
+                return p, opts
+        return None, {}
+
+    def add_watermark(self):
+        """为本故事全部场景的主轨 clip 加水印（PNG 路径见项目 watermark 配置或程序目录 media/watermark.png）。"""
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
+            return
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not current_scene:
+            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
+            return
+        wm_path, wm_opts = self._resolve_watermark_config()
+        if not wm_path:
+            messagebox.showerror(
+                "水印",
+                "未找到水印图片。\n"
+                "请在项目 JSON 中配置 watermark.path，或将 PNG 放在程序目录下的 media\\watermark.png。",
+                parent=self.root,
+            )
+            return
+        story_scenes = self.workflow.scenes_in_story(current_scene)
+        if not story_scenes:
+            messagebox.showwarning("提示", "当前故事无场景", parent=self.root)
+            return
+        fp = self.workflow.ffmpeg_processor
+        failed = []
+        for scene in story_scenes:
+            oldv = get_file_path(scene, "clip")
+            if not oldv or not os.path.isfile(oldv):
+                failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
+                continue
+            oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
+            temp_out = config.get_temp_file(self.workflow.pid, "mp4")
+            moved = False
+            try:
+                ok = fp.watermark_clip_with_preprocess(oldv_ref, temp_out, wm_path, wm_opts)
+                if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
+                    scene["clip"] = oldv_ref
+                    failed.append(f"场景 id={scene.get('id', '?')}: 加水印失败")
+                    continue
+                os.replace(temp_out, newv)
+                moved = True
+            except Exception as e:
+                scene["clip"] = oldv_ref
+                failed.append(f"场景 id={scene.get('id', '?')}: {e}")
+            finally:
+                if not moved and os.path.isfile(temp_out):
+                    try:
+                        os.remove(temp_out)
+                    except OSError:
+                        pass
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        if failed:
+            messagebox.showwarning(
+                "水印",
+                "部分场景未处理：\n" + "\n".join(failed[:12]),
+                parent=self.root,
+            )
+        else:
+            messagebox.showinfo("成功", "本故事全部场景已添加水印。", parent=self.root)
 
 
     def print_title(self):

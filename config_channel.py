@@ -1803,6 +1803,11 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
         "scene_min_length": 20,
+        "watermark": {
+            "path": "media/watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),

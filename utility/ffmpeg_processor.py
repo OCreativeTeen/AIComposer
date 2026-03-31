@@ -3,6 +3,7 @@ import subprocess
 import shutil
 import time
 import uuid
+from pathlib import Path
 
 from config import FONT_0, FONT_1, FONT_3, FONT_4, FONT_7, FONT_8
 import config
@@ -2110,6 +2111,107 @@ class FfmpegProcessor:
         print(f"✅ Video mirrored successfully: {output_file}")
         return output_file
 
+    def apply_watermark_to_video(self, src_video, dest_video, watermark_path, opts):
+        """
+        对视频叠加水印（右下角），输出到 dest_video。
+        加水印前先 upscale：横屏 -> 1920x1080，竖屏 -> 1080x1920（与 NotebookLM_Processor 一致）。
+        opts: margin_x, margin_y, max_width, max_height（可选）
+        """
+        if not Path(watermark_path).exists():
+            return False
+        dims = self.get_resolution(str(src_video))
+        if dims and dims[0] is not None and dims[1] is not None:
+            w, h = dims
+            out_w, out_h = (1920, 1080) if w >= h else (1080, 1920)
+            upscale = (
+                f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+                f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2[v_base]"
+            )
+            video_in = "[v_base]"
+        else:
+            upscale = ""
+            video_in = "[0:v]"
+        margin_x = opts.get("margin_x", 20)
+        margin_y = opts.get("margin_y", 20)
+        max_w = opts.get("max_width")
+        max_h = opts.get("max_height")
+        # max_width/max_height 表示「水印最大边长」；若写成视频分辨率（如 1920x1080），
+        # scale 会把水印放大到几乎铺满画面。若任一边 >= 输出帧对应边，则视为不限制尺寸，用 PNG 原始像素叠右下角。
+        if dims and dims[0] is not None and dims[1] is not None:
+            vw, vh = dims
+            frame_w, frame_h = (1920, 1080) if vw >= vh else (1080, 1920)
+            if max_w is not None and max_w >= frame_w:
+                max_w = None
+            if max_h is not None and max_h >= frame_h:
+                max_h = None
+        if max_w is not None and max_h is not None:
+            wm_scale = f"[1:v]scale={int(max_w)}:{int(max_h)}:force_original_aspect_ratio=decrease[wm]"
+        elif max_w is not None:
+            wm_scale = f"[1:v]scale={int(max_w)}:-1[wm]"
+        elif max_h is not None:
+            wm_scale = f"[1:v]scale=-1:{int(max_h)}[wm]"
+        else:
+            wm_scale = None
+        overlay_expr = f"main_w-overlay_w-{margin_x}:main_h-overlay_h-{margin_y}"
+        if wm_scale:
+            overlay_part = f"{wm_scale};{video_in}[wm]overlay={overlay_expr}[v]"
+        else:
+            overlay_part = f"{video_in}[1:v]overlay={overlay_expr}[v]"
+        filt = f"{upscale};{overlay_part}" if upscale else overlay_part.replace(video_in, "[0:v]")
+        cmd = [
+            ffmpeg_path,
+            "-y",
+            "-i",
+            str(src_video),
+            "-i",
+            str(watermark_path),
+            "-filter_complex",
+            filt,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-c:a",
+            "copy",
+            str(dest_video),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+            return True
+        except Exception as e:
+            print(f"❌ Watermark overlay failed: {e}")
+            return False
+
+    def watermark_clip_with_preprocess(self, src_video: str, dest_video: str, watermark_path, opts: dict) -> bool:
+        """
+        与 add_watermark_cli.process_video 一致：偏小分辨率先 resize，再叠加水印。
+        """
+        src_abs = os.path.abspath(src_video)
+        vp = src_abs
+        dims = self.get_resolution(vp)
+        if not dims or dims[0] is None or dims[1] is None:
+            print(f"❌ Watermark: cannot read resolution: {vp}")
+            return False
+        width, height = dims
+        resized = None
+        try:
+            if width > height:
+                if width < 1200:
+                    resized = self.resize_video(vp, 1280, 720)
+                    if resized:
+                        vp = resized
+            else:
+                if width < 700:
+                    resized = self.resize_video(vp, 720, 1280)
+                    if resized:
+                        vp = resized
+            return self.apply_watermark_to_video(vp, dest_video, watermark_path, opts)
+        finally:
+            if vp != src_abs and os.path.isfile(vp):
+                try:
+                    os.remove(vp)
+                except OSError:
+                    pass
 
     def reverse_video(self, video_path):
         output_file = config.get_temp_file(self.pid, "mp4")
