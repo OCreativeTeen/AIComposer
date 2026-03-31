@@ -1,6 +1,55 @@
 import config_prompt
 
 
+STORY_REMIX_SPEAKING_SYSTEM_PROMPT = """
+*** You are a narrative restructuring and natural speech refinement engine.
+
+*** Input
+    ** You will receive a JSON array.
+        * Each element in the array represents one scene.
+        * Each scene field "speaking" contains a short segment of spoken narration (a few sentences forming one idea cluster, in {language}).
+        * All scenes together form a complete story, explanation, analysis, or speech.
+
+
+*** Task
+	** Your job is to remix and restructure the narration while maintaining the exact original scene count.
+	** You must redistribute the narrative flow to balance the weight of each scene without changing the array size.
+
+*** Core Requirements
+	** CRITICAL: Array Length Preservation (1:1 Mapping)
+		* STRICTLY!!!!!: The number of elements (objects) in the output array MUST be EXACTLY equal to the input array !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		* STRICTLY!!!!!: If input has N elements, output MUST have N elements !!!!!!!!!!!!!!!!!!!!!!!!!!!
+		* So, basically, DO NOT merge or split elements.
+	** Content Redistribution & Balancing
+		* You may move text across the boundaries of adjacent scenes to balance length.
+		* If a scene is too short, pull relevant detail from the previous or next scene to fill it.
+		* If a scene is too long, push some content into the adjacent scenes.
+		* The goal is for each of the N scenes to feel like a balanced, meaningful unit, while staying within the N-element constraint.
+	** No Summarization (Preserve Density)
+		* Do NOT summarize or shorten the total content.
+		* Preserve all original details, nuances, and descriptive richness.
+		* You may expand slightly for natural flow, but never reduce information density.
+	** Natural Spoken Style
+		* The output must sound like spontaneous human speech, not a written script.
+		* Keep it conversational and "perfectly imperfect":
+			- Use natural fillers, casual phrasing, discourse markers!!!!!!!!!!
+			- Allow for slight redundancies or minor repetitions common in speaking.
+			- Ensure the flow between scenes feels like a person thinking and talking in real-time.
+            - DO NOT use long sentences, or complex sentences!!!!!! Can break sentence into short sentences, or use short phrases.
+	** Language & Grammar
+		* Fix typos and punctuation errors in {language}.
+		* Ensure each scene is a self-contained "thought cluster" but remains part of the continuous flow.
+
+*** Output Format
+	** Return ONLY a valid JSON array.
+	** STRICTLY!!!!!: The array length MUST be identical to the input length!!!!!!!!!!!!!!!!!!!!!!!!!
+	** Order is fixed: output[0] refines input[0], output[1] refines input[1], etc. Do NOT add index fields.
+	** Each object MUST contain:
+		* "speaking" — the refined content for that scene (same position as in the input array).
+	** NO markdown code blocks (unless requested), or explanations in your response. Only the JSON.
+"""
+
+
 BUILD_CLEAR_STORIES_ON_CASE_STUDY_SUMMARIES_SYSTEM_PROMPT = """
 ROLE:
     ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
@@ -128,20 +177,21 @@ ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
 
 
 SCENE_VIDEO_INSTRUCTION = """
-Scene-Image generation instruction:
-    ** Visual-Style
-        ** General Visual-Style:  {visual_style};  Detailed visual-style follows the scene json field "visual_style".
-
-    ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and show 'narrator' as talking-avatar at front.
-
---------------
 Video generation instruction: 
+    *** MOST IMPORTANT!!!: if current scene image not has any 'actor' / 'narrator' as talking-avatar,  DO NOT add any talking-avatar to the video!!!  (actor or narrator info just used to choose voice !!!)
+
 	*** if current scene image has 'narrator' talking-avatar;
         ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
         ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
 
 --------------
+Scene-Image generation instruction:
+    ** Visual-Style
+        ** General Visual-Style:  {visual_style};  Detailed visual-style follows the scene json field "visual_style".
+    ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and show 'narrator' as talking-avatar at front.
 
+
+--------------
 Audio generation / Words-in-image generation instruction: 
     ** Speaker:
         * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
@@ -189,6 +239,7 @@ Video generation instruction:
 	*** if current scene image has 'narrator' talking-avatar;
         ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
         ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
+    *** if current scene image not has any 'actor' / 'narrator' as talking-avatar,  DO NOT add any talking-avatar to the video!!!  (actor or narrator info just used to choose voice !!!)
 
 --------------
 

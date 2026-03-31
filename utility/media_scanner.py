@@ -334,9 +334,9 @@ class MediaScanner:
 
         if current_scene.get(media_type+"_status", "ORIG") == "ENH2":
             refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
-        elif next_scene:
-            dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
-            if dialog:
-                refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
+        #elif next_scene:
+        #    dialog = messagebox.askyesno("替换下一场景图片", "是否要替换下一场景图片？")
+        #    if dialog:
+        #        refresh_scene_media(next_scene, media_type+"_image", ".webp", last_image)
 
 

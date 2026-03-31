@@ -3,7 +3,6 @@ from datetime import datetime
 import re
 import os
 import json
-import zhconv
 from . import llm_api
 import config_prompt
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
@@ -29,7 +28,7 @@ class AudioTranscriber:
         self.pid = pid
         self.model_size = model_size
         self.device = device
-        self.api_url = "http://10.0.0.222:9001/transcribe"
+        self.api_url = "http://10.0.0.231:9001/transcribe"
         self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
@@ -89,24 +88,12 @@ class AudioTranscriber:
         return []
 
 
-
-    def chinese_convert(self, text, language):
-        if language == "zh":
-            # Convert to simplified Chinese
-            return zhconv.convert(text, 'zh-cn')
-        elif language == "tw":
-            # Convert to traditional Chinese
-            return zhconv.convert(text, 'zh-tw')
-        else:
-            return text
-
-
     def translate_text(self, text, source_language, target_language):
         if source_language == target_language:
-            return self.chinese_convert(text, target_language)
+            return config.chinese_convert(text, target_language)
         
         if (source_language == "zh" or source_language == "tw") and (target_language == "zh" or target_language == "tw"):
-            return self.chinese_convert(text, target_language)
+            return config.chinese_convert(text, target_language)
         
         system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
             source_language=config.LANGUAGES[source_language],

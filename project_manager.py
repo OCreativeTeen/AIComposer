@@ -930,6 +930,7 @@ class ProjectSelectionDialog:
             # 保存 channel_id（多个 config key 可对应同一 channel_id）
             self.story_result['channel'] = config_channel.get_channel_id(self.story_result['channel'])
             self.story_result['prompts'] = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {})
+            self.story_result['scene_min_length'] = config_channel.get_channel_config(self.story_result['channel']).get('scene_min_length', 9)
 
             self.selected_config = self.story_result
 

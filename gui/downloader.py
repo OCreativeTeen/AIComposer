@@ -471,7 +471,8 @@ class MediaDownloader:
             print(f"❌ 音频文件不存在")
             return None
 
-        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, 9, 22)
+        scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
+        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, scene_min_length, int(scene_min_length*1.5))
         if script_json:
             write_json(src_path, script_json)  
             return src_path
@@ -2384,7 +2385,7 @@ class MediaGUIManager:
             subtype_var.trace_add('write', lambda *a: update_tags())
             
             # 保存按钮
-            def save_topic_info():
+            def save_story_info():
                 """保存主题信息"""
                 category = category_var.get().strip()
                 subtype = subtype_var.get().strip()
@@ -2415,7 +2416,17 @@ class MediaGUIManager:
                     video_detail["status"] = st
                 else:
                     video_detail.pop("status", None)
-                
+
+                # 剪贴板有文本时写入 raw_content，再落盘列表
+                clip_note = ""
+                try:
+                    clip_text = (summary_window.clipboard_get() or "").strip()
+                except tk.TclError:
+                    clip_text = ""
+                if clip_text:
+                    video_detail["raw_content"] = clip_text
+                    clip_note = "（已用剪贴板更新 raw_content）"
+
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                     json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
@@ -2426,7 +2437,7 @@ class MediaGUIManager:
                 except:
                     pass
                 
-                messagebox.showinfo("成功", "主题信息已保存", parent=summary_window)
+                messagebox.showinfo("成功", f"主题信息已保存{clip_note}", parent=summary_window)
 
 
             def on_raw_start_project():
@@ -2580,7 +2591,7 @@ class MediaGUIManager:
             # 添加标签按钮
 
             ttk.Button(right_btns, text="启动项目", command=on_raw_start_project).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(right_btns, text="保存信息", command=save_topic_info).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(right_btns, text="保存信息", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
 

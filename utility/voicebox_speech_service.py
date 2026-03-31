@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional
 import requests
 
 import config
-from .ffmpeg_audio_processor import FfmpegAudioProcessor
 
 # 与 minimax_speech_service 一致，供 GUI import EXPRESSION_STYLES
 EXPRESSION_STYLES = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm"]
@@ -109,7 +108,6 @@ class VoiceboxService:
         raw = (base_url or os.getenv("VOICEBOX_BASE_URL") or DEFAULT_BASE_URL).strip()
         self.base_url = raw.rstrip("/")
         self.default_profile_id = os.getenv("VOICEBOX_PROFILE_ID") or DEFAULT_PROFILE_ID
-        self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         print(f"Voicebox TTS base: {self.base_url}")
         _ensure_voices_for_project(self.pid)
 
@@ -129,7 +127,13 @@ class VoiceboxService:
         escaped_text = re.sub(r" {2,}", ". ", escaped_text)
         escaped_text = re.sub(r"([,.!，。？，；：]) ", r". ", escaped_text)
         if language == "chinese":
+            content = config.chinese_convert(content, "zh")
             escaped_text = escaped_text.replace(" ", ", ")
+            escaped_text = escaped_text.replace("。", "。\n")
+            escaped_text = escaped_text.replace("？", "？\n")
+            escaped_text = escaped_text.replace("！", "！\n")
+            escaped_text = escaped_text.replace("；", "；\n")
+            escaped_text = escaped_text.replace("：", "：\n")
 
         profile_id = voice.get("voice") or voice.get("profile_id") or self.default_profile_id
         payload = {

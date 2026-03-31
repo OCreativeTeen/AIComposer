@@ -5,12 +5,22 @@ import random
 import glob
 import json
 import shutil
+import zhconv
 
 
 
 LANGUAGES = {
     "zh": "Chinese",
     "tw": "Chinese",
+    "zh-cn": "Chinese",
+    "zh-tw": "Chinese",
+    "zh-hk": "Chinese",
+    "zh-mo": "Chinese",
+    "zh-sg": "Chinese",
+    "zh-my": "Chinese",
+    "zh-ph": "Chinese",
+    "zh-th": "Chinese",
+    "zh-vn": "Chinese",
     "en": "English",
     "ja": "Japanese",
     "ko": "Korean",
@@ -18,6 +28,21 @@ LANGUAGES = {
     "de": "German",
     "es": "Spanish",
 }
+
+
+
+def chinese_convert(text, language):
+    if language == "zh":
+        # Convert to simplified Chinese
+        return zhconv.convert(text, 'zh-cn')
+    elif language == "tw":
+        # Convert to traditional Chinese
+        return zhconv.convert(text, 'zh-tw')
+    else:
+        return text
+
+
+
 
 # =============================================================================
 # Speaker/Host 角色与风格定义 - 供 GUI、downloader 等模块共享
@@ -45,6 +70,8 @@ CHARACTER_PERSON_OPTIONS = [
     "man/grok/chinese",
     "woman/grok/english",
     "man/grok/english",
+    "man/teen/chinese",
+    
     "man/narrator/chinese",
     "woman/qin/chinese",
     "woman/qin-fast/chinese",

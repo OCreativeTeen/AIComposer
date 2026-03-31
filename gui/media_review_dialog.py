@@ -1074,11 +1074,12 @@ class AVReviewDialog:
         print("🔄 开始转录录音...")
         
         # 使用音频转录器转录
+        scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
         audio_json = self.transcriber.transcribe_with_whisper(
             self.source_audio_path, 
             self.workflow.language,
-            9,
-            22
+            scene_min_length,
+            int(scene_min_length*1.5)
         )
 
         if not audio_json or len(audio_json) == 0:
@@ -1456,7 +1457,7 @@ class AVReviewDialog:
             return
 
         #self.audio_json, self.source_audio_path = self.parent.workflow.regenerate_audio(self.audio_json, self.workflow.language)
-        lang = config.LANGUAGES[self.workflow.language]
+        lang = config.LANGUAGES[self.workflow.language.lower()]
         start_time = 0.0
         for json_item in self.audio_json:
             speaker = json_item[self.SPEAKER_KEY]

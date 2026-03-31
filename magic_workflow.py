@@ -354,7 +354,8 @@ class MagicWorkflow:
         if introduction_story and introduction_story.strip() != "":
             if introduction_story.endswith(".mp3") or introduction_story.endswith(".wav"):
                 introduction_path = f"{config.get_project_path(self.pid)}/{Path(introduction_story).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", 9, 22)
+                scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
+                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", scene_min_length, int(scene_min_length*1.5))
                 write_json(introduction_path, script_json)  
 
             if not introduction_story:
@@ -375,7 +376,8 @@ class MagicWorkflow:
         if previous_dialogue and previous_dialogue.strip() != "":
             if previous_dialogue.endswith(".mp3") or previous_dialogue.endswith(".wav"):
                 previous_path = f"{config.get_project_path(self.pid)}/{Path(previous_dialogue).stem}.srt.json"
-                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", 9, 22)
+                scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
+                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", scene_min_length, int(scene_min_length*1.5))
                 write_json(previous_path, script_json)  
 
             if not previous_dialogue:
@@ -885,7 +887,7 @@ class MagicWorkflow:
             content.append(item["kernel"])
             content.append("\n")
 
-        return self.transcriber.chinese_convert('\n'.join(content), self.language)
+        return config.chinese_convert('\n'.join(content), self.language)
 
 
     def calculate_speed_percentage(self, default_duration, actual_duration):
@@ -1117,7 +1119,7 @@ class MagicWorkflow:
 
 
     def upload_video(self, title):
-        title_cvt = self.transcriber.chinese_convert(title, self.language)
+        title_cvt = config.chinese_convert(title, self.language)
         title_used = title_cvt.replace("_", " ")
         title_used = title_used.replace("\n", " ")
         self.title = title_used
@@ -1144,7 +1146,7 @@ class MagicWorkflow:
         sums = config.fetch_main_summary_content(self.pid, self.language)
         if not sums:
             sums = "《"+config_channel.get_channel_config(self.channel)["channel_name"]+"》 "+self.title
-        sums = self.transcriber.chinese_convert(sums, self.language)
+        sums = config.chinese_convert(sums, self.language)
 
         final_srt_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.srt"
 
@@ -1188,7 +1190,7 @@ class MagicWorkflow:
 
         promo_video_path = f"{self.publish_path}/{title.replace(' ', '_')}_promo.mp4"
         if os.path.exists(promo_video_path):
-            channel_name = self.transcriber.chinese_convert(config_channel.get_channel_config(self.channel)["channel_name"], self.language)
+            channel_name = config.chinese_convert(config_channel.get_channel_config(self.channel)["channel_name"], self.language)
             self.downloader.upload_video(promo_video_path, 
                             None, 
                             title=f"《{channel_name}》：{title}", 
