@@ -125,7 +125,7 @@ class VoiceboxService:
         escaped_text = html.escape(text)
         escaped_text = re.sub(r" {2,}", ", ", escaped_text)
         escaped_text = re.sub(r"([,.!，。？，；：]) ", r"\n", escaped_text)
-        content = config.chinese_convert(content, "zh")
+        escaped_text = config.chinese_convert(escaped_text, "zh")
 
         profile_id = voice.get("voice") or voice.get("profile_id") or self.default_profile_id
         payload = {

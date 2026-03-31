@@ -220,13 +220,16 @@ Slide-Show generation instruction:
         ** Keep the visual style '{visual_style}' consistent throughout all the scenes of the story !!!!!!!!!!!.
 		** Consider visual_style of each scene as more details.
 
-	** Story Characters (only show in image, if current scene has 'actor' field)
-		* From NotebookLM resource:  named "Story-Character:xxx", like "Story-Character: 中国中年"; Follow visual-style & gender to choose.
+	** Story Characters 
+		* From NotebookLM source:  named like "Story-Character:xxx"; Follow gender to choose.
 		* This character must stay consistent across all scenes !!!!!!!!!!!
+        * show as talking-avatar, if current scene has 'actor', but no 'narrator'; show as actor (no talking), if current scene has both 'actor' & 'narrator')
 
-	** Narrator Character (only show in image, if current scene has 'narrator' field)
-		* From NotebookLM resource:  named "Host:xxx", like "Host: 中国女主持"; Follow visual-style & gender to choose.
+	** Narrator Character
+		* From NotebookLM source:  named like "Narrator:xxx"; Follow gender to choose.
+        * show as talking-avatar, if current scene has 'narrator' field.
 
+    ** if current scene has No 'narrator', No 'actor', then DO NOT show any of them in the scene-image !!!!! (if speaking content is talking about persons, show other person image)
     ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and pop-up the 'narrator' as talking-avatar at front.
     ** DO NOT put any scene instruction / information (like content in json structure) in the image, only show the visual content of the scene!!!!!!!!!!!!!!
     ** DO NOT include any info of this prompt / instruction in the image, only express the content describing the scenes (the 'Story Json-Content' at end) !!!!!!!!!!!!!!

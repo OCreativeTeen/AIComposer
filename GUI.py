@@ -1189,8 +1189,7 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="生场视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
 
-        # ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
-
+        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(visual_button_frame, text="CLIP_", width=6, command=lambda: self.choose_from_download("clip", ".mp4")).pack(side=tk.LEFT, padx=1)
@@ -1465,6 +1464,7 @@ class WorkflowGUI:
 
         ttk.Button(video_control_frame, text="交换", command=self.swap_with_next_image, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="反转", command=self.reverse_video, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="静音", command=self.mute_scene_clip_audio, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="镜像", command=self.mirror_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="标题", command=self.print_title, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="LOGO", command=self.add_watermark, width=5).pack(side=tk.LEFT, padx=1)
@@ -1489,21 +1489,6 @@ class WorkflowGUI:
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
-        # 存储按钮引用以便后续控制状态
-        # add 2 marks, to mark the current video progress sec，　then add a button 'make_silence'　to make the audio  period between mark1 mark2 be silient
-        separator = ttk.Separator(video_control_frame, orient='vertical')
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        
-        ttk.Button(video_control_frame, text="静音", command=self.make_silence_between_marks, width=6).pack(side=tk.LEFT, padx=1)
-        # Mark buttons and labels
-        ttk.Button(video_control_frame, text="M1", command=self.set_mark1, width=3).pack(side=tk.LEFT, padx=1)
-        self.mark1_label = ttk.Label(video_control_frame, text="--:--.--", width=10)
-        self.mark1_label.pack(side=tk.LEFT, padx=1)
-        
-        ttk.Button(video_control_frame, text="M2", command=self.set_mark2, width=3).pack(side=tk.LEFT, padx=1)
-        self.mark2_label = ttk.Label(video_control_frame, text="--:--.--", width=10)
-        self.mark2_label.pack(side=tk.LEFT, padx=1)
-
         # 视频进度标签
         self.video_progress_label = ttk.Label(video_control_frame, text="00:00.00 /00:00.00")
         self.video_progress_label.pack(side=tk.RIGHT, padx=1)
@@ -1517,10 +1502,6 @@ class WorkflowGUI:
         self.video_after_id = None
         self.video_start_time = None
         self.video_pause_time = None  # 记录暂停时的累计播放时间
-        
-        # 标记时间点
-        self.mark1_time = None
-        self.mark2_time = None
         
         # 右侧：场景信息显示区域
         self.video_edit_frame = ttk.LabelFrame(main_content, text="场景信息", padding=10)
@@ -1600,6 +1581,17 @@ class WorkflowGUI:
             self.video_edit_frame, width=40, height=10, undo=True, maxundo=0
         )
         self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+
+        def _copy_speaking_to_clipboard(_event=None):
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(self.scene_speaking.get("1.0", tk.END).rstrip("\n"))
+                self.root.update_idletasks()
+            except tk.TclError:
+                pass
+            return "break"
+
+        self.scene_speaking.bind("<Double-1>", _copy_speaking_to_clipboard)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -2540,117 +2532,45 @@ class WorkflowGUI:
 
         return current_time, total_time
 
-
-    def set_mark1(self):
-        """Set mark1 to current video time"""
-        current_time, total_time = self.get_current_video_time()
-        current_time = current_time + self.playing_delta
-        self.mark1_time = current_time
-        time_str = self.format_time_with_centisec(current_time)
-        self.mark1_label.config(text=time_str)
-        print(f"✓ 设置标记1: {time_str}")
-    
-
-    def set_mark2(self):
-        """Set mark2 to current video time"""
-        current_time, total_time = self.get_current_video_time()
-        current_time = current_time + self.playing_delta
-        self.mark2_time = current_time
-        time_str = self.format_time_with_centisec(current_time)
-        self.mark2_label.config(text=time_str)
-        print(f"✓ 设置标记2: {time_str}")
-    
-
-    def make_silence_between_marks(self):
-        """Make audio silent between mark1 and mark2"""
-        if self.mark1_time is None:
-            messagebox.showwarning("警告", "请先设置标记1和标记2")
-            return
-        
-        if self.mark2_time and self.mark1_time >= self.mark2_time:
-            messagebox.showwarning("警告", "标记1和标记2时间相同或无效")
-            return
-        
+    def mute_scene_clip_audio(self):
+        """将当前场景整条 clip_audio 替换为等长静音，并写回 clip 视频音轨。"""
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 messagebox.showerror("错误", "没有当前场景")
                 return
-            
+
             clip_audio_path = get_file_path(current_scene, "clip_audio")
             if not clip_audio_path or not os.path.exists(clip_audio_path):
-                messagebox.showerror("错误", "找不到音频文件")
+                messagebox.showerror("错误", "找不到主轨音频 clip_audio")
                 return
-            
-            # Get total duration
+
             total_duration = self.workflow.ffmpeg_processor.get_duration(clip_audio_path)
             if total_duration <= 0:
                 messagebox.showerror("错误", "无法获取音频时长")
                 return
-            
-            # Ensure marks are within audio duration
-            mark1 = self.mark1_time
-            mark2 = self.mark2_time if self.mark2_time else total_duration
-            
-            if mark1 >= mark2:
-                messagebox.showwarning("警告", "标记时间无效")
+
+            silent_wav = self.workflow.ffmpeg_audio_processor.make_silence(total_duration)
+            if not silent_wav or not os.path.exists(silent_wav):
+                messagebox.showerror("错误", "生成静音失败")
                 return
-            
-            print(f"🔇 静音处理: {mark1:.2f}s 到 {mark2:.2f}s")
-            
-            # Split audio into three parts: before mark1, between marks (silent), after mark2
-            audio_segments = []
-            
-            # Part 1: from start to mark1
-            if mark1 > 0:
-                part1 = self.workflow.ffmpeg_audio_processor.audio_cut_fade(
-                    clip_audio_path, 0, mark1, 0, 0, 1.0
-                )
-                if part1:
-                    audio_segments.append(part1)
-            
-            # Part 2: silent segment from mark1 to mark2
-            silent_duration = mark2 - mark1
-            silent_segment = self.workflow.ffmpeg_audio_processor.make_silence(silent_duration)
-            if silent_segment:
-                audio_segments.append(silent_segment)
-            
-            # Part 3: from mark2 to end
-            if mark2 < total_duration:
-                part3_duration = total_duration - mark2
-                part3 = self.workflow.ffmpeg_audio_processor.audio_cut_fade(
-                    clip_audio_path, mark2, part3_duration, 0, 0, 1.0
-                )
-                if part3:
-                    audio_segments.append(part3)
-            
-            # Concatenate all segments
-            if audio_segments:
-                output_audio = self.workflow.ffmpeg_audio_processor.concat_audios(audio_segments)
-                if output_audio and os.path.exists(output_audio):
-                    # Update scene audio file
-                    old_audio, new_audio = refresh_scene_media(
-                        current_scene, "clip_audio", ".wav", output_audio, True
-                    )
-                    
-                    # Update video with new audio
-                    clip_video = get_file_path(current_scene, "clip")
-                    if clip_video and os.path.exists(clip_video):
-                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video( clip_video, new_audio )
-                        if output_video:
-                            refresh_scene_media(
-                                current_scene, "clip", ".mp4", output_video, True
-                            )
-                    
-                    messagebox.showinfo("成功", f"已将 {mark1:.2f}s 到 {mark2:.2f}s 之间的音频静音")
-                    print(f"✅ 静音处理完成")
-                else:
-                    messagebox.showerror("错误", "音频处理失败")
-            else:
-                messagebox.showerror("错误", "无法创建音频片段")
-                
+
+            _, new_audio = refresh_scene_media(
+                current_scene, "clip_audio", ".wav", silent_wav, True
+            )
+
+            clip_video = get_file_path(current_scene, "clip")
+            if clip_video and os.path.exists(clip_video) and new_audio:
+                output_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, new_audio)
+                if output_video:
+                    refresh_scene_media(current_scene, "clip", ".mp4", output_video, True)
+
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            messagebox.showinfo("成功", "本场景主轨音频已整条静音")
+            print("✅ 整条 clip_audio 已静音")
         except Exception as e:
-            error_msg = f"静音处理失败: {str(e)}"
+            error_msg = f"静音失败: {str(e)}"
             print(f"❌ {error_msg}")
             messagebox.showerror("错误", error_msg)
 
