@@ -14,6 +14,7 @@ wan22 3 frames
 
 
 
+content from "Pasted Text" source,  "Narrator:xxx" source help find out the narrator IP image,  "Story-Character:xxx" source help give image of the story characters (male & female)
 
 program starting :  just relax, no specific talk , add some relax background music
 
