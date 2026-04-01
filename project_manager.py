@@ -197,34 +197,6 @@ class ProjectConfigManager:
         if PROJECT_CONFIG is not None:
             PROJECT_CONFIG.pop('debut_content', None)
 
-
-    def save_project_config(self, config_data=None):
-        """保存项目配置"""
-        global PROJECT_CONFIG
-        if not self.pid:
-            print("❌ 项目ID未设置，无法保存项目配置")
-            return False
-        
-        if not config_data:
-            if not PROJECT_CONFIG:
-                print("❌ 项目配置未加载，无法保存项目配置")
-                return False
-            config_data = PROJECT_CONFIG
-        else:
-            # 如果传入了 config_data，更新全局 PROJECT_CONFIG
-            PROJECT_CONFIG = config_data.copy()
-
-        config_path = os.path.join(self.config_dir, f"{self.pid}.config")
-        try:
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 项目配置已保存: {config_path}")
-            return True
-        except Exception as e:
-            print(f"❌ 保存项目配置失败: {e}")
-            return False
-    
-
     def load_project_config(self, config_file):
         """加载项目配置"""
         try:
@@ -243,6 +215,30 @@ class ProjectConfigManager:
         except Exception as e:
             print(f"❌ 删除项目配置失败: {e}")
             return False
+
+
+def save_project_config():
+    """将全局 PROJECT_CONFIG 写入 config/{pid}.config。"""
+    global PROJECT_CONFIG, pid
+    if not PROJECT_CONFIG:
+        print("❌ 项目配置未加载，无法保存项目配置")
+        return False
+    file_pid = PROJECT_CONFIG.get('pid') or pid
+    if not file_pid:
+        print("❌ 项目ID未设置，无法保存项目配置")
+        return False
+    config_dir = "config"
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, f"{file_pid}.config")
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(PROJECT_CONFIG, f, ensure_ascii=False, indent=2)
+        pid = file_pid
+        print(f"✅ 项目配置已保存: {config_path}")
+        return True
+    except Exception as e:
+        print(f"❌ 保存项目配置失败: {e}")
+        return False
 
 
 class ProjectSelectionDialog:
@@ -899,6 +895,26 @@ class ProjectSelectionDialog:
             if not self.story_result.get('raw_content', None):
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
+
+            def _material_to_str(val):
+                if val is None or val == '':
+                    return ''
+                if isinstance(val, (dict, list)):
+                    return json.dumps(val, ensure_ascii=False)
+                return str(val).strip()
+
+            init_str = _material_to_str(self.story_result.get('init_content'))
+            material_for_summary = init_str if init_str else (self.story_result.get('raw_content') or '').strip()
+            if material_for_summary:
+                try:
+                    lang_key = self.story_result.get('language', 'tw')
+                    lang_label = LANGUAGES.get(lang_key, lang_key)
+                    prompt = config_prompt.SUMMARIZE_MATERIAL_SYSTEM_PROMPT.format(language=lang_label)
+                    summary = self.llm_api_local.generate_text(prompt, material_for_summary)
+                    if summary and str(summary).strip():
+                        self.story_result['summary'] = str(summary).strip()
+                except Exception as e:
+                    print(f"⚠️ 生成项目 summary 失败: {e}")
             
             # 解析分辨率
             if resolution == "1920x1080":
@@ -1244,8 +1260,8 @@ def create_project_with_initial_raw(parent, raw_content, channel, language, init
         pid = selected_config.get('pid')
         if pid:
             try:
-                config_manager.pid = pid
-                config_manager.save_project_config(selected_config)
+                ProjectConfigManager.set_global_config(selected_config)
+                save_project_config()
             except Exception:
                 pass
     return result, selected_config

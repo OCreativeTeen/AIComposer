@@ -165,43 +165,6 @@ _SIMILAR_SUMMARY_MATCH_SYSTEM = """你是心理咨询类视频摘要的相似度
 规则：matches 按 confidence 降序；最多 18 条；id 必须完全来自候选列表；若无合适候选则 {"matches":[]}。"""
 
 
-def _run_similar_summary_matches(llm_api, ref_title, ref_summary, prepared_candidates):
-    """prepared_candidates: [{id,title,summary_excerpt}, ...]，可分批调用 LLM 再合并。"""
-    if not prepared_candidates:
-        return []
-    chunk_size = 22
-    merged_by_id = {}
-    ref_title = (ref_title or "")[:300]
-    ref_summary = (ref_summary or "")[:8000]
-    for off in range(0, len(prepared_candidates), chunk_size):
-        chunk = prepared_candidates[off : off + chunk_size]
-        user_payload = json.dumps(
-            {"reference": {"title": ref_title, "summary": ref_summary}, "candidates": chunk},
-            ensure_ascii=False,
-        )
-        res = llm_api.generate_json(_SIMILAR_SUMMARY_MATCH_SYSTEM, user_payload, expect_list=False)
-        if not isinstance(res, dict):
-            continue
-        rows = res.get("matches")
-        if not isinstance(rows, list):
-            continue
-        for m in rows:
-            if not isinstance(m, dict):
-                continue
-            oid = (m.get("id") or "").strip()
-            if not oid:
-                continue
-            try:
-                conf = float(m.get("confidence", 0))
-            except (TypeError, ValueError):
-                conf = 0.0
-            reason = m.get("reason", "") or ""
-            if oid not in merged_by_id or conf > merged_by_id[oid][0]:
-                merged_by_id[oid] = (conf, reason)
-    out = [{"id": oid, "confidence": t[0], "reason": t[1]} for oid, t in merged_by_id.items()]
-    out.sort(key=lambda x: -x["confidence"])
-    return out[:24]
-
 
 class MediaDownloader:
 
@@ -1150,6 +1113,7 @@ class MediaDownloader:
             print(f"❌ 下载错误: {d.get('error', 'Unknown error')}")
 
 
+
     def upload_video(self, file_path, thumbnail_path, title, description, language, script_path, secret_key, channel_id, categoryId, tags, privacy="unlisted"):
         scopes = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
 
@@ -1166,7 +1130,9 @@ class MediaDownloader:
             if credentials and credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
-                flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(secret_key, scopes)
+                # the cient secret json is now just under fold config.get_channel_path(channel_id)
+                client_secret_file = os.path.join(config.get_channel_path(channel_id), secret_key)
+                flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(client_secret_file, scopes)
                 # 运行时，浏览器会自动打开，请在浏览器中选择您想上传到的频道
                 credentials = flow.run_local_server(port=8080)
             
@@ -2369,6 +2335,7 @@ class MediaGUIManager:
                 rewritten = self.llm_api_local.generate_text(prompt, text_content)
                 if rewritten and rewritten.strip():
                     video_detail["summary"] = rewritten.strip()
+
                 # 4. 弹窗展示概括结果
                 self.root.clipboard_clear()
                 self.root.clipboard_append(video_detail.get("summary", ""))
@@ -2446,7 +2413,10 @@ class MediaGUIManager:
                 except Exception:
                     content = ""
                 story_text = video_detail.get('raw_content', '')
-
+                if not story_text:
+                    story_text = video_detail.get('summary', '')
+                    video_detail['raw_content'] = story_text
+                
                 if content:
                     # if content is not empty, ask user to confirm if they want to use the content as new story content 
                     if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):

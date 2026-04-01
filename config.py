@@ -588,98 +588,10 @@ def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor
 
     return background_image, background_video, background_music
     
-
-def get_main_summary_path(pid: str, language: str) -> str:
-    """获取长文本文件路径"""
-    return f"{get_project_path(pid)}/main_summary.txt"
-
-
-def get_main_audio_path(pid: str) -> str:
-    """获取主音频文件路径"""
-    return f"{get_media_path(pid)}/main.wav"
-
-
-def get_main_video_path(pid: str) -> str:
-    """获取主视频文件路径"""
-    return f"{get_media_path(pid)}/main.mp4"
-
-
-def get_selected_music_path(pid: str) -> str:
-    """获取背景音乐文件路径"""
-    return f"{get_media_path(pid)}/selected_music.wav"
-
-
-def get_starting_video_path(pid: str) -> str:
-    """获取开始视频文件路径"""
-    return f"{get_media_path(pid)}/starting.mp4"
-
-
-def get_ending_video_path(pid: str) -> str:
-    """获取结束视频文件路径"""
-    return f"{get_media_path(pid)}/ending.mp4"
-
-
-def get_pre_video_path(pid: str) -> str:
-    """获取预视频文件路径"""
-    return f"{get_media_path(pid)}/pre.mp4"
-
-
-def get_story_audio_path(pid: str) -> str:
-    """获取沉浸故事音频文件路径"""
-    return f"{get_media_path(pid)}/story.wav"
-
-
-def get_story_video_path(pid: str) -> str:
-    """获取沉浸故事视频文件路径"""
-    return f"{get_media_path(pid)}/story.mp4"
-
-
-def get_story_json_path(pid: str) -> str:
-    """获取沉浸故事JSON文件路径"""
-    return f"{get_project_path(pid)}/story.json"
-
-
-def get_story_extract_text_path(pid: str) -> str:
-    """获取沉浸故事提取文本文件路径"""
-    return f"{get_project_path(pid)}/story_extract_text.txt"
-
-
-def get_short_audio_path(pid: str) -> str:
-    """获取短视频对话音频文件路径"""
-    return f"{get_media_path(pid)}/short.wav"
-
-
+    
 def get_scenes_path(pid: str) -> str:
     """获取场景文件路径"""
     return f"{get_project_path(pid)}/scenes.json"
-
-
-main_summary_content = None
-def fetch_main_summary_content(pid: str, language: str):
-    global main_summary_content
-    sum_long_path = get_main_summary_path(pid, language)
-    if not main_summary_content and os.path.exists(sum_long_path):
-        with open(sum_long_path, "r", encoding='utf-8') as f:
-            main_summary_content = f.read()
-    return main_summary_content
-
-def write_main_summary_content(pid: str, language: str):
-    global main_summary_content
-    with open(get_main_summary_path(pid, language), "w", encoding='utf-8') as f:
-        f.write(main_summary_content)
-
-
-
-story_extract_text_content = None
-def fetch_story_extract_text_content(pid: str, language: str):
-    global story_extract_text_content
-    story_extract_text_path = get_story_extract_text_path(pid)
-    if not story_extract_text_content and os.path.exists(story_extract_text_path):
-        with open(story_extract_text_path, "r", encoding='utf-8') as f:
-            story_extract_text_content = f.read()
-    return story_extract_text_content
-
-
 
 
 

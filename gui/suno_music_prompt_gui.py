@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 import config
 import config_prompt
-from project_manager import ProjectConfigManager, PROJECT_CONFIG
+from project_manager import PROJECT_CONFIG, save_project_config
 from utility.llm_api import LLMApi
 
 
@@ -178,8 +178,7 @@ class SunoMusicPromptGUI:
             # 保存到文件
             pid = config_data.get('pid')
             if pid:
-                config_manager = ProjectConfigManager(pid)
-                config_manager.save_project_config(config_data)
+                save_project_config()
                 self.current_project_config = config_data
                 print(f"✅ 项目配置已保存: {pid}")
                 

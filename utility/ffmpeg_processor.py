@@ -1757,7 +1757,7 @@ class FfmpegProcessor:
         - 所有片段先 **统一分辨率 + fps**（scale+pad+fps），再进 xfade，与 `_concat_videos_with_transitions` 一致。
         - **filter_complex** 路径统一用 **libx264**（避免 NVENC 与长 filter 链的兼容问题）。
 
-        **音频**：与视频 **xfade** 对称，使用 **acrossfade** 链（同 transition_sec）；勿用 concat+atrim，否则与 xfade 重叠时长不一致会导致逐段漂移。
+        **音频**：**不做** acrossfade / 音量过渡；每段末尾裁掉与 xfade 重叠的 ``transition_sec`` 秒（硬切），再 ``concat`` 成一条音轨，总时长与 ``[vout]`` 一致，WAV 听感为连续拼接、无衔接处“变小”。
 
         :param video_segments: list of dict，至少含 ``path`` 键
         :param extend_sec: 每段末尾延长秒数（末帧克隆），需 >= transition_sec
@@ -1839,26 +1839,26 @@ class FfmpegProcessor:
 
             if keep_audio_if_has:
                 audio_filters = []
+                td = transition_sec
                 for i in range(n):
+                    dur_i = extended_durations[i]
+                    if i < n - 1:
+                        cut_dur = max(0.05, dur_i - td)
+                    else:
+                        cut_dur = dur_i
                     if self.has_audio_stream(temp_extended[i]):
                         audio_filters.append(
                             f"[{i}:a]aresample={STANDARD_AUDIO_RATE},aformat=sample_fmts=fltp:sample_rates={STANDARD_AUDIO_RATE}:channel_layouts=stereo,"
-                            f"atrim=0:{extended_durations[i]:.6f},asetpts=PTS-STARTPTS[pa{i}]"
+                            f"atrim=start=0:end={cut_dur:.6f},asetpts=PTS-STARTPTS[pa{i}]"
                         )
                     else:
                         audio_filters.append(
-                            f"anullsrc=channel_layout=stereo:sample_rate={STANDARD_AUDIO_RATE}:duration={extended_durations[i]:.6f}[pa{i}]"
+                            f"anullsrc=channel_layout=stereo:sample_rate={STANDARD_AUDIO_RATE}:duration={cut_dur:.6f}[pa{i}]"
                         )
-                # 与 xfade 对称：链式 acrossfade，输出时长 = sum(E_i)-(n-1)*T，与 [vout] 一致（concat+atrim 会破坏对齐）
-                cur_a = "pa0"
-                td = transition_sec
-                for t in range(n - 1):
-                    next_a = f"pa{t + 1}"
-                    out_a = f"afx{t}" if t < n - 2 else "audio_out"
-                    audio_filters.append(
-                        f"[{cur_a}][{next_a}]acrossfade=d={td:.6f}:c1=tri:c2=tri[{out_a}]"
-                    )
-                    cur_a = out_a
+                concat_inputs = "".join(f"[pa{i}]" for i in range(n))
+                audio_filters.append(
+                    f"{concat_inputs}concat=n={n}:v=0:a=1[audio_out]"
+                )
                 filter_complex = ";".join(video_filters + audio_filters)
                 cmd = [ffmpeg_path, "-y"] + input_args + [
                     "-filter_complex", filter_complex,
@@ -1884,7 +1884,10 @@ class FfmpegProcessor:
                 cmd.extend(self._get_output_optimization_args())
                 cmd.append(video_out_path)
 
-            print(f"🔨 concat_videos_simple_transitions: {n} clips, extend={extend_sec}s, fade={transition_sec}s (libx264)")
+            print(
+                f"🔨 concat_videos_simple_transitions: {n} clips, extend={extend_sec}s, "
+                f"video xfade={transition_sec}s; audio=hard-concat (no acrossfade)"
+            )
             self.run_ffmpeg_command(cmd)
 
             if not os.path.exists(video_out_path):

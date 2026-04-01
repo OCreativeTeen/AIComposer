@@ -18,7 +18,7 @@ from io import BytesIO
 from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation, safe_copy_overwrite
 from utility.llm_api import LLMApi
 import project_manager
-from project_manager import refresh_scene_media
+from project_manager import refresh_scene_media, save_project_config
 import tkinter as tk
 
 
@@ -190,6 +190,9 @@ class MagicWorkflow:
             speaker_audio = get_file_path(scene, "speaker_audio")
             if speaker_audio:
                 valid_media_files.append(speaker_audio)
+            actor_audio = get_file_path(scene, "actor_audio")
+            if actor_audio:
+                valid_media_files.append(actor_audio)
             narrator_audio = get_file_path(scene, "narrator_audio")
             if narrator_audio:
                 valid_media_files.append(narrator_audio)
@@ -333,88 +336,6 @@ class MagicWorkflow:
 
         return audio_path
 
-
-    # style: choices of  '1 male & 1 female) hosts', '1 male host', '1 female host', '1 host & 2 actors', '2 hosts & 2 actors'
-    # topic: the topic of the dialogue (text field)
-    # avoid_content: the content to avoid in the dialogue (text field)
-    # location: the location of the dialogue (text field)
-    # general_location: the name of the large site (from existing 故事场地 field)
-    # dialogue_openning: the opening of the dialogue (text field)
-    # dialogue_ending: the ending of the dialogue (text field)
-    # previous_dialogue: the previous dialogue (drag/drop mp3 or txt file, to the image area [media/wave_sound.png]) in left side 
-    # introducation_story: the introducation story (drag/drop mp3 or txt file, to the image area [media/wave_sound.png]) in right side 
-    def prepare_notebooklm_for_project(self, style, topic, avoid_content, location, previous_dialogue, introduction_story, introduction_type):
-        if avoid_content and avoid_content.strip() != "":
-            avoid_content = f"""
-            "Avoid_Content" : "Try to avoid content like '{avoid_content}'",
-            """
-        else:
-            avoid_content = ""
-            
-        if introduction_story and introduction_story.strip() != "":
-            if introduction_story.endswith(".mp3") or introduction_story.endswith(".wav"):
-                introduction_path = f"{config.get_project_path(self.pid)}/{Path(introduction_story).stem}.srt.json"
-                scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
-                script_json = self.transcriber.transcribe_with_whisper(introduction_story, "zh", scene_min_length, int(scene_min_length*1.5))
-                write_json(introduction_path, script_json)  
-
-            if not introduction_story:
-                return None
-
-            user_prompt = config.fetch_text_from_json(introduction_story)
-            
-            introduction_story = self.llm_api.generate_text(config_prompt.NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT, user_prompt)
-            if not introduction_story:
-                return None
-
-            introduction_story = f"""
-            "Introducation_story" : "The hosts start the dialogue just after they {introduction_type}, that talks about : '{introduction_story}'.     (the dialogue is carried out immediately after this talk)",
-            """
-        else:
-            introduction_story = ""
-
-        if previous_dialogue and previous_dialogue.strip() != "":
-            if previous_dialogue.endswith(".mp3") or previous_dialogue.endswith(".wav"):
-                previous_path = f"{config.get_project_path(self.pid)}/{Path(previous_dialogue).stem}.srt.json"
-                scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
-                script_json = self.transcriber.transcribe_with_whisper(previous_dialogue, "zh", scene_min_length, int(scene_min_length*1.5))
-                write_json(previous_path, script_json)  
-
-            if not previous_dialogue:
-                return None
-
-            user_prompt = config.fetch_text_from_json(previous_dialogue)
-
-            previous_dialogue = self.llm_api.generate_text(config_prompt.NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT, user_prompt)
-            if not previous_dialogue:
-                return None
-
-            previous_dialogue = f"""
-                "Previous_Dialogue" : "This dialogue follows the previous story-telling-dialogue, talking about : '{previous_dialogue}'.    !!! This dialogue may mention the previous content quickly, but DO NOT talking the details again !!!",
-            """
-        else:
-            previous_dialogue = ""
-
-        user_prompt = config.fetch_story_extract_text_content(self.pid, self.language)
-
-
-        dialogue_opening = ""
-        dialogue_ending = ""
-        location = ""
-
-
-        return config_prompt.NOTEBOOKLM_PROMPT.format(
-            style=style,
-            topic=topic,
-            avoid_content=avoid_content,
-            location=location,
-            previous_dialogue=previous_dialogue,
-            introduction_story=introduction_story,
-            dialogue_openning=dialogue_opening,
-            dialogue_ending=dialogue_ending
-        )
- 
- 
 
     def find_clip_duration(self, current_scene):
         clip_audio = get_file_path(current_scene, "clip_audio")
@@ -1105,7 +1026,6 @@ class MagicWorkflow:
             return True
 
 
-
     def replace_scene_image(self, current_scene, source_image_path, vertical_line_position, target_field):
         oldi, image_path = refresh_scene_media(current_scene, target_field, ".webp", source_image_path)
 
@@ -1118,91 +1038,37 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self, title):
-        title_cvt = config.chinese_convert(title, self.language)
-        title_used = title_cvt.replace("_", " ")
-        title_used = title_used.replace("\n", " ")
-        self.title = title_used
+    def upload_video(self):
+        title = self.title.strip().replace(" ", "_").replace("\n", "_")
+        title = config.chinese_convert(title, self.language)
+        final_video_path = f"{self.publish_path}/{title}_final.mp4"
+        title = config_channel.get_channel_config(self.channel)["channel_name"] + "：" + title.replace("_", " ")
+        # get "summary" from project_manager.PROJECT_CONFIG
+        summary = project_manager.PROJECT_CONFIG.get("summary", "")
+        summary = config.chinese_convert(summary, self.language)
 
-        for scene in self.scenes:
-            if scene.get("clip_animation", "") == "IMAGE_MAIN":
-                image_main_scene = scene
-                break
-
-        if not image_main_scene:
-            for scene in self.scenes:
-                clip_animation = scene.get("clip_animation", "S2V")
-                if clip_animation == "VIDEO" or clip_animation == "IMAGE" or clip_animation == "IMAGE_MAIN":
-                    image_main_scene = scene
-                    break
-
-        if not image_main_scene:
-            print(f"❌ 没有找到IMAGE_MAIN场景")
-            return
-
-        thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
-        final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
-
-        sums = config.fetch_main_summary_content(self.pid, self.language)
-        if not sums:
-            sums = "《"+config_channel.get_channel_config(self.channel)["channel_name"]+"》 "+self.title
-        sums = config.chinese_convert(sums, self.language)
-
-        final_srt_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.srt"
+        # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
+        thumbnail_path = None
 
         video_id = self.downloader.upload_video(final_video_path, 
                                      thumbnail_path, 
                                      title=title, 
-                                     description=sums, 
+                                     description=summary, 
                                      language=self.language, 
-                                     script_path=final_srt_path, 
+                                     script_path=None, 
                                      secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
                                      channel_id=self.channel,
-                                     categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"][0], 
-                                     tags=config_channel.get_channel_config(self.channel)["channel_tags"], 
+                                     categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"], 
+                                     tags=[], 
                                      privacy="unlisted")
-        # save video_id to the project_manager.PROJECT_CONFIG
-        try:
-            from project_manager import ProjectConfigManager
-            config_manager = ProjectConfigManager(self.pid)
-            # Load existing config or create new one
-            existing_config = config_manager.load_config(self.pid) or {}
-            # Add video_id to config
-            existing_config["video_id"] = video_id
-            # Save the updated config
-            ProjectConfigManager.set_global_config(existing_config)
-            config_manager.save_project_config(existing_config)
-            print(f"✅ Video ID saved to project config: {video_id}")
-        except Exception as e:
-            print(f"❌ Failed to save video_id to project config: {e}")
-
-
-
-    def upload_promo_video(self, title, description):
-        # need to get video_id from the project_manager.PROJECT_CONFIG
-        try:
-            from project_manager import ProjectConfigManager
-            config_manager = ProjectConfigManager(self.pid)
-            existing_config = config_manager.load_config(self.pid) or {}
-            video_id = existing_config.get("video_id", None)
-        except Exception as e:
-            print(f"❌ Failed to get video_id from project config: {e}")
-
-        promo_video_path = f"{self.publish_path}/{title.replace(' ', '_')}_promo.mp4"
-        if os.path.exists(promo_video_path):
-            channel_name = config.chinese_convert(config_channel.get_channel_config(self.channel)["channel_name"], self.language)
-            self.downloader.upload_video(promo_video_path, 
-                            None, 
-                            title=f"《{channel_name}》：{title}", 
-                            description=channel_name,
-                            language=self.language, 
-                            script_path=None, 
-                            secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
-                            channel_id=self.channel,
-                            categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"][0],
-                            tags=config_channel.get_channel_config(self.channel)["channel_tags"], 
-                            privacy="unlisted")
-        return promo_video_path
+        # 必须用 project_manager.PROJECT_CONFIG，勿 from-import：reload 后本地名会仍指向 None
+        pc = project_manager.PROJECT_CONFIG
+        if pc is not None:
+            pc["video_id"] = video_id
+            save_project_config()
+        else:
+            print("⚠️ project_manager.PROJECT_CONFIG 未加载，无法将 video_id 写入项目配置")
+        print(f"✅ Video ID saved to project config: {video_id}")
 
 
 
@@ -1276,75 +1142,28 @@ class MagicWorkflow:
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
-    def promotion_video(self, title):
-        self.post_init(title)
-
-        promotion_scenes = []
-        for s in self.scenes:
-            promotion = s.get("promotion", None)
-            if promotion and len(promotion) > 0:
-                promotion_scenes.append(s)
-        
-        if len(promotion_scenes) == 0:
-            return
-
-        video_segments = []
-        zero_audio = None
-        zero_offset = None
-        for s in promotion_scenes:
-            promotion = s.get("promotion", "")
-            clip = s.get("clip", None)
-            if zero_offset is None:
-                zero_offset, clip_duration, story_duration, indx, count, is_story_last_clip = self.get_scene_detail(s)
-            if zero_audio is None:
-                zero_audio = get_file_path(s, "zero_audio")
-
-            clip_lang = s.get("content_language", "")
-            if not clip_lang or clip_lang not in config.FONT_LIST:
-                font = self.font_video
-            else:
-                font = config.FONT_LIST[clip_lang]
-        
-            promotion = "hl_" + self.transcriber.translate_text(promotion, self.language, self.language)
-            clip_temp = self.ffmpeg_processor.add_script_to_video(clip, promotion, font)
-            video_segments.append({"path":clip_temp, "transition":"fade", "duration":1.0})
-
-        video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
-        if zero_audio is not None and zero_offset is not None:
-            audio_zero = self.ffmpeg_audio_processor.audio_cut_fade(zero_audio, zero_offset, self.ffmpeg_processor.get_duration(video_temp))
-            video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_zero)
-            
-        promotion_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_promotion.mp4"
-        os.replace(video_temp, promotion_video_path)
-
-        config.clear_temp_files()
-        print(f"✅ Promotion video created: {promotion_video_path}")
-
-
-    def finalize_video(self, title, add_narration):
-        self.post_init(title)
-
+    def finalize_video(self):
         video_segments = []
         for s in self.scenes:
-            valid_narrator = None
-            if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
-                valid_narrator = s["narrator"]
+            #valid_narrator = None
+            #if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
+            #    valid_narrator = s["narrator"]
 
             ext = float(s.get("extension", 0) or 0)
 
-            if valid_narrator and ("left" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
-                #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
-                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
+            #if valid_narrator and ("left" in valid_narrator):
+            #    video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
+            #    #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+            #    #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 
             v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
             #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":ext})
             video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 
-            if valid_narrator and (not "left" in valid_narrator):
-                video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
-                #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
-                #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
+            #if valid_narrator and (not "left" in valid_narrator):
+            #    video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
+            #    #v = self.ffmpeg_processor.add_audio_to_video(s["narration"], s["narration_audio"], True)
+            #    #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
 
         final_video_dir = f"{self.publish_path}/{self.pid}"
         if not os.path.exists(final_video_dir):
@@ -1380,7 +1199,9 @@ class MagicWorkflow:
         #        audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
         #        video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
 
-        final_video_path = f"{self.publish_path}/{self.title.replace(' ', '_')}_final.mp4"
+        title = self.title.strip().replace(' ', '_').replace('\n', '_')
+        title = config.chinese_convert(title, self.language)
+        final_video_path = f"{self.publish_path}/{title}_final.mp4"
         os.replace(video_temp, final_video_path)
 
         config.clear_temp_files()
@@ -1392,6 +1213,7 @@ class MagicWorkflow:
         # add subtitle to the final video
         # self.ffmpeg_processor.add_subtitle(final_video_path, mp4_path, final_srt_path)
         print(f"✅ Final video with audio created: {final_video_path}")
+
 
 
     def make_background_audio(self):

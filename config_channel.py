@@ -1800,8 +1800,13 @@ CHANNEL_CONFIG = {
 
     "counseling": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
+
+        "channel_name": "心源谈天",
         "channel_id": "counseling",
+        "channel_category_id": "22",
+        "channel_tags": ["心理咨询", "心理治疗", "心理健康", "Psychology", "Psychological Counseling", "Psychological Therapy", "Psychological Health"],
+        "channel_key": "client_secret_creative4teen.json",
+
         "scene_min_length": 20,
         "watermark": {
             "path": "media/watermark.png",
@@ -1829,8 +1834,7 @@ CHANNEL_CONFIG = {
                 "mode": "init_multiple",
                 "prompt": COUNSELING_CASE_DEVELOPMENT
             },
-        ],
-        "channel_key": "config/client_secret_creative4teen.json"
+        ]
     },
 
     "counseling_talk": {

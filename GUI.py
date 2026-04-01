@@ -19,7 +19,7 @@ import config
 import config_channel
 import config_prompt
 from PIL import Image, ImageTk
-from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media
+from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media, save_project_config
 import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
@@ -239,11 +239,8 @@ class WorkflowGUI:
             # 立即创建ProjectConfigManager并保存新项目配置
             pid = selected_config.get('pid')
             try:
-                # 先设置全局 project_manager.PROJECT_CONFIG
                 ProjectConfigManager.set_global_config(selected_config)
-                # 然后创建 ProjectConfigManager 并保存
-                config_manager = ProjectConfigManager(pid)
-                config_manager.save_project_config(selected_config)
+                save_project_config()
                 print(f"✅ 新项目配置已保存: {pid}")
             except Exception as e:
                 print(f"❌ 保存新项目配置失败: {e}")
@@ -326,8 +323,8 @@ class WorkflowGUI:
         #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
 
 
-        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video(False)).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="Video+生成", command=lambda:self.run_finalize_video(True)).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="Video发布", command=lambda:self.publish_video()).pack(side=tk.LEFT)
         ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
         # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
 
@@ -1109,46 +1106,6 @@ class WorkflowGUI:
             return None, None
 
 
-    def upload_promo_video(self):
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "upload_promo_video",
-            "status": "运行中",
-            "start_time": datetime.now(),
-            "pid": self.workflow.pid
-        }
-        
-        def run_task():
-            try:
-                print(f"🎬 上传宣传视频...")
-                title = self.video_title.get().strip()
-                
-                # 调用工作流的方法
-                result_video_path = self.workflow.upload_promo_video(title, "")
-
-                print(f"✅ 宣传视频上传完成: {result_video_path}")
-                
-                # 更新任务状态
-                self.tasks[task_id]["status"] = "完成"
-                self.tasks[task_id]["result"] = f"宣传视频已上传: {os.path.basename(result_video_path)}"
-                
-            except Exception as e:
-                error_msg = f"上传宣传视频失败: {str(e)}"
-                print(f"❌ {error_msg}")
-                
-                # 更新状态为失败
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = str(e)
-                
-                # 通知错误
-                self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-        # 启动后台任务
-        thread = threading.Thread(target=run_task, daemon=True)
-        thread.start()
-        
-        print(f"🚀 上传宣传视频任务已启动，任务ID: {task_id}")
-        
-
 
     def create_video_tab(self):
         """创建视频生成标签页"""
@@ -1866,7 +1823,16 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
     
 
-    def run_finalize_video(self, add_narration):
+    def publish_video(self):
+        self.workflow.upload_video()
+        messagebox.showinfo("提示", "视频发布成功！")
+
+
+    def run_finalize_video(self):
+        # ask user to confirm if they want to add watermark
+        if messagebox.askyesno("提示", "是否添加水印？", parent=self.root):
+            self.add_watermark()
+
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -1878,46 +1844,11 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(self.video_title.get().strip(), add_narration)
+                self.workflow.finalize_video()
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
                 self.log_to_output(self.video_output, f"❌ 最终视频生成失败: {str(e)}")
-                self.tasks[task_id]["status"] = "失败"
-                self.tasks[task_id]["error"] = str(e)
-
-        threading.Thread(target=run_task, daemon=True).start()
-
-
-    def run_upload_video(self):
-        """上传视频到YouTube（或其他平台）"""
-        pid = self.get_pid()
-        title = self.video_title.get().strip()
-
-        if not pid:
-            messagebox.showerror("错误", "请输入项目ID")
-            return
-
-        task_id = str(uuid.uuid4())
-        self.tasks[task_id] = {
-            "type": "upload_video",
-            "status": "运行中",
-            "start_time": datetime.now(),
-            "pid": pid
-        }
-
-        def run_task():
-            try:
-                self.log_to_output(self.video_output, f"开始上传视频 - PID: {pid}")
-                workflow = self.workflow
-                if workflow is None:
-                    raise Exception("无法获取工作流对象")
-
-                workflow.upload_video(title)
-                self.log_to_output(self.video_output, "✅ 视频上传完成！")
-                self.tasks[task_id]["status"] = "完成"
-            except Exception as e:
-                self.log_to_output(self.video_output, f"❌ 视频上传失败: {str(e)}")
                 self.tasks[task_id]["status"] = "失败"
                 self.tasks[task_id]["error"] = str(e)
 
@@ -2866,6 +2797,7 @@ class WorkflowGUI:
                 }
                 return p, opts
         return None, {}
+
 
     def add_watermark(self):
         """为本故事全部场景的主轨 clip 加水印（PNG 路径见项目 watermark 配置或程序目录 media/watermark.png）。"""
@@ -4923,10 +4855,7 @@ class WorkflowGUI:
 
             # 更新当前项目配置（统一通过 set_global_config）
             ProjectConfigManager.set_global_config(config_data)
-            
-            # 保存到文件
-            config_manager = ProjectConfigManager(self.get_pid())
-            config_manager.save_project_config(config_data)
+            save_project_config()
                 
         except Exception as e:
             print(f"❌ 保存项目配置失败: {e}")
@@ -4979,23 +4908,16 @@ class WorkflowGUI:
             self.video_title.bind('<FocusOut>', self.on_video_title_change)
 
 
-
     def on_video_title_change(self, event=None):
         """当视频标题发生变化时的回调函数"""
         # 如果正在加载配置，不要自动保存
-        if hasattr(self, '_loading_config') and self._loading_config:
-            return
-        
-        # 直接更新workflow的title属性
-        if hasattr(self, 'workflow') and self.workflow is not None:
-            gui_title = self.video_title.get().strip()
-            if gui_title and gui_title != "......":
-                self.workflow.title = gui_title
-                print(f"🏷️ Workflow title updated: {gui_title}")
-        
-        # 保存配置
-        self.save_config()
-
+        gui_title = self.video_title.get().strip()
+        if gui_title and gui_title != "......":
+            self.workflow.title = gui_title
+            print(f"🏷️ Workflow title updated: {gui_title}")
+            # save summary to project_manager.PROJECT_CONFIG
+            project_manager.PROJECT_CONFIG["video_title"] = gui_title
+            self.save_config()
 
 
     def on_config_change(self, event=None):

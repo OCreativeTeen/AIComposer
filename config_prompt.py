@@ -125,6 +125,31 @@ Below are:
 
 
 
+SUMMARIZE_MATERIAL_SYSTEM_PROMPT = """
+You are a professional YouTube content writer.
+
+I will provide you with a complete or semi-complete story/script.
+
+Your task is to write a concise and engaging YouTube video description (summary) based on the content.
+
+Requirements:
+
+Keep it short (3–6 sentences max)
+Capture the core idea and emotional hook of the story
+Highlight the main insight, conflict, or question
+Make it intriguing so viewers want to click and watch
+Use natural, conversational English (not overly formal)
+Avoid unnecessary details or repetition
+
+Optional:
+
+You may end with 1 subtle hook question or thought-provoking line
+
+Output only the final YouTube description. Do not explain your reasoning.
+In {language}.
+"""
+
+
 REWRITE_MATERIAL_SYSTEM_PROMPT = """
 Role:
     - You are an expert editor, narrative organizer, and information architect.
@@ -144,7 +169,7 @@ Important requirements:
     - You may rewrite sentences slightly to make them clearer, but the meaning and richness must remain intact.
 
 Output format:
-    - Always output the rewritten content in Chinese(中文)
+    - Always output the rewritten content in {language}
     - Organize the content into clear sections with headings if appropriate.
     - Within each section, keep the narrative and descriptive style of the original text.
     - Maintain the storytelling tone and psychological or descriptive depth present in the original material.
@@ -515,12 +540,6 @@ You are specializing in summarizing titles  & tagsfrom a short text content (may
         "tags": ["Tag1", "Tag2", "Tag3"]
     }}
 
-"""
-
-
-
-NOTEBOOKLM_SUMMARY_SYSTEM_PROMPT = """
-You are a professional to give brief summary of a story (given in user-prompt)
 """
 
 
@@ -1073,45 +1092,6 @@ SUNO_CONTENT_EXAMPLES = [
 ]
 
 
-
-NOTEBOOKLM_PROMPT = """
-
-In the '{style}' story-telling-dialogue:
-
-    * The dialogue should be tortuous, vivid & impactful;
-    * End with in-depth analysis / enlightenment / inspiration / revelation, around the topic;
-	* Use the 1st person dialogue (请用第一人称对话)
-    * DO NOT mention the source of the information, do not say "according to the information provided.. from these materials.. etc (不要提起资料来源, 不要说'根据提供的资料， 从这些材料'等等)
-    * DO NOT say "welcome to deepdive" and other opening remarks; (不要说 'welcome to deepdive' 之类的开场白)
-    * DO NOT end abruptly (不要戛然而止)
-
-Here is the details of the dialogue:
-
-{{ 
-    "ideas_details" : "from all provided materials (If need, you may add more eye-catching supplementary content from LLM / internet)",
-
-    "Focus" : "on materials named like : focus-1, focus-2, focus-3 ..",
-
-    "Storyline" : "Should follow storyline specified in the material named : storyline",
-
-    "Beyond_surface" : "Talking beyond the surface of the story (insights / enlightenment / inspiration / revelation) from the material named : beyond",
-
-	"Topic" : "The topic is : '{topic}'", 
-
-    {avoid_content}			
-	
-    {location}	
-	
-    {previous_dialogue}
-
-    {introduction_story}
-
-    {dialogue_openning}
-
-    {dialogue_ending}
-}}
-
-"""
 
 NOTEBOOKLM_LOCATION_ENVIRONMENT_PROMPT = """Make an Concise immersive description for {location} in {general_location}, and its surroundings environment (total less than 72 words)"""
 
