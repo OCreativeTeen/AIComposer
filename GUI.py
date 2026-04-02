@@ -666,7 +666,7 @@ class WorkflowGUI:
             messagebox.showinfo("成功", f"{track_label} 音频已生成并替换", parent=self.root)
         return True
 
-    def regenerate_story_clip_audio_all(self, skip_confirm=False):
+    def regenerate_story_clip_audio_all(self, current_scene):
         """为本故事全部场景按各镜「人物 + 讲话」重新生成主轨(clip)音频（无对话框审核，直接 TTS）。"""
         if not self.workflow or not self.speech_service:
             messagebox.showerror("错误", "工作流未就绪，请先选择项目", parent=self.root)
@@ -679,17 +679,17 @@ class WorkflowGUI:
         if not story_scenes:
             messagebox.showwarning("提示", "当前故事无场景", parent=self.root)
             return
-        if not skip_confirm:
-            if not messagebox.askyesno(
-                "本故事生音频",
-                f"为当前故事全部 {len(story_scenes)} 个场景重新生成主轨(clip)音频？\n"
-                f"将按每镜保存的「人物」「讲话」逐镜 TTS（无逐步审核）。",
-                parent=self.root,
-            ):
-                return
+
         ok = 0
         skipped = []
+        start = False
         for s in story_scenes:
+            if not start:
+                if s.get("id") == current_scene.get("id"):
+                    start = True
+                else:
+                    continue
+
             sid = s.get("id", "?")
             out = self.regenerate_story_clip_for_scene(s)
             if out == "ok":
@@ -700,6 +700,7 @@ class WorkflowGUI:
                 skipped.append(f"id={sid}：未设置人物")
             elif out == "fail":
                 skipped.append(f"id={sid}：TTS 或合成失败")
+
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
         tail = "\n".join(skipped[:12])
@@ -723,7 +724,7 @@ class WorkflowGUI:
         if scope is None:
             return
         if scope:
-            self.regenerate_story_clip_audio_all(skip_confirm=True)
+            self.regenerate_story_clip_audio_all(self.workflow.get_scene_by_index(self.current_scene_index))
         else:
             self.regenerate_story_clip_for_scene(self.workflow.get_scene_by_index(self.current_scene_index))
 

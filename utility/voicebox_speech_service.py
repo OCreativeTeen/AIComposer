@@ -128,7 +128,7 @@ class VoiceboxService:
         escaped_text = re.sub(r"\.{3,}", "。", escaped_text)
         escaped_text = escaped_text.replace("——", "。")
         escaped_text = re.sub(r"[\t\n\r]+", " ", escaped_text)
-        _pause = "...——"
+        _pause = "..."
         _np = re.escape(_pause)
         escaped_text = re.sub(rf"([,!?，。？；：！、])(?!{_np})", rf"\1{_pause} ", escaped_text)
         # 勿匹配「...——」里的三个 .：若紧跟另一 . 则属省略号/停顿前缀，跳过
