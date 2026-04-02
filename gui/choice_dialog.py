@@ -86,6 +86,38 @@ def askchoice(title, choices, parent=None):
     return result
 
 
+def _get_media_duration_sec(file_path):
+    """返回视频时长（秒），无法读取或非视频则返回 None。"""
+    try:
+        import cv2
+        lower = file_path.lower()
+        if not lower.endswith((".mp4", ".avi", ".mov", ".webm", ".mkv")):
+            return None
+        cap = cv2.VideoCapture(file_path)
+        if not cap.isOpened():
+            return None
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0
+        n = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        cap.release()
+        if fps and fps > 0 and n and n > 0:
+            return float(n / fps)
+    except Exception:
+        pass
+    return None
+
+
+def _format_duration(sec):
+    if sec is None:
+        return "—"
+    if sec < 0:
+        return "—"
+    if sec < 60:
+        return f"{sec:.1f}s"
+    m = int(sec // 60)
+    s = sec - m * 60
+    return f"{m}:{s:04.1f}"
+
+
 def _load_preview_image(file_path, max_w=320, max_h=240):
     """从视频或图片文件加载预览图，返回可显示的 PhotoImage 或 None"""
     try:
@@ -139,7 +171,7 @@ def askchoice_media_preview(title, choices, folder_path, parent=None):
 
     # 窗口尺寸：左侧列表 + 右侧预览
     dialog_width = 560
-    dialog_height = 420
+    dialog_height = 450
     dialog.geometry(f"{dialog_width}x{dialog_height}")
     dialog.resizable(True, True)
 
@@ -187,7 +219,25 @@ def askchoice_media_preview(title, choices, folder_path, parent=None):
     preview_frame.pack()
     preview_label = tk.Label(preview_frame, text="选择文件以查看预览", bg="gray90")
     preview_label.pack()
+    duration_label = ttk.Label(
+        preview_frame,
+        text="时长 —",
+        font=("Consolas", 9),
+        foreground="gray25",
+    )
+    duration_label.pack(pady=(4, 0))
     preview_photo = [None]  # 保持引用避免被 GC
+
+    def _update_duration_for_path(full):
+        sec = _get_media_duration_sec(full)
+        if sec is not None:
+            duration_label.config(text=f"时长 {_format_duration(sec)}")
+        else:
+            lower = full.lower()
+            if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")):
+                duration_label.config(text="时长 —（图片）")
+            else:
+                duration_label.config(text="时长 —")
 
     def on_select(e):
         sel = listbox.curselection()
@@ -203,6 +253,7 @@ def askchoice_media_preview(title, choices, folder_path, parent=None):
         else:
             preview_photo[0] = None
             preview_label.config(image="", text="(无预览)")
+        _update_duration_for_path(full)
 
     def on_confirm():
         sel = listbox.curselection()
@@ -224,6 +275,7 @@ def askchoice_media_preview(title, choices, folder_path, parent=None):
             preview_label.config(image=img, text="")
         else:
             preview_label.config(image="", text="(无预览)")
+        _update_duration_for_path(full)
 
     btn_frame = ttk.Frame(main)
     btn_frame.pack(fill=tk.X, pady=(10, 0))

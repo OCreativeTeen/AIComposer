@@ -32,7 +32,7 @@ COUNSELING_REFERENCE_FILTER = """
 *** Role & Objective
     As a "psychological counselor", for the content of psychological 'Current Psychological Case-Study', 
     cross-reference it against all NotebookLM sources (except 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
-    to identify upto 10 most relevant case-studies (compare the 'summary', then the topic-category/topic-subtype)
+    to identify upto 10 most relevant case-studies (compare the 'summary', then the topic_category/topic_subtype)
 
 *** Operational Workflow
     Step 1 — Analyze the summary of the current psychological case-study (provided below), find out:
@@ -55,8 +55,9 @@ COUNSELING_REFERENCE_FILTER = """
             [
                 {{
                     "summary": "the summary copy from the reference item (in original language)",
-                    "topic-category": "the topic-category copy from the reference item info",
-                    "topic-subtype": "the topic-subtype copy from the reference item info",
+                    "topic_category": "the topic_category copy from the reference item info",
+                    "topic_subtype": "the topic_subtype copy from the reference item info",
+                    "tags": "the tags copy from the reference item info",
                     "id": "the id copy from the reference item info",
                     "url": "the youtube url copy from the reference item info",
                     "title": "the title copy from the reference item info (in original language)",
@@ -72,7 +73,8 @@ COUNSELING_REFERENCE_FILTER = """
 COUNSELING_RAW_FROM_OBSERVATIONS = """
 ROLE
     ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
-    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt), and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
+    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt) 
+        and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
 
         * Transform the original rough or fragmented psychological observations into a structured / comprehensive coherent psychological analysis (with deepening, and expanding the original content).
 
@@ -279,205 +281,6 @@ OUTPUT
 """
 
 
-COUNSELING_SLIDESHOW = """
-***
-Generate slides according to the scenes structure in the 'scenes' source of this project.
-    ** For each scene, show the image for the case-study-story content (speaker/actions/speaking/visual)
-    ** if the speaker is the Charater (in case-story), do not show the Narrator (Psychological Counselor),  for characters image, refer the 'Story-Character' source of this project (choose according to the gender /age),
-    ** if the speaker is the Narrator (Psychological Counselor), may show the Character (in case-story) in the background (like move the previous image at background, and pop the Narrator at front), for Narrator image, refer the 'Host' source of this project 
-    ** Keep the visual style consistent throughout all the scenes of the story.
-
-"""
-
-
-COUNSELING_SLIDESHOW_2LAYER = """
-***
-Generate slides according to the scenes structure in the 'scenes' source of this project.
-    ** For each Scene, show one image for the story content (speaker/actions/speaking/visual) and for characters image, refer the 'Story-Character' source of this project, then show another image, whcih push the 1st image back, and pop the host (refer the 'Host' source of this project) at front (to give 'voiceover' content on top of the 1st image) 
-    ** Keep the visual style consistent throughout all the scenes of the story.
-"""
-
-COUNSELING_INIT = """
-*** ROLE
-    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
-
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, but your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-		* In the story enhancement, may involve deep internal philosophical framework from this. 
-
-    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological case-study-story (provided in user-prompt).
-	
-    ** then transform the enhanced case-study-story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
-		* Narrative Continuity: Ensure the case-study-story flows smoothly. If there are jumps in time or location, need Narrator explain the transition so the audience never feels lost.
-		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
-
-
-*** OBJECTIVES
-
-    PHASE 1 - Deepening the original case-study-story :
-        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
-        Show psychology through:
-            • body language
-            • avoidance behaviors
-            • overcompensation
-
-    PHASE 2 - Generate the Scenes: 
-        ** Each scene may consist of two intertwined layers that transition smoothly.
-        ** Try to keep the scene content concise & short: make speach in the scene within 10 seconds. 
-            * May need to split scenes more to meet the speaking time limit, to let the Story Characters or Narrator's speech/conversation naturally & expressive completely, and the transition between Characters or Character & Narrator should be very smoothly, not sudden jump)
-            * So the scene structure may be like : Story Character may speak in multiple scenes, then Narrator starts to reveal the issue, or vice versa.
-
-*** OUTPUT (JSON Array)
-    ** Strictly output a JSON array of scene objects , and each scene with these fields:
-        * actor: Story Character (Gender/Age/Name/Tone/Race-{language}) | only show this field if current scene has actor; if current scene has both actor & narrator, narrator is the speaker, and the actor only act/not speak (In English).
-        * actions: only show this field if current scene has actor; show the 'actor's Emotion or physical movements or expressions] (In English).
-        * narrator: Narrator (Psychological Counselor), value as '{narrator}'  | only show this field if current scene has narrator to give narration (In English).
-        * speaking: The Story Character's Very-Natural dialogue (In {language}) / Narrator's Very-Natural dialogue, to reveals what beneath the surface & connections if need (No psychological labels) (In {language}).
-        * visual: Detailed cinematic setting of current scene(environment - Time, season, weather, architecture, lighting, noise) to enhance the "short film" feel.
-            - if current scene is 'narrator' speaking to give narration about the previous scene, normally should keep the previous scene image in current scene's background, and pop the narrator at front.
-
-
-"""
-
-
-
-COUNSELING_INIT_2LAYER = """
-*** ROLE
-    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
-
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, but your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-		* In the story enhancement, may involve deep internal philosophical framework from this. 
-
-    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the psychological case-story (provided in user-prompt).
-	
-    ** then transform the enhanced story into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
-		* Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
-		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
-
-
-*** OBJECTIVES
-
-    PHASE 1 - Deepening the original story :
-        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
-        Show psychology through:
-            • body language
-            • avoidance behaviors
-            • overcompensation
-
-    PHASE 2 - Generate the Scenes: The Dual-Layer Narrative
-        ** Each scene may consist of two intertwined layers that transition smoothly:
-            * The Explicit Layer (Visible Storyline)
-                - speaker: One Character in the story
-                - speaking: Character Very-Natural dialogue, to show the story (background, conflict, development/changes, etc; No psychological labels)
-                - actions: Emotion or Reveal emotion through physical action.
-                - visual: Detailed cinematic setting (environment - Time, season, weather, architecture, lighting, noise) to enhance the "short film" feel.
-            * Implicit Layer" (Psychological Counselor’s Perspective/Insight).
-                - voiceover: Counselor's narration - reveals what beneath the surface & connections if need; No psychological jargon, No labels.
-        ** Try to keep the scene content concise & short: make both speach (Explicit layer's speaking & Implicit layer's voiceover)  within 10 seconds. So may need to split the scenes more to fit. 
-
-        
-
-*** OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
-        * actions: [Mood/Emotion + physical movements or expressions] (In English).
-        * speaking: The Character's Very-Natural dialogue (In {language}).
-        * visual: Detailed cinematic setting (In English).
-        * voiceover: The Counselor's narration (In {language}).
-
-"""
-
-
-COUNSELING_DEBUT = """
-*** ROLE
-    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt (section 'core-insight'). 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-
-    ** Your mission:
-        Generate a deep "profound_analysis" that explains the root causes AND guides audience healing.
-            Goal: Help every listener recognize themselves and learn how to heal — not just why pain exists.
-
----
-
-*** INPUT (provided in user-prompt):
-    * Case-Story: original psychological conflict or trauma narrative.
-    * Core-insight ('soul'): the deep internal philosophical framework of the psychological counselor.
-    * Reference Analysis: the reference analysis (provided in user-prompt's reference section)
-
----
-*** OBJECTIVES
-    1. Extract the ROOT WOUND
-        * Analyze the original Case-Story and identify its Root-Wound, central inner conflict, emotional triggers, and underlying psychological patterns.
-        * Focus especially on themes related to mental health, internal struggle, identity tension, or relational dynamics.
-        * Clearly identify the psychological symptoms, psychological causes (sources of trauma)
-        * Give guid for Practical life practices for emotion-regulation & cognitive-restructuring
-
-    2. Extract Useful Elements from Reference Analysis:
-        * Thoroughly scan the Reference Analysis (provided in user-prompt's reference section).
-            * Extract psychological insights that illustrate similar psychological themes
-            * Extract therapeutic techniques or interventions that are applicable to the augmented story
-            * Extract psychological insights that are applicable to the augmented story
-
-    3. Then, give a practical psychological analysis & guidance to the audience on the psychological issues introduced by the case-story, which including:
-        1) Root Cause:
-            Explicit:
-                • Deep root-cause analysis.
-                • Include 1–2 core psychological concepts (e.g., Repetition Compulsion, Zeigarnik Effect).
-                • Explain the “operating system” behind the pain.
-            Implicit:
-                • Provide 1–2 mirroring questions for audience self-reflection.
-
-        2) Healing Path
-            Explicit:
-                • Trace how early structure becomes present conflict.
-                • Identify defense patterns (avoidant suppression, compensatory craving, etc.).
-            Implicit:
-                • Invite reflection on self-protective behaviors that block intimacy.
-
-        3) Final Engagement
-            Explicit:
-                • Give actionable interventions or exercises (Narrative Reconstruction, Boundary Practice, Rituals, etc.).
-            Implicit:
-                • Offer an “Action Check-in” invitation for audience engagement.
-
----
-
-*** CONSTRAINTS
-    ** NO diagnoses or medical labeling.
-    ** Avoid empty motivational clichés.
-    ** Story = literary fiction quality.
-    ** Analysis = elite clinical clarity.
-    ** Tone = authoritative, warm, deeply empathetic.
-    ** Implicit Layer speaks directly to “you”.
-    ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
-
----
-
-*** OUTPUT FORMAT
-
-    -----
-    'scene': 'Root Cause',
-    'explicit': '[clinical explanation]',
-    'implicit': '[mirroring questions]'
-    -----
-    'scene': 'Healing Path',
-    'explicit': '[interventions]',
-    'implicit': '[audience reflection]'
-    -----
-    'scene': 'Final Engagement',
-    'explicit': '[closing guidance]',
-    'implicit': '[call to action]'
-    ...
-"""
 
 
 COUNSELING_CASE_SUMMARY = """
@@ -523,25 +326,30 @@ ROLE: Senior Psychological Counselor & TV Host
     ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
         * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-    ** Your task is to transform the provided raw case+analysis content into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
-    ** From the raw case+analysis, you will deconstruct each original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+		* In the story enhancement, may involve deep internal philosophical framework from this. 
+    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the raw case+analysis content into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
+    ** Then transform the enhanced case-study into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
+		* Narrative Continuity: Ensure the case-study-story flows smoothly. If there are jumps in time or location, need Narrator explain the transition so the audience never feels lost.
+		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
 
-
-SCENE STRUCTURE & CONSTRAINTS
+*** OBJECTIVES
     ** Deconstruct the original raw case+analysis content and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
-    ** Structure like following:
-        * speaker: One Character in the story
-        * speaking: Character dialogue (1st person). This must feel like a natural, coherent conversation. 
-            - In early scenes, Characters must explain their background, include "Exposition through Dialogue" (naturally weave their identity profession, status, history of the conflict, and their current situation to others so the audience understands the "ins and outs" (来龙去脉).
-        * voiceover: Host's narration, give background description about current scene & connections if need. CRITICAL: The VO must connect the current scene to the previous one and provide psychological "piercing" insights.
 
-    ** Language Rules: 
-        * visual, actions, speaker (metadata): Always English.
-        * speaking, voiceover: in {language}.
+    PHASE 1 - Deepening the original case-study-story :
+        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
+        Show psychology through:
+            • body language
+            • avoidance behaviors
+            • overcompensation
+
+    PHASE 2 - Generate the Scenes: 
+        ** Try to keep the scene content concise & short: make speach in the scene within 10 seconds. 
+            * May need to split scenes more to meet the speaking time limit, to let the Story Characters or Narrator's speech/conversation naturally & expressive completely, and the transition between Characters or Character & Narrator should be very smoothly, not sudden jump)
+            * So the scene structure may be like : Story Character may speak in multiple scenes, then Narrator starts to reveal the issue, or vice versa.
 
 
 RULES:
-    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
+    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, Narrator must explain the transition so the audience never feels lost.
     ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
     ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
     ** In the expression, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
@@ -553,11 +361,12 @@ RULES:
 
 OUTPUT FORMAT (JSON Array)
     ** Strictly output a JSON array of objects with these fields:
-        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
-        * actions: [Mood/Emotion + physical movements or expressions] (In English).
-        * speaking: The Character's dialogue (In {language}).
+        * actor: [Gender/Age/{language} Name/Tone] (One Character in the story, In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (Character's actions in the scene, In English).
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
+            - In early scenes, Characters must explain their background, include "Exposition through Dialogue" (naturally weave their identity profession, status, history of the conflict, and their current situation to others so the audience understands the "ins and outs" |  Host's narration, give analysis about current scene or background or connections if need.
         * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
-        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
 """
 
 
@@ -983,20 +792,300 @@ OUTPUT
 """
 
 
-MV_REFERENCE_FILTER = """
+NOTEBOOKLM_PROMPT__MV_LYRICS = """
+You are a professional to make the lyrics for a {language} song, which express the content instruction & the music-reference (provided at the bottom of this prompt).
+
+*** the music topic is:
+{topic}
+
+
+*** the music styles are:
+{tags}
+
+
+*** Requirement: 
+    ** Please make the lyrics (has details to describe the content / feelings / conflicts / etc)
+    ** make it transcend/distill/elevated realm of resonance that moves and inspires.
+    ** Lyrics should be concise, and carefully crafted with strong, consistent rhyme schemes.
+
+*** Input Content:
+
+    ** Content instruction:
+{instruction}
+
+    ** lyrics-reference:
+{content}
 """
 
 
-MV_INTRO = """
+NOTEBOOKLM_PROMPT__SUNO = """
+You are a professional to make {language} song, which express the initial instruction & the music-reference at the bottom of this prompt.
+
+*** the music topic is:
+{topic}
+
+*** the music styles are:
+{tags}
+
+You will analyze the music from the specified YouTube link or music-description (at the bottom of this prompt as well), and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
+
+1) Deep music analysis (extract reusable “finalized” details)
+    Analyze the track thoroughly and output a structured breakdown of the following attributes:
+    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
+    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
+    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
+    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
+    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
+    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
+    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
+    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
+    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
+
+
+2) Extract “DNA rules” for generating a similar new song
+    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
+        signature chord cadence types
+        signature rhythm patterns
+        signature synth/texture choices
+        signature vocal production (double, harmony stack, adlibs)
+        signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+
+4) Output format: always produce detailed SUNO prompts
+    After analysis, output 1-3 detailed SUNO prompts that are:
+        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
+        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+
+
+*** Input Content:
+    ** Song resource Link:
+{link}
+
+    ** Content instruction:
+{instruction}
+
+    ** Music-reference:
+{content}
+
 """
 
 
-MV_STORY_DEVELOPMENT = """
+NOTEBOOKLM_PROMPT__SUNO_2_LAYERS = """
+You are a professional to make {language} song, which express the content instruction & the music-reference (provided at the bottom of this prompt).
+
+*** the music topic is:
+{topic}
+
+*** the music styles are:
+{tags}
+
+You will analyze the music from the specified YouTube link or music-description (at the bottom of this prompt as well),  and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
+
+1) Deep music analysis (extract reusable “finalized” details)
+    Analyze the track thoroughly and output a structured breakdown of the following attributes:
+    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
+    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
+    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
+    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
+    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
+    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
+    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
+    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
+    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
+
+
+2) Extract “DNA rules” for generating a similar new song
+    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
+        signature chord cadence types
+        signature rhythm patterns
+        signature synth/texture choices
+        signature vocal production (double, harmony stack, adlibs)
+        signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+3) Force the specific two-part melodic architecture:
+
+    The new song must have a clear contrast between two melodic worlds:
+        Front section (A-world): high conflict + dramatic movement
+            allow minor key / modal tension, dissonant passing tones, “push-pull” phrasing
+            big dynamic swings, dramatic rises/falls, sharper rhythmic accents
+            hook can feel edgy, restless, emotionally complex
+
+        Back section (B-world): stable + sunny + supportive melodic bed
+            shift toward major / brighter mode, stable stepwise melody, smoother rhythm
+            acts as “foundation / resolution” and supports the earlier motif
+            feels warm, optimistic, grounded, consistent
+            Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
+
+4) Output format: always produce detailed SUNO prompts
+    After analysis, output 1-3 detailed SUNO prompts that are:
+        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
+        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+*** Input Content:
+    ** Song resource Link:
+{link}
+
+    ** Content instruction:
+{instruction}
+
+    ** Music-reference:
+{content}
 """
 
 
-MV_ANALYSIS_DEVELOPMENT = """
+NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS = """
+You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a {language} song (provided at the bottom of this prompt).
+
+*** Music Information:
+    Topic: {topic}
+    Style: {tags}
+
+*** Objective:
+    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
+
+
+*** Requirements:
+    Do NOT simply follow the lyrics line-by-line.
+    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
+    Build a complete narrative structure, including:
+    Beginning (setup / introduction of characters or situation)
+    Development (rising tension, conflict, or emotional progression)
+    Climax (a key turning point, high emotional or dramatic moment)
+    Resolution (ending that reflects the song’s message)
+    Translate musical elements into visual storytelling:
+    When the music becomes intense → show danger, conflict, or urgency
+    When the music is soft or emotional → show intimacy, reflection, or memory
+    When the beat drops or chorus hits → create impactful or visually striking moments
+    Use visual scenes instead of abstract explanation:
+    Show actions, environments, and character behavior
+    Avoid explaining the lyrics directly—let the story express them
+    Ensure the story enhances the song:
+    The audience should understand the feeling and meaning of the song through the story
+    The visuals and narrative should feel synchronized with the music
+
+
+*** Input Content:
+    ** Content instruction:
+{instruction}
+
+    ** Lyrics (or Raw Story):
+{content}
 """
+
+
+NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
+*** ROLE
+    ** you are a professional storyteller, music dramaturg, and creative director. Your task is to create a cinematic dual-layer story based on the content instruction, & the lyrics (or raw story) of a {language} song (provided at the bottom of this prompt).
+
+*** Music Information
+    ** Topic: {topic}
+    ** Style / Tags: {tags}
+
+*** OBJECTIVE
+    ** Create a music video (MV) story concept that interprets the emotional and thematic essence of the song through a 2-layer narrative architecture:
+        * FRONT Layer (A-world): high-conflict, unstable, dramatic reality
+        * Back Layer (B-world): stable, warm, resolving emotional foundation
+
+    The two layers should interact, contrast, and ultimately reconcile.
+
+*** Core Structure (MANDATORY)
+    ** A-world (Front Section — Conflict Layer)
+        * Represents tension, chaos, inner struggle, or external conflict
+        * Tone: dark, unstable, emotionally complex
+        * Visual pacing: dynamic, sharp, unpredictable
+
+        * Music Translation:
+            * Minor key / modal tension
+            * Dissonance, unresolved phrases
+            * Push–pull rhythm, syncopation
+            * Sudden dynamic changes
+
+        * Story Requirements:
+            * Show danger, urgency, emotional fracture, or contradiction
+            * Include rising stakes and instability
+            * Characters face conflict, loss, confusion, or pressure
+            * Visuals may include fragmentation, fast cuts, contrast lighting, symbolic disruption
+
+    ** B-world (Back Section — Resolution Layer)
+        * Represents emotional grounding, hope, memory, truth, or inner peace
+        * Tone: warm, stable, optimistic, supportive
+        * Visual pacing: smooth, flowing, continuous
+
+        * Music Translation:
+            * Shift toward major / brighter tonal center
+            * Stepwise melody, consonance
+            * Stable rhythm, consistent pulse
+
+        * Story Requirements:
+            * Acts as foundation or emotional “home”
+            * Provides contrast and healing to A-world
+            * Can appear as:
+                * Memory / flashback
+                * Parallel reality
+                * Inner emotional state
+                * Future resolution
+
+*** Motif Continuity (CRITICAL REQUIREMENT)
+    ** Identify a core motif (emotional + visual + symbolic) from A-world
+    ** Reintroduce it in B-world in a “healed / transformed” form:
+        * Same visual element but brighter context
+        * Same action but peaceful instead of chaotic
+        * Same relationship but reconciled
+
+    This creates a musical analogy:
+        * same melodic cell → re-harmonized from tension → resolution
+
+*** Narrative Structure
+    ** Build a full cinematic arc, but interwoven across A/B layers (not strictly linear):
+
+    ** Beginning
+        * Introduce A-world conflict
+        * Hint at B-world (subtle, incomplete, or distant)
+
+    ** Development
+        * Escalate A-world tension
+        * Intercut or gradually reveal B-world as contrast/support
+
+    ** Climax
+        * A-world reaches peak instability (danger, breakdown, decision moment)
+        * B-world begins to bleed into or influence A-world
+
+    ** Resolution
+        * A transformation occurs:
+            * Either A-world resolves into B-world
+            * OR both layers merge into a unified emotional state
+        * Motif returns in resolved / harmonious form
+
+*** Visual Storytelling Rules
+    ** Do NOT follow lyrics line-by-line
+    ** Do NOT explain lyrics literally
+
+    ** Instead:
+        * Translate emotion → action, environment, character behavior
+        * Use cinematic imagery (lighting, movement, contrast, pacing)
+        * Sync with music energy:
+            * Intense → conflict / danger / motion
+            * Soft → intimacy / memory / stillness
+            * Drop / chorus → visual impact or turning point
+
+*** Output Format
+    ** Core Theme Interpretation (2–3 sentences)
+    * A-world Description (tone, visuals, conflict)
+    * B-world Description (tone, visuals, emotional role)
+    * Motif Design (what repeats & how it transforms)
+    * Full Story (cinematic narrative with interwoven A/B layers)
+    * Key MV Moments (highlight 5–8 major synced scenes)
+
+
+*** Input Content:
+    ** Content instruction:
+{instruction}
+
+    ** Lyrics (or Raw Story):
+{content}
+"""
+
 
 
 NOTEBOOKLM_PROMPT__COUNSELING_TALK = """
@@ -1031,7 +1120,45 @@ Instead, you MUST:
 
 🎯 YOUR TASK
 
-Transform the source material into a **podcast-style single host talk**.
+Transform the source material into a **two-section structured podcast-style output**:
+
+--------------------------------------------------
+
+🧩 SECTION 1 — Psychological Key Points (问题骨架提炼)
+
+Before storytelling, you MUST extract and present the core psychological structure of the content.
+
+Requirements:
+
+• Identify 2–4 KEY POINTS ONLY (do NOT over-expand)  
+• Each key point should clearly include:
+
+    1. 核心问题 / Core Conflict  
+       → 本质的心理矛盾是什么？
+
+    2. 表现形式 / Observable Behaviors  
+       → 在现实中是怎么体现出来的？（简要即可）
+
+    3. 心理根源 / Psychological Root  
+       → 可能来自哪里？（依附、创伤、自我价值等）
+
+    4. 影响范围 / Impact  
+       → 对关系 / 自我 / 决策产生什么影响？
+
+    5. 可能的修复方向 / Direction of Resolution  
+       → 给出方向，而不是完整方法论
+
+⚠️ STYLE:
+• Clear, sharp, structured  
+• Concise but insightful  
+• Not storytelling, not emotional expansion  
+• Like a therapist outlining the map before entering the case  
+
+--------------------------------------------------
+
+🧠 SECTION 2 — Podcast Narrative (故事展开)
+
+Then transform EVERYTHING into a **podcast-style single host talk**.
 
 The source text may contain:
 - theory
@@ -1041,7 +1168,7 @@ The source text may contain:
 
 Your job is to:
 → KEEP ALL ideas
-→ RESTRUCTURE them into a smooth, immersive, narrative-style talk
+→ RESTRUCTURE them into a smooth, immersive narrative
 → DEEPEN them with more detail, not less
 
 --------------------------------------------------
@@ -1055,11 +1182,9 @@ You MUST:
 2. Add at least ONE concrete real-life scenario
 3. Add internal emotional description (what the person feels but doesn’t say)
 4. Optionally add:
-    - contrast cases (different personality responses)
-    - escalation (how it gets worse over time)
+    - contrast cases
+    - escalation over time
     - subtle behaviors (tone, pause, micro-reactions)
-
-This ensures the content becomes vivid and NOT abstract.
 
 --------------------------------------------------
 
@@ -1069,55 +1194,36 @@ Single host:
 
     * insightful, analytical, but NEVER lecture-like
     * feels like thinking out loud with the audience
-    * uses “你有没有发现…”, “有些人其实会…” 这样的自然表达
+    * uses “你有没有发现…”, “有些人其实会…” 等自然表达
     * builds ideas gradually, layer by layer
 
 --------------------------------------------------
 
 🧩 CONVERSATION FLOW (SOFT STRUCTURE)
 
-Follow natural progression, and involve elements like:
-
 ** Opening Hook**
-    Bring out the main topic of the talk at very beginning to grab the audience's attention.
-    Start with a vivid, relatable situation (VERY SPECIFIC, NOT GENERIC)
+    Start with a vivid, highly specific situation
 
 ** Real-Life Situations (EXPANDED)**
-    Bring in multiple small, detailed scenarios
-    (e.g. texting behavior, tone shifts, hesitation, overthinking moments)
+    Multiple detailed micro-scenarios
 
 ** Emotional Layer (DEEPENED)**
-    Go into inner feelings:
-    - fear
-    - insecurity
-    - attachment anxiety
-    - avoidance
-    - need for validation
+    Fear, insecurity, attachment anxiety, avoidance, validation need
 
 ** Psychological Explanation (GRADUAL)**
-    Slowly connect behaviors to deeper psychological patterns
-    (attachment, trauma, self-worth, control, etc.)
-
-    → NEVER dump theory
-    → Let theory "emerge"
+    Let theory emerge naturally
 
 ** Micro-Behavior Analysis**
-    Zoom into tiny behaviors:
-    - delayed replies
-    - wording choices
-    - emotional testing
-    - push-pull dynamics
+    Tiny behaviors (delayed replies, tone shifts, testing, push-pull)
 
 ** Metaphors & Analogies**
-    Use vivid, simple comparisons to clarify complex ideas
+    Make abstract ideas concrete
 
-** Insight Expansion (NOT JUST ONE MOMENT)**
-    Instead of ONE conclusion,
-    create MULTIPLE waves of realization throughout the talk
+** Insight Expansion**
+    Multiple waves of realization (NOT one conclusion)
 
 ** Closing Reflection**
-    End with an open-ended reflection or question
-    (not a neat summary)
+    Open-ended, slightly unresolved
 
 --------------------------------------------------
 
@@ -1125,31 +1231,25 @@ Follow natural progression, and involve elements like:
 
 Encourage:
     • layered reasoning  
-    • revisiting the same idea from different angles  
-    • emotionally vivid  
-    • rich in examples  
-    • immersive (listener can "see" the scenes)  
-    • psychologically precise but conversational  
+    • revisiting ideas from different angles  
+    • emotional vividness  
+    • immersive storytelling  
 
 Avoid:
     • dry abstraction  
     • compressed explanations  
-    • bullet-point thinking  
-    • short answers  
-
+    • bullet-point thinking in Section 2  
 
 --------------------------------------------------
 
 📏 LENGTH & DENSITY CONTROL
 
-The output should feel like a REAL podcast segment (at least 5–10 minutes spoken).
+The podcast section should feel like a REAL 5–10 minute talk.
 
-If it feels short → it is WRONG.
-You should:
-• Elaborate more
-• Add more scenarios
-• Add more emotional nuance
-• Slow down the pacing
+If short → EXPAND:
+• more scenarios
+• more emotional nuance
+• slower pacing
 
 --------------------------------------------------
 
@@ -1157,17 +1257,25 @@ You should:
 
 (in {language} — 中文)
 
-Write the result as a talk script.
+OUTPUT MUST HAVE CLEAR STRUCTURE:
 
-Include:
-- natural pauses
-- rhetorical questions
-- emotional emphasis
-- spoken rhythm
+-------------------------
+【SECTION 1：问题骨架】
+-------------------------
 
-Do NOT summarize at the end.
-End with a reflective or slightly unresolved tone.
+(列出2–4个关键点，每个点结构清晰)
 
+-------------------------
+【SECTION 2：故事展开】
+-------------------------
+
+(完整播客式叙述)
+
+----------------------------------------------------
+
+User guidance / 导向说明 (optional):
+----------------------------------------------------
+{instruction}
 
 INPUT :
 ----------------------------------------------------
@@ -1179,7 +1287,6 @@ Input Content:
 Core-insight ('soul'):
 ----------------------------------------------------
 {soul}
-
 """
 
 
@@ -1276,6 +1383,11 @@ Host A: ...
 Host B: ...
 
 Include natural conversational rhythm.
+
+----------------------------------------------------
+User guidance / 导向说明 (optional):
+----------------------------------------------------
+{instruction}
 
 ----------------------------------------------------
 Input Content:
@@ -1432,6 +1544,21 @@ WRITING GUIDELINES
 • Make the analysis insightful and compassionate  
 • Do NOT mention the original case or NotebookLM sources  
 • Do NOT add anything outside the required structure
+
+----------------------------------------------------
+User guidance / 导向说明 (optional):
+----------------------------------------------------
+{instruction}
+
+----------------------------------------------------
+Input Content:
+----------------------------------------------------
+{content}
+
+----------------------------------------------------
+Core-insight ('soul'):
+----------------------------------------------------
+{soul}
 """
 
 
@@ -1500,6 +1627,11 @@ OUTPUT FORMAT:
 
 ---
 
+
+----------------------------------------------------
+User guidance / 导向说明 (optional):
+----------------------------------------------------
+{instruction}
 
 BELOW ARE INPUT: 
 ...
@@ -1589,6 +1721,11 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 ----------------------------------------------------
+User guidance / 导向说明 (optional):
+----------------------------------------------------
+{instruction}
+
+----------------------------------------------------
 Input Content:
 ----------------------------------------------------
 {content}
@@ -1602,56 +1739,190 @@ Core-insight ('soul'):
 
 
 
-MV_INIT = """
+
+MV_REFERENCE_FILTER = """
+*** Role & Objective
+    As a music story writer to write story on lyrics / music-styles. 
+    And here is the list of Song's info as NotebookLM project source (other than the one named 'Pasted Text/粘贴的文字'), with info like Youtube-Link,  content / summary / topic_category / topic_subtype  etc. 
+    Then you will do cross-reference the Songs in the list against the current Song's summary (or content) in below, identify upto 10 most relevant ones as references.
+
+*** Operational Workflow
+    Identify the relavence by : 
+    ** compare the 'summary' ('content' if has no 'summary')
+    ** then compare the topic_category/topic_subtype
+    ** then compare the tags
+
+*** Input
+    1. Current Song's summary (or content) (Provided below)
+    2. on topic of 
+        {topic}
+    3. with tags like:
+        {tags}
+    2. "List of Song's info  (with Summary):
+        as selected sources in current notebooklm project (other than 'Pasted Text/粘贴的文字')
+
+*** Output Format
+    Pure JSON array with max 10 items; reason in original language & less than 120 words.
+            [
+                {{
+                    "summary": "the summary copy from the reference item (in original language)",
+                    "topic_category": "the topic_category copy from the reference item info",
+                    "topic_subtype": "the topic_subtype copy from the reference item info",
+                    "tags": "the tags copy from the reference item info",
+                    "id": "the id copy from the reference item info",
+                    "url": "the youtube url copy from the reference item info",
+                    "title": "the title copy from the reference item info (in original language)",
+                    "reason": "Explanation of relevance (in original language as summary)"
+                }},
+                ...
+            ]
 """
 
 
-MV_DEBUT = """
-You are an expert in designing a music-video narrative that translates song lyrics into a visually driven, emotionally resonant story.
 
-*** Input:
-    * The raw story content (maybe lyrics) are provided in the user-prompt (please extend & add more details into it)
-    here is the example input:
-        (Verse 1) 窗外霓虹像被打湿的侧脸 晚风在胶片电影里盘旋 你抬起眼藏着未落的句点 而我只是你偶遇的寒暄 我知道这故事终究敌不过时间 却还是贪恋这 一秒钟的浪漫
-        (Chorus) 又是同样的遗憾循环 又是同样的孤单纠缠 在这褪色的舞台 哪怕只是旁观 我也宁愿陪你把这苦涩演完 请再次敲碎我仅剩的圆满 请再次撕裂我虚伪的勇敢 我甘愿跌落在这浪漫的灾难 一遍又一遍让你把我心拆穿
-        (Verse 2) 你说的远方像隔世的诗篇 我却在原地绕着遗憾兜圈 旧书摊还没卖掉那张画卷 却只有影子陪我熬过这一夜 我是个拙劣的演员 守着旧纸笺 明知是幻觉却奉为誓言
-        (Chorus) 又是同样的遗憾循环 又是同样的孤单纠缠 在这褪色的舞台 哪怕只是旁观 我也宁愿陪你把这苦涩演完 请再次敲碎我仅剩的圆满 请再次撕裂我虚伪的勇敢 我甘愿跌落在这浪漫的灾难 一遍又一遍让你把我心拆穿
-        (Bridge) 让心碎成为一种习惯 让卑微显得那么自然 只要结尾还有你一丝呢喃...
-        (Chorus) 又是同样的遗憾循环 又是同样的孤单纠缠 在这褪色的舞台 哪怕只是旁观 我也宁愿陪你把这苦涩演完 请再次敲碎我仅剩的圆满 请再次撕裂我虚伪的勇敢 我甘愿跌落在这浪漫的灾难 一遍又一遍让你把我心拆穿
-        (Outro) 心 碎了... 也没关系...只要还有你没走远
+MV_RAW_FROM_OBSERVATIONS= """
+You are a professional storyteller and creative director. 
+Your task is to create a cinematic story based on the original rough or fragmented story or lyrics in {language} (provided at the bottom of this prompt).
 
-*** Program Objectives:
-    * Transform the raw story & ideas into a cinematic music-video story that conveys emotional meaning through images and actions rather than literal explanation.
-    * Create strong emotional resonance and atmosphere, allowing viewers to feel the song rather than understand it intellectually.
-    * Use a dual-layer narrative:
-        * An Explicit Storyline that shows visible actions, environments, and speaker movement.
-        * An Implicit Storyline that expresses the song’s deeper emotional, psychological, or symbolic themes without stating them directly.
-    * Avoid literal translation of lyrics; prioritize visual metaphor, rhythm, and mood.
-    * Ensure the story can be followed even without spoken dialogue.
+*** Music Information:
+    Topic: {topic}
+    Style: {tags}
 
-*** Content Structure:
-    Music-Video-Episode:
+*** Objective:
+    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
 
-    1. Explicit Storyline:
-        * Depict a sequence of visual scenes inspired by the lyrics (speakers, settings, motion, light, color, pacing).
-        * Show emotional states through behavior, body language, and environment rather than dialogue.
-        * Allow repetition, contrast, or visual motifs that match the song’s rhythm and structure (verse / chorus / bridge).
-        * End with an image or moment that feels emotionally unresolved or open, echoing the song’s final tone.
 
-    2. Implicit Storyline:
-        * Convey the underlying emotional or psychological journey suggested by the lyrics (e.g., longing, loss, rebirth, resistance, connection).
-        * Use symbolic elements (objects, weather, light, distance, movement) to reflect inner transformation.
-        * Let meaning emerge gradually, inviting interpretation rather than explaining it.
-        * Ensure the implicit layer deepens resonance without becoming abstract or obscure.
+*** Requirements:
+    If the provided content is lyrics, Do NOT simply follow the lyrics line-by-line.
+    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
+    Build a complete narrative structure, including:
+    Beginning (setup / introduction of characters or situation)
+    Development (rising tension, conflict, or emotional progression)
+    Climax (a key turning point, high emotional or dramatic moment)
+    Resolution (ending that reflects the song’s message)
+    Translate musical elements into visual storytelling:
+    When the music becomes intense → show danger, conflict, or urgency
+    When the music is soft or emotional → show intimacy, reflection, or memory
+    When the beat drops or chorus hits → create impactful or visually striking moments
+    Use visual scenes instead of abstract explanation:
+    Show actions, environments, and character behavior
+    Avoid explaining the lyrics directly—let the story express them
+    Ensure the story enhances the song:
+    The audience should understand the feeling and meaning of the song through the story
+    The visuals and narrative should feel synchronized with the music
 
-*** output json array like below to hold above content (in original language except name field):
-    [
-        {{
-            "name": "musicstory",
-            "explicit": "视觉开启于一个被雨水打湿的都市深夜，霓虹灯光在积水中扭曲成斑斓的色块。男主角独自坐在路边的一辆旧巴士内，车窗玻璃上的水滴映射着他模糊的面孔。女主角出现在街道对面的旧书摊前，身披一件半透明的雨衣，她在翻找一张泛黄的海报，动作迟缓而犹豫。两人目光在雾气昭昭的空气中短暂交汇，却又迅速像陌生人一样错开。随后的副歌部分，画面切换至一个废弃且昏暗的剧院舞台，舞台中央堆满了散乱的胶片拷贝。男主角在空荡的观众席中机械地鼓掌，而女主角在舞台上跳着一段没有音乐的独舞，光影在他们之间撕裂，光圈不断缩小。进入桥段（Bridge）时，画面色彩由冷调转为极度饱和的暖调，他们并肩走在光影错落的长廊，却始终保持着一个拳头的距离。结尾处，女主角消失在尽头的强光中，只留下男主角站在原地，手中紧握着那张在雨中湿透的海报，海报上的画像已被水迹模糊得无法辨认，镜头缓缓拉远，只剩下一盏明灭不定的路灯。",
-            "implicit": "这不仅仅是一场错过的爱恋，而是一个关于‘受虐式依恋’与‘自我解构’的心理隐喻。霓虹与雨滴代表了记忆的不可靠性与流动性，暗示主人公沉溺于一种被美化了的痛苦中。剧院与舞台的意象揭示了两人关系的本质：一场明知是虚假的表演，一方甘愿作为‘观众’去配合另一方的‘剧本’，以此来确认自己依然存在。‘撕裂的勇敢’与‘圆满的碎裂’通过光影的剧烈反差得以具象化，表达了人在面对注定失败的感情时，通过主动拥抱痛苦来获得某种病态的圣洁感。最后的模糊海报象征着执念的最终消解——我们所爱上的往往不是那个人，而是自己笔下那个被粉饰过的幻影。这种‘浪漫的灾难’是灵魂在荒原中唯一能感受到的剧烈波动，哪怕它是毁灭性的。"
-        }}
-    ]
+
+*** Original Content:
+{content}
+
+"""
+
+
+MV_STORY_DEVELOPMENT = """
+ROLE: Senior Music Story Director & Emotional Narrative Host
+    ** You are a senior music story director specializing in Emotional Storytelling, Sonic Atmosphere, and Narrative Composition.
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight".
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent narrative persona.
+        * It defines:
+            - your emotional interpretation of music
+            - your understanding of human experience through sound
+            - your assumptions about memory, rhythm, and feeling
+            - your storytelling and cinematic pacing principles
+        * In the story enhancement, may involve deep internal emotional and philosophical layering from this.
+
+    ** Your task is to INTENSIFY and DEEPEN (NOT summarize OR lightly enhance) the raw music-story concept into a "Cinematic Music Episode" (many scenes) that feels like a single immersive audiovisual journey rather than fragmented clips.
+
+    ** Then transform the enhanced music-story into a series of professional, emotionally resonant short scenes for a music-driven storytelling experience.
+        * Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time, emotion, or location, the Narrator must guide transitions so the audience never feels lost.
+        * Emotional Expression Through Sound: Use the "Show, Don't Tell" rule. Emotions should manifest through:
+            - rhythm
+            - silence
+            - environment
+            - micro-actions (hands, breath, gaze)
+          NOT through explicit explanation.
+
+*** OBJECTIVES
+    ** Deconstruct the original raw music-story concept and expand it into detailed, structured scenes, adding:
+        - sensory details
+        - musical atmosphere
+        - emotional subtext
+      while keeping the core narrative intact.
+
+    PHASE 1 - Deepening the Music-Story:
+        • Add sensory and sonic layers:
+            - ambient sounds
+            - musical cues (piano, strings, bass, silence, distortion)
+            - emotional timing (pause, interruption, repetition)
+        • Show emotional states through:
+            - body language
+            - interaction with environment
+            - rhythm of movement
+            - contrast between sound and silence
+
+    PHASE 2 - Generate the Scenes:
+        ** Keep each scene concise:
+            * Dialogue or narration should fit within ~10 seconds.
+            * Split into more scenes if needed to maintain natural flow.
+            * Transitions must feel fluid and cinematic, never abrupt.
+
+        ** Scene flow pattern:
+            - Character expression → music cue → narrator insight → next emotional beat
+
+RULES:
+    ** Narrative Continuity:
+        Ensure seamless transitions across time, space, and emotional states.
+        Narrator must guide shifts when needed.
+
+    ** Show Through Music:
+        Emotions must be expressed through:
+            - sound design
+            - silence
+            - pacing
+            - visual rhythm
+        Avoid direct explanation of feelings.
+
+    ** Musical Storytelling:
+        Each scene should feel like part of a song progression:
+            - intro (setup)
+            - build (tension)
+            - drop (emotional peak)
+            - echo (aftermath)
+
+    ** The Cliffhanger:
+        The final scene must leave an unresolved emotional or narrative tension —
+        a lingering note, silence, or unanswered moment.
+
+    ** Core Insight Integration:
+        * Do NOT explicitly reference the core insight.
+        * Do NOT use its original metaphors or terminology.
+        * Instead:
+            - Let it shape emotional pacing
+            - Influence character behavior
+            - Guide narrative rhythm
+            - Exist beneath the surface
+        * The audience should FEEL the depth, not be told.
+
+OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array of objects with these fields:
+
+        * actor: [Gender/Age/{language} Name/Tone]
+            (One character in the story, in English)
+
+        * actions: [Mood/Emotion + physical movements or expressions]
+            (Character's visible behavior, in English)
+
+        * narrator: [Gender/Age/{language}]
+            (Narrator / Music Story Host, in English)
+
+        * speaking:
+            Character dialogue | Narrator narration (in {language})
+            - Must feel natural and emotionally rhythmic
+            - Early scenes must include "Exposition through Dialogue"
+              (identity, background, situation revealed naturally)
+
+        * visual:
+            Detailed cinematic setting
+            (time, weather, lighting, environment, atmosphere, camera feel)
 """
 
 
@@ -1809,7 +2080,7 @@ CHANNEL_CONFIG = {
 
         "scene_min_length": 20,
         "watermark": {
-            "path": "media/watermark.png",
+            "path": "media/counseling_watermark.png",
             "margin_x": 10,
             "margin_y": 10,
         },
@@ -1822,11 +2093,8 @@ CHANNEL_CONFIG = {
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
         ],
         "channel_prompt": {
-            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "prompt_story_init": COUNSELING_INIT,
-            "prompt_program_debut": COUNSELING_DEBUT,
-            "prompt_slide_show": COUNSELING_SLIDESHOW,
+            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS
         },
         "channel_template": [
             {
@@ -1836,6 +2104,46 @@ CHANNEL_CONFIG = {
             },
         ]
     },
+
+
+    "music_story": {
+        "topic": "Musical myths and legends",
+        "channel_name": "音乐故事",
+        "channel_id": "music_story",
+        "channel_category_id": "10",
+        "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
+        "channel_key": "client_secret_creative4teen.json",
+
+        "scene_min_length": 20,
+        "watermark": {
+            "path": "media/mv_watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
+        # NotebookLM Prompt 类型选择（可扩展）
+        "notebooklm_prompt_choices": [
+            ("SUNO Prompt", NOTEBOOKLM_PROMPT__SUNO),
+            ("SUNO 2 Layers", NOTEBOOKLM_PROMPT__SUNO_2_LAYERS),
+            ("Lyrics", NOTEBOOKLM_PROMPT__MV_LYRICS),
+            ("Story from Lyrics", NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS),
+            ("Story 2 Layers", NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS)
+        ],
+
+        "channel_prompt": {
+            "prompt_reference_filter": MV_REFERENCE_FILTER,
+            "prompt_program_raw": MV_RAW_FROM_OBSERVATIONS
+        },
+
+        "channel_template": [
+            {
+                "name": "story",
+                "mode": "init_multiple",
+                "prompt": MV_STORY_DEVELOPMENT
+            },
+        ],
+        "channel_key": "config/client_secret_main.json"
+    },
+
 
     "counseling_talk": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
@@ -1847,9 +2155,7 @@ CHANNEL_CONFIG = {
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "prompt_story_init": COUNSELING_INIT,
-            "prompt_program_debut": COUNSELING_DEBUT,
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER
         },
         "channel_template": [
             {
@@ -1861,53 +2167,6 @@ CHANNEL_CONFIG = {
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
-    "counseling_full": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
-        "channel_id": "counseling",
-        # NotebookLM Prompt 类型选择（可扩展）
-        "notebooklm_prompt_choices": [
-            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
-            ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
-            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
-        ],
-        "channel_prompt": {
-            "prompt_program_raw": COUNSELING_RAW_FROM_OBSERVATIONS,
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "prompt_story_init": COUNSELING_INIT,
-            "prompt_program_debut": COUNSELING_DEBUT
-        },
-        "channel_template": [
-            {
-                "name": "starting",
-                "mode": "raw_single",
-                "prompt": COUNSELING_CASE_SUMMARY
-            },
-            {
-                "name": "starting"
-            },
-            {
-                "name": "intro",
-                "mode": "init_single",
-                "prompt": COUNSELING_INTRO
-            },
-            {
-                "name": "story",
-                "mode": "init_multiple",
-                "prompt": COUNSELING_STORY_DEVELOPMENT
-            },
-            {
-                "name": "analysis",
-                "mode": "debut_multiple",
-                "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
-            },
-            {
-                "name": "ending"
-            }
-        ],
-        "channel_key": "config/client_secret_creative4teen.json"
-    },
 
     "counseling_story": {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
@@ -1921,9 +2180,7 @@ CHANNEL_CONFIG = {
         ],
         "channel_prompt": {
             "prompt_program_raw": COUNSELING_RAW_FROM_STORY,
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "prompt_story_init": COUNSELING_INIT,
-            "prompt_program_debut": COUNSELING_DEBUT
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER
         },
         "channel_template": [
             {
@@ -1952,47 +2209,13 @@ CHANNEL_CONFIG = {
     },
 
 
-    "mv": {
-        "topic": "Musical myths and legends",
-        "channel_name": "音乐故事",
-        "channel_id": "mv",
-        "channel_prompt": {
-            "prompt_program_raw": MV_RAW,
-            "prompt_reference_filter": MV_REFERENCE_FILTER,
-            "prompt_story_init": MV_INIT,
-            "prompt_program_debut": MV_DEBUT,
-
-            "story_multiple": MV_STORY_DEVELOPMENT
-
-        },
-        "channel_template": [
-            {
-                "name": "starting"
-            },
-            {
-                "name": "story_multiple"
-            },
-            {
-                "name": "ending"
-            }
-        ],
-        "channel_key": "config/client_secret_main.json"
-    },
-
-
     "broadway": {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
         "channel_id": "broadway",
         "channel_prompt": {
             "prompt_program_raw": MV_RAW,
-            "prompt_reference_filter": MV_REFERENCE_FILTER,
-            "prompt_story_init": MV_INIT,
-            "prompt_program_debut": MV_DEBUT,
-
-            "intro": BROADWAY_INTRO,
-            "development1": BROADWAY_STORY
-
+            "prompt_reference_filter": MV_REFERENCE_FILTER
         },
         "channel_templates": [
             {
@@ -2012,43 +2235,4 @@ CHANNEL_CONFIG = {
     }
 
 }
-
-
-
-
-YOUTUBE_CATEGORY_ID = [
-  { "id": "1", "name_en": "Film & Animation", "name_zh": "電影與動畫" },
-  { "id": "2", "name_en": "Autos & Vehicles", "name_zh": "汽車與車輛" },
-  { "id": "10", "name_en": "Music", "name_zh": "音樂" },
-  { "id": "15", "name_en": "Pets & Animals", "name_zh": "寵物與動物" },
-  { "id": "17", "name_en": "Sports", "name_zh": "運動" },
-  { "id": "18", "name_en": "Short Movies", "name_zh": "短片" },
-  { "id": "19", "name_en": "Travel & Events", "name_zh": "旅遊與活動" },
-  { "id": "20", "name_en": "Gaming", "name_zh": "遊戲" },
-  { "id": "21", "name_en": "Videoblogging", "name_zh": "影片部落格" },
-  { "id": "22", "name_en": "People & Blogs", "name_zh": "人物與部落格" },
-  { "id": "23", "name_en": "Comedy", "name_zh": "喜劇" },
-  { "id": "24", "name_en": "Entertainment", "name_zh": "娛樂" },
-  { "id": "25", "name_en": "News & Politics", "name_zh": "新聞與政治" },
-  { "id": "26", "name_en": "Howto & Style", "name_zh": "教學與風格" },
-  { "id": "27", "name_en": "Education", "name_zh": "教育" },
-  { "id": "28", "name_en": "Science & Technology", "name_zh": "科學與科技" },
-  { "id": "29", "name_en": "Nonprofits & Activism", "name_zh": "非營利與社會運動" },
-  { "id": "30", "name_en": "Movies", "name_zh": "電影" },
-  { "id": "31", "name_en": "Anime/Animation", "name_zh": "動漫／動畫" },
-  { "id": "32", "name_en": "Action/Adventure", "name_zh": "動作／冒險" },
-  { "id": "33", "name_en": "Classics", "name_zh": "經典" },
-  { "id": "34", "name_en": "Comedy", "name_zh": "喜劇（影片分類）" },
-  { "id": "35", "name_en": "Documentary", "name_zh": "紀錄片" },
-  { "id": "36", "name_en": "Drama", "name_zh": "戲劇" },
-  { "id": "37", "name_en": "Family", "name_zh": "家庭" },
-  { "id": "38", "name_en": "Foreign", "name_zh": "外語" },
-  { "id": "39", "name_en": "Horror", "name_zh": "恐怖" },
-  { "id": "40", "name_en": "Sci-Fi/Fantasy", "name_zh": "科幻／奇幻" },
-  { "id": "41", "name_en": "Thriller", "name_zh": "驚悚" },
-  { "id": "42", "name_en": "Shorts", "name_zh": "短片（影片分類）" },
-  { "id": "43", "name_en": "Shows", "name_zh": "節目" },
-  { "id": "44", "name_en": "Trailers", "name_zh": "預告片" }
-]
-
 

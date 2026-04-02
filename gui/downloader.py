@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import json
 import re
+import string
 import threading
 import glob
 
@@ -25,6 +26,8 @@ from utility.audio_transcriber import AudioTranscriber
 from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json, make_safe_file_name
 from gui.choice_dialog import askchoice
 from gui.reference_editor_dialog import ReferenceEditorDialog
+from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
+from utility.tags_text import merge_tag_pick, parse_tags_list
 import project_manager
         
 # 导入所需模块
@@ -33,6 +36,17 @@ import tkinter.ttk as ttk
 import tkinter.messagebox as messagebox
 import tkinter.scrolledtext as scrolledtext
 import tkinter.simpledialog as simpledialog
+
+
+def _format_nb_prompt_template(template: str, **kwargs) -> str:
+    """只对模板中出现的 {name} 占位符填入 kwargs，避免各频道模板字段不一致导致 str.format 报错。"""
+    names = set()
+    for _, field_name, _, _ in string.Formatter().parse(template):
+        if not field_name:
+            continue
+        names.add(field_name.split("!")[0].split(":")[0].strip())
+    safe = {k: kwargs.get(k, "") for k in names}
+    return template.format(**safe)
 
 
 def _treeview_item_tags_safe(tree, item):
@@ -1336,7 +1350,7 @@ class MediaGUIManager:
         self.active_summary_threads = []
         self.active_threads_lock = threading.Lock()
 
-        self.topic_choices, self.topic_categories, self.tag_choices = config.load_topics(self.channel_path)
+        self.topic_choices, self.topic_categories, self.tag_features_map = config.load_topics(self.channel_path)
         
         # 初始化主主题分类变量
         self.main_topic_category = None
@@ -1694,7 +1708,7 @@ class MediaGUIManager:
                 if tags_list:
                     video_detail['tags'] = tags_list
             elif isinstance(raw_tags, str) and raw_tags.strip():
-                video_detail['tags'] = [t.strip() for t in raw_tags.split(',') if t.strip()]
+                video_detail["tags"] = parse_tags_list(raw_tags)
             # 保存到文件（在锁内，确保数据一致性）
             try:
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -1899,7 +1913,7 @@ class MediaGUIManager:
         tree.heading("story", text="Story")
         tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
-        tree.heading("tags", text="问题标签")
+        tree.heading("tags", text="标签")
         tree.heading("mark", text="关联ID")
         
         tree.column("#0", width=30, anchor="center")
@@ -1912,7 +1926,7 @@ class MediaGUIManager:
         tree.column("story", width=20, anchor="center")
         tree.column("topic_category", width=150, anchor="w")
         tree.column("topic_subtype", width=100, anchor="w")
-        tree.column("tags", width=80, anchor="w")
+        tree.column("tags", width=220, anchor="w")
         tree.column("mark", width=120, anchor="w")
         
 
@@ -2028,10 +2042,14 @@ class MediaGUIManager:
                 topic_subtype = video.get('topic_subtype', '')
                 problem_tags = video.get('tags', '')
                 if isinstance(problem_tags, list):
-                    problem_tags = ' | '.join(problem_tags)
+                    problem_tags = " | ".join(str(t) for t in problem_tags if t is not None)
                 elif not isinstance(problem_tags, str):
-                    problem_tags = str(problem_tags) if problem_tags else ''
-                
+                    problem_tags = str(problem_tags) if problem_tags else ""
+
+                tag_cell = problem_tags
+                if len(tag_cell) > 120:
+                    tag_cell = tag_cell[:120] + "…"
+
                 # status：用户可编辑的关联视频 ID，| 分隔（旧版 1/2/3 或下载 success/failed 仍显示为可读）
                 user_status = _status_display_for_related_field(video.get("status", ""))
                 if len(user_status) > 80:
@@ -2048,8 +2066,8 @@ class MediaGUIManager:
                                summary_mark,
                                story_mark,
                                topic_category[:30] if topic_category else '',
-                               topic_subtype[:30] if topic_subtype else '',
-                               problem_tags[:50] if problem_tags else '',
+                               topic_subtype[:30] if topic_subtype else "",
+                               tag_cell,
                                user_status
                            ),
                            tags=(   video.get('url', ''), 
@@ -2245,8 +2263,25 @@ class MediaGUIManager:
             
             ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='nw', padx=5, pady=5)
             tags_var = tk.StringVar(value=topic_tags)
-            tags_entry = ttk.Entry(topic_frame, textvariable=tags_var, width=30)
-            tags_entry.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+            tags_row = ttk.Frame(topic_frame)
+            tags_row.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
+            tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=24)
+            tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def _on_tag_pick(feature: str, option: str):
+                merged = merge_tag_pick(parse_tags_list(tags_var.get() or ""), feature, option)
+                tags_var.set(", ".join(merged))
+
+            def _open_tag_menu():
+                m = build_tag_cascade_menu(
+                    summary_window,
+                    getattr(self, "tag_features_map", None) or {},
+                    _on_tag_pick,
+                )
+                post_menu_below_widget(m, tags_add_btn)
+
+            tags_add_btn = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu)
+            tags_add_btn.pack(side=tk.LEFT, padx=(6, 0))
 
             # 关联视频 ID（| 分隔，网状关系；与列表「关联ID」列同一字段）
             ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=1, column=2, sticky='w', padx=5, pady=5)
@@ -2274,25 +2309,6 @@ class MediaGUIManager:
                     subtype_var.set(current_subtype)
                 else:
                     subtype_var.set('')
-                update_tags()
-            
-            # 主题分类变更时同步更新子类型选项（trace 更可靠，因 <<ComboboxSelected>> 有时不触发）
-            category_var.trace_add('write', lambda *a: update_subtypes())
-            
-            def update_tags(*args):
-                """根据选择的子类型更新标签选项（tags 为字符串数组）"""
-                selected_category = category_var.get()
-                selected_subtype = subtype_var.get()
-                tags = []
-                if selected_category and selected_subtype and self.topic_choices:
-                    for item in self.topic_choices:
-                        if isinstance(item, dict) and item.get('topic_category') == selected_category:
-                            for subtype_item in item.get('topic_subtypes', []):
-                                if isinstance(subtype_item, dict) and subtype_item.get('topic_subtype') == selected_subtype:
-                                    for tag in subtype_item.get('tags', []) or subtype_item.get('problem_tags', []):
-                                        if tag not in tags:
-                                            tags.append(tag)
-
 
             def do_re_category():
                 """重新分类：重新分类，保存回 video_detail 并持久化"""
@@ -2309,7 +2325,6 @@ class MediaGUIManager:
                 tags_list = video_detail.get("tags", [])
                 tags_var.set(", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list or ""))
                 update_subtypes()
-                update_tags()
                 refresh_notebooklm_prompt()
                 try:
                     populate_tree()
@@ -2349,7 +2364,6 @@ class MediaGUIManager:
             def _on_category_var_write(*args):
                 update_subtypes()
             category_var.trace_add('write', _on_category_var_write)
-            subtype_var.trace_add('write', lambda *a: update_tags())
             
             # 保存按钮
             def save_story_info():
@@ -2359,11 +2373,8 @@ class MediaGUIManager:
                 tags_text = tags_var.get().strip()
                 st = status_var.get()
                 
-                # 解析标签（支持 , 或 | 分隔，保留 GENRE=xxx 等格式）
-                if tags_text:
-                    tags_list = [tag.strip() for tag in re.split(r'[|,]', tags_text) if tag.strip()]
-                else:
-                    tags_list = []
+                # 解析标签：KEY=value 与旧版纯文本；| 或「逗号+下一段 KEY=」分隔
+                tags_list = parse_tags_list(tags_text) if tags_text else []
                 
                 # 更新视频详情
                 if category:
@@ -2587,9 +2598,9 @@ class MediaGUIManager:
             topic_frame.columnconfigure(1, weight=1, uniform='topic_inputs')
             topic_frame.columnconfigure(3, weight=1, uniform='topic_inputs')
             
-            # 初始化子类型和标签选项
+            # 初始化子类型选项
             if topic_category:
-                update_subtypes()  # 这会调用 update_tags()
+                update_subtypes()
             
             # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
             _channel_key = os.path.basename(self.channel_path)
@@ -2606,6 +2617,13 @@ class MediaGUIManager:
                 width=16
             )
             prompt_combo.pack(side=tk.LEFT)
+            prompt_initial_btn = ttk.Button(
+                prompt_choice_frame,
+                text="导向说明",
+                width=8,
+                command=lambda: open_initial_content_dialog(lambda: refresh_notebooklm_prompt()),
+            )
+            prompt_initial_btn.pack(side=tk.LEFT, padx=(6, 0))
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
@@ -2848,11 +2866,15 @@ class MediaGUIManager:
             )
             text_widget.pack(fill=tk.BOTH, expand=True)
 
+            # 用户导向说明（非视频正文）：通过模板占位符 {instruction} 嵌入（与 SUNO 等模板一致）
+            initial_content_holder = [""]
+
             def refresh_notebooklm_prompt(*args):
-                """根据 combo 选择生成 prompt 并更新 text_widget + 剪贴板"""
+                """根据 combo 选择生成 prompt 并更新 text_widget + 剪贴板；{instruction} 来自导向说明。"""
                 sel = prompt_combo_var.get()
                 template = next((t for lbl, t in NOTEBOOKLM_PROMPT_CHOICES if lbl == sel), NOTEBOOKLM_PROMPT_CHOICES[0][1])
                 topic = category_var.get().strip() + "-" + subtype_var.get().strip()
+
                 # status 中为关联视频的 YouTube id（| 分隔）；在 channel_videos 列表中按 id 查找，拼标题与摘要
                 reference_parts = []
                 for i, seg in enumerate( (video_detail.get("status") or "").split("|")):
@@ -2871,9 +2893,22 @@ class MediaGUIManager:
                 story_title = video_detail.get('title', '').strip()
                 story_summary = video_detail.get('summary', '').strip()
                 content = video_detail.get('content', '').strip()
+                link = video_detail.get('url', '').strip()
                 soul = project_manager.get_soul_for_topic(self.channel_path, category_var.get().strip(), subtype_var.get().strip(), self.topic_choices) or ''
-                prompt = template.format( topic=topic, language=config.LANGUAGES[self.language], reference=reference, soul=soul,
-                                          story_title=story_title, story_summary=story_summary, content=content )
+                instruction = (initial_content_holder[0] or "").strip()
+                prompt = _format_nb_prompt_template(
+                    template,
+                    topic=topic,
+                    tags=tags_var.get().strip(),
+                    language=config.LANGUAGES[self.language],
+                    reference=reference,
+                    soul=soul,
+                    story_title=story_title,
+                    story_summary=story_summary,
+                    content=content,
+                    link=link,
+                    instruction=instruction,
+                )
 
                 text_widget.config(state=tk.NORMAL)
                 text_widget.delete(1.0, tk.END)
@@ -2887,16 +2922,57 @@ class MediaGUIManager:
                     except Exception:
                         pass
 
+            def open_initial_content_dialog(on_done=None):
+                """弹出窗口编辑导向说明；确定后执行 on_done（默认刷新 LM prompt）。"""
+                dlg = tk.Toplevel(summary_window)
+                dlg.title("Initial content（导向说明）")
+                dlg.geometry("640x320")
+                dlg.transient(summary_window)
+                dlg.grab_set()
+                dlg.update_idletasks()
+                px = (dlg.winfo_screenwidth() - 640) // 2
+                py = (dlg.winfo_screenheight() - 320) // 2
+                dlg.geometry(f"640x320+{px}+{py}")
+                ttk.Label(
+                    dlg,
+                    text=(
+                        "补充你希望 NotebookLM 侧重的方向、故事意图、受众等（可选）。\n"
+                        "将填入 NotebookLM 提示模板中的「导向说明」占位符；留空则该段为空。"
+                    ),
+                    wraplength=600,
+                    justify="left",
+                ).pack(anchor="w", padx=12, pady=(12, 6))
+                body = scrolledtext.ScrolledText(dlg, wrap=tk.WORD, width=78, height=12, font=("Arial", 10))
+                body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+                body.insert("1.0", initial_content_holder[0])
+
+                def _ok():
+                    initial_content_holder[0] = body.get("1.0", tk.END).strip()
+                    dlg.destroy()
+                    fn = on_done or refresh_notebooklm_prompt
+                    fn()
+
+                def _cancel():
+                    dlg.destroy()
+
+                bf = ttk.Frame(dlg)
+                bf.pack(pady=(0, 12))
+                ttk.Button(bf, text="确定", command=_ok).pack(side=tk.LEFT, padx=6)
+                ttk.Button(bf, text="取消", command=_cancel).pack(side=tk.LEFT, padx=6)
+
+            def on_prompt_combo_selected(e):
+                open_initial_content_dialog(lambda: refresh_notebooklm_prompt())
+
             def on_category_change(e):
                 update_subtypes()
                 refresh_notebooklm_prompt()
             def on_subtype_change(e):
-                update_tags()
                 refresh_notebooklm_prompt()
-            prompt_combo.bind('<<ComboboxSelected>>', lambda e: refresh_notebooklm_prompt())
+            prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
             category_combo.bind('<<ComboboxSelected>>', on_category_change)
             subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
-            refresh_notebooklm_prompt()  # 初始生成
+
+            refresh_notebooklm_prompt()  # 初始生成（不弹窗）
 
             LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
             last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...

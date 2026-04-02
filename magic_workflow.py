@@ -719,36 +719,9 @@ class MagicWorkflow:
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
         stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
-        topic = project_manager.PROJECT_CONFIG.get('topic_category', '') + "-" + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
-        # 
         for story_index, element in enumerate(stories_template):
             element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
             self.add_story_scene(story_index, element, True, is_append=False)
-
-        for index, story_scene in enumerate(self.scenes):
-            scene_mode = story_scene.get("mode", "")
-            #selected_prompt = story_scene.get("prompt", "")
-            #selected_prompt = selected_prompt.format(topic=topic, language=config.LANGUAGES[self.language])
-            if scene_mode == "init_multiple":
-                new_scenes = project_manager.PROJECT_CONFIG.get('init_content', "")
-                if not new_scenes:
-                    continue
-
-                start_id = story_scene.get("id", 0)
-                for i, scene in enumerate(new_scenes):
-                    scene["id"] = start_id + 1
-                    start_id = scene["id"]
-                    scene["name"] = story_scene.get("name", "story")
-                    scene["mode"] = story_scene.get("mode", "")
-                    scene["caption"] = story_scene.get("caption", "")
-                    scene["zero"] = story_scene.get("zero", "")
-                    scene["zero_image"] = story_scene.get("zero_image", "")
-                    scene["zero_audio"] = story_scene.get("zero_audio", "")
-                    scene["clip"] = story_scene.get("clip", "")
-                    scene["clip_image"] = story_scene.get("clip_image", "")
-                    scene["clip_audio"] = story_scene.get("clip_audio", "")
-
-                self.replace_scene_with_others(index, new_scenes)
 
         for story_scene in self.scenes:
             if not story_scene.get("host_display"):

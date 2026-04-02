@@ -1271,13 +1271,13 @@ class AVReviewDialog:
         _content = ""
         selected_prompt = ""
         if _name == "development2":
-            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development2', '')
         elif _name == "development1":
-            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development1', '')
         elif _name == "intro":
-            _content = project_manager.PROJECT_CONFIG.get('init_content', "")
+            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('intro', '')
 
         if not _content:

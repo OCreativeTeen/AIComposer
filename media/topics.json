@@ -1,0 +1,102 @@
+[
+  {
+    "topic_category": "Love & Intimacy__爱情叙事与亲密互动",
+    "description": "围绕爱情、依恋与情感张力，从单人倾诉到双人对话，涵盖甜蜜、心碎与关系博弈。",
+    "topic_subtypes": [
+      {
+        "topic_subtype": "Love Story: 浪漫叙事与情感递进",
+        "description": "从相遇到失去的完整情感弧线，强调情绪推进与故事感。",
+        "tags": ["Romantic & Gentle", "Emotional Progression", "Ballad", "Lyrical Narrative"]
+      },
+      {
+        "topic_subtype": "Love Dialogue: 对唱互动与关系张力",
+        "description": "男女或双声部对话，通过Call & Response制造关系张力。",
+        "tags": ["Musical Duets", "Call and Response", "Emotional Twist", "Duality"]
+      },
+      {
+        "topic_subtype": "Love Whisper: 亲密低语与身体感律动",
+        "description": "强调呼吸感、贴近感与低强度律动。",
+        "tags": ["R&B Slow Jam", "Acoustic Heartbeat", "Romantic & Soothing", "Intimate"]
+      }
+    ]
+  },
+  {
+    "topic_category": "Sacred & Healing__神圣疗愈与内在修复",
+    "description": "涵盖祷告、忏悔与情绪释放，强调内在连接与精神安放。",
+    "topic_subtypes": [
+      {
+        "topic_subtype": "Prayer & Hymn: 神圣冥想与仪式感",
+        "description": "偏圣咏、冥想与宗教仪式氛围。",
+        "tags": ["Chant-like", "Ambient", "Peaceful & Uplifting", "Ritual"]
+      },
+      {
+        "topic_subtype": "Healing & Comfort: 情绪修复与温柔陪伴",
+        "description": "安抚、疗愈、重建安全感。",
+        "tags": ["Light & Healing", "Soothing", "Reflective", "Hopeful"]
+      },
+      {
+        "topic_subtype": "Confessional: 私密独白与真实表达",
+        "description": "类似日记的情感表达，真实、脆弱。",
+        "tags": ["Diary-like", "Minimal", "Emotional", "Honest"]
+      }
+    ]
+  },
+  {
+    "topic_category": "Epic & Narrative__史诗叙事与寓言表达",
+    "description": "强调宏大叙事、人生寓言与文化象征。",
+    "topic_subtypes": [
+      {
+        "topic_subtype": "Epic Cinematic: 史诗构建与英雄旅程",
+        "description": "宏大配器、强情绪推进。",
+        "tags": ["Epic", "Orchestral", "Triumphant", "Wide-leap"]
+      },
+      {
+        "topic_subtype": "Ballad & Allegory: 民谣叙事与隐喻表达",
+        "description": "通过故事传递象征意义。",
+        "tags": ["Folk", "Symbolic", "Narrative", "Acoustic"]
+      }
+    ]
+  },
+  {
+    "topic_category": "Rhythm & Social__节奏驱动与群体互动",
+    "description": "强调节奏、身体律动与社交能量释放。",
+    "topic_subtypes": [
+      {
+        "topic_subtype": "Dance & Group Energy: 集体舞动与节奏驱动",
+        "description": "强节奏、适合舞蹈或集体互动。",
+        "tags": ["House Beat", "Dance", "Upbeat", "Group Energy"]
+      },
+      {
+        "topic_subtype": "Lively Interaction: 互动感与律动沟通",
+        "description": "节奏用于人与人之间的互动。",
+        "tags": ["Groove", "Syncopation", "Funk", "Lively"]
+      },
+      {
+        "topic_subtype": "Vintage & Swing: 复古律动与人性连接",
+        "description": "复古风格带来社交亲和力。",
+        "tags": ["Swing", "Jazz", "Soul", "Retro"]
+      }
+    ]
+  },
+  {
+    "topic_category": "Growth & Meaning__成长动机与精神表达",
+    "description": "涵盖励志、友情、文化认同与人生意义。",
+    "topic_subtypes": [
+      {
+        "topic_subtype": "Inspirational: 励志成长与突破",
+        "description": "从低谷走向高点的情绪结构。",
+        "tags": ["Uplifting", "Rising Arc", "Motivation", "Hope"]
+      },
+      {
+        "topic_subtype": "Friendship & Bond: 友情与连接",
+        "description": "强调信任、陪伴与关系。",
+        "tags": ["Warm", "Trust", "Companionship", "Light"]
+      },
+      {
+        "topic_subtype": "Patriotic & Cultural: 仪式与文化认同",
+        "description": "国家、文化或仪式表达。",
+        "tags": ["Ceremonial", "Anthem", "Cultural", "Unity"]
+      }
+    ]
+  }
+]

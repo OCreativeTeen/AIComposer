@@ -16,15 +16,13 @@ STORY_REMIX_SPEAKING_SYSTEM_PROMPT = """
 	** You must redistribute the narrative flow to balance the weight of each scene without changing the array size.
 
 *** Core Requirements
-	** CRITICAL: Array Length Preservation (1:1 Mapping)
-		* STRICTLY!!!!!: The number of elements (objects) in the output array MUST be EXACTLY equal to the input array !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		* STRICTLY!!!!!: If input has N elements, output MUST have N elements !!!!!!!!!!!!!!!!!!!!!!!!!!!
+	** CRITICAL: try to keep result json array length the same as input array length !!!!!!!!!!
 		* So, basically, DO NOT merge or split elements.
 	** Content Redistribution & Balancing
 		* You may move text across the boundaries of adjacent scenes to balance length.
 		* If a scene is too short, pull relevant detail from the previous or next scene to fill it.
 		* If a scene is too long, push some content into the adjacent scenes.
-		* The goal is for each of the N scenes to feel like a balanced, meaningful unit, while staying within the N-element constraint.
+		* The goal is for each of the scenes to feel like a balanced, meaningful unit !!!!!!!!!!
 	** No Summarization (Preserve Density)
 		* Do NOT summarize or shorten the total content.
 		* Preserve all original details, nuances, and descriptive richness.
@@ -32,18 +30,16 @@ STORY_REMIX_SPEAKING_SYSTEM_PROMPT = """
 	** Natural Spoken Style
 		* The output must sound like spontaneous human speech, not a written script.
 		* Keep it conversational and "perfectly imperfect":
-			- Use natural fillers, casual phrasing, discourse markers!!!!!!!!!!
+			- Use natural fillers, casual phrasing, discourse markers !!!!!!!!!!
 			- Allow for slight redundancies or minor repetitions common in speaking.
 			- Ensure the flow between scenes feels like a person thinking and talking in real-time.
-            - DO NOT use long sentences, or complex sentences!!!!!! Can break sentence into short sentences, or use short phrases.
+            - DO NOT use long sentences, or complex sentences !!!!!!!!!! Can break sentence into short sentences, or use short phrases.
 	** Language & Grammar
 		* Fix typos and punctuation errors in {language}.
 		* Ensure each scene is a self-contained "thought cluster" but remains part of the continuous flow.
 
 *** Output Format
 	** Return ONLY a valid JSON array.
-	** STRICTLY!!!!!: The array length MUST be identical to the input length!!!!!!!!!!!!!!!!!!!!!!!!!
-	** Order is fixed: output[0] refines input[0], output[1] refines input[1], etc. Do NOT add index fields.
 	** Each object MUST contain:
 		* "speaking" — the refined content for that scene (same position as in the input array).
 	** NO markdown code blocks (unless requested), or explanations in your response. Only the JSON.
@@ -730,18 +726,6 @@ You will analyze the music from the specified YouTube link or music-description 
 ]
 
 
-
-SUNO_LYRICS_SYSTEM_PROMPT = """
-You are a professional to make the lyrics for a {suno_lang} song, which express the content in 'user-prompt':
-
-** Please make the lyrics like story-telling (has details to describe the content / feelings / conflicts / etc)
-        **** make it transcend/distill/elevated realm of resonance that moves and inspires.
-** Lyrics should be concise, non-repetitive, and carefully crafted with strong, consistent rhyme schemes.
-
-** The lyrics is for music styles like : 
-{music_styles}
-
-"""
 
 
 

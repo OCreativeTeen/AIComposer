@@ -1,0 +1,96 @@
+{
+  "Structure": [
+    "Layer by layer",
+    "Rising arc",
+    "Call and response",
+    "A-B-A",
+    "Circular reprise",
+    "Through-composed"
+  ],
+  "Melody": [
+    "Ambient",
+    "Lyrical",
+    "Strong melody",
+    "Fragmented motif",
+    "Chant-like",
+    "Epic cinematic"
+  ],
+  "Rhythm": [
+    "Slow Pop Ballad",
+    "R&B Groove",
+    "House Beat",
+    "Trap Pulse",
+    "Swing Jazz",
+    "Bossa Nova",
+    "Afrobeat",
+    "Ambient Pulse"
+  ],
+  "Atmosphere": [
+    "Light & relaxing",
+    "Light & healing",
+    "Romantic & gentle",
+    "Romantic & passionate",
+    "Emotional progression",
+    "Epic",
+    "Mysterious",
+    "Reflective",
+    "Hopeful"
+  ],
+  "Instruments": [
+    "Piano",
+    "Acoustic Guitar",
+    "Full Strings",
+    "Violin",
+    "Cello",
+    "Ney Flute",
+    "Oud",
+    "Synth Pads",
+    "Heavy Percussion",
+    "Taiko Drums"
+  ],
+  "World Instruments": [
+    "Chinese Guzheng",
+    "Japanese Koto",
+    "Indian Tabla",
+    "Arabic Oud",
+    "African Djembe",
+    "Celtic Harp",
+    "Andean Panpipes",
+    "Tibetan Dungchen"
+  ],
+  "Language": [
+    "Instrumental",
+    "English",
+    "中文",
+    "粵語",
+    "Japanese",
+    "Korean",
+    "Spanish",
+    "French",
+    "Arabic",
+    "Hebrew",
+    "Mixed Language"
+  ],
+  "Energy": [
+    "Calm",
+    "Soft",
+    "Mid-tempo",
+    "Upbeat",
+    "Energetic",
+    "Intense"
+  ],
+  "Music content": [
+    "Story telling",
+    "Chinese festival",
+    "Travel & journey",
+    "Meditation & healing",
+    "Workout & sports",
+    "Study & focus",
+    "Wedding & ceremony",
+    "Memorial & tribute",
+    "Nightlife & club",
+    "Nature & landscape",
+    "Urban life",
+    "Children & family"
+  ]
+}

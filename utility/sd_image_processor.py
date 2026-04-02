@@ -27,6 +27,7 @@ GEN_CONFIG = {
         "I2V":    {"url": "http://10.0.0.231:9001/wan/image2video",    "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":16, "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
         "2I2V":   {"url": "http://10.0.0.231:9001/wan/imagesss2video", "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":91,  "image_width":704, "image_height":400},
 
+        #"HS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":120, "image_width":922, "image_height":518},
         "HS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":196, "image_width":720, "image_height":405},
         "S2V":    {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":5,  "frame_rate":15, "max_frames":226, "image_width":672, "image_height":378},
         "FS2V":   {"url": "http://10.0.0.222:9001/wan/infinite_s2v",   "face": "66", "seed": 1234567890, "steps": 4, "cfg": 0.5, "motion_frame":4,  "frame_rate":15, "max_frames":335, "image_width":550, "image_height":310},

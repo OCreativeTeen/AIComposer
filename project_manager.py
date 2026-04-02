@@ -19,6 +19,7 @@ import config_prompt
 import config_channel
 from utility.llm_api import LLMApi, LM_STUDIO
 from utility.file_util import safe_copy_overwrite, safe_remove
+from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
 from gui.downloader import MediaGUIManager
 
@@ -294,7 +295,7 @@ class ProjectSelectionDialog:
             'channel_template': None,
             'topic_category': None,
             'topic_subtype': None,
-            'tags': None,  # list of selected tag values from tags.json (one per tag_type)
+            'tags': None,  # list of str，如 Feature=选项、GENRE=Jazz；与 tags.json 两级菜单一致
             'soul': None,
             'content': None,
             'action': None,
@@ -509,7 +510,7 @@ class ProjectSelectionDialog:
 
         # 主题分类选择（两级：category 和 subtype，各单选）
         topics_data = []  # 存储完整的 topics.json 数据
-        tag_choices_data = []  # 存储 tags.json 数据 [{tag_type, tags}, ...]
+        tag_features_map = {}  # tags.json：{ "Structure": ["...", ...], ... }
         
         # 主题分类、主题子类型：同一行横向排列
         topic_row = ttk.Frame(main_frame)
@@ -523,12 +524,26 @@ class ProjectSelectionDialog:
         row += 1
 
         # 主题标签显示（可编辑，支持 a,b, GENRE=Jazz 格式，单选变更会同步至此）
-        ttk.Label(main_frame, text="主题标签:").grid(row=row, column=0, sticky='w', padx=(0, 8), pady=5)
+        ttk.Label(main_frame, text="主题标签:").grid(row=row, column=0, sticky='nw', padx=(0, 8), pady=5)
         _tags_initial = self.story_result.get('tags')
         _tags_str = ', '.join(_tags_initial) if isinstance(_tags_initial, list) else (str(_tags_initial) if _tags_initial else '')
         tags_var = tk.StringVar(value=_tags_str)
-        tags_entry = ttk.Entry(main_frame, textvariable=tags_var, width=80)
-        tags_entry.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='ew')
+        tags_row = ttk.Frame(main_frame)
+        tags_row.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='ew')
+        tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=72)
+        tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def _on_tag_pick_pm(feature: str, option: str):
+            merged = merge_tag_pick(parse_tags_list(tags_var.get() or ""), feature, option)
+            tags_var.set(", ".join(merged))
+
+        def _open_tag_menu_pm():
+            from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
+            m = build_tag_cascade_menu(new_project_dialog, tag_features_map, _on_tag_pick_pm)
+            post_menu_below_widget(m, tags_add_btn_pm)
+
+        tags_add_btn_pm = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu_pm)
+        tags_add_btn_pm.pack(side=tk.LEFT, padx=(8, 0))
         row += 1
         
         # 显示说明文本的标签（支持多行）
@@ -537,40 +552,40 @@ class ProjectSelectionDialog:
         row += 1
         
         def _tags_analysis_part(tags):
-            """从 tags 中提取分析得来的部分（不含 '=' 的项）"""
+            """从 tags 中提取分析得来的部分（不含 '=' 的项，含旧版纯文本标签）"""
             if not tags:
                 return []
-            lst = [t.strip() for t in (tags if isinstance(tags, list) else re.split(r'[|,]', str(tags))) if t and isinstance(t, str)]
-            return [t for t in lst if '=' not in t]
+            lst = tags if isinstance(tags, list) else parse_tags_list(str(tags))
+            lst = [t.strip() for t in lst if t and isinstance(t, str)]
+            return [t for t in lst if "=" not in t]
 
         def _tags_manual_part(tags):
-            """从 tags 中提取手动选择的 name=value 部分"""
+            """从 tags 中提取手动选择的 KEY=value 部分"""
             if not tags:
                 return []
-            lst = [t.strip() for t in (tags if isinstance(tags, list) else re.split(r'[|,]', str(tags))) if t and isinstance(t, str)]
-            return [t for t in lst if '=' in t]
+            lst = tags if isinstance(tags, list) else parse_tags_list(str(tags))
+            lst = [t.strip() for t in lst if t and isinstance(t, str)]
+            return [t for t in lst if "=" in t]
 
         def _parse_tags_entry_text(text):
             """解析 tags 输入框文本为 (analysis, manual)"""
-            parts = [t.strip() for t in re.split(r'[|,]', text or '') if t.strip()]
-            return [p for p in parts if '=' not in p], [p for p in parts if '=' in p]
+            parts = parse_tags_list(text or "")
+            return [p for p in parts if "=" not in p], [p for p in parts if "=" in p]
 
         def _on_tags_entry_change(*args):
             """用户手动编辑 tags 时同步到 story_result"""
-            combined = [t.strip() for t in re.split(r'[|,]', tags_var.get() or '') if t.strip()]
-            self.story_result['tags'] = combined if combined else None
+            combined = parse_tags_list(tags_var.get() or "")
+            self.story_result["tags"] = combined if combined else None
 
         tags_var.trace_add('write', _on_tags_entry_change)
 
-        tag_combo_refs = []  # 存储 (tag_type, [(val, BooleanVar), ...]) 多选用
-        
         # 更新主题子类型选项的函数（根据选择的 category）
         def update_topic_subtype(*args):
             selected_category = topic_category_combo.get()
             self.story_result['topic_category'] = selected_category.strip() if selected_category else None
             self.story_result['topic_subtype'] = None
-            self.story_result['tags'] = _tags_manual_part(self.story_result.get('tags')) or None  # 保留手动选择的 name=value 标签
-            tags_var.set(', '.join(self.story_result['tags'] or []))
+            # 保留全部标签：KEY=value 与旧版纯文本（切换分类时不再只保留含「=」项）
+            tags_var.set(", ".join(self.story_result.get("tags") or []))
             self.story_result['soul'] = None
             topic_subtype_combo.set('')
             topic_subtype_combo['values'] = []
@@ -621,7 +636,7 @@ class ProjectSelectionDialog:
         # 加载主题分类选项的函数（从 topics.json）；channel/language 已从首层传入，不再从 UI 同步
         def update_topic_choices(*args):
             topics_data.clear()  # 清空旧数据
-            tag_choices_data.clear()
+            tag_features_map.clear()
             topic_category_combo.set('')  # 清空选择
             topic_category_combo['values'] = []
             topic_subtype_combo.set('')
@@ -635,9 +650,10 @@ class ProjectSelectionDialog:
             
             if self.story_result['channel']:
                 channel_path = config.get_channel_path(config_channel.get_channel_id(self.story_result['channel']))
-                loaded_choices, loaded_categories, loaded_tags = config.load_topics(channel_path)
+                loaded_choices, loaded_categories, loaded_tag_map = config.load_topics(channel_path)
                 topics_data.extend(loaded_choices)
-                tag_choices_data.extend(loaded_tags)
+                if isinstance(loaded_tag_map, dict):
+                    tag_features_map.update(loaded_tag_map)
                 topic_category_combo['values'] = sorted(loaded_categories)
             # 频道切换后需更新编辑按钮状态
             try:
@@ -649,14 +665,12 @@ class ProjectSelectionDialog:
         update_topic_choices()
         sync_channel_template()
 
-        # 内容编辑区域：RAW | INIT（两列并排）
+        # 内容编辑区域：RAW
         content_panels_frame = ttk.Frame(main_frame)
         content_panels_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
         content_panels_frame.columnconfigure(0, weight=1)
-        content_panels_frame.columnconfigure(1, weight=1)
         row += 1
 
-        # 第一列：RAW 内容（需先选 topic）
         raw_label_frame = ttk.LabelFrame(content_panels_frame, text="RAW内容", padding=10)
         raw_label_frame.grid(row=0, column=0, padx=(5, 5), sticky='nsew')
         raw_preview = ttk.Label(raw_label_frame, text="RAW: (未生成)", foreground="gray", wraplength=200)
@@ -664,18 +678,8 @@ class ProjectSelectionDialog:
         edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
         edit_raw_btn.pack(pady=5)
 
-        # 第二列：INIT 内容
-        story_label_frame = ttk.LabelFrame(content_panels_frame, text="INIT内容", padding=10)
-        story_label_frame.grid(row=0, column=1, padx=5, sticky='nsew')
-        init_preview = ttk.Label(story_label_frame, text="INIT: (未编辑)", foreground="gray", wraplength=200)
-        init_preview.pack(anchor='w', pady=(0, 10))
-        edit_init_btn = ttk.Button(story_label_frame, text="INIT编辑", command=lambda: None)
-        edit_init_btn.pack(pady=5)
-
-        _editor_open = [False]  # 用 list 以便在闭包中修改；同一时刻只允许打开一个编辑器
-
         def update_previews():
-            """根据 story_result 更新 RAW/INIT 预览文本"""
+            """根据 story_result 更新 RAW 预览文本"""
             def _preview_text(val):
                 """预览用：兼容 str/dict/list，转成短文本。"""
                 if val is None:
@@ -696,23 +700,11 @@ class ProjectSelectionDialog:
                 raw_preview.config(text=f"RAW: {preview}", foreground="black")
             else:
                 raw_preview.config(text="RAW: (未生成)", foreground="gray")
-            # INIT
-            init_str = _preview_text(self.story_result.get('init_content'))
-            if init_str:
-                preview = (init_str[:40] + '…') if len(init_str) > 40 else init_str
-                init_preview.config(text=f"INIT: {preview}", foreground="black")
-            else:
-                init_preview.config(text="INIT: (未编辑)", foreground="gray")
 
-        # 根据 topic、raw 状态启用/禁用编辑按钮
+        # 根据 topic 启用/禁用 RAW 编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
-            has_raw = bool(self.story_result.get('raw_content'))
-            editor_busy = _editor_open[0]
-            edit_raw_btn.config(state='normal' if has_topic and not editor_busy else 'disabled')
-            # INIT：需已选 topic 且已有 raw_content
-            can_edit_init = has_topic and has_raw and not editor_busy
-            edit_init_btn.config(state='normal' if can_edit_init else 'disabled')
+            edit_raw_btn.config(state='normal' if has_topic else 'disabled')
 
 
         def on_topic_category_selected(e):
@@ -847,29 +839,6 @@ class ProjectSelectionDialog:
             update_buttons_state()
             new_project_dialog.after(300, lambda: open_raw_editor(initial_text=_init_raw.strip()))
 
-
-        def open_init_editor():
-            _editor_open[0] = True
-            update_buttons_state()
-
-            topic = self.story_result.get('topic_category','') + " - " + self.story_result.get('topic_subtype','')
-            user_prompt = f"On topic of {topic}, the initial story script is : \n{self.story_result.get('raw_content','')}\n\n\n\
-                        And the core-insight ('soul') is: \n{self.story_result.get('soul', '')}"
-            system_prompt = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {}).get('prompt_story_init', '')
-            narrator = self.story_result.get('narrator') or config.CHARACTER_PERSON_OPTIONS[0]
-            system_prompt = system_prompt.format(
-                language=LANGUAGES[self.story_result['language']],
-                topic=topic,
-                narrator=narrator
-            )
-            # 调用LLM生成内容
-            self.story_result['init_content'] = self.llm_api.generate_json(system_prompt, user_prompt)
-
-            update_previews()
-
-
-        edit_init_btn.config(command=open_init_editor)
-
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
         
@@ -889,22 +858,11 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            if not self.story_result.get('init_content', None):
-                self.story_result['init_content'] = ""
-
             if not self.story_result.get('raw_content', None):
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
 
-            def _material_to_str(val):
-                if val is None or val == '':
-                    return ''
-                if isinstance(val, (dict, list)):
-                    return json.dumps(val, ensure_ascii=False)
-                return str(val).strip()
-
-            init_str = _material_to_str(self.story_result.get('init_content'))
-            material_for_summary = init_str if init_str else (self.story_result.get('raw_content') or '').strip()
+            material_for_summary = (self.story_result.get('raw_content') or '').strip()
             if material_for_summary:
                 try:
                     lang_key = self.story_result.get('language', 'tw')
