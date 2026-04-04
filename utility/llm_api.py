@@ -13,7 +13,7 @@ from . import file_util
 
 LM_STUDIO = "qwen/qwen3.5-9b"
 #OLLAMA = "qwen3.5:9b"
-OLLAMA = "gemma3:12b-it-qat"
+OLLAMA = "gemma4"
 
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"

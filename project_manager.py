@@ -17,7 +17,8 @@ from datetime import datetime
 import config
 import config_prompt
 import config_channel
-from utility.llm_api import LLMApi, LM_STUDIO
+import utility.llm_api as llm_api
+from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove
 from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
@@ -267,7 +268,7 @@ class ProjectSelectionDialog:
         self.youtube_gui = youtube_gui
         self.selected_config = None
         self.llm_api = LLMApi()
-        self.llm_api_local = LLMApi(LM_STUDIO)
+        self.llm_api_local = LLMApi(llm_api.OLLAMA)
 
         available_channels = list(config_channel.CHANNEL_CONFIG.keys())
         default_channel = initial_channel or (available_channels[0] if available_channels else 'default')

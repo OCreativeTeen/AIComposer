@@ -1375,7 +1375,7 @@ class MediaGUIManager:
         self._input_language = (language or 'zh').strip().lower()
         self.language = 'en' if self._input_language == 'en' else 'zh'  # 从首层传入，后续 YT 功能可复用
         
-        self.llm_api_local = llm_api.LLMApi(llm_api.LM_STUDIO)
+        self.llm_api_local = llm_api.LLMApi(llm_api.OLLAMA)
         self.llm_api = llm_api.LLMApi()
 
         # 创建YoutubeDownloader实例
