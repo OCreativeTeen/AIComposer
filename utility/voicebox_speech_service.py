@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import requests
 
 import config
+from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
+from utility.file_util import safe_copy_overwrite
 
 # 与 minimax_speech_service 一致，供 GUI import EXPRESSION_STYLES
 EXPRESSION_STYLES = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm"]
@@ -100,6 +102,63 @@ def _vb_normalize_race(token: str, language: str) -> str:
     return "english"
 
 
+# 半角标点 → 中文常用全角（TTS 断句更自然）；`;` 按产品习惯映射为 `，`
+_VB_ASCII_PUNCT_TO_FULL = str.maketrans(
+    {
+        ",": "，",
+        ";": "，",
+        ":": "：",
+        "!": "！",
+        "?": "？",
+        "(": "（",
+        ")": "）",
+        "[": "【",
+        "]": "】",
+        "{": "｛",
+        "}": "｝",
+        '"': "\uff02",
+        "'": "\uff07",
+        "@": "＠",
+        "#": "＃",
+        "%": "％",
+        "&": "＆",
+        "*": "＊",
+        "+": "＋",
+        "=": "＝",
+        "<": "＜",
+        ">": "＞",
+        "/": "／",
+        "\\": "＼",
+        "|": "｜",
+        "~": "～",
+        "^": "＾",
+    }
+)
+
+
+def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
+    """将常见英文半角标点换成中文全角；句号 `.` 在非小数处改为 `。`。"""
+    if not s:
+        return s
+    s = s.translate(_VB_ASCII_PUNCT_TO_FULL)
+    return re.sub(r"(?<!\d)\.(?!\d)", "。", s)
+
+
+# 逐句 TTS 后拼接时，句间静音（秒）；来自 noise.wav 裁切，见 FfmpegAudioProcessor.make_silence
+_VB_SEGMENT_GAP_SEC = 0.15
+
+
+def _split_voicebox_segments(text: str) -> List[str]:
+    """按中文句读标点拆句（作用于与 _normalize_for_voicebox 相同语义的文本）。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    text = re.sub(r" +", " ", text)
+    chunks = re.split(r"(?<=[。！？])", text)
+    parts = [c.strip() for c in chunks if c.strip()]
+    return parts if parts else [text]
+
+
 class VoiceboxService:
     """Voicebox：POST /generate + GET /audio/{id}；POST /transcribe（multipart file）。"""
 
@@ -110,6 +169,18 @@ class VoiceboxService:
         self.default_profile_id = os.getenv("VOICEBOX_PROFILE_ID") or DEFAULT_PROFILE_ID
         print(f"Voicebox TTS base: {self.base_url}")
         _ensure_voices_for_project(self.pid)
+        self._ffmpeg_audio = FfmpegAudioProcessor(pid)
+
+    def _normalize_for_voicebox(self, text: str) -> str:
+        """与 create_ssml 中一致：省略号/破折号、全角化、繁简转换（在 html.escape 之前）。"""
+        text = text or ""
+        text = re.sub(r"…", "。\n", text)
+        text = re.sub(r"\.{3,}", "。\n", text)
+        text = text.replace("——", "。\n")
+        text = _vb_normalize_ascii_punctuation_to_cjk(text)
+        text = re.sub(r"[\t\r]+", " ", text)
+        text = config.chinese_convert(text, "zh")
+        return text
 
     def _generate_url(self) -> str:
         return f"{self.base_url}/generate"
@@ -122,20 +193,8 @@ class VoiceboxService:
 
     def create_ssml(self, text: str, voice: Dict[str, Any], actions: str, language: str) -> str:
         """返回 JSON 字符串；synthesize_speech 解析后 POST /generate。"""
-        escaped_text = html.escape(text)
-        # 原文中的 … / —— 先换成句号，再统一在标点后加整段「...——」
-        escaped_text = re.sub(r"…", "。\n", escaped_text)
-        escaped_text = re.sub(r"\.{3,}", "。\n", escaped_text)
-        escaped_text = escaped_text.replace("——", "。\n")
-        #escaped_text = re.sub(r"[\t\n\r]+", " ", escaped_text)
-        escaped_text = re.sub(r"[\t\r]+", " ", escaped_text)
-        #_pause = "..."
-        #_np = re.escape(_pause)
-        #escaped_text = re.sub(rf"([,!?，。？；：！、])(?!{_np})", rf"\1{_pause} ", escaped_text)
-        # 勿匹配「...——」里的三个 .：若紧跟另一 . 则属省略号/停顿前缀，跳过
-        #escaped_text = re.sub(rf"(?<!\d)(?<!\.)\\.(?!\\d)(?!\\.)", f".{_pause} ", escaped_text)
-        escaped_text = config.chinese_convert(escaped_text, "zh")
-
+        norm = self._normalize_for_voicebox(text or "")
+        escaped_text = html.escape(norm)
         profile_id = voice.get("voice") or voice.get("profile_id") or self.default_profile_id
         payload = {
             "profile_id": profile_id,
@@ -143,8 +202,41 @@ class VoiceboxService:
         }
         return json.dumps(payload, ensure_ascii=False)
 
+    def _post_generate_and_save_mp3(self, profile_id: str, text_for_api: str, out_mp3_path: str) -> bool:
+        """POST /generate，轮询下载音频，写入 out_mp3_path。"""
+        body = {"profile_id": profile_id, "text": text_for_api}
+        try:
+            r = requests.post(
+                self._generate_url(),
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=600,
+            )
+            if r.status_code != 200:
+                print(f"Voicebox /generate HTTP {r.status_code}: {r.text[:800]}")
+                return False
+            data = r.json()
+        except requests.RequestException as e:
+            print(f"Voicebox /generate request error: {e}")
+            return False
+
+        job_id = data.get("id")
+        if not job_id:
+            print(f"Voicebox: no id in response: {data!r}")
+            return False
+
+        raw = self._download_audio_bytes(job_id)
+        if raw is None:
+            return False
+
+        os.makedirs(os.path.dirname(out_mp3_path) or ".", exist_ok=True)
+        with open(out_mp3_path, "wb") as f:
+            f.write(raw)
+        return True
+
     def synthesize_speech(self, ssml_text: str) -> Optional[str]:
-        """解析 create_ssml 的 JSON（或兼容仅含 text 字段），生成音频并保存为文件。"""
+        """解析 create_ssml 的 JSON（或兼容仅含 text 字段），生成音频并保存为文件。
+        多句时按标点拆句逐段生成，句间用 make_silence 静音拼接（concat_audios）。"""
         ssml_text = (ssml_text or "").strip()
         audio_path = f"{config.get_project_path(self.pid)}/temp/{self.string_to_code(ssml_text)}.mp3"
         if os.path.exists(audio_path):
@@ -161,34 +253,40 @@ class VoiceboxService:
             print("Voicebox: empty text")
             return None
 
-        body = {"profile_id": profile_id, "text": text}
-        try:
-            r = requests.post(
-                self._generate_url(),
-                json=body,
-                headers={"Content-Type": "application/json"},
-                timeout=600,
-            )
-            if r.status_code != 200:
-                print(f"Voicebox /generate HTTP {r.status_code}: {r.text[:800]}")
+        base = html.unescape(text)
+        segments = _split_voicebox_segments(base)
+        if len(segments) <= 1:
+            if not self._post_generate_and_save_mp3(profile_id, text, audio_path):
                 return None
-            data = r.json()
-        except requests.RequestException as e:
-            print(f"Voicebox /generate request error: {e}")
-            return None
+            return audio_path
 
-        job_id = data.get("id")
-        if not job_id:
-            print(f"Voicebox: no id in response: {data!r}")
-            return None
+        print(
+            f"Voicebox: 拆句 TTS 共 {len(segments)} 段，句间静音 {_VB_SEGMENT_GAP_SEC}s（noise.wav / concat）"
+        )
+        gap = self._ffmpeg_audio.make_silence(_VB_SEGMENT_GAP_SEC)
+        if not gap:
+            print("⚠️ Voicebox: make_silence 失败，句间无静音直接拼接")
+        mp3_parts: List[str] = []
+        for i, seg in enumerate(segments):
+            esc = html.escape(seg)
+            part_path = config.get_temp_file(self.pid, "mp3")
+            if not self._post_generate_and_save_mp3(profile_id, esc, part_path):
+                return None
+            mp3_parts.append(part_path)
 
-        raw = self._download_audio_bytes(job_id)
-        if raw is None:
-            return None
+        chain: List[str] = []
+        for i, p in enumerate(mp3_parts):
+            chain.append(p)
+            chain.append(gap)
 
+        wav = self._ffmpeg_audio.concat_audios(chain)
+        if not wav:
+            return None
+        mp3_out = self._ffmpeg_audio.to_mp3(wav)
+        if not mp3_out:
+            return None
         os.makedirs(os.path.dirname(audio_path) or ".", exist_ok=True)
-        with open(audio_path, "wb") as f:
-            f.write(raw)
+        safe_copy_overwrite(mp3_out, audio_path)
         return audio_path
 
     def _download_audio_bytes(self, job_id: str, max_wait_sec: float = 300.0) -> Optional[bytes]:
