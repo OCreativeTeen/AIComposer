@@ -396,6 +396,12 @@ the merged sentences should be like
 
 
 
+SPEAKING_SUMMARY_SYSTEM_PROMPT = """
+You are a professional expert who is good at generating the Summary (in {language}) from a list of speaking content (in json format) given in 'user-prompt'.
+This summary is used as youtube program description, so, at beginning, please give some youtube video tags (like #pychology #心理咨询 etc).
+"""
+
+
 # 内容总结相关Prompt
 SCENE_SERIAL_SUMMARY_SYSTEM_PROMPT = """
 You are a professional expert who is good at generating the Visual-Summary (image-generation) and sound-effects (audio-generation)

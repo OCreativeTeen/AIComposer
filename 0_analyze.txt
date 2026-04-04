@@ -14,10 +14,16 @@ wan22 3 frames
 
 
 
+replace the narrator with the one in 2nd image
+
+replace the figure with the one in 2nd image
+
+
 content from "Pasted Text" source,  "Narrator:xxx" source help find out the narrator IP image,  "Story-Character:xxx" source help give image of the story characters (male & female)
 
 program starting :  just relax, no specific talk , add some relax background music
 
+replace the host/narrator in 1st image with the IP in 2nd image
 replace the host/narrator in 1st image with the IP in 2nd image (no cup in hand, stand up, no chair)
 replace the host/narrator in 1st image with the IP in 2nd image (no cup in hand, stand up, no chair, pop in front - half body)
 
@@ -27,7 +33,11 @@ remove the PIP (host/narrator) in the image, remove words in image
 
 add the IP in 2nd image to 1st image (no cup in hand, stand up, no chair, pop in front - half body, face to the actor)
 
-主持 "心源谈天" 节目, 做一个节目片头, 有创意的显示出 节目名称
+主持 "心源谈天" 节目, 做一个节目片头 显示在 header 位置, 有创意的显示出 节目名称
+
+woman in center, 主持 "心源谈天" 节目 (only she speaking, left & right persons just listening), 做一个节目片头 显示在 header 位置, 有创意的显示出 节目名称
+woman in center speak: 
+为什么我们常常觉得升官的都不是那些最该升的人？接下来我们就来拆解几个，听起来很不合理，但每天都在上演的游戏逻辑。第一条潜规则，叫做对确定性的渴望。
 
 主持人"明月", 主持 "心源谈天" 节目, 做一个有相应背景的节目片头, 穿职业装
 

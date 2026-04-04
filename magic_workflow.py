@@ -1011,7 +1011,11 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self):
+    def upload_video(self, publish_at=None):
+        """
+        publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
+        若为 datetime（建议带本地时区），则使用 YouTube 定时公开（API 要求先 private + publishAt）。
+        """
         title = self.title.strip().replace(" ", "_").replace("\n", "_")
         title = config.chinese_convert(title, self.language)
         final_video_path = f"{self.publish_path}/{title}_final.mp4"
@@ -1023,21 +1027,31 @@ class MagicWorkflow:
         # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
         thumbnail_path = None
 
-        video_id = self.downloader.upload_video(final_video_path, 
-                                     thumbnail_path, 
-                                     title=title, 
-                                     description=summary, 
-                                     language=self.language, 
-                                     script_path=None, 
-                                     secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
-                                     channel_id=self.channel,
-                                     categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"], 
-                                     tags=[], 
-                                     privacy="unlisted")
+        video_id = self.downloader.upload_video(
+            final_video_path,
+            thumbnail_path,
+            title=title,
+            description=summary,
+            language=self.language,
+            script_path=None,
+            secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
+            channel_id=self.channel,
+            categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"],
+            tags=[],
+            privacy="unlisted",
+            publish_at=publish_at,
+        )
         # 必须用 project_manager.PROJECT_CONFIG，勿 from-import：reload 后本地名会仍指向 None
         pc = project_manager.PROJECT_CONFIG
         if pc is not None:
             pc["video_id"] = video_id
+            if publish_at is not None:
+                try:
+                    pc["youtube_scheduled_publish_at"] = publish_at.isoformat()
+                except Exception:
+                    pc["youtube_scheduled_publish_at"] = str(publish_at)
+            else:
+                pc.pop("youtube_scheduled_publish_at", None)
             save_project_config()
         else:
             print("⚠️ project_manager.PROJECT_CONFIG 未加载，无法将 video_id 写入项目配置")

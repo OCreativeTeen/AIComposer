@@ -13,7 +13,7 @@ import glob
 import config
 import config_prompt
 import config_channel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -1128,7 +1128,25 @@ class MediaDownloader:
 
 
 
-    def upload_video(self, file_path, thumbnail_path, title, description, language, script_path, secret_key, channel_id, categoryId, tags, privacy="unlisted"):
+    def upload_video(
+        self,
+        file_path,
+        thumbnail_path,
+        title,
+        description,
+        language,
+        script_path,
+        secret_key,
+        channel_id,
+        categoryId,
+        tags,
+        privacy="unlisted",
+        publish_at=None,
+    ):
+        """
+        publish_at: 若为 datetime，则定时公开（YouTube 要求 privacy 为 private，并设置 status.publishAt，UTC RFC3339）。
+        若为 None，则按 privacy 立即上传（如 unlisted）。
+        """
         scopes = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
 
         # 区分不同频道的 token 文件
@@ -1174,6 +1192,24 @@ class MediaDownloader:
         # Get the proper YouTube language code
         youtube_language = language_mapping.get(language, language)
 
+        status_block = {
+            "selfDeclaredMadeForKids": False,
+            "containsSyntheticMedia": True,
+        }
+        if publish_at is not None:
+            # API：仅当 privacyStatus 为 private 且从未发布过时，可设置 publishAt
+            if not isinstance(publish_at, datetime):
+                raise TypeError("publish_at 须为 datetime 或 None")
+            local_tz = datetime.now().astimezone().tzinfo
+            dt_utc = publish_at if publish_at.tzinfo else publish_at.replace(tzinfo=local_tz)
+            dt_utc = dt_utc.astimezone(timezone.utc)
+            publish_at_str = dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            status_block["privacyStatus"] = "private"
+            status_block["publishAt"] = publish_at_str
+            print(f"📅 定时发布（UTC）: {publish_at_str}")
+        else:
+            status_block["privacyStatus"] = privacy
+
         request_body = {
             "snippet": {
                 "title": title,
@@ -1183,11 +1219,7 @@ class MediaDownloader:
                 "defaultLanguage": youtube_language,  # Video language
                 "defaultAudioLanguage": youtube_language  # Audio language
             },
-            "status": {
-                "privacyStatus": privacy,  # "private", "unlisted", or "public"
-                "selfDeclaredMadeForKids": False,  # ✅ FIXED: Use correct field for "made for kids"
-                "containsSyntheticMedia": True  # ✅ NEW: Set "Altered content" to YES
-            },
+            "status": status_block,
             # ✅ NEW: Add localizations for title and description language
             "localizations": {
                 youtube_language: {
@@ -1209,6 +1241,9 @@ class MediaDownloader:
         video_id = response["id"]
         print("✅ Upload successful! Video ID:", video_id)
         print(f"📝 Video settings applied:")
+        print(f"   - Privacy: {request_body['status'].get('privacyStatus')}")
+        if request_body["status"].get("publishAt"):
+            print(f"   - publishAt: {request_body['status']['publishAt']}")
         print(f"   - Made for Kids: {request_body['status']['selfDeclaredMadeForKids']}")
         print(f"   - Altered Content: {request_body['status']['containsSyntheticMedia']}")
         print(f"   - Video Language: {youtube_language}")

@@ -124,15 +124,16 @@ class VoiceboxService:
         """返回 JSON 字符串；synthesize_speech 解析后 POST /generate。"""
         escaped_text = html.escape(text)
         # 原文中的 … / —— 先换成句号，再统一在标点后加整段「...——」
-        escaped_text = re.sub(r"…", "。", escaped_text)
-        escaped_text = re.sub(r"\.{3,}", "。", escaped_text)
-        escaped_text = escaped_text.replace("——", "。")
-        escaped_text = re.sub(r"[\t\n\r]+", " ", escaped_text)
-        _pause = "..."
-        _np = re.escape(_pause)
-        escaped_text = re.sub(rf"([,!?，。？；：！、])(?!{_np})", rf"\1{_pause} ", escaped_text)
+        escaped_text = re.sub(r"…", "。\n", escaped_text)
+        escaped_text = re.sub(r"\.{3,}", "。\n", escaped_text)
+        escaped_text = escaped_text.replace("——", "。\n")
+        #escaped_text = re.sub(r"[\t\n\r]+", " ", escaped_text)
+        escaped_text = re.sub(r"[\t\r]+", " ", escaped_text)
+        #_pause = "..."
+        #_np = re.escape(_pause)
+        #escaped_text = re.sub(rf"([,!?，。？；：！、])(?!{_np})", rf"\1{_pause} ", escaped_text)
         # 勿匹配「...——」里的三个 .：若紧跟另一 . 则属省略号/停顿前缀，跳过
-        escaped_text = re.sub(rf"(?<!\d)(?<!\.)\\.(?!\\d)(?!\\.)", f".{_pause} ", escaped_text)
+        #escaped_text = re.sub(rf"(?<!\d)(?<!\.)\\.(?!\\d)(?!\\.)", f".{_pause} ", escaped_text)
         escaped_text = config.chinese_convert(escaped_text, "zh")
 
         profile_id = voice.get("voice") or voice.get("profile_id") or self.default_profile_id
@@ -277,7 +278,7 @@ class VoiceboxService:
 
     def get_voice(self, speaker: str, language: str) -> dict:
         for v in VOICES:
-            if v["name"].lower().strip() == speaker.lower().strip().lower():
+            if v["name"].lower().strip() in speaker.lower().strip().lower():
                 if v["language"].lower().strip() == language.lower().strip():
                     return v
                 else:
