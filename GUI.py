@@ -3134,6 +3134,57 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         return "break"
 
+    def _speaking_merge_next_pair_or_error(self):
+        """合并讲话：须存在下一场景，且列表中下一条即本故事内紧随当前镜的下一条。成功返回 (current, next_scene)，否则返回错误字符串。"""
+        wf = self.workflow
+        idx = self.current_scene_index
+        if idx + 1 >= len(wf.scenes):
+            return "没有下一场景"
+        current = wf.get_scene_by_index(idx)
+        nxt = wf.get_scene_by_index(idx + 1)
+        if not current or not nxt:
+            return "无法读取场景"
+        ss = wf.scenes_in_story(current)
+        if len(ss) <= 1:
+            return "本故事内没有可合并的下一场景"
+        try:
+            pos = ss.index(current)
+        except ValueError:
+            return "无法定位当前场景"
+        if pos + 1 >= len(ss):
+            return "已是本故事最后一镜"
+        if ss[pos + 1] is not nxt:
+            return "列表中的下一场景不是本故事中的下一场景，无法合并讲话"
+        return (current, nxt)
+
+    def _on_speaking_ctrl_m_merge_next_speaking(self, event=None):
+        """Ctrl+M：把本故事下一场景的 speaking 并入当前（中缝按需加中文句号），音视频不变；删除下一场景。"""
+        if not self._speaking_shortcuts_guard():
+            return "break"
+        self.update_current_scene()
+        r = self._speaking_merge_next_pair_or_error()
+        if isinstance(r, str):
+            messagebox.showinfo("提示", r, parent=self.root)
+            return "break"
+        current, nxt = r
+        if not messagebox.askyesno(
+            "合并讲话",
+            "将「下一场景」的讲话合并到当前场景的讲话（中间按需加中文句号）。\n\n"
+            "当前场景的视频、音频、图片等媒体保持不变，不合并音轨。\n"
+            "下一场景将从场景列表中删除。\n\n"
+            "是否继续？",
+            parent=self.root,
+        ):
+            return "break"
+        current["speaking"] = self._speaking_join_prev_then_moved(
+            current.get("speaking") or "",
+            nxt.get("speaking") or "",
+        )
+        self.workflow.scenes.pop(self.current_scene_index + 1)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        return "break"
+
     def on_scene_speaking_copy_double_click(self, event=None):
         """双击讲话框：仅按钮，一点即拷贝（原文 / LLM 精简 / 前缀等）。"""
         raw = self.scene_speaking.get("1.0", tk.END).rstrip("\n")
@@ -4111,8 +4162,10 @@ class WorkflowGUI:
                 self.root,
             )
             if picked:
-                # copy the picked to clipboard
-                self.copy_image_to_clipboard(picked)
+                # copy the picked text to clipboard
+                self.root.clipboard_clear()
+                self.root.clipboard_append(picked[1])
+                self.root.update()
 
             #image_path = None
             #need_select = op_value in ("3", "4")
@@ -5478,13 +5531,15 @@ class WorkflowGUI:
             field.bind('<Return>', self.on_scene_combobox_return_commit)
             field.bind('<KP_Enter>', self.on_scene_combobox_return_commit)
         
-        # 讲话：仅在此框 — Ctrl+S 光标处拆分并克隆场景；Ctrl+Right 尾段移到下一镜；Ctrl+Left 首段移到上一镜
+        # 讲话：仅在此框 — Ctrl+S 拆分克隆；Ctrl+←/→ 移动片段；Ctrl+M 合并下一场景讲话并删下一场景（仅讲话，不碰音视频）
         self.scene_speaking.bind("<Control-s>", self._on_speaking_ctrl_s_split_clone)
         self.scene_speaking.bind("<Control-S>", self._on_speaking_ctrl_s_split_clone)
         self.scene_speaking.bind("<Control-Right>", self._on_speaking_ctrl_right_move_tail_to_next)
         self.scene_speaking.bind("<Control-Left>", self._on_speaking_ctrl_left_move_head_to_prev)
+        self.scene_speaking.bind("<Control-m>", self._on_speaking_ctrl_m_merge_next_speaking)
+        self.scene_speaking.bind("<Control-M>", self._on_speaking_ctrl_m_merge_next_speaking)
 
-        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→")
+        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→/M")
     
 
 
