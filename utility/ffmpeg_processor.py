@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import shutil
 import time
@@ -15,6 +16,11 @@ import unicodedata
 STANDARD_FPS = 60
 STANDARD_AUDIO_RATE = 44100
 STANDARD_AUDIO_CHANNELS = 2
+
+# 与目标分辨率相差在此像素内视为「同尺寸」，避免 int 舍入导致无意义重编码
+DIMENSION_MATCH_TOLERANCE_PX = 2
+# 重编码输出帧率：与 STANDARD_FPS 足够接近时沿用源帧率，减少 30→60 等插帧带来的耗时与体积
+FPS_ENCODE_NEAR_STANDARD_TOLERANCE = 10
 
 # NVENC limitations
 NVENC_MAX_WIDTH = 4096
@@ -301,14 +307,30 @@ class FfmpegProcessor:
             print(f"FFmpeg Error 1: {e.stderr}")
 
 
-    def resize_video(self, video_path, width, height, startx=None, starty=None):
+    def resize_video(self, video_path, width, height, startx=None, starty=None, _probe=None):
+        """将视频缩放到目标分辨率；若与目标同尺寸（允许少量像素容差）且无裁剪则直接返回原路径，避免整文件复制或重编码。
+
+        _probe: 可选，为 probe_video_stream_basic 的返回值，避免与 GUI 重复 ffprobe。
+        """
         try:
-            crop_width, crop_height = self.get_resolution(video_path)
-            x_y_ratio = (float(crop_width)/float(crop_height))
-            if x_y_ratio > 1.0:
-                x_y_ratio = 16.0/9.0
+            if _probe is not None:
+                crop_width = _probe.get("width")
+                crop_height = _probe.get("height")
+                src_fps = _probe.get("fps")
             else:
-                x_y_ratio = 9.0/16.0
+                crop_width, crop_height, src_fps = self._probe_video_size_and_fps(video_path)
+                if crop_width is None or crop_height is None:
+                    crop_width, crop_height = self.get_resolution(video_path)
+                    if crop_width is None or crop_height is None:
+                        return None
+                if src_fps is None:
+                    src_fps = self.get_video_fps(video_path)
+
+            x_y_ratio = (float(crop_width) / float(crop_height))
+            if x_y_ratio > 1.0:
+                x_y_ratio = 16.0 / 9.0
+            else:
+                x_y_ratio = 9.0 / 16.0
 
             if height is None and width is None:
                 height = crop_height
@@ -318,25 +340,30 @@ class FfmpegProcessor:
             elif height is None:
                 height = int(width / x_y_ratio)
 
-            # Check if cropping is needed
             need_crop = (startx is not None and startx != 0) or (starty is not None and starty != 0)
-            need_scale = (crop_height != height or crop_width != width)
-            
-            output_path = config.get_temp_file(self.pid, "mp4")
-            # Early exit if no changes needed
+            tol = DIMENSION_MATCH_TOLERANCE_PX
+            need_scale = (abs(crop_height - height) > tol or abs(crop_width - width) > tol)
+
+            # 无需缩放且无需裁剪：直接沿用原文件（避免大文件 shutil.copy2）
             if not need_scale and not need_crop:
-                shutil.copy2(video_path, output_path)
-                print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")
-                return output_path
-            
+                print(
+                    f"📋 No resize needed ({crop_width}x{crop_height} ≈ target {width}x{height}), "
+                    f"using original: {os.path.basename(video_path)}"
+                )
+                return video_path
+
+            output_path = config.get_temp_file(self.pid, "mp4")
+
             # Normalize startx and starty (default to 0 if None)
             if startx is None:
                 startx = 0
             if starty is None:
                 starty = 0
-            
-            # Build and execute FFmpeg command
-            cmd = self._build_resize_command( video_path, output_path, width, height, startx, starty )
+
+            out_fps = self._output_fps_for_resize_encode(src_fps)
+            cmd = self._build_resize_command(
+                video_path, output_path, width, height, startx, starty, output_fps=out_fps
+            )
             
             print(f"🔧 Executing FFmpeg command for resize_video: {' '.join(cmd)}")
             self.run_ffmpeg_command(cmd)
@@ -383,42 +410,33 @@ class FfmpegProcessor:
             return None
 
 
-    def _build_resize_command(self, video_path, output_path, target_width, target_height, startx=0, starty=0):
+    def _build_resize_command(self, video_path, output_path, target_width, target_height, startx=0, starty=0, output_fps=None):
         """Build FFmpeg command for video resizing with optional cropping."""
         cmd = self._ffmpeg_input_args(video_path)
-        
-        # Build video filter chain
-        # If cropping is needed, combine crop and scale filters
+
         need_crop = (startx != 0 or starty != 0)
-        
+
         if need_crop:
-            # Get original video dimensions for crop calculation
             original_width, original_height = self.get_resolution(video_path)
-            # Calculate crop width and height (crop to target size before scaling)
             crop_w = min(target_width, original_width - startx)
             crop_h = min(target_height, original_height - starty)
-            # Build filter chain: crop first, then scale
             vf_filter = f"crop={crop_w}:{crop_h}:{startx}:{starty},scale={target_width}:{target_height}"
         else:
-            # Only scale if no cropping needed
             vf_filter = f"scale={target_width}:{target_height}"
-        
-        # Add video encoder configuration
-        cmd.extend(self._get_video_output_args(keyframe_interval=False))
-        
-        # Add audio configuration - re-encode to ensure consistency
+
+        out_fps = output_fps if output_fps is not None else STANDARD_FPS
+        cmd.extend(self._get_video_output_args(keyframe_interval=False, fps=out_fps))
+
         if self.has_audio_stream(video_path):
             cmd.extend(self._get_audio_encode_args())
 
-        # Add common output options
-        cmd.extend(self._get_video_output_args(keyframe_interval=False))
         cmd.extend(["-sc_threshold", "0"])
         cmd.extend(self._get_output_optimization_args())
         cmd.extend([
             "-vf", vf_filter,
             output_path
         ])
-        
+
         return cmd
 
 
@@ -2098,6 +2116,52 @@ class FfmpegProcessor:
             print(f"FFmpeg Error getting resolution: {e}")
             return None, None
 
+    def _probe_video_size_and_fps(self, filename):
+        """一次 ffprobe 读取首路视频宽高与帧率，供 resize 与 GUI 复用，减少重复子进程。"""
+        try:
+            result = self.run_ffmpeg_command([
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,r_frame_rate",
+                "-of", "json",
+                filename,
+            ])
+            data = json.loads(result.stdout or "{}")
+            streams = data.get("streams") or []
+            if not streams:
+                return None, None, None
+            s = streams[0]
+            w = int(s["width"]) if s.get("width") is not None else None
+            h = int(s["height"]) if s.get("height") is not None else None
+            r = (s.get("r_frame_rate") or "0/1").strip()
+            if "/" in r:
+                num, den = r.split("/", 1)
+                fps_f = float(num) / float(den) if float(den) != 0 else 0.0
+            else:
+                fps_f = float(r) if r else 0.0
+            fps_i = int(round(fps_f)) if fps_f > 0 else None
+            return w, h, fps_i
+        except Exception as e:
+            print(f"ffprobe size/fps: {e}")
+            return None, None, None
+
+    def probe_video_stream_basic(self, video_path: str):
+        """返回 {"width","height","fps"} 或 None（无视频轨时）。"""
+        w, h, fps = self._probe_video_size_and_fps(video_path)
+        if w is None or h is None:
+            return None
+        return {"width": w, "height": h, "fps": fps}
+
+    def _output_fps_for_resize_encode(self, src_fps):
+        """重编码缩放时输出帧率：与标准帧率接近或常见片源帧率则沿用源，避免强制 60 插帧。"""
+        if src_fps is None or src_fps <= 0:
+            return STANDARD_FPS
+        if abs(src_fps - STANDARD_FPS) <= FPS_ENCODE_NEAR_STANDARD_TOLERANCE:
+            return src_fps
+        if 15 <= src_fps <= 120:
+            return src_fps
+        return STANDARD_FPS
 
 
     def mirror_video(self, video_path):

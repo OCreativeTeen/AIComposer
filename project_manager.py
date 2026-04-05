@@ -22,8 +22,33 @@ from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove
 from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
-from gui.downloader import MediaGUIManager
+from gui.downloader import MediaGUIManager, _format_nb_prompt_template
+from utility.analyzed_content_util import analyzed_content_valid_message_shape
 
+
+def _analyzed_content_for_llm_prompt(val) -> str:
+    """story_result['analyzed_content'] 传给 LLM 时：dict/list 序列化为 JSON 字符串。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, (dict, list)):
+        return json.dumps(val, ensure_ascii=False)
+    return str(val)
+
+
+def _analyzed_content_preview_text(val) -> str:
+    """RAW 预览：与 dict/list/str 兼容。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, (dict, list)):
+        try:
+            return json.dumps(val, ensure_ascii=False)
+        except Exception:
+            return str(val)
+    return str(val).strip()
 
 
 PROJECT_CONFIG = None
@@ -246,7 +271,7 @@ def save_project_config():
 class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
     
-    def __init__(self, parent, config_manager, youtube_gui=None, create_only=False, selection_only=False, initial_channel=None, initial_language=None, initial_raw_content=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
+    def __init__(self, parent, config_manager, youtube_gui=None, create_only=False, selection_only=False, initial_channel=None, initial_language=None, initial_analyzed_content=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
         """
         初始化项目选择对话框
         
@@ -258,7 +283,7 @@ class ProjectSelectionDialog:
             selection_only: 若为 True，只显示项目列表，不显示「新建项目」按钮
             initial_channel: 首层选择的频道（用于创建新项目预填、YT 等）
             initial_language: 首层选择的语言
-            initial_raw_content: 预设的 RAW 内容（用于从 NotebookLM Story 启动新项目）
+            initial_analyzed_content: 预设的 RAW 内容（用于从 NotebookLM Story 启动新项目）
             initial_narrator: 首层选择的旁白 narrator（config_prompt.NARRATOR）
             initial_visual_style: 首层选择的画面风格（config.VISUAL_STYLE_OPTIONS 的 value）
             initial_host_display: 首层选择的 Host 显示（HOST_DISPLAY_OPTIONS_DOWNLOADER 的英文 value）
@@ -268,7 +293,7 @@ class ProjectSelectionDialog:
         self.youtube_gui = youtube_gui
         self.selected_config = None
         self.llm_api = LLMApi()
-        self.llm_api_local = LLMApi(llm_api.OLLAMA)
+        self.llm_api_local = LLMApi(llm_api.LM_STUDIO)
 
         available_channels = list(config_channel.CHANNEL_CONFIG.keys())
         default_channel = initial_channel or (available_channels[0] if available_channels else 'default')
@@ -301,7 +326,7 @@ class ProjectSelectionDialog:
             'content': None,
             'action': None,
         }
-        self.initial_raw_content = initial_raw_content
+        self.initial_analyzed_content = initial_analyzed_content
         if create_only:
             # 创建隐藏的父窗口（用于后续销毁），创建表单必须挂在可见的 parent 下否则会白屏
             self.dialog = tk.Toplevel(parent)
@@ -568,11 +593,6 @@ class ProjectSelectionDialog:
             lst = [t.strip() for t in lst if t and isinstance(t, str)]
             return [t for t in lst if "=" in t]
 
-        def _parse_tags_entry_text(text):
-            """解析 tags 输入框文本为 (analysis, manual)"""
-            parts = parse_tags_list(text or "")
-            return [p for p in parts if "=" not in p], [p for p in parts if "=" in p]
-
         def _on_tags_entry_change(*args):
             """用户手动编辑 tags 时同步到 story_result"""
             combined = parse_tags_list(tags_var.get() or "")
@@ -681,21 +701,8 @@ class ProjectSelectionDialog:
 
         def update_previews():
             """根据 story_result 更新 RAW 预览文本"""
-            def _preview_text(val):
-                """预览用：兼容 str/dict/list，转成短文本。"""
-                if val is None:
-                    return ""
-                if isinstance(val, str):
-                    return val.strip()
-                if isinstance(val, (dict, list)):
-                    try:
-                        return json.dumps(val, ensure_ascii=False)
-                    except Exception:
-                        return str(val)
-                return str(val).strip()
-
             # RAW
-            raw_str = _preview_text(self.story_result.get('raw_content'))
+            raw_str = _analyzed_content_preview_text(self.story_result.get('analyzed_content'))
             if raw_str:
                 preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
                 raw_preview.config(text=f"RAW: {preview}", foreground="black")
@@ -752,22 +759,23 @@ class ProjectSelectionDialog:
             story_str = json.dumps(category_result, indent=2, ensure_ascii=False)
             new_project_dialog.clipboard_clear()
             new_project_dialog.clipboard_append(story_str)
-            # RAW 预览显示 raw_content（原始故事），不显示 category_result JSON
-            raw_str = (self.story_result.get('raw_content') or '').strip()
+            # RAW 预览显示 analyzed_content（原始故事），不显示 category_result JSON
+            raw_str = _analyzed_content_preview_text(self.story_result.get('analyzed_content'))
             if raw_str:
                 preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
                 raw_preview_widget.config(text=f"RAW: {preview}", foreground="black")
 
 
         def open_raw_editor(initial_text=None):
-            """输入 raw case-story，生成 system_prompt 并复制到剪贴板。initial_text 为预填内容时显示「直接使用」按钮；否则从 story_result['raw_content'] 读取"""
-            # 未显式传入时，从 story_result 或 project config 读取已有 raw_content
+            """输入 Raw Case-Story：须为 JSON 对象（结构与 MESSAGE 模板 english/chinese 一致），存为 dict。"""
             if initial_text is None:
-                initial_text = self.story_result.get('raw_content') or ''
-            if isinstance(initial_text, str) and initial_text.strip():
-                initial_text = initial_text.strip()
+                initial_text = self.story_result.get('analyzed_content')
+            if isinstance(initial_text, dict):
+                _prefill = json.dumps(initial_text, ensure_ascii=False, indent=2)
+            elif isinstance(initial_text, str) and initial_text.strip():
+                _prefill = initial_text.strip()
             else:
-                initial_text = None
+                _prefill = None
             raw_dialog = tk.Toplevel(new_project_dialog)
             raw_dialog.title("RAW Case-Story 输入")
             raw_dialog.geometry("700x400")
@@ -783,7 +791,6 @@ class ProjectSelectionDialog:
             case_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=12)
             case_text.pack(fill=tk.BOTH, expand=True)
 
-            _prefill = (initial_text if initial_text is not None else '') or (self.story_result.get('raw_content') or '')
             if _prefill:
                 case_text.insert(tk.END, _prefill)
 
@@ -816,12 +823,43 @@ class ProjectSelectionDialog:
             raw_input = (raw_input_holder[0] or "").strip()
             if not raw_input:
                 return
-            self.story_result['raw_content'] = raw_input
+            try:
+                parsed = json.loads(raw_input)
+            except json.JSONDecodeError:
+                tc = (self.story_result.get("topic_category") or "").strip()
+                ts = (self.story_result.get("topic_subtype") or "").strip()
+                # 与 gui/downloader.refresh_notebooklm_prompt 中 topic 一致
+                topic_str = tc + "-" + ts
+                lang_key = self.story_result.get("language")
+                language_name = LANGUAGES.get(lang_key, lang_key) if lang_key else ""
+                soul = (self.story_result.get("soul") or "").strip()
+                full_prompt = _format_nb_prompt_template(
+                    config_channel.NOTEBOOKLM_PROMPT__COUNSELING_TALK,
+                    topic=topic_str,
+                    language=language_name,
+                    instruction="",
+                    analyzed_content="",
+                    content=raw_input,
+                    soul=soul,
+                )
+                parsed = self.llm_api.generate_json(
+                    full_prompt,
+                    "",
+                    expect_list=False,
+                )
+            if not isinstance(parsed, dict):
+                messagebox.showerror(
+                    "格式错误",
+                    "顶层须为 JSON 对象，例如 {\"english\": {...}, \"chinese\": {...}}。",
+                    parent=new_project_dialog,
+                )
+                return
+            self.story_result['analyzed_content'] = parsed
 
             topic_choices, topic_categories, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
             category_result = self.llm_api_local.generate_json(
                 config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic_choices=topic_choices),
-                self.story_result['raw_content'],
+                _analyzed_content_for_llm_prompt(self.story_result['analyzed_content']),
                 expect_list=False
             )
             if category_result:
@@ -833,12 +871,19 @@ class ProjectSelectionDialog:
         edit_raw_btn.config(command=open_raw_editor)
 
         # 若有预设 RAW（如从 NotebookLM Story 启动），预填并自动打开 RAW 编辑器
-        _init_raw = getattr(self, 'initial_raw_content', None)
-        if _init_raw and isinstance(_init_raw, str) and _init_raw.strip():
-            self.story_result['raw_content'] = _init_raw.strip()
-            update_previews()
-            update_buttons_state()
-            new_project_dialog.after(300, lambda: open_raw_editor(initial_text=_init_raw.strip()))
+        _init_raw = getattr(self, 'initial_analyzed_content', None)
+        if _init_raw is not None:
+            if isinstance(_init_raw, dict) and _init_raw:
+                self.story_result['analyzed_content'] = _init_raw
+            elif isinstance(_init_raw, str) and _init_raw.strip():
+                try:
+                    self.story_result['analyzed_content'] = json.loads(_init_raw.strip())
+                except json.JSONDecodeError:
+                    self.story_result['analyzed_content'] = _init_raw.strip()
+            if self.story_result.get('analyzed_content'):
+                update_previews()
+                update_buttons_state()
+                new_project_dialog.after(300, lambda: open_raw_editor(initial_text=self.story_result.get('analyzed_content')))
 
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
@@ -859,22 +904,21 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            if not self.story_result.get('raw_content', None):
+            ac = self.story_result.get('analyzed_content')
+            if not ac:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
+            if not isinstance(ac, dict):
+                messagebox.showerror("错误", "RAW 须为 JSON 对象（含 english / chinese 等字段），请重新编辑。")
+                return
+            if not analyzed_content_valid_message_shape(ac):
+                messagebox.showerror(
+                    "错误",
+                    "analyzed_content 须含 english、chinese，且各分支内 story、summary 均非空（与 MESSAGE 模板一致）。",
+                    parent=new_project_dialog,
+                )
+                return
 
-            material_for_summary = (self.story_result.get('raw_content') or '').strip()
-            if material_for_summary:
-                try:
-                    lang_key = self.story_result.get('language', 'tw')
-                    lang_label = LANGUAGES.get(lang_key, lang_key)
-                    prompt = config_prompt.SUMMARIZE_MATERIAL_SYSTEM_PROMPT.format(language=lang_label)
-                    summary = self.llm_api_local.generate_text(prompt, material_for_summary)
-                    if summary and str(summary).strip():
-                        self.story_result['summary'] = str(summary).strip()
-                except Exception as e:
-                    print(f"⚠️ 生成项目 summary 失败: {e}")
-            
             # 解析分辨率
             if resolution == "1920x1080":
                 video_width = "1920"
@@ -1191,10 +1235,18 @@ def create_project_dialog(parent, youtube_gui=None):
     return result, selected_config
 
 
-def create_project_with_initial_raw(parent, raw_content, channel, language, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
-    """用现有 RAW 材料（如 NotebookLM Story）直接启动创建新项目，跳过初始选择"""
+def create_project_with_initial_raw(parent, analyzed_content, channel, language, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
+    """用现有 RAW 材料（如 NotebookLM Story）直接启动创建新项目，跳过初始选择。analyzed_content 可为 dict 或 JSON 字符串。"""
     global PROJECT_CONFIG
-    if not raw_content or not raw_content.strip():
+    if analyzed_content is None:
+        return 'cancel', None
+    if isinstance(analyzed_content, dict):
+        if not analyzed_content:
+            return 'cancel', None
+    elif isinstance(analyzed_content, str):
+        if not analyzed_content.strip():
+            return 'cancel', None
+    else:
         return 'cancel', None
     config_manager = ProjectConfigManager()
     _nar = initial_narrator if initial_narrator is not None else LAST_NARRATOR
@@ -1203,7 +1255,9 @@ def create_project_with_initial_raw(parent, raw_content, channel, language, init
     dialog = ProjectSelectionDialog(
         parent, config_manager, youtube_gui=None, create_only=True,
         initial_channel=channel, initial_language=language,
-        initial_raw_content=raw_content.strip(),
+        initial_analyzed_content=(
+            analyzed_content.strip() if isinstance(analyzed_content, str) else analyzed_content
+        ),
         initial_narrator=_nar,
         initial_visual_style=_vs,
         initial_host_display=_hd,

@@ -145,7 +145,7 @@ def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
 
 
 # 逐句 TTS 后拼接时，句间静音（秒）；来自 noise.wav 裁切，见 FfmpegAudioProcessor.make_silence
-_VB_SEGMENT_GAP_SEC = 0.15
+_VB_SEGMENT_GAP_SEC = 0.125
 
 
 def _split_voicebox_segments(text: str) -> List[str]:

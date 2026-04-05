@@ -14,6 +14,12 @@ import config
 import config_prompt
 import config_channel
 from datetime import datetime, timedelta, timezone
+from utility.analyzed_content_util import (
+    analyzed_content_to_prompt_text,
+    analyzed_content_valid_message_shape,
+    merge_analyzed_content,
+    resolve_material_for_topic_classification,
+)
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -49,6 +55,29 @@ def _format_nb_prompt_template(template: str, **kwargs) -> str:
     return template.format(**safe)
 
 
+def _analyzed_content_to_text(ac) -> str:
+    """video_detail['analyzed_content']：与 utility.analyzed_content_util 一致。"""
+    return analyzed_content_to_prompt_text(ac)
+
+
+def _ensure_analyzed_content_dict(video_detail: dict) -> dict:
+    """保证 video_detail['analyzed_content'] 为 dict，便于写入 english/chinese.summary。"""
+    ac = video_detail.get("analyzed_content")
+    if isinstance(ac, dict):
+        return ac
+    if isinstance(ac, str) and ac.strip():
+        try:
+            parsed = json.loads(ac)
+            if isinstance(parsed, dict):
+                video_detail["analyzed_content"] = parsed
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    out = {}
+    video_detail["analyzed_content"] = out
+    return out
+
+
 def _treeview_item_tags_safe(tree, item):
     """读取 Treeview 行的 tags。populate_tree 会删行重建，旧 iid 失效，必须先 exists。"""
     try:
@@ -60,7 +89,6 @@ def _treeview_item_tags_safe(tree, item):
 
 
 # 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
-_STORY_LANG_BRANCH_KEYS = ("concise_speaking", "heart_message", "psychological_micro_story")
 
 
 def _normalize_channel_videos_story_field_to_str(videos):
@@ -1375,7 +1403,7 @@ class MediaGUIManager:
         self._input_language = (language or 'zh').strip().lower()
         self.language = 'en' if self._input_language == 'en' else 'zh'  # 从首层传入，后续 YT 功能可复用
         
-        self.llm_api_local = llm_api.LLMApi(llm_api.OLLAMA)
+        self.llm_api_local = llm_api.LLMApi(llm_api.LM_STUDIO)
         self.llm_api = llm_api.LLMApi()
 
         # 创建YoutubeDownloader实例
@@ -1526,10 +1554,10 @@ class MediaGUIManager:
         channel_choices.append(CREATE_NEW)
         
         # 使用 askchoice 显示选择对话框
-        selected_choice = askchoice("选择频道", channel_choices, parent=self.root)
-        
-        if not selected_choice:
+        picked = askchoice("选择频道", channel_choices, parent=self.root)
+        if not picked:
             return  # 用户取消
+        _, selected_choice = picked
         if selected_choice == CREATE_NEW:
             # 创建新频道（输入频道/视频链接，解析频道名）
             if self._do_create_new_channel_from_url():
@@ -1724,7 +1752,12 @@ class MediaGUIManager:
         return video_detail
 
 
-    def prepare_category_for_content(self, video_detail, text_content, topic_choices):
+    def prepare_category_for_content(self, video_detail, topic_choices):
+        text_content, err = resolve_material_for_topic_classification(video_detail)
+        if not text_content:
+            messagebox.showinfo("提示", err or "缺少用于分类的文本。", parent=self.root)
+            return
+
         # LLM API 调用在信号量保护下（已在上层 with 语句中）
         result = self.llm_api_local.generate_json(
             config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic_choices=topic_choices), 
@@ -1902,7 +1935,8 @@ class MediaGUIManager:
                 if not video_detail:
                     continue
                 title = (video_detail.get('title') or '').strip().lower()
-                content = (video_detail.get('content') or video_detail.get('summary') or '').strip().lower()
+                _ac = _analyzed_content_to_text(video_detail.get('analyzed_content'))
+                content = (video_detail.get('content') or _ac or '').strip().lower()
                 if search_text in title or search_text in content:
                     tree.selection_add(item)
                     matched_count += 1
@@ -2089,7 +2123,7 @@ class MediaGUIManager:
                 user_status = _status_display_for_related_field(video.get("status", ""))
                 if len(user_status) > 80:
                     user_status = user_status[:77] + "..."
-                summary_mark = "✓" if (video.get('summary') or '').strip() else ""
+                summary_mark = "✓" if analyzed_content_valid_message_shape(video.get("analyzed_content")) else ""
                 story_mark = "✓" if (video.get('story') or '').strip() else ""
                 tree.insert("", tk.END, text=str(idx), 
                            values=(
@@ -2347,13 +2381,7 @@ class MediaGUIManager:
 
             def do_re_category():
                 """重新分类：重新分类，保存回 video_detail 并持久化"""
-                content = video_detail.get("summary", "")
-                if not content or not content.strip():
-                    content = video_detail.get('content', '')
-                    if not content or not content.strip():
-                        messagebox.showinfo("提示", "content 不存在或为空", parent=summary_window)
-                        return
-                self.prepare_category_for_content(video_detail, content, self.topic_choices)
+                self.prepare_category_for_content(video_detail, self.topic_choices)
                 # 3. 同步 UI 显示
                 category_var.set(video_detail.get("topic_category", ""))
                 subtype_var.set(video_detail.get("topic_subtype", ""))
@@ -2382,9 +2410,22 @@ class MediaGUIManager:
                     return
                 # 1. 用 LLM 重写原文
                 prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api_local.generate_text(prompt, text_content)
-                if rewritten and rewritten.strip():
-                    video_detail["summary"] = rewritten.strip()
+                rewritten = self.llm_api_local.generate_json(prompt, text_content, expect_list=False)
+                if rewritten:
+                    ac = _ensure_analyzed_content_dict(video_detail)
+                    ac.setdefault("english", {})
+                    ac.setdefault("chinese", {})
+                    if not isinstance(ac["english"], dict):
+                        ac["english"] = {}
+                    if not isinstance(ac["chinese"], dict):
+                        ac["chinese"] = {}
+                    ac["english"]["summary"] = rewritten.get("english")
+                    ac["chinese"]["summary"] = rewritten.get("chinese")
+                    try:
+                        with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    except Exception as e:
+                        print(f"保存 channel 列表失败: {e}")
 
                 # 4. 弹窗展示概括结果
                 self.root.clipboard_clear()
@@ -2430,15 +2471,24 @@ class MediaGUIManager:
                 else:
                     video_detail.pop("status", None)
 
-                # 剪贴板有文本时写入 raw_content，再落盘列表
+                # 剪贴板有文本时写入 analyzed_content，再落盘列表
                 clip_note = ""
                 try:
                     clip_text = (summary_window.clipboard_get() or "").strip()
                 except tk.TclError:
                     clip_text = ""
                 if clip_text:
-                    video_detail["raw_content"] = clip_text
-                    clip_note = "（已用剪贴板更新 raw_content）"
+                    try:
+                        parsed = json.loads(clip_text)
+                        if isinstance(parsed, dict):
+                            video_detail["analyzed_content"] = merge_analyzed_content(
+                                video_detail.get("analyzed_content"), parsed
+                            )
+                            clip_note = "（已用剪贴板合并至 analyzed_content，JSON 对象）"
+                        else:
+                            messagebox.showwarning("格式", "剪贴板内容须为 JSON 对象（english / chinese 等）。", parent=summary_window)
+                    except json.JSONDecodeError:
+                        messagebox.showwarning("格式", "剪贴板不是合法 JSON，未写入 analyzed_content。", parent=summary_window)
 
                 # 保存到文件
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2458,28 +2508,43 @@ class MediaGUIManager:
                     content = summary_window.clipboard_get()
                 except Exception:
                     content = ""
-                story_text = video_detail.get('raw_content', '')
-                if not story_text:
-                    story_text = video_detail.get('summary', '')
-                    video_detail['raw_content'] = story_text
-                
+                story_text = video_detail.get("analyzed_content")
+
                 if content:
-                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
-                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
-                        story_text = content
-                        # clean the clipboard
+                    if messagebox.askyesno(
+                        "提示",
+                        "剪贴板内容不为空，是否将剪贴板 JSON 合并到当前 analyzed_content？",
+                        parent=summary_window,
+                    ):
+                        try:
+                            parsed = json.loads(content)
+                        except json.JSONDecodeError:
+                            messagebox.showwarning(
+                                "格式",
+                                "剪贴板须为合法 JSON 对象（english / chinese 等）。",
+                                parent=summary_window,
+                            )
+                            return
+                        if not isinstance(parsed, dict):
+                            messagebox.showwarning("格式", "顶层须为 JSON 对象。", parent=summary_window)
+                            return
+                        story_text = merge_analyzed_content(video_detail.get("analyzed_content"), parsed)
                         summary_window.clipboard_clear()
                         summary_window.update()
-                        video_detail['raw_content'] = story_text
+                        video_detail["analyzed_content"] = story_text
                         try:
-                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
+                            with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                             dialog.after(0, populate_tree)
                         except Exception:
                             pass
 
-                if not story_text:
-                    messagebox.showwarning("提示", "RAW故事内容为空，无法复制风格和人物", parent=summary_window)
+                if not analyzed_content_valid_message_shape(story_text):
+                    messagebox.showwarning(
+                        "提示",
+                        "analyzed_content 须为 JSON，且含 english/chinese，各分支 story、summary 均非空，无法启动新项目。",
+                        parent=summary_window,
+                    )
                     return
 
                 from project_manager import (
@@ -2488,7 +2553,7 @@ class MediaGUIManager:
                     LAST_VISUAL_STYLE
                 )
                 ch = os.path.basename(self.channel_path)
-                lang = getattr(self, 'language', 'tw') or 'tw'
+                lang = getattr(self, "language", "tw") or "tw"
                 result, selected_config = create_project_with_initial_raw(
                     self.root,
                     story_text,
@@ -2552,8 +2617,8 @@ class MediaGUIManager:
 
                 editor = ReferenceEditorDialog(
                     summary_window,
-                    current_story=video_detail['summary'],
-                    reference_filter=reference_filter_prompt
+                    current_story=_analyzed_content_to_text(video_detail.get("analyzed_content")),
+                    reference_filter=reference_filter_prompt,
                 )
 
                 prepared = editor.show()
@@ -2692,16 +2757,30 @@ class MediaGUIManager:
                     content = summary_window.clipboard_get()
                 except Exception:
                     content = ""
-                story_text = video_detail.get('story', '')
+                content = (content or "").strip()
 
                 if content:
-                    # if content is not empty, ask user to confirm if they want to use the content as new story content 
-                    if messagebox.askyesno("提示", "剪贴板内容不为空，是否使用剪贴板内容作为新的故事内容？", parent=summary_window):
-                        story_text = content
-                        # clean the clipboard
+                    if messagebox.askyesno(
+                        "提示",
+                        "剪贴板内容不为空，是否将剪贴板 JSON 合并到当前 analyzed_content？",
+                        parent=summary_window,
+                    ):
+                        try:
+                            parsed = json.loads(content)
+                        except json.JSONDecodeError:
+                            messagebox.showwarning(
+                                "格式",
+                                "剪贴板须为合法 JSON 对象（english / chinese 等）。",
+                                parent=summary_window,
+                            )
+                            return
+                        if not isinstance(parsed, dict):
+                            messagebox.showwarning("格式", "顶层须为 JSON 对象。", parent=summary_window)
+                            return
+                        merged = merge_analyzed_content(video_detail.get("analyzed_content"), parsed)
+                        video_detail["analyzed_content"] = merged
                         summary_window.clipboard_clear()
                         summary_window.update()
-                        video_detail['story'] = story_text
                         try:
                             with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
@@ -2709,14 +2788,18 @@ class MediaGUIManager:
                         except Exception:
                             pass
 
+                story_text = analyzed_content_to_prompt_text(video_detail.get("analyzed_content"))
+                if not (story_text or "").strip():
+                    story_text = (video_detail.get("story") or "").strip()
+
                 if not story_text:
-                    messagebox.showwarning("提示", "故事内容为空，无法复制风格和人物", parent=summary_window)
+                    messagebox.showwarning("提示", "analyzed_content 为空，无法复制风格和人物", parent=summary_window)
                     return
 
                 try:
                     story_json = parse_json(story_text, expect_list=False)
 
-                    lang_editor_title = "编辑故事 JSON"
+                    lang_editor_title = "编辑 analyzed_content（JSON）"
                     concise_win = tk.Toplevel(summary_window)
                     concise_win.title(lang_editor_title)
                     concise_win.geometry("720x620")
@@ -2728,7 +2811,7 @@ class MediaGUIManager:
                     concise_win.geometry(f"720x620+{x}+{y}")
                     ttk.Label(
                         concise_win,
-                        text=f"{lang_editor_title}\n（Story；须为合法 JSON 对象后再保存）",
+                        text=f"{lang_editor_title}\n（english / chinese；须为合法 JSON 对象后再保存）",
                         font=("TkDefaultFont", 10),
                     ).pack(anchor="w", padx=15, pady=(15, 5))
                     concise_text_widget = scrolledtext.ScrolledText(concise_win, wrap=tk.WORD, width=88, height=26)
@@ -2742,14 +2825,16 @@ class MediaGUIManager:
                         raw = (concise_text_widget.get("1.0", tk.END) or "").strip()
                         try:
                             parsed = json.loads(raw)
-                            video_detail["story"] = json.dumps(parsed, ensure_ascii=False, indent=2)
+                            if not isinstance(parsed, dict):
+                                messagebox.showerror("JSON 无效", "顶层须为 JSON 对象。", parent=concise_win)
+                                return
+                            video_detail["analyzed_content"] = parsed
                             with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                             dialog.after(0, populate_tree)
                         except json.JSONDecodeError as e:
                             messagebox.showerror("JSON 无效", f"请修正后再保存：\n{e}", parent=concise_win)
                             return
-                        merged = {k: ("" if parsed.get(k) is None else str(parsed[k])) for k in _STORY_LANG_BRANCH_KEYS}
 
                         concise_win.destroy()
 
@@ -2758,97 +2843,93 @@ class MediaGUIManager:
 
                     summary_window.wait_window(concise_win)
 
-                    story_json = parse_json(video_detail.get("story", "") or "", expect_list=False)
+                    story_json = parse_json(
+                        analyzed_content_to_prompt_text(video_detail.get("analyzed_content")) or "",
+                        expect_list=False,
+                    )
 
                 except Exception:
                     messagebox.showwarning("提示", "故事内容格式错误，无法复制风格和人物", parent=summary_window)
                     return
 
 
-                header_parts = []
+                header_parts = {}
                 
-                header_parts.append(f"Visual Style: {project_manager.LAST_VISUAL_STYLE}")
+                header_parts['Visual_Style'] = project_manager.LAST_VISUAL_STYLE
 
                 if character_var.get():
-                    header_parts.append(f"Main Character: {character_var.get()}")
+                    header_parts['Main_Character'] = character_var.get()
 
                 host_str = project_manager.LAST_NARRATOR
                 if host_str:
-                    header_parts.append(f"Host (voice): {host_str}")
+                    header_parts['Host_Voice'] = host_str
                     hd = project_manager.LAST_HOST_DISPLAY
                     if hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
-                        host_display_desc = "No Host. The main character performs and narrates."
+                        header_parts['Host_Display'] = "No Host. The main character performs and narrates."
                     else:
-                        header_parts.append(f"Host display: {hd}")
+                        header_parts['Host_Display'] = hd
 
-                    header_parts.append(
-                        "\n\nIn Video generation:"
+                    header_parts['Instruction_for_video_generation'] = (
                         "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
                         "** If scene-image has only a main character (no Host) → use the main character as talking-avatar to speak about the content of the scene."
                     )
                 else:
-                    header_parts.append("\n\nIn Video generation:"
+                    header_parts['Instruction_for_video_generation'] = (
                         "** No Host (Narrator). Use the main character as talking-avatar to speak about the content of scene."
                     )
 
                 if language == "en":
                     if story_json.get('english', {}).get('concise_speaking', ''):
-                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
+                        header_parts['Instruction_for_speaking_words'] = (
+                            f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}"
+                            "** Speak out the key points, very very concisely (激发人心灵深处) !!!!)"
+                        )
                     else:
-                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+                        header_parts['Instruction_for_speaking_words'] = (
+                            f"** Generate the speaking words based on : the content in the image"
+                            "** Speak out the key points, very very concisely (激发人心灵深处) !!!!)"
+                        )
 
-                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                    header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
-                    header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
+                    header_parts["Scene_Expression_for_image_generation"] = (
+                        f"** Heart_Message: {story_json.get('english', {}).get('key_message', '')}"
+                        f"** Summary: {story_json.get('english', {}).get('summary', '')}"
+                        f"** Psychological_Story: {story_json.get('english', {}).get('story', '')}"
+                    )
 
 
                 if language == "zh":
                     if story_json.get('chinese', {}).get('concise_speaking', ''):
-                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
+                        header_parts['Instruction_for_speaking_words'] = (
+                            f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}"
+                            "** Speak out the key points, very very concisely (激发人心灵深处) !!!!)"
+                        )
                     else:
-                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
+                        header_parts['Instruction_for_speaking_words'] = (
+                            f"** Generate the speaking words based on : the content in the image"
+                            "** Speak out the key points, very very concisely (激发人心灵深处) !!!!)"
+                        )
 
-                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                    header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
-                    header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
+                    header_parts["Scene_Expression_for_image_generation"] = (
+                        f"** Heart_Message: {story_json.get('chinese', {}).get('key_message', '')}"
+                        f"** Summary: {story_json.get('chinese', {}).get('summary', '')}"
+                        f"** Psychological_Story: {story_json.get('chinese', {}).get('story', '')}"
+                    )
 
 
                 try:
                     summary_window.clipboard_clear()
-                    summary_window.clipboard_append("\n".join(header_parts))
+                    # header_parts 为 dict：join(dict) 只会串联键名，须按「键: 值」或值拼接
+                    _clip_body = "\n\n".join(
+                        f"{_k}:\n{_v}" for _k, _v in header_parts.items()
+                    )
+                    summary_window.clipboard_append(_clip_body)
                     summary_window.update()
                 except Exception:
                     pass
 
-                header_parts.append(f"\n\n\n----------------------------------------------------------\n")
 
-                if language == "zh":
-                    if story_json.get('english', {}).get('concise_speaking', ''):
-                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('english', {}).get('concise_speaking', '')}")
-                    else:
-                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
-
-                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                    header_parts.append(f"** Heart_Message: {story_json.get('english', {}).get('heart_message', '')}")
-                    header_parts.append(f"** Psychological_Story: {story_json.get('english', {}).get('psychological_micro_story', '')}")
-
-
-                if language == "en":
-                    if story_json.get('chinese', {}).get('concise_speaking', ''):
-                        header_parts.append(f"** Generate the speaking words based on : {story_json.get('chinese', {}).get('concise_speaking', '')}")
-                    else:
-                        header_parts.append(f"** Generate the speaking words based on : the content in the image")
-                    header_parts.append(f"** Speak out the key points, very very concisely (激发人心灵深处) !!!!)")
-
-                    header_parts.append(f"\nScene Expression (In Image or Video generation):")
-                    header_parts.append(f"** Heart_Message: {story_json.get('chinese', {}).get('heart_message', '')}")
-                    header_parts.append(f"** Psychological_Story: {story_json.get('chinese', {}).get('psychological_micro_story', '')}")
-
-                header_parts.append(f"\n\n\n\n----------------------------------------------------------\n")
-                header_parts.append(f"\nCase-Study Summary: \n{video_detail.get('summary', '')}")
+                header_parts["Case-Study_Raw_Content"] = _analyzed_content_to_text(video_detail.get('analyzed_content'))
+                header_parts["id"] = video_detail.get('id')
 
                 input_media_path = config.INPUT_MEDIA_PATH
                 _cat_raw = (category_var.get() or "").strip()
@@ -2862,7 +2943,7 @@ class MediaGUIManager:
                 if os.path.exists(file_path):
                     os.remove(file_path)
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(header_parts))
+                    json.dump(header_parts, f, ensure_ascii=False, indent=2)
 
 
             def _update_copy_btn_text():
@@ -2886,7 +2967,6 @@ class MediaGUIManager:
                     pass
 
 
-
             label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
             label.pack(anchor=tk.W, pady=(0, 5))
             # 创建可滚动的文本区域
@@ -2903,6 +2983,7 @@ class MediaGUIManager:
 
             # 用户导向说明（非视频正文）：通过模板占位符 {instruction} 嵌入（与 SUNO 等模板一致）
             initial_content_holder = [""]
+
 
             def refresh_notebooklm_prompt(*args):
                 """根据 combo 选择生成 prompt 并更新 text_widget + 剪贴板；{instruction} 来自导向说明。"""
@@ -2926,7 +3007,7 @@ class MediaGUIManager:
                     )
                 reference = "\n\n\n----------------------------------------------------------\n".join(reference_parts) if reference_parts else ""
                 story_title = video_detail.get('title', '').strip()
-                story_summary = video_detail.get('summary', '').strip()
+                analyzed_content = _analyzed_content_to_text(video_detail.get("analyzed_content")).strip()
                 content = video_detail.get('content', '').strip()
                 link = video_detail.get('url', '').strip()
                 soul = project_manager.get_soul_for_topic(self.channel_path, category_var.get().strip(), subtype_var.get().strip(), self.topic_choices) or ''
@@ -2939,7 +3020,7 @@ class MediaGUIManager:
                     reference=reference,
                     soul=soul,
                     story_title=story_title,
-                    story_summary=story_summary,
+                    analyzed_content=analyzed_content,
                     content=content,
                     link=link,
                     instruction=instruction,
@@ -2956,6 +3037,7 @@ class MediaGUIManager:
                         summary_window.update()
                     except Exception:
                         pass
+                
 
             def open_initial_content_dialog(on_done=None):
                 """弹出窗口编辑导向说明；确定后执行 on_done（默认刷新 LM prompt）。"""
@@ -3447,10 +3529,8 @@ class MediaGUIManager:
                 if not video_detail:
                     continue
                 self.update_text_content(video_detail)
-                content = video_detail.get('content', '')
-                if not content or not content.strip():
-                    continue
-                self.prepare_category_for_content(video_detail, content, self.topic_choices)
+                self.prepare_category_for_content(video_detail, self.topic_choices)
+
             populate_tree()
 
 
@@ -3464,9 +3544,9 @@ class MediaGUIManager:
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
-                if video_detail.get('summary', ''):
+                if analyzed_content_valid_message_shape(video_detail.get("analyzed_content")):
                     summary_list.append({
-                        'summary': video_detail.get('summary', ''),
+                        'analyzed_content': video_detail.get('analyzed_content', ''),
                         'title': video_detail.get('title', ''),
                         'url': video_detail.get('url', ''),
                         'id': video_detail.get('id', ''),
@@ -3503,17 +3583,28 @@ class MediaGUIManager:
                 if not text_content or len(text_content) < 100:
                     continue
 
-                summary_content = video_detail.get('summary', '')
-                summary_list.append(summary_content)
-                if summary_content and summary_content.strip():
+                if analyzed_content_valid_message_shape(video_detail.get("analyzed_content")):
+                    summary_list.append(_analyzed_content_to_text(video_detail.get("analyzed_content")))
                     continue
 
                 prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api_local.generate_text(prompt, text_content)
-                if rewritten and rewritten.strip():
-                    video_detail["summary"] = rewritten.strip()
-                    summary_list.append(rewritten.strip())
-                    self.prepare_category_for_content(video_detail, rewritten.strip(), self.topic_choices)
+                rewritten = self.llm_api_local.generate_json(prompt, text_content, expect_list=False)
+                if not rewritten or not isinstance(rewritten, dict):
+                    continue
+
+                analyzed_json = _ensure_analyzed_content_dict(video_detail)
+                analyzed_json.setdefault("english", {})
+                analyzed_json.setdefault("chinese", {})
+                if not isinstance(analyzed_json["english"], dict):
+                    analyzed_json["english"] = {}
+                if not isinstance(analyzed_json["chinese"], dict):
+                    analyzed_json["chinese"] = {}
+                analyzed_json["english"]["summary"] = rewritten.get("english")
+                analyzed_json["chinese"]["summary"] = rewritten.get("chinese")
+                video_detail["analyzed_content"] = analyzed_json
+
+                summary_list.append(_analyzed_content_to_text(analyzed_json))
+                self.prepare_category_for_content(video_detail, self.topic_choices)
 
             if summary_list:
                 summaries = ""
@@ -3635,11 +3726,13 @@ class MediaGUIManager:
         CREATE_NEW = "【创建新频道】"
         if candidates:
             choices = candidates + [CREATE_NEW]
-            choice = askchoice("选择频道列表", choices, parent=self.root)
-            if choice == CREATE_NEW:
-                selected_file = None  # 进入下方创建新频道分支
-            elif choice and choice in channel_to_file:
-                selected_file = channel_to_file[choice]
+            picked = askchoice("选择频道列表", choices, parent=self.root)
+            if picked:
+                _, choice = picked
+                if choice == CREATE_NEW:
+                    selected_file = None  # 进入下方创建新频道分支
+                elif choice in channel_to_file:
+                    selected_file = channel_to_file[choice]
 
         if selected_file:
             self.downloader.channel_list_json = selected_file

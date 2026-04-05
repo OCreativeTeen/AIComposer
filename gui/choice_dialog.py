@@ -9,31 +9,54 @@ import tkinter as tk
 import tkinter.ttk as ttk
 
 
+def _askchoice_normalize_pairs(choices):
+    """将 choices 规范为 [(return_value, button_label), ...]。
+    支持 str（返回值与按钮文案相同）或 (value, label) 二元组。
+    """
+    pairs = []
+    for c in choices:
+        if isinstance(c, (tuple, list)) and len(c) >= 2:
+            pairs.append((c[0], str(c[1])))
+        else:
+            s = str(c)
+            pairs.append((s, s))
+    return pairs
+
+
 def askchoice(title, choices, parent=None):
-    # 如果没有提供父窗口，尝试获取默认根窗口
+    """每个选项一个按钮，点击即选并关闭；点「取消」返回 None。
+
+    choices:
+      - list[str]：按钮文案与返回值均为该字符串
+      - list[tuple]：每项 (return_value, button_label)，按钮显示 label，返回时 value 为 return_value
+
+    返回:
+      - None：用户取消
+      - (label, value)：label 为按钮上显示的文案；value 为对应返回值（纯 str 选项时二者相同）
+    """
+    if not choices:
+        return None
+
     if parent is None:
         try:
             parent = tk._default_root
-        except:
+        except Exception:
             parent = None
-    
-    # 创建一个简单的选择对话框
+
+    pairs = _askchoice_normalize_pairs(choices)
+    num_choices = len(pairs)
+    max_label_len = max(len(lbl) for _, lbl in pairs)
+
     dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    
-    # 根据选项数量动态计算高度
-    # 每个按钮约 35 像素高度（包括间距），标题约 50 像素，取消按钮约 50 像素
-    # 最小高度 250，最大高度不超过屏幕高度的 80%
-    num_choices = len(choices)
-    button_height = 35  # 每个按钮的高度（包括间距）
-    title_height = 50   # 标题区域高度
-    cancel_height = 50  # 取消按钮区域高度
-    padding = 20        # 上下边距
-    
+    dialog.title(title[:80] + ("…" if len(title) > 80 else ""))
+
+    button_height = 36
+    title_height = 72
+    cancel_height = 52
+    padding = 24
     calculated_height = title_height + (num_choices * button_height) + cancel_height + padding
-    min_height = 250
-    
-    # 获取屏幕尺寸（使用父窗口或对话框本身）
+    min_height = 220
+
     dialog.update_idletasks()
     if parent:
         screen_width = parent.winfo_screenwidth()
@@ -41,49 +64,75 @@ def askchoice(title, choices, parent=None):
     else:
         screen_width = dialog.winfo_screenwidth()
         screen_height = dialog.winfo_screenheight()
-    
-    max_height = int(screen_height * 0.8)
-    
+
+    max_height = int(screen_height * 0.85)
     dialog_height = max(min_height, min(calculated_height, max_height))
-    dialog_width = 350
-    
+    # 长英文标签时加宽窗口；按钮 width 为字符数
+    dialog_width = min(920, max(360, 48 + int(min(max_label_len, 100) * 7.0)))
+
     dialog.resizable(False, False)
-    
-    # 居中显示
+
     if parent:
         dialog.transient(parent)
     dialog.grab_set()
-    
-    # 居中窗口
+
     x = (screen_width // 2) - (dialog_width // 2)
     y = (screen_height // 2) - (dialog_height // 2)
     dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
-    
+
     result = None
-    
-    def on_choice(choice):
+
+    def on_choice(val, lbl: str):
         nonlocal result
-        result = choice
+        result = (lbl, val)
         dialog.destroy()
-    
-    # 添加标题
-    label = ttk.Label(dialog, text=title, font=("Arial", 12, "bold"))
-    label.pack(pady=15)
-    
-    # 添加选择按钮
-    for choice in choices:
-        btn = ttk.Button(dialog, text=choice, width=25, 
-                       command=lambda c=choice: on_choice(c))
-        btn.pack(pady=5)
-    
-    # 添加取消按钮
-    cancel_btn = ttk.Button(dialog, text="取消", width=25, 
-                          command=lambda: dialog.destroy())
-    cancel_btn.pack(pady=15)
-    
-    # 等待用户选择
+
+    main = ttk.Frame(dialog, padding=10)
+    main.pack(fill=tk.BOTH, expand=True)
+
+    label = ttk.Label(
+        main,
+        text=title,
+        font=("Arial", 12, "bold"),
+        wraplength=dialog_width - 40,
+        justify=tk.CENTER,
+    )
+    label.pack(pady=(8, 12))
+
+    btn_char_w = min(100, max(25, min(max_label_len + 2, 95)))
+
+    for val, lbl in pairs:
+        ttk.Button(
+            main,
+            text=lbl,
+            width=btn_char_w,
+            command=lambda v=val, lb=lbl: on_choice(v, lb),
+        ).pack(pady=4, fill=tk.X)
+
+    ttk.Button(main, text="取消", width=min(btn_char_w, 28), command=dialog.destroy).pack(pady=(14, 6))
+
     dialog.wait_window()
     return result
+
+
+def pack_text_buttons(parent, rows, cancel=None, width=48):
+    """自上而下排列 ttk 按钮；用于「一点即执行」的自定义对话框（如讲话拷贝）。
+
+    rows: [(label, command), ...]
+    cancel: None 或 (label, command)，置于最下方并加大上边距。
+    返回所有按钮控件列表（含取消），便于统一 disable 等。
+    """
+    buttons = []
+    for label, cmd in rows:
+        b = ttk.Button(parent, text=label, width=width, command=cmd)
+        b.pack(fill=tk.X, pady=2)
+        buttons.append(b)
+    if cancel is not None:
+        cl, cc = cancel
+        b = ttk.Button(parent, text=cl, width=width, command=cc)
+        b.pack(fill=tk.X, pady=(8, 0))
+        buttons.append(b)
+    return buttons
 
 
 def _get_media_duration_sec(file_path):

@@ -29,7 +29,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.device = device
         self.api_url = "http://10.0.0.231:9001/transcribe"
-        self.llm_api = llm_api.LLMApi(llm_api.OLLAMA)
+        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
 

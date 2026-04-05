@@ -37,9 +37,10 @@ from gui.downloader import MediaGUIManager
 from gui.suno_music_prompt_gui import SunoMusicPromptGUI
 import cv2
 import json
+import copy
 import shutil
 from pathlib import Path
-from gui.choice_dialog import askchoice, askchoice_media_preview
+from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons
 
 try:
     from tkcalendar import Calendar as TkCalendar
@@ -48,6 +49,16 @@ except ImportError:
 
 
 STANDARD_FPS = 60  # Match FfmpegProcessor.STANDARD_FPS
+
+# 图像画布双击：gui.choice_dialog.askchoice 用 (return_value, button_label) 元组列表
+IMAGE_ACTION_CHOICES = [
+    "复制当前图片",
+    "去掉下半部分中的文字",
+    "去掉上半部分中的文字",
+    "去掉 PIP (narrator) in the image",
+    "替换 narrator in 1st image, with the IP in 2nd image",
+    "替换 figure's faces in the 1st image,  with the figure's face in 2nd image",
+]
 
 
 class WorkflowGUI:
@@ -82,6 +93,7 @@ class WorkflowGUI:
         self.current_scene_index = 0
 
         self.llm_api = llm_api.LLMApi()
+        self.llm_api_local = llm_api.LLMApi(llm_api.LM_STUDIO)
 
         # 显示项目选择对话框（或 --open-pid 时直接加载指定项目）
         if initial_pid:
@@ -913,7 +925,7 @@ class WorkflowGUI:
         if not track_path:
             messagebox.showinfo("提示", f"当前场景的 {track} 轨道没有内容，无需删除")
             return
-        track_label = {"narration": "旁白(NN)", "zero": "ZZ", "one": "OO"}.get(track, track)
+        track_label = {"narration": "旁白(NN)", "zero": "ZZ"}.get(track, track)
         if not messagebox.askyesno("确认删除", f"确定要删除当前 {track_label} 轨道的视频和音频吗？"):
             return
         for key in [track, track + '_audio', track + '_left', track + '_right', track + '_image', track + '_fps']:
@@ -1026,17 +1038,14 @@ class WorkflowGUI:
             # popup to ask user to select background source ? 
             # if is clip_image or clip_image_last, then generate background video from clip_image or clip_image_last + narration_audio
             # if is clip, then use clip_audio
-            background_source = askchoice("选择背景来源", ["clip", "one", "clip_image", "clip_image_last"], self.root)
-            if background_source is None:
+            _bg = askchoice("选择背景来源", ["clip", "clip_image", "clip_image_last"], self.root)
+            if _bg is None:
                 return
+            _, background_source = _bg
             if background_source == "clip":
                 target_video_track = "clip"  
                 background_audio = get_file_path(current_scene, "clip_audio")
                 background_video = get_file_path(current_scene, "clip")
-            elif background_source == "one":
-                target_video_track = "narration"  
-                background_audio = get_file_path(current_scene, "one_audio")
-                background_video = get_file_path(current_scene, "one")
             elif background_source == "clip_image":
                 target_video_track = "narration"
             elif background_source == "clip_image_last":
@@ -1219,7 +1228,7 @@ class WorkflowGUI:
         self.video_frame = ttk.LabelFrame(main_content, text=f"预览 - secondary ({self.secondary_track_after_id})", padding=10)
         self.video_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
         # 设置左侧面板的最大宽度，为右侧面板留出空间
-        self.video_frame.configure(width=1700)
+        self.video_frame.configure(width=1600)
         self.video_frame.pack_propagate(False)
 
         # 创建水平布局框架来并排显示图像标签和视频画布
@@ -1252,8 +1261,6 @@ class WorkflowGUI:
         ttk.Button(visual_button_frame, text="SECO_", width=6, command=lambda: self.choose_from_download("narration", ".mp4")).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(visual_button_frame, text="ZERO_", width=6, command=lambda: self.choose_from_download("zero", ".mp4")).pack(side=tk.LEFT, padx=1)
-
-        ttk.Button(visual_button_frame, text="ONE__",  width=6, command=lambda: self.choose_from_download("one", ".mp4")).pack(side=tk.LEFT, padx=(1, 10))
 
         #ttk.Button(visual_button_frame, text="生解说", width=7, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(1, 10))
         # ttk.Button(visual_button_frame, text="SEC声", width=6, command=lambda: self.choose_audio_source_or_tts("narration")).pack(side=tk.LEFT, padx=1)
@@ -1332,29 +1339,6 @@ class WorkflowGUI:
         self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
         self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
 
-
-        # Top: one_image
-        one_img_frame = ttk.Frame(images_container)
-        one_img_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
-        ttk.Label(one_img_frame, text="One", anchor=tk.CENTER).pack()
-        one_canvas_container = ttk.Frame(one_img_frame)
-        one_canvas_container.pack(fill=tk.BOTH, expand=True)
-
-        self.one_image_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='purple')
-        self.one_image_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 1))
-        self.one_image_canvas.create_text(75, 37, text="One\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
-        self.one_image_canvas.drop_target_register(DND_FILES)
-        self.one_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image'))
-        self.one_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image'))
-
-        self.one_image_last_canvas = tk.Canvas(one_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='purple')
-        self.one_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
-        self.one_image_last_canvas.create_text(75, 37, text="One\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
-        self.one_image_last_canvas.drop_target_register(DND_FILES)
-        self.one_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'one_image_last'))
-        self.one_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'one_image_last'))
-
-
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
         track_video_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -1429,7 +1413,6 @@ class WorkflowGUI:
         ttk.Button(self.track_frame, text="📺11", command=lambda:self.pip_secondary_track(), width=5).pack(side=tk.LEFT, padx=(1, 10))
         ttk.Button(self.track_frame, text="💫NN", command=lambda:self.choose_secondary_track("narration"), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(self.track_frame, text="💫ZZ", command=lambda:self.choose_secondary_track('zero'), width=5).pack(side=tk.LEFT, padx=1)
-        ttk.Button(self.track_frame, text="💫OO", command=lambda:self.choose_secondary_track('one'), width=5).pack(side=tk.LEFT, padx=(1, 10))
         #ttk.Button(self.track_frame, text="💫", command=self.swap_narration, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔊", command=self.pip_narration_sound, width=3).pack(side=tk.LEFT, padx=2)
@@ -1633,20 +1616,16 @@ class WorkflowGUI:
         ttk.Label(self.video_edit_frame, text="讲话:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         # Tk Text 内置撤销/重做：Ctrl+Z 撤销，Ctrl+Y 重做（Windows 常见）；maxundo=0 为不限制深度
         self.scene_speaking = scrolledtext.ScrolledText(
-            self.video_edit_frame, width=40, height=10, undo=True, maxundo=0
+            self.video_edit_frame,
+            width=40,
+            height=10,
+            undo=True,
+            maxundo=0,
+            font=("Arial", 16),
         )
         self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
 
-        def _copy_speaking_to_clipboard(_event=None):
-            try:
-                self.root.clipboard_clear()
-                self.root.clipboard_append(self.scene_speaking.get("1.0", tk.END).rstrip("\n"))
-                self.root.update_idletasks()
-            except tk.TclError:
-                pass
-            return "break"
-
-        self.scene_speaking.bind("<Double-1>", _copy_speaking_to_clipboard)
+        self.scene_speaking.bind("<Double-1>", self.on_scene_speaking_copy_double_click)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1759,6 +1738,7 @@ class WorkflowGUI:
         # 绑定配置变化事件
         # 绑定编辑事件
         self.bind_edit_events()
+        self.bind_scene_navigation_shortcuts()
         self.bind_config_change_events()
 
 
@@ -2752,6 +2732,12 @@ class WorkflowGUI:
         self.scene_host_display.set(scene_data.get("host_display", project_manager.PROJECT_CONFIG.get("host_display")))
         self.scene_visual_style.set(scene_data.get("visual_style", project_manager.PROJECT_CONFIG.get("visual_style")))
 
+        _slang = scene_data.get("content_language") or self.shared_language.cget("text")
+        if _slang in config.FONT_LIST:
+            self.scene_language.set(_slang)
+        else:
+            self.scene_language.set(self.shared_language.cget("text"))
+
         #self.scene_cinematography.delete("1.0", tk.END)
         # 如果 cinematography 是字典，格式化显示；如果是字符串，直接显示
         #cinematography_value = scene_data.get("cinematography", "")
@@ -2874,6 +2860,7 @@ class WorkflowGUI:
             self.scene_narrator.set(_pc.get("narrator") or project_manager.LAST_NARRATOR)
             self.scene_host_display.set(_pc.get("host_display") or project_manager.LAST_HOST_DISPLAY)
             self.scene_visual_style.set(_pc.get("visual_style") or project_manager.LAST_VISUAL_STYLE)
+            self.scene_language.set(self.shared_language.cget("text"))
             self.scene_voiceover.delete("1.0", tk.END)
             self.scene_caption.delete("1.0", tk.END)
         finally:
@@ -2925,7 +2912,9 @@ class WorkflowGUI:
 
 
     def split_scene(self):
-        """分离当前场景"""      
+        """分离当前场景"""
+        # 先把界面上的讲话等写回当前 scene，再按时间轴切分，否则会按「上次落盘」的旧内容拆 speaking
+        self.update_current_scene()
         position = pygame.mixer.music.get_pos() / 1000.0
         self.workflow.split_scene_at_position(self.current_scene_index, position+self.playing_delta)
         self.playing_delta = 0.0
@@ -3018,6 +3007,207 @@ class WorkflowGUI:
         self.workflow.scenes.insert(self.current_scene_index + 1, dup)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
+
+    def _put_clipboard_speaking(self, text: str) -> None:
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+
+    @staticmethod
+    def _speaking_join_prev_then_moved(prev_tail: str, moved_head: str) -> str:
+        """上一段末尾接上移入的首段；若上一段末尾无句读则插入中文句号。"""
+        a = (prev_tail or "").rstrip()
+        b = (moved_head or "").lstrip()
+        if not b:
+            return a
+        if not a:
+            return b
+        if a[-1] in "。！？；…":
+            return a + b
+        return a + "。" + b
+
+    @staticmethod
+    def _speaking_join_moved_then_next(moved_tail: str, next_head: str) -> str:
+        """移入的尾段拼在下一场景原文前；中间按需加中文句号。"""
+        a = (moved_tail or "").rstrip()
+        b = (next_head or "").lstrip()
+        if not a:
+            return b
+        if not b:
+            return a
+        if a[-1] in "。！？；…":
+            return a + b
+        return a + "。" + b
+
+    def _speaking_shortcuts_guard(self) -> bool:
+        if getattr(self, "_scene_widgets_loading", False):
+            return False
+        if not self.workflow or not getattr(self.workflow, "scenes", None):
+            return False
+        if self.current_scene_index < 0 or self.current_scene_index >= len(self.workflow.scenes):
+            return False
+        return True
+
+    @staticmethod
+    def _speaking_ctrl_arrow_shift_held(event) -> bool:
+        """若同时按住 Shift，则应为全局场景导航（Ctrl+Shift+←/→），讲话框勿拦截。"""
+        if event is None:
+            return False
+        try:
+            st = int(getattr(event, "state", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        return bool(st & 0x0001)  # Shift
+
+    def _on_speaking_ctrl_s_split_clone(self, event=None):
+        """Ctrl+S：以光标为界拆分讲话；当前镜保留光标前，下一镜为深拷贝场景，讲话为光标后。"""
+        if not self._speaking_shortcuts_guard():
+            return "break"
+        self.update_current_scene()
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return "break"
+        ins = self.scene_speaking.index("insert")
+        before = self.scene_speaking.get("1.0", ins)
+        after = self.scene_speaking.get(ins, "end-1c")
+        dup = copy.deepcopy(scene)
+        dup["id"] = self.workflow.max_id(dup) + 1
+        scene["speaking"] = before
+        dup["speaking"] = after
+        self.workflow.scenes.insert(self.current_scene_index + 1, dup)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        return "break"
+
+    def _on_speaking_ctrl_right_move_tail_to_next(self, event=None):
+        """Ctrl+Right：光标至文末移入下一镜讲话开头，与原文用中文句号衔接。"""
+        if self._speaking_ctrl_arrow_shift_held(event):
+            return  # 不 break，交给 bind_all：Ctrl+Shift+→ 切换场景
+        if not self._speaking_shortcuts_guard():
+            return "break"
+        self.update_current_scene()
+        if self.current_scene_index + 1 >= len(self.workflow.scenes):
+            messagebox.showinfo("提示", "没有下一场景", parent=self.root)
+            return "break"
+        ins = self.scene_speaking.index("insert")
+        tail = self.scene_speaking.get(ins, "end-1c")
+        if not tail.strip():
+            messagebox.showinfo("提示", "光标后无内容可移动", parent=self.root)
+            return "break"
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        nxt = self.workflow.get_scene_by_index(self.current_scene_index + 1)
+        if not scene or not nxt:
+            return "break"
+        head_kept = self.scene_speaking.get("1.0", ins)
+        scene["speaking"] = head_kept
+        nxt["speaking"] = self._speaking_join_moved_then_next(tail, nxt.get("speaking") or "")
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        return "break"
+
+    def _on_speaking_ctrl_left_move_head_to_prev(self, event=None):
+        """Ctrl+Left：文首至光标移入上一镜讲话末尾，与上一镜原文用中文句号衔接。"""
+        if self._speaking_ctrl_arrow_shift_held(event):
+            return  # 不 break，交给 bind_all：Ctrl+Shift+← / Ctrl+Shift+Alt+← 等
+        if not self._speaking_shortcuts_guard():
+            return "break"
+        self.update_current_scene()
+        if self.current_scene_index <= 0:
+            messagebox.showinfo("提示", "没有上一场景", parent=self.root)
+            return "break"
+        ins = self.scene_speaking.index("insert")
+        head = self.scene_speaking.get("1.0", ins)
+        if not head.strip():
+            messagebox.showinfo("提示", "光标前无内容可移动", parent=self.root)
+            return "break"
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        prev = self.workflow.get_scene_by_index(self.current_scene_index - 1)
+        if not scene or not prev:
+            return "break"
+        tail_kept = self.scene_speaking.get(ins, "end-1c")
+        scene["speaking"] = tail_kept
+        prev["speaking"] = self._speaking_join_prev_then_moved(prev.get("speaking") or "", head)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        return "break"
+
+    def on_scene_speaking_copy_double_click(self, event=None):
+        """双击讲话框：仅按钮，一点即拷贝（原文 / LLM 精简 / 前缀等）。"""
+        raw = self.scene_speaking.get("1.0", tk.END).rstrip("\n")
+        if not raw.strip():
+            messagebox.showinfo("提示", "讲话为空", parent=self.root)
+            return "break"
+
+        _ns = config_prompt.SPEAKING_COPY_NSOS_PREFIX
+        dlg = tk.Toplevel(self.root)
+        dlg.title("讲话拷贝")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        fr = ttk.Frame(dlg, padding=12)
+        fr.pack(fill=tk.BOTH, expand=True)
+        status_lbl = ttk.Label(fr, text="", foreground="gray")
+        status_lbl.pack(anchor=tk.W, pady=(0, 6))
+
+        btn_f = ttk.Frame(fr)
+        btn_f.pack(fill=tk.X)
+        all_btns = []
+
+        def close_and_clip(t: str) -> None:
+            self._put_clipboard_speaking(t)
+            dlg.destroy()
+
+        def do_llm(with_prefix: bool) -> None:
+            status_lbl.config(text="正在调用 LLM 精简…")
+            for b in all_btns:
+                b.config(state="disabled")
+
+            def worker() -> None:
+                try:
+                    concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, raw)
+                    if concise is None or not str(concise).strip():
+                        self.root.after(0, lambda: _finish_err(RuntimeError("LLM 返回为空")))
+                        return
+                    concise_s = str(concise).strip()
+                    final = (_ns + "\n" + concise_s) if with_prefix else concise_s
+                    self.root.after(0, lambda f=final: _finish_ok(f))
+                except Exception as ex:
+                    self.root.after(0, lambda e=ex: _finish_err(e))
+
+            def _finish_ok(t: str) -> None:
+                self._put_clipboard_speaking(t)
+                dlg.destroy()
+
+            def _finish_err(ex: BaseException) -> None:
+                status_lbl.config(text="")
+                for b in all_btns:
+                    b.config(state="normal")
+                messagebox.showerror("LLM 失败", str(ex), parent=dlg)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        all_btns = pack_text_buttons(
+            btn_f,
+            [
+                ("1 拷贝原文", lambda: close_and_clip(raw)),
+                ("2 拷贝精简（LLM）", lambda: do_llm(False)),
+                ("3 前缀 + 原文（no speak only show）", lambda: close_and_clip(_ns + "\n" + raw)),
+                ("4 前缀 + 精简（LLM）", lambda: do_llm(True)),
+            ],
+            cancel=("关闭", dlg.destroy),
+            width=48,
+        )
+
+        dlg.update_idletasks()
+        w = max(520, dlg.winfo_reqwidth())
+        h = dlg.winfo_reqheight()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
+        dlg.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        return "break"
+
 
     def copy_story_scene(self):
         story_level = self.workflow.first_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))  or  self.workflow.last_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))
@@ -3896,69 +4086,6 @@ class WorkflowGUI:
         tip.geometry(f"+{rx}+{ry}")
         tip.after(ms, tip.destroy)
 
-    def _show_image_action_choice(self, parent, image_type):
-        """弹出图像操作选择对话框，返回用户选择：1-7 或 None(取消)"""
-        choice_var = tk.StringVar(value="")
-        dialog = tk.Toplevel(parent)
-        dialog.title("选择操作")
-        dialog.geometry("420x380")
-        dialog.transient(parent)
-        dialog.grab_set()
-
-        choices = [
-            ("1", "选现有图"),
-            ("2", "现有图 → 增强"),
-            #("4", "(当前图) 生成视频"),
-            #("5", "增强 → 生成视频"),
-            ("3", "选新图（替换）"),
-            ("4", "选新图 → 增强"),
-            #("6", "选新图 → 增强 → 生成视频"),
-            #("7", "选新图 → 生成视频"),
-        ]
-        ttk.Label(dialog, text=f"对 {image_type.replace('_', ' ')} 执行操作：", font=("", 10)).pack(pady=(15, 10))
-        for val, text in choices:
-            ttk.Radiobutton(dialog, text=text, variable=choice_var, value=val).pack(anchor=tk.W, padx=20, pady=2)
-
-        choice_var.set("1")
-
-        result = [None]
-        auto_timer = {"id": None}
-
-        def _cancel_auto_timer():
-            if auto_timer["id"] is not None:
-                try:
-                    self.root.after_cancel(auto_timer["id"])
-                except tk.TclError:
-                    pass
-                auto_timer["id"] = None
-
-        def on_ok():
-            _cancel_auto_timer()
-            result[0] = choice_var.get() or None
-            dialog.destroy()
-
-        def on_cancel():
-            _cancel_auto_timer()
-            result[0] = None
-            dialog.destroy()
-
-        def _auto_close():
-            auto_timer["id"] = None
-            try:
-                # 超时视同「确定」：采用当前单选项（默认 "1"）
-                result[0] = choice_var.get() or None
-                dialog.destroy()
-            except tk.TclError:
-                pass
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=15)
-        ttk.Button(btn_frame, text="确定", command=on_ok).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=5)
-        auto_timer["id"] = self.root.after(2000, _auto_close)
-        dialog.wait_window()
-        return result[0]
-
     def on_image_canvas_double_click(self, event, image_type):
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -3972,49 +4099,53 @@ class WorkflowGUI:
             source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
             track = image_type.split("_")[0]  # clip_image -> clip, narration_image -> narration, etc.
 
-            choice = self._show_image_action_choice(self.root, image_type)
-            if not choice:
+            image_path = current_scene.get(image_type)
+            if not image_path or not os.path.exists(image_path):
+                messagebox.showwarning("警告", f"场景中没有有效的 {image_type} 图像")
                 return
+            self.copy_image_to_clipboard(image_path)
 
-            image_path = None
-            need_select = choice in ("3", "4")
-            need_enhance = choice in ("2", "4")
-            #need_gen_video = choice in ("4", "5", "6", "7")
+            picked = askchoice(
+                f"对 {image_type.replace('_', ' ')} 执行操作",
+                IMAGE_ACTION_CHOICES,
+                self.root,
+            )
+            if picked:
+                # copy the picked to clipboard
+                self.copy_image_to_clipboard(picked)
 
-            image_changed = False
+            #image_path = None
+            #need_select = op_value in ("3", "4")
+            #need_enhance = op_value in ("2", "4")
 
-            if need_select:
-                image_path = filedialog.askopenfilename(
-                    title="选择图像",
-                    initialdir=source_folder if os.path.exists(source_folder) else None,
-                    filetypes=[("图像文件", "*.png;*.jpg;*.jpeg;*.webp")]
-                )
-                if not image_path:
-                    return
-                download_path = config.get_project_path(self.workflow.pid) + "/download"
-                os.makedirs(download_path, exist_ok=True)
-                image = Path(image_path)
-                rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
-                shutil.move(image_path, rename)
-                image_path = rename
-                image_changed = True
-            else:
-                image_path = current_scene.get(image_type)
-                if not image_path or not os.path.exists(image_path):
-                    messagebox.showwarning("警告", f"场景中没有有效的 {image_type} 图像")
-                    return
+            #image_changed = False
+            #if need_select:
+            #    image_path = filedialog.askopenfilename(
+            #        title="选择图像",
+            #        initialdir=source_folder if os.path.exists(source_folder) else None,
+            #        filetypes=[("图像文件", "*.png;*.jpg;*.jpeg;*.webp")]
+            #    )
+            #    if not image_path:
+            #        return
+            #    download_path = config.get_project_path(self.workflow.pid) + "/download"
+            #    os.makedirs(download_path, exist_ok=True)
+            #    image = Path(image_path)
+            #    rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
+            #    shutil.move(image_path, rename)
+            #    image_path = rename
+            #    image_changed = True
 
-            if need_enhance:
-                image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
-                if not image_path:
-                    messagebox.showerror("错误", "图像增强失败")
-                    return
-                image_changed = True
+            #if need_enhance:
+            #    image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
+            #    if not image_path:
+            #        messagebox.showerror("错误", "图像增强失败")
+            #        return
+            #    image_changed = True
 
-            if image_changed:
-                image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
-                refresh_scene_media(current_scene, image_type, ".webp", image_path)
-                self.workflow.save_scenes_to_json()
+            #if image_changed:
+            #    image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
+            #    refresh_scene_media(current_scene, image_type, ".webp", image_path)
+            #    self.workflow.save_scenes_to_json()
 
             # if need_gen_video:
             #     audio_path = get_file_path(current_scene, track+"_audio") or get_file_path(current_scene, "clip_audio")
@@ -4027,7 +4158,6 @@ class WorkflowGUI:
             #    video_path = self.workflow.ffmpeg_processor.image_audio_to_video(image_path, audio_path, 1)
             #    refresh_scene_media(current_scene, track, ".mp4", video_path, True)
             #    self.media_scanner.last_image_replacement(current_scene, video_path, track)
-            self.copy_image_to_clipboard(image_path)
 
             self.refresh_gui_scenes()
 
@@ -4058,18 +4188,20 @@ class WorkflowGUI:
         file_path = self.workflow.ffmpeg_processor.resize_image_smart(file_path)
         try:
             # 获取当前场景
-            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            if not current_scene:
-                messagebox.showerror("错误", "没有选中场景")
-                return
-            
-            # 复制图片到项目目录
-            oldi, image_path = refresh_scene_media(current_scene, image_type, ".webp", file_path, True)
+            # if image_type NOT start with 'clip', then  ask user if want to assigne this image to the current scene or all scenes of same story?
+            selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)] 
+            if not image_type.startswith('clip'):
+                dialog = messagebox.askyesno("确认替换", f"确定要替换所有当前故事的 {image_type} 吗？")
+                if dialog:
+                    selected_scens = self.workflow.scenes_in_story(self.workflow.get_scene_by_index(self.current_scene_index))
+
+            for scene in selected_scens:
+                oldi, image_path = refresh_scene_media(scene, image_type, ".webp", file_path, True)
+
+            self.workflow.save_scenes_to_json()
 
             # 刷新显示
             self.display_image_on_canvas_for_track(image_type)
-            
-            self.workflow.save_scenes_to_json()
             print(f"✅ 已更新 {image_type}: {os.path.basename(file_path)}")
             
         except Exception as e:
@@ -4091,8 +4223,6 @@ class WorkflowGUI:
                 "narration_image_last": (self.narration_image_last_canvas, "Narration\nLast", '_narration_image_last_photo'),
                 'zero_image': (self.zero_image_canvas, "Zero\nImage", '_zero_image_photo'),
                 'zero_image_last': (self.zero_image_last_canvas, "Zero\nLast", '_zero_image_last_photo'),
-                'one_image': (self.one_image_canvas, "One\nImage", '_one_image_photo'),
-                'one_image_last': (self.one_image_last_canvas, "One\nLast", '_one_image_last_photo'),
             }
             
             if image_type not in canvas_mapping:
@@ -4165,8 +4295,6 @@ class WorkflowGUI:
             self.display_image_on_canvas_for_track("narration_image_last")
             self.display_image_on_canvas_for_track('zero_image')
             self.display_image_on_canvas_for_track('zero_image_last')
-            self.display_image_on_canvas_for_track('one_image')
-            self.display_image_on_canvas_for_track('one_image_last')
 
             # 根据当前选中的tab加载轨道视频预览
             current_tab_index = self.narration_notebook.index(self.narration_notebook.select())
@@ -4399,6 +4527,8 @@ class WorkflowGUI:
     
 
     def shift_scene(self, forward=True):
+        # 先把当前镜界面内容写回 scene，避免 refresh 时用旧 dict 盖住未保存编辑（shift 本身不改 speaking）
+        self.update_current_scene()
         position = pygame.mixer.music.get_pos() / 1000.0
         if position <= 0.001:
             position = 0.0
@@ -4419,6 +4549,7 @@ class WorkflowGUI:
 
     def shift_before(self):
         """下移当前场景"""
+        self.update_current_scene()
         position = pygame.mixer.music.get_pos() / 1000.0
         self.workflow.shift_scene(self.current_scene_index, self.current_scene_index-1, position+self.playing_delta)
         self.playing_delta = 0.0
@@ -5046,6 +5177,9 @@ class WorkflowGUI:
             "clip_animation": self.clip_animate.get(),
             "narration_animation": self.narration_animation.get()
         })
+        _cl = (self.scene_language.get() or "").strip()
+        if _cl in config.FONT_LIST:
+            scene["content_language"] = _cl
         self.workflow.save_scenes_to_json()
         return scene
 
@@ -5248,40 +5382,109 @@ class WorkflowGUI:
             print(f"❌ 保存项目配置失败: {e}")
 
 
+    def bind_scene_navigation_shortcuts(self):
+        """全局：Ctrl+Shift+←/→ 上一/下一场景；Ctrl+Shift+Alt+←/→ 首/末场景。"""
+        def _has_scenes():
+            return getattr(self, "workflow", None) and getattr(self.workflow, "scenes", None)
+
+        def _prev(event=None):
+            if not _has_scenes():
+                return
+            self.prev_scene()
+            return "break"
+
+        def _next(event=None):
+            if not _has_scenes():
+                return
+            self.next_scene()
+            return "break"
+
+        def _first(event=None):
+            if not _has_scenes():
+                return
+            self.first_scene()
+            return "break"
+
+        def _last(event=None):
+            if not _has_scenes():
+                return
+            self.last_scene()
+            return "break"
+
+        for seq in (
+            "<Control-Shift-Left>",
+            "<Control-Shift-KP_Left>",
+        ):
+            self.root.bind_all(seq, _prev)
+        for seq in (
+            "<Control-Shift-Right>",
+            "<Control-Shift-KP_Right>",
+        ):
+            self.root.bind_all(seq, _next)
+        # Alt 左右键在部分 Tk 下需写成 Alt-Control-Shift（与 Control-Shift-Alt 等价）
+        for seq in (
+            "<Control-Shift-Alt-Left>",
+            "<Control-Shift-Alt-KP_Left>",
+            "<Alt-Control-Shift-Left>",
+            "<Control-Alt-Shift-Left>",
+        ):
+            self.root.bind_all(seq, _first)
+        for seq in (
+            "<Control-Shift-Alt-Right>",
+            "<Control-Shift-Alt-KP_Right>",
+            "<Alt-Control-Shift-Right>",
+            "<Control-Alt-Shift-Right>",
+        ):
+            self.root.bind_all(seq, _last)
+
 
     def bind_edit_events(self):
         """绑定编辑事件"""
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
-        scene_fields = [
+        scene_text_fields = [
             self.scene_speaking,
-            self.scene_speaker,
             self.scene_actions,
             self.scene_visual,
-            self.scene_narrator,
             self.scene_voiceover,
-            self.scene_caption
+            self.scene_caption,
         ]
-        for field in scene_fields:
-            # 绑定Enter键事件（Ctrl+Enter在ScrolledText中触发保存）
+        for field in scene_text_fields:
+            # Ctrl+Enter：保存且不插入换行
             field.bind('<Control-Return>', self.on_scene_field_enter)
             field.bind('<Control-Enter>', self.on_scene_field_enter)
-            # 也绑定失去焦点事件作为备选保存机制
+            # Enter：立即写回场景与 JSON，并保留默认换行
+            field.bind('<Return>', self.on_scene_field_return_commit)
+            field.bind('<KP_Enter>', self.on_scene_field_return_commit)
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
-        
+
+        for field in (self.scene_speaker, self.scene_narrator):
+            field.bind('<FocusOut>', self.on_scene_field_focus_out)
+        self.scene_speaker.bind('<<ComboboxSelected>>', self.on_speaker_selected)
+        self.scene_narrator.bind('<<ComboboxSelected>>', self.on_narrator_selected)
+        self.scene_speaker.bind('<Return>', self.on_scene_speaker_return)
+        self.scene_speaker.bind('<KP_Enter>', self.on_scene_speaker_return)
+        self.scene_narrator.bind('<Return>', self.on_scene_narrator_return)
+        self.scene_narrator.bind('<KP_Enter>', self.on_scene_narrator_return)
+
         # 为Entry和Combobox字段单独绑定失去焦点事件（人物/讲员单独处理「同步本故事」）
         entry_combobox_fields = [
             self.scene_host_display,
             self.scene_visual_style,
+            self.scene_language,
         ]
         for field in entry_combobox_fields:
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
             field.bind('<<ComboboxSelected>>', self.update_current_scene)
-        self.scene_speaker.bind('<FocusOut>', self.on_scene_field_focus_out)
-        self.scene_speaker.bind('<<ComboboxSelected>>', self.on_speaker_selected)
-        self.scene_narrator.bind('<FocusOut>', self.on_scene_field_focus_out)
-        self.scene_narrator.bind('<<ComboboxSelected>>', self.on_narrator_selected)
+            field.bind('<Return>', self.on_scene_combobox_return_commit)
+            field.bind('<KP_Enter>', self.on_scene_combobox_return_commit)
         
-        print("📝 已绑定场景编辑字段的自动保存事件 (Ctrl+Enter 或失去焦点时保存)")
+        # 讲话：仅在此框 — Ctrl+S 光标处拆分并克隆场景；Ctrl+Right 尾段移到下一镜；Ctrl+Left 首段移到上一镜
+        self.scene_speaking.bind("<Control-s>", self._on_speaking_ctrl_s_split_clone)
+        self.scene_speaking.bind("<Control-S>", self._on_speaking_ctrl_s_split_clone)
+        self.scene_speaking.bind("<Control-Right>", self._on_speaking_ctrl_right_move_tail_to_next)
+        self.scene_speaking.bind("<Control-Left>", self._on_speaking_ctrl_left_move_head_to_prev)
+
+        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→")
     
 
 
@@ -5327,16 +5530,56 @@ class WorkflowGUI:
         self.update_current_scene()
         return "break"  # 阻止默认的换行行为
 
-
-    def on_scene_field_focus_out(self, event=None):
-        """当场景编辑字段失去焦点时的回调"""
-        # 延迟保存以避免频繁操作（仅取消有效的 after id，避免 None/已失效 id 触发 ValueError）
-        tid = getattr(self, '_save_timer', None)
+    def _cancel_scene_debounce_timer(self):
+        tid = getattr(self, "_save_timer", None)
         if tid:
             try:
                 self.root.after_cancel(tid)
             except (ValueError, tk.TclError):
                 pass
+        self._save_timer = None
+
+    def on_scene_field_return_commit(self, event=None):
+        """多行文本框内按 Enter：立即写回当前场景与 JSON（仍插入换行）。"""
+        if getattr(self, "_scene_widgets_loading", False):
+            return
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            return
+        self._cancel_scene_debounce_timer()
+        self.update_current_scene()
+
+    def on_scene_combobox_return_commit(self, event=None):
+        """下拉框按 Enter：立即写回当前场景与 JSON。"""
+        if getattr(self, "_scene_widgets_loading", False):
+            return
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            return
+        self._cancel_scene_debounce_timer()
+        self.update_current_scene()
+
+    def on_scene_speaker_return(self, event=None):
+        """人物下拉按 Enter：与选择变更一致（含多镜同步询问）。"""
+        if getattr(self, "_scene_widgets_loading", False):
+            return
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            return
+        self._cancel_scene_debounce_timer()
+        self.on_speaker_selected(event)
+
+    def on_scene_narrator_return(self, event=None):
+        """讲员下拉按 Enter：与选择变更一致（含多镜同步询问）。"""
+        if getattr(self, "_scene_widgets_loading", False):
+            return
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            return
+        self._cancel_scene_debounce_timer()
+        self.on_narrator_selected(event)
+
+
+    def on_scene_field_focus_out(self, event=None):
+        """当场景编辑字段失去焦点时的回调"""
+        # 延迟保存以避免频繁操作（仅取消有效的 after id，避免 None/已失效 id 触发 ValueError）
+        self._cancel_scene_debounce_timer()
         self._save_timer = self.root.after(500, lambda: self.update_current_scene())
 
 
@@ -5367,8 +5610,16 @@ class WorkflowGUI:
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
 
-            current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
-            video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
+            # 一次 ffprobe 供帧率写入与 resize 共用，避免重复子进程；同尺寸则 resize 内直接跳过复制/重编码
+            probe = self.workflow.ffmpeg_processor.probe_video_stream_basic(video_path)
+            if probe and probe.get("fps") is not None:
+                current_scene[media_type + "_fps"] = probe["fps"]
+            else:
+                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
+
+            video_path = self.workflow.ffmpeg_processor.resize_video(
+                video_path, width=None, height=self.workflow.ffmpeg_processor.height, _probe=probe
+            )
 
             print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
             if media_type == "zero":

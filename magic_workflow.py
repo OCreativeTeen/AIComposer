@@ -7,9 +7,11 @@ from utility.sd_image_processor import SDProcessor
 from utility.ffmpeg_processor import FfmpegProcessor
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 import os
+import copy
 import json
 import shutil
 import re
+from datetime import datetime
 from pathlib import Path
 import config
 import config_prompt
@@ -129,13 +131,6 @@ class MagicWorkflow:
             if zero_audio:
                 valid_media_files.append(zero_audio)
 
-            one = get_file_path(scene, "one")
-            if one:
-                valid_media_files.append(one)
-            one_audio = get_file_path(scene, "one_audio")
-            if one_audio:
-                valid_media_files.append(one_audio)
-
             clip_audio = get_file_path(scene, "clip_audio")
             if clip_audio:
                 valid_media_files.append(clip_audio)
@@ -157,13 +152,6 @@ class MagicWorkflow:
             zero_right = get_file_path(scene, "zero_right")
             if zero_right:
                 valid_media_files.append(zero_right)
-
-            one_left = get_file_path(scene, "one_left")
-            if one_left:
-                valid_media_files.append(one_left)
-            one_right = get_file_path(scene, "one_right")
-            if one_right:
-                valid_media_files.append(one_right)
 
             clip_left = get_file_path(scene, "clip_left")
             if clip_left:
@@ -204,13 +192,6 @@ class MagicWorkflow:
             zero_image_last = get_file_path(scene, "zero_image_last")
             if zero_image_last:
                 valid_media_files.append(zero_image_last)
-
-            one_image = get_file_path(scene, "one_image")
-            if one_image:
-                valid_media_files.append(one_image)
-            one_image_last = get_file_path(scene, "one_image_last")
-            if one_image_last:
-                valid_media_files.append(one_image_last)
 
             clip_image = get_file_path(scene, "clip_image")
             if clip_image:
@@ -510,7 +491,7 @@ class MagicWorkflow:
             if i == 0:
                 new_scene = current_scene
             else:
-                new_scene = current_scene.copy()
+                new_scene = copy.deepcopy(current_scene)
 
             new_scene["id"] = max_section_id + i + 1
             new_scenes.append(new_scene)
@@ -548,7 +529,9 @@ class MagicWorkflow:
         original_audio_clip = get_file_path(current_scene, "clip_audio")
         original_video_clip = get_file_path(current_scene, "clip")
 
-        next_scene = current_scene.copy()
+        # 须用深拷贝：浅拷贝会使两半场景共享嵌套 dict/list，后续任一侧原地修改会污染另一侧，
+        # 表现为「别的镜」或后半段 speaking / 其它字段错乱。
+        next_scene = copy.deepcopy(current_scene)
 
         self.replace_scene_with_others(n, [current_scene, next_scene])
 
@@ -695,8 +678,22 @@ class MagicWorkflow:
         scenes_file = config.get_scenes_path(self.pid)
         if os.path.exists(scenes_file):
             # 先读取文件到局部变量再赋值，避免先清空 self.scenes 导致在 make_backgroud_medias 期间若触发 save 会覆盖成空列表
-            with open(scenes_file, "r", encoding="utf-8") as f:
-                loaded_scenes = json.load(f)
+            loaded_scenes = []
+            try:
+                with open(scenes_file, "r", encoding="utf-8") as f:
+                    loaded_scenes = json.load(f)
+            except json.JSONDecodeError as e:
+                bad_copy = scenes_file + f".broken.{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                try:
+                    shutil.copy2(scenes_file, bad_copy)
+                    print(
+                        f"❌ scenes.json 不是合法 JSON（line {e.lineno} col {e.colno}）：{e.msg}\n"
+                        f"   已备份损坏文件到: {bad_copy}\n"
+                        f"   请用编辑器打开原文件对照行号修复，或从备份恢复后再启动。"
+                    )
+                except OSError as copy_err:
+                    print(f"❌ scenes.json JSON 解析失败且无法备份: {copy_err}\n   原错误: {e}")
+                loaded_scenes = []
             if not isinstance(loaded_scenes, list):
                 loaded_scenes = []
             self.scenes = loaded_scenes
@@ -904,8 +901,21 @@ class MagicWorkflow:
                     if field in normalized_scene:
                         normalized_scene[field] = self._normalize_json_string_field(normalized_scene[field])
                 normalized_scenes.append(normalized_scene)
-            
-            with open(config.get_scenes_path(self.pid), "w", encoding="utf-8") as f:
+
+            scenes_path = config.get_scenes_path(self.pid)
+            if os.path.exists(scenes_path):
+                # check if the content of the file is same as the normalized_scenes
+                with open(scenes_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if content != json.dumps(normalized_scenes, ensure_ascii=False, indent=2):
+                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                    backup_path = f"{scenes_path}.{ts}.bak"
+                    # overwrite the backup file, if exists
+                    if os.path.exists(backup_path):
+                        os.remove(backup_path)
+                    shutil.copy2(scenes_path, backup_path)
+
+            with open(scenes_path, "w", encoding="utf-8") as f:
                 json.dump(normalized_scenes, f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:

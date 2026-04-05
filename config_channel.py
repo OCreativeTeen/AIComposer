@@ -1253,23 +1253,23 @@ If short → EXPAND:
 
 --------------------------------------------------
 
-📝 OUTPUT FORMAT
+📝 OUTPUT FORMAT  (in {language} — 中文):
 
-(in {language} — 中文)
+{{
+    "english": {{
+        "title": "A short title capturing the psychological theme. In English.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
+        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "title": "A short title capturing the psychological theme. In Chinese.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
+        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
 
-OUTPUT MUST HAVE CLEAR STRUCTURE:
-
--------------------------
-【SECTION 1：问题骨架】
--------------------------
-
-(列出2–4个关键点，每个点结构清晰)
-
--------------------------
-【SECTION 2：故事展开】
--------------------------
-
-(完整播客式叙述)
 
 ----------------------------------------------------
 
@@ -1277,11 +1277,18 @@ User guidance / 导向说明 (optional):
 ----------------------------------------------------
 {instruction}
 
-INPUT :
+
 ----------------------------------------------------
 Input Content:
 ----------------------------------------------------
+Raw Content:
+----------------------------------------------------
 {content}
+----------------------------------------------------
+Analyzed Content:
+----------------------------------------------------
+{analyzed_content}
+
 
 ----------------------------------------------------
 Core-insight ('soul'):
@@ -1375,24 +1382,42 @@ The hosts should sometimes pause, react, or build on each other's ideas.
 
 --------------------------------
 
-OUTPUT FORMAT
-(in {language} as the content in the user-prompt -- 中文)
-Write the result as a dialogue script.
+OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
 
-Host A: ...
-Host B: ...
+{{
+    "english": {{
+        "title": "A short title capturing the psychological theme. In English.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
+        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "title": "A short title capturing the psychological theme. In Chinese.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
+        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
 
-Include natural conversational rhythm.
+
 
 ----------------------------------------------------
 User guidance / 导向说明 (optional):
 ----------------------------------------------------
 {instruction}
 
+
 ----------------------------------------------------
 Input Content:
 ----------------------------------------------------
+Raw Content:
+----------------------------------------------------
 {content}
+----------------------------------------------------
+Analyzed Content:
+----------------------------------------------------
+{analyzed_content}
+
 
 ----------------------------------------------------
 Core-insight ('soul'):
@@ -1498,20 +1523,21 @@ Avoid heavy academic jargon.
 OUTPUT FORMAT (STRICT)
 --------------------------------------------------
 
-[Story] (in {language})
+{{
+    "english": {{
+        "title": "A short title capturing the psychological theme. In English.",
+        "key_message": "列出2–4个关键点 (insightful, clear, accessible psychological analysis)，每个点结构清晰 - in English",
+        "story": "Full psychological Story: vivid, emotionally rich psychological story. In English.",
+        "summary": "Write a vivid, emotionally rich psychological story. Length guideline: 12–18 sentences. The story should contain: detailed scenes, emotional tension, internal psychological struggle, interpersonal conflict, a moment that reveals the deeper emotional root. In English.",
+    }},
+    "chinese": {{
+        "title": "A short title capturing the psychological theme. In Chinese.",
+        "key_message": "列出2–4个关键点 (insightful, clear, accessible psychological analysis)，每个点结构清晰 - in Chinese",
+        "story": "Full psychological Story: vivid, emotionally rich psychological story. In Chinese.",
+        "summary": "Write a vivid, emotionally rich psychological story. Length guideline: 12–18 sentences. The story should contain: detailed scenes, emotional tension, internal psychological struggle, interpersonal conflict, a moment that reveals the deeper emotional root. In Chinese.",
+    }}
+}}
 
-Write a vivid, emotionally rich psychological story.
-
-Length guideline:
-12–18 sentences.
-
-The story should contain:
-
-• detailed scenes  
-• emotional tension  
-• internal psychological struggle  
-• interpersonal conflict  
-• a moment that reveals the deeper emotional root
 
 --------------------------------------------------
 
@@ -1550,10 +1576,18 @@ User guidance / 导向说明 (optional):
 ----------------------------------------------------
 {instruction}
 
+
 ----------------------------------------------------
 Input Content:
 ----------------------------------------------------
+Raw Content:
+----------------------------------------------------
 {content}
+----------------------------------------------------
+Analyzed Content:
+----------------------------------------------------
+{analyzed_content}
+
 
 ----------------------------------------------------
 Core-insight ('soul'):
@@ -1682,8 +1716,8 @@ STEP 2 — Create the Reflective Output
 Based on the synthesized insight, produce a gentle counseling reflection consisting of:
 
 1) A short title
-2) A heart message
-3) A micro-story
+2) A heart message (key_message)
+3) A micro-story (story)
 4) A 9 seconds concise caption speaking (based on 2 & 3)
 
 The story should indirectly illustrate the psychological truth.
@@ -1707,15 +1741,17 @@ OUTPUT FORMAT (STRICT JSON)
 {{
     "english": {{
         "title": "A short title capturing the psychological theme. In English.",
-        "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-        "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
-        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In English."
+        "key_message": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+        "story": "psychological_micro_story (5–8 sentences). A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
+        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In English.",
+        "summary": "A short summary of the content (for youtube program description). In English."
     }}  ,
     "chinese": {{    
         "title": "A short title capturing the psychological theme. In Chinese.",
-        "heart_message": "2–4 short sentences. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
-        "psychological_micro_story": "5–8 sentences. A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
-        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese."
+        "key_message": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
+        "story": "psychological_micro_story (5–8 sentences). A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
+        "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (in 9 seconds). In Chinese.",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
     }}
 }}
 
@@ -1725,10 +1761,18 @@ User guidance / 导向说明 (optional):
 ----------------------------------------------------
 {instruction}
 
+
 ----------------------------------------------------
 Input Content:
 ----------------------------------------------------
+Raw Content:
+----------------------------------------------------
 {content}
+----------------------------------------------------
+Analyzed Content:
+----------------------------------------------------
+{analyzed_content}
+
 
 ----------------------------------------------------
 Core-insight ('soul'):
@@ -2089,8 +2133,8 @@ CHANNEL_CONFIG = {
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
             ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION),
-            ("Story with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
             ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Story with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,

@@ -19,6 +19,10 @@ replace the narrator with the one in 2nd image
 replace the figure with the one in 2nd image
 
 
+make the person in the image more realistic 
+
+make the person in the image more pixar cartoon
+
 content from "Pasted Text" source,  "Narrator:xxx" source help find out the narrator IP image,  "Story-Character:xxx" source help give image of the story characters (male & female)
 
 program starting :  just relax, no specific talk , add some relax background music
@@ -27,9 +31,29 @@ replace the host/narrator in 1st image with the IP in 2nd image
 replace the host/narrator in 1st image with the IP in 2nd image (no cup in hand, stand up, no chair)
 replace the host/narrator in 1st image with the IP in 2nd image (no cup in hand, stand up, no chair, pop in front - half body)
 
+
 remove the PIP (host/narrator) in the image
+replace the host/narrator in 1st image with the IP in 2nd image
+replace the faces of the 1st image,  with the face in 2nd image
+
+
+
 remove words in image
 remove the PIP (host/narrator) in the image, remove words in image
+
+remove text show at image 下半部分　
+
+remove text show at image 上半部分
+
+replace the face of the 1st image with the face in 2nd image
+
+replace the faces of the 1st image,  with the face in 2nd image
+
+not speak, but show : 
+這種被看見的感覺，有時候其實會讓人有點不自在。你會突然意識到，欸，我現在坐姿OK嗎？我表情會不會怪怪的？甚至會下意識想動一下、調整一下，讓自己看起來好一點。
+
+not speak, but show : 尋求連結。 那是在你本來就完整、有自己節奏的情況下，你靠近對方，不是為了拿，而是為了分享
+
 
 add the IP in 2nd image to 1st image (no cup in hand, stand up, no chair, pop in front - half body, face to the actor)
 
@@ -42,6 +66,10 @@ woman in center speak:
 主持人"明月", 主持 "心源谈天" 节目, 做一个有相应背景的节目片头, 穿职业装
 
 主持人"明月", 主持 "心源谈天" 节目, 做一个有相应背景的节目片头, 穿职业装  (户外), 节目名字显示要有创意
+
+中间主持人 主持"心源谈天" 节目, 做一个节目结束片段
+
+no talk, smile to audience,  add ending fade & music
 
 
 woman voice,  not read , natural talking main clue!!!

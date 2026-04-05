@@ -91,11 +91,11 @@ class AVReviewDialog:
         self.media_type_names = {
             "clip": "场景媒体 (clip)",
             "narration": "旁白轨道 (narration)",
-            "zero": "背景轨道 (zero)",
-            "one": "第一轨道 (one)"
+            "zero": "背景轨道 (zero)"
         }
 
         self.transcribe_way = "single"
+        self.media_split = "split"  # 与 fresh 区 Combobox 同步：split | clone
 
         self.media_type = media_type
         self.replace_media_audio = replace_media_audio
@@ -117,19 +117,6 @@ class AVReviewDialog:
             self.video_field = "zero"
             self.audio_field = "zero_audio"
             self.image_field = "zero_image"
-        elif media_type == "one":
-            self.video_field = "one"
-            narration_audio = get_file_path(self.current_scene, "narration_audio")
-            _refresh_scene_media(self.current_scene, "one_audio", ".wav", narration_audio, True)
-
-            one_video = get_file_path(self.current_scene, "one")
-            if not one_video or not os.path.exists(one_video):
-                one_video = video_path
-            one_video = self.workflow.ffmpeg_processor.add_audio_to_video(one_video, narration_audio)
-            _refresh_scene_media(self.current_scene, "one", ".mp4", one_video)
-            
-            self.audio_field = "one_audio"
-            self.image_field = "one_image"
 
         self.source_video_path = get_file_path(self.current_scene, self.video_field)
         self.source_audio_path = get_file_path(self.current_scene, self.audio_field)
@@ -456,7 +443,24 @@ class AVReviewDialog:
         
         # ttk.Button(fresh_buttons_frame, text="剪音视", command=lambda: self.trim_video(False)).pack(side=tk.LEFT)
         # ttk.Button(fresh_buttons_frame, text="剪视频", command=lambda: self.trim_video(True)).pack(side=tk.LEFT)
-        
+
+        ttk.Label(fresh_buttons_frame, text="媒体分离").pack(side=tk.RIGHT, padx=(0, 4))
+        self.media_split_var = tk.StringVar(value=self.media_split)
+        self.media_split_combo = ttk.Combobox(
+            fresh_buttons_frame,
+            textvariable=self.media_split_var,
+            values=("split", "clone"),
+            state="readonly",
+            width=8,
+        )
+        self.media_split_combo.pack(side=tk.RIGHT, padx=(0, 10))
+
+        def _sync_media_split(*_):
+            self.media_split = (self.media_split_var.get() or "split").strip() or "split"
+
+        self.media_split_combo.bind("<<ComboboxSelected>>", lambda e: _sync_media_split())
+        _sync_media_split()
+
         ttk.Button(fresh_buttons_frame, text="替换", command=self.confirm_replacement).pack(side=tk.RIGHT)
         ttk.Button(fresh_buttons_frame, text="取消", command=self.cancel).pack(side=tk.RIGHT)
         
@@ -1263,20 +1267,18 @@ class AVReviewDialog:
             self._update_fresh_json_text()
 
         _name = self.current_scene.get("name", "")
-        _content = ""
+        _ac = project_manager.PROJECT_CONFIG.get("analyzed_content", "")
+        if isinstance(_ac, (dict, list)):
+            _content = json.dumps(_ac, ensure_ascii=False)
+        else:
+            _content = _ac or ""
         selected_prompt = ""
         if _name == "development2":
-            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development2', '')
         elif _name == "development1":
-            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development1', '')
         elif _name == "intro":
-            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
             selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('intro', '')
-
-        if not _content:
-            _content = project_manager.PROJECT_CONFIG.get('raw_content', "")
 
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
@@ -1667,6 +1669,7 @@ class AVReviewDialog:
 
 
     def confirm_replacement(self):
+        self.media_split = (self.media_split_var.get() or "split").strip() or "split"
         self.confirm_edit_timeline_change()
         video_path = self.source_video_path
         
@@ -1715,24 +1718,33 @@ class AVReviewDialog:
                     _refresh_scene_media(self.current_scene, self.image_field+"_last", ".webp", last_image, True)
 
         elif self.clip_multiple_audio_changed():
-            print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
-            for i, item in enumerate(self.audio_json):
-                duration = item.get("duration", 0)
-                if duration <= 0:
-                    print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
-                    continue
-                clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, item["start"], item["duration"])
-                olda, item["speaker_audio"] = _refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
-                v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
-                _refresh_scene_media(item, "clip", ".mp4", v)
-                first_image = item.get(self.image_field, None)
-                if  not first_image or not os.path.exists(first_image):
-                    first_image = self._extract_or_fallback_frame(v, True)
+            if self.media_split == "split":
+                print(f"✓ 确认剪辑区间，共 {len(self.audio_json)} 个场景，开始切割音视频...")
+                for i, item in enumerate(self.audio_json):
+                    duration = item.get("duration", 0)
+                    if duration <= 0:
+                        print(f"⚠️ 场景 {i+1} duration={duration}，跳过")
+                        continue
+                    clip_wav = self.workflow.ffmpeg_audio_processor.audio_cut_fade(self.source_audio_path, item["start"], item["duration"])
+                    olda, item["speaker_audio"] = _refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                    v = self.workflow.ffmpeg_processor.trim_video(self.source_video_path, item["start"], item["end"])
+                    _refresh_scene_media(item, "clip", ".mp4", v)
+                    first_image = item.get(self.image_field, None)
+                    if  not first_image or not os.path.exists(first_image):
+                        first_image = self._extract_or_fallback_frame(v, True)
+                        if first_image:
+                            _refresh_scene_media(item, self.image_field, ".webp", first_image)
+                    last_image = self._extract_or_fallback_frame(v, False)
+                    if last_image:
+                        _refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
+            else:
+                for i, item in enumerate(self.audio_json):
+                    olda, item["speaker_audio"] = _refresh_scene_media(item, "clip_audio", ".wav", self.source_audio_path, True)
+                    _refresh_scene_media(item, "clip", ".mp4", self.source_video_path, True)
+                    first_image = item.get(self.image_field, None)
                     if first_image:
-                        _refresh_scene_media(item, self.image_field, ".webp", first_image)
-                last_image = self._extract_or_fallback_frame(v, False)
-                if last_image:
-                    _refresh_scene_media(item, self.image_field+"_last", ".webp", last_image, True)
+                        _refresh_scene_media(item, self.image_field, ".webp", first_image, True)
+                        _refresh_scene_media(item, self.image_field+"_last", ".webp", first_image, True)
 
             print(f"✓ 音视频切割完成")
         else:

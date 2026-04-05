@@ -31,7 +31,6 @@ class MediaTypeSelector:
         ttk.Button(options_frame, text="场景媒体 (clip)",       command=lambda: self.select("clip")).pack(fill=tk.X, pady=5)
         ttk.Button(options_frame, text="旁白轨道 (narration)",  command=lambda: self.select("narration")).pack(fill=tk.X, pady=5)
         ttk.Button(options_frame, text="背景轨道 (zero)",       command=lambda: self.select("zero")).pack(fill=tk.X, pady=5)
-        ttk.Button(options_frame, text="第一轨道 (one)",        command=lambda: self.select("one")).pack(fill=tk.X, pady=5)
 
         # 音频处理选项（仅当视频有音频时显示）
         if has_audio:

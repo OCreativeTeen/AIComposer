@@ -1,5 +1,13 @@
 import config_prompt
 
+SPEAKING_COPY_NSOS_PREFIX = "no speak (only show the content)"
+SPEAKING_CONCISE_SYSTEM_PROMPT = (
+    "You are a text condenser. From the user's ORIGINAL content below, produce ONLY a concise version: "
+    "one sentence or at most two very short clauses. Preserve the one key point in original language. "
+    "Keep words and punctuation (semicolons, periods, commas). Do not wrap the output in quotes. "
+    "Do not add any preamble, explanation, label, or markdown."
+)
+
 
 STORY_REMIX_SPEAKING_SYSTEM_PROMPT = """
 *** You are a narrative restructuring and natural speech refinement engine.
@@ -165,7 +173,12 @@ Important requirements:
     - You may rewrite sentences slightly to make them clearer, but the meaning and richness must remain intact.
 
 Output format:
-    - Always output the rewritten content in {language}
+    - Give both English & Chinese versions of the rewritten content. into a json dictionary, like:
+        {{
+            "english": "rewritten content in English",
+            "chinese": "rewritten content in Chinese"
+        }}
+        
     - Organize the content into clear sections with headings if appropriate.
     - Within each section, keep the narrative and descriptive style of the original text.
     - Maintain the storytelling tone and psychological or descriptive depth present in the original material.

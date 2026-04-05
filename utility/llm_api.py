@@ -11,9 +11,11 @@ import tkinter.ttk as ttk
 from . import file_util
 
 
-LM_STUDIO = "qwen/qwen3.5-9b"
+#LM_STUDIO = "qwen/qwen3.5-9b"
+#LM_STUDIO = "google/gemma-4-26b-a4b"
+LM_STUDIO = "gemma-4-e4b-it"
 #OLLAMA = "qwen3.5:9b"
-OLLAMA = "gemma4"
+OLLAMA = "gemma4:26b"
 
 GPT_MINI = "gpt-5-nano"
 #GPT_MINI = "gpt-4o-mini"
@@ -197,7 +199,7 @@ class LLMApi:
                 request_params = {
                     "model": model,  # 使用确定的模型名称
                     "messages": messages,
-                    "max_completion_tokens": 262144,
+                    "max_completion_tokens": 131072,
                     "stream": False
                 }
                 response = self.openai_client.chat.completions.create(**request_params)
@@ -287,15 +289,15 @@ class LLMApi:
         # 创建对话框
         dialog = tk.Toplevel(parent)
         dialog.title("选择 LLM 模型")
-        dialog.geometry("1000x800")
+        dialog.geometry("1000x1000")
         dialog.transient(parent)
         dialog.grab_set()
         
         # 居中显示
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() - 1000) // 2
-        y = (dialog.winfo_screenheight() - 800) // 2
-        dialog.geometry(f"1000x800+{x}+{y}")
+        y = (dialog.winfo_screenheight() - 1000) // 2
+        dialog.geometry(f"1000x1000+{x}+{y}")
         # 置顶/聚焦，避免被其它 Toplevel 压住看不到
         try:
             dialog.lift()
@@ -307,18 +309,29 @@ class LLMApi:
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 模型选择区域
+        # 模型选择区域（纯按钮，无 Radio；点选后更新「当前模型」与 Manual 响应区显隐）
         model_frame = ttk.LabelFrame(main_frame, text="选择 LLM 模型", padding=10)
         model_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # 用于存储选择的变量
-        selected_model = tk.StringVar(value=MANUAL)  # 默认选择 GPT_MINI
-        
-        # 创建单选按钮
-        ttk.Radiobutton(model_frame, text=f"GPT Mini ({GPT_MINI})", variable=selected_model, value=GPT_MINI).pack(anchor='w', pady=2)
-        ttk.Radiobutton(model_frame, text=f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})", variable=selected_model, value=GEMINI_2_0_FLASH).pack(anchor='w', pady=2)
-        ttk.Radiobutton(model_frame, text=f"OLLAMA ({OLLAMA})", variable=selected_model, value=OLLAMA).pack(anchor='w', pady=2)
-        ttk.Radiobutton(model_frame, text=f"Manual ({MANUAL})", variable=selected_model, value=MANUAL).pack(anchor='w', pady=2)
+
+        selected_model = tk.StringVar(value=MANUAL)
+
+        ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
+
+        _model_rows = [
+            (GPT_MINI, f"GPT Mini ({GPT_MINI})"),
+            (GEMINI_2_0_FLASH, f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})"),
+            (OLLAMA, f"OLLAMA ({OLLAMA})"),
+            (MANUAL, f"Manual ({MANUAL})"),
+        ]
+        for mid, title in _model_rows:
+            ttk.Button(
+                model_frame,
+                text=title,
+                command=lambda m=mid: selected_model.set(m),
+            ).pack(fill=tk.X, pady=3)
+
+        model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
+        model_status.pack(anchor=tk.W, pady=(6, 0))
         
         # 请求内容区域（分成两部分）
         request_frame = ttk.LabelFrame(main_frame, text="请求内容 (Request)", padding=10)
@@ -384,10 +397,16 @@ class LLMApi:
                 response_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
             else:
                 response_frame.pack_forget()
-        
-        # 绑定模型选择变化事件
-        selected_model.trace('w', lambda *args: update_response_visibility())
-        update_response_visibility()  # 初始更新（默认选择 GPT_MINI，所以响应区域会被隐藏）
+
+        def sync_model_status(*_):
+            model_status.config(text=f"当前模型: {selected_model.get()}")
+
+        def on_model_changed(*_):
+            update_response_visibility()
+            sync_model_status()
+
+        selected_model.trace("w", on_model_changed)
+        on_model_changed()
         
 
         def on_ok():
