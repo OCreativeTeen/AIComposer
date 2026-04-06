@@ -296,11 +296,11 @@ class MediaScanner:
         return gen_video
 
 
-    def video_simple_replacement(self, current_scene, video_path, replace_audio, media_type):
+    def video_simple_replacement(self, current_scene, video_path_in, replace_audio, media_type):
         """处理音频替换"""
-        current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
+        current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path_in)
         current_scene[media_type + "_status"] = "ORIG"
-        video_path = self.workflow.ffmpeg_processor.resize_video(video_path, width=None, height=self.workflow.ffmpeg_processor.height)
+        video_path = self.workflow.ffmpeg_processor.resize_video(video_path_in, width=None, height=self.workflow.ffmpeg_processor.height)
         # 仅当显式为 "replace" 时用场景已有 *_audio 替换；字符串 "keep" 须为假（勿用 if replace_audio: 非空串皆真）
         if replace_audio == "replace":
             audio = current_scene.get(media_type+"_audio", None)

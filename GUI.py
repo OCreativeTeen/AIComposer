@@ -40,7 +40,7 @@ import json
 import copy
 import shutil
 from pathlib import Path
-from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons
+from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons, post_nested_clipboard_menu
 
 try:
     from tkcalendar import Calendar as TkCalendar
@@ -51,14 +51,59 @@ except ImportError:
 STANDARD_FPS = 60  # Match FfmpegProcessor.STANDARD_FPS
 
 # 图像画布双击：gui.choice_dialog.askchoice 用 (return_value, button_label) 元组列表
-IMAGE_ACTION_CHOICES = [
-    "复制当前图片",
-    "去掉下半部分中的文字",
-    "去掉上半部分中的文字",
-    "去掉 PIP (narrator) in the image",
-    "替换 narrator in 1st image, with the IP in 2nd image",
-    "替换 figure's faces in the 1st image,  with the figure's face in 2nd image",
-]
+IMAGE_ACTION_CHOICES = {
+    "人物替换" : [
+        "Replace Narrator/Figure in 1st image with the IP in 2nd image",
+        "Add IP in 2nd image into 1st image (in front, half body, facing actor)",
+        "Add IP in 2nd image into 1st image (in front, half body, facing audience)",
+        "Add IP in 2nd image into 1st image (right, half body, facing actor)",
+        "Add IP in 2nd image into 1st image (right, half body, facing audience)",
+        "Add IP in 2nd image into 1st image (left, half body, facing actor)",
+        "Add IP in 2nd image into 1st image (left, half body, facing audience)"
+    ],
+    "删除元素" : [
+        "Remove text in upper part of image",
+        "Remove text in lower part of image",
+        "Remove PIP (narrator) in the image",
+        "Remove Narrator in the image",
+        "Remove Narrator in the image left",
+        "Remove Narrator in the image right",
+        "Remove Narrator in the image bottom",
+        "Remove all text in the image",
+    ],
+    "节目包装" : [
+        "Show title '心源谈天' in header (creative)",
+        "Show title '心源谈天' in footer (creative)"
+    ],
+    "风格控制" : [
+        "Change visual style to Realistic Style",
+        "Change visual style to Pixar Style",
+        "Change visual style to Cinematic Style"
+    ]
+}
+
+
+VIDEO_ACTION_CHOICES = {
+    "节目包装" : [
+        "Starting: Narrator主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Starting: Narrator(Left)主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Starting: Narrator(Right)主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Starting: Narrator主持'心源谈天'节目 (no talk+background music)",
+        
+        "Ending: Narrator主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Ending: Narrator(Left)主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Ending: Narrator(Right)主持'心源谈天'节目 (Narrator speak, others react only)",
+        "Ending: Narrator主持'心源谈天'节目 (no talk+background music)"
+    ],
+    "讲话人物": [
+        "Narrator (center) speaking, other listening : $$$",
+        "Narrator (left) speaking, other listening : $$$",
+        "Narrator (right) speaking, others acting only : $$$",
+        "No talk, but show : $$$",
+    ] 
+}
+
+
 
 
 class WorkflowGUI:
@@ -480,39 +525,48 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
-    def choose_from_channel_media(self, track, audio_action):
+    def choose_from_channel_media(self, track, audio_action, video_or_image):
         try:
-            mp4_path = None
-
             channel = project_manager.PROJECT_CONFIG.get('channel')
-            scene_name = self.workflow.get_scene_by_index(self.current_scene_index)['name']
-            source_folder = f"{config.get_channel_path(channel)}/video/{scene_name}"
+            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            scene_name = current_scene['name']
+            source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/{scene_name}"
             if not os.path.exists(source_folder):
                 # check current style , then if is pixar-art cartoon, then use "cartoon" folder, otherwise use "realistic" folder
-                current_style = project_manager.PROJECT_CONFIG.get('visual_style')
+                current_style = project_manager.PROJECT_CONFIG.get('visual_style') or ""
                 if "cartoon" in current_style.lower():
-                    source_folder = f"{config.get_channel_path(channel)}/video/cartoon"
+                    source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/cartoon"
                 else:
-                    source_folder = f"{config.get_channel_path(channel)}/video/realistic"
-
-            video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
-            video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
-            if video_width > video_height:
-                ratio = "_169_"
-            else:
-                ratio = "_916_"
+                    source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/realistic"
 
             # 1. 文件名含场景名（同档内优先匹配位置前缀）
             # 2. 不含场景名但文件名以 starting / ending / running 开头（依当前是否首/末场景）
             # 3. 其余符合 ratio 的 mp4
-            candidates = [
-                f for f in os.listdir(source_folder)
-                if ratio in f and f.lower().endswith(".mp4")
-                and os.path.isfile(os.path.join(source_folder, f))
-            ]
-            if not candidates:
-                messagebox.showwarning("警告", "未找到符合分辨率标记 {} 的 .mp4 文件".format(ratio))
-                return
+            if video_or_image == "video":
+                video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
+                video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
+                if video_width > video_height:
+                    ratio = "_169_"
+                else:
+                    ratio = "_916_"
+
+                candidates = [
+                    f for f in os.listdir(source_folder)
+                    if ratio in f and f.lower().endswith(".mp4")
+                    and os.path.isfile(os.path.join(source_folder, f))
+                ]
+                if not candidates:
+                    messagebox.showwarning("警告", "未找到符合分辨率标记 {} 的 .mp4 文件".format(ratio))
+                    return
+            else:
+                candidates = [
+                    f for f in os.listdir(source_folder)
+                    if f.lower().endswith(".png")
+                    and os.path.isfile(os.path.join(source_folder, f))
+                ]
+                if not candidates:
+                    messagebox.showwarning("警告", "未找到 .png 文件")
+                    return
 
             n_scenes = len(self.workflow.scenes)
             idx = self.current_scene_index
@@ -543,16 +597,14 @@ class WorkflowGUI:
             if not chosen:
                 return
 
-            mp4_path = os.path.join(source_folder, chosen)
-            download_path = config.get_project_path(self.workflow.pid) + "/download"
-            if not os.path.exists(download_path):
-                os.makedirs(download_path, exist_ok=True)
+            media_path = os.path.join(source_folder, chosen)
+            if video_or_image == "video":
+                self.media_scanner.video_simple_replacement(current_scene, media_path, audio_action, track)
+                current_scene[track+"_status"] = "ENH2"
+            else:
+                webp_path = self.workflow.ffmpeg_processor.to_webp(media_path)
+                refresh_scene_media(current_scene, track, ".webp", webp_path, True)
 
-            rename = os.path.join(download_path, track+"_"+str(self.workflow.get_scene_by_index(self.current_scene_index)["id"]) + "_" + datetime.now().strftime("%H%M%S") + ".mp4")
-            shutil.copy(mp4_path, rename)
-            self.media_scanner.video_simple_replacement(self.workflow.get_scene_by_index(self.current_scene_index), rename, audio_action, track)
-            # current scene, update track+"_status" to "ENH2"
-            self.workflow.get_scene_by_index(self.current_scene_index)[track+"_status"] = "ENH2"
             self.refresh_gui_scenes()
                 
         except Exception as e:
@@ -681,19 +733,18 @@ class WorkflowGUI:
             messagebox.showinfo("成功", f"{track_label} 音频已生成并替换", parent=self.root)
         return True
 
-    def regenerate_story_clip_audio_all(self, current_scene):
-        """为本故事全部场景按各镜「人物 + 讲话」重新生成主轨(clip)音频（无对话框审核，直接 TTS）。"""
+    def _run_story_clip_audio_all(self, current_scene):
+        """为本故事从 current_scene 起批量 TTS 主轨 clip（不依赖 current_scene_index）。
+
+        返回 (ok_count, skipped_lines, fatal_error)。fatal_error 非空时未执行或已中止。
+        """
         if not self.workflow or not self.speech_service:
-            messagebox.showerror("错误", "工作流未就绪，请先选择项目", parent=self.root)
-            return
-        cur = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not cur:
-            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
-            return
-        story_scenes = self.workflow.scenes_in_story(cur)
+            return 0, [], "工作流未就绪，请先选择项目"
+        if not current_scene:
+            return 0, [], "没有当前场景"
+        story_scenes = self.workflow.scenes_in_story(current_scene)
         if not story_scenes:
-            messagebox.showwarning("提示", "当前故事无场景", parent=self.root)
-            return
+            return 0, [], "当前故事无场景"
 
         ok = 0
         skipped = []
@@ -716,15 +767,7 @@ class WorkflowGUI:
             elif out == "fail":
                 skipped.append(f"id={sid}：TTS 或合成失败")
 
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-        tail = "\n".join(skipped[:12])
-        if len(skipped) > 12:
-            tail += f"\n… 另有 {len(skipped) - 12} 条"
-        msg = f"完成：成功 {ok} / {len(story_scenes)} 个场景。"
-        if skipped:
-            msg += f"\n\n跳过或失败 ({len(skipped)}):\n{tail}"
-        messagebox.showinfo("本故事生音频", msg, parent=self.root)
+        return ok, skipped, None
 
 
     @staticmethod
@@ -872,7 +915,7 @@ class WorkflowGUI:
         threading.Thread(target=work, daemon=True).start()
 
     def choose_clip_audio_scope(self):
-        """生主轨 clip 音频：先选仅当前场景（音色与审核）或本故事全部（批量 TTS）。"""
+        """生主轨 clip 音频：先选仅当前场景或本故事全部。后台线程执行，避免阻塞 UI；结果写回发起时锚定的场景 dict，不依赖之后切换的 current_scene_index。"""
         scope = messagebox.askyesnocancel(
             "Clip 音频",
             "请选择生成范围：\n\n"
@@ -883,10 +926,106 @@ class WorkflowGUI:
         )
         if scope is None:
             return
-        if scope:
-            self.regenerate_story_clip_audio_all(self.workflow.get_scene_by_index(self.current_scene_index))
-        else:
-            self.regenerate_story_clip_for_scene(self.workflow.get_scene_by_index(self.current_scene_index))
+        if getattr(self, "_clip_audio_worker_busy", False):
+            messagebox.showinfo("提示", "已有 Clip 音频生成任务进行中，请稍候。", parent=self.root)
+            return
+        scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene_anchor:
+            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
+            return
+        anchor_id = scene_anchor.get("id")
+        self._clip_audio_worker_busy = True
+        root = self.root
+        do_all_story = bool(scope)
+
+        def clear_busy():
+            self._clip_audio_worker_busy = False
+
+        def work():
+            try:
+                if scene_anchor not in self.workflow.scenes:
+                    root.after(
+                        0,
+                        lambda: (
+                            clear_busy(),
+                            messagebox.showwarning(
+                                "Clip 音频",
+                                "发起时的场景已不在当前列表中，任务取消。",
+                                parent=root,
+                            ),
+                        ),
+                    )
+                    return
+
+                if not do_all_story:
+                    try:
+                        out = self.regenerate_story_clip_for_scene(scene_anchor)
+                    except Exception as e:
+                        root.after(
+                            0,
+                            lambda: (
+                                clear_busy(),
+                                messagebox.showerror("Clip 音频", f"生成失败：{e}", parent=root),
+                            ),
+                        )
+                        return
+
+                    def finish_single():
+                        clear_busy()
+                        still = scene_anchor in self.workflow.scenes
+                        self.workflow.save_scenes_to_json()
+                        self.refresh_gui_scenes()
+                        if not still:
+                            messagebox.showwarning(
+                                "Clip 音频",
+                                f"任务完成时，发起时的场景 (id={anchor_id}) 已从列表中移除；"
+                                "若磁盘上已生成媒体，请自行核对。",
+                                parent=root,
+                            )
+                        if out == "ok":
+                            messagebox.showinfo("Clip 音频", "当前场景主轨音频已生成。", parent=root)
+                        elif out == "no_content":
+                            messagebox.showwarning("Clip 音频", "当前场景无讲话内容，跳过。", parent=root)
+                        elif out == "no_speaker":
+                            messagebox.showwarning("Clip 音频", "未设置人物，跳过。", parent=root)
+                        elif out == "no_scene":
+                            messagebox.showwarning("Clip 音频", "当前场景无效。", parent=root)
+                        else:
+                            messagebox.showwarning("Clip 音频", "TTS 或合成失败。", parent=root)
+
+                    root.after(0, finish_single)
+                    return
+
+                ok, skipped, err = self._run_story_clip_audio_all(scene_anchor)
+
+                def finish_batch():
+                    clear_busy()
+                    self.workflow.save_scenes_to_json()
+                    self.refresh_gui_scenes()
+                    if err:
+                        messagebox.showerror("本故事生音频", err, parent=root)
+                        return
+                    story_scenes = self.workflow.scenes_in_story(scene_anchor)
+                    nstory = len(story_scenes) if story_scenes else 0
+                    tail = "\n".join(skipped[:12])
+                    if len(skipped) > 12:
+                        tail += f"\n… 另有 {len(skipped) - 12} 条"
+                    msg = f"完成：成功 {ok} / {nstory} 个场景。"
+                    if skipped:
+                        msg += f"\n\n跳过或失败 ({len(skipped)}):\n{tail}"
+                    messagebox.showinfo("本故事生音频", msg, parent=root)
+
+                root.after(0, finish_batch)
+            except Exception as e:
+                root.after(
+                    0,
+                    lambda: (
+                        clear_busy(),
+                        messagebox.showerror("Clip 音频", f"任务异常：{e}", parent=root),
+                    ),
+                )
+
+        threading.Thread(target=work, daemon=True).start()
 
 
     def regenerate_story_clip_for_scene(self, scene):
@@ -1253,8 +1392,8 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="生场视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
 
-        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep", "video")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace", "video")).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(visual_button_frame, text="CLIP_", width=6, command=lambda: self.choose_from_download("clip", ".mp4")).pack(side=tk.LEFT, padx=1)
 
@@ -1287,6 +1426,7 @@ class WorkflowGUI:
         self.clip_image_canvas.drop_target_register(DND_FILES)
         self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
         self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image'))
+        self.clip_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image", "keep", "image"))
 
         self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='blue')
         self.clip_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1294,7 +1434,7 @@ class WorkflowGUI:
         self.clip_image_last_canvas.drop_target_register(DND_FILES)
         self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
         self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image_last'))
-
+        self.clip_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image_last", "keep", "image"))
 
         # Top: narration_image
         narration_img_frame = ttk.Frame(images_container)
@@ -1309,6 +1449,7 @@ class WorkflowGUI:
         self.narration_image_canvas.drop_target_register(DND_FILES)
         self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
         self.narration_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image"))
+        self.narration_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image", "keep", "image"))
 
         self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='green')
         self.narration_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1316,6 +1457,7 @@ class WorkflowGUI:
         self.narration_image_last_canvas.drop_target_register(DND_FILES)
         self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
         self.narration_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image_last"))
+        self.narration_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image_last", "keep", "image"))
         
 
         # Top: zero_image
@@ -1331,6 +1473,7 @@ class WorkflowGUI:
         self.zero_image_canvas.drop_target_register(DND_FILES)
         self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
         self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
+        self.zero_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image", "keep", "image"))
 
         self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='orange')
         self.zero_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1338,6 +1481,7 @@ class WorkflowGUI:
         self.zero_image_last_canvas.drop_target_register(DND_FILES)
         self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
         self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
+        self.zero_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image_last", "keep", "image"))
 
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
@@ -1645,6 +1789,7 @@ class WorkflowGUI:
             self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
         )
         self.scene_visual.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_visual.bind("<Double-1>", self.on_scene_voiceover_image_action_menu)
         row_number += 1
 
         _nar_host_row = ttk.Frame(self.video_edit_frame)
@@ -1667,6 +1812,7 @@ class WorkflowGUI:
             self.video_edit_frame, width=40, height=5, undo=True, maxundo=0
         )
         self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_voiceover.bind("<Double-1>", self.on_scene_voiceover_video_action_menu)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="字幕:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -3185,6 +3331,17 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         return "break"
 
+
+
+    def on_scene_voiceover_video_action_menu(self, event=None):
+        """双击旁白框：VIDEO_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
+        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event)
+
+    def on_scene_voiceover_image_action_menu(self, event=None):
+        """双击视觉框：IMAGE_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
+        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event)
+
+
     def on_scene_speaking_copy_double_click(self, event=None):
         """双击讲话框：仅按钮，一点即拷贝（原文 / LLM 精简 / 前缀等）。"""
         raw = self.scene_speaking.get("1.0", tk.END).rstrip("\n")
@@ -4120,6 +4277,7 @@ class WorkflowGUI:
                 messagebox.showerror("错误", error_msg)
             return False
 
+
     def _show_auto_dismiss_tip(self, title: str, message: str, ms: int = 2000):
         """非模态提示，约 ms 毫秒后自动关闭，无需点确定。"""
         tip = tk.Toplevel(self.root)
@@ -4136,6 +4294,7 @@ class WorkflowGUI:
         ry = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - h) // 2)
         tip.geometry(f"+{rx}+{ry}")
         tip.after(ms, tip.destroy)
+
 
     def on_image_canvas_double_click(self, event, image_type):
         try:
@@ -4155,38 +4314,6 @@ class WorkflowGUI:
                 messagebox.showwarning("警告", f"场景中没有有效的 {image_type} 图像")
                 return
             self.copy_image_to_clipboard(image_path)
-
-            picked = askchoice(
-                f"对 {image_type.replace('_', ' ')} 执行操作",
-                IMAGE_ACTION_CHOICES,
-                self.root,
-            )
-            if picked:
-                # copy the picked text to clipboard
-                self.root.clipboard_clear()
-                self.root.clipboard_append(picked[1])
-                self.root.update()
-
-            #image_path = None
-            #need_select = op_value in ("3", "4")
-            #need_enhance = op_value in ("2", "4")
-
-            #image_changed = False
-            #if need_select:
-            #    image_path = filedialog.askopenfilename(
-            #        title="选择图像",
-            #        initialdir=source_folder if os.path.exists(source_folder) else None,
-            #        filetypes=[("图像文件", "*.png;*.jpg;*.jpeg;*.webp")]
-            #    )
-            #    if not image_path:
-            #        return
-            #    download_path = config.get_project_path(self.workflow.pid) + "/download"
-            #    os.makedirs(download_path, exist_ok=True)
-            #    image = Path(image_path)
-            #    rename = os.path.join(download_path, image_type+"_"+str(current_scene["id"]) + "_" + datetime.now().strftime("%H%M%S") + image.suffix)
-            #    shutil.move(image_path, rename)
-            #    image_path = rename
-            #    image_changed = True
 
             #if need_enhance:
             #    image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)

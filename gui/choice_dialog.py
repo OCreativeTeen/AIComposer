@@ -135,6 +135,54 @@ def pack_text_buttons(parent, rows, cancel=None, width=48):
     return buttons
 
 
+def post_nested_clipboard_menu(root, choices_dict, event=None, *, max_label_len=72):
+    """
+    弹出两级 tk.Menu：第一层为 choices_dict 的 key（级联标题），第二层为英文指令；
+    鼠标移到一级项上展开子菜单；点击子项将完整英文指令写入 root 剪贴板。
+
+    choices_dict: dict[str, list[str]]，例如 GUI.IMAGE_ACTION_CHOICES / VIDEO_ACTION_CHOICES。
+    event: 含 x_root / y_root 的鼠标事件；为 None 时在 root 左上角附近弹出。
+    max_label_len: 菜单项过长时截断显示（复制仍为全文）。
+
+    返回:
+      字符串 "break"，供控件 <Double-1> 等回调直接 return，减少默认双击选词干扰。
+    """
+    if not choices_dict:
+        return "break"
+
+    def _menu_label(s: str) -> str:
+        t = (s or "").strip()
+        if len(t) <= max_label_len:
+            return t
+        return t[: max_label_len - 1] + "…"
+
+    def _copy(text: str) -> None:
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update_idletasks()
+        except tk.TclError:
+            pass
+
+    m = tk.Menu(root, tearoff=0)
+    for cn_key, items in choices_dict.items():
+        sub = tk.Menu(m, tearoff=0)
+        for text in items:
+            sub.add_command(
+                label=_menu_label(text),
+                command=lambda t=text: _copy(t),
+            )
+        m.add_cascade(label=cn_key, menu=sub)
+    try:
+        if event is not None:
+            m.post(event.x_root, event.y_root)
+        else:
+            m.post(root.winfo_rootx() + 40, root.winfo_rooty() + 40)
+    except tk.TclError:
+        pass
+    return "break"
+
+
 def _get_media_duration_sec(file_path):
     """返回视频时长（秒），无法读取或非视频则返回 None。"""
     try:
