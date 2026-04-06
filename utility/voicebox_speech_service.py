@@ -289,6 +289,29 @@ class VoiceboxService:
         safe_copy_overwrite(mp3_out, audio_path)
         return audio_path
 
+    def synthesize_speaker_text_to_wav(self, speaker: str, text: str, language_key: str) -> Optional[str]:
+        """
+        与 GUI.apply_tts_audio_to_scene_track 中 SSML→TTS→to_wav 段一致，供主界面与成品审阅复用。
+        language_key: 与 workflow.language 相同，如 zh / tw / en。
+        成功返回 wav 路径，失败返回 None。
+        """
+        text = (text or "").strip()
+        if not text:
+            return None
+        lk = (language_key or "zh").lower().split("-")[0]
+        if lk not in config.LANGUAGES:
+            lk = "zh"
+        lang = config.LANGUAGES[lk]
+        voice = self.get_voice(speaker, lang)
+        if not voice:
+            print("Voicebox: get_voice 无匹配 voice")
+            return None
+        ssml = self.create_ssml(text=text, voice=voice, actions="", language=lang)
+        audio_file = self.synthesize_speech(ssml)
+        if not audio_file:
+            return None
+        return self._ffmpeg_audio.to_wav(audio_file)
+
     def _download_audio_bytes(self, job_id: str, max_wait_sec: float = 300.0) -> Optional[bytes]:
         """GET /audio/{id}，轮询直到拿到非空字节或超时。"""
         deadline = time.time() + max_wait_sec
@@ -586,6 +609,11 @@ def _ensure_voices_for_project(pid: str) -> None:
         if merged:
             VOICES = merged
     _voice_json_applied_pid = pid
+    # 与 config.CHARACTER_PERSON_OPTIONS 同源（media/voices.json 的 name），切换项目时刷新下拉
+    try:
+        config.reload_character_person_options()
+    except Exception:
+        pass
 
 
 def _voicebox_resolve_voice(speaker: str, language: str) -> dict:

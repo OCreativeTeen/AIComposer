@@ -47,6 +47,8 @@ def chinese_convert(text, language):
 # =============================================================================
 # Speaker/Host 角色与风格定义 - 供 GUI、downloader 等模块共享
 # 格式: gender/age/race | style（如 man/mature/chinese | realistic）
+# 旁白/人物下拉：默认从仓库根 media/voices.json 各条目的 name 动态加载（与 Voicebox 同源），
+# 仅当文件缺失或解析失败时使用下方回退列表。
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
     "pixar-art cartoon + realistic",
@@ -55,7 +57,7 @@ VISUAL_STYLE_OPTIONS = [
     "cartoon",
 ]
 
-CHARACTER_PERSON_OPTIONS = [
+_CHARACTER_PERSON_OPTIONS_FALLBACK = [
     "",
     "woman/mature/chinese",
     "man/mature/chinese",
@@ -65,20 +67,61 @@ CHARACTER_PERSON_OPTIONS = [
     "man/mature/english",
     "woman/young/english",
     "man/young/english",
-
     "woman/grok/chinese",
     "man/grok/chinese",
     "woman/grok/english",
     "man/grok/english",
     "man/teen/chinese",
-    
     "man/narrator/chinese",
     "woman/qin/chinese",
     "woman/qin-fast/chinese",
     "man/wj/chinese",
     "man/elon/english",
-    "man/trump/english"
+    "man/trump/english",
 ]
+
+
+def load_character_person_options():
+    """
+    从 ``media/voices.json`` 读取每条 ``name``（兼容 ``voice``），去重保序；
+    首项固定为 ``""`` 供下拉留空。失败则返回 ``_CHARACTER_PERSON_OPTIONS_FALLBACK``。
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media", "voices.json")
+    if not os.path.isfile(path):
+        return list(_CHARACTER_PERSON_OPTIONS_FALLBACK)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return list(_CHARACTER_PERSON_OPTIONS_FALLBACK)
+    if not isinstance(data, list):
+        return list(_CHARACTER_PERSON_OPTIONS_FALLBACK)
+    names = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        n = (item.get("name") or item.get("voice") or "").strip()
+        if n:
+            names.append(n)
+    seen = set()
+    uniq = []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            uniq.append(n)
+    if not uniq:
+        return list(_CHARACTER_PERSON_OPTIONS_FALLBACK)
+    return [""] + uniq
+
+
+def reload_character_person_options():
+    """重新从 ``voices.json`` 加载并写回 ``CHARACTER_PERSON_OPTIONS``（例如 JSON 更新后调用）。"""
+    global CHARACTER_PERSON_OPTIONS
+    CHARACTER_PERSON_OPTIONS = load_character_person_options()
+    return CHARACTER_PERSON_OPTIONS
+
+
+CHARACTER_PERSON_OPTIONS = load_character_person_options()
 
 
 

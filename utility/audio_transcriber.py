@@ -21,6 +21,22 @@ if not os.path.exists(VOICE_TEMP_PATH):
     os.makedirs(VOICE_TEMP_PATH)
 
 
+def remove_transcribe_cache_for_audio_path(audio_path: str) -> None:
+    """删除与音频同名的 .srt.json 缓存，便于强制重新转写。"""
+    if not audio_path:
+        return
+    if audio_path.endswith(".mp3"):
+        cache_file = audio_path.replace(".mp3", ".srt.json")
+    elif audio_path.endswith(".wav"):
+        cache_file = audio_path.replace(".wav", ".srt.json")
+    else:
+        return
+    if os.path.exists(cache_file):
+        try:
+            os.remove(cache_file)
+        except OSError:
+            pass
+
 
 class AudioTranscriber:
 

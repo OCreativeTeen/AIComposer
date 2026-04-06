@@ -1164,16 +1164,22 @@ def show_initial_choice_dialog(parent):
         parent.withdraw()
 
     # 按钮垂直排列
-    ttk.Button(btn_frame, text="选择项目", command=on_open, width=18).pack(fill=tk.X, pady=8)
-    ttk.Button(btn_frame, text="创建新项目", command=on_new, width=18).pack(fill=tk.X, pady=8)
+    project_frame = ttk.Frame(btn_frame)
+    project_frame.pack(fill=tk.X, pady=(8, 0))
+    ttk.Button(project_frame, text="选择项目", command=on_open, width=32).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(project_frame, text="创建新项目", command=on_new, width=32).pack(side=tk.LEFT)
 
-    yt_frame = ttk.Frame(btn_frame)
-    yt_frame.pack(fill=tk.X, pady=(8, 0))
-    ttk.Button(yt_frame, text="YT管理", command=lambda: _create_yt_gui_and_run('manage_hot_videos'), width=18).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(yt_frame, text="YT文字", command=lambda: _create_yt_gui_and_run('download_youtube', True), width=18).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(yt_frame, text="YT視頻", command=lambda: _create_yt_gui_and_run('download_youtube', False), width=18).pack(side=tk.LEFT)
+    yt_frame1 = ttk.Frame(btn_frame)
+    yt_frame1.pack(fill=tk.X, pady=(8, 0))
+    ttk.Button(yt_frame1, text="YT管理", command=lambda: _create_yt_gui_and_run('manage_hot_videos'), width=32).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(yt_frame1, text="文字转译", command=lambda: _create_yt_gui_and_run('transcribe_media', True), width=32).pack(side=tk.LEFT, padx=(0, 5))
 
-    ttk.Button(btn_frame, text="取消", command=on_cancel, width=18).pack(fill=tk.X, pady=8)
+    yt_frame2 = ttk.Frame(btn_frame)
+    yt_frame2.pack(fill=tk.X, pady=(8, 0))
+    ttk.Button(yt_frame2, text="YT文字", command=lambda: _create_yt_gui_and_run('download_youtube', True), width=32).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(yt_frame2, text="YT視頻", command=lambda: _create_yt_gui_and_run('download_youtube', False), width=32).pack(side=tk.LEFT)
+
+    ttk.Button(btn_frame, text="取消", command=on_cancel, width=32).pack(fill=tk.X, pady=8)
 
     dialog.update_idletasks()
     w, h = 450, 580

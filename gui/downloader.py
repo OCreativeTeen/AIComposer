@@ -47,6 +47,7 @@ import tkinter.ttk as ttk
 import tkinter.messagebox as messagebox
 import tkinter.scrolledtext as scrolledtext
 import tkinter.simpledialog as simpledialog
+from tkinter import filedialog
 
 
 def _format_nb_prompt_template(template: str, **kwargs) -> str:
@@ -130,7 +131,7 @@ def _find_video_by_youtube_id(channel_videos, yid):
     return None
 
 
-# INPUT_MEDIA_PATH 下 __数字__名称_.txt，JSON 含 id（YouTube 视频 id）→ 同目录同 stem 的 .mp4 可发布
+# INPUT_MEDIA_PATH 下 __数字__简码__标题_.txt，JSON 含 id → 同目录同 stem 的 .mp4 可发布；发布后同 stem 的 mp4/png/txt 可归档到简码/topic_category 对应的子文件夹（如 Identity__...）
 _INPUT_PUBLISH_TXT_RE = re.compile(r"^__\d+__.+\.txt$", re.IGNORECASE)
 
 
@@ -163,6 +164,190 @@ def _scan_input_media_publish_map():
     except Exception:
         pass
     return out
+
+
+def _folder_english_prefix(folder_name: str) -> str:
+    """如 Identity__人格防御... → 'Identity'。"""
+    if not folder_name:
+        return ""
+    return folder_name.split("__", 1)[0] if "__" in folder_name else folder_name
+
+
+def _parse_input_media_category_short_code(basename_no_ext: str) -> str:
+    """从 __102__Identi__Slug_ 形式解析中间简码（如 Identi）。"""
+    if not basename_no_ext.startswith("__"):
+        return ""
+    parts = basename_no_ext.split("__")
+    if len(parts) >= 4 and parts[1].isdigit():
+        return (parts[2] or "").strip()
+    return ""
+
+
+def _find_category_subfolder(parent_dir: str, short_code: str, topic_category: str):
+    """在 parent_dir 下找与 video_detail['topic_category'] 或文件名简码前缀匹配的子文件夹。"""
+    try:
+        names = os.listdir(parent_dir)
+    except OSError:
+        return None
+    dirs = [n for n in names if os.path.isdir(os.path.join(parent_dir, n))]
+    tc = (topic_category or "").strip()
+    if tc:
+        for n in dirs:
+            en = _folder_english_prefix(n)
+            if en == tc or n.startswith(tc + "__"):
+                return n
+    sc = (short_code or "").strip()
+    if not sc:
+        return None
+    best = None
+    best_len = -1
+    for n in dirs:
+        en = _folder_english_prefix(n)
+        if en.startswith(sc) and len(en) > best_len:
+            best = n
+            best_len = len(en)
+    return best
+
+
+def _is_windows_file_in_use(err: OSError) -> bool:
+    """WinError 32：文件正被另一进程使用。"""
+    if getattr(err, "winerror", None) == 32:
+        return True
+    # 非 Windows：EBUSY 等
+    en = getattr(err, "errno", None)
+    return en in (11, 16, 26)  # EAGAIN, EBUSY, ETXTBSY 等视平台而定
+
+
+def _run_on_main_tk_and_wait(root, fn, timeout=60) -> None:
+    """后台线程中等待 Tk 主线程执行 fn（释放播放器句柄等）。"""
+    ev = threading.Event()
+    err: list = [None]
+
+    def _run():
+        try:
+            fn()
+        except Exception as e:
+            err[0] = e
+        finally:
+            ev.set()
+
+    root.after(0, _run)
+    if not ev.wait(timeout=timeout):
+        raise TimeoutError("主线程操作超时")
+    if err[0]:
+        raise err[0]
+
+
+def _release_publish_review_if_same_mp4(parent, mp4_path: str) -> None:
+    """审阅窗口若正在播放同一 mp4，先 _stop_play，避免归档/覆盖时 WinError 32。"""
+    try:
+        pr = getattr(parent, "_publish_review", None)
+        if not pr:
+            return
+        p = os.path.normcase(os.path.abspath(getattr(pr, "mp4_path", "") or ""))
+        m = os.path.normcase(os.path.abspath(mp4_path or ""))
+        if p == m and hasattr(pr, "_stop_play"):
+            pr._stop_play()
+            time.sleep(0.15)  # 给 OS 释放 mp4 句柄一点时间
+    except Exception:
+        pass
+
+
+def _move_file_to_dest_with_fallback(src: str, dst: str) -> None:
+    """优先 move；失败时 copy2 再删源。对「文件正被使用」短暂重试（预览刚停时句柄未立即释放）。"""
+    retries = 12
+    delay = 0.3
+    last_err: OSError | None = None
+    for attempt in range(retries):
+        try:
+            shutil.move(src, dst)
+            return
+        except OSError as e:
+            last_err = e
+            if _is_windows_file_in_use(e) and attempt < retries - 1:
+                time.sleep(delay)
+                delay = min(delay * 1.2, 2.0)
+                continue
+            break
+    delay = 0.3
+    for attempt in range(retries):
+        try:
+            shutil.copy2(src, dst)
+            try:
+                os.remove(src)
+            except OSError as rm_err:
+                if _is_windows_file_in_use(rm_err) and attempt < retries - 1:
+                    time.sleep(delay)
+                    delay = min(delay * 1.2, 2.0)
+                    continue
+                raise
+            return
+        except OSError as e:
+            last_err = e
+            if _is_windows_file_in_use(e) and attempt < retries - 1:
+                time.sleep(delay)
+                delay = min(delay * 1.2, 2.0)
+                continue
+            raise
+    if last_err:
+        raise last_err
+
+
+def _is_already_in_category_folder(current_dir: str, short_code: str, topic_category: str) -> bool:
+    """已在名称匹配的子文件夹内（如 Identity__xxx）则不再移动。"""
+    base = os.path.basename(current_dir.rstrip("/\\"))
+    if not base:
+        return False
+    en = _folder_english_prefix(base)
+    tc = (topic_category or "").strip()
+    if tc and en == tc:
+        return True
+    sc = (short_code or "").strip()
+    if sc and en.startswith(sc):
+        return True
+    return False
+
+
+def _move_published_input_media_files(mp4_path: str, video_detail: dict) -> str:
+    """发布后把同 stem 的 mp4/png/txt 移入同级分类子文件夹；返回给 UI 的说明。"""
+    mp4_path = os.path.abspath(mp4_path)
+    parent = os.path.dirname(mp4_path)
+    stem, _ = os.path.splitext(os.path.basename(mp4_path))
+    short_code = _parse_input_media_category_short_code(stem)
+    topic_category = (video_detail.get("topic_category") or "").strip()
+
+    if not short_code and not topic_category:
+        return ""
+
+    if _is_already_in_category_folder(parent, short_code, topic_category):
+        return "成品已在分类文件夹内，未移动。"
+
+    sub = _find_category_subfolder(parent, short_code, topic_category)
+    if not sub:
+        hint = short_code or topic_category
+        return f"未找到与「{hint}」对应的分类子文件夹，文件未移动。"
+
+    dest_dir = os.path.join(parent, sub)
+    if not os.path.isdir(dest_dir):
+        return "分类文件夹不存在，未移动。"
+
+    moved = []
+    for ext in (".mp4", ".png", ".txt"):
+        src = os.path.join(parent, stem + ext)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(dest_dir, os.path.basename(src))
+        if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
+            continue
+        try:
+            _move_file_to_dest_with_fallback(src, dst)
+            moved.append(ext)
+        except OSError as e:
+            return f"归档失败（{ext}）：{e}"
+
+    if not moved:
+        return "未找到可移动的同名 .mp4/.png/.txt，未移动。"
+    return f"已将成品移入文件夹：{sub}"
 
 
 def _format_publish_display_date(pub_s: str) -> str:
@@ -1576,9 +1761,10 @@ class MediaDownloader:
 class MediaGUIManager:
     """YouTube GUI管理器 - 处理所有YouTube相关的GUI对话框"""
     
-    def __init__(self, root, channel_path, pid, tasks, log_to_output_func, download_output, language):
+    def __init__(self, root, channel_path, pid, tasks, log_to_output_func, download_output, language, workflow_gui=None):
         self.root = root
         self.channel_path = channel_path
+        self.workflow_gui = workflow_gui
         self.youtube_dir = f"{channel_path}/Download"
         os.makedirs(self.youtube_dir, exist_ok=True)
         os.makedirs(f"{self.youtube_dir}/list", exist_ok=True)
@@ -1974,7 +2160,7 @@ class MediaGUIManager:
                 print(f"❌ 保存 channel_list_json 失败: {e}")
 
 
-    def _open_publish_video_dialog(self, parent, mp4_path: str, video_detail: dict, refresh_tree):
+    def _open_publish_video_dialog(self, parent, title_prefix: str, mp4_path: str, video_detail: dict, refresh_tree):
         """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；日历与 GUI.py Video发布 相同（ask_publish_schedule_dialog）。"""
         ch_key = os.path.basename(self.channel_path)
         cfg = config_channel.get_channel_config(ch_key)
@@ -1993,14 +2179,23 @@ class MediaGUIManager:
 
         ac = video_detail.get("analyzed_content")
         if isinstance(ac, dict):
-            summary = (ac.get("chinese") or {}).get("summary") or ""
+            branch = "english" if self.language == "en" else "chinese"
+            summary = (ac.get(branch) or {}).get("summary") or ""
+            if not (summary or "").strip():
+                other = "chinese" if branch == "english" else "english"
+                summary = (ac.get(other) or {}).get("summary") or ""
+            title_from_ac = (ac.get(branch) or {}).get("title") or ""
+            if not (title_from_ac or "").strip():
+                other = "chinese" if branch == "english" else "english"
+                title_from_ac = (ac.get(other) or {}).get("title") or ""
         else:
             summary = ""
+            title_from_ac = ""
         summary = config.chinese_convert(summary, self.language)
 
-        raw_title = (video_detail.get("title") or "video").strip().replace(" ", "_").replace("\n", "_")
+        raw_title = (title_from_ac or video_detail.get("title") or "video").strip().replace(" ", "_").replace("\n", "_")
         raw_title = config.chinese_convert(raw_title, self.language)
-        disp_name = (cfg.get("channel_name") or "") + "：" + raw_title.replace("_", " ")
+        disp_name = title_prefix + raw_title.replace("_", " ")
 
         def worker():
             try:
@@ -2026,15 +2221,46 @@ class MediaGUIManager:
                 with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                     json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
 
+                # 审阅窗口若正在播放同一 mp4，先主线程释放句柄，否则归档 move/copy 易 WinError 32
+                try:
+                    _run_on_main_tk_and_wait(
+                        self.root,
+                        lambda: _release_publish_review_if_same_mp4(parent, mp4_path),
+                        timeout=25,
+                    )
+                except Exception:
+                    pass
+
+                archive_msg = _move_published_input_media_files(mp4_path, video_detail)
+
                 def ok_ui():
-                    messagebox.showinfo("成功", f"已上传，YouTube 视频 ID: {vid}", parent=parent)
-                    refresh_tree()
+                    try:
+                        refresh_tree()
+                    except Exception:
+                        pass
+                    msg = f"已上传，YouTube 视频 ID: {vid}"
+                    if archive_msg:
+                        msg = f"{msg}\n\n{archive_msg}"
+                    messagebox.showinfo("成功", msg, parent=parent)
 
                 self.root.after(0, ok_ui)
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("上传失败", str(e), parent=parent))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _open_publish_review_dialog(self, parent, mp4_path: str, video_detail: dict, on_refresh):
+        """打开成品审阅窗口（预览、转写、重合成、发布）。"""
+        from gui.publish_review_dialog import PublishReviewDialog
+
+        PublishReviewDialog(
+            parent,
+            mp4_path,
+            video_detail,
+            self,
+            getattr(self, "workflow_gui", None),
+            on_refresh,
+        )
 
     def _show_channel_videos_dialog(self):
         # 创建视频管理对话框
@@ -2503,6 +2729,8 @@ class MediaGUIManager:
 
         tree.bind("<Button-1>", lambda e: tree.focus_set())
 
+        # 摘要窗口单例：切换上一条/下一条时复用同一 Toplevel，仅重建内容
+        summary_window_ref = {"w": None}
 
         def on_enter_key(event):
             on_focus(event, low_priority=False)
@@ -2559,13 +2787,18 @@ class MediaGUIManager:
                 elif not isinstance(topic_tags, str):
                     topic_tags = str(topic_tags) if topic_tags else ''
 
-            # show the summary in a new window
-            summary_window = tk.Toplevel(dialog)
+            # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
+            if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():
+                summary_window = summary_window_ref["w"]
+                for child in summary_window.winfo_children():
+                    child.destroy()
+            else:
+                summary_window = tk.Toplevel(dialog)
+                summary_window_ref["w"] = summary_window
+                summary_window.geometry("1400x1000")
+                summary_window.resizable(True, True)
+                summary_window.transient(dialog)
             summary_window.title(f"{selected_index} - {video_detail['title']} - 摘要")
-            summary_window.geometry("1400x1000")
-            summary_window.resizable(True, True)
-            summary_window.transient(dialog)
-            # 创建主框架
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
@@ -2923,6 +3156,21 @@ class MediaGUIManager:
 
                 dialog.after(0, _after_find_similar)
 
+            def _select_tree_row_for_url(target_url: str):
+                u = (target_url or "").strip()
+                if not u:
+                    return
+                try:
+                    for item in tree.get_children():
+                        t = _treeview_item_tags_safe(tree, item)
+                        if t and t[0] == u:
+                            tree.selection_set(item)
+                            tree.see(item)
+                            tree.focus(item)
+                            break
+                except tk.TclError:
+                    pass
+
             # 右侧按钮组：粘贴 NotebookLM 结果启动新项目（从剪贴板读取→保存→启动）、保存主题信息
             button_frame = ttk.Frame(topic_frame)
             button_frame.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
@@ -2931,13 +3179,13 @@ class MediaGUIManager:
 
             publish_info_var = tk.StringVar(value="发布: …")
 
-            def on_publish_youtube():
+            def on_review_publish():
                 imap = _scan_input_media_publish_map()
                 _, st = _publish_cell_display(video_detail, imap)
                 if st != "ready":
                     messagebox.showwarning(
                         "提示",
-                        "当前不可发布：需在 input 媒体目录下存在 __*__.txt（JSON 含 id）且同目录同名 .mp4。",
+                        "当前不可审阅：需在 input 媒体目录下存在 __*__.txt（JSON 含 id）且同目录同名 .mp4。",
                         parent=summary_window,
                     )
                     return
@@ -2945,20 +3193,74 @@ class MediaGUIManager:
                 mp4 = (imap.get(yid) or {}).get("mp4_path", "")
 
                 def after_publish():
-                    populate_tree()
-                    refresh_publish_row()
+                    try:
+                        populate_tree()
+                    except Exception:
+                        pass
+                    try:
+                        refresh_publish_row()
+                    except Exception:
+                        pass
+                    try:
+                        _select_tree_row_for_url(video_detail.get("url"))
+                    except Exception:
+                        pass
+                    try:
+                        update_selection_count()
+                    except Exception:
+                        pass
 
-                self._open_publish_video_dialog(summary_window, mp4, video_detail, after_publish)
+                self._open_publish_review_dialog(summary_window, mp4, video_detail, after_publish)
 
             ttk.Label(right_btns, textvariable=publish_info_var).pack(side=tk.LEFT, padx=(0, 6))
-            pub_btn = ttk.Button(right_btns, text="发布到 YouTube", command=on_publish_youtube)
-            pub_btn.pack(side=tk.LEFT, padx=(0, 10))
+            pub_btn = ttk.Button(right_btns, text="审阅并发布", command=on_review_publish)
+            pub_btn.pack(side=tk.LEFT, padx=(0, 6))
 
             def refresh_publish_row():
+                if not summary_window.winfo_exists():
+                    return
                 imap = _scan_input_media_publish_map()
                 txt, st = _publish_cell_display(video_detail, imap)
-                publish_info_var.set(f"发布: {txt}")
-                pub_btn.config(state=("normal" if st == "ready" else "disabled"))
+                pub_raw = (video_detail.get("publish") or "").strip()
+                if st == "published" and pub_raw:
+                    publish_info_var.set(f"发布: {pub_raw}（已发布）")
+                else:
+                    publish_info_var.set(f"发布: {txt}")
+                try:
+                    pub_btn.config(state=("normal" if st == "ready" else "disabled"))
+                except tk.TclError:
+                    pass
+
+            def on_clear_publish():
+                if not messagebox.askyesno(
+                    "确认",
+                    "清除当前视频的「发布」字段？\n\n"
+                    "保存后列表会重新按 input 目录下 txt/mp4 检测可发布状态。",
+                    parent=summary_window,
+                ):
+                    return
+                video_detail.pop("publish", None)
+                try:
+                    with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                except OSError as e:
+                    messagebox.showerror("错误", f"保存失败：{e}", parent=summary_window)
+                    return
+                try:
+                    populate_tree()
+                except Exception:
+                    pass
+                refresh_publish_row()
+                try:
+                    _select_tree_row_for_url(video_detail.get("url"))
+                except Exception:
+                    pass
+                try:
+                    update_selection_count()
+                except Exception:
+                    pass
+
+            ttk.Button(right_btns, text="清除发布记录", command=on_clear_publish).pack(side=tk.LEFT, padx=(0, 10))
 
             refresh_publish_row()
 
@@ -3379,6 +3681,40 @@ class MediaGUIManager:
 
             LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
             last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...
+
+            class _FakeNavEvt:
+                y = None
+
+            def _nav_summary(delta):
+                items = list(tree.get_children())
+                cur = (video_detail.get("url") or "").strip()
+                if not cur:
+                    return "break"
+                try:
+                    i = next(
+                        idx
+                        for idx, it in enumerate(items)
+                        if (_treeview_item_tags_safe(tree, it) or [None])[0] == cur
+                    )
+                except StopIteration:
+                    return "break"
+                j = i + delta
+                if j < 0 or j >= len(items):
+                    return "break"
+                nxt = items[j]
+                tree.selection_set(nxt)
+                tree.see(nxt)
+                tree.focus(nxt)
+                on_focus(_FakeNavEvt(), low_priority)
+                return "break"
+
+            def _bind_nav_recursive(w):
+                w.bind("<Control-Left>", lambda e: _nav_summary(-1))
+                w.bind("<Control-Right>", lambda e: _nav_summary(1))
+                for ch in w.winfo_children():
+                    _bind_nav_recursive(ch)
+
+            _bind_nav_recursive(summary_window)
 
             summary_window.focus_set()
         
@@ -3925,6 +4261,29 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)
 
 
+    def transcribe_media(self, transcribe):
+        """选择本地 MP4/MP3：预览播放 → 转写，同目录保存 TXT 并复制到剪贴板。"""
+        _ = transcribe
+        from gui.transcribe_media_dialog import open_transcribe_media_dialog
+
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="选择 MP4 或 MP3",
+            filetypes=[
+                ("音视频", "*.mp4 *.mp3"),
+                ("MP4", "*.mp4"),
+                ("MP3", "*.mp3"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        path = os.path.abspath(path)
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".mp4", ".mp3"):
+            messagebox.showwarning("提示", "请选择 .mp4 或 .mp3 文件", parent=self.root)
+            return
+        open_transcribe_media_dialog(self.root, self, path)
 
     def download_youtube(self, transcribe):
         """下载YouTube视频并转录"""

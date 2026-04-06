@@ -274,6 +274,7 @@ class WorkflowGUI:
                 self.log_to_output, 
                 self.video_output,  # 使用video_output作为YouTube下载日志输出
                 language or "tw",
+                workflow_gui=self,
             )
             
             print("✅ 工作流实例创建完成")
@@ -698,15 +699,11 @@ class WorkflowGUI:
             if show_error_messages:
                 messagebox.showwarning("警告", "讲话/旁白内容为空", parent=self.root)
             return False
-        lang = config.LANGUAGES[self.workflow.language.lower()]            
-        voice = self.speech_service.get_voice(speaker, lang)
-        ssml = self.speech_service.create_ssml(text=text, voice=voice, actions="", language=lang)
-        audio_file = self.speech_service.synthesize_speech(ssml)
-        if not audio_file:
+        tts_wav = self.speech_service.synthesize_speaker_text_to_wav(speaker, text, self.workflow.language)
+        if not tts_wav:
             if show_error_messages:
                 messagebox.showerror("错误", "TTS 生成失败", parent=self.root)
             return False
-        tts_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_file)
         _olda, newa = refresh_scene_media(scene, track + "_audio", ".wav", tts_wav)
         vtrack = get_file_path(scene, track)
         if not vtrack:
@@ -768,20 +765,9 @@ class WorkflowGUI:
 
     @staticmethod
     def _remove_transcribe_cache_for_audio_path(audio_path: str) -> None:
-        """删除与音频同名的 .srt.json 缓存，便于强制重新转写。"""
-        if not audio_path:
-            return
-        if audio_path.endswith(".mp3"):
-            cache_file = audio_path.replace(".mp3", ".srt.json")
-        elif audio_path.endswith(".wav"):
-            cache_file = audio_path.replace(".wav", ".srt.json")
-        else:
-            return
-        if os.path.exists(cache_file):
-            try:
-                os.remove(cache_file)
-            except OSError:
-                pass
+        from utility.audio_transcriber import remove_transcribe_cache_for_audio_path as _rm_cache
+
+        _rm_cache(audio_path)
 
     @staticmethod
     def _strip_narrator_export_markup(raw: str) -> str:
@@ -1048,7 +1034,6 @@ class WorkflowGUI:
             show_error_messages=False,
         )
         return "ok" if ok else "fail"
-
 
     def remove_secondary_track(self):
         """删除当前选中的旁白轨道（视频+音频）"""
