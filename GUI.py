@@ -41,11 +41,7 @@ import copy
 import shutil
 from pathlib import Path
 from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons, post_nested_clipboard_menu
-
-try:
-    from tkcalendar import Calendar as TkCalendar
-except ImportError:
-    TkCalendar = None
+from gui.downloader import ask_publish_schedule_dialog
 
 
 STANDARD_FPS = 60  # Match FfmpegProcessor.STANDARD_FPS
@@ -2049,137 +2045,12 @@ class WorkflowGUI:
 
     def _ask_upload_schedule(self):
         """
-        上传前选择立即上传或定时公开。
+        上传前选择立即上传或定时公开（与 gui.downloader.ask_publish_schedule_dialog 共用）。
         返回 None 表示取消；
         ("immediate", None) 表示立即上传（不公开列出）；
         ("scheduled", datetime) 表示本地时区的定时公开时间。
         """
-        result = {"ok": False, "mode": "immediate", "dt": None}
-        dlg = tk.Toplevel(self.root)
-        dlg.title("上传至 YouTube")
-        dlg.transient(self.root)
-        dlg.resizable(True, True)
-        dlg.geometry("440x560")
-        dlg.grab_set()
-
-        frm = ttk.Frame(dlg, padding=10)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(
-            frm,
-            text=(
-                "YouTube API 支持定时「公开」：上传时为私有，到点自动公开。\n"
-                "「首映 Premiere」（倒计时、实时聊天）需在 YouTube Studio 里\n"
-                "对视频单独设置，Data API 无法直接创建 Premiere。"
-            ),
-            wraplength=410,
-            justify=tk.LEFT,
-        ).pack(anchor="w", pady=(0, 10))
-
-        mode_var = tk.StringVar(value="immediate")
-        ttk.Radiobutton(
-            frm,
-            text="立即上传（不公开列出，与原先一致）",
-            variable=mode_var,
-            value="immediate",
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            frm,
-            text="定时发布（指定日期与时刻后由 YouTube 自动公开）",
-            variable=mode_var,
-            value="scheduled",
-        ).pack(anchor="w", pady=(0, 6))
-
-        sched_frame = ttk.LabelFrame(frm, text="日期与时间（本机本地时区）", padding=8)
-        sched_frame.pack(fill=tk.BOTH, expand=True, pady=6)
-
-        now = datetime.now()
-        local_tz = now.astimezone().tzinfo
-
-        cal_widget = None
-        y_var = tk.IntVar(value=now.year)
-        m_var = tk.IntVar(value=now.month)
-        d_var = tk.IntVar(value=now.day)
-        h_var = tk.IntVar(value=min(now.hour + 1, 23))
-        min_var = tk.IntVar(value=0)
-
-        if TkCalendar is not None:
-            cal_widget = TkCalendar(
-                sched_frame,
-                selectmode="day",
-                date_pattern="yyyy-mm-dd",
-                year=now.year,
-                month=now.month,
-                day=now.day,
-            )
-            cal_widget.pack(pady=4)
-        else:
-            rowd = ttk.Frame(sched_frame)
-            rowd.pack(fill=tk.X, pady=2)
-            ttk.Label(rowd, text="年").pack(side=tk.LEFT)
-            tk.Spinbox(rowd, from_=now.year, to=now.year + 3, textvariable=y_var, width=6).pack(
-                side=tk.LEFT, padx=4
-            )
-            ttk.Label(rowd, text="月").pack(side=tk.LEFT)
-            tk.Spinbox(rowd, from_=1, to=12, textvariable=m_var, width=4).pack(side=tk.LEFT, padx=4)
-            ttk.Label(rowd, text="日").pack(side=tk.LEFT)
-            tk.Spinbox(rowd, from_=1, to=31, textvariable=d_var, width=4).pack(side=tk.LEFT, padx=4)
-
-        rowt = ttk.Frame(sched_frame)
-        rowt.pack(fill=tk.X, pady=4)
-        ttk.Label(rowt, text="时 (0–23)").pack(side=tk.LEFT)
-        tk.Spinbox(rowt, from_=0, to=23, textvariable=h_var, width=4).pack(side=tk.LEFT, padx=6)
-        ttk.Label(rowt, text="分 (0–59)").pack(side=tk.LEFT)
-        tk.Spinbox(rowt, from_=0, to=59, textvariable=min_var, width=4).pack(side=tk.LEFT, padx=6)
-
-        btn_row = ttk.Frame(frm)
-        btn_row.pack(fill=tk.X, pady=(12, 0))
-
-        def on_ok():
-            if mode_var.get() == "immediate":
-                result["ok"] = True
-                result["mode"] = "immediate"
-                result["dt"] = None
-                dlg.destroy()
-                return
-            if TkCalendar is not None and cal_widget is not None:
-                dstr = cal_widget.get_date()
-                try:
-                    y, mo, da = map(int, dstr.split("-"))
-                except ValueError:
-                    messagebox.showerror("日期错误", "无法解析日历日期（需 yyyy-mm-dd）。", parent=dlg)
-                    return
-            else:
-                y, mo, da = y_var.get(), m_var.get(), d_var.get()
-            try:
-                dt = datetime(y, mo, da, h_var.get(), min_var.get(), 0, tzinfo=local_tz)
-            except ValueError as e:
-                messagebox.showerror("日期错误", str(e), parent=dlg)
-                return
-            min_future = datetime.now(local_tz) + timedelta(minutes=2)
-            if dt <= min_future:
-                messagebox.showwarning("时间", "请选择至少约 2 分钟后的时间。", parent=dlg)
-                return
-            result["ok"] = True
-            result["mode"] = "scheduled"
-            result["dt"] = dt
-            dlg.destroy()
-
-        def on_cancel():
-            result["ok"] = False
-            dlg.destroy()
-
-        ttk.Button(btn_row, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT)
-        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
-        dlg.update_idletasks()
-        px = (dlg.winfo_screenwidth() - 440) // 2
-        py = (dlg.winfo_screenheight() - 560) // 2
-        dlg.geometry(f"440x560+{px}+{py}")
-        dlg.wait_window()
-        if not result["ok"]:
-            return None
-        return (result["mode"], result["dt"])
+        return ask_publish_schedule_dialog(self.root)
 
 
     def publish_video(self):

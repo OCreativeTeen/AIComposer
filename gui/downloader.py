@@ -35,7 +35,12 @@ from gui.reference_editor_dialog import ReferenceEditorDialog
 from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
 from utility.tags_text import merge_tag_pick, parse_tags_list
 import project_manager
-        
+
+try:
+    from tkcalendar import Calendar as TkCalendar
+except ImportError:
+    TkCalendar = None
+
 # 导入所需模块
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -88,23 +93,6 @@ def _treeview_item_tags_safe(tree, item):
     return ()
 
 
-# 频道视频项里 story 字段：持久化为 JSON 文本字符串；若历史数据为 dict/list 则规范为字符串
-
-
-def _normalize_channel_videos_story_field_to_str(videos):
-    """将每条 video['story'] 规范为 str（JSON 字符串），不把结构直接挂在 dict 上。"""
-    if not videos:
-        return
-    for v in videos:
-        if not isinstance(v, dict):
-            continue
-        s = v.get("story")
-        if s is None:
-            continue
-        if isinstance(s, (dict, list)):
-            v["story"] = json.dumps(s, ensure_ascii=False, indent=2)
-
-
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。"""
     if not isinstance(v, dict):
@@ -140,6 +128,208 @@ def _find_video_by_youtube_id(channel_videos, yid):
         if _video_youtube_id(v) == yid:
             return v
     return None
+
+
+# INPUT_MEDIA_PATH 下 __数字__名称_.txt，JSON 含 id（YouTube 视频 id）→ 同目录同 stem 的 .mp4 可发布
+_INPUT_PUBLISH_TXT_RE = re.compile(r"^__\d+__.+\.txt$", re.IGNORECASE)
+
+
+def _scan_input_media_publish_map():
+    """扫描 config.INPUT_MEDIA_PATH，返回 {youtube_id: {txt_path, mp4_path}}。"""
+    out = {}
+    base = getattr(config, "INPUT_MEDIA_PATH", None)
+    if not base or not os.path.isdir(base):
+        return out
+    try:
+        for name in os.listdir(base):
+            if not _INPUT_PUBLISH_TXT_RE.match(name):
+                continue
+            txt_path = os.path.join(base, name)
+            if not os.path.isfile(txt_path):
+                continue
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            yid = (data.get("id") or "").strip()
+            if not yid:
+                continue
+            stem = os.path.splitext(name)[0]
+            mp4_path = os.path.join(base, stem + ".mp4")
+            out[yid] = {"txt_path": txt_path, "mp4_path": mp4_path}
+    except Exception:
+        pass
+    return out
+
+
+def _format_publish_display_date(pub_s: str) -> str:
+    """将已发布时间的多种字符串格式压成 yyyy-mm-dd（只精确到天）。"""
+    s = (pub_s or "").strip()
+    if not s:
+        return ""
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00").split("+")[0])
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return s[:10] if len(s) >= 10 else s
+
+
+def _publish_cell_display(video: dict, input_map: dict):
+    """返回 (列文本, 状态 published|ready|txt|na)。与 GUI.py Video发布 日历逻辑配套的成品上传。"""
+    pub = (video.get("publish") or "").strip()
+    if pub:
+        return _format_publish_display_date(pub), "published"
+    yid = _video_youtube_id(video)
+    if yid and yid in input_map:
+        entry = input_map[yid] or {}
+        txt_path = (entry.get("txt_path") or "").strip()
+        mp4_path = (entry.get("mp4_path") or "").strip()
+        if txt_path and os.path.isfile(txt_path):
+            if mp4_path and os.path.isfile(mp4_path):
+                return "ready", "ready"
+            return "TXT", "txt"
+    return "N/A", "na"
+
+
+def ask_publish_schedule_dialog(parent, mp4_path_hint=None, dialog_title="上传至 YouTube"):
+    """
+    与 GUI.py _ask_upload_schedule 相同：立即上传或定时公开；tkcalendar 可选。
+    返回 None 表示取消；("immediate", None) 或 ("scheduled", datetime)。
+    """
+    result = {"ok": False, "mode": "immediate", "dt": None}
+    dlg = tk.Toplevel(parent)
+    dlg.title(dialog_title)
+    dlg.transient(parent)
+    dlg.resizable(True, True)
+    dlg.geometry("440x560")
+    dlg.grab_set()
+
+    frm = ttk.Frame(dlg, padding=10)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    if mp4_path_hint:
+        ttk.Label(frm, text=f"视频文件:\n{mp4_path_hint}", wraplength=410, justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
+
+    ttk.Label(
+        frm,
+        text=(
+            "YouTube API 支持定时「公开」：上传时为私有，到点自动公开。\n"
+            "「首映 Premiere」需在 YouTube Studio 里单独设置。"
+        ),
+        wraplength=410,
+        justify=tk.LEFT,
+    ).pack(anchor="w", pady=(0, 10))
+
+    mode_var = tk.StringVar(value="immediate")
+    ttk.Radiobutton(
+        frm,
+        text="立即上传（不公开列出，与原先一致）",
+        variable=mode_var,
+        value="immediate",
+    ).pack(anchor="w")
+    ttk.Radiobutton(
+        frm,
+        text="定时发布（指定日期与时刻后由 YouTube 自动公开）",
+        variable=mode_var,
+        value="scheduled",
+    ).pack(anchor="w", pady=(0, 6))
+
+    sched_frame = ttk.LabelFrame(frm, text="日期与时间（本机本地时区）", padding=8)
+    sched_frame.pack(fill=tk.BOTH, expand=True, pady=6)
+
+    now = datetime.now()
+    local_tz = now.astimezone().tzinfo
+
+    cal_widget = None
+    y_var = tk.IntVar(value=now.year)
+    m_var = tk.IntVar(value=now.month)
+    d_var = tk.IntVar(value=now.day)
+    h_var = tk.IntVar(value=min(now.hour + 1, 23))
+    min_var = tk.IntVar(value=0)
+
+    if TkCalendar is not None:
+        cal_widget = TkCalendar(
+            sched_frame,
+            selectmode="day",
+            date_pattern="yyyy-mm-dd",
+            year=now.year,
+            month=now.month,
+            day=now.day,
+        )
+        cal_widget.pack(pady=4)
+    else:
+        rowd = ttk.Frame(sched_frame)
+        rowd.pack(fill=tk.X, pady=2)
+        ttk.Label(rowd, text="年").pack(side=tk.LEFT)
+        tk.Spinbox(rowd, from_=now.year, to=now.year + 3, textvariable=y_var, width=6).pack(
+            side=tk.LEFT, padx=4
+        )
+        ttk.Label(rowd, text="月").pack(side=tk.LEFT)
+        tk.Spinbox(rowd, from_=1, to=12, textvariable=m_var, width=4).pack(side=tk.LEFT, padx=4)
+        ttk.Label(rowd, text="日").pack(side=tk.LEFT)
+        tk.Spinbox(rowd, from_=1, to=31, textvariable=d_var, width=4).pack(side=tk.LEFT, padx=4)
+
+    rowt = ttk.Frame(sched_frame)
+    rowt.pack(fill=tk.X, pady=4)
+    ttk.Label(rowt, text="时 (0–23)").pack(side=tk.LEFT)
+    tk.Spinbox(rowt, from_=0, to=23, textvariable=h_var, width=4).pack(side=tk.LEFT, padx=6)
+    ttk.Label(rowt, text="分 (0–59)").pack(side=tk.LEFT)
+    tk.Spinbox(rowt, from_=0, to=59, textvariable=min_var, width=4).pack(side=tk.LEFT, padx=6)
+
+    btn_row = ttk.Frame(frm)
+    btn_row.pack(fill=tk.X, pady=(12, 0))
+
+    def on_ok():
+        if mode_var.get() == "immediate":
+            result["ok"] = True
+            result["mode"] = "immediate"
+            result["dt"] = None
+            dlg.destroy()
+            return
+        if TkCalendar is not None and cal_widget is not None:
+            dstr = cal_widget.get_date()
+            try:
+                y, mo, da = map(int, dstr.split("-"))
+            except ValueError:
+                messagebox.showerror("日期错误", "无法解析日历日期（需 yyyy-mm-dd）。", parent=dlg)
+                return
+        else:
+            y, mo, da = y_var.get(), m_var.get(), d_var.get()
+        try:
+            dt = datetime(y, mo, da, h_var.get(), min_var.get(), 0, tzinfo=local_tz)
+        except ValueError as e:
+            messagebox.showerror("日期错误", str(e), parent=dlg)
+            return
+        min_future = datetime.now(local_tz) + timedelta(minutes=2)
+        if dt <= min_future:
+            messagebox.showwarning("时间", "请选择至少约 2 分钟后的时间。", parent=dlg)
+            return
+        result["ok"] = True
+        result["mode"] = "scheduled"
+        result["dt"] = dt
+        dlg.destroy()
+
+    def on_cancel():
+        result["ok"] = False
+        dlg.destroy()
+
+    ttk.Button(btn_row, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=4)
+    ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT)
+    dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+    dlg.update_idletasks()
+    px = (dlg.winfo_screenwidth() - 440) // 2
+    py = (dlg.winfo_screenheight() - 560) // 2
+    dlg.geometry(f"440x560+{px}+{py}")
+    dlg.wait_window()
+    if not result["ok"]:
+        return None
+    return (result["mode"], result["dt"])
 
 
 def _reference_item_youtube_id(item):
@@ -978,7 +1168,6 @@ class MediaDownloader:
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
-                    _normalize_channel_videos_story_field_to_str(self.channel_videos)
                     self.latest_date = max(
                                             (
                                                 datetime.strptime(v["upload_date"], "%Y%m%d")
@@ -1575,7 +1764,6 @@ class MediaGUIManager:
         # 读出 list：同 title 只保留一条，保留 content + topic_category + topic_subtype 最完整（内容最多）的那条；每条删掉 summary；写回 JSON
         with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
             channel_videos = json.load(f)
-        _normalize_channel_videos_story_field_to_str(channel_videos)
 
         # filter out the videos that have content length less than 100
         channel_videos = [v for v in channel_videos if len(v.get('content', '')) < 180000]
@@ -1786,6 +1974,67 @@ class MediaGUIManager:
                 print(f"❌ 保存 channel_list_json 失败: {e}")
 
 
+    def _open_publish_video_dialog(self, parent, mp4_path: str, video_detail: dict, refresh_tree):
+        """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；日历与 GUI.py Video发布 相同（ask_publish_schedule_dialog）。"""
+        ch_key = os.path.basename(self.channel_path)
+        cfg = config_channel.get_channel_config(ch_key)
+        if not cfg:
+            messagebox.showerror("错误", "未找到频道配置", parent=parent)
+            return
+        if not mp4_path or not os.path.isfile(mp4_path):
+            messagebox.showwarning("提示", f"未找到 mp4 文件：\n{mp4_path}", parent=parent)
+            return
+
+        choice = ask_publish_schedule_dialog(parent, mp4_path_hint=mp4_path, dialog_title="发布成品视频到 YouTube")
+        if choice is None:
+            return
+        mode, publish_at = choice
+        publish_at = publish_at if mode == "scheduled" else None
+
+        ac = video_detail.get("analyzed_content")
+        if isinstance(ac, dict):
+            summary = (ac.get("chinese") or {}).get("summary") or ""
+        else:
+            summary = ""
+        summary = config.chinese_convert(summary, self.language)
+
+        raw_title = (video_detail.get("title") or "video").strip().replace(" ", "_").replace("\n", "_")
+        raw_title = config.chinese_convert(raw_title, self.language)
+        disp_name = (cfg.get("channel_name") or "") + "：" + raw_title.replace("_", " ")
+
+        def worker():
+            try:
+                vid = self.downloader.upload_video(
+                    mp4_path,
+                    None,
+                    disp_name,
+                    summary,
+                    self.language,
+                    None,
+                    cfg["channel_key"],
+                    cfg.get("channel_id") or ch_key,
+                    cfg["channel_category_id"],
+                    [],
+                    privacy="unlisted",
+                    publish_at=publish_at,
+                )
+                if publish_at is not None:
+                    pub_str = publish_at.strftime("%Y-%m-%d %H:%M")
+                else:
+                    pub_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                video_detail["publish"] = pub_str
+                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+
+                def ok_ui():
+                    messagebox.showinfo("成功", f"已上传，YouTube 视频 ID: {vid}", parent=parent)
+                    refresh_tree()
+
+                self.root.after(0, ok_ui)
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("上传失败", str(e), parent=parent))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _show_channel_videos_dialog(self):
         # 创建视频管理对话框
@@ -1958,7 +2207,7 @@ class MediaGUIManager:
         smart_select_entry.bind('<Return>', lambda e: smart_select())
         
         # 创建Treeview显示视频列表
-        columns = ("title", "views", "duration", "upload_date", "status", "summary", "story", "topic_category", "topic_subtype", "tags", "mark")
+        columns = ("title", "views", "duration", "upload_date", "status", "summary", "publish", "topic_category", "topic_subtype", "tags", "mark")
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -1979,7 +2228,7 @@ class MediaGUIManager:
         tree.heading("upload_date", text="上传日期")
         tree.heading("status", text="状态")
         tree.heading("summary", text="摘要")
-        tree.heading("story", text="Story")
+        tree.heading("publish", text="发布")
         tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
         tree.heading("tags", text="标签")
@@ -1992,7 +2241,7 @@ class MediaGUIManager:
         tree.column("upload_date", width=50, anchor="center")
         tree.column("status", width=110, anchor="center")
         tree.column("summary", width=20, anchor="center")
-        tree.column("story", width=20, anchor="center")
+        tree.column("publish", width=88, anchor="center")
         tree.column("topic_category", width=150, anchor="w")
         tree.column("topic_subtype", width=100, anchor="w")
         tree.column("tags", width=220, anchor="w")
@@ -2058,7 +2307,8 @@ class MediaGUIManager:
             transcribed_count = 0
             summarized_count = 0
             hottest_degree = 0.0
-            
+            input_publish_map = _scan_input_media_publish_map()
+
             for idx, video in enumerate(filtered_videos, 1):
                 #video.pop('text_content', None)
                 # 格式化时长
@@ -2124,7 +2374,11 @@ class MediaGUIManager:
                 if len(user_status) > 80:
                     user_status = user_status[:77] + "..."
                 summary_mark = "✓" if analyzed_content_valid_message_shape(video.get("analyzed_content")) else ""
-                story_mark = "✓" if (video.get('story') or '').strip() else ""
+                publish_cell, publish_state = _publish_cell_display(video, input_publish_map)
+                yid = _video_youtube_id(video)
+                mp4_for_publish = ""
+                if publish_state == "ready":
+                    mp4_for_publish = (input_publish_map.get(yid) or {}).get("mp4_path", "")
                 tree.insert("", tk.END, text=str(idx), 
                            values=(
                                video.get('title', 'Unknown')[:60],
@@ -2133,7 +2387,7 @@ class MediaGUIManager:
                                upload_date_str,
                                status_str,
                                summary_mark,
-                               story_mark,
+                               publish_cell,
                                topic_category[:30] if topic_category else '',
                                topic_subtype[:30] if topic_subtype else "",
                                tag_cell,
@@ -2146,7 +2400,8 @@ class MediaGUIManager:
                                     str(view_count), 
                                     video.get('upload_date', ''), 
                                     str(duration_sec), 
-                                    self.downloader.channel_name)
+                                    self.downloader.channel_name,
+                                    mp4_for_publish)
                                 )
             
             with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
@@ -2245,8 +2500,8 @@ class MediaGUIManager:
         tree.bind('<KeyPress>', on_key_press)
         # 确保tree可以获得焦点以便接收键盘事件
         tree.focus_set()
-        # 当点击tree时，确保获得焦点
-        tree.bind('<Button-1>', lambda e: tree.focus_set())
+
+        tree.bind("<Button-1>", lambda e: tree.focus_set())
 
 
         def on_enter_key(event):
@@ -2499,7 +2754,11 @@ class MediaGUIManager:
                     populate_tree()
                 except:
                     pass
-                
+                try:
+                    refresh_publish_row()
+                except Exception:
+                    pass
+
                 messagebox.showinfo("成功", f"主题信息已保存{clip_note}", parent=summary_window)
 
 
@@ -2669,7 +2928,41 @@ class MediaGUIManager:
             button_frame.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
             right_btns = ttk.Frame(button_frame)
             right_btns.pack(side=tk.RIGHT)
-            # 添加标签按钮
+
+            publish_info_var = tk.StringVar(value="发布: …")
+
+            def on_publish_youtube():
+                imap = _scan_input_media_publish_map()
+                _, st = _publish_cell_display(video_detail, imap)
+                if st != "ready":
+                    messagebox.showwarning(
+                        "提示",
+                        "当前不可发布：需在 input 媒体目录下存在 __*__.txt（JSON 含 id）且同目录同名 .mp4。",
+                        parent=summary_window,
+                    )
+                    return
+                yid = _video_youtube_id(video_detail)
+                mp4 = (imap.get(yid) or {}).get("mp4_path", "")
+
+                def after_publish():
+                    populate_tree()
+                    refresh_publish_row()
+
+                self._open_publish_video_dialog(summary_window, mp4, video_detail, after_publish)
+
+            ttk.Label(right_btns, textvariable=publish_info_var).pack(side=tk.LEFT, padx=(0, 6))
+            pub_btn = ttk.Button(right_btns, text="发布到 YouTube", command=on_publish_youtube)
+            pub_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+            def refresh_publish_row():
+                imap = _scan_input_media_publish_map()
+                txt, st = _publish_cell_display(video_detail, imap)
+                publish_info_var.set(f"发布: {txt}")
+                pub_btn.config(state=("normal" if st == "ready" else "disabled"))
+
+            refresh_publish_row()
+
+            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
 
             ttk.Button(right_btns, text="启动项目", command=on_raw_start_project).pack(side=tk.LEFT, padx=(0, 5))
             ttk.Button(right_btns, text="保存信息", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
@@ -2789,9 +3082,6 @@ class MediaGUIManager:
                             pass
 
                 story_text = analyzed_content_to_prompt_text(video_detail.get("analyzed_content"))
-                if not (story_text or "").strip():
-                    story_text = (video_detail.get("story") or "").strip()
-
                 if not story_text:
                     messagebox.showwarning("提示", "analyzed_content 为空，无法复制风格和人物", parent=summary_window)
                     return
@@ -2843,10 +3133,7 @@ class MediaGUIManager:
 
                     summary_window.wait_window(concise_win)
 
-                    story_json = parse_json(
-                        analyzed_content_to_prompt_text(video_detail.get("analyzed_content")) or "",
-                        expect_list=False,
-                    )
+                    story_json = video_detail.get("analyzed_content", {})
 
                 except Exception:
                     messagebox.showwarning("提示", "故事内容格式错误，无法复制风格和人物", parent=summary_window)
@@ -2895,7 +3182,6 @@ class MediaGUIManager:
                         f"** Summary: {story_json.get('english', {}).get('summary', '')}"
                         f"** Psychological_Story: {story_json.get('english', {}).get('story', '')}"
                     )
-
 
                 if language == "zh":
                     if story_json.get('chinese', {}).get('concise_speaking', ''):
@@ -3739,7 +4025,6 @@ class MediaGUIManager:
             try:
                 with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
                     self.downloader.channel_videos = json.load(f)
-                    _normalize_channel_videos_story_field_to_str(self.downloader.channel_videos)
                     self.downloader.latest_date = max(
                         (datetime.strptime(v["upload_date"], "%Y%m%d") for v in self.downloader.channel_videos if v.get("upload_date")),
                         default=None
