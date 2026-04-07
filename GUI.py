@@ -608,7 +608,7 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def choose_from_download(self, track, media_post):
+    def choose_from_download(self, track, media_post, audio_choice):
         media_path = None
 
         for folder in ["L:"]:
@@ -654,17 +654,6 @@ class WorkflowGUI:
 
         if media_post == ".mp4":
             scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            if track == "clip" or track == "narration":
-                #use_scene_audio = messagebox.askyesno(
-                #    "音频",
-                #    "是否用本场景已有的「{}」音频轨道替换新视频中的音频？\n\n"
-                #    "是：使用场景里已保存的 {}_audio（旧音频）\n"
-                #    "否：保留所选新视频文件里的音频".format(track, track),
-                #    parent=self.root,
-                #)
-                audio_choice = "replace"
-            else:
-                audio_choice = "keep"
             self.media_scanner.video_simple_replacement(scene, rename, audio_choice, track)
         else: # audio
             olda, newa = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
@@ -1376,11 +1365,14 @@ class WorkflowGUI:
         ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep", "video")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace", "video")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="CLIP_", width=6, command=lambda: self.choose_from_download("clip", ".mp4")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="CL_KP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="CL_RP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="SECO_", width=6, command=lambda: self.choose_from_download("narration", ".mp4")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SE_RP", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SE_KP", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="ZERO_", width=6, command=lambda: self.choose_from_download("zero", ".mp4")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="ZE_RP", width=6, command=lambda: self.choose_from_download("zero", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="ZE_KP", width=6, command=lambda: self.choose_from_download("zero", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
 
         #ttk.Button(visual_button_frame, text="生解说", width=7, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(1, 10))
         # ttk.Button(visual_button_frame, text="SEC声", width=6, command=lambda: self.choose_audio_source_or_tts("narration")).pack(side=tk.LEFT, padx=1)
@@ -1749,8 +1741,6 @@ class WorkflowGUI:
             font=("Arial", 16),
         )
         self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-
-        self.scene_speaking.bind("<Double-1>", self.on_scene_speaking_copy_double_click)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -3188,89 +3178,17 @@ class WorkflowGUI:
         return "break"
 
 
-
     def on_scene_voiceover_video_action_menu(self, event=None):
         """双击旁白框：VIDEO_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
-        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event)
+        current_scene = self.workflow.scenes.pop(self.current_scene_index)
+        concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, current_scene["speaking"])
+        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event, concise)
+
 
     def on_scene_voiceover_image_action_menu(self, event=None):
         """双击视觉框：IMAGE_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
-        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event)
-
-
-    def on_scene_speaking_copy_double_click(self, event=None):
-        """双击讲话框：仅按钮，一点即拷贝（原文 / LLM 精简 / 前缀等）。"""
-        raw = self.scene_speaking.get("1.0", tk.END).rstrip("\n")
-        if not raw.strip():
-            messagebox.showinfo("提示", "讲话为空", parent=self.root)
-            return "break"
-
-        _ns = config_prompt.SPEAKING_COPY_NSOS_PREFIX
-        dlg = tk.Toplevel(self.root)
-        dlg.title("讲话拷贝")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        fr = ttk.Frame(dlg, padding=12)
-        fr.pack(fill=tk.BOTH, expand=True)
-        status_lbl = ttk.Label(fr, text="", foreground="gray")
-        status_lbl.pack(anchor=tk.W, pady=(0, 6))
-
-        btn_f = ttk.Frame(fr)
-        btn_f.pack(fill=tk.X)
-        all_btns = []
-
-        def close_and_clip(t: str) -> None:
-            self._put_clipboard_speaking(t)
-            dlg.destroy()
-
-        def do_llm(with_prefix: bool) -> None:
-            status_lbl.config(text="正在调用 LLM 精简…")
-            for b in all_btns:
-                b.config(state="disabled")
-
-            def worker() -> None:
-                try:
-                    concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, raw)
-                    if concise is None or not str(concise).strip():
-                        self.root.after(0, lambda: _finish_err(RuntimeError("LLM 返回为空")))
-                        return
-                    concise_s = str(concise).strip()
-                    final = (_ns + "\n" + concise_s) if with_prefix else concise_s
-                    self.root.after(0, lambda f=final: _finish_ok(f))
-                except Exception as ex:
-                    self.root.after(0, lambda e=ex: _finish_err(e))
-
-            def _finish_ok(t: str) -> None:
-                self._put_clipboard_speaking(t)
-                dlg.destroy()
-
-            def _finish_err(ex: BaseException) -> None:
-                status_lbl.config(text="")
-                for b in all_btns:
-                    b.config(state="normal")
-                messagebox.showerror("LLM 失败", str(ex), parent=dlg)
-
-            threading.Thread(target=worker, daemon=True).start()
-
-        all_btns = pack_text_buttons(
-            btn_f,
-            [
-                ("1 拷贝原文", lambda: close_and_clip(raw)),
-                ("2 拷贝精简（LLM）", lambda: do_llm(False)),
-                ("3 前缀 + 原文（no speak only show）", lambda: close_and_clip(_ns + "\n" + raw)),
-                ("4 前缀 + 精简（LLM）", lambda: do_llm(True)),
-            ],
-            cancel=("关闭", dlg.destroy),
-            width=48,
-        )
-
-        dlg.update_idletasks()
-        w = max(520, dlg.winfo_reqwidth())
-        h = dlg.winfo_reqheight()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 2
-        dlg.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
-        return "break"
+        current_scene = self.workflow.scenes.pop(self.current_scene_index)
+        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event, current_scene["speaking"])
 
 
     def copy_story_scene(self):
@@ -3447,11 +3365,6 @@ class WorkflowGUI:
                 "部分场景未处理：\n" + "\n".join(failed[:12]),
                 parent=self.root,
             )
-        else:
-            if len(target_scenes) == 1:
-                messagebox.showinfo("成功", "当前场景已添加水印。", parent=self.root)
-            else:
-                messagebox.showinfo("成功", "本故事全部场景已添加水印。", parent=self.root)
 
 
     def print_title(self):

@@ -135,7 +135,7 @@ def pack_text_buttons(parent, rows, cancel=None, width=48):
     return buttons
 
 
-def post_nested_clipboard_menu(root, choices_dict, event=None, *, max_label_len=72):
+def post_nested_clipboard_menu(root, choices_dict, event=None, content=None, *, max_label_len=72):
     """
     弹出两级 tk.Menu：第一层为 choices_dict 的 key（级联标题），第二层为英文指令；
     鼠标移到一级项上展开子菜单；点击子项将完整英文指令写入 root 剪贴板。
@@ -159,6 +159,8 @@ def post_nested_clipboard_menu(root, choices_dict, event=None, *, max_label_len=
     def _copy(text: str) -> None:
         try:
             root.clipboard_clear()
+            if content:
+                text = text.replace("$$$", content)
             root.clipboard_append(text)
             root.update_idletasks()
         except tk.TclError:
