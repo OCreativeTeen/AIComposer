@@ -971,6 +971,26 @@ You are a professional storyteller and creative director. Your task is to create
 
     ** Lyrics (or Raw Story):
 {content}
+
+
+
+📝 OUTPUT FORMAT  (in {language} — 中文):
+
+{{
+    "english": {{
+        "title": "title of the story. In English.",
+        "key_message": "key points of the story. In English",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "title": "title of the story. In Chinese.",
+        "key_message": "key points of the story. In Chinese",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
+
 """
 
 
@@ -1069,7 +1089,32 @@ NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
             * Soft → intimacy / memory / stillness
             * Drop / chorus → visual impact or turning point
 
-*** Output Format
+
+*** Input Content:
+    ** Content instruction:
+{instruction}
+
+    ** Lyrics (or Raw Story):
+{content}
+
+
+*** Output Format:
+{{
+    "english": {{
+        "title": "title of the story. In English.",
+        "key_message": "key points of the story. In English",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "title": "title of the story. In Chinese.",
+        "key_message": "key points of the story. In Chinese",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
+
+FYI: the story has details like:
     ** Core Theme Interpretation (2–3 sentences)
     * A-world Description (tone, visuals, conflict)
     * B-world Description (tone, visuals, emotional role)
@@ -1078,12 +1123,8 @@ NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
     * Key MV Moments (highlight 5–8 major synced scenes)
 
 
-*** Input Content:
-    ** Content instruction:
-{instruction}
 
-    ** Lyrics (or Raw Story):
-{content}
+
 """
 
 
@@ -2166,11 +2207,11 @@ CHANNEL_CONFIG = {
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
+            ("Story from Lyrics", NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS),
+            ("Story 2 Layers", NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS),
             ("SUNO Prompt", NOTEBOOKLM_PROMPT__SUNO),
             ("SUNO 2 Layers", NOTEBOOKLM_PROMPT__SUNO_2_LAYERS),
-            ("Lyrics", NOTEBOOKLM_PROMPT__MV_LYRICS),
-            ("Story from Lyrics", NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS),
-            ("Story 2 Layers", NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS)
+            ("Lyrics", NOTEBOOKLM_PROMPT__MV_LYRICS)
         ],
 
         "channel_prompt": {

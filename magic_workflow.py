@@ -92,7 +92,6 @@ class MagicWorkflow:
         self.title = ""
 
         self.background_image = None
-        self.background_music = None
         self.background_video = None
 
         # load_scenes() 之前若有代码路径调用 save_scenes_to_json，需有默认列表（GUI 启动顺序已保证先 load）
@@ -698,11 +697,7 @@ class MagicWorkflow:
                 loaded_scenes = []
             self.scenes = loaded_scenes
 
-            #background_image, background_video, background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
             for story_scene in self.scenes:
-                #refresh_scene_media(scene, "zero_image", ".png", background_image, True)
-                #refresh_scene_media(scene, "zero", ".mp4", background_video, True)
-                #refresh_scene_media(scene, "zero_audio", ".wav", background_music, True)
                 if not story_scene.get("host_display"):
                     story_scene["host_display"] = _host_display_default
                 if not story_scene.get("visual_style"):
@@ -1283,7 +1278,7 @@ class MagicWorkflow:
 
 
     def add_story_scene(self, story_index, story, story_level, is_append):
-        self.background_image, self.background_video, self.background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
+        self.background_image, self.background_video, background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
 
         if story_level:
             next_root_id = (int(self.max_id(story)/10000) + 1)*10000
@@ -1297,8 +1292,9 @@ class MagicWorkflow:
         story["environment"] = ""
 
         oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)
-        olda, zero_audio = refresh_scene_media(story, "zero_audio", ".wav", self.background_music, True)
         oldi, zero_image = refresh_scene_media(story, "zero_image", ".webp", self.background_image, True)
+        zero_audio = self.ffmpeg_audio_processor.extract_audio_from_video(background_music)
+        olda, zero_audio = refresh_scene_media(story, "zero_audio", ".wav", zero_audio, True)
 
         refresh_scene_media(story, "clip", ".mp4", zero, True)
         refresh_scene_media(story, "clip_audio", ".wav", zero_audio, True)

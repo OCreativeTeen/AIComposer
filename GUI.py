@@ -24,7 +24,14 @@ import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
 import os
-from utility.file_util import get_file_path, is_video_file, check_folder_files, safe_copy_overwrite, make_safe_file_name
+from utility.file_util import (
+    get_file_path,
+    is_video_file,
+    check_folder_files,
+    safe_copy_overwrite,
+    make_safe_file_name,
+    safe_clipboard_json_copy,
+)
 from gui.media_review_dialog import AVReviewDialog
 #from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from utility.voicebox_speech_service import VoiceboxService, EXPRESSION_STYLES
@@ -174,6 +181,8 @@ class WorkflowGUI:
         # refresh_gui_scenes 节流控制
         self.refresh_gui_scenes_last_time = 0  # 上次执行时间
         self.refresh_gui_scenes_after_id = None  # 延迟任务ID
+        self._demo_playthrough_active = False
+        self._demo_playthrough_after_id = None
         
         # 添加视频效果选择存储
         self.effect_radio_vars = {}  # {scene_index: tk.StringVar}
@@ -372,6 +381,7 @@ class WorkflowGUI:
         self.shared_channel.pack(side=tk.LEFT)
 
         ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
+        ttk.Button(row1_frame, text="全文演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -522,30 +532,25 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
-    def choose_from_channel_media(self, track, audio_action, video_or_image):
+    def choose_from_channel_media(self, track, audio_action):
         try:
             channel = project_manager.PROJECT_CONFIG.get('channel')
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             scene_name = current_scene['name']
-            source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/{scene_name}"
+            source_folder = f"{config.get_channel_path(channel)}/{track}/{scene_name}"
             if not os.path.exists(source_folder):
-                # check current style , then if is pixar-art cartoon, then use "cartoon" folder, otherwise use "realistic" folder
-                current_style = project_manager.PROJECT_CONFIG.get('visual_style') or ""
-                if "cartoon" in current_style.lower():
-                    source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/cartoon"
-                else:
-                    source_folder = f"{config.get_channel_path(channel)}/{video_or_image}/realistic"
+                source_folder = f"{config.get_channel_path(channel)}/{track}"
 
             # 1. 文件名含场景名（同档内优先匹配位置前缀）
             # 2. 不含场景名但文件名以 starting / ending / running 开头（依当前是否首/末场景）
             # 3. 其余符合 ratio 的 mp4
-            if video_or_image == "video":
+            if track == "clip" or track == "narration" or track == "zero":
                 video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
                 video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
                 if video_width > video_height:
-                    ratio = "_169_"
+                    ratio = "169_"
                 else:
-                    ratio = "_916_"
+                    ratio = "916_"
 
                 candidates = [
                     f for f in os.listdir(source_folder)
@@ -595,7 +600,7 @@ class WorkflowGUI:
                 return
 
             media_path = os.path.join(source_folder, chosen)
-            if video_or_image == "video":
+            if track == "clip" or track == "narration" or track == "zero":
                 self.media_scanner.video_simple_replacement(current_scene, media_path, audio_action, track)
                 current_scene[track+"_status"] = "ENH2"
             else:
@@ -1064,13 +1069,37 @@ class WorkflowGUI:
         except Exception:
             pass
 
+    def _mix_zero_base_offset_seconds(self) -> float:
+        """混零时从 zero_audio 的哪一秒开始截取：副轨选 ZZ 且当前场景有 zero 视频时，用预览时间轴；否则从 0。"""
+        if getattr(self, "selected_secondary_track", None) != "zero":
+            return 0.0
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not current_scene or not get_file_path(current_scene, "zero"):
+            return 0.0
+        if getattr(self, "secondary_track_playing", False) and getattr(self, "secondary_track_start_time", None):
+            return (time.time() - self.secondary_track_start_time) + float(self.secondary_track_offset)
+        if getattr(self, "secondary_track_paused_time", None) is not None:
+            return float(self.secondary_track_paused_time)
+        if hasattr(self, "secondary_track_scale_var"):
+            try:
+                return float(self.secondary_track_scale_var.get())
+            except (tk.TclError, ValueError):
+                pass
+        return float(getattr(self, "secondary_track_offset", 0.0) or 0.0)
+
     def mix_zero_audio_to_clips(self):
-        """将起始场景的 zero_audio 连续混入当前及后续 N 个场景的 clip 视频，最后一个场景末尾 2 秒淡出"""
+        """将起始场景的 zero_audio（长背景轨）按时间连续混入当前及后续 N 个场景的 clip。
+
+        时间轴：默认从 zero_audio 起点截取；若副轨选中 ZZ 且当前场景有 zero 视频，则从预览播放头/滑块位置起算。
+        淡变：仅第一段开头淡入、仅最后一段末尾淡出；中间段硬切、无淡入淡出。
+        """
         try:
             n = int(getattr(self, 'mix_scenes_var', tk.StringVar(value="1")).get())
             n = max(1, min(5, n))
             volume = self.track_volume_var.get()
             volume = max(0.0, min(1.5, volume))
+            _fade_in_first = 0.5
+            _fade_out_last = 2.0
 
             # 使用起始场景的 zero_audio
             start_scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -1085,8 +1114,11 @@ class WorkflowGUI:
                 messagebox.showwarning("警告", "zero_audio 无法读取时长")
                 return
 
+            base = self._mix_zero_base_offset_seconds()
+            base = max(0.0, min(base, max(0.0, zero_duration - 1e-3)))
+
             mixed_count = 0
-            total_offset = 0.0
+            total_offset = base
             scenes_to_mix = []
             for i in range(n):
                 idx = self.current_scene_index + i
@@ -1105,8 +1137,15 @@ class WorkflowGUI:
                 is_last = (idx == len(scenes_to_mix) - 1)
                 if total_offset + clip_dur > zero_duration:
                     break
-                fade_out = 2.0 if is_last else 0.0
-                segment_audio = fp.extract_audio_segment(zero_audio, total_offset, clip_dur, fade_out_duration=fade_out)
+                fade_in = _fade_in_first if idx == 0 else 0.0
+                fade_out = _fade_out_last if is_last else 0.0
+                segment_audio = fp.extract_audio_segment(
+                    zero_audio,
+                    total_offset,
+                    clip_dur,
+                    fade_in_duration=fade_in,
+                    fade_out_duration=fade_out,
+                )
                 if not segment_audio:
                     continue
                 output_video = fp.video_audio_mix(clip_path, segment_audio, volume=volume)
@@ -1120,7 +1159,10 @@ class WorkflowGUI:
             if mixed_count > 0:
                 self.workflow.save_scenes_to_json()
                 self.refresh_gui_scenes()
-                messagebox.showinfo("成功", f"已将 zero_audio 混入 {mixed_count} 个场景的 clip 视频（音量: {volume:.2f}）")
+                msg = f"已将 zero_audio 混入 {mixed_count} 个场景的 clip 视频（音量: {volume:.2f}）"
+                if base > 0.01:
+                    msg = f"已从 zero 轨约 {base:.2f}s 起截取。\n{msg}"
+                messagebox.showinfo("成功", msg)
             else:
                 messagebox.showwarning("警告", "没有可处理的场景")
         except Exception as e:
@@ -1362,17 +1404,14 @@ class WorkflowGUI:
 
         ttk.Button(visual_button_frame, text="生场视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
 
-        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep", "video")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace", "video")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(visual_button_frame, text="CL_KP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="CL_RP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="SE_RP", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="SE_KP", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
-
-        ttk.Button(visual_button_frame, text="ZE_RP", width=6, command=lambda: self.choose_from_download("zero", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="ZE_KP", width=6, command=lambda: self.choose_from_download("zero", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SECO", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="ZERO", width=6, command=lambda: self.choose_from_channel_media("zero", "keep")).pack(side=tk.LEFT, padx=1)
 
         #ttk.Button(visual_button_frame, text="生解说", width=7, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(1, 10))
         # ttk.Button(visual_button_frame, text="SEC声", width=6, command=lambda: self.choose_audio_source_or_tts("narration")).pack(side=tk.LEFT, padx=1)
@@ -1399,7 +1438,7 @@ class WorkflowGUI:
         self.clip_image_canvas.drop_target_register(DND_FILES)
         self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
         self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image'))
-        self.clip_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image", "keep", "image"))
+        self.clip_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image", "keep"))
 
         self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='blue')
         self.clip_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1407,7 +1446,6 @@ class WorkflowGUI:
         self.clip_image_last_canvas.drop_target_register(DND_FILES)
         self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
         self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image_last'))
-        self.clip_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image_last", "keep", "image"))
 
         # Top: narration_image
         narration_img_frame = ttk.Frame(images_container)
@@ -1422,7 +1460,7 @@ class WorkflowGUI:
         self.narration_image_canvas.drop_target_register(DND_FILES)
         self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
         self.narration_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image"))
-        self.narration_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image", "keep", "image"))
+        self.narration_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image", "image"))
 
         self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='green')
         self.narration_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1430,7 +1468,6 @@ class WorkflowGUI:
         self.narration_image_last_canvas.drop_target_register(DND_FILES)
         self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
         self.narration_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image_last"))
-        self.narration_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image_last", "keep", "image"))
         
 
         # Top: zero_image
@@ -1446,7 +1483,7 @@ class WorkflowGUI:
         self.zero_image_canvas.drop_target_register(DND_FILES)
         self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
         self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
-        self.zero_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image", "keep", "image"))
+        self.zero_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image", "image"))
 
         self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='orange')
         self.zero_image_last_canvas.pack(fill=tk.BOTH, expand=True, pady=(1, 0))
@@ -1454,7 +1491,6 @@ class WorkflowGUI:
         self.zero_image_last_canvas.drop_target_register(DND_FILES)
         self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
         self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
-        self.zero_image_last_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image_last", "keep", "image"))
 
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
@@ -1598,7 +1634,6 @@ class WorkflowGUI:
                                           command=self.stop_video_playback, width=3)
         self.video_stop_button.pack(side=tk.LEFT, padx=1)
 
-        # 翻转按钮
         ttk.Button(video_control_frame, text="<", command=lambda: self.move_video(-0.25), width=2).pack(side=tk.LEFT, padx=0)
         self.playing_delta_label = ttk.Label(video_control_frame, text="0.0s", width=4)
         self.playing_delta_label.pack(side=tk.LEFT, padx=0)
@@ -1673,7 +1708,7 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Button(duration_promo_frame, text="增主轨", width=8, command=lambda: self.enhance_clip("clip")).pack(side=tk.LEFT)
-        ttk.Button(duration_promo_frame, text="增次轨", width=8, command=lambda: self.enhance_clip("narration")).pack(side=tk.LEFT)
+        # ttk.Button(duration_promo_frame, text="增次轨", width=8, command=lambda: self.enhance_clip("narration")).pack(side=tk.LEFT)
 
         FACE_ENHANCE = ["0", "15", "30", "60"]
         self.enhance_level = ttk.Combobox(duration_promo_frame, width=3, values=FACE_ENHANCE)
@@ -1687,7 +1722,7 @@ class WorkflowGUI:
         # extension: 场景末尾延长秒数 (0=不写字段)，用于 finalize 时每段视频末尾克隆最后一帧延长；选项见 self.extension_values
         ttk.Label(duration_promo_frame, text="延长:").pack(side=tk.LEFT)
         self.extension_var = tk.StringVar(value="0")
-        self.extension_values = ["0", "0.25", "0.5", "0.75", "1.0"]
+        self.extension_values = ["0", "0.2", "0.3", "0.5", "1.0"]
         self.extension_combobox = ttk.Combobox(duration_promo_frame, textvariable=self.extension_var, values=self.extension_values, state="readonly", width=5)
         self.extension_combobox.pack(side=tk.LEFT, padx=2)
         self.extension_combobox.bind('<<ComboboxSelected>>', lambda e: self._on_extension_change())
@@ -1804,7 +1839,7 @@ class WorkflowGUI:
         row_number += 1
         self.scene_language.set(self.shared_language.cget('text'))
 
-        ttk.Label(self.video_edit_frame, text="画面风格:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        ttk.Label(self.video_edit_frame, text="风格:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         _vs_labels = list(config.VISUAL_STYLE_OPTIONS)
         self.scene_visual_style = ttk.Combobox(
             self.video_edit_frame,
@@ -2355,8 +2390,36 @@ class WorkflowGUI:
         self.pause_audio_playback()
         print(f"⏸️ 视频暂停，总播放时间: {self.video_pause_time or 0:.2f}秒")
 
-    def stop_video_playback(self):
+    def _demo_cleanup_playback(self):
+        """停止当前视频/音频，不刷新 GUI（全文演示衔接用）"""
+        self.video_playing = False
+        self.video_play_button.config(text="▶")
+        if self.video_after_id:
+            try:
+                self.root.after_cancel(self.video_after_id)
+            except Exception:
+                pass
+            self.video_after_id = None
+        if self.video_cap:
+            try:
+                self.video_cap.release()
+            except Exception:
+                pass
+            self.video_cap = None
+        self.stop_audio_playback()
+        self.video_start_time = None
+        self.video_pause_time = None
+
+    def stop_video_playback(self, cancel_demo=True):
         """停止视频播放"""
+        if cancel_demo:
+            self._demo_playthrough_active = False
+            if getattr(self, "_demo_playthrough_after_id", None):
+                try:
+                    self.root.after_cancel(self._demo_playthrough_after_id)
+                except Exception:
+                    pass
+                self._demo_playthrough_after_id = None
         self.video_playing = False
         self.video_play_button.config(text="▶")
         
@@ -2392,7 +2455,16 @@ class WorkflowGUI:
         # 首先检查音频是否还在播放
         audio_is_playing = pygame.mixer.music.get_busy()
         if not audio_is_playing:
-            # 音频播放完毕，停止视频
+            if getattr(self, "_demo_playthrough_active", False):
+                elapsed = 0.0
+                if self.video_start_time:
+                    elapsed = (time.time() - self.video_start_time) + (self.video_pause_time or 0)
+                if elapsed < 0.2:
+                    self.video_after_id = self.root.after(50, self.play_next_frame)
+                    return
+                self.log_to_output(self.video_output, "✅ 音频播放完毕，继续下一场景")
+                self._demo_after_clip_finished()
+                return
             self.stop_video_playback()
             self.log_to_output(self.video_output, "✅ 音频播放完毕，视频同步停止")
             return
@@ -2468,6 +2540,10 @@ class WorkflowGUI:
                 self.video_after_id = self.root.after(33, self.play_next_frame)
                 print("🔄 视频循环播放以等待音频完成")
             else:
+                if getattr(self, "_demo_playthrough_active", False):
+                    self.log_to_output(self.video_output, "✅ 视频播放完毕，继续下一场景")
+                    self._demo_after_clip_finished()
+                    return
                 self.stop_video_playback()
                 self.log_to_output(self.video_output, "✅ 视频播放完毕")
 
@@ -2656,7 +2732,7 @@ class WorkflowGUI:
             fv = float(ext_val) if ext_val is not None else 0.0
         except (TypeError, ValueError):
             fv = 0.0
-        allowed = getattr(self, "extension_values", ("0", "0.25", "0.5", "0.75", "1.0"))
+        allowed = getattr(self, "extension_values", ("0", "0.2", "0.3", "0.5", "1.0"))
         for s in allowed:
             try:
                 if abs(fv - float(s)) < 1e-6:
@@ -2901,6 +2977,89 @@ class WorkflowGUI:
         if self.current_scene_index >= len(self.workflow.scenes):
             self.current_scene_index = 0
         self.refresh_gui_scenes()
+
+    def start_demo_playthrough(self):
+        """从第一场景起依次导航并播放主轨 clip，串成整条故事预览。"""
+        if not self.workflow or not self.workflow.scenes:
+            messagebox.showwarning("提示", "没有场景", parent=self.root)
+            return
+        if self._demo_playthrough_active:
+            messagebox.showinfo("提示", "全文演示已在进行中", parent=self.root)
+            return
+        if self.video_playing:
+            self.stop_video_playback(cancel_demo=False)
+        if hasattr(self, "_save_timer") and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
+        self._demo_playthrough_active = True
+        if self._demo_playthrough_after_id:
+            try:
+                self.root.after_cancel(self._demo_playthrough_after_id)
+            except Exception:
+                pass
+            self._demo_playthrough_after_id = None
+        self.update_current_scene()
+        self.current_scene_index = 0
+        self.refresh_gui_scenes()
+        self.log_to_output(self.video_output, "▶ 全文演示：从场景 1 开始")
+        self.root.after(400, self._demo_start_play_scene)
+
+    def _demo_video_duration_sec(self, path: str) -> float:
+        cap = cv2.VideoCapture(path)
+        try:
+            if not cap.isOpened():
+                return 3.0
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            n = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+            if fps <= 0:
+                return 3.0
+            return max(0.5, float(n) / float(fps))
+        finally:
+            cap.release()
+
+    def _demo_start_play_scene(self):
+        if not self._demo_playthrough_active:
+            return
+        if not self.workflow or not self.workflow.scenes:
+            self._demo_playthrough_active = False
+            return
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        clip = get_file_path(scene, "clip") if scene else None
+        clip_audio = get_file_path(scene, "clip_audio") if scene else None
+        if not clip:
+            self.log_to_output(self.video_output, f"场景 {self.current_scene_index + 1} 无 clip，跳过")
+            self._demo_after_clip_finished()
+            return
+        if not clip_audio:
+            d = self._demo_video_duration_sec(clip)
+            self.log_to_output(
+                self.video_output,
+                f"场景 {self.current_scene_index + 1} 无 clip_audio，按视频时长 {d:.1f}s 后切下一场景",
+            )
+            self.load_all_images_preview()
+            ms = max(100, int(d * 1000) + 200)
+            self._demo_playthrough_after_id = self.root.after(ms, self._demo_after_clip_finished)
+            return
+        self.play_video()
+
+    def _demo_after_clip_finished(self):
+        if not self._demo_playthrough_active:
+            return
+        self._demo_playthrough_after_id = None
+        self._demo_cleanup_playback()
+        n = len(self.workflow.scenes)
+        if n == 0:
+            self._demo_playthrough_active = False
+            return
+        next_i = self.current_scene_index + 1
+        if next_i >= n:
+            self._demo_playthrough_active = False
+            self.log_to_output(self.video_output, "✅ 全文演示结束（已播完所有场景）")
+            self.refresh_gui_scenes()
+            return
+        self.current_scene_index = next_i
+        self.refresh_gui_scenes()
+        self.root.after(300, self._demo_start_play_scene)
 
 
     def split_scene(self):
@@ -3177,18 +3336,33 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         return "break"
 
+    def _on_speaking_ctrl_shift_nav_prev(self, event=None):
+        """讲话框内 Ctrl+Shift+←：上一场景（优先于 Text 默认行为，与 bind_scene_navigation_shortcuts 一致）。"""
+        if getattr(self, "workflow", None) and getattr(self.workflow, "scenes", None):
+            self.prev_scene()
+        return "break"
+
+    def _on_speaking_ctrl_shift_nav_next(self, event=None):
+        """讲话框内 Ctrl+Shift+→：下一场景（同上）。"""
+        if getattr(self, "workflow", None) and getattr(self.workflow, "scenes", None):
+            self.next_scene()
+        return "break"
 
     def on_scene_voiceover_video_action_menu(self, event=None):
         """双击旁白框：VIDEO_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
-        current_scene = self.workflow.scenes.pop(self.current_scene_index)
-        concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, current_scene["speaking"])
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, scene["speaking"])
         return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event, concise)
 
 
     def on_scene_voiceover_image_action_menu(self, event=None):
         """双击视觉框：IMAGE_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
-        current_scene = self.workflow.scenes.pop(self.current_scene_index)
-        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event, current_scene["speaking"])
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event, scene["speaking"])
 
 
     def copy_story_scene(self):
@@ -4730,7 +4904,7 @@ class WorkflowGUI:
         def _do_remix_speaking():
             raw = text_widget.get("1.0", tk.END).strip()
             try:
-                data = json.loads(raw)
+                data = json.loads(safe_clipboard_json_copy(raw))
             except json.JSONDecodeError as e:
                 messagebox.showerror("REMIX SPEAKING", f"JSON 无效：{e}", parent=dialog)
                 return
@@ -5434,6 +5608,10 @@ class WorkflowGUI:
         self.scene_speaking.bind("<Control-Left>", self._on_speaking_ctrl_left_move_head_to_prev)
         self.scene_speaking.bind("<Control-m>", self._on_speaking_ctrl_m_merge_next_speaking)
         self.scene_speaking.bind("<Control-M>", self._on_speaking_ctrl_m_merge_next_speaking)
+        for seq in ("<Control-Shift-Left>", "<Control-Shift-KP_Left>"):
+            self.scene_speaking.bind(seq, self._on_speaking_ctrl_shift_nav_prev)
+        for seq in ("<Control-Shift-Right>", "<Control-Shift-KP_Right>"):
+            self.scene_speaking.bind(seq, self._on_speaking_ctrl_shift_nav_next)
 
         print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→/M")
     
@@ -5454,6 +5632,7 @@ class WorkflowGUI:
         # 如果正在加载配置，不要自动保存
         gui_title = self.video_title.get().strip()
         if gui_title and gui_title != "......":
+            gui_title = config.chinese_convert(gui_title, self.workflow.language)
             self.workflow.title = gui_title
             print(f"🏷️ Workflow title updated: {gui_title}")
             # save summary to project_manager.PROJECT_CONFIG

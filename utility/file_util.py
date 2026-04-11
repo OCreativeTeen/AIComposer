@@ -3,9 +3,72 @@ import os
 import shutil
 import glob
 from datetime import datetime
-from typing import List, Dict, Union, Any
+from typing import List, Dict, Union, Any, Optional
 import re
 
+
+def safe_clipboard_json_copy(text: Optional[str]) -> str:
+    """
+    剪贴板/粘贴文本在解析为 JSON 前的规范化：先经 safe_clipboard_copy（Unicode 空白等），
+    再去除 Markdown 代码围栏（``` / ```json）、以及单独一行的 json/json: 标识。
+    """
+    if text is None:
+        return ""
+    content = safe_clipboard_copy(text).strip()
+    if not content:
+        return ""
+
+    if "```" in content:
+        m = re.search(
+            r"```\s*(?:json)?\s*\r?\n?(.*?)```",
+            content,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if m:
+            content = m.group(1).strip()
+        else:
+            content = re.sub(
+                r"^\s*```\s*(?:json)?\s*",
+                "",
+                content,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            content = re.sub(r"\s*```\s*$", "", content).strip()
+
+    lines = content.splitlines()
+    if lines:
+        first = lines[0].strip()
+        if re.fullmatch(r"json\s*:?", first, flags=re.IGNORECASE):
+            content = "\n".join(lines[1:]).strip()
+            lines = content.splitlines()
+    if lines:
+        last = lines[-1].strip()
+        if re.fullmatch(r"json\s*:?", last, flags=re.IGNORECASE):
+            content = "\n".join(lines[:-1]).strip()
+
+    return content
+
+
+def safe_clipboard_copy(text: Optional[str]) -> str:
+    """
+    规范化从剪贴板取得的文本，使 json.loads 等解析更不易失败。
+    将 NBSP、行/段分隔符（U+2028/U+2029）、零宽字符及常见 Unicode 空白
+    转为普通空格或移除；并去掉 BOM。
+    """
+    if text is None:
+        return ""
+    t = text.replace("\ufeff", "")
+    t = t.replace("\u00a0", " ").replace("\u202f", " ")
+    t = t.replace("\u2028", " ").replace("\u2029", " ")
+    for z in "\u200b\u200c\u200d\u2060":
+        t = t.replace(z, "")
+    for cp in range(0x2000, 0x200B):
+        t = t.replace(chr(cp), " ")
+    t = t.replace("\u1680", " ")
+    t = t.replace("\u205f", " ")
+    t = t.replace("\u3000", " ")
+    return t
 
 
 def make_safe_file_name(title, title_length=15):

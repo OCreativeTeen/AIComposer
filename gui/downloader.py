@@ -29,7 +29,14 @@ from google.oauth2.credentials import Credentials
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
-from utility.file_util import write_json, safe_copy_overwrite, safe_remove, parse_json, make_safe_file_name
+from utility.file_util import (
+    write_json,
+    safe_copy_overwrite,
+    safe_remove,
+    parse_json,
+    make_safe_file_name,
+    safe_clipboard_json_copy,
+)
 from gui.choice_dialog import askchoice
 from gui.reference_editor_dialog import ReferenceEditorDialog
 from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
@@ -2962,7 +2969,7 @@ class MediaGUIManager:
                 # 剪贴板有文本时写入 analyzed_content，再落盘列表
                 clip_note = ""
                 try:
-                    clip_text = (summary_window.clipboard_get() or "").strip()
+                    clip_text = safe_clipboard_json_copy(summary_window.clipboard_get() or "").strip()
                 except tk.TclError:
                     clip_text = ""
                 if clip_text:
@@ -2997,7 +3004,7 @@ class MediaGUIManager:
 
             def on_raw_start_project():
                 try:
-                    content = summary_window.clipboard_get()
+                    content = safe_clipboard_json_copy(summary_window.clipboard_get() or "")
                 except Exception:
                     content = ""
                 story_text = video_detail.get("analyzed_content")
@@ -3349,7 +3356,7 @@ class MediaGUIManager:
 
             def copy_style_character(language):
                 try:
-                    content = summary_window.clipboard_get()
+                    content = safe_clipboard_json_copy(summary_window.clipboard_get() or "")
                 except Exception:
                     content = ""
                 content = (content or "").strip()
@@ -3416,7 +3423,7 @@ class MediaGUIManager:
                     def _save_story():
                         raw = (concise_text_widget.get("1.0", tk.END) or "").strip()
                         try:
-                            parsed = json.loads(raw)
+                            parsed = json.loads(safe_clipboard_json_copy(raw))
                             if not isinstance(parsed, dict):
                                 messagebox.showerror("JSON 无效", "顶层须为 JSON 对象。", parent=concise_win)
                                 return

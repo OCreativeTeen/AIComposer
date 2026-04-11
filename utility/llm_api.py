@@ -367,7 +367,7 @@ class LLMApi:
             """双击时从剪贴板粘贴内容到当前光标位置"""
             try:
                 # 获取剪贴板内容
-                clipboard_content = dialog.clipboard_get()
+                clipboard_content = file_util.safe_clipboard_json_copy(dialog.clipboard_get())
                 if clipboard_content:
                     # 检查是否有选中的文本，如果有则先删除
                     try:

@@ -145,7 +145,7 @@ def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
 
 
 # 逐句 TTS 后拼接时，句间静音（秒）；来自 noise.wav 裁切，见 FfmpegAudioProcessor.make_silence
-_VB_SEGMENT_GAP_SEC = 0.125
+_VB_SEGMENT_GAP_SEC = 0.15
 
 
 def _split_voicebox_segments(text: str) -> List[str]:
@@ -170,6 +170,9 @@ class VoiceboxService:
         print(f"Voicebox TTS base: {self.base_url}")
         _ensure_voices_for_project(self.pid)
         self._ffmpeg_audio = FfmpegAudioProcessor(pid)
+        self._segment_gap_wav = self._ffmpeg_audio.make_silence(_VB_SEGMENT_GAP_SEC)
+        if not self._segment_gap_wav:
+            print("⚠️ Voicebox: 预生成句间静音失败，多句 TTS 拼接时将无句间静音")
 
     def _normalize_for_voicebox(self, text: str) -> str:
         """与 create_ssml 中一致：省略号/破折号、全角化、繁简转换（在 html.escape 之前）。"""
@@ -236,7 +239,7 @@ class VoiceboxService:
 
     def synthesize_speech(self, ssml_text: str) -> Optional[str]:
         """解析 create_ssml 的 JSON（或兼容仅含 text 字段），生成音频并保存为文件。
-        多句时按标点拆句逐段生成，句间用 make_silence 静音拼接（concat_audios）。"""
+        多句时按标点拆句逐段生成，句间用 __init__ 预生成的静音片段拼接（concat_audios）。"""
         ssml_text = (ssml_text or "").strip()
         audio_path = f"{config.get_project_path(self.pid)}/temp/{self.string_to_code(ssml_text)}.mp3"
         if os.path.exists(audio_path):
@@ -263,9 +266,9 @@ class VoiceboxService:
         print(
             f"Voicebox: 拆句 TTS 共 {len(segments)} 段，句间静音 {_VB_SEGMENT_GAP_SEC}s（noise.wav / concat）"
         )
-        gap = self._ffmpeg_audio.make_silence(_VB_SEGMENT_GAP_SEC)
+        gap = self._segment_gap_wav
         if not gap:
-            print("⚠️ Voicebox: make_silence 失败，句间无静音直接拼接")
+            print("⚠️ Voicebox: 句间静音不可用，无静音直接拼接")
         mp3_parts: List[str] = []
         for i, seg in enumerate(segments):
             esc = html.escape(seg)

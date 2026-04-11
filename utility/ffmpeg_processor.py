@@ -615,22 +615,38 @@ class FfmpegProcessor:
         return output_path
 
 
-    def extract_audio_segment(self, audio_path, start_time, duration, fade_out_duration=0):
+    def extract_audio_segment(
+        self,
+        audio_path,
+        start_time,
+        duration,
+        fade_in_duration=0,
+        fade_out_duration=0,
+    ):
         """
-        从音频文件中提取指定时间段，可选在末尾添加淡出。
+        从音频文件中提取指定时间段，可选在开头淡入、末尾淡出（秒）。
+        多段拼接时通常只在首段用 fade_in、末段用 fade_out，中间段两者均为 0。
         Returns: 临时 wav 路径，失败返回 None
         """
         try:
             if duration <= 0:
                 return None
             output_path = config.get_temp_file(self.pid, "wav")
+            fade_in = min(fade_in_duration, duration) if fade_in_duration > 0 else 0
             fade_out = min(fade_out_duration, duration) if fade_out_duration > 0 else 0
-            fade_st = max(0, duration - fade_out)
-            # atrim: start=起始秒, duration=时长; asetpts 重置时间戳; 可选 afade 淡出
+            if fade_in + fade_out > duration > 0:
+                scale = duration / (fade_in + fade_out)
+                fade_in *= scale
+                fade_out *= scale
+            fade_st = max(0.0, duration - fade_out)
+            af_filter = (
+                f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS"
+            )
+            if fade_in > 0.01:
+                af_filter += f",afade=t=in:st=0:d={fade_in:.6f}"
             if fade_out > 0.01:
-                af_filter = f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS,afade=t=out:st={fade_st:.6f}:d={fade_out:.6f}[a]"
-            else:
-                af_filter = f"[0:a]atrim=start={start_time:.6f}:duration={duration:.6f},asetpts=PTS-STARTPTS[a]"
+                af_filter += f",afade=t=out:st={fade_st:.6f}:d={fade_out:.6f}"
+            af_filter += "[a]"
             cmd = [
                 ffmpeg_path, "-y",
                 "-i", audio_path,

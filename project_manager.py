@@ -19,7 +19,7 @@ import config_prompt
 import config_channel
 import utility.llm_api as llm_api
 from utility.llm_api import LLMApi
-from utility.file_util import safe_copy_overwrite, safe_remove
+from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
 from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
 from gui.downloader import MediaGUIManager, _format_nb_prompt_template
@@ -796,7 +796,7 @@ class ProjectSelectionDialog:
 
             def paste_on_double_click(e):
                 try:
-                    s = raw_dialog.clipboard_get()
+                    s = safe_clipboard_json_copy(raw_dialog.clipboard_get())
                     if s:
                         case_text.delete(1.0, tk.END)
                         case_text.insert(tk.END, s)
@@ -824,7 +824,7 @@ class ProjectSelectionDialog:
             if not raw_input:
                 return
             try:
-                parsed = json.loads(raw_input)
+                parsed = json.loads(safe_clipboard_json_copy(raw_input))
             except json.JSONDecodeError:
                 tc = (self.story_result.get("topic_category") or "").strip()
                 ts = (self.story_result.get("topic_subtype") or "").strip()
@@ -877,7 +877,9 @@ class ProjectSelectionDialog:
                 self.story_result['analyzed_content'] = _init_raw
             elif isinstance(_init_raw, str) and _init_raw.strip():
                 try:
-                    self.story_result['analyzed_content'] = json.loads(_init_raw.strip())
+                    self.story_result['analyzed_content'] = json.loads(
+                        safe_clipboard_json_copy(_init_raw.strip())
+                    )
                 except json.JSONDecodeError:
                     self.story_result['analyzed_content'] = _init_raw.strip()
             if self.story_result.get('analyzed_content'):

@@ -7,6 +7,7 @@ import json
 import shutil
 import zhconv
 
+from utility.file_util import safe_clipboard_json_copy
 
 
 LANGUAGES = {
@@ -300,11 +301,13 @@ def parse_json_from_text(text):
     """从文本中解析 JSON，处理可能的引号包裹问题"""
     if not text:
         return None
-    
-    text = text.strip()
-    if not text:
+
+    text = safe_clipboard_json_copy(text)
+    if not text.strip():
         return None
-    
+
+    text = text.strip()
+
     # 尝试直接解析
     try:
         return json.loads(text)
@@ -601,38 +604,20 @@ def get_fallback_background_image(channel, width, height):
 
 
 def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor):
-    """获取背景图、背景音乐，并用图+音乐合成背景视频，返回 (background_image, background_video, background_music)。"""
     prefix, kernel = fetch_resource_prefix("", [])
-    image_dir = get_channel_path(channel) + "/image"
-    music_dir = get_channel_path(channel) + "/music"
-    video_dir = get_channel_path(channel) + "/video"
+    image_dir = get_channel_path(channel) + "/clip_image"
+    music_dir = get_channel_path(channel) + "/zero"
+    video_dir = get_channel_path(channel) + "/clip"
 
     # 1. 获取 background_image（按横竖屏选 169_ 或 916_）
     if ffmpeg_processor.width > ffmpeg_processor.height:
         background_image = find_matched_file(image_dir, prefix + "/169_", "png", kernel)
+        background_video= find_matched_file(video_dir, prefix + "/169_", "mp4", kernel)
+        background_music= find_matched_file(music_dir, prefix + "/169_", "mp4", kernel)
     else:
         background_image = find_matched_file(image_dir, prefix + "/916_", "png", kernel)
-    if background_image:
-        img_stem = os.path.splitext(os.path.basename(background_image))[0]
-        background_image = ffmpeg_processor.to_webp(background_image)
-
-    # 2. 获取 background_music（转成 wav）
-    background_music = find_matched_file(music_dir, prefix + "/", "mp3", kernel)
-    if background_music:
-        music_stem = os.path.splitext(os.path.basename(background_music))[0]
-        background_music = ffmpeg_audio_processor.to_wav(background_music)
-
-    # 3. 用 图 + 音乐 合成 background_video
-    background_video = None
-    if background_image and background_music:
-        video_path = video_dir + "/" + img_stem + "_" + music_stem + ".mp4"
-        os.makedirs(video_dir, exist_ok=True)  # 确保目标目录存在
-        if os.path.exists(video_path):
-            background_video = video_path
-        else:
-            background_video = ffmpeg_processor.image_audio_to_video(background_image, background_music, 1) 
-            shutil.move(background_video, video_path)
-            background_video = video_path
+        background_video= find_matched_file(video_dir, prefix + "/916_", "mp4", kernel)
+        background_music= find_matched_file(music_dir, prefix + "/916_", "mp4", kernel)
 
     return background_image, background_video, background_music
     

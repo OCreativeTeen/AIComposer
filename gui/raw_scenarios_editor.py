@@ -5,6 +5,8 @@ import tkinter.messagebox as messagebox
 import json
 import os
 
+from utility.file_util import safe_clipboard_json_copy
+
 
 class RawScenesEditor:
     """Raw scenes JSON editor dialog"""
@@ -105,7 +107,7 @@ class RawScenesEditor:
         try:
             content = self.text_editor.get(1.0, tk.END).strip()
             if content:
-                json_data = json.loads(content)
+                json_data = json.loads(safe_clipboard_json_copy(content))
                 formatted = json.dumps(json_data, ensure_ascii=False, indent=2)
                 self.text_editor.delete(1.0, tk.END)
                 self.text_editor.insert(1.0, formatted)
@@ -120,7 +122,7 @@ class RawScenesEditor:
         try:
             content = self.text_editor.get(1.0, tk.END).strip()
             if content:
-                json.loads(content)
+                json.loads(safe_clipboard_json_copy(content))
                 messagebox.showinfo("成功", "JSON格式正确")
             else:
                 messagebox.showwarning("警告", "内容为空")
@@ -139,12 +141,11 @@ class RawScenesEditor:
         try:
             content = self.text_editor.get(1.0, tk.END).strip()
             if content:
-                # 验证JSON格式
-                json_data = json.loads(content)
-                
-                # 保存到文件
+                normalized = safe_clipboard_json_copy(content)
+                json_data = json.loads(normalized)
+                out = json.dumps(json_data, ensure_ascii=False, indent=2)
                 with open(self.json_file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                    f.write(out)
                 
                 self.result = True
                 messagebox.showinfo("成功", "文件保存成功")

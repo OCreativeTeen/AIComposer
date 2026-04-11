@@ -7,6 +7,7 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
 
 from config import parse_json_from_text
+from utility.file_util import safe_clipboard_json_copy
 from utility.llm_api import LLMApi
 
 
@@ -48,7 +49,7 @@ class ReferenceEditorDialog:
 
     def _on_paste_from_clipboard(self, event=None):
         try:
-            clipboard_content = self.dialog.clipboard_get()
+            clipboard_content = safe_clipboard_json_copy(self.dialog.clipboard_get())
             if clipboard_content:
                 self.reference_editor.insert(tk.INSERT, clipboard_content)
         except tk.TclError:
@@ -78,7 +79,7 @@ class ReferenceEditorDialog:
         paste_text.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
 
         def paste_on_double_click(e):
-            clipboard_content = paste_dialog.clipboard_get()
+            clipboard_content = safe_clipboard_json_copy(paste_dialog.clipboard_get())
             paste_text.insert(tk.INSERT, clipboard_content)
 
         paste_text.bind('<Double-1>', paste_on_double_click)
