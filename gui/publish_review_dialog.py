@@ -114,14 +114,18 @@ class PublishReviewDialog:
         ).pack(anchor="w", pady=(8, 2))
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
         self.text_w.pack(fill=tk.BOTH, expand=True, pady=4)
-        lang = "english" if self.media_gui.language == "en" else "chinese"
-        summary = self.video_detail.get("analyzed_content", {}).get(lang, {}).get("summary") or ""
-        summary = summary + "\n" + self.video_detail.get("analyzed_content", {}).get(lang, {}).get("key_message") or ""
 
-        if summary:
-            self.text_w.insert(tk.END, summary + "\n\n")
+        scene_content = self.video_detail.get('scene_content', {}).get(config.LANGUAGES[self.media_gui.language], [{}])[0]
+        if scene_content:
+            summary = scene_content.get("message", "")
+            summary = summary + "\n" + scene_content.get("concise_speaking", "")
+            summary = summary + "\n" + scene_content.get("story_analysis", "")
         else:
-            self.text_w.insert(tk.END, self.video_detail.get("content") or "")
+            summary = self.video_detail.get("analyzed_content", {}).get(config.LANGUAGES[self.media_gui.language],"")
+            if not summary:
+                summary = self.video_detail.get("content")
+
+        self.text_w.insert(tk.END, summary + "\n\n")
 
         btn_row = ttk.Frame(top)
         btn_row.pack(fill=tk.X, pady=8)

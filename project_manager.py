@@ -13,6 +13,7 @@ import os
 import re
 import json
 import glob
+import copy
 from datetime import datetime
 import config
 import config_prompt
@@ -23,32 +24,115 @@ from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_j
 from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
 from gui.downloader import MediaGUIManager, _format_nb_prompt_template
-from utility.analyzed_content_util import analyzed_content_valid_message_shape
-
-
-def _analyzed_content_for_llm_prompt(val) -> str:
-    """story_result['analyzed_content'] 传给 LLM 时：dict/list 序列化为 JSON 字符串。"""
-    if val is None:
-        return ""
-    if isinstance(val, str):
-        return val.strip()
-    if isinstance(val, (dict, list)):
-        return json.dumps(val, ensure_ascii=False)
-    return str(val)
 
 
 def _analyzed_content_preview_text(val) -> str:
-    """RAW 预览：与 dict/list/str 兼容。"""
-    if val is None:
-        return ""
-    if isinstance(val, str):
-        return val.strip()
-    if isinstance(val, (dict, list)):
-        try:
-            return json.dumps(val, ensure_ascii=False)
-        except Exception:
-            return str(val)
-    return str(val).strip()
+    """列表/对象仅在预览时再 json.dumps；字符串原样截取。"""
+    content = val.get('content')
+    if not content:
+        return ''
+
+    blob = None
+    if isinstance(content, dict):
+        blob = content.get('story')
+    else:
+        blob = content
+
+    if blob is None:
+        s = ''
+    elif isinstance(blob, str):
+        s = blob.strip()
+    elif isinstance(blob, (list, dict)):
+        s = json.dumps(blob, ensure_ascii=False)
+    else:
+        s = str(blob)
+
+    content = (s[:40] + '…') if len(s) > 40 else s
+    return content.strip()
+
+
+
+def resolve_initial_counseling_role_content(language_code, analyzed_raw, scene_raw):
+    branch = config.LANGUAGES.get(language_code, 'chinese')
+
+    analyzed = analyzed_raw[branch] if analyzed_raw else None
+    scene_arr = scene_raw[branch] if scene_raw else None
+
+    if not analyzed and not scene_arr:
+        return {"story": ""}
+
+    if not analyzed and scene_arr:
+        return {"story": scene_arr}
+
+    if analyzed and not scene_arr:
+        return {"story": analyzed}
+  
+    if len(scene_arr) > 1:
+        return {"story": scene_arr}
+    else:
+        return {"story": analyzed}
+    
+ 
+def _story_value_nonempty(sv) -> bool:
+    if sv is None:
+        return False
+    if isinstance(sv, str):
+        return bool(sv.strip())
+    if isinstance(sv, list):
+        return len(sv) > 0
+    if isinstance(sv, dict):
+        return len(sv) > 0
+    return True
+
+
+def _raw_content_valid_for_create(ac) -> bool:
+    """须为 { english: {story}, chinese: {story} }；story 可为非空 str / list / dict（无 summary）。"""
+    if not isinstance(ac, dict):
+        return False
+    for lang in ('english', 'chinese'):
+        br = ac.get(lang)
+        if not isinstance(br, dict):
+            return False
+        if not _story_value_nonempty(br.get('story')):
+            return False
+    return True
+
+
+def build_soul(channel, topic_category, topic_subtype):
+    channel_path = config.get_channel_path(config_channel.get_channel_id(channel)) if channel else None
+    topic_choices, topic_categories, tag_features_map = config.load_topics(channel)
+
+    topic_category = (topic_category or '').strip()
+    topic_subtype = (topic_subtype or '').strip()
+
+    for topic in topic_choices:
+        if not isinstance(topic, dict):
+            continue
+        cat = topic.get('topic_category') or topic.get('category') or ''
+        if cat.strip() != topic_category:
+            continue
+        # 先加载 category 级 soul
+        cat_soul_spec = topic.get('soul') or ''
+        category_soul = _load_soul_content(channel_path, cat_soul_spec) if cat_soul_spec else ''
+        # 若有 subtype，再找并加载 subtype 级 soul
+        subtype_soul = ''
+        if topic_subtype:
+            for st in topic.get('topic_subtypes') or []:
+                if not isinstance(st, dict):
+                    continue
+                if (st.get('topic_subtype') or '').strip() == topic_subtype:
+                    sub_spec = st.get('soul') or ''
+                    subtype_soul = _load_soul_content(channel_path, sub_spec) if sub_spec else ''
+                    break
+        
+        if subtype_soul:
+            return subtype_soul, topic_choices, topic_categories, tag_features_map
+        else:
+            return category_soul, topic_choices, topic_categories, tag_features_map
+        #parts = [p for p in (category_soul, subtype_soul) if p]
+        #return '\n---\n'.join(parts) if parts else ''
+    return '', topic_choices, topic_categories, tag_features_map  # 未找到匹配的 topic_category
+
 
 
 PROJECT_CONFIG = None
@@ -98,53 +182,7 @@ def _load_soul_content(channel_path, soul_spec):
                     return f.read().strip()
             except Exception:
                 pass
-    return soul
-
-
-def get_soul_for_topic(channel_path, topic_category, topic_subtype, topics_data):
-    """从 topics_data 根据 topic_category/topic_subtype 查找 soul，支持文件路径或内联文本。
-
-    流程：先按 topic_category 找到主题，加载 category 级 soul；若有 topic_subtype 再加载 subtype 级 soul；
-    两者都存在时用 --- 分隔拼接返回；仅 category 存在则只返回 category；都不存在则返回空字符串。
-
-    Args:
-        channel_path: 频道目录路径（soul 文件所在目录）
-        topic_category: 主题分类
-        topic_subtype: 主题子类型
-        topics_data: 从 config.load_topics 返回的 topic_choices 列表
-
-    Returns:
-        加载的 soul 文本，未找到则返回空字符串
-    """
-    if not topics_data or not isinstance(topics_data, list):
-        return ''
-    topic_category = (topic_category or '').strip()
-    topic_subtype = (topic_subtype or '').strip()
-
-    for topic in topics_data:
-        if not isinstance(topic, dict):
-            continue
-        cat = topic.get('topic_category') or topic.get('category') or ''
-        if cat.strip() != topic_category:
-            continue
-        # 先加载 category 级 soul
-        cat_soul_spec = topic.get('soul') or ''
-        category_soul = _load_soul_content(channel_path, cat_soul_spec) if cat_soul_spec else ''
-        # 若有 subtype，再找并加载 subtype 级 soul
-        subtype_soul = ''
-        if topic_subtype:
-            for st in topic.get('topic_subtypes') or []:
-                if not isinstance(st, dict):
-                    continue
-                if (st.get('topic_subtype') or '').strip() == topic_subtype:
-                    sub_spec = st.get('soul') or ''
-                    subtype_soul = _load_soul_content(channel_path, sub_spec) if sub_spec else ''
-                    break
-        # 组合：两者都有则 category + --- + subtype；仅 category 有则只返回 category；都无则返回空
-        parts = [p for p in (category_soul, subtype_soul) if p]
-        return '\n---\n'.join(parts) if parts else ''
-
-    return ''  # 未找到匹配的 topic_category
+    return ""
 
 
 class ProjectConfigManager:
@@ -154,7 +192,9 @@ class ProjectConfigManager:
         self.config_dir = "config"
         os.makedirs(self.config_dir, exist_ok=True)
         self.pid = pid
+
         self.load_config(pid)
+
     
 
     def list_projects(self):
@@ -271,29 +311,18 @@ def save_project_config():
 class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
     
-    def __init__(self, parent, config_manager, youtube_gui=None, create_only=False, selection_only=False, initial_channel=None, initial_language=None, initial_analyzed_content=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
-        """
-        初始化项目选择对话框
-        
-        Args:
-            parent: 父窗口
-            config_manager: ProjectConfigManager实例
-            youtube_gui: 可选，YT 相关功能的 GUI 管理器（下载/寻找/管理）
-            create_only: 若为 True，直接打开创建新项目窗口，不显示项目列表
-            selection_only: 若为 True，只显示项目列表，不显示「新建项目」按钮
-            initial_channel: 首层选择的频道（用于创建新项目预填、YT 等）
-            initial_language: 首层选择的语言
-            initial_analyzed_content: 预设的 RAW 内容（用于从 NotebookLM Story 启动新项目）
-            initial_narrator: 首层选择的旁白 narrator（config_prompt.NARRATOR）
-            initial_visual_style: 首层选择的画面风格（config.VISUAL_STYLE_OPTIONS 的 value）
-            initial_host_display: 首层选择的 Host 显示（HOST_DISPLAY_OPTIONS_DOWNLOADER 的英文 value）
-        """
+    def __init__(self, parent, config_manager, youtube_gui, create_only, selection_only, 
+                 initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None,
+                 initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None):
+
         self.parent = parent
         self.config_manager = config_manager
         self.youtube_gui = youtube_gui
         self.selected_config = None
-        self.llm_api = LLMApi()
-        self.llm_api_local = LLMApi(llm_api.LM_STUDIO)
+        self.llm_api_local = LLMApi(llm_api.GPT_MINI)
+        # 与频道 topics.json / tags.json 对应；create_new_project 内「添加标签」等闭包依赖
+        self.topics_data = []
+        self.tag_features_map = {}
 
         available_channels = list(config_channel.CHANNEL_CONFIG.keys())
         default_channel = initial_channel or (available_channels[0] if available_channels else 'default')
@@ -312,6 +341,29 @@ class ProjectSelectionDialog:
             'default_video_width': '1920',
             'default_video_height': '1080'
         }
+
+        icat = (initial_category or '').strip() or None
+        isub = (initial_subtype or '').strip() or None
+        if initial_tags is not None:
+            if isinstance(initial_tags, list):
+                itags = [
+                    str(t).strip()
+                    for t in initial_tags
+                    if t is not None and str(t).strip()
+                ]
+            else:
+                itags = parse_tags_list(str(initial_tags)) or None
+            if itags == []:
+                itags = None
+        else:
+            itags = None
+
+        merged_content = resolve_initial_counseling_role_content(
+            default_lang,
+            initial_analyzed_content,
+            initial_scene_content,
+        )
+
         self.story_result = {
             'channel': default_channel,
             'language': default_lang,
@@ -319,14 +371,28 @@ class ProjectSelectionDialog:
             'visual_style': _vs,
             'host_display': _hd,
             'channel_template': None,
-            'topic_category': None,
-            'topic_subtype': None,
-            'tags': None,  # list of str，如 Feature=选项、GENRE=Jazz；与 tags.json 两级菜单一致
+            'topic_category': icat,
+            'topic_subtype': isub,
+            'tags': itags,
             'soul': None,
-            'content': None,
+            'content': merged_content,
             'action': None,
         }
-        self.initial_analyzed_content = initial_analyzed_content
+
+        #self.story_result['analyzed_content'] = initial_analyzed_content
+        #self.story_result['scene_content'] = initial_scene_content
+
+        if (
+            initial_channel
+            and self.story_result.get('topic_category')
+            and self.story_result.get('topic_subtype')
+        ):
+            self.story_result['soul'], _, _, _ = build_soul(
+                initial_channel,
+                self.story_result['topic_category'],
+                self.story_result['topic_subtype'],
+            )
+
         if create_only:
             # 创建隐藏的父窗口（用于后续销毁），创建表单必须挂在可见的 parent 下否则会白屏
             self.dialog = tk.Toplevel(parent)
@@ -338,10 +404,7 @@ class ProjectSelectionDialog:
         else:
             self.create_dialog(selection_only=selection_only)
 
-    def build_soul(self, channel, topic_category, topic_subtype, topics_data):
-        """从 topics_data 根据 topic_category/topic_subtype 加载并组合 soul（支持文件路径或内联文本）"""
-        channel_path = config.get_channel_path(config_channel.get_channel_id(channel)) if channel else None
-        return get_soul_for_topic(channel_path, topic_category, topic_subtype, topics_data)
+
 
     def create_dialog(self, selection_only=False):
         """创建对话框
@@ -534,10 +597,6 @@ class ProjectSelectionDialog:
 
         sync_channel_template()
 
-        # 主题分类选择（两级：category 和 subtype，各单选）
-        topics_data = []  # 存储完整的 topics.json 数据
-        tag_features_map = {}  # tags.json：{ "Structure": ["...", ...], ... }
-        
         # 主题分类、主题子类型：同一行横向排列
         topic_row = ttk.Frame(main_frame)
         topic_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
@@ -565,7 +624,7 @@ class ProjectSelectionDialog:
 
         def _open_tag_menu_pm():
             from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
-            m = build_tag_cascade_menu(new_project_dialog, tag_features_map, _on_tag_pick_pm)
+            m = build_tag_cascade_menu(new_project_dialog, self.tag_features_map, _on_tag_pick_pm)
             post_menu_below_widget(m, tags_add_btn_pm)
 
         tags_add_btn_pm = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu_pm)
@@ -612,9 +671,9 @@ class ProjectSelectionDialog:
             topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
             
-            if selected_category and topics_data:
+            if selected_category and self.topics_data:
                 subtypes = []
-                for topic in topics_data:
+                for topic in self.topics_data:
                     if topic.get('topic_category') == selected_category:
                         for subtype_item in topic.get('topic_subtypes', []):
                             if isinstance(subtype_item, dict):
@@ -629,10 +688,10 @@ class ProjectSelectionDialog:
             selected_subtype = topic_subtype_combo.get()
             self.story_result['topic_category'] = selected_category.strip() if selected_category else None
             self.story_result['topic_subtype'] = selected_subtype.strip() if selected_subtype else None
-            self.story_result['soul'] = self.build_soul(self.story_result['channel'], self.story_result['topic_category'], self.story_result['topic_subtype'], topics_data)
+            self.story_result['soul'], choices, categories, features = build_soul(self.story_result['channel'], self.story_result['topic_category'], self.story_result['topic_subtype'])
             
-            if selected_category and topics_data:
-                for topic in topics_data:
+            if selected_category and choices:
+                for topic in choices:
                     if topic.get('topic_category') == selected_category:
                         sample = topic.get('sample_topic', '')
                         display_parts = []
@@ -656,27 +715,31 @@ class ProjectSelectionDialog:
 
         # 加载主题分类选项的函数（从 topics.json）；channel/language 已从首层传入，不再从 UI 同步
         def update_topic_choices(*args):
-            topics_data.clear()  # 清空旧数据
-            tag_features_map.clear()
-            topic_category_combo.set('')  # 清空选择
+            self.topics_data.clear()
+            self.tag_features_map.clear()
+            topic_category_combo.set('')
             topic_category_combo['values'] = []
             topic_subtype_combo.set('')
             topic_subtype_combo['values'] = []
             topic_explanation_label.config(text="")
-            self.story_result['topic_category'] = None
-            self.story_result['topic_subtype'] = None
-            self.story_result['tags'] = None
-            self.story_result['soul'] = None
-            tags_var.set('')
-            
+
             if self.story_result['channel']:
-                channel_path = config.get_channel_path(config_channel.get_channel_id(self.story_result['channel']))
-                loaded_choices, loaded_categories, loaded_tag_map = config.load_topics(channel_path)
-                topics_data.extend(loaded_choices)
+                loaded_choices, loaded_categories, loaded_tag_map = config.load_topics(
+                    self.story_result['channel']
+                )
+                self.topics_data.extend(loaded_choices)
                 if isinstance(loaded_tag_map, dict):
-                    tag_features_map.update(loaded_tag_map)
+                    self.tag_features_map.update(loaded_tag_map)
                 topic_category_combo['values'] = sorted(loaded_categories)
-            # 频道切换后需更新编辑按钮状态
+
+            _tg = self.story_result.get('tags')
+            if isinstance(_tg, list) and _tg:
+                tags_var.set(', '.join(_tg))
+            elif _tg:
+                tags_var.set(str(_tg).strip())
+            else:
+                tags_var.set('')
+
             try:
                 update_buttons_state()
             except NameError:
@@ -702,17 +765,34 @@ class ProjectSelectionDialog:
         def update_previews():
             """根据 story_result 更新 RAW 预览文本"""
             # RAW
-            raw_str = _analyzed_content_preview_text(self.story_result.get('analyzed_content'))
-            if raw_str:
-                preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
-                raw_preview.config(text=f"RAW: {preview}", foreground="black")
-            else:
-                raw_preview.config(text="RAW: (未生成)", foreground="gray")
+            preview = _analyzed_content_preview_text(self.story_result)
+            raw_preview.config(text=f"RAW: {preview}", foreground="black")
 
         # 根据 topic 启用/禁用 RAW 编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
             edit_raw_btn.config(state='normal' if has_topic else 'disabled')
+
+
+        def apply_initial_topic_selection():
+            """把 __init__/YT 写入的 topic_category、topic_subtype 同步到下拉框（须在 update_buttons_state 之后）。"""
+            cat = (self.story_result.get('topic_category') or '').strip()
+            if not cat:
+                return
+            cats = list(topic_category_combo['values'])
+            if cat not in cats:
+                return
+            topic_category_combo.set(cat)
+            update_topic_subtype()
+            sub = (self.story_result.get('topic_subtype') or '').strip()
+            if sub:
+                subs = list(topic_subtype_combo['values'])
+                if sub in subs:
+                    topic_subtype_combo.set(sub)
+            update_explanation()
+            update_buttons_state()
+
+        apply_initial_topic_selection()
 
 
         def on_topic_category_selected(e):
@@ -727,49 +807,11 @@ class ProjectSelectionDialog:
         topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
         topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
 
-        def _apply_category_result_to_ui(category_result, raw_preview_widget):
-            """根据 category_result 更新 topic/title/tags 等 UI"""
-            if not category_result:
-                return
-            cat = category_result.get('topic_category')
-            sub = category_result.get('topic_subtype')
-            if cat and sub:
-                self.story_result['topic_category'] = cat
-                topic_category_combo.set(cat)
-                update_topic_subtype()
-                self.story_result['topic_subtype'] = sub
-                topic_subtype_combo.set(sub)
-                topic_choices, _, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
-                self.story_result['soul'] = self.build_soul(self.story_result['channel'], cat, sub, topic_choices)
-                update_explanation()
-            title = category_result.get('title', '')
-            if title:
-                title_entry.delete(0, tk.END)
-                title_entry.insert(0, title)
-                self.story_result['title'] = title
-            analysis_logic = category_result.get('analysis_logic', '')
-            if analysis_logic:
-                self.story_result['analysis_logic'] = analysis_logic
-            problem_tags = category_result.get('tags', '')
-            if problem_tags:
-                analysis_tags = _tags_analysis_part(problem_tags)
-                manual_tags = _tags_manual_part(self.story_result.get('tags'))
-                self.story_result['tags'] = (analysis_tags + manual_tags) if (analysis_tags or manual_tags) else None
-                tags_var.set(', '.join(self.story_result['tags'] or []))
-            story_str = json.dumps(category_result, indent=2, ensure_ascii=False)
-            new_project_dialog.clipboard_clear()
-            new_project_dialog.clipboard_append(story_str)
-            # RAW 预览显示 analyzed_content（原始故事），不显示 category_result JSON
-            raw_str = _analyzed_content_preview_text(self.story_result.get('analyzed_content'))
-            if raw_str:
-                preview = (raw_str[:40] + '…') if len(raw_str) > 40 else raw_str
-                raw_preview_widget.config(text=f"RAW: {preview}", foreground="black")
 
-
-        def open_raw_editor(initial_text=None):
-            """输入 Raw Case-Story：须为 JSON 对象（结构与 MESSAGE 模板 english/chinese 一致），存为 dict。"""
+        def open_project_content_editor(initial_text=None):
+            """输入 Raw Case-Story：JSON 对象，english / chinese 各为 { story }（story 可为字符串或数组/对象）。"""
             if initial_text is None:
-                initial_text = self.story_result.get('analyzed_content')
+                initial_text = self.story_result.get('content')
             if isinstance(initial_text, dict):
                 _prefill = json.dumps(initial_text, ensure_ascii=False, indent=2)
             elif isinstance(initial_text, str) and initial_text.strip():
@@ -777,7 +819,7 @@ class ProjectSelectionDialog:
             else:
                 _prefill = None
             raw_dialog = tk.Toplevel(new_project_dialog)
-            raw_dialog.title("RAW Case-Story 输入")
+            raw_dialog.title("项目内容 输入")
             raw_dialog.geometry("700x400")
             raw_dialog.transient(new_project_dialog)
             raw_dialog.grab_set()
@@ -826,66 +868,20 @@ class ProjectSelectionDialog:
             try:
                 parsed = json.loads(safe_clipboard_json_copy(raw_input))
             except json.JSONDecodeError:
-                tc = (self.story_result.get("topic_category") or "").strip()
-                ts = (self.story_result.get("topic_subtype") or "").strip()
-                # 与 gui/downloader.refresh_notebooklm_prompt 中 topic 一致
-                topic_str = tc + "-" + ts
-                lang_key = self.story_result.get("language")
-                language_name = LANGUAGES.get(lang_key, lang_key) if lang_key else ""
-                soul = (self.story_result.get("soul") or "").strip()
-                full_prompt = _format_nb_prompt_template(
-                    config_channel.NOTEBOOKLM_PROMPT__COUNSELING_TALK,
-                    topic=topic_str,
-                    language=language_name,
-                    instruction="",
-                    analyzed_content="",
-                    content=raw_input,
-                    soul=soul,
-                )
-                parsed = self.llm_api.generate_json(
-                    full_prompt,
-                    "",
-                    expect_list=False,
-                )
-            if not isinstance(parsed, dict):
-                messagebox.showerror(
-                    "格式错误",
-                    "顶层须为 JSON 对象，例如 {\"english\": {...}, \"chinese\": {...}}。",
-                    parent=new_project_dialog,
-                )
                 return
-            self.story_result['analyzed_content'] = parsed
 
-            topic_choices, topic_categories, _ = config.load_topics(config.get_channel_path(config_channel.get_channel_id(self.story_result['channel'])))
-            category_result = self.llm_api_local.generate_json(
-                config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language=LANGUAGES.get(self.story_result['language'], self.story_result['language']), topic_choices=topic_choices),
-                _analyzed_content_for_llm_prompt(self.story_result['analyzed_content']),
-                expect_list=False
-            )
-            if category_result:
-                _apply_category_result_to_ui(category_result, raw_preview)
+            self.story_result['content'] = parsed
             update_buttons_state()
             update_previews()
 
 
-        edit_raw_btn.config(command=open_raw_editor)
+        edit_raw_btn.config(command=open_project_content_editor)
 
-        # 若有预设 RAW（如从 NotebookLM Story 启动），预填并自动打开 RAW 编辑器
-        _init_raw = getattr(self, 'initial_analyzed_content', None)
-        if _init_raw is not None:
-            if isinstance(_init_raw, dict) and _init_raw:
-                self.story_result['analyzed_content'] = _init_raw
-            elif isinstance(_init_raw, str) and _init_raw.strip():
-                try:
-                    self.story_result['analyzed_content'] = json.loads(
-                        safe_clipboard_json_copy(_init_raw.strip())
-                    )
-                except json.JSONDecodeError:
-                    self.story_result['analyzed_content'] = _init_raw.strip()
-            if self.story_result.get('analyzed_content'):
-                update_previews()
-                update_buttons_state()
-                new_project_dialog.after(300, lambda: open_raw_editor(initial_text=self.story_result.get('analyzed_content')))
+
+        if self.story_result.get('content'):
+            update_previews()
+            update_buttons_state()
+            new_project_dialog.after(300, lambda: open_project_content_editor(initial_text=self.story_result.get('content')))
 
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
@@ -906,19 +902,12 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            ac = self.story_result.get('analyzed_content')
+            ac = self.story_result.get('content')
             if not ac:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
-            if not isinstance(ac, dict):
-                messagebox.showerror("错误", "RAW 须为 JSON 对象（含 english / chinese 等字段），请重新编辑。")
-                return
-            if not analyzed_content_valid_message_shape(ac):
-                messagebox.showerror(
-                    "错误",
-                    "analyzed_content 须含 english、chinese，且各分支内 story、summary 均非空（与 MESSAGE 模板一致）。",
-                    parent=new_project_dialog,
-                )
+            if not isinstance(ac, dict) or ac.get('story') is None:
+                messagebox.showerror("错误", "RAW 须为 JSON 对象，且含 story 字段。")
                 return
 
             # 解析分辨率
@@ -1153,14 +1142,13 @@ def show_initial_choice_dialog(parent):
         yt_parent.lift()
         yt_parent.focus_force()
         # 不在此处 withdraw(parent)，否则 Windows 下可能导致所有窗口消失；等 YT 方法返回后再隐藏
-        channel_path = config.get_channel_path(config_channel.get_channel_id(ch))
         _yt_log = tk.Text(yt_parent, height=1)
         def _yt_log_fn(w, m):
             try:
                 w.insert(tk.END, m + '\n')
             except Exception:
                 pass
-        yt_gui = MediaGUIManager(yt_parent, channel_path, 'temp', {}, _yt_log_fn, _yt_log, language=lang)
+        yt_gui = MediaGUIManager(yt_parent, ch, 'temp', {}, _yt_log_fn, _yt_log, language=lang)
         getattr(yt_gui, yt_method)(*args)
         # YT 方法返回后再隐藏主窗口（若提前 withdraw 可能导致 YT 子窗被一起隐藏）
         parent.withdraw()
@@ -1216,12 +1204,10 @@ def create_project_dialog(parent, youtube_gui=None):
     if choice == 'new':
         # 直接打开创建新项目窗口，传入首层选择的 channel/language
         dialog = ProjectSelectionDialog(
-            parent, config_manager, youtube_gui=youtube_gui, create_only=True,
-            initial_channel=initial_channel, initial_language=initial_language,
-            initial_narrator=initial_narrator,
-            initial_visual_style=initial_visual_style,
-            initial_host_display=initial_host_display,
+            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, create_only=True, selection_only=False, 
+            initial_channel=initial_channel, initial_language=initial_language, initial_narrator=initial_narrator, initial_visual_style=initial_visual_style, initial_host_display=initial_host_display,
         )
+
         result = dialog.story_result.get('action', 'cancel')
         selected_config = dialog.selected_config
         if dialog.dialog.winfo_exists():
@@ -1229,11 +1215,8 @@ def create_project_dialog(parent, youtube_gui=None):
     else:
         # 选择项目：显示项目列表（不含「新建项目」按钮），传入 channel/language
         dialog = ProjectSelectionDialog(
-            parent, config_manager, youtube_gui=youtube_gui, selection_only=True,
-            initial_channel=initial_channel, initial_language=initial_language,
-            initial_narrator=initial_narrator,
-            initial_visual_style=initial_visual_style,
-            initial_host_display=initial_host_display,
+            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, selection_only=True,
+            initial_channel=initial_channel, initial_language=initial_language, initial_narrator=initial_narrator, initial_visual_style=initial_visual_style, initial_host_display=initial_host_display,
         )
         result, selected_config = dialog.show()
 
@@ -1243,33 +1226,39 @@ def create_project_dialog(parent, youtube_gui=None):
     return result, selected_config
 
 
-def create_project_with_initial_raw(parent, analyzed_content, channel, language, initial_narrator=None, initial_visual_style=None, initial_host_display=None):
+def create_project_with_initial_raw(parent, channel, language, narrator, visual_style, host_display,
+                                    analyzed_content, scene_content, topic_category, topic_subtype, topic_tags):
     """用现有 RAW 材料（如 NotebookLM Story）直接启动创建新项目，跳过初始选择。analyzed_content 可为 dict 或 JSON 字符串。"""
     global PROJECT_CONFIG
-    if analyzed_content is None:
+    if analyzed_content is None and scene_content is None:
         return 'cancel', None
-    if isinstance(analyzed_content, dict):
-        if not analyzed_content:
-            return 'cancel', None
-    elif isinstance(analyzed_content, str):
-        if not analyzed_content.strip():
-            return 'cancel', None
-    else:
-        return 'cancel', None
+
     config_manager = ProjectConfigManager()
-    _nar = initial_narrator if initial_narrator is not None else LAST_NARRATOR
-    _vs = initial_visual_style if initial_visual_style is not None else LAST_VISUAL_STYLE
-    _hd = initial_host_display if initial_host_display is not None else config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
+    _nar = narrator if narrator is not None else LAST_NARRATOR
+    _vs = visual_style if visual_style is not None else LAST_VISUAL_STYLE
+    _hd = host_display if host_display is not None else config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
+
     dialog = ProjectSelectionDialog(
-        parent, config_manager, youtube_gui=None, create_only=True,
-        initial_channel=channel, initial_language=language,
-        initial_analyzed_content=(
-            analyzed_content.strip() if isinstance(analyzed_content, str) else analyzed_content
-        ),
+        parent=parent, 
+        config_manager=config_manager, 
+        youtube_gui=None, 
+        create_only=True,
+        selection_only=False,
+
+        initial_channel=channel, 
+        initial_language=language,
+        
         initial_narrator=_nar,
         initial_visual_style=_vs,
         initial_host_display=_hd,
+
+        initial_analyzed_content=analyzed_content,
+        initial_scene_content=scene_content,
+        initial_category = topic_category,
+        initial_subtype = topic_subtype,
+        initial_tags = topic_tags
     )
+
     result = dialog.story_result.get('action', 'cancel')
     selected_config = dialog.selected_config
     if dialog.dialog.winfo_exists():
@@ -1285,5 +1274,6 @@ def create_project_with_initial_raw(parent, analyzed_content, channel, language,
                 save_project_config()
             except Exception:
                 pass
+
     return result, selected_config
 

@@ -1,6 +1,5 @@
 from faster_whisper import WhisperModel
 from datetime import datetime
-import re
 import os
 import json
 from . import llm_api
@@ -8,10 +7,6 @@ import config_prompt
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from difflib import SequenceMatcher
 from typing import List, Dict, Any
-from utility.file_util import safe_file, read_json, write_json, clean_memory, safe_remove, read_text, write_text
-import gc
-import math
-import torch
 import requests
 import config
 
@@ -45,7 +40,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.device = device
         self.api_url = "http://10.0.0.231:9001/transcribe"
-        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
+        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
 

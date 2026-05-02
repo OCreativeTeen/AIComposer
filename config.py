@@ -4,30 +4,30 @@ import uuid
 import random
 import glob
 import json
-import shutil
 import zhconv
 
 from utility.file_util import safe_clipboard_json_copy
+import config_channel
 
 
 LANGUAGES = {
-    "zh": "Chinese",
-    "tw": "Chinese",
-    "zh-cn": "Chinese",
-    "zh-tw": "Chinese",
-    "zh-hk": "Chinese",
-    "zh-mo": "Chinese",
-    "zh-sg": "Chinese",
-    "zh-my": "Chinese",
-    "zh-ph": "Chinese",
-    "zh-th": "Chinese",
-    "zh-vn": "Chinese",
-    "en": "English",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "fr": "French",
-    "de": "German",
-    "es": "Spanish",
+    "zh": "chinese",
+    "tw": "chinese",
+    "zh-cn": "chinese",
+    "zh-tw": "chinese",
+    "zh-hk": "chinese",
+    "zh-mo": "chinese",
+    "zh-sg": "chinese",
+    "zh-my": "chinese",
+    "zh-ph": "chinese",
+    "zh-th": "chinese",
+    "zh-vn": "chinese",
+    "en": "english",
+    "ja": "japanese",
+    "ko": "korean",
+    "fr": "french",
+    "de": "german",
+    "es": "spanish",
 }
 
 
@@ -360,18 +360,10 @@ def parse_json_from_text(text):
     return None
 
 
-def load_topics(channel_path: str) -> tuple[list, list, dict]:
-    """
-    从频道目录下的 topics.json 和 tags.json 加载主题与标签配置。
-    可被 downloader、project_manager 等模块复用。
 
-    Args:
-        channel_path: 频道目录路径（可用 config.get_channel_path(channel) 获取）
+def load_topics(channel: str) -> tuple[list, list, dict]:
+    channel_path = get_channel_path(config_channel.get_channel_id(channel)) if channel else None
 
-    Returns:
-        (topic_choices, topic_categories, tag_features_map):
-        主题列表、去重后的分类列表、tags.json 解析得到的「特征名 -> 选项列表」字典。
-    """
     topics_file = os.path.join(channel_path, 'topics.json')
     tags_file = os.path.join(channel_path, 'tags.json')
     topic_choices = []

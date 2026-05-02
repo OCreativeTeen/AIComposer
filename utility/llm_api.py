@@ -5,19 +5,20 @@ from openai import OpenAI
 import time
 import os
 import httpx
+import config
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
 from . import file_util
 
 
-#LM_STUDIO = "qwen/qwen3.5-9b"
-#LM_STUDIO = "google/gemma-4-26b-a4b"
-LM_STUDIO = "gemma-4-e4b-it"
+LM_STUDIO = "qwen/qwen3.5-9b"
+#LM_STUDIO = "gemma-4-e4b-it"
 #OLLAMA = "qwen3.5:9b"
 OLLAMA = "gemma4:26b"
 
-GPT_MINI = "gpt-5-nano"
+GPT_MINI = "deepseek-v4-flash" #"gpt-5-nano"
+
 #GPT_MINI = "gpt-4o-mini"
 GEMINI_2_0_FLASH = "gemini-2.0-flash"  # 免费
 #GEMINI_2_5_FLASH = "gemini-2.5-pro-preview-06-05"  # 付费
@@ -25,7 +26,7 @@ MANUAL = "manual"
 
 MODELS = {
     GPT_MINI : {
-        "url": "https://api.openai.com/v1"
+        "url": "https://api.deepseek.com/v1" #"https://api.openai.com/v1"
     },
     GEMINI_2_0_FLASH : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -134,7 +135,7 @@ class LLMApi:
 
     # { "topic_category": "心智成长与存在焦虑", "topic_subtype": "觉醒期与意义崩塌", "tags": "我开始怀疑以前相信的一切, 努力好像不一定 有回报, 我看清规则却更迷茫" }
     def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True) -> Union[Dict, List]:
-        max_retries = 3
+        max_retries = 1
         for attempt in range(max_retries):
             try:
                 content = self.generate_text(system_prompt, user_prompt)
@@ -166,7 +167,11 @@ class LLMApi:
                     return file_util.parse_json( content_string=content_string, expect_list=expect_list )
 
             except Exception as e:
-                print(f"生成JSON摘要失败: {str(e)}")
+                print(f"生成JSON失败: {str(e)}")
+                # write content_string to file
+                failed_file = config.get_temp_file("debug", "txt", "llm_api_generate_json_failed_content_string")
+                with open(failed_file, "w", encoding="utf-8") as f:
+                    f.write(content_string)
 
             if attempt < max_retries - 1:  # 不是最后一次尝试
                 print(f"等待 7 秒后重试...")

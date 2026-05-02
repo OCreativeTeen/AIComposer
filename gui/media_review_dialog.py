@@ -1267,7 +1267,7 @@ class AVReviewDialog:
             self._update_fresh_json_text()
 
         _name = self.current_scene.get("name", "")
-        _ac = project_manager.PROJECT_CONFIG.get("analyzed_content", "")
+        _ac = project_manager.PROJECT_CONFIG.get('analyzed_content', "")
         if isinstance(_ac, (dict, list)):
             _content = json.dumps(_ac, ensure_ascii=False)
         else:
