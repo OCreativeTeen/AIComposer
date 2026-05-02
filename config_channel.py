@@ -112,8 +112,8 @@ OUTPUT FORMAT (STRICT JSON)
         {{
             "title": "A short title capturing the psychological theme. In English.",
             "message": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "story_analysis": "psychological_micro_story (5–8 sentences). A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
-            "concise_speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English)."
+            "story": "psychological_micro_story (5–8 sentences). A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In English.",
+            "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English)."
         }}
     ],
     "chinese": [
@@ -121,7 +121,7 @@ OUTPUT FORMAT (STRICT JSON)
             "title": "A short title capturing the psychological theme. In Chinese.",
             "message": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
             "story": "psychological_micro_story (5–8 sentences). A simple, human story that indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction. In Chinese.",
-            "concise_speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in Chinese)."
+            "speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in Chinese)."
         }}
     ]
 }}
@@ -188,8 +188,8 @@ OUTPUT FORMAT (STRICT JSON)
             {{
                 "title": "title of this scene; but the title of 1st scene is the title of whole story.",
                 "message": "heart message to express the psychological life guidance. Reflective tone.",
-                "story_analysis": "psychological story & analysis to indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction.",
-                "concise_speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking)."
+                "story": "psychological story & analysis to indirectly illustrates the message. Often involving a small life moment, a quiet realization, or a child/adult interaction.",
+                "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking)."
             }},
             ...
         ],
@@ -198,8 +198,8 @@ OUTPUT FORMAT (STRICT JSON)
             {{
                 "title": "場景的標題；但对第一個場景, 给出整個故事的標題.",
                 "message": "表達人生心理指引的內心寄語。用反思的語氣",
-                "story_analysis": "用心理故事和分析間接闡釋信息。通常涉及生活中的小瞬間、悄然的領悟或兒童/成人的互動",
-                "concise_speaking": "用簡潔的旁白表達內心寄語和心理微故事(約9秒旁白)"
+                "story": "用心理故事和分析間接闡釋信息。通常涉及生活中的小瞬間、悄然的領悟或兒童/成人的互動",
+                "speaking": "用簡潔的旁白表達內心寄語和心理微故事(約9秒旁白)"
             }},
             ...
         ]
@@ -209,7 +209,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_STORY_ANALYSIS = """
+NOTEBOOKLM_PROMPT__COUNSELING_story = """
 You are a psychological counselor, narrative case writer, and reflective analyst.
 
 
@@ -606,13 +606,27 @@ RULES:
         * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
 
 
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
+            }}
+
 OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array, which has ONLY one object with these fields:
-        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
-        * actions: [Mood/Emotion + physical movements or expressions] (In English).
-        * speaking: The Character's dialogue (In {language}).
+    ** Strictly output a JSON array of objects with these fields:
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * speaking: The Host's narration/analysis that give summary of the story and sub-insights of the story (In {language}).
         * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
-        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
 
 """
 
@@ -657,14 +671,32 @@ RULES:
         * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
 
 
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
+            }}
+
 OUTPUT FORMAT (JSON Array)
     ** Strictly output a JSON array of objects with these fields:
         * actor: [Gender/Age/{language} Name/Tone] (One Character in the story, In English).
         * actions: [Mood/Emotion + physical movements or expressions] (Character's actions in the scene, In English).
         * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
         * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
-            - In early scenes, Characters must explain their background, include "Exposition through Dialogue" (naturally weave their identity profession, status, history of the conflict, and their current situation to others so the audience understands the "ins and outs" |  Host's narration, give analysis about current scene or background or connections if need.
+            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
+            - if speaking is Host's narration, give analysis about current scene or background or connections if need.
         * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+
 """
 
 
@@ -704,13 +736,32 @@ RULES:
         * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
 
 
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
+            }}
+
 OUTPUT FORMAT (JSON Array)
     ** Strictly output a JSON array of objects with these fields:
-        * speaker: [Gender/Age/Name/Tone/Race-{language}] (In English).
-        * actions: [Mood/Emotion + physical movements or expressions] (In English).
-        * speaking: The Character's dialogue (In {language}).
+        * actor: [Gender/Age/{language} Name/Tone] (One Character in the story, In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (Character's actions in the scene, In English).
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
+            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
+            - if speaking is Host's narration, give analysis about current scene or background or connections if need.
         * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
-        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
+
 """
 
 
@@ -740,25 +791,30 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
     ** 听众分享的是他们自己生活中的真实片段，而不是对故事角色的评价。
     * 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
 
-*** Output Format (JSON Array - each object is a scene with fields):
-    ** narrator: 咨询师性别 (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)。
-    ** speaking: (中文) 咨询师的台词。
-        * 结构必须包含：[对上一个听众分享的感谢/承接] + [本场景的心理分析] + [引出下一个话题的过渡] + [向观众提问]。
-        * 注意：第一个场景不需要承接部分。
-    ** actions: (英文) 咨询师的情绪与肢体动作（如：gentle smile, leans forward）。
-    ** visual: (英文) 咨询师所在的心灵空间场景描述（光影、天气、环境）。
-    ** voiceover_gender: (Choice: man/woman) 明确下一段分享听众的性别。
-    ** voiceover: (中文) 随机听众的个人故事片段（像是电台热线或私密日记的读白）。
 
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
+            }}
 
-*** Example Output:
-    {
-        "narrator": "woman/mature/chinese",
-        "speaking": "谢谢刚才那位先生分享的他那把旧钥匙的故事，原来那不仅仅是一件物品，更是对家人的牵挂。好，我们现在来看看这个故事的第二个片段：当妻子面对满屋旧物感到窒息时，她的这种‘愤怒’其实是一种呼救。各位，在你们的生命里，是否也有过那样一刻，觉得自己被过去的东西‘困住’了？哪怕是一个小小的物件，也让你动弹不得？",
-        "actions": "Nods slowly, eyes filled with warmth, hands cupping a mug.",
-        "visual": "A cozy study filled with the scent of old books and lavender, evening sunlight casting long shadows.",
-        "voiceover": "听了刚才的话，我想起我衣柜里那件穿不下的旧裙子。那是十年前我第一次面试时穿的，虽然现在全是褶皱，但我每次想扔掉它，心里就像破了个洞。我发现，我舍不得的不是裙子，是那个还对未来充满期待的自己..."
-    }
+OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array of objects with these fields:
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
+            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
+            - if speaking is Host's narration, give analysis about current scene or background or connections if need.
+        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
 """
 
 
@@ -779,26 +835,32 @@ COUNSELING_INTRO = """
         * 3. "the Shattering Moment":  To grab the audience's attention, identify the specific, shocking scene from the provided text where the psychological conflict explodes. Describe this scene vividly to grab attention.
             * don't try to give full story cover, just VERY briefly describe the most important / shocking scene vividly to grab attention.
 
-*** Input:
-    ** story content provided in the user-prompt >> only focuse on 'content' field, ignore other fields.
-        Here is a example:
-        [
-            {{
-                "content": "心理治愈系短片剧本：《碎掉的灯影》\\n场景一：完美的裂痕\\n\\nscene: \\\"完美的裂痕 (The Perfect Crack)\\\"\\n\\nexplicit:\\n[新房，四年前。黄昏的余晖穿过落地窗。屋子里到处是还没拆封的纸箱和喜庆的红色软装。..."
+
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
             }}
-        ]
 
-
-*** Output Format:
-    ** inside a JSON array, strictly output only one single scene element with fields like: 
-        * speaker: "Narrative Host/Lead Counselor" (Specify gender/tone ~ in english).
-        * speaking: The VERY brief introduction script of the story (in the original language).
-        * actions: Describe the host's body language (e.g., "Leans forward, voice drops to a whisper, stops smiling when the conflict is mentioned" ~ in english).
-        * visual: Describe the studio environment (e.g., "A dimly lit library with a single spotlight, reflecting the duality of the story" ~ in english).
-
-    Here is a Example:
-        {example}
+OUTPUT FORMAT (JSON Array)
+    ** Strictly output a JSON array of objects with these fields:
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
+            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
+            - if speaking is Host's narration, give analysis about current scene or background or connections if need.
+        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
 """
+
 
 
 
@@ -1897,27 +1959,33 @@ RULES:
             - Exist beneath the surface
         * The audience should FEEL the depth, not be told.
 
+
+INPUT (the original case+analysis content):
+    ** story content text : 
+        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** or scene list of the story: 
+        *   {{
+                "story": [ 
+                    {{
+                        "title": "場景標題",
+                        "message": "简短核心信息/寄語",
+                        "story": "..故事场景描述/分析..",
+                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
+                    }},
+                    ...
+                ]
+            }}
+
 OUTPUT FORMAT (JSON Array)
     ** Strictly output a JSON array of objects with these fields:
+        * actor: [Gender/Age/{language} Name/Tone] (One Character in the story, In English).
+        * actions: [Mood/Emotion + physical movements or expressions] (Character's actions in the scene, In English).
+        * speaking: The Character's dialogue (In {language}).
+            - In early scenes, Characters must explain background (naturally weave identity, status, history of the conflict).
+        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
+        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
+        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
 
-        * actor: [Gender/Age/{language} Name/Tone]
-            (One character in the story, in English)
-
-        * actions: [Mood/Emotion + physical movements or expressions]
-            (Character's visible behavior, in English)
-
-        * narrator: [Gender/Age/{language}]
-            (Narrator / Music Story Host, in English)
-
-        * speaking:
-            Character dialogue | Narrator narration (in {language})
-            - Must feel natural and emotionally rhythmic
-            - Early scenes must include "Exposition through Dialogue"
-              (identity, background, situation revealed naturally)
-
-        * visual:
-            Detailed cinematic setting
-            (time, weather, lighting, environment, atmosphere, camera feel)
 """
 
 

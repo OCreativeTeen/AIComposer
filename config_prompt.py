@@ -189,7 +189,7 @@ Output format:
 
 
 
-CONCISE_SPEAKING_PROMPT = """
+speaking_PROMPT = """
 Condense the spoken content (given in user-prompt) into a clearer and VERY concise form while preserving the 1-2 key points from the content.
 """
 

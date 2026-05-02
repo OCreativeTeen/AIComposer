@@ -2172,7 +2172,7 @@ class MediaGUIManager:
         summary = video_detail.get('scene_content')
         if summary and isinstance(summary, dict):
             title = summary.get(config.LANGUAGES[self.language], [{}])[0].get('title', '')
-            summary = summary.get(config.LANGUAGES[self.language], [{}])[0].get('story_analysis', '')
+            summary = summary.get(config.LANGUAGES[self.language], [{}])[0].get('story', '')
         if not summary:
             title = (video_detail.get("title") or "video")
             summary = video_detail.get('analyzed_content', {}).get(config.LANGUAGES[self.language], "")
@@ -2982,7 +2982,7 @@ class MediaGUIManager:
                 if not analyzed_content and not scene_content:
                     messagebox.showwarning(
                         "提示",
-                        "analyzed_content 或 scene_content 须为 JSON，且含 english/chinese，各分支 story_analysis非空，无法启动新项目。",
+                        "analyzed_content 或 scene_content 须为 JSON，且含 english/chinese，各分支 story非空，无法启动新项目。",
                         parent=summary_window,
                     )
                     return
@@ -3399,7 +3399,7 @@ class MediaGUIManager:
 
 
                 header_parts['Instruction_for_Speaking_and_Visual_generation'] = (
-                    "** Generate speaking or visual-image,  according to concise_speaking (and/or message, title and story_analysis) fields inside object of the json array, and/or the content in the image."
+                    "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
                 )
 
                 _lc = (language or "zh").strip().lower()
@@ -3450,8 +3450,8 @@ class MediaGUIManager:
                 _v_story = tk.BooleanVar(value=True)
                 _v_concise = tk.BooleanVar(value=True)
                 ttk.Checkbutton(_chk_row, text="message", variable=_v_message).pack(side=tk.LEFT, padx=(0, 12))
-                ttk.Checkbutton(_chk_row, text="story_analysis", variable=_v_story).pack(side=tk.LEFT, padx=(0, 12))
-                ttk.Checkbutton(_chk_row, text="concise_speaking", variable=_v_concise).pack(side=tk.LEFT)
+                ttk.Checkbutton(_chk_row, text="story", variable=_v_story).pack(side=tk.LEFT, padx=(0, 12))
+                ttk.Checkbutton(_chk_row, text="speaking", variable=_v_concise).pack(side=tk.LEFT)
 
                 ttk.Label(_picker, text="预览（只读）:").pack(anchor="w", padx=12, pady=(8, 2))
                 _prev = scrolledtext.ScrolledText(_picker, wrap=tk.WORD, width=78, height=16, state="disabled")
@@ -3462,9 +3462,9 @@ class MediaGUIManager:
                     if _v_message.get():
                         names.append("message")
                     if _v_story.get():
-                        names.append("story_analysis")
+                        names.append("story")
                     if _v_concise.get():
-                        names.append("concise_speaking")
+                        names.append("speaking")
                     return names
 
                 def _refresh_scene_preview(*_a):
