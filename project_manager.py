@@ -28,50 +28,13 @@ from gui.downloader import MediaGUIManager, _format_nb_prompt_template
 
 def _analyzed_content_preview_text(val) -> str:
     """列表/对象仅在预览时再 json.dumps；字符串原样截取。"""
-    content = val.get('content')
+    content = val.get('analyzed_content')
     if not content:
         return ''
 
-    blob = None
-    if isinstance(content, dict):
-        blob = content.get('story')
-    else:
-        blob = content
-
-    if blob is None:
-        s = ''
-    elif isinstance(blob, str):
-        s = blob.strip()
-    elif isinstance(blob, (list, dict)):
-        s = json.dumps(blob, ensure_ascii=False)
-    else:
-        s = str(blob)
-
-    content = (s[:40] + '…') if len(s) > 40 else s
+    content = (content[:40] + '…') if len(content) > 40 else content
     return content.strip()
 
-
-
-def resolve_initial_counseling_role_content(language_code, analyzed_raw, scene_raw):
-    branch = config.LANGUAGES.get(language_code, 'chinese')
-
-    analyzed = analyzed_raw[branch] if analyzed_raw else None
-    scene_arr = scene_raw[branch] if scene_raw else None
-
-    if not analyzed and not scene_arr:
-        return {"story": ""}
-
-    if not analyzed and scene_arr:
-        return {"story": scene_arr}
-
-    if analyzed and not scene_arr:
-        return {"story": analyzed}
-  
-    if len(scene_arr) > 1:
-        return {"story": scene_arr}
-    else:
-        return {"story": analyzed}
-    
  
 def _story_value_nonempty(sv) -> bool:
     if sv is None:
@@ -358,12 +321,10 @@ class ProjectSelectionDialog:
         else:
             itags = None
 
-        merged_content = resolve_initial_counseling_role_content(
-            default_lang,
-            initial_analyzed_content,
-            initial_scene_content,
-        )
-
+        # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get
+        ac_src = initial_analyzed_content if isinstance(initial_analyzed_content, dict) else {}
+        sc_src = initial_scene_content if isinstance(initial_scene_content, dict) else {}
+        _branch = config.LANGUAGES[default_lang]
         self.story_result = {
             'channel': default_channel,
             'language': default_lang,
@@ -375,7 +336,8 @@ class ProjectSelectionDialog:
             'topic_subtype': isub,
             'tags': itags,
             'soul': None,
-            'content': merged_content,
+            'analyzed_content': ac_src.get(_branch),
+            'scene_content': sc_src.get(_branch, ""),
             'action': None,
         }
 
@@ -762,6 +724,7 @@ class ProjectSelectionDialog:
         edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
         edit_raw_btn.pack(pady=5)
 
+
         def update_previews():
             """根据 story_result 更新 RAW 预览文本"""
             # RAW
@@ -811,7 +774,7 @@ class ProjectSelectionDialog:
         def open_project_content_editor(initial_text=None):
             """输入 Raw Case-Story：JSON 对象，english / chinese 各为 { story }（story 可为字符串或数组/对象）。"""
             if initial_text is None:
-                initial_text = self.story_result.get('content')
+                initial_text = self.story_result.get('analyzed_content')
             if isinstance(initial_text, dict):
                 _prefill = json.dumps(initial_text, ensure_ascii=False, indent=2)
             elif isinstance(initial_text, str) and initial_text.strip():
@@ -870,7 +833,7 @@ class ProjectSelectionDialog:
             except json.JSONDecodeError:
                 return
 
-            self.story_result['content'] = parsed
+            self.story_result['analyzed_content'] = parsed
             update_buttons_state()
             update_previews()
 
@@ -878,10 +841,10 @@ class ProjectSelectionDialog:
         edit_raw_btn.config(command=open_project_content_editor)
 
 
-        if self.story_result.get('content'):
+        if self.story_result.get('analyzed_content'):
             update_previews()
             update_buttons_state()
-            new_project_dialog.after(300, lambda: open_project_content_editor(initial_text=self.story_result.get('content')))
+            new_project_dialog.after(300, lambda: open_project_content_editor(initial_text=self.story_result.get('analyzed_content')))
 
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
@@ -902,12 +865,9 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请输入标题")
                 return
             
-            ac = self.story_result.get('content')
+            ac = self.story_result.get('analyzed_content')
             if not ac:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
-                return
-            if not isinstance(ac, dict) or ac.get('story') is None:
-                messagebox.showerror("错误", "RAW 须为 JSON 对象，且含 story 字段。")
                 return
 
             # 解析分辨率
@@ -1215,7 +1175,7 @@ def create_project_dialog(parent, youtube_gui=None):
     else:
         # 选择项目：显示项目列表（不含「新建项目」按钮），传入 channel/language
         dialog = ProjectSelectionDialog(
-            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, selection_only=True,
+            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, create_only=False, selection_only=True,
             initial_channel=initial_channel, initial_language=initial_language, initial_narrator=initial_narrator, initial_visual_style=initial_visual_style, initial_host_display=initial_host_display,
         )
         result, selected_config = dialog.show()
@@ -1239,9 +1199,9 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
     _hd = host_display if host_display is not None else config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
 
     dialog = ProjectSelectionDialog(
-        parent=parent, 
-        config_manager=config_manager, 
-        youtube_gui=None, 
+        parent=parent,
+        config_manager=config_manager,
+        youtube_gui=None,
         create_only=True,
         selection_only=False,
 

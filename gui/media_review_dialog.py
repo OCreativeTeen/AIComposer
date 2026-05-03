@@ -9,11 +9,10 @@ import config, config_channel
 def _refresh_scene_media(*args, **kwargs):
     from project_manager import refresh_scene_media as _fn
     return _fn(*args, **kwargs)
-from utility.llm_api import LLMApi
+from utility.llm_api import LLMApi, GPT_MINI
 import json
 from config import parse_json_from_text
 from utility.file_util import is_audio_file, is_video_file, is_image_file
-import config_prompt
 import project_manager
 #from utility.minimax_speech_service import MinimaxSpeechService
 from utility.voicebox_speech_service import VoiceboxService
@@ -83,7 +82,7 @@ class AVReviewDialog:
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
         self.transcriber = AudioTranscriber(self.workflow.pid, model_size="small", device="cuda")
-        self.llm_api = LLMApi()
+        self.llm_api = LLMApi(GPT_MINI)
         #self.speech_service = MinimaxSpeechService(self.workflow.pid)
         self.speech_service = VoiceboxService(self.workflow.pid)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(self.workflow.pid)
@@ -1267,18 +1266,13 @@ class AVReviewDialog:
             self._update_fresh_json_text()
 
         _name = self.current_scene.get("name", "")
-        _ac = project_manager.PROJECT_CONFIG.get('analyzed_content', "")
+        _ac = project_manager.PROJECT_CONFIG.get('content', {}).get('story')
         if isinstance(_ac, (dict, list)):
             _content = json.dumps(_ac, ensure_ascii=False)
         else:
             _content = _ac or ""
-        selected_prompt = ""
-        if _name == "development2":
-            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development2', '')
-        elif _name == "development1":
-            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('development1', '')
-        elif _name == "intro":
-            selected_prompt = project_manager.PROJECT_CONFIG['prompts'].get('intro', '')
+
+        selected_prompt = self.current_scene.get("prompt", "")
 
         refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
 
@@ -1330,23 +1324,13 @@ class AVReviewDialog:
             if not selected_prompt_example or not isinstance(selected_prompt_example, list) or len(selected_prompt_example) == 0:
                 messagebox.showerror("错误", f"无法解析示例文件: {example_file}")
                 return
-            example_json_str = json.dumps(selected_prompt_example, indent=2, ensure_ascii=False)
 
             if self.transcribe_way == "multiple":
-                if len(self.audio_json) > 1:
-                    json_str = f"json array holding {len(self.audio_json)} scenes"
-                    objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
-                else:
-                    json_str = "json array holding scenes"
-                    objective_str = "split it into several scenes, which build the whole program"
-                    selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
+                selected_prompt = selected_prompt.format(language=self.workflow.language, topic=topic_type)
+                selected_prompt = selected_prompt + "\n\n" + "split the whole program into several scenes. Like the following example:\n" + json.dumps(selected_prompt_example, indent=2, ensure_ascii=False)
             else:
-                selected_prompt_example_item = selected_prompt_example[0]
-                example_json_str = json.dumps(selected_prompt_example_item, indent=2, ensure_ascii=False)
-                json_str = "a single json item describing a scene"
-                objective_str = "recreate a scene in detail"
-                selected_prompt = selected_prompt.format(json=json_str, objective=objective_str, example=example_json_str, channel_name=channel_name, topic=topic_type)
+                selected_prompt = selected_prompt.format(language=self.workflow.language, topic=topic_type)
+                selected_prompt = selected_prompt + "\n\n" + "output only has a single json item describing the whole program. Like the following example:\n" + json.dumps(selected_prompt_example[0], indent=2, ensure_ascii=False)
 
         else:
             selected_prompt = config_channel.SIMPLE_REORGANIZE
@@ -1363,7 +1347,6 @@ class AVReviewDialog:
         if self.transcribe_way == "single" or (len(self.audio_json) == 1 and len(new_scenes) == 1):
             self.current_scene[self.SPEAKER_KEY] = new_scenes[0].get(self.SPEAKER_KEY, "")
             self.current_scene[self.SPEAKER_KEY+"_audio"] = self.source_audio_path
-            self.current_scene["actions"] = new_scenes[0].get("actions", "")
             self.current_scene["visual"] = new_scenes[0].get("visual", "")
             self.current_scene["start"] = 0.0
             self.current_scene["end"] = self.audio_duration
@@ -1412,8 +1395,6 @@ class AVReviewDialog:
                 new_item["duration"] = item["duration"]
             if "visual" in item:
                 new_item["visual"] = item["visual"]
-            if "actions" in item:
-                new_item["actions"] = item["actions"]
             if "start" in item:
                 new_item["start"] = item["start"]
             if "end" in item:
@@ -1441,7 +1422,6 @@ class AVReviewDialog:
             fresh_json = json.loads(fresh_text)
             if self.transcribe_way == "single":
                 self.current_scene[self.SPEAKER_KEY] = fresh_json[0].get(self.SPEAKER_KEY, "")
-                self.current_scene["actions"] = fresh_json[0].get("actions", "")
                 self.current_scene["visual"] = fresh_json[0].get("visual", "")
                 self.current_scene["caption"] = ". ".join([item.get("caption", "") for item in fresh_json])
                 self.current_scene["speaking"] = ". ".join([item.get("speaking", "") for item in fresh_json])
@@ -1459,13 +1439,12 @@ class AVReviewDialog:
         for json_item in self.audio_json:
             speaker = json_item[self.SPEAKER_KEY]
             content = json_item[self.SPEAKING_KEY]
-            actions = json_item["actions"]
 
             voice = self.speech_service.get_voice(speaker, lang)
             if not voice:
                 messagebox.showerror("错误", f"无法找到语音: {speaker}")
                 return
-            ssml = self.speech_service.create_ssml(text=content, voice=voice, actions=actions, language=lang)
+            ssml = self.speech_service.create_ssml(text=content, voice=voice, language=lang)
             audio_file = self.speech_service.synthesize_speech(ssml)
             if audio_file:  # 只添加成功生成的音频文件
                 tts_wav = self.workflow.ffmpeg_audio_processor.to_wav(audio_file)

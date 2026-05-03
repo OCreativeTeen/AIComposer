@@ -1783,13 +1783,6 @@ class WorkflowGUI:
         self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="动作:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_actions = scrolledtext.ScrolledText(
-            self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
-        )
-        self.scene_actions.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        row_number += 1
-
         ttk.Label(self.video_edit_frame, text="视觉:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_visual = scrolledtext.ScrolledText(
             self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
@@ -2776,9 +2769,6 @@ class WorkflowGUI:
         
         self.scene_speaker.set(scene_data.get("actor", ""))
 
-        self.scene_actions.delete("1.0", tk.END)
-        self.scene_actions.insert("1.0", scene_data.get("actions", ""))
-
         self.scene_visual.delete("1.0", tk.END)
         self.scene_visual.insert("1.0", scene_data.get("visual", ""))
 
@@ -2922,7 +2912,6 @@ class WorkflowGUI:
 
             self.scene_speaking.delete("1.0", tk.END)
             self.scene_speaker.set("")
-            self.scene_actions.delete("1.0", tk.END)
             self.scene_visual.delete("1.0", tk.END)
             _pc = project_manager.PROJECT_CONFIG
             self.scene_narrator.set(_pc.get("narrator") or project_manager.LAST_NARRATOR)
@@ -4798,7 +4787,7 @@ class WorkflowGUI:
 
         # Speaker 形象提示
         scene_video_desc += f"""
-            the speaker is character (appears as {visual_style} style) of the story - {scene.get("actor", "")} - {scene.get("actions", "")}
+            the speaker is character (appears as {visual_style} style) of the story - {scene.get("actor", "")}
             speaking like below (use this just as a reference, please make a very concise version):  
             {scene.get("speaking", "")}
 
@@ -4852,8 +4841,7 @@ class WorkflowGUI:
             item = {
                 "visual_style": s.get("visual_style", visual_style),
                 "actor": str(s.get("actor", "")).strip(),
-                "speaking": s.get("speaking", ""),
-                "actions": s.get("actions", "")
+                "speaking": s.get("speaking", "")
             }
 
             nar = s.get("narrator", None)
@@ -4896,7 +4884,6 @@ class WorkflowGUI:
         # checkbox：控制导出 JSON 中包含哪些字段（Speaking 始终包含）
         include_visual_chk_var = tk.BooleanVar(value=True)
         include_voiceover_chk_var = tk.BooleanVar(value=False)
-        include_actions_chk_var = tk.BooleanVar(value=True)
         include_actor_chk_var = tk.BooleanVar(value=True)
         include_narrator_chk_var = tk.BooleanVar(value=True)
 
@@ -5011,7 +4998,6 @@ class WorkflowGUI:
                 for key in (
                     "speaking",
                     "actor",
-                    "actions",
                     "visual",
                     "voiceover",
                     "visual_style",
@@ -5032,8 +5018,6 @@ class WorkflowGUI:
             scenes_data = []
             for s in current_story_scenes:
                 item = {"speaking": s.get("speaking", "")}
-                if include_actions_chk_var.get():
-                    item["actions"] = s.get("actions", "")
                 if include_actor_chk_var.get():
                     item["actor"] = str(s.get("actor", "")).strip()
                 if include_visual_chk_var.get():
@@ -5080,7 +5064,6 @@ class WorkflowGUI:
 
         ttk.Checkbutton(opts_frame, text="Visual", variable=include_visual_chk_var, command=_do_build).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Checkbutton(opts_frame, text="Voiceover", variable=include_voiceover_chk_var, command=_do_build).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Checkbutton(opts_frame, text="Actions", variable=include_actions_chk_var, command=_do_build).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Checkbutton(opts_frame, text="Actor", variable=include_actor_chk_var, command=_do_build).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Checkbutton(opts_frame, text="Narrator", variable=include_narrator_chk_var, command=_do_build).pack(side=tk.LEFT)
 
@@ -5142,6 +5125,74 @@ class WorkflowGUI:
         )
 
 
+    def _show_scene_payload_export_dialog(self, title: str, preface: str, payload: dict) -> None:
+        """
+        非阻塞弹窗：JSON 片段可按字段勾选导出（默认全包含）；勾选掉即不参与预览与复制（mute）。
+        不 grab、不自动关闭；用户自行点「复制到剪贴板」或「关闭」。
+        """
+        key_order = ("actor", "speaking", "voiceover")
+        keys = [k for k in key_order if k in payload]
+        for k in payload:
+            if k not in keys:
+                keys.append(k)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("720x560")
+        dialog.transient(self.root)
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 720) // 2
+        y = (dialog.winfo_screenheight() - 560) // 2
+        dialog.geometry(f"720x560+{x}+{y}")
+
+        ttk.Label(
+            dialog,
+            text="勾选要导出到下方 JSON 的字段；取消勾选则视为排除（如对 speaking / 旁白按需 mute）。预览不会自动复制。",
+            font=("TkDefaultFont", 9),
+            wraplength=680,
+        ).pack(anchor="w", padx=15, pady=(12, 4))
+
+        chk_frame = ttk.LabelFrame(dialog, text="包含字段", padding=6)
+        chk_frame.pack(fill=tk.X, padx=15, pady=(0, 6))
+
+        include = {k: tk.BooleanVar(value=True) for k in keys}
+
+        def build_text() -> str:
+            part = {k: payload[k] for k in keys if include[k].get()}
+            return (json.dumps(part, indent=2, ensure_ascii=False)).strip()
+
+        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=18)
+        text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=4)
+
+        def refresh_preview(*_args):
+            try:
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert("1.0", build_text())
+            except tk.TclError:
+                pass
+
+        ncols = 2
+        for i, k in enumerate(keys):
+            cb = ttk.Checkbutton(chk_frame, text=k, variable=include[k], command=refresh_preview)
+            cb.grid(row=i // ncols, column=i % ncols, sticky="w", padx=8, pady=2)
+
+        def copy_preview():
+            body = preface + "\n\n" + build_text()
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(body)
+                self.root.update()
+            except Exception:
+                pass
+
+        btn_row = ttk.Frame(dialog)
+        btn_row.pack(fill=tk.X, padx=15, pady=(4, 12))
+        ttk.Button(btn_row, text="复制到剪贴板", command=copy_preview).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="关闭", command=dialog.destroy).pack(side=tk.LEFT)
+
+        refresh_preview()
+
+
     def describe_scene_content(self):
         self.root.update_idletasks()
         self.update_current_scene()
@@ -5160,7 +5211,6 @@ class WorkflowGUI:
 
         if scene.get("actor"):
             item["actor"] = scene.get("actor")
-            item["actions"] = scene.get("actions")
 
         if scene.get("narrator"):
             _nar_s = WorkflowGUI._strip_narrator_export_markup(scene.get("narrator"))
@@ -5171,35 +5221,15 @@ class WorkflowGUI:
                     + item["visual"]
                 )
 
-        if scene.get("speaking"):  
+        if scene.get("speaking"):
             item["speaking"] = scene.get("speaking")
 
-        scene_video_desc = config_prompt.SCENE_VIDEO_INSTRUCTION.format(visual_style=visual_style) + "\n\n" + json.dumps(item, indent=2, ensure_ascii=False)
+        vo = scene.get("voiceover")
+        if vo and str(vo).strip():
+            item["voiceover"] = vo
 
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Scene Video Description")
-        dialog.geometry("700x500")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 700) // 2
-        y = (dialog.winfo_screenheight() - 500) // 2
-        dialog.geometry(f"700x500+{x}+{y}")
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(scene_video_desc.strip())
-            self.root.update()
-        except Exception:
-            pass
-        ttk.Label(dialog, text="Scene Video Description（已复制到剪贴板）", font=("TkDefaultFont", 10)).pack(anchor="w", padx=15, pady=(15, 5))
-        text_widget = scrolledtext.ScrolledText(dialog, wrap=tk.WORD, width=80, height=22)
-        text_widget.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-        text_widget.insert("1.0", scene_video_desc.strip())
-
-        # auto dismiss after 2 seconds
-        self.root.after(2000, lambda: dialog.destroy())
-		
-        return scene_video_desc
+        preface = config_prompt.SCENE_VIDEO_INSTRUCTION.format(visual_style=visual_style)
+        self._show_scene_payload_export_dialog("Scene Video Description", preface, item)
 
 
     def on_narrator_selected(self, event=None):
@@ -5289,7 +5319,6 @@ class WorkflowGUI:
         scene.update({
             "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
             "actor": self.scene_speaker.get().strip(),
-            "actions": self.scene_actions.get("1.0", tk.END).strip(),
             "visual": self.scene_visual.get("1.0", tk.END).strip(),
             "narrator": self.scene_narrator.get(),
             "host_display": _hd_en,
@@ -5566,7 +5595,6 @@ class WorkflowGUI:
         # 绑定场景信息编辑字段的Enter键事件，用于自动保存
         scene_text_fields = [
             self.scene_speaking,
-            self.scene_actions,
             self.scene_visual,
             self.scene_voiceover,
             self.scene_caption,

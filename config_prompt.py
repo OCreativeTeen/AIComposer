@@ -214,7 +214,7 @@ SCENE_VIDEO_INSTRUCTION = """
 Video generation instruction: 
     *** MOST IMPORTANT!!!: if current scene image not has any 'actor' / 'narrator' as talking-avatar,  DO NOT add any talking-avatar to the video!!!  (actor or narrator info just used to choose voice !!!)
 
-	*** if current scene image has 'narrator' talking-avatar;
+    *** if current scene image has 'narrator' talking-avatar;
         ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
         ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
 

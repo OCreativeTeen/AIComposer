@@ -59,15 +59,11 @@ def _vb_normalize_gender(token: str) -> str:
 
 
 def _vb_age_number_to_category(n: int) -> str:
-    if n < 13:
-        return "kids"
     if n < 20:
         return "teen"
     if n < 30:
         return "young"
-    if n <= 60:
-        return "mature"
-    return "old"
+    return "mature"
 
 
 def _vb_age_token_to_category(token: str) -> str:
@@ -75,18 +71,18 @@ def _vb_age_token_to_category(token: str) -> str:
     if t.isdigit():
         return _vb_age_number_to_category(int(t))
     aliases = {
-        "kid": "kids",
-        "child": "kids",
-        "children": "kids",
+        "kid": "teen",
+        "child": "teen",
+        "children": "teen",
         "teenager": "teen",
         "middle": "mature",
         "middle-aged": "mature",
         "middle_aged": "mature",
-        "senior": "old",
+        "senior": "mature",
     }
     if t in aliases:
         return aliases[t]
-    if t in ("kids", "teen", "young", "mature", "old", "narrator"):
+    if t in ("teen", "young", "mature"):
         return t
     return "mature"
 
@@ -194,7 +190,7 @@ class VoiceboxService:
     def _transcribe_url(self) -> str:
         return f"{self.base_url}/transcribe"
 
-    def create_ssml(self, text: str, voice: Dict[str, Any], actions: str, language: str) -> str:
+    def create_ssml(self, text: str, voice: Dict[str, Any], language: str) -> str:
         """返回 JSON 字符串；synthesize_speech 解析后 POST /generate。"""
         norm = self._normalize_for_voicebox(text or "")
         escaped_text = html.escape(norm)
@@ -309,7 +305,7 @@ class VoiceboxService:
         if not voice:
             print("Voicebox: get_voice 无匹配 voice")
             return None
-        ssml = self.create_ssml(text=text, voice=voice, actions="", language=lang)
+        ssml = self.create_ssml(text=text, voice=voice, language=lang)
         audio_file = self.synthesize_speech(ssml)
         if not audio_file:
             return None
@@ -627,9 +623,12 @@ def _voicebox_resolve_voice(speaker: str, language: str) -> dict:
     gender：``woman`` | ``man``；race：``chinese`` | ``english``（缺省时由 ``language`` 推断）。
 
     age 可为词（``kids`` / ``teen`` / ``young`` / ``mature`` / ``old`` / ``narrator``）或**年龄数字**：
-    <13 kids，<20 teen，20–29 young，30–60 mature，>60 old。
+    <20 teen，20–29 young，>30 mature。
     """
     raw = (speaker or "").strip().replace("\\", "/")
+    # split raw by |, keep the first part
+    raw = raw.split("|")[0].strip()
+
     lang_pref = "chinese" if language in ("zh", "tw", "chinese") else "english"
 
     def _fallback() -> dict:

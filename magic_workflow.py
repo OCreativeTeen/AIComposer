@@ -229,7 +229,6 @@ class MagicWorkflow:
         # 提取当前场景的关键信息
         actor = scene_data.get("actor", "")
         speaking = scene_data.get("speaking", "")
-        actions = scene_data.get("actions", "")
         visual = scene_data.get("visual", "")
 
         narrator = scene_data.get("narrator", "")
@@ -710,10 +709,18 @@ class MagicWorkflow:
         self.scenes = []
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
-        stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
-        for story_index, element in enumerate(stories_template):
-            element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
-            self.add_story_scene(story_index, element, True, is_append=False)
+
+        scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
+        if scene_content and len(scene_content) > 1:
+            for scene_index, scene_item in enumerate(scene_content):
+                scene_item["caption"] = scene_item.pop("title","")
+                scene_item["visual"] = scene_item.pop("story","")
+                self.add_story_scene(scene_index, scene_item, False, is_append=False)
+        else:
+            stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
+            for story_index, element in enumerate(stories_template):
+                element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
+                self.add_story_scene(story_index, element, True, is_append=False)
 
         for story_scene in self.scenes:
             if not story_scene.get("host_display"):

@@ -3369,9 +3369,6 @@ class MediaGUIManager:
                     messagebox.showwarning("提示", "故事内容格式错误，无法复制风格和人物", parent=summary_window)
                     return
 
-
-                scene_json = video_detail.get("scene_content", {})
-
                 header_parts = {}
                 
                 header_parts['Visual_Style'] = project_manager.LAST_VISUAL_STYLE
@@ -3402,114 +3399,7 @@ class MediaGUIManager:
                     "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
                 )
 
-                _lc = (language or "zh").strip().lower()
-                _scene_branch = config.LANGUAGES.get(_lc) or (
-                    "english" if _lc.startswith("en") else "chinese"
-                )
-                _raw_scenes = scene_json.get(_scene_branch)
-                if isinstance(_raw_scenes, str):
-                    try:
-                        _raw_scenes = json.loads(_raw_scenes)
-                    except json.JSONDecodeError:
-                        _raw_scenes = []
-                _scene_arr = _raw_scenes if isinstance(_raw_scenes, list) else []
-
-                _scene_export_json = None
-
-                def _build_scene_array_export(selected_fields):
-                    out = []
-                    for _obj in _scene_arr:
-                        if not isinstance(_obj, dict):
-                            continue
-                        row = {}
-                        for _f in selected_fields:
-                            row[_f] = _obj.get(_f, "")
-                        out.append(row)
-                    return out
-
-                _picker = tk.Toplevel(summary_window)
-                _picker.title("选择写入 header 的 scene 字段")
-                _picker.transient(summary_window)
-                _picker.grab_set()
-                _picker.geometry("640x480")
-                _picker.update_idletasks()
-                _px = (_picker.winfo_screenwidth() - 640) // 2
-                _py = (_picker.winfo_screenheight() - 480) // 2
-                _picker.geometry(f"640x480+{_px}+{_py}")
-
-                ttk.Label(
-                    _picker,
-                    text=f"语言分支: {_scene_branch}（共 {len(_scene_arr)} 个场景对象）\n"
-                    "勾选要写入 header 的字段（导出为 JSON 数组，每项仅含所选键）。",
-                    font=("TkDefaultFont", 10),
-                ).pack(anchor="w", padx=12, pady=(12, 6))
-
-                _chk_row = ttk.Frame(_picker)
-                _chk_row.pack(anchor="w", padx=12, pady=4)
-                _v_message = tk.BooleanVar(value=True)
-                _v_story = tk.BooleanVar(value=True)
-                _v_concise = tk.BooleanVar(value=True)
-                ttk.Checkbutton(_chk_row, text="message", variable=_v_message).pack(side=tk.LEFT, padx=(0, 12))
-                ttk.Checkbutton(_chk_row, text="story", variable=_v_story).pack(side=tk.LEFT, padx=(0, 12))
-                ttk.Checkbutton(_chk_row, text="speaking", variable=_v_concise).pack(side=tk.LEFT)
-
-                ttk.Label(_picker, text="预览（只读）:").pack(anchor="w", padx=12, pady=(8, 2))
-                _prev = scrolledtext.ScrolledText(_picker, wrap=tk.WORD, width=78, height=16, state="disabled")
-                _prev.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
-
-                def _selected_field_names():
-                    names = []
-                    if _v_message.get():
-                        names.append("message")
-                    if _v_story.get():
-                        names.append("story")
-                    if _v_concise.get():
-                        names.append("speaking")
-                    return names
-
-                def _refresh_scene_preview(*_a):
-                    _fn = _selected_field_names()
-                    if not _fn:
-                        _txt = "（请至少勾选一个字段）"
-                    elif not _scene_arr:
-                        _txt = "[]"
-                    else:
-                        _txt = json.dumps(_build_scene_array_export(_fn), ensure_ascii=False, indent=2)
-                    _prev.config(state="normal")
-                    _prev.delete("1.0", tk.END)
-                    _prev.insert("1.0", _txt)
-                    _prev.config(state="disabled")
-
-                for _vv in (_v_message, _v_story, _v_concise):
-                    _vv.trace_add("write", lambda *_: _refresh_scene_preview())
-
-                _btn_row = ttk.Frame(_picker)
-                _btn_row.pack(fill=tk.X, pady=(4, 10))
-
-                def _picker_ok():
-                    _fn = _selected_field_names()
-                    if not _fn:
-                        messagebox.showwarning("提示", "请至少勾选一个字段。", parent=_picker)
-                        return
-                    nonlocal _scene_export_json
-                    _scene_export_json = json.dumps(
-                        _build_scene_array_export(_fn), ensure_ascii=False, indent=2
-                    )
-                    _picker.destroy()
-
-                def _picker_skip():
-                    nonlocal _scene_export_json
-                    _scene_export_json = None
-                    _picker.destroy()
-
-                ttk.Button(_btn_row, text="确定并加入 header", command=_picker_ok).pack(side=tk.LEFT, padx=(12, 6))
-                ttk.Button(_btn_row, text="不包含 scene 数组", command=_picker_skip).pack(side=tk.LEFT)
-
-                _refresh_scene_preview()
-                summary_window.wait_window(_picker)
-
-                if _scene_export_json is not None:
-                    header_parts["Scene_Array_Content_JSON"] = _scene_export_json
+                header_parts["Scene_Content"] = video_detail.get("scene_content", {}).get(config.LANGUAGES[language], [])
 
                 try:
                     summary_window.clipboard_clear()
