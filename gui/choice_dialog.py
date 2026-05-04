@@ -136,17 +136,6 @@ def pack_text_buttons(parent, rows, cancel=None, width=48):
 
 
 def post_nested_clipboard_menu(root, choices_dict, event=None, content=None, *, max_label_len=72):
-    """
-    弹出两级 tk.Menu：第一层为 choices_dict 的 key（级联标题），第二层为英文指令；
-    鼠标移到一级项上展开子菜单；点击子项将完整英文指令写入 root 剪贴板。
-
-    choices_dict: dict[str, list[str]]，例如 GUI.IMAGE_ACTION_CHOICES / VIDEO_ACTION_CHOICES。
-    event: 含 x_root / y_root 的鼠标事件；为 None 时在 root 左上角附近弹出。
-    max_label_len: 菜单项过长时截断显示（复制仍为全文）。
-
-    返回:
-      字符串 "break"，供控件 <Double-1> 等回调直接 return，减少默认双击选词干扰。
-    """
     if not choices_dict:
         return "break"
 

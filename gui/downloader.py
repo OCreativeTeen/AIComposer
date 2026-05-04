@@ -3397,6 +3397,7 @@ class MediaGUIManager:
 
                 header_parts['Instruction_for_Speaking_and_Visual_generation'] = (
                     "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
+                    "** Avoid the words reach very left or right of the screen (try to keep words at the square-area of the screen)."
                 )
 
                 header_parts["Scene_Content"] = video_detail.get("scene_content", {}).get(config.LANGUAGES[language], [])
@@ -3413,8 +3414,9 @@ class MediaGUIManager:
                     pass
 
 
-                header_parts["Case_Study_Content"] = json.dumps(video_detail.get('analyzed_content'), ensure_ascii=False, indent=2)
                 header_parts["id"] = video_detail.get('id')
+                header_parts["To_cover_following_Case_Study_Content____adjust(not_replace)_the_description_of_"] = "topic_category: " + video_detail.get('topic_category', '') + ",  topic_subtype: " + video_detail.get('topic_subtype', '')
+                header_parts["Case_Study_Content"] = json.dumps(video_detail.get('analyzed_content').get(config.LANGUAGES[self.language], {}), ensure_ascii=False, indent=2)
 
                 input_media_path = config.INPUT_MEDIA_PATH
                 _cat_raw = (category_var.get() or "").strip()

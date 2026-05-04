@@ -1,4 +1,6 @@
 import matplotlib
+
+from utility import audio_transcriber
 matplotlib.use('Agg')  # Must be at the TOP of main.py
 
 import tkinter as tk
@@ -103,6 +105,8 @@ VIDEO_ACTION_CHOICES = {
         "Narrator (left) speaking, other listening : $$$",
         "Narrator (right) speaking, others acting only : $$$",
         "No talk, but show : $$$",
+        "Actor speaking as 1st person : $$$",
+        "Actor speaking about the words content of the image"
     ] 
 }
 
@@ -720,8 +724,10 @@ class WorkflowGUI:
             messagebox.showinfo("成功", f"{track_label} 音频已生成并替换", parent=self.root)
         return True
 
-    def _run_story_clip_audio_all(self, current_scene):
+    def _run_story_clip_audio_all(self, current_scene, source_mode: str = "speaker"):
         """为本故事从 current_scene 起批量 TTS 主轨 clip（不依赖 current_scene_index）。
+
+        source_mode: ``speaker`` → actor + speaking；``narrator`` → narrator + voiceover。
 
         返回 (ok_count, skipped_lines, fatal_error)。fatal_error 非空时未执行或已中止。
         """
@@ -744,13 +750,19 @@ class WorkflowGUI:
                     continue
 
             sid = s.get("id", "?")
-            out = self.regenerate_story_clip_for_scene(s)
+            out = self.regenerate_story_clip_for_scene(s, source_mode=source_mode)
             if out == "ok":
                 ok += 1
             elif out == "no_content":
-                skipped.append(f"id={sid}：无讲话内容")
+                if source_mode == "narrator":
+                    skipped.append(f"id={sid}：无旁白内容")
+                else:
+                    skipped.append(f"id={sid}：无对白内容")
             elif out == "no_speaker":
-                skipped.append(f"id={sid}：未设置人物")
+                if source_mode == "narrator":
+                    skipped.append(f"id={sid}：未设置讲员")
+                else:
+                    skipped.append(f"id={sid}：未设置人物")
             elif out == "fail":
                 skipped.append(f"id={sid}：TTS 或合成失败")
 
@@ -891,17 +903,38 @@ class WorkflowGUI:
         threading.Thread(target=work, daemon=True).start()
 
     def choose_clip_audio_scope(self):
-        """生主轨 clip 音频：先选仅当前场景或本故事全部。后台线程执行，避免阻塞 UI；结果写回发起时锚定的场景 dict，不依赖之后切换的 current_scene_index。"""
-        scope = messagebox.askyesnocancel(
-            "Clip 音频",
-            "请选择生成范围：\n\n"
-            "「是」本故事全部场景（按各镜「人物」「讲话」逐镜 TTS）\n"
-            "「否」仅当前场景（选择音色与审核内容）\n"
-            "「取消」不处理",
+        """生主轨 clip 音频：`askchoice` 四选一（范围 × 音源）。后台线程执行。"""
+        clip_choices = [
+            (
+                ("single", "speaker"),
+                "仅当前场景 · 人物 + 对白（actor + speaking）",
+            ),
+            (
+                ("single", "narrator"),
+                "仅当前场景 · 讲员 + 旁白（narrator + voiceover）",
+            ),
+            (
+                ("story", "speaker"),
+                "本故事全部 · 各镜 人物 + 对白",
+            ),
+            (
+                ("story", "narrator"),
+                "本故事全部 · 各镜 讲员 + 旁白",
+            ),
+        ]
+        picked = askchoice(
+            "Clip 主轨音频：请选择范围与音源\n（取消 = 放弃）",
+            clip_choices,
             parent=self.root,
         )
-        if scope is None:
+        if picked is None:
             return
+        _lbl, bundle = picked
+        scope, source_mode = bundle
+        if scope not in ("single", "story") or source_mode not in ("speaker", "narrator"):
+            return
+        do_all_story = scope == "story"
+
         if getattr(self, "_clip_audio_worker_busy", False):
             messagebox.showinfo("提示", "已有 Clip 音频生成任务进行中，请稍候。", parent=self.root)
             return
@@ -912,7 +945,6 @@ class WorkflowGUI:
         anchor_id = scene_anchor.get("id")
         self._clip_audio_worker_busy = True
         root = self.root
-        do_all_story = bool(scope)
 
         def clear_busy():
             self._clip_audio_worker_busy = False
@@ -935,7 +967,9 @@ class WorkflowGUI:
 
                 if not do_all_story:
                     try:
-                        out = self.regenerate_story_clip_for_scene(scene_anchor)
+                        out = self.regenerate_story_clip_for_scene(
+                            scene_anchor, source_mode=source_mode
+                        )
                     except Exception as e:
                         root.after(
                             0,
@@ -961,9 +995,15 @@ class WorkflowGUI:
                         if out == "ok":
                             messagebox.showinfo("Clip 音频", "当前场景主轨音频已生成。", parent=root)
                         elif out == "no_content":
-                            messagebox.showwarning("Clip 音频", "当前场景无讲话内容，跳过。", parent=root)
+                            if source_mode == "narrator":
+                                messagebox.showwarning("Clip 音频", "当前场景无旁白内容，跳过。", parent=root)
+                            else:
+                                messagebox.showwarning("Clip 音频", "当前场景无对白内容，跳过。", parent=root)
                         elif out == "no_speaker":
-                            messagebox.showwarning("Clip 音频", "未设置人物，跳过。", parent=root)
+                            if source_mode == "narrator":
+                                messagebox.showwarning("Clip 音频", "未设置讲员，跳过。", parent=root)
+                            else:
+                                messagebox.showwarning("Clip 音频", "未设置人物，跳过。", parent=root)
                         elif out == "no_scene":
                             messagebox.showwarning("Clip 音频", "当前场景无效。", parent=root)
                         else:
@@ -972,7 +1012,7 @@ class WorkflowGUI:
                     root.after(0, finish_single)
                     return
 
-                ok, skipped, err = self._run_story_clip_audio_all(scene_anchor)
+                ok, skipped, err = self._run_story_clip_audio_all(scene_anchor, source_mode=source_mode)
 
                 def finish_batch():
                     clear_busy()
@@ -986,7 +1026,8 @@ class WorkflowGUI:
                     tail = "\n".join(skipped[:12])
                     if len(skipped) > 12:
                         tail += f"\n… 另有 {len(skipped) - 12} 条"
-                    msg = f"完成：成功 {ok} / {nstory} 个场景。"
+                    src_note = "人物+对白" if source_mode == "speaker" else "讲员+旁白"
+                    msg = f"完成（{src_note}）：成功 {ok} / {nstory} 个场景。"
                     if skipped:
                         msg += f"\n\n跳过或失败 ({len(skipped)}):\n{tail}"
                     messagebox.showinfo("本故事生音频", msg, parent=root)
@@ -1004,13 +1045,22 @@ class WorkflowGUI:
         threading.Thread(target=work, daemon=True).start()
 
 
-    def regenerate_story_clip_for_scene(self, scene):
-        """单场景：按「人物 + 讲话」直接 TTS 主轨 clip 音频（无审核对话框）。
+    def regenerate_story_clip_for_scene(self, scene, source_mode: str = "speaker"):
+        """单场景：TTS 主轨 clip 音频（无审核对话框）。
+
+        source_mode:
+          - ``speaker``: actor + speaking（人物口型/对白轨）
+          - ``narrator``: 讲员 + voiceover（主持旁白）
+
         返回：'ok' 成功，'fail' TTS/合成失败，'no_content' / 'no_speaker' 跳过，'no_scene' 无场景。"""
         if not scene:
             return "no_scene"
-        speaker = (scene.get("narrator") or "").strip()
-        raw = (scene.get("speaking") or "").strip()
+        if source_mode == "narrator":
+            speaker = WorkflowGUI._strip_narrator_export_markup(scene.get("narrator") or "")
+            raw = (scene.get("voiceover") or "").strip()
+        else:
+            speaker = (scene.get("actor") or "").strip()
+            raw = (scene.get("speaking") or "").strip()
         content = raw.replace("——", ", ").replace("—", ", ")
         if not content:
             return "no_content"
@@ -1658,6 +1708,7 @@ class WorkflowGUI:
         ttk.Button(video_control_frame, text="镜像", command=self.mirror_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="标题", command=self.print_title, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="LOGO", command=self.add_watermark, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="顶标", command=self.add_headmark, width=5).pack(side=tk.LEFT, padx=1)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -1776,6 +1827,7 @@ class WorkflowGUI:
             font=("Arial", 16),
         )
         self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_speaking.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("speaking", event))
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1811,10 +1863,11 @@ class WorkflowGUI:
             self.video_edit_frame, width=40, height=5, undo=True, maxundo=0
         )
         self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        self.scene_voiceover.bind("<Double-1>", self.on_scene_voiceover_video_action_menu)
+        self.scene_voiceover.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("voiceover", event))
         row_number += 1
 
-        ttk.Label(self.video_edit_frame, text="字幕:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
+        _caption_lbl = ttk.Label(self.video_edit_frame, text="字幕:")
+        _caption_lbl.grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_caption = scrolledtext.ScrolledText(
             self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
         )
@@ -3156,6 +3209,7 @@ class WorkflowGUI:
         except tk.TclError:
             pass
 
+
     @staticmethod
     def _speaking_join_prev_then_moved(prev_tail: str, moved_head: str) -> str:
         """上一段末尾接上移入的首段；若上一段末尾无句读则插入中文句号。"""
@@ -3337,12 +3391,15 @@ class WorkflowGUI:
             self.next_scene()
         return "break"
 
-    def on_scene_voiceover_video_action_menu(self, event=None):
+
+    def on_scene_video_action_menu(self, text_field, event=None):
         """双击旁白框：VIDEO_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
-        concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, scene["speaking"])
+        #concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, scene[text_field])
+        #concise = config.chinese_convert(concise, "zh")
+        concise = config.chinese_convert(scene[text_field], "zh")
         return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event, concise)
 
 
@@ -3459,6 +3516,150 @@ class WorkflowGUI:
                 }
                 return p, opts
         return None, {}
+
+
+    def _resolve_headmark_config(self):
+        """解析左上角角标：优先 PROJECT_CONFIG.headmark，缺字段时并入当前频道 headmark；再按路径探测文件。"""
+        base = os.path.dirname(os.path.abspath(__file__))
+        pc = project_manager.PROJECT_CONFIG or {}
+        proj_hm = pc.get("headmark")
+        proj_hm = proj_hm if isinstance(proj_hm, dict) else {}
+        ch_key = pc.get("channel")
+        ch_hm = config_channel.get_channel_config(ch_key).get("headmark") if ch_key else None
+        ch_hm = ch_hm if isinstance(ch_hm, dict) else {}
+        # 频道默认 + 项目覆盖（项目里可只写部分字段）
+        hm = {**ch_hm, **proj_hm}
+        rel = hm.get("path") or "media/headmark.png"
+        pid = pc.get("pid")
+        candidates = []
+        if os.path.isabs(rel):
+            candidates.append(rel)
+        else:
+            if pid:
+                candidates.append(os.path.join(config.get_project_path(pid), rel))
+            candidates.append(os.path.join(base, rel))
+        candidates.append(os.path.join(base, "media", "headmark.png"))
+        seen = set()
+        for p in candidates:
+            if not p or p in seen:
+                continue
+            seen.add(p)
+            if os.path.isfile(p):
+                opts = {
+                    "margin_x": int(hm.get("margin_x", 20)),
+                    "margin_y": int(hm.get("margin_y", 20)),
+                    "max_width": hm.get("max_width"),
+                    "max_height": hm.get("max_height"),
+                }
+                return p, opts
+        return None, {}
+
+
+    def _apply_watermark_to_flat_image_webp(self, webp_path: str) -> str:
+        """在静态图右下角叠加当前频道水印，写入新 WEBP；无水印配置则返回原路径。"""
+        wm_path, wm_opts = self._resolve_watermark_config()
+        if not wm_path or not os.path.isfile(webp_path):
+            return webp_path
+        from PIL import Image
+
+        base = Image.open(webp_path).convert("RGBA")
+        wm = Image.open(wm_path).convert("RGBA")
+        bw, bh = base.size
+        margin_x = int(wm_opts.get("margin_x", 20))
+        margin_y = int(wm_opts.get("margin_y", 20))
+        max_w = wm_opts.get("max_width")
+        max_h = wm_opts.get("max_height")
+        if max_w is not None and max_w >= bw:
+            max_w = None
+        if max_h is not None and max_h >= bh:
+            max_h = None
+        ww, wh = wm.size
+        if max_w is not None and max_h is not None:
+            wmc = wm.copy()
+            wmc.thumbnail((int(max_w), int(max_h)), Image.Resampling.LANCZOS)
+            wm = wmc
+        elif max_w is not None:
+            nw = int(max_w)
+            wm = wm.resize((nw, max(1, int(wh * nw / max(1, ww)))), Image.Resampling.LANCZOS)
+        elif max_h is not None:
+            nh = int(max_h)
+            wm = wm.resize((max(1, int(ww * nh / max(1, wh))), nh), Image.Resampling.LANCZOS)
+        ww, wh = wm.size
+        x = max(0, bw - ww - margin_x)
+        y = max(0, bh - wh - margin_y)
+        base.paste(wm, (x, y), wm)
+        out = config.get_temp_file(self.workflow.pid, "webp")
+        base.convert("RGB").save(out, "WEBP", quality=90, method=6)
+        return out
+
+
+    def add_headmark(self):
+        """为当前场景或本故事全部场景的主轨 clip 左上角叠加角标 PNG（headmark 配置，默认 media\\headmark.png）。"""
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
+            return
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not current_scene:
+            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
+            return
+        hm_path, hm_opts = self._resolve_headmark_config()
+        if not hm_path:
+            messagebox.showerror(
+                "顶标",
+                "未找到左上角角标图片。\n"
+                "请在项目 JSON 中配置 headmark.path，或将 PNG 放在程序目录下的 media\\headmark.png。",
+                parent=self.root,
+            )
+            return
+
+        scope = messagebox.askyesnocancel(
+            "顶标范围",
+            "请选择叠加左上角角标范围：\n\n"
+            "「是」本故事全部场景\n"
+            "「否」仅当前场景\n"
+            "「取消」不处理",
+            parent=self.root,
+        )
+        if scope is None:
+            return
+
+        target_scenes = self.workflow.scenes_in_story(current_scene) if scope else [current_scene]
+
+        fp = self.workflow.ffmpeg_processor
+        failed = []
+        for scene in target_scenes:
+            oldv = get_file_path(scene, "clip")
+            if not oldv or not os.path.isfile(oldv):
+                failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
+                continue
+            oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
+            temp_out = config.get_temp_file(self.workflow.pid, "mp4")
+            moved = False
+            try:
+                ok = fp.headmark_clip_with_preprocess(oldv_ref, temp_out, hm_path, hm_opts)
+                if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
+                    scene["clip"] = oldv_ref
+                    failed.append(f"场景 id={scene.get('id', '?')}: 加顶标失败")
+                    continue
+                os.replace(temp_out, newv)
+                moved = True
+            except Exception as e:
+                scene["clip"] = oldv_ref
+                failed.append(f"场景 id={scene.get('id', '?')}: {e}")
+            finally:
+                if not moved and os.path.isfile(temp_out):
+                    try:
+                        os.remove(temp_out)
+                    except OSError:
+                        pass
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        if failed:
+            messagebox.showwarning(
+                "顶标",
+                "部分场景未处理：\n" + "\n".join(failed[:12]),
+                parent=self.root,
+            )
 
 
     def add_watermark(self):
@@ -4279,29 +4480,136 @@ class WorkflowGUI:
             messagebox.showerror("错误", error_msg)
 
 
+    @staticmethod
+    def _is_approx_16_9_landscape(w: int | None, h: int | None) -> bool:
+        if w is None or h is None or h <= 0 or w <= h:
+            return False
+        r = w / h
+        return abs(r - 16.0 / 9.0) < 0.08
+
+
     def on_image_drop(self, event, image_type):
         """处理图片拖放事件
         
         Args:
             event: 拖放事件
             image_type: 'clip_image', "narration_image", 或 'zero_image'
-        """
-        file_path = event.data.strip('{}').strip('"')
         
-        # 检查是否为图片文件
-        if not (file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'))):
+        竖屏项目 **1080×1920**：一次拖入 **三张** 横向 ≈16∶9 图 → 1152×648、每图裁底 20px，
+        自上而下顶对齐铺满宽度，底部留白叠水印（``compose_triple_landscape_vertical_mosaic_webp``）。
+
+        **两张** → 仍为双图居中拼接（1440×810、裁底 25px）。
+        否则单图 ``resize_image_smart``；多张非拼图时仅用首张并提示。
+        """
+        IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
+        try:
+            raw_paths = self.root.tk.splitlist(event.data)
+        except tk.TclError:
+            raw_paths = [event.data]
+
+        paths = []
+        seen = set()
+        for rp in raw_paths:
+            ps = os.path.expanduser(str(rp).strip().strip('{}"'))
+            ps = ps.strip('"')
+            if ps and ps not in seen:
+                seen.add(ps)
+                paths.append(ps)
+
+        img_paths = [
+            p for p in paths
+            if os.path.isfile(p) and p.lower().endswith(IMAGE_EXT)
+        ]
+        if not img_paths:
             messagebox.showerror("错误", "请拖放图片文件 (PNG, JPG, WEBP等)")
             return
-        
-        if not os.path.exists(file_path):
-            messagebox.showerror("错误", "文件不存在")
-            return
-        
-        file_path = self.workflow.ffmpeg_processor.resize_image_smart(file_path)
+
+        fp = self.workflow.ffmpeg_processor
+        pc = project_manager.PROJECT_CONFIG or {}
         try:
+            vw = int(pc.get('video_width') or fp.width)
+            vh = int(pc.get('video_height') or fp.height)
+        except (TypeError, ValueError):
+            vw, vh = fp.width, fp.height
+
+        mosaic_mode = None  # "triple" | "dual"
+
+        portrait_mosaic_canvas = vw == 1080 and vh == 1920
+
+        def _dims_ok_for_mosaic(ipath: str) -> tuple[int | None, int | None]:
+            return fp.get_resolution(ipath)
+
+        if portrait_mosaic_canvas and len(img_paths) >= 3:
+            d0 = _dims_ok_for_mosaic(img_paths[0])
+            d1 = _dims_ok_for_mosaic(img_paths[1])
+            d2 = _dims_ok_for_mosaic(img_paths[2])
+            if (
+                WorkflowGUI._is_approx_16_9_landscape(*d0)
+                and WorkflowGUI._is_approx_16_9_landscape(*d1)
+                and WorkflowGUI._is_approx_16_9_landscape(*d2)
+            ):
+                mosaic_mode = "triple"
+
+        if portrait_mosaic_canvas and mosaic_mode is None and len(img_paths) >= 2:
+            d0 = _dims_ok_for_mosaic(img_paths[0])
+            d1 = _dims_ok_for_mosaic(img_paths[1])
+            if WorkflowGUI._is_approx_16_9_landscape(*d0) and WorkflowGUI._is_approx_16_9_landscape(*d1):
+                mosaic_mode = "dual"
+
+        if len(img_paths) >= 2 and portrait_mosaic_canvas and mosaic_mode is None:
+            messagebox.showwarning(
+                "竖屏拼图",
+                "当前项目为 1080×1920：双图/三图拼接需对应张数均为横向约 16∶9 的图片。\n已对第一张做单图缩放处理。",
+                parent=self.root,
+            )
+
+        if len(img_paths) > 1 and not portrait_mosaic_canvas:
+            messagebox.showinfo(
+                "拖放多张图",
+                f"检测到 {len(img_paths)} 张图；仅首张将写入（拼图仅适用于 1080×1920 竖屏项目）。",
+                parent=self.root,
+            )
+
+        if mosaic_mode == "triple" and len(img_paths) > 3:
+            messagebox.showinfo(
+                "三图拼接",
+                f"已使用前 3 张图做竖屏顶对齐拼接；其余 {len(img_paths) - 3} 张未使用。",
+                parent=self.root,
+            )
+
+        if mosaic_mode == "dual" and len(img_paths) > 2:
+            extra = (
+                "第三张未同时满足拼图条件或未参与。"
+                if len(img_paths) >= 3 and portrait_mosaic_canvas
+                else f"其余 {len(img_paths) - 2} 张未使用。"
+            )
+            messagebox.showinfo(
+                "双图拼接",
+                f"已使用前 2 张图做竖屏拼接。{extra}",
+                parent=self.root,
+            )
+
+        try:
+            if mosaic_mode == "triple":
+                file_path = fp.compose_triple_landscape_vertical_mosaic_webp(
+                    img_paths[0], img_paths[1], img_paths[2]
+                )
+                file_path = self._apply_watermark_to_flat_image_webp(file_path)
+            elif mosaic_mode == "dual":
+                file_path = fp.compose_dual_landscape_vertical_mosaic_webp(
+                    img_paths[0], img_paths[1]
+                )
+                file_path = self._apply_watermark_to_flat_image_webp(file_path)
+            else:
+                file_path = fp.resize_image_smart(img_paths[0])
+
+            if not os.path.exists(file_path):
+                messagebox.showerror("错误", "文件不存在")
+                return
+
             # 获取当前场景
             # if image_type NOT start with 'clip', then  ask user if want to assigne this image to the current scene or all scenes of same story?
-            selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)] 
+            selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)]
             if not image_type.startswith('clip'):
                 dialog = messagebox.askyesno("确认替换", f"确定要替换所有当前故事的 {image_type} 吗？")
                 if dialog:
@@ -5166,8 +5474,13 @@ class WorkflowGUI:
 
         def refresh_preview(*_args):
             try:
+                body = build_text()
                 text_widget.delete("1.0", tk.END)
-                text_widget.insert("1.0", build_text())
+                text_widget.insert("1.0", body)
+
+                self.root.clipboard_clear()
+                self.root.clipboard_append(preface + "\n\n" + body)
+                self.root.update()
             except tk.TclError:
                 pass
 
@@ -5177,10 +5490,9 @@ class WorkflowGUI:
             cb.grid(row=i // ncols, column=i % ncols, sticky="w", padx=8, pady=2)
 
         def copy_preview():
-            body = preface + "\n\n" + build_text()
             try:
                 self.root.clipboard_clear()
-                self.root.clipboard_append(body)
+                self.root.clipboard_append(preface + "\n\n" + text_widget.get("1.0", tk.END).strip())
                 self.root.update()
             except Exception:
                 pass

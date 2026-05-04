@@ -2194,13 +2194,20 @@ class FfmpegProcessor:
         print(f"✅ Video mirrored successfully: {output_file}")
         return output_file
 
-    def apply_watermark_to_video(self, src_video, dest_video, watermark_path, opts):
+    def _apply_corner_logo_to_video(self, src_video, dest_video, logo_path, opts, corner: str) -> bool:
         """
-        对视频叠加水印（右下角），输出到 dest_video。
-        加水印前先 upscale：横屏 -> 1920x1080，竖屏 -> 1080x1920（与 NotebookLM_Processor 一致）。
+        在视频角落叠加 PNG（先 upscale：横屏 1920×1080 / 竖屏 1080×1920）。
+
+        corner: ``br`` 右下角；``tl`` 左上角。
         opts: margin_x, margin_y, max_width, max_height（可选）
+
+        叠加前将角标链路强制为 rgba，以保持透明 PNG 的 alpha，`overlay` 按透明度与底图混合，
+        不会用整块不透明像素盖住下层视频。
         """
-        if not Path(watermark_path).exists():
+        corner = (corner or "br").lower()
+        if corner not in ("br", "tl"):
+            raise ValueError("corner must be 'br' or 'tl'")
+        if not Path(logo_path).exists():
             return False
         dims = self.get_resolution(str(src_video))
         if dims and dims[0] is not None and dims[1] is not None:
@@ -2218,8 +2225,6 @@ class FfmpegProcessor:
         margin_y = opts.get("margin_y", 20)
         max_w = opts.get("max_width")
         max_h = opts.get("max_height")
-        # max_width/max_height 表示「水印最大边长」；若写成视频分辨率（如 1920x1080），
-        # scale 会把水印放大到几乎铺满画面。若任一边 >= 输出帧对应边，则视为不限制尺寸，用 PNG 原始像素叠右下角。
         if dims and dims[0] is not None and dims[1] is not None:
             vw, vh = dims
             frame_w, frame_h = (1920, 1080) if vw >= vh else (1080, 1920)
@@ -2228,18 +2233,31 @@ class FfmpegProcessor:
             if max_h is not None and max_h >= frame_h:
                 max_h = None
         if max_w is not None and max_h is not None:
-            wm_scale = f"[1:v]scale={int(max_w)}:{int(max_h)}:force_original_aspect_ratio=decrease[wm]"
+            max_w, max_h = int(max_w), int(max_h)
+        if max_w is not None and max_h is not None:
+            scl = (
+                f"scale={max_w}:{max_h}:force_original_aspect_ratio=decrease,"
+                f"format=rgba"
+            )
         elif max_w is not None:
-            wm_scale = f"[1:v]scale={int(max_w)}:-1[wm]"
+            scl = f"scale={int(max_w)}:-1,format=rgba"
         elif max_h is not None:
-            wm_scale = f"[1:v]scale=-1:{int(max_h)}[wm]"
+            scl = f"scale=-1:{int(max_h)},format=rgba"
         else:
-            wm_scale = None
-        overlay_expr = f"main_w-overlay_w-{margin_x}:main_h-overlay_h-{margin_y}"
-        if wm_scale:
-            overlay_part = f"{wm_scale};{video_in}[wm]overlay={overlay_expr}[v]"
+            scl = None
+
+        # 透明 PNG：先转 rgba（含调色板+tRNS），再 scale；最后再 rgba，避免某些版本 scale 丢弃 alpha，
+        # 否则透明区会变成实色整块盖住底层视频。
+        if scl:
+            logo_chain = f"[1:v]format=rgba,{scl}[wm]"
         else:
-            overlay_part = f"{video_in}[1:v]overlay={overlay_expr}[v]"
+            logo_chain = "[1:v]format=rgba[wm]"
+
+        if corner == "br":
+            overlay_expr = f"main_w-overlay_w-{margin_x}:main_h-overlay_h-{margin_y}"
+        else:
+            overlay_expr = f"{margin_x}:{margin_y}"
+        overlay_part = f"{logo_chain};{video_in}[wm]overlay={overlay_expr}[v]"
         filt = f"{upscale};{overlay_part}" if upscale else overlay_part.replace(video_in, "[0:v]")
         cmd = [
             ffmpeg_path,
@@ -2247,7 +2265,7 @@ class FfmpegProcessor:
             "-i",
             str(src_video),
             "-i",
-            str(watermark_path),
+            str(logo_path),
             "-filter_complex",
             filt,
             "-map",
@@ -2262,8 +2280,20 @@ class FfmpegProcessor:
             subprocess.run(cmd, check=True, capture_output=True, timeout=600)
             return True
         except Exception as e:
-            print(f"❌ Watermark overlay failed: {e}")
+            print(f"❌ Corner logo overlay failed ({corner}): {e}")
             return False
+
+    def apply_watermark_to_video(self, src_video, dest_video, watermark_path, opts):
+        """
+        对视频叠加水印（右下角），输出到 dest_video。
+        加水印前先 upscale：横屏 -> 1920x1080，竖屏 -> 1080x1920（与 NotebookLM_Processor 一致）。
+        opts: margin_x, margin_y, max_width, max_height（可选）
+        """
+        return self._apply_corner_logo_to_video(src_video, dest_video, watermark_path, opts, "br")
+
+    def apply_headmark_to_video(self, src_video, dest_video, headmark_path, opts):
+        """对视频叠加左上角 PNG 角标。opts 与 apply_watermark_to_video 相同。"""
+        return self._apply_corner_logo_to_video(src_video, dest_video, headmark_path, opts, "tl")
 
     def watermark_clip_with_preprocess(self, src_video: str, dest_video: str, watermark_path, opts: dict) -> bool:
         """
@@ -2289,6 +2319,34 @@ class FfmpegProcessor:
                     if resized:
                         vp = resized
             return self.apply_watermark_to_video(vp, dest_video, watermark_path, opts)
+        finally:
+            if vp != src_abs and os.path.isfile(vp):
+                try:
+                    os.remove(vp)
+                except OSError:
+                    pass
+
+    def headmark_clip_with_preprocess(self, src_video: str, dest_video: str, headmark_path, opts: dict) -> bool:
+        """偏小分辨率先 resize，再在左上角叠加 PNG 角标。"""
+        src_abs = os.path.abspath(src_video)
+        vp = src_abs
+        dims = self.get_resolution(vp)
+        if not dims or dims[0] is None or dims[1] is None:
+            print(f"❌ Headmark: cannot read resolution: {vp}")
+            return False
+        width, height = dims
+        try:
+            if width > height:
+                if width < 1200:
+                    resized = self.resize_video(vp, 1280, 720)
+                    if resized:
+                        vp = resized
+            else:
+                if width < 700:
+                    resized = self.resize_video(vp, 720, 1280)
+                    if resized:
+                        vp = resized
+            return self.apply_headmark_to_video(vp, dest_video, headmark_path, opts)
         finally:
             if vp != src_abs and os.path.isfile(vp):
                 try:
@@ -2592,6 +2650,152 @@ class FfmpegProcessor:
         ])
         return output_path
         
+
+    def compose_landscape_vertical_mosaic_webp(
+        self,
+        paths: list[str],
+        *,
+        stage_w: int,
+        stage_h: int,
+        bottom_trim_px: int,
+        vertical_align: str = "center",
+        vertical_gap_top_fraction: float | None = None,
+        fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    ) -> str:
+        """2 或 3 张横屏图纵向拼接后置于竖版画布 ``self.width×self.height``（如 1080×1920）。
+
+        每张图：按比例放大铺满 ``stage_w×stage_h`` 后居中裁剪，再裁掉底部 ``bottom_trim_px`` 行；
+        自上而下按顺序拼接。横向若宽于画布则左右居中裁至 ``self.width``。
+
+        vertical_align:
+          - ``center``：整块在画布垂直方向居中（双图默认）；若给出 ``vertical_gap_top_fraction`` 则按比例拆分上下留白
+          - ``top``：靠上对齐，下部留白（便于叠水印）（三图流水线）
+
+        vertical_gap_top_fraction:
+          - 仅当拼接条高度小于画布、且 ``vertical_align`` 为 ``center`` 时生效；
+          - 总纵向留白 ``gap`` 中，分配给「上方留白」的比例 ``∈ [0,1]``（如 ``2/3`` 表示上留白 : 下留白 = 2 : 1）。
+        """
+        from PIL import Image
+
+        n = len(paths)
+        if n not in (2, 3):
+            raise ValueError("compose_landscape_vertical_mosaic_webp 仅支持 2 或 3 张图")
+        vertical_a = vertical_align.strip().lower()
+        if vertical_a not in ("center", "top"):
+            raise ValueError("vertical_align 须为 center 或 top")
+
+        tw, sh = int(stage_w), int(stage_h)
+        h_trimmed = sh - bottom_trim_px
+        if h_trimmed <= 0:
+            raise ValueError("bottom_trim_px 过大，裁剪后高度无效")
+
+        fill = tuple(fill_rgb)
+
+        def prep_layer(src_path: str) -> Image.Image:
+            img = Image.open(src_path)
+            try:
+                img.seek(0)
+            except EOFError:
+                pass
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA") if img.mode == "LA" else img.convert("RGB")
+            w0, h0 = img.size
+            scale = max(tw / w0, sh / h0)
+            nw = max(1, int(round(w0 * scale)))
+            nh = max(1, int(round(h0 * scale)))
+            img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+            left = (nw - tw) // 2
+            top_c = (nh - sh) // 2
+            img = img.crop((left, top_c, left + tw, top_c + sh))
+            if img.mode == "RGBA":
+                bg = Image.new("RGB", (tw, sh), fill)
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            return img.crop((0, 0, tw, h_trimmed))
+
+        layers = [prep_layer(p) for p in paths]
+        stacked_h = h_trimmed * n
+        stacked = Image.new("RGB", (tw, stacked_h), fill)
+        yp = 0
+        for lay in layers:
+            stacked.paste(lay, (0, yp))
+            yp += h_trimmed
+
+        out_w = int(self.width)
+        out_h = int(self.height)
+        if tw < out_w:
+            raise ValueError(f"拼接宽 {tw} 小于目标画布宽 {out_w}")
+        cx0 = (tw - out_w) // 2
+        stripe = stacked.crop((cx0, 0, cx0 + out_w, stacked_h))
+
+        canvas = Image.new("RGB", (out_w, out_h), fill)
+        sh_stripe = stripe.height
+
+        if sh_stripe > out_h:
+            if vertical_a == "top":
+                stripe = stripe.crop((0, 0, out_w, out_h))
+            else:
+                cut = (sh_stripe - out_h) // 2
+                stripe = stripe.crop((0, cut, out_w, cut + out_h))
+            canvas.paste(stripe, (0, 0))
+        elif vertical_a == "top":
+            canvas.paste(stripe, (0, 0))
+        else:
+            gap = out_h - sh_stripe
+            if vertical_gap_top_fraction is not None:
+                frac = max(0.0, min(1.0, float(vertical_gap_top_fraction)))
+                y0 = int(round(gap * frac))
+            else:
+                y0 = gap // 2
+            canvas.paste(stripe, (0, y0))
+
+        output_image = config.get_temp_file(self.pid, "webp")
+        canvas.save(output_image, "WEBP", quality=90, method=6)
+        return output_image
+
+    def compose_dual_landscape_vertical_mosaic_webp(
+        self,
+        path_top: str,
+        path_bottom: str,
+        *,
+        stage_w: int = 1440,
+        stage_h: int = 810,
+        bottom_trim_px: int = 25,
+        fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    ) -> str:
+        """双横屏图：1440×810 → 裁底 25 → 纵向拼接；在 1080×1920 画布上上下留白按 2:1（上 2/3、下 1/3）。"""
+        return self.compose_landscape_vertical_mosaic_webp(
+            [path_top, path_bottom],
+            stage_w=stage_w,
+            stage_h=stage_h,
+            bottom_trim_px=bottom_trim_px,
+            vertical_align="center",
+            vertical_gap_top_fraction=2.0 / 3.0,
+            fill_rgb=fill_rgb,
+        )
+
+    def compose_triple_landscape_vertical_mosaic_webp(
+        self,
+        path_a: str,
+        path_b: str,
+        path_c: str,
+        *,
+        stage_w: int = 1152,
+        stage_h: int = 648,
+        bottom_trim_px: int = 20,
+        fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    ) -> str:
+        """三横屏图：1152×648 → 裁底 20 → 高度 628，自上而下拼接；在竖版画布顶部对齐，底部留白叠水印。"""
+        return self.compose_landscape_vertical_mosaic_webp(
+            [path_a, path_b, path_c],
+            stage_w=stage_w,
+            stage_h=stage_h,
+            bottom_trim_px=bottom_trim_px,
+            vertical_align="top",
+            fill_rgb=fill_rgb,
+        )
 
     def resize_image_smart(self, input_image, width=None, height=None):
         if width is None:

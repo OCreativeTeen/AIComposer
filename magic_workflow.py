@@ -1033,7 +1033,7 @@ class MagicWorkflow:
         final_video_path = f"{self.publish_path}/{title}_final.mp4"
         title = config_channel.get_channel_config(self.channel)["channel_name"] + "：" + title.replace("_", " ")
         # get "summary" from project_manager.PROJECT_CONFIG
-        summary = project_manager.PROJECT_CONFIG.get("scene_content").get(config.LANGUAGES[self.language],"").get("summary","")
+        summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])[0].get("voiceover","")
         summary = config.chinese_convert(summary, self.language)
 
         # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"

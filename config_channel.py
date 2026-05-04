@@ -1894,6 +1894,11 @@ CHANNEL_CONFIG = {
             "margin_x": 10,
             "margin_y": 10,
         },
+        "headmark": {
+            "path": "media/counseling_headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
+        },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
             ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),

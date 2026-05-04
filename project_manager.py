@@ -507,7 +507,7 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
         resolution_frame = ttk.Frame(top_fields_row)
         resolution_frame.pack(side=tk.LEFT, padx=(0, 0))
-        resolution_var = tk.StringVar(value="1920x1080")
+        resolution_var = tk.StringVar(value="1080x1920")
         ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
@@ -521,7 +521,11 @@ class ProjectSelectionDialog:
         _nar_init = self.story_result.get('narrator')
         new_project_visual_style_var = tk.StringVar(value=_vs_cur)
         new_project_host_display_var = tk.StringVar(value=_hd_init)
+
         new_project_narrator_var = tk.StringVar(value=_nar_init)
+        # SET new_project_narrator_var default value TO woman/qin-fast/chinese
+        new_project_narrator_var.set("woman/qin-fast/chinese")
+
         ttk.Label(welcome_info_row, text="频道:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(welcome_info_row, text=str(self.story_result.get('channel', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(welcome_info_row, text="语言:").pack(side=tk.LEFT, padx=(0, 4))
@@ -898,10 +902,13 @@ class ProjectSelectionDialog:
 
             self.story_result['action'] = 'new'
             # 保存 channel_id（多个 config key 可对应同一 channel_id）
-            self.story_result['channel'] = config_channel.get_channel_id(self.story_result['channel'])
-            self.story_result['prompts'] = config_channel.get_channel_config(self.story_result['channel']).get('channel_prompt', {})
-            self.story_result['scene_min_length'] = config_channel.get_channel_config(self.story_result['channel']).get('scene_min_length', 9)
-            self.story_result['watermark'] = config_channel.get_channel_config(self.story_result['channel']).get('watermark', {})
+            ch_id = config_channel.get_channel_id(self.story_result['channel'])
+            self.story_result['channel'] = ch_id
+            _ch_cfg = config_channel.get_channel_config(ch_id)
+            self.story_result['prompts'] = _ch_cfg.get('channel_prompt', {})
+            self.story_result['scene_min_length'] = _ch_cfg.get('scene_min_length', 9)
+            self.story_result['watermark'] = dict(_ch_cfg.get('watermark') or {})
+            self.story_result['headmark'] = dict(_ch_cfg.get('headmark') or {})
             self.selected_config = self.story_result
 
             new_project_dialog.destroy()
