@@ -3736,7 +3736,7 @@ class WorkflowGUI:
             messagebox.showinfo("标题", "视频为空")
             return
        
-        content = self.workflow.transcriber.translate_text(content, self.workflow.language, self.workflow.language)
+        content = config.chinese_convert(content, self.workflow.language)
 
         content_language = self.scene_language.get()
         if content_language in config.FONT_LIST:

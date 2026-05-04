@@ -35,7 +35,7 @@ class TranscribeMediaDialog:
         self.media_gui = media_gui
         self._is_mp3 = os.path.splitext(self.media_path)[1].lower() == ".mp3"
 
-        self._transcriber = AudioTranscriber(media_gui.pid, "small", "cuda")
+        self._transcriber = AudioTranscriber(media_gui.pid, "medium", "cuda")
 
         self.dlg = tk.Toplevel(parent)
         self.dlg.title("媒体转写 — 预览与文稿")

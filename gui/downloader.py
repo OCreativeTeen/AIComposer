@@ -585,7 +585,7 @@ class MediaDownloader:
         
         # 检测 JavaScript 运行时
         self.js_runtime = self._detect_js_runtime()
-        self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
+        self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
 
 
     def _find_cookies_file(self):

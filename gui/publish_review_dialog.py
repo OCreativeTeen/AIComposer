@@ -1,5 +1,5 @@
 """
-成品发布前审阅：预览 MP4、转写（AudioTranscriber.transcribe_with_whisper）、
+成品发布前审阅：预览 MP4、转写（AudioTranscriber.transcribe_with_whisper → WhisperX / API 回退）、
 重合成（VoiceboxService.synthesize_speaker_text_to_wav + FfmpegProcessor）。
 
 旁白音色：本对话框可重新选择「重合成」说话人；未改时顺序为
@@ -74,7 +74,7 @@ class PublishReviewDialog:
         self.workflow_gui = workflow_gui
         self.on_refresh_after_publish = on_refresh_after_publish
 
-        self._transcriber = AudioTranscriber(media_gui.pid, "small", "cuda")
+        self._transcriber = AudioTranscriber(media_gui.pid, "medium", "cuda")
         self._voicebox = VoiceboxService(media_gui.pid)
 
         self.dlg = tk.Toplevel(parent)

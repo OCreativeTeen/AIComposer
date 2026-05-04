@@ -81,7 +81,7 @@ class AVReviewDialog:
         # Get video dimensions from workflow's ffmpeg_processor
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
-        self.transcriber = AudioTranscriber(self.workflow.pid, model_size="small", device="cuda")
+        self.transcriber = AudioTranscriber(self.workflow.pid, model_size="medium", device="cuda")
         self.llm_api = LLMApi(GPT_MINI)
         #self.speech_service = MinimaxSpeechService(self.workflow.pid)
         self.speech_service = VoiceboxService(self.workflow.pid)

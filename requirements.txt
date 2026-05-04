@@ -28,6 +28,7 @@
 # pip install -r requirements.txt
 
 # Whisper ASR
+whisperx
 faster-whisper
 pyannote.audio
 

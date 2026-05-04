@@ -52,7 +52,7 @@ class MagicWorkflow:
         self.sd_processor = SDProcessor(self)
         self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid), language)
         self.llm_api = LLMApi()
-        self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
+        self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
 
         config.create_project_path(pid)
 
@@ -99,7 +99,7 @@ class MagicWorkflow:
 
     def post_init(self, title):
         if title:
-            self.title = self.transcriber.translate_text(title, self.language, self.language)
+            self.title = config.chinese_convert(title, self.language)
 
 
     def project_169_mode(self):
