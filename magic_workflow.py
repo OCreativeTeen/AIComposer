@@ -1023,15 +1023,13 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self, publish_at=None):
+    def upload_video(self, video_title, title, publish_at=None):
         """
         publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
         若为 datetime（建议带本地时区），则使用 YouTube 定时公开（API 要求先 private + publishAt）。
         """
-        title = self.title.strip().replace(" ", "_").replace("\n", "_")
-        title = config.chinese_convert(title, self.language)
-        final_video_path = f"{self.publish_path}/{title}_final.mp4"
-        title = config_channel.get_channel_config(self.channel)["channel_name"] + "：" + title.replace("_", " ")
+        video_title = video_title.strip().replace(" ", "_").replace("\n", "_")
+        final_video_path = f"{self.publish_path}/{video_title}_final.mp4"
         # get "summary" from project_manager.PROJECT_CONFIG
         summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])[0].get("voiceover","")
         summary = config.chinese_convert(summary, self.language)

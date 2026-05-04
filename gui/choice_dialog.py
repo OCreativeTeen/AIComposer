@@ -135,7 +135,7 @@ def pack_text_buttons(parent, rows, cancel=None, width=48):
     return buttons
 
 
-def post_nested_clipboard_menu(root, choices_dict, event=None, content=None, *, max_label_len=72):
+def post_nested_clipboard_menu(root, choices_dict, speaker, content, event, max_label_len=72):
     if not choices_dict:
         return "break"
 
@@ -150,6 +150,10 @@ def post_nested_clipboard_menu(root, choices_dict, event=None, content=None, *, 
             root.clipboard_clear()
             if content:
                 text = text.replace("$$$", content)
+                if speaker:
+                    text = text.replace("###", speaker)
+                else:
+                    text = text.replace("###", "")
             root.clipboard_append(text)
             root.update_idletasks()
         except tk.TclError:

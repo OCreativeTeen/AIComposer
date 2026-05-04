@@ -101,12 +101,12 @@ VIDEO_ACTION_CHOICES = {
         "Ending: Narrator主持'心源谈天'节目 (no talk+background music)"
     ],
     "讲话人物": [
-        "Narrator (center) speaking, other listening : $$$",
-        "Narrator (left) speaking, other listening : $$$",
-        "Narrator (right) speaking, others acting only : $$$",
+        "Narrator (center - ###) speaking, other listening : $$$",
+        "Narrator (left - ###) speaking, other listening : $$$",
+        "Narrator (right - ###) speaking, others acting only : $$$",
         "No talk, but show : $$$",
-        "Actor speaking as 1st person : $$$",
-        "Actor speaking about the words content of the image"
+        "actor (###) speaking as 1st person : $$$",
+        "actor (###) speaking about the words content of the image"
     ] 
 }
 
@@ -1820,7 +1820,7 @@ class WorkflowGUI:
             font=("Arial", 16),
         )
         self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        self.scene_speaking.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("speaking", event))
+        self.scene_speaking.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("actor", "speaking", event))
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
@@ -1856,7 +1856,7 @@ class WorkflowGUI:
             self.video_edit_frame, width=40, height=5, undo=True, maxundo=0
         )
         self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
-        self.scene_voiceover.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("voiceover", event))
+        self.scene_voiceover.bind("<Double-1>", lambda event: self.on_scene_video_action_menu("narrator", "voiceover", event))
         row_number += 1
 
         _caption_lbl = ttk.Label(self.video_edit_frame, text="字幕:")
@@ -2101,14 +2101,122 @@ class WorkflowGUI:
         """
         return ask_publish_schedule_dialog(self.root)
 
+    def _ask_upload_video_title_slug(self):
+        """弹窗：可编辑标题（默认标题栏 ``video_title``），下拉可选前 5 场景 ``caption`` 填入。
+
+        确定后按语言做简繁转换并 ``make_safe_file_name``，得到传给 ``upload_video`` 的文件名主干 slug。
+        取消返回 None。
+        """
+        lang = getattr(self.workflow, "language", None) or "zh"
+        gui_title = ""
+        if hasattr(self, "video_title"):
+            gui_title = (self.video_title.get() or "").strip()
+
+        wf_title = (getattr(self.workflow, "title", None) or "").strip()
+
+        default_text = gui_title or wf_title
+        default_text = config_channel.get_channel_config(self.workflow.channel)["channel_name"] + "：" + default_text 
+ 
+        labels = ["— 从场景字幕选择（可选）—"]
+        caption_payloads = [None]
+        scenes = getattr(self.workflow, "scenes", None) or []
+        for idx in range(min(5, len(scenes))):
+            cap = (scenes[idx].get("caption") or "").strip()
+            if not cap:
+                continue
+            short = cap if len(cap) <= 48 else cap[:45] + "…"
+            labels.append(f"场景 {idx + 1}: {short}")
+            caption_payloads.append(cap)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("上传视频 — 标题")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(True, False)
+
+        result = {"slug": None}
+
+        main = ttk.Frame(dlg, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            main,
+            text="标题（可直接编辑；将用于本地成片文件名与 YouTube 标题基础）",
+            wraplength=520,
+        ).pack(anchor=tk.W, pady=(0, 6))
+
+        title_var = tk.StringVar(value=default_text)
+        entry = ttk.Entry(main, textvariable=title_var, width=72)
+        entry.pack(fill=tk.X, pady=(0, 10))
+        if default_text:
+            entry.select_range(0, len(default_text))
+            entry.icursor(tk.END)
+        else:
+            entry.icursor(0)
+        entry.focus_set()
+
+        ttk.Label(main, text="从场景字幕填入：").pack(anchor=tk.W)
+
+        cb = ttk.Combobox(
+            main,
+            values=labels,
+            state="readonly",
+            width=68,
+        )
+        cb.pack(fill=tk.X, pady=(2, 12))
+        cb.set(labels[0])
+
+        def on_scene_pick(_event=None):
+            i = cb.current()
+            if 0 <= i < len(caption_payloads) and caption_payloads[i]:
+                title_var.set(caption_payloads[i])
+                entry.icursor(tk.END)
+                entry.focus_set()
+            cb.set(labels[0])
+
+        cb.bind("<<ComboboxSelected>>", on_scene_pick)
+
+        btn_row = ttk.Frame(main)
+        btn_row.pack(fill=tk.X)
+
+        def on_ok():
+            raw = (title_var.get() or "").strip()
+            if not raw:
+                messagebox.showwarning("上传标题", "请填写标题，或从场景字幕选择。", parent=dlg)
+                return
+            conv = config.chinese_convert(raw.replace("\n", " "), lang)
+            result["slug"] = make_safe_file_name(conv.replace("\n", " "), title_length=180)
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="确定", command=on_ok).pack(side=tk.RIGHT)
+
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        dlg.update_idletasks()
+        w, h = 640, dlg.winfo_reqheight()
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{w}x{max(h, 200)}+{(sw - w) // 2}+{(sh - max(h, 200)) // 2}")
+        dlg.wait_window()
+        return result["slug"]
 
     def publish_video(self):
+        title_slug = self._ask_upload_video_title_slug()
+        if title_slug is None:
+            return
         choice = self._ask_upload_schedule()
         if choice is None:
             return
         mode, publish_at = choice
         try:
-            self.workflow.upload_video(publish_at=publish_at if mode == "scheduled" else None)
+            self.workflow.upload_video(
+                config.chinese_convert(self.video_title.get(), self.workflow.language),
+                title_slug,
+                publish_at=publish_at if mode == "scheduled" else None,
+            )
         except Exception as e:
             messagebox.showerror("上传失败", str(e), parent=self.root)
             return
@@ -3385,7 +3493,7 @@ class WorkflowGUI:
         return "break"
 
 
-    def on_scene_video_action_menu(self, text_field, event=None):
+    def on_scene_video_action_menu(self, speaker_field, text_field, event=None):
         """双击旁白框：VIDEO_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
@@ -3393,7 +3501,7 @@ class WorkflowGUI:
         #concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, scene[text_field])
         #concise = config.chinese_convert(concise, "zh")
         concise = config.chinese_convert(scene[text_field], "zh")
-        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, event, concise)
+        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, scene[speaker_field], concise, event)
 
 
     def on_scene_voiceover_image_action_menu(self, event=None):
@@ -3401,7 +3509,7 @@ class WorkflowGUI:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
-        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, event, scene["speaking"])
+        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, scene["actor"], scene["speaking"], event)
 
 
     def copy_story_scene(self):
