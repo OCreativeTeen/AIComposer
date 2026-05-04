@@ -173,11 +173,11 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
 
 *** 4-6 continuous Scenes:
     ** Each scene focus on one message, and include fields like:
-        1) Short title (title of this scene; but the title of 1st scene is the title of whole story)
-        2) Heart message (voiceover -- to express the psychological life guidance. Reflective tone)
-        3) Micro-story (story -- psychological story & analysis, but avoid technical psychology terminology)
-        4) 9-10 seconds concise caption speaking (speaking -- concise 1st person speaking to express the message)
-        5) Speaker (gender/age/race | mood | actions)
+        1) title (title of this scene; but the title of 1st scene is the title of whole story)
+        2) voiceover (Heart message -- to express the psychological life guidance. Reflective tone)
+        3) story (story scene description - All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis. Please avoid technical psychology terminology)
+        4) 9-10 seconds concise caption speaking (speaking in this scene -- concise 1st person speaking to express the heart message)
+        5) Actor (actor in this story scene, format in -- gender/age/race | mood | actions) 
             - gender: man,woman
             - age: young,mature,teen
             - race: chinese,english
