@@ -345,7 +345,7 @@ def _format_publish_display_date(pub_s: str) -> str:
 
 
 def _publish_cell_display(video: dict, input_map: dict):
-    """返回 (列文本, 状态 published|ready|txt|na)。与 GUI.py Video发布 日历逻辑配套的成品上传。"""
+    """返回 (列文本, 状态 published|ready|txt|na)。与 GUI_wf.py Video发布 日历逻辑配套的成品上传。"""
     pub = (video.get("publish") or "").strip()
     if pub:
         return _format_publish_display_date(pub), "published"
@@ -363,7 +363,7 @@ def _publish_cell_display(video: dict, input_map: dict):
 
 def ask_publish_schedule_dialog(parent, mp4_path_hint=None, dialog_title="上传至 YouTube"):
     """
-    与 GUI.py _ask_upload_schedule 相同：立即上传或定时公开；tkcalendar 可选。
+    与 GUI_wf.py _ask_upload_schedule 相同：立即上传或定时公开；tkcalendar 可选。
     返回 None 表示取消；("immediate", None) 或 ("scheduled", datetime)。
     """
     result = {"ok": False, "mode": "immediate", "dt": None}
@@ -2152,7 +2152,7 @@ class MediaGUIManager:
 
 
     def _open_publish_video_dialog(self, parent, title_prefix: str, mp4_path: str, video_detail: dict, refresh_tree):
-        """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；日历与 GUI.py Video发布 相同（ask_publish_schedule_dialog）。"""
+        """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；日历与 GUI_wf.py Video发布 相同（ask_publish_schedule_dialog）。"""
         ch_key = os.path.basename(self.channel_path)
         cfg = config_channel.get_channel_config(ch_key)
         if not cfg:
@@ -2253,7 +2253,7 @@ class MediaGUIManager:
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
         dialog.title(f"热门视频管理 - {self.downloader.channel_name}")
-        dialog.geometry("1600x650")
+        dialog.geometry("2100x1150")
         dialog.transient(self.root)
         
         # 顶部信息和控制栏
@@ -2658,16 +2658,35 @@ class MediaGUIManager:
             selected = tree.selection()
             stats_label.config(text=f"已选择: {len(selected)} 个视频")
         tree.bind("<<TreeviewSelect>>", lambda e: update_selection_count())
+
+        def _unique_video_details_from_tree_selection():
+            """同一 URL 在树上可能对应多行；批量操作时按 URL 去重，每个 video_detail 只处理一次。"""
+            seen_urls = set()
+            details = []
+            for item in tree.selection():
+                item_tags = _treeview_item_tags_safe(tree, item)
+                if not item_tags:
+                    continue
+                url_key = (item_tags[0] or "").strip()
+                if not url_key or url_key in seen_urls:
+                    continue
+                seen_urls.add(url_key)
+                vd = self.get_video_detail(url_key)
+                if vd is not None:
+                    details.append(vd)
+            return details
         
 
         def delete_selected_videos():
             """删除选中的视频：从列表移除并删除相关文件"""
-            selected_items = tree.selection()
-            if not selected_items:
+            if not tree.selection():
+                return
+            uniq_details = _unique_video_details_from_tree_selection()
+            if not uniq_details:
                 return
             
             # 确认删除
-            if not messagebox.askyesno("确认删除", f"确定要删除 {len(selected_items)} 个视频吗？\n\n这将从列表中移除并删除相关的文件（mp4、srt、json）。",
+            if not messagebox.askyesno("确认删除", f"确定要删除 {len(uniq_details)} 个视频吗？\n\n这将从列表中移除并删除相关的文件（mp4、srt、json）。",
                                            parent=dialog):
                 return
             
@@ -2678,12 +2697,7 @@ class MediaGUIManager:
             videos_to_remove = []
             files_to_delete = []
             
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-                
-                video_detail = self.get_video_detail(item_tags[0])
+            for video_detail in uniq_details:
                 videos_to_remove.append(video_detail)
                 filename_prefix = self.downloader.generate_video_prefix(video_detail)
                 for filename in os.listdir(f"{self.youtube_dir}/media"):
@@ -3012,37 +3026,13 @@ class MediaGUIManager:
                     _pid = selected_config.get('pid', '')
                     if not _pid:
                         return
-                    def _open_main_in_same_process():
-                        _tk_root = None
-                        try:
-                            _tk_root = self.root
-                            while getattr(_tk_root, 'master', None):
-                                _tk_root = _tk_root.master
-                            try:
-                                self.root.protocol("WM_DELETE_WINDOW", lambda: None)
-                            except Exception:
-                                pass
-                            try:
-                                self.root.destroy()
-                            except Exception:
-                                pass
-                            _tk_root.deiconify()
-                            import sys
-                            _gui_mod = sys.modules.get('GUI') or sys.modules.get('__main__')
-                            WorkflowGUI = getattr(_gui_mod, 'WorkflowGUI', None)
-                            if WorkflowGUI:
-                                WorkflowGUI(_tk_root, initial_pid=_pid)
-                            else:
-                                messagebox.showerror("错误", "无法加载主界面模块", parent=_tk_root)
-                        except Exception as ex:
-                            import traceback
-                            traceback.print_exc()
-                            try:
-                                _parent = _tk_root if (_tk_root and _tk_root.winfo_exists()) else None
-                                messagebox.showerror("错误", f"打开主界面失败: {ex}", parent=_parent)
-                            except Exception:
-                                pass
-                    self.root.after(100, _open_main_in_same_process)
+                    messagebox.showinfo(
+                        "项目已创建",
+                        "新项目已建立。\n\n"
+                        f"PID：{_pid}\n\n"
+                        "请运行 GUI_wf.py，在主界面使用「选择项目」打开该项目后继续编辑。",
+                        parent=summary_window,
+                    )
 
 
             def on_find_similar_cases():
@@ -3799,16 +3789,11 @@ class MediaGUIManager:
 
         def fetch_info_selected():
             """对选中的、无 upload_date 的视频重新拉取元信息，更新后保存列表"""
-            selected_items = tree.selection()
-            if not selected_items:
+            if not tree.selection():
                 messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
             videos = []
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-                video_detail = self.get_video_detail(item_tags[0])
+            for video_detail in _unique_video_details_from_tree_selection():
                 if video_detail and not (video_detail.get('upload_date') or '').strip():
                     videos.append(video_detail)
             if not videos:
@@ -3858,19 +3843,10 @@ class MediaGUIManager:
             threading.Thread(target=fetch_task, daemon=True).start()
 
         def download_selected():
-            selected_items = tree.selection()
-            if not selected_items:
+            if not tree.selection():
                 return
-            # 获取选中视频的信息
-            selected_videos = []
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-                video_detail = self.get_video_detail(item_tags[0])
-                if video_detail:
-                    selected_videos.append(video_detail)
-            
+            # 获取选中视频的信息（按 URL 去重）
+            selected_videos = _unique_video_details_from_tree_selection()
             # filter out the videos that are already downloaded
             def needs_download(video):
                 audio_path = video.get('audio_path') or ''
@@ -3957,19 +3933,14 @@ class MediaGUIManager:
 
 
         def transcribe_selected():
-            selected_items = tree.selection()
-            # 检查选中的视频：已下载且没有SRT文件的视频
+            if not tree.selection():
+                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
+                return
+            # 检查选中的视频：已下载且没有SRT文件的视频（按 URL 去重）
             videos_to_transcribe = []
             videos_already_transcribed = []
             
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-                video_detail = self.get_video_detail(item_tags[0])
-                if not video_detail:
-                    continue
-
+            for video_detail in _unique_video_details_from_tree_selection():
                 content = video_detail.get('content', '')
                 if content and len(content) > 100:
                     self.update_text_content(video_detail)
@@ -4042,18 +4013,11 @@ class MediaGUIManager:
 
 
         def tag_selected():
-            selected_items = tree.selection()
-            if not selected_items:
+            if not tree.selection():
                 messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
 
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-                video_detail = self.get_video_detail(item_tags[0])
-                if not video_detail:
-                    continue
+            for video_detail in _unique_video_details_from_tree_selection():
                 self.update_text_content(video_detail)
                 self.prepare_category_for_content(video_detail, self.topic_choices)
 
@@ -4063,6 +4027,7 @@ class MediaGUIManager:
         def list_summary():
             # new list for items in the list, only item with summary,  include fields :  summary, title, url, topic_category, topic_subtype, tags
             summary_list = []
+            seen_urls = set()
             for item in tree.get_children():
                 item_tags = _treeview_item_tags_safe(tree, item)
                 if not item_tags:
@@ -4070,6 +4035,10 @@ class MediaGUIManager:
                 video_detail = self.get_video_detail(item_tags[0])
                 if not video_detail:
                     continue
+                url_key = (video_detail.get('url') or item_tags[0] or '').strip()
+                if not url_key or url_key in seen_urls:
+                    continue
+                seen_urls.add(url_key)
                 if video_detail.get('analyzed_content'):
                     summary_list.append({
                         'analyzed_content': video_detail.get('analyzed_content', ''),
@@ -4090,21 +4059,12 @@ class MediaGUIManager:
 
 
         def summarize_selected(rewrite=False):
-            selected_items = tree.selection()
-            if not selected_items:
+            if not tree.selection():
                 messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
 
             summary_list = []
-            for item in selected_items:
-                item_tags = _treeview_item_tags_safe(tree, item)
-                if not item_tags:
-                    continue
-
-                video_detail = self.get_video_detail(item_tags[0])
-                if not video_detail:
-                    continue
-
+            for video_detail in _unique_video_details_from_tree_selection():
                 text_content = self.fetch_text_content(video_detail)
                 if not text_content or len(text_content) < 100:
                     continue

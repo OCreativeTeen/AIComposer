@@ -149,7 +149,7 @@ class WorkflowGUI:
 
         # 显示项目选择对话框（或 --open-pid 时直接加载指定项目）
         if initial_pid:
-            # 从 YT「用Story启动新项目」创建后启动：跳过欢迎屏，直接加载项目
+            # 命令行 --open-pid：跳过欢迎屏，直接加载该项目
             config_manager = ProjectConfigManager()
             selected_config = config_manager.load_config(initial_pid)
             if not selected_config:
@@ -163,10 +163,6 @@ class WorkflowGUI:
 
         if selection_result is False:
             self.root.destroy()
-            return
-        if selection_result == 'yt':
-            # 用户选择了 YT 管理/下载，主界面不打开，只保留根窗口供 YT 子窗口使用
-            self.root.withdraw()  # 隐藏根窗口，仅显示 YT 子窗口
             return
         
         # 首先初始化任务状态跟踪 - 增强版
@@ -303,9 +299,6 @@ class WorkflowGUI:
         
         if result == 'cancel':
             return False
-        elif result == 'yt':
-            # 用户选择了 YT 管理/下载，主界面不打开，只保留根窗口供 YT 子窗口使用
-            return 'yt'
         elif result == 'new':
             # 立即创建ProjectConfigManager并保存新项目配置
             pid = selected_config.get('pid')
@@ -6365,7 +6358,7 @@ def main():
     import sys
     root = TkinterDnD.Tk()
 
-    # 支持 --open-pid <pid> 参数：跳过欢迎屏，直接打开指定项目（用于从 YT「用Story启动新项目」创建后启动）
+    # 支持 --open-pid <pid>：跳过欢迎屏，直接打开指定项目（可选，便于脚本或快捷方式）
     initial_pid = None
     if len(sys.argv) >= 3 and sys.argv[1] == '--open-pid':
         initial_pid = sys.argv[2]

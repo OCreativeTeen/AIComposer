@@ -955,8 +955,75 @@ class ProjectSelectionDialog:
         return self.story_result.get('action', 'cancel'), self.selected_config
 
 
-def show_initial_choice_dialog(parent):
-    """GUI 启动时首先显示的选择：频道、语言、旁白 narrator、画面风格 + 创建新项目/选择项目/YT 操作"""
+def launch_yt_media_tool(
+    parent,
+    *,
+    channel: str,
+    language: str,
+    narrator: str,
+    visual_style: str,
+    host_display: str,
+    yt_method: str,
+    yt_method_args: tuple = (),
+):
+    """独立 YT 入口：不再创建额外的「YT 管理」占位窗。
+
+    日志控件仅创建、不 pack。勿对 ``parent`` 使用 ``withdraw()``：在 Windows 下会导致后续
+    ``Toplevel(parent)``（选语言、选频道等）无法显示。改为将根窗移到屏外极小几何以保持 mapped。
+
+    当 ``parent`` 下没有任何 ``Toplevel`` 子窗口时，轮询 ``quit()`` 结束 ``mainloop``。
+    """
+    global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_HOST_DISPLAY
+    LAST_NARRATOR = narrator
+    LAST_VISUAL_STYLE = visual_style
+    LAST_HOST_DISPLAY = host_display
+
+    ch = (channel or "").strip()
+    lang = (language or "tw").strip()
+    if not ch:
+        messagebox.showwarning("提示", "请先选择频道", parent=parent)
+        return
+
+    try:
+        parent.geometry("1x1+-3000+-3000")
+        parent.update_idletasks()
+    except tk.TclError:
+        pass
+
+    # 仅占位供回调签名使用，不布局 → 不出现在屏幕上
+    _yt_log = tk.Text(parent)
+    _yt_log.configure(height=1, width=1)
+
+    def _yt_log_fn(w, m):
+        try:
+            w.insert(tk.END, m + "\n")
+        except Exception:
+            pass
+
+    yt_gui = MediaGUIManager(parent, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang)
+    getattr(yt_gui, yt_method)(*yt_method_args)
+
+    def _poll_standalone_exit():
+        try:
+            if not parent.winfo_exists():
+                return
+            has_dialog = any(isinstance(w, tk.Toplevel) for w in parent.winfo_children())
+            if not has_dialog:
+                parent.quit()
+                return
+        except tk.TclError:
+            return
+        parent.after(350, _poll_standalone_exit)
+
+    parent.after(450, _poll_standalone_exit)
+
+
+def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
+    """GUI / YT 工具启动时的选项（频道、语言、风格、旁白、HOST）。
+
+    - ``for_yt_tools=False``（默认）：仅「选择项目」「创建新项目」——供 ``GUI_wf.py`` 使用。
+    - ``for_yt_tools=True``：仅四个 YT 按钮——供 ``GUI_pm.py`` 独立入口使用。
+    """
     result = {
         'choice': 'cancel',
         'channel': '',
@@ -967,7 +1034,7 @@ def show_initial_choice_dialog(parent):
     }
 
     dialog = tk.Toplevel(parent)
-    dialog.title("欢迎")
+    dialog.title("YT 工具" if for_yt_tools else "欢迎")
     dialog.transient(parent)
     dialog.grab_set()
     dialog.resizable(False, False)
@@ -1083,63 +1150,66 @@ def show_initial_choice_dialog(parent):
         result['choice'] = 'cancel'
         dialog.destroy()
 
-    def _create_yt_gui_and_run(yt_method, *args):
-        """按当前 channel/language 创建 MediaGUIManager 并执行 YT 方法"""
+    def _run_yt_tool(yt_method: str, *method_args):
         ch = channel_var.get().strip()
-        lang = language_var.get().strip()
         if not ch:
             messagebox.showwarning("提示", "请先选择频道", parent=dialog)
             return
         _sync_welcome_choices()
-        result['choice'] = 'yt'  # 标记为 YT 操作，避免调用方误判为取消而退出 App
-        dialog.destroy()  # YT 操作时先关闭欢迎窗口
-        # 使用独立 Toplevel 作为 YT 父窗口（无 parent），避免主窗口 withdraw 导致 YT 子窗被隐藏
-        yt_parent = tk.Toplevel()
-        yt_parent.title("YT 管理")
-        yt_parent.geometry("300x80+100+100")  # 小窗口，用户可见且可关闭以退出应用
-        yt_parent.lift()  # 确保显示在最前
-        yt_parent.focus_force()
-        def _on_yt_parent_close():
-            yt_parent.destroy()
-            try:
-                parent.quit()
-            except Exception:
-                pass
-        yt_parent.protocol("WM_DELETE_WINDOW", _on_yt_parent_close)
-        yt_parent.lift()
-        yt_parent.focus_force()
-        # 不在此处 withdraw(parent)，否则 Windows 下可能导致所有窗口消失；等 YT 方法返回后再隐藏
-        _yt_log = tk.Text(yt_parent, height=1)
-        def _yt_log_fn(w, m):
-            try:
-                w.insert(tk.END, m + '\n')
-            except Exception:
-                pass
-        yt_gui = MediaGUIManager(yt_parent, ch, 'temp', {}, _yt_log_fn, _yt_log, language=lang)
-        getattr(yt_gui, yt_method)(*args)
-        # YT 方法返回后再隐藏主窗口（若提前 withdraw 可能导致 YT 子窗被一起隐藏）
-        parent.withdraw()
+        result["choice"] = "yt"
+        dialog.destroy()
+        launch_yt_media_tool(
+            parent,
+            channel=ch,
+            language=language_var.get().strip(),
+            narrator=narrator_var.get(),
+            visual_style=visual_style_var.get(),
+            host_display=host_display_var.get(),
+            yt_method=yt_method,
+            yt_method_args=method_args,
+        )
 
-    # 按钮垂直排列
-    project_frame = ttk.Frame(btn_frame)
-    project_frame.pack(fill=tk.X, pady=(8, 0))
-    ttk.Button(project_frame, text="选择项目", command=on_open, width=32).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(project_frame, text="创建新项目", command=on_new, width=32).pack(side=tk.LEFT)
+    # 按钮：主 GUI 仅项目；YT 独立入口仅四个 YT 功能
+    if not for_yt_tools:
+        project_frame = ttk.Frame(btn_frame)
+        project_frame.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(project_frame, text="选择项目", command=on_open, width=32).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(project_frame, text="创建新项目", command=on_new, width=32).pack(side=tk.LEFT)
+    else:
+        yt_frame1 = ttk.Frame(btn_frame)
+        yt_frame1.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(
+            yt_frame1,
+            text="YT管理",
+            command=lambda: _run_yt_tool("manage_hot_videos"),
+            width=32,
+        ).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(
+            yt_frame1,
+            text="文字转译",
+            command=lambda: _run_yt_tool("transcribe_media", True),
+            width=32,
+        ).pack(side=tk.LEFT, padx=(0, 5))
 
-    yt_frame1 = ttk.Frame(btn_frame)
-    yt_frame1.pack(fill=tk.X, pady=(8, 0))
-    ttk.Button(yt_frame1, text="YT管理", command=lambda: _create_yt_gui_and_run('manage_hot_videos'), width=32).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(yt_frame1, text="文字转译", command=lambda: _create_yt_gui_and_run('transcribe_media', True), width=32).pack(side=tk.LEFT, padx=(0, 5))
-
-    yt_frame2 = ttk.Frame(btn_frame)
-    yt_frame2.pack(fill=tk.X, pady=(8, 0))
-    ttk.Button(yt_frame2, text="YT文字", command=lambda: _create_yt_gui_and_run('download_youtube', True), width=32).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(yt_frame2, text="YT視頻", command=lambda: _create_yt_gui_and_run('download_youtube', False), width=32).pack(side=tk.LEFT)
+        yt_frame2 = ttk.Frame(btn_frame)
+        yt_frame2.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(
+            yt_frame2,
+            text="YT文字",
+            command=lambda: _run_yt_tool("download_youtube", True),
+            width=32,
+        ).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(
+            yt_frame2,
+            text="YT視頻",
+            command=lambda: _run_yt_tool("download_youtube", False),
+            width=32,
+        ).pack(side=tk.LEFT)
 
     ttk.Button(btn_frame, text="取消", command=on_cancel, width=32).pack(fill=tk.X, pady=8)
 
     dialog.update_idletasks()
-    w, h = 450, 580
+    w, h = 450, (520 if for_yt_tools else 430)
     x = (dialog.winfo_screenwidth() - w) // 2
     y = (dialog.winfo_screenheight() - h) // 2
     dialog.geometry(f"{w}x{h}+{x}+{y}")
@@ -1158,13 +1228,12 @@ def show_initial_choice_dialog(parent):
 
 def create_project_dialog(parent, youtube_gui=None):
     global PROJECT_CONFIG
-    # 首先显示初始选择：频道、语言 + 创建新项目 / 选择项目 / YT
-    choice, initial_channel, initial_language, initial_narrator, initial_visual_style, initial_host_display = show_initial_choice_dialog(parent)
+    # 欢迎屏：仅创建新项目 / 选择项目（YT 请使用 GUI_pm.py）
+    choice, initial_channel, initial_language, initial_narrator, initial_visual_style, initial_host_display = show_initial_choice_dialog(
+        parent, for_yt_tools=False
+    )
     if choice == 'cancel':
         return 'cancel', None
-    if choice == 'yt':
-        # YT 操作已打开独立窗口，不创建/打开项目，但需让 App 保持运行
-        return 'yt', None
 
     config_manager = ProjectConfigManager()
 

@@ -184,6 +184,7 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
             - mood: happy,sad,angry,fearful,disgusted,surprised,calm
             - actions: actions of the speaker in the scene
     ** All scenes together to express one concrete/cinematic psychological story, with same actor(s) or optional a narrator (psychological counselor); 
+        * All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis.
         * Tension must build across scenes, show progression / emotional escalation, or turning point / aftermath etc.
         * In difference scenes, the speaker can be different (i.e., character speak in one scene, then the narrator speak in next scene to explain...).
 
@@ -196,16 +197,16 @@ OUTPUT FORMAT (STRICT JSON)
         {{
             "title": "A short title capturing the psychological theme. In English.",
             "voiceover": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "story": "psychological_micro_story (5–8 sentences). Human story that illustrates the message. In English.",
+            "story": "A story scene in English.  All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis",
             "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English).",
             "actor": "gender/age/race | mood | actions"
         }}
     ],
     "chinese": [
         {{
-            "title": "場景的標題；但对第一個場景, 给出整個故事的標題.",
+            "title": "場景的標題；但对第一個場景, 给出整個故事的標題",
             "voiceover": "表達人生心理指引的內心寄語。用反思的語氣",
-            "story": "用心理故事和分析間接闡釋信息。通常涉及生活中的小瞬間、悄然的領悟或兒童/成人的互動",
+            "story": "故事场景描述. 所有场景都深入挖掘同一个心理问题，从开始 / 发展到高潮 / 结局 / 后续影响",
             "speaking": "用簡潔的旁白表達內心寄語和心理微故事(約9秒旁白)",
             "actor": "gender/age/race | mood | actions"
         }}

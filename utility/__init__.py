@@ -1,10 +1,4 @@
-from .azure_speech_service import AzureSpeechService
-from .ffmpeg_processor import FfmpegProcessor
-from .ffmpeg_audio_processor import FfmpegAudioProcessor
-from .sd_image_processor import SDProcessor
-from .audio_transcriber import AudioTranscriber
-from .llm_api import LLMApi
-from .media_scanner import MediaScanner
-from .voicebox_speech_service import VoiceboxService
+"""utility 包：请在调用处使用显式子模块导入，例如 ``from utility.ffmpeg_processor import FfmpegProcessor``。
 
-
+不在此文件中顶层导入各子模块，以免 ``config`` ↔ ``utility`` 在导入 ``utility.file_util`` 等时出现循环依赖。
+"""
