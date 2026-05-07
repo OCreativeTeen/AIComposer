@@ -329,14 +329,14 @@ class FfmpegAudioProcessor:
                 filter_complex = (
                     f"[0:a]volume={main_volume}[a0];"
                     f"[1:a]atrim=end={remaining_time},adelay={start_time_ms}|{start_time_ms},volume={mix_volume}[a1];"
-                    f"[a0][a1]amix=inputs=2:duration=first[aout]"
+                    f"[a0][a1]amix=inputs=2:duration=first:normalize=0[aout]"
                 )
             else:
                 # Mix sound fits within remaining time, use original logic
                 filter_complex = (
                     f"[0:a]volume={main_volume}[a0];"
                     f"[1:a]adelay={start_time_ms}|{start_time_ms},volume={mix_volume}[a1];"
-                    f"[a0][a1]amix=inputs=2:duration=first[aout]"
+                    f"[a0][a1]amix=inputs=2:duration=first:normalize=0[aout]"
                 )
             
             print(f"主音频时长: {main_audio_duration:.2f}s, 主音量: {main_volume}, 开始时间: {start_time}s, 剩余时间: {remaining_time:.2f}s")

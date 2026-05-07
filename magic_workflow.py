@@ -711,16 +711,19 @@ class MagicWorkflow:
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
 
         scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
-        if scene_content and len(scene_content) > 1:
+        if isinstance(scene_content, dict):
+            scene_content = [scene_content]
+
+        if scene_content:
             for scene_index, scene_item in enumerate(scene_content):
                 scene_item["caption"] = scene_item.pop("title","")
                 scene_item["visual"] = scene_item.pop("story","")
                 self.add_story_scene(scene_index, scene_item, False, is_append=False)
-        else:
-            stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
-            for story_index, element in enumerate(stories_template):
-                element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
-                self.add_story_scene(story_index, element, True, is_append=False)
+        #else:
+        #    stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
+        #     for story_index, element in enumerate(stories_template):
+        #          element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
+        #          self.add_story_scene(story_index, element, True, is_append=False)
 
         for story_scene in self.scenes:
             if not story_scene.get("host_display"):
@@ -1139,7 +1142,7 @@ class MagicWorkflow:
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
-    def finalize_video(self):
+    def finalize_video(self, with_transitions, replace_final_audio_with_zero=False):
         video_segments = []
         for s in self.scenes:
             #valid_narrator = None
@@ -1170,7 +1173,7 @@ class MagicWorkflow:
 
         for i, v in enumerate(video_segments):
             video_path = f"{final_video_dir}/{i:04d}.mp4"
-            if v["extend"] > 0.0:
+            if v["extend"] > 0.0 and with_transitions:
                 # create new function to extend the clip (simple extend last frame (if extend > 0.0))
                 v_temp = self.ffmpeg_processor.extend_video(v["path"], v["extend"])
             else:
@@ -1180,21 +1183,16 @@ class MagicWorkflow:
 
         #video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
-        # create new function to simplly concat videos (No extendsion, NO transition at all)
-        #video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
-        video_temp = self.ffmpeg_processor.concat_videos_simple_transitions(video_segments, keep_audio_if_has=True)
+        if with_transitions:
+            video_temp = self.ffmpeg_processor.concat_videos_simple_transitions(video_segments, keep_audio_if_has=True)
+        else:
+            video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
-        #if not add_narration:
-        #    current_zero = None
-        #    audio_segments = []
-        #    for s in self.scenes:
-        #        if not current_zero or current_zero != s["zero_audio"]:
-        #            current_zero = s["zero_audio"]
-        #            audio_segments.append(current_zero)
-        #    if audio_segments and len(audio_segments) > 0:
-        #        audio_temp = self.ffmpeg_audio_processor.concat_audios(audio_segments)
-        #        video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, audio_temp, False)
+        if replace_final_audio_with_zero:
+            current_zero = get_file_path(self.scenes[0], "zero_audio")
+            if current_zero:
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, current_zero, True)
 
         title = self.title.strip().replace(' ', '_').replace('\n', '_')
         title = config.chinese_convert(title, self.language)

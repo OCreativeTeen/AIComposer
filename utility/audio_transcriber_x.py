@@ -5,7 +5,8 @@
     2. 词级对齐（``whisperx.align``），便于 diarize 与 NLP 重切。
     3. 可选 pyannote diarization，默认 ``min_speakers=2 / max_speakers=2``。
     4. 可选按句末标点（。！？!?…）的 NLP 重切超长片段；句末缺失时退回到「，；：」等软断点。
-    5. 输出 JSON：``[{start, end, duration, caption, speaker?}]``，与现有管线兼容。
+    5. 合并后可选 LLM（``SRT_REORGANIZATION_SYSTEM_PROMPT``）为各条 ``caption`` 补全标点。
+    6. 输出 JSON：``[{start, end, duration, caption, speaker?}]``，与现有管线兼容。
 
 CLI 示例::
 
@@ -20,7 +21,11 @@ import argparse
 import importlib
 import json
 import os
+import re
 import sys
+from utility import llm_api
+import config
+import config_prompt
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -39,6 +44,29 @@ _DEFAULT_MAX_SENTENCE_DURATION = 22.0
 _SENTENCE_END_PUNCT = set("。！？!?…")
 # 软断点：当一个超长片段内找不到句末标点时，退回到这些标点
 _SOFT_BREAK_PUNCT = set("，,；;：:")
+
+
+def _parse_llm_json_subtitle_list(raw: str) -> Optional[List[Dict[str, Any]]]:
+    """从模型回复中解析 JSON 数组；支持包裹在 ```json ``` 中。"""
+    text = (raw or "").strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if m:
+        text = m.group(1).strip()
+    try:
+        out = json.loads(text)
+        if isinstance(out, list):
+            return out
+    except json.JSONDecodeError:
+        pass
+    i, j = text.find("["), text.rfind("]")
+    if i >= 0 and j > i:
+        try:
+            out = json.loads(text[i : j + 1])
+            if isinstance(out, list):
+                return out
+        except json.JSONDecodeError:
+            pass
+    return None
 
 
 def resolve_whisperx_device_compute(device: str, compute_type: str) -> Tuple[str, str]:
@@ -123,6 +151,7 @@ class AudioTranscriberX:
         # 对齐 / Diarize 模型按需懒加载
         self._align_cache: Dict[str, Tuple[Any, Any]] = {}
         self._diarize_pipeline = None
+        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
 
     # ------------------------------------------------------------------
     # 公共入口
@@ -138,8 +167,9 @@ class AudioTranscriberX:
         min_duration: float = _DEFAULT_MIN_SENTENCE_DURATION,
         max_duration: float = _DEFAULT_MAX_SENTENCE_DURATION,
         nlp_resplit: bool = True,
+        llm_punctuate: bool = True,
     ) -> Tuple[List[Dict[str, Any]], str]:
-        """转写 → 对齐 → 可选 diarize → NLP 重切 → 合并/规整 → 落盘 JSON。
+        """转写 → 对齐 → 可选 diarize → NLP 重切 → 合并/规整 → 可选 LLM 补标点 → 落盘 JSON。
 
         返回 ``(segments, transcribe_file)``。``segments`` 形如::
 
@@ -191,6 +221,12 @@ class AudioTranscriberX:
             # 5) 合并过短/过长，规整 start/end
             srt_segments = self.merge_sentences(srt_segments, min_duration, max_duration)
 
+            if llm_punctuate and srt_segments:
+                try:
+                    srt_segments = self._llm_punctuate_srt_segments(srt_segments, lang)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[WARN] LLM 标点失败，保留原文：{type(e).__name__}: {e}")
+
             with open(transcribe_file, "w", encoding="utf-8") as f:
                 json.dump(srt_segments, f, ensure_ascii=False, indent=2)
             print(f"[OK] 已写入 {transcribe_file}（{len(srt_segments)} 段）")
@@ -198,6 +234,56 @@ class AudioTranscriberX:
         except Exception as e:  # noqa: BLE001 - 顶层兜底，保持与 simple 版同样的接口
             print(f"[ERROR] 转录失败: {type(e).__name__}: {e}")
         return [], ""
+
+    # ------------------------------------------------------------------
+    # LLM 标点
+    # ------------------------------------------------------------------
+    def _llm_punctuate_srt_segments(
+        self,
+        srt_segments: List[Dict[str, Any]],
+        language_code: str,
+    ) -> List[Dict[str, Any]]:
+        """用 ``SRT_REORGANIZATION_SYSTEM_PROMPT`` 为各条 ``caption`` 补标点；失败则返回原列表。"""
+        if not srt_segments:
+            return srt_segments
+        lang_label = config.LANGUAGES.get(language_code, language_code)
+        system = config_prompt.SRT_REORGANIZATION_SYSTEM_PROMPT.format(language=lang_label)
+        payload: List[Dict[str, Any]] = []
+        for s in srt_segments:
+            row: Dict[str, Any] = {
+                "start": s.get("start"),
+                "end": s.get("end"),
+                "caption": (s.get("caption") or ""),
+            }
+            if s.get("duration") is not None:
+                row["duration"] = s.get("duration")
+            if s.get("speaker") is not None:
+                row["speaker"] = s["speaker"]
+            payload.append(row)
+        user = (
+            "以下为 JSON 字幕数组。请仅在各条的 \"caption\" 中补上合适的中文或原文标点（句号、逗号、问号、叹号等），"
+            "保持语序与用字不变；不要增删词句。不要修改 start、end、duration、speaker 的数值。\n\n"
+            "只输出与输入等长、同顺序的 JSON 数组；仅 \"caption\" 字段允许变化。\n\n"
+            + json.dumps(payload, ensure_ascii=False)
+        )
+        print("[INFO] LLM 标点修正…")
+        raw = self.llm_api.generate_text(system, user)
+        parsed = _parse_llm_json_subtitle_list(raw)
+        if not parsed or len(parsed) != len(srt_segments):
+            print(
+                f"[WARN] LLM 标点：解析结果段数不符（期望 {len(srt_segments)}，"
+                f"实际 {len(parsed) if parsed else 0}），保留原 caption"
+            )
+            return srt_segments
+        merged: List[Dict[str, Any]] = []
+        for i, seg in enumerate(srt_segments):
+            new_seg = dict(seg)
+            cap = parsed[i].get("caption")
+            if isinstance(cap, str) and cap.strip():
+                new_seg["caption"] = cap.strip()
+            merged.append(new_seg)
+        print("[OK] LLM 标点修正完成")
+        return merged
 
     # ------------------------------------------------------------------
     # 对齐 / diarize / NLP
@@ -505,9 +591,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="禁用按句末标点的 NLP 重切",
     )
     p.add_argument(
-        "--hf-token",
-        default=None,
-        help="HuggingFace token（diarization 必需；亦可通过环境变量 HF_TOKEN 提供）",
+        "--no-llm-punctuate",
+        action="store_true",
+        help="跳过合并后的 LLM 标点补全",
     )
     return p.parse_args(argv)
 
@@ -529,6 +615,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_duration=args.min_duration,
         max_duration=args.max_duration,
         nlp_resplit=not args.no_nlp_resplit,
+        llm_punctuate=not args.no_llm_punctuate,
     )
     if not out:
         print("❌ 失败")

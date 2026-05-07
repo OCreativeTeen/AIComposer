@@ -874,6 +874,57 @@ class FfmpegProcessor:
         self.run_ffmpeg_command(cmd)
         return output_path
 
+    # Composite overlap_video_path video onto main: main keeps its audio only; overlap contributes only video,
+    # full length of overlap, from start_time until overlap ends. Main video is tpad-extended if needed so the overlay fits.
+    def video_overlap(self, video_path, start_time, overlap_video_path):
+        output_path = config.get_temp_file(self.pid, "mp4")
+        main_duration = self.get_duration(video_path)
+        overlap_duration = self.get_duration(overlap_video_path)
+        start_time = float(start_time)
+
+        if main_duration <= 0:
+            print(f"video_overlap: invalid main duration for {video_path}")
+            return None
+        if overlap_duration <= 0:
+            print(f"video_overlap: invalid overlap duration for {overlap_video_path}")
+            return None
+        if start_time < 0:
+            print("video_overlap: start_time must be >= 0")
+            return None
+        if start_time >= main_duration:
+            print(f"video_overlap: start_time {start_time}s beyond main duration {main_duration:.2f}s")
+            return None
+
+        out_duration = max(main_duration, start_time + overlap_duration)
+        pad_main_video = max(0.0, out_duration - main_duration)
+        bg_w, bg_h = self.get_resolution(video_path)
+        has0a = self.has_audio_stream(video_path)
+
+        filter_complex = (
+            f"[0:v]tpad=stop_mode=clone:stop_duration={pad_main_video:.6f}[bg];"
+            f"[1:v]trim=duration={overlap_duration},setpts=PTS-STARTPTS+{start_time}/TB,"
+            f"scale={bg_w}:{bg_h}:force_original_aspect_ratio=decrease,"
+            f"pad={bg_w}:{bg_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[ov];"
+            f"[bg][ov]overlay=0:0[outv]"
+        )
+        if has0a:
+            filter_complex += f";[0:a]apad=whole_dur={out_duration:.6f}[outa]"
+
+        cmd = self._ffmpeg_input_args(video_path, overlap_video_path)
+        cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]"])
+        if has0a:
+            cmd.extend(["-map", "[outa]"])
+        else:
+            cmd.append("-an")
+
+        if has0a:
+            cmd.extend(self._get_audio_encode_args())
+        cmd.extend(self._get_video_output_args(keyframe_interval=False))
+        cmd.extend(self._get_output_optimization_args())
+        cmd.append(output_path)
+        self.run_ffmpeg_command(cmd)
+        return output_path
+
 
     def add_audio_to_video(self, video_path, audio_path, match_audio_length=True, change_ratio_to_match_audio_length=False):
         temp_file = config.get_temp_file(self.pid, "mp4")
@@ -2651,6 +2702,78 @@ class FfmpegProcessor:
         return output_path
         
 
+    @staticmethod
+    def prep_mosaic_source_layer(
+        src_path: str,
+        tw: int,
+        sh: int,
+        bottom_trim_px: int,
+        *,
+        fill_rgb: tuple[int, int, int] = (255, 255, 255),
+        shift_x: int = 0,
+    ):
+        """单张横屏图源：cover 缩放至覆盖 ``tw×sh``，水平视窗相对居中偏移 ``shift_x``（像素，正右负左），裁底后得到与拼图条一致的一层。
+
+        与 ``compose_landscape_vertical_mosaic_webp`` 中单层逻辑一致，供 GUI 预览与拼接共用。
+        """
+        from PIL import Image
+
+        tw, sh = int(tw), int(sh)
+        h_trimmed = sh - bottom_trim_px
+        if h_trimmed <= 0:
+            raise ValueError("bottom_trim_px 过大，裁剪后高度无效")
+        fill = tuple(fill_rgb)
+
+        img = Image.open(src_path)
+        try:
+            img.seek(0)
+        except EOFError:
+            pass
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA") if img.mode == "LA" else img.convert("RGB")
+        w0, h0 = img.size
+        scale = max(tw / w0, sh / h0)
+        nw = max(1, int(round(w0 * scale)))
+        nh = max(1, int(round(h0 * scale)))
+        img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+        left_center = (nw - tw) // 2
+        top_c = (nh - sh) // 2
+        left = left_center + int(shift_x)
+        max_left = max(0, nw - tw)
+        left = max(0, min(left, max_left))
+        img = img.crop((left, top_c, left + tw, top_c + sh))
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", (tw, sh), fill)
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        return img.crop((0, 0, tw, h_trimmed))
+
+    @staticmethod
+    def mosaic_crop_shift_limits(src_path: str, tw: int, sh: int) -> tuple[int, int]:
+        """相对「居中裁切」的水平偏移允许范围 ``[min_shift, max_shift]``（含端点）。正数往右、负数往左。"""
+        from PIL import Image
+
+        tw, sh = int(tw), int(sh)
+        with Image.open(src_path) as im:
+            w0, h0 = im.size
+        scale = max(tw / w0, sh / h0)
+        nw = max(1, int(round(w0 * scale)))
+        if nw < tw:
+            return 0, 0
+        left_center = (nw - tw) // 2
+        return (-left_center, (nw - tw) - left_center)
+
+    @staticmethod
+    def mosaic_viewport_shift_limits(stage_tw: int, viewport_w: int) -> tuple[int, int]:
+        """在 ``stage_tw`` 宽的条带内取出 ``viewport_w`` 宽视窗时，相对「居中」的水平偏移允许范围（正=视窗右移）。"""
+        st, ow = int(stage_tw), int(viewport_w)
+        if st <= ow:
+            return 0, 0
+        c = (st - ow) // 2
+        return (-c, (st - ow) - c)
+
     def compose_landscape_vertical_mosaic_webp(
         self,
         paths: list[str],
@@ -2661,11 +2784,14 @@ class FfmpegProcessor:
         vertical_align: str = "center",
         vertical_gap_top_fraction: float | None = None,
         fill_rgb: tuple[int, int, int] = (255, 255, 255),
+        horizontal_crop_shifts: list[int] | None = None,
+        viewport_crop_shifts: list[int] | None = None,
     ) -> str:
         """2 或 3 张横屏图纵向拼接后置于竖版画布 ``self.width×self.height``（如 1080×1920）。
 
-        每张图：按比例放大铺满 ``stage_w×stage_h`` 后居中裁剪，再裁掉底部 ``bottom_trim_px`` 行；
-        自上而下按顺序拼接。横向若宽于画布则左右居中裁至 ``self.width``。
+        每张图：按比例放大铺满 ``stage_w×stage_h`` 后居中裁剪（``horizontal_crop_shifts`` 在图源上平移视窗）；
+        再在 **条带宽度** 内按 ``viewport_crop_shifts`` 取出 ``self.width`` 宽的一列（默认居中，等同原先整幅再左右裁）；
+        再裁掉底部 ``bottom_trim_px`` 行；自上而下拼接。条带此时已为画布宽，不再做整幅横向居中裁。
 
         vertical_align:
           - ``center``：整块在画布垂直方向居中（双图默认）；若给出 ``vertical_gap_top_fraction`` 则按比例拆分上下留白
@@ -2691,44 +2817,56 @@ class FfmpegProcessor:
 
         fill = tuple(fill_rgb)
 
-        def prep_layer(src_path: str) -> Image.Image:
-            img = Image.open(src_path)
-            try:
-                img.seek(0)
-            except EOFError:
-                pass
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGBA") if img.mode == "LA" else img.convert("RGB")
-            w0, h0 = img.size
-            scale = max(tw / w0, sh / h0)
-            nw = max(1, int(round(w0 * scale)))
-            nh = max(1, int(round(h0 * scale)))
-            img = img.resize((nw, nh), Image.Resampling.LANCZOS)
-            left = (nw - tw) // 2
-            top_c = (nh - sh) // 2
-            img = img.crop((left, top_c, left + tw, top_c + sh))
-            if img.mode == "RGBA":
-                bg = Image.new("RGB", (tw, sh), fill)
-                bg.paste(img, mask=img.split()[3])
-                img = bg
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
-            return img.crop((0, 0, tw, h_trimmed))
+        if horizontal_crop_shifts is None:
+            hsh = [0] * n
+        else:
+            hsh = list(horizontal_crop_shifts)
+            if len(hsh) != n:
+                raise ValueError(
+                    f"horizontal_crop_shifts 长度须为 {n}（当前 {len(hsh)}）"
+                )
 
-        layers = [prep_layer(p) for p in paths]
+        if viewport_crop_shifts is None:
+            vsh = [0] * n
+        else:
+            vsh = list(viewport_crop_shifts)
+            if len(vsh) != n:
+                raise ValueError(
+                    f"viewport_crop_shifts 长度须为 {n}（当前 {len(vsh)}）"
+                )
+
+        out_w = int(self.width)
+        out_h = int(self.height)
+
+        layers_full = [
+            self.prep_mosaic_source_layer(
+                p,
+                tw,
+                sh,
+                bottom_trim_px,
+                fill_rgb=fill_rgb,
+                shift_x=hsh[i],
+            )
+            for i, p in enumerate(paths)
+        ]
+
+        layers: list = []
+        for i, lay in enumerate(layers_full):
+            ttw, tth = lay.size
+            if ttw < out_w:
+                raise ValueError(f"条带宽 {ttw} 小于画布宽 {out_w}")
+            x0 = (ttw - out_w) // 2 + int(vsh[i])
+            x0 = max(0, min(x0, ttw - out_w))
+            layers.append(lay.crop((x0, 0, x0 + out_w, tth)))
+
         stacked_h = h_trimmed * n
-        stacked = Image.new("RGB", (tw, stacked_h), fill)
+        stacked = Image.new("RGB", (out_w, stacked_h), fill)
         yp = 0
         for lay in layers:
             stacked.paste(lay, (0, yp))
             yp += h_trimmed
 
-        out_w = int(self.width)
-        out_h = int(self.height)
-        if tw < out_w:
-            raise ValueError(f"拼接宽 {tw} 小于目标画布宽 {out_w}")
-        cx0 = (tw - out_w) // 2
-        stripe = stacked.crop((cx0, 0, cx0 + out_w, stacked_h))
+        stripe = stacked
 
         canvas = Image.new("RGB", (out_w, out_h), fill)
         sh_stripe = stripe.height
@@ -2764,6 +2902,8 @@ class FfmpegProcessor:
         stage_h: int = 810,
         bottom_trim_px: int = 25,
         fill_rgb: tuple[int, int, int] = (255, 255, 255),
+        horizontal_crop_shifts: list[int] | None = None,
+        viewport_crop_shifts: list[int] | None = None,
     ) -> str:
         """双横屏图：1440×810 → 裁底 25 → 纵向拼接；在 1080×1920 画布上上下留白按 2:1（上 2/3、下 1/3）。"""
         return self.compose_landscape_vertical_mosaic_webp(
@@ -2774,6 +2914,8 @@ class FfmpegProcessor:
             vertical_align="center",
             vertical_gap_top_fraction=2.0 / 3.0,
             fill_rgb=fill_rgb,
+            horizontal_crop_shifts=horizontal_crop_shifts,
+            viewport_crop_shifts=viewport_crop_shifts,
         )
 
     def compose_triple_landscape_vertical_mosaic_webp(
@@ -2786,6 +2928,8 @@ class FfmpegProcessor:
         stage_h: int = 648,
         bottom_trim_px: int = 20,
         fill_rgb: tuple[int, int, int] = (255, 255, 255),
+        horizontal_crop_shifts: list[int] | None = None,
+        viewport_crop_shifts: list[int] | None = None,
     ) -> str:
         """三横屏图：1152×648 → 裁底 20 → 高度 628，自上而下拼接；在竖版画布顶部对齐，底部留白叠水印。"""
         return self.compose_landscape_vertical_mosaic_webp(
@@ -2795,6 +2939,8 @@ class FfmpegProcessor:
             bottom_trim_px=bottom_trim_px,
             vertical_align="top",
             fill_rgb=fill_rgb,
+            horizontal_crop_shifts=horizontal_crop_shifts,
+            viewport_crop_shifts=viewport_crop_shifts,
         )
 
     def resize_image_smart(self, input_image, width=None, height=None):

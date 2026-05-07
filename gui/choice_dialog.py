@@ -7,6 +7,9 @@
 import os
 import tkinter as tk
 import tkinter.ttk as ttk
+import tkinter.scrolledtext as scrolledtext
+import tkinter.messagebox as messagebox
+from typing import Callable, Optional
 
 
 def _askchoice_normalize_pairs(choices):
@@ -135,6 +138,109 @@ def pack_text_buttons(parent, rows, cancel=None, width=48):
     return buttons
 
 
+def ask_speaking_concise_review_dialog(
+    parent,
+    original_content: str,
+    remix_fn: Callable[[str], str],
+    *,
+    title: str = "审阅文案",
+) -> Optional[str]:
+    """弹窗：只读「原文」+ 可编辑定稿区；「Remix」对当前编辑区全文调用 ``remix_fn``；「确定」返回定稿（用于 $$$/@@@ 同一正文）。
+
+    remix_fn: 接受当前编辑文本，返回 LLM 摘要结果（调用方负责 ``chinese_convert`` 等）。
+    取消返回 None。
+    """
+    result: list[Optional[str]] = [None]
+
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.transient(parent)
+    dlg.grab_set()
+    dlg.resizable(True, True)
+
+    main = ttk.Frame(dlg, padding=10)
+    main.pack(fill=tk.BOTH, expand=True)
+
+    ttk.Label(
+        main,
+        text="原文（只读参考）",
+        font=("Arial", 10, "bold"),
+    ).pack(anchor=tk.W)
+    orig_w = scrolledtext.ScrolledText(
+        main,
+        wrap=tk.WORD,
+        height=7,
+        width=72,
+        font=("Arial", 10),
+        state=tk.DISABLED,
+        background="#f5f5f5",
+    )
+    orig_w.pack(fill=tk.BOTH, expand=False, pady=(2, 8))
+    orig_w.config(state=tk.NORMAL)
+    orig_w.insert("1.0", original_content or "")
+    orig_w.config(state=tk.DISABLED)
+
+    ttk.Label(
+        main,
+        text="定稿（可手工修改；Remix 基于当前编辑区全文重新摘要）",
+        font=("Arial", 10, "bold"),
+    ).pack(anchor=tk.W)
+    edit_w = scrolledtext.ScrolledText(
+        main,
+        wrap=tk.WORD,
+        height=10,
+        width=72,
+        font=("Arial", 10),
+    )
+    edit_w.pack(fill=tk.BOTH, expand=True, pady=(2, 8))
+    edit_w.insert("1.0", original_content or "")
+
+    btn_bar = ttk.Frame(main)
+    btn_bar.pack(fill=tk.X, pady=(4, 0))
+
+    def reset_from_original() -> None:
+        edit_w.delete("1.0", tk.END)
+        edit_w.insert("1.0", original_content or "")
+
+    def do_remix() -> None:
+        raw = original_content #edit_w.get("1.0", tk.END)
+        try:
+            out = remix_fn(raw)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("Remix 失败", str(e), parent=dlg)
+            return
+        edit_w.delete("1.0", tk.END)
+        edit_w.insert("1.0", (out or "").strip())
+
+    def on_ok() -> None:
+        text = edit_w.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showwarning("审阅", "定稿正文不能为空。", parent=dlg)
+            return
+        result[0] = text
+        dlg.destroy()
+
+    def on_cancel() -> None:
+        dlg.destroy()
+
+    ttk.Button(btn_bar, text="还原原文", command=reset_from_original).pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(btn_bar, text="Remix(LLM)", command=do_remix).pack(side=tk.LEFT, padx=(0, 6))
+
+    btn_row2 = ttk.Frame(main)
+    btn_row2.pack(fill=tk.X, pady=(10, 0))
+    ttk.Button(btn_row2, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
+    ttk.Button(btn_row2, text="确定", command=on_ok).pack(side=tk.RIGHT)
+
+    dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+    dlg.update_idletasks()
+    w_m, h_m = 720, min(640, dlg.winfo_reqheight() + 20)
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    dlg.geometry(f"{w_m}x{h_m}+{(sw - w_m) // 2}+{(sh - h_m) // 2}")
+    dlg.wait_window()
+    return result[0]
+
+
 def post_nested_clipboard_menu(root, choices_dict, speaker, content, event, max_label_len=72):
     if not choices_dict:
         return "break"
@@ -149,7 +255,9 @@ def post_nested_clipboard_menu(root, choices_dict, speaker, content, event, max_
         try:
             root.clipboard_clear()
             if content:
-                text = text.replace("$$$", content)
+                if "$$$" in text:
+                    text = text.replace("$$$", content)
+
                 if speaker:
                     text = text.replace("###", speaker)
                 else:

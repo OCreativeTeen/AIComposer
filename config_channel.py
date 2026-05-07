@@ -171,12 +171,12 @@ STEP 2 — Create the Reflective Output
 
 Based on the synthesized insight, produce a gentle counseling reflection consisting of:
 
-*** 4-6 continuous Scenes:
+*** 2-4 (prefer 3) continuous Scenes:
     ** Each scene focus on one message, and include fields like:
         1) title (title of this scene; but the title of 1st scene is the title of whole story)
         2) voiceover (Heart message -- to express the psychological life guidance. Reflective tone)
         3) story (story scene description - All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis. Please avoid technical psychology terminology)
-        4) 9-10 seconds concise caption speaking (speaking in this scene -- concise 1st person speaking to express the heart message)
+        4) speaking (speaking in this scene -- 1st person speaking to express the heart message)
         5) Actor (actor in this story scene, format in -- gender/age/race | mood | actions) 
             - gender: man,woman
             - age: young,mature,teen
@@ -196,7 +196,7 @@ OUTPUT FORMAT (STRICT JSON)
     "english": [
         {{
             "title": "A short title capturing the psychological theme. In English.",
-            "voiceover": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
             "story": "A story scene in English.  All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis",
             "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English).",
             "actor": "gender/age/race | mood | actions"

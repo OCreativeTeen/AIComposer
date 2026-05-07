@@ -474,15 +474,15 @@ class ProjectSelectionDialog:
         form_parent = getattr(self, '_form_parent', self.dialog)
         new_project_dialog = tk.Toplevel(form_parent)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("800x400")
+        new_project_dialog.geometry("800x500")
         new_project_dialog.transient(form_parent)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
         x = (new_project_dialog.winfo_screenwidth() - 800) // 2
-        y = (new_project_dialog.winfo_screenheight() - 400) // 2
-        new_project_dialog.geometry(f"800x400+{x}+{y}")
+        y = (new_project_dialog.winfo_screenheight() - 500) // 2
+        new_project_dialog.geometry(f"800x500+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)

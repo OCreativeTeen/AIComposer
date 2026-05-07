@@ -29,6 +29,8 @@ import os
 from utility.file_util import (
     get_file_path,
     is_video_file,
+    is_image_file,
+    is_audio_file,
     check_folder_files,
     safe_copy_overwrite,
     make_safe_file_name,
@@ -49,7 +51,7 @@ import json
 import copy
 import shutil
 from pathlib import Path
-from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons, post_nested_clipboard_menu
+from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons, post_nested_clipboard_menu, ask_speaking_concise_review_dialog
 from gui.downloader import ask_publish_schedule_dialog
 
 
@@ -101,12 +103,14 @@ VIDEO_ACTION_CHOICES = {
         "Ending: Narrator主持'心源谈天'节目 (no talk+background music)"
     ],
     "讲话人物": [
-        "Narrator (center - ###) speaking, other listening : $$$",
-        "Narrator (left - ###) speaking, other listening : $$$",
-        "Narrator (right - ###) speaking, others acting only : $$$",
         "No talk, but show : $$$",
+        "actor (###) speaking about the words content of the image",
+        "Narrator (###) speaking about the words content of the image",
+
         "actor (###) speaking as 1st person : $$$",
-        "actor (###) speaking about the words content of the image"
+        "Narrator (###) speaking, other listening : $$$",
+        "Narrator (left - ###) speaking, other listening : $$$",
+        "Narrator (right - ###) speaking, others acting only : $$$"
     ] 
 }
 
@@ -610,8 +614,22 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def choose_from_download(self, track, media_post, audio_choice):
+    def choose_from_download(self, track, media_post):
         media_path = None
+
+        audio_choice = None
+        if media_post == ".mp4":
+            choices = [
+                ("keep", "保留新视频音轨（提取并写入场景 *_audio）"),
+                ("replace", "保留场景原音轨（画面用新视频）"),
+                ("mix", "混音: 新轨音量 1.0"),
+                ("mix1", "混音: 新轨音量 1.5"),
+                ("mix2", "混音: 新轨音量 2.0"),
+            ]
+            picked = askchoice("下载视频替换：音频如何处理？", choices, self.root)
+            if picked is None:
+                return
+            _, audio_choice = picked
 
         for folder in ["L:"]:
             if check_folder_files(folder, media_post):
@@ -1441,20 +1459,18 @@ class WorkflowGUI:
         visual_button_frame.pack(fill=tk.X, pady=(0, 5))
 
 
-        ttk.Button(visual_button_frame, text="生场音频", width=10, command=self.choose_clip_audio_scope).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(visual_button_frame, text="音频转译", width=10, command=self.transcribe_clip_audio).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(visual_button_frame, text="拷贝场景", width=10, command=lambda: self.copy_clip_to_download(False)).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(visual_button_frame, text="生场音频", width=8, command=self.choose_clip_audio_scope).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(visual_button_frame, text="音频转译", width=8, command=self.transcribe_clip_audio).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(visual_button_frame, text="拷贝场景", width=8, command=lambda: self.copy_clip_to_download(False)).pack(side=tk.LEFT, padx=(0, 3))
 
-        ttk.Button(visual_button_frame, text="生场视频", width=10, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(visual_button_frame, text="生场视频", width=8, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT, padx=(0, 3))
 
-        ttk.Button(visual_button_frame, text="SC_KP", width=6, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="SC_RP", width=6, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="CLIP", width=5, command=lambda: self.choose_from_download("clip", ".mp4")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="NARR", width=5, command=lambda: self.choose_from_download("narration", ".mp4")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="CL_KP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="CL_RP", width=6, command=lambda: self.choose_from_download("clip", ".mp4", "replace")).pack(side=tk.LEFT, padx=1)
-
-        ttk.Button(visual_button_frame, text="SECO", width=6, command=lambda: self.choose_from_download("narration", ".mp4", "keep")).pack(side=tk.LEFT, padx=1)
-        ttk.Button(visual_button_frame, text="ZERO", width=6, command=lambda: self.choose_from_channel_media("zero", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="ZERO", width=5, command=lambda: self.choose_from_channel_media("zero", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SCEN", width=5, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="SC_R", width=5, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
 
         #ttk.Button(visual_button_frame, text="生解说", width=7, command=lambda: self.regenerate_video("narration", True)).pack(side=tk.LEFT, padx=(1, 10))
         # ttk.Button(visual_button_frame, text="SEC声", width=6, command=lambda: self.choose_audio_source_or_tts("narration")).pack(side=tk.LEFT, padx=1)
@@ -2293,6 +2309,28 @@ class WorkflowGUI:
         if messagebox.askyesno("提示", "是否添加水印？", parent=self.root):
             self.add_watermark()
 
+        picked = askchoice(
+            "最终视频生成方式",
+            [
+                ("transitions", "带转场（extension>0 时延长片尾后再拼接）"),
+                ("transitions_zero", "带转场，成片音轨替换为 zero_audio"),
+                ("plain", "无转场（简单拼接，保留各场景合成音轨）"),
+                ("plain_zero", "无转场，成片音轨替换为 zero_audio"),
+            ],
+            self.root,
+        )
+        if picked is None:
+            return
+        _, mode = picked
+        if mode == "transitions":
+            with_transitions, replace_final_audio_with_zero = True, False
+        elif mode == "transitions_zero":
+            with_transitions, replace_final_audio_with_zero = True, True
+        elif mode == "plain":
+            with_transitions, replace_final_audio_with_zero = False, False
+        else:
+            with_transitions, replace_final_audio_with_zero = False, True
+
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -2304,7 +2342,7 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video()
+                self.workflow.finalize_video(with_transitions, replace_final_audio_with_zero)
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -3498,10 +3536,29 @@ class WorkflowGUI:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
-        #concise = self.llm_api_local.generate_text(config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, scene[text_field])
-        #concise = config.chinese_convert(concise, "zh")
-        concise = config.chinese_convert(scene[text_field], "zh")
-        return post_nested_clipboard_menu(self.root, VIDEO_ACTION_CHOICES, scene[speaker_field], concise, event)
+        original = config.chinese_convert((scene.get(text_field) or ""), "zh")
+
+        def _remix(t: str) -> str:
+            out = self.llm_api_local.generate_text(
+                config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, (t or "").strip()
+            )
+            return config.chinese_convert(out, "zh")
+
+        confirmed = ask_speaking_concise_review_dialog(
+            self.root,
+            original,
+            remix_fn=_remix,
+            title="审阅文案 — 视频动作菜单",
+        )
+        if confirmed is None:
+            return "break"
+        return post_nested_clipboard_menu(
+            self.root,
+            VIDEO_ACTION_CHOICES,
+            scene[speaker_field],
+            confirmed,
+            event,
+        )
 
 
     def on_scene_voiceover_image_action_menu(self, event=None):
@@ -3509,7 +3566,30 @@ class WorkflowGUI:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             return
-        return post_nested_clipboard_menu(self.root, IMAGE_ACTION_CHOICES, scene["actor"], scene["speaking"], event)
+
+        original = config.chinese_convert((scene.get("speaking") or ""), "zh")
+
+        def _remix(t: str) -> str:
+            out = self.llm_api_local.generate_text(
+                config_prompt.SPEAKING_CONCISE_SYSTEM_PROMPT, (t or "").strip()
+            )
+            return config.chinese_convert(out, "zh")
+
+        confirmed = ask_speaking_concise_review_dialog(
+            self.root,
+            original,
+            remix_fn=_remix,
+            title="审阅文案 — 图像动作菜单",
+        )
+        if confirmed is None:
+            return "break"
+        return post_nested_clipboard_menu(
+            self.root,
+            IMAGE_ACTION_CHOICES,
+            scene["actor"],
+            confirmed,
+            event,
+        )
 
 
     def copy_story_scene(self):
@@ -4588,6 +4668,250 @@ class WorkflowGUI:
         r = w / h
         return abs(r - 16.0 / 9.0) < 0.08
 
+    _MOSAIC_PREVIEW_MAX_W = 720
+    _MOSAIC_SHIFT_STEP = 8
+    _MOSAIC_SHIFT_STEP_FINE = 1
+
+    def _review_mosaic_layer_crop_dialog(
+        self,
+        image_path: str,
+        index_1based: int,
+        total: int,
+        stage_w: int,
+        stage_h: int,
+        bottom_trim_px: int,
+    ) -> tuple[int, int] | None:
+        """返回 ``(图源偏移, 条带视窗偏移)``；取消 ``None``。16∶9 图源通常仅条带视窗可调（1152→1080 等）。"""
+        fp = self.workflow.ffmpeg_processor
+        try:
+            min_src, max_src = fp.mosaic_crop_shift_limits(image_path, stage_w, stage_h)
+        except OSError as e:
+            messagebox.showerror("拼图预览", f"无法读取图片：{e}", parent=self.root)
+            return None
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("拼图预览", f"{type(e).__name__}: {e}", parent=self.root)
+            return None
+
+        try:
+            out_w = int(fp.width)
+        except (TypeError, ValueError):
+            out_w = 1080
+
+        min_vp, max_vp = fp.mosaic_viewport_shift_limits(stage_w, out_w)
+        src_can_pan = min_src < max_src
+        vp_can_pan = min_vp < max_vp
+
+        state = {"src": 0, "vp": 0}
+        result: dict[str, tuple[int, int] | None] = {"v": None}
+        photo_holder = {"ph": None}
+
+        def clamp_src(v: int) -> int:
+            return max(min_src, min(max_src, int(v)))
+
+        def clamp_vp(v: int) -> int:
+            return max(min_vp, min(max_vp, int(v)))
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"拼图裁切 — 第 {index_1based}/{total} 张")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        main = ttk.Frame(dlg, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        hint_extra = ""
+        if src_can_pan:
+            hint_extra = "图源有余量时：Ctrl+←/→ 或「图源左/右」。"
+        if not vp_can_pan and not src_can_pan:
+            hint_extra = "（本张无可平移余量。）"
+
+        ttk.Label(
+            main,
+            text=(
+                f"{os.path.basename(image_path)}\n"
+                f"条带 {stage_w}×{stage_h}（底裁 {bottom_trim_px}px）→ 成片宽 {out_w}px。\n"
+                f"← / →：在条带内移动 {out_w}px 视窗（Shift=1px）。{hint_extra}"
+            ),
+            justify=tk.CENTER,
+            wraplength=680,
+        ).pack(pady=(0, 6))
+
+        status_var = tk.StringVar()
+
+        def update_status() -> None:
+            parts = [f"条带视窗: {state['vp']} px  （[{min_vp}, {max_vp}]）"]
+            if src_can_pan:
+                parts.append(f"图源: {state['src']} px  （[{min_src}, {max_src}]）")
+            status_var.set("    ".join(parts))
+
+        preview_host = tk.Frame(
+            main,
+            takefocus=True,
+            highlightthickness=2,
+            highlightbackground="#666",
+            highlightcolor="#333",
+            bd=0,
+        )
+        preview_host.pack(pady=4)
+
+        img_label = ttk.Label(preview_host)
+        img_label.pack(padx=4, pady=4)
+
+        def _focus_preview(_event=None) -> None:
+            try:
+                preview_host.focus_set()
+            except tk.TclError:
+                pass
+
+        img_label.bind("<Button-1>", _focus_preview)
+        preview_host.bind("<Button-1>", _focus_preview)
+
+        ttk.Label(main, textvariable=status_var, font=("Arial", 10)).pack(pady=(4, 4))
+
+        nudge_row = ttk.Frame(main)
+        nudge_row.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(nudge_row, text="视窗：" if vp_can_pan else ("图源：" if src_can_pan else "平移：")).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+
+        def refresh_preview() -> None:
+            try:
+                tile = fp.prep_mosaic_source_layer(
+                    image_path,
+                    stage_w,
+                    stage_h,
+                    bottom_trim_px,
+                    shift_x=state["src"],
+                )
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("预览", str(e), parent=dlg)
+                return
+            tw, th = tile.size
+            if tw > out_w:
+                x0 = (tw - out_w) // 2 + state["vp"]
+                x0 = max(0, min(x0, tw - out_w))
+                view = tile.crop((x0, 0, x0 + out_w, th))
+            else:
+                view = tile
+            vw, vh = view.size
+            max_w = WorkflowGUI._MOSAIC_PREVIEW_MAX_W
+            if vw > max_w:
+                scale = max_w / vw
+                disp = view.resize(
+                    (max_w, max(1, int(round(vh * scale)))),
+                    Image.Resampling.LANCZOS,
+                )
+            else:
+                disp = view
+            photo_holder["ph"] = ImageTk.PhotoImage(disp)
+            img_label.configure(image=photo_holder["ph"])
+            update_status()
+
+        def _step(event) -> int:
+            step = WorkflowGUI._MOSAIC_SHIFT_STEP
+            if event is not None and (event.state & 0x0001):
+                step = WorkflowGUI._MOSAIC_SHIFT_STEP_FINE
+            return step
+
+        def nudge_viewport(delta: int, event=None) -> str | None:
+            if not vp_can_pan:
+                return "break"
+            state["vp"] = clamp_vp(state["vp"] + (delta * _step(event)))
+            refresh_preview()
+            return "break"
+
+        def nudge_source(delta: int, event=None) -> str | None:
+            if not src_can_pan:
+                return "break"
+            state["src"] = clamp_src(state["src"] + (delta * _step(event)))
+            refresh_preview()
+            return "break"
+
+        def on_arrow_left(e) -> str | None:
+            ctrl = (e.state & 0x0004) != 0
+            if ctrl and src_can_pan:
+                return nudge_source(-1, e)
+            if vp_can_pan:
+                return nudge_viewport(-1, e)
+            if src_can_pan:
+                return nudge_source(-1, e)
+            return "break"
+
+        def on_arrow_right(e) -> str | None:
+            ctrl = (e.state & 0x0004) != 0
+            if ctrl and src_can_pan:
+                return nudge_source(1, e)
+            if vp_can_pan:
+                return nudge_viewport(1, e)
+            if src_can_pan:
+                return nudge_source(1, e)
+            return "break"
+
+        def on_reset() -> None:
+            state["src"] = 0
+            state["vp"] = 0
+            refresh_preview()
+
+        def on_ok() -> None:
+            result["v"] = (state["src"], state["vp"])
+            dlg.destroy()
+
+        def on_cancel() -> None:
+            dlg.destroy()
+
+        if vp_can_pan:
+            ttk.Button(nudge_row, text="← 左", width=6, command=lambda: nudge_viewport(-1)).pack(
+                side=tk.LEFT, padx=2
+            )
+            ttk.Button(nudge_row, text="右 →", width=6, command=lambda: nudge_viewport(1)).pack(
+                side=tk.LEFT, padx=2
+            )
+        elif src_can_pan:
+            ttk.Button(nudge_row, text="← 左", width=6, command=lambda: nudge_source(-1)).pack(
+                side=tk.LEFT, padx=2
+            )
+            ttk.Button(nudge_row, text="右 →", width=6, command=lambda: nudge_source(1)).pack(
+                side=tk.LEFT, padx=2
+            )
+
+        if vp_can_pan and src_can_pan:
+            src_row = ttk.Frame(main)
+            src_row.pack(fill=tk.X, pady=(0, 4))
+            ttk.Label(src_row, text="图源：").pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Button(src_row, text="图源←", width=8, command=lambda: nudge_source(-1)).pack(
+                side=tk.LEFT, padx=2
+            )
+            ttk.Button(src_row, text="图源→", width=8, command=lambda: nudge_source(1)).pack(
+                side=tk.LEFT, padx=2
+            )
+
+        btn_f = ttk.Frame(main)
+        btn_f.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_f, text="复原（双归零）", command=on_reset).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_f, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(btn_f, text="确定", command=on_ok).pack(side=tk.RIGHT)
+
+        def _bind_arrows_recursive(wid: tk.Misc) -> None:
+            wid.bind("<Left>", on_arrow_left)
+            wid.bind("<Right>", on_arrow_right)
+            for ch in wid.winfo_children():
+                _bind_arrows_recursive(ch)
+
+        _bind_arrows_recursive(dlg)
+
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        refresh_preview()
+        dlg.update_idletasks()
+        dlg.geometry(
+            "+{}+{}".format(
+                (dlg.winfo_screenwidth() - dlg.winfo_reqwidth()) // 2,
+                (dlg.winfo_screenheight() - dlg.winfo_reqheight()) // 2,
+            )
+        )
+        dlg.after_idle(_focus_preview)
+        dlg.wait_window()
+        return result["v"]
 
     def on_image_drop(self, event, image_type):
         """处理图片拖放事件
@@ -4598,8 +4922,9 @@ class WorkflowGUI:
         
         竖屏项目 **1080×1920**：一次拖入 **三张** 横向 ≈16∶9 图 → 1152×648、每图裁底 20px，
         自上而下顶对齐铺满宽度，底部留白叠水印（``compose_triple_landscape_vertical_mosaic_webp``）。
+        **三图 / 双图拼图前** 会对每张图依次弹出裁切审阅（←/→ 平移水平视窗，复原恢复居中）。
 
-        **两张** → 仍为双图居中拼接（1440×810、裁底 25px）。
+        **两张** → 仍为双图居中拼接（1440×810、裁底 25px）；同样先逐张审阅。
         否则单图 ``resize_image_smart``；多张非拼图时仅用首张并提示。
         """
         IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
@@ -4692,13 +5017,42 @@ class WorkflowGUI:
 
         try:
             if mosaic_mode == "triple":
+                sw, sh, btrim = 1152, 648, 20
+                shifts_src: list[int] = []
+                shifts_vp: list[int] = []
+                for i in range(3):
+                    pair = self._review_mosaic_layer_crop_dialog(
+                        img_paths[i], i + 1, 3, sw, sh, btrim
+                    )
+                    if pair is None:
+                        return
+                    shifts_src.append(pair[0])
+                    shifts_vp.append(pair[1])
                 file_path = fp.compose_triple_landscape_vertical_mosaic_webp(
-                    img_paths[0], img_paths[1], img_paths[2]
+                    img_paths[0],
+                    img_paths[1],
+                    img_paths[2],
+                    horizontal_crop_shifts=shifts_src,
+                    viewport_crop_shifts=shifts_vp,
                 )
                 file_path = self._apply_watermark_to_flat_image_webp(file_path)
             elif mosaic_mode == "dual":
+                sw, sh, btrim = 1440, 810, 25
+                shifts_src = []
+                shifts_vp = []
+                for i in range(2):
+                    pair = self._review_mosaic_layer_crop_dialog(
+                        img_paths[i], i + 1, 2, sw, sh, btrim
+                    )
+                    if pair is None:
+                        return
+                    shifts_src.append(pair[0])
+                    shifts_vp.append(pair[1])
                 file_path = fp.compose_dual_landscape_vertical_mosaic_webp(
-                    img_paths[0], img_paths[1]
+                    img_paths[0],
+                    img_paths[1],
+                    horizontal_crop_shifts=shifts_src,
+                    viewport_crop_shifts=shifts_vp,
                 )
                 file_path = self._apply_watermark_to_flat_image_webp(file_path)
             else:
@@ -6295,21 +6649,278 @@ class WorkflowGUI:
 
     def on_media_drop(self, event):
         self.video_canvas.delete("drag_border")
-        
-        files = self.root.tk.splitlist(event.data)
-        if not files:
+
+        try:
+            raw_paths = self.root.tk.splitlist(event.data)
+        except tk.TclError:
+            raw_paths = [event.data]
+
+        paths = []
+        seen = set()
+        for rp in raw_paths:
+            ps = os.path.expanduser(str(rp).strip().strip('{}"'))
+            ps = ps.strip('"')
+            if ps and ps not in seen:
+                seen.add(ps)
+                paths.append(ps)
+
+        if not paths:
             return
-        dropped_file = files[0]
-        if not os.path.exists(dropped_file) or not is_video_file(dropped_file):
+
+        if len(paths) > 1:
+            for p in paths:
+                if not os.path.isfile(p):
+                    messagebox.showwarning("拖放", f"无效路径：\n{p}", parent=self.root)
+                    return
+                if not is_image_file(p):
+                    messagebox.showwarning(
+                        "拖放",
+                        "多文件拖放时仅支持全部为图片（PNG、JPG、WEBP 等），\n请勿混入视频或其他类型。",
+                        parent=self.root,
+                    )
+                    return
+            self._on_media_drop_multi_clip_images(paths)
             return
-        
+
+        dropped_file = paths[0]
+        if not os.path.exists(dropped_file):
+            return
+
+        if is_image_file(dropped_file):
+            self._on_media_drop_single_clip_image(dropped_file)
+            return
+
+        can_equal_split = (
+            (is_audio_file(dropped_file) and dropped_file.lower().endswith(".wav"))
+            or (is_audio_file(dropped_file) and dropped_file.lower().endswith(".mp3"))
+        )
+
+        if can_equal_split:
+            lower = dropped_file.lower()
+            if lower.endswith(".mp3"):
+                wav_path = self.workflow.ffmpeg_audio_processor.to_wav(dropped_file)
+            else:
+                wav_path = dropped_file
+
+            picked = askchoice(
+                "拖入音频：分配到本故事 CLIP 或 ZERO",
+                [
+                    ("equal_clip", "均分：按时长均分，依次写入各场景 clip_audio"),
+                    (
+                        "ratio_clip",
+                        "按比例：按各场景现有 clip 音/视频时长比例切分 clip_audio",
+                    ),
+                    (
+                        "zero_bg",
+                        "ZERO 背景：同一音轨写入各场景 zero_audio，并 mux 进 zero 视频",
+                    ),
+                ],
+                self.root,
+            )
+            if picked is None:
+                return
+            _, mode = picked
+
+            if mode == "equal_clip":
+                self._media_drop_apply_equal_clip_audio_split(wav_path)
+            elif mode == "ratio_clip":
+                self._media_drop_apply_ratio_clip_audio_split(wav_path)
+            elif mode == "zero_bg":
+                # 作为 ZERO 背景音：同一 WAV（MP3 先转 WAV）写入本故事各 zero_audio，并 mux 进各场景 zero 视频
+                scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+                story_scenes = self.workflow.scenes_in_story(scene_anchor) if scene_anchor else []
+                zero_video_path = get_file_path(scene_anchor, "zero") if scene_anchor else None
+                if zero_video_path:
+                    new_zero = self.workflow.ffmpeg_processor.add_audio_to_video(zero_video_path, wav_path)
+                    for scene in story_scenes:
+                        refresh_scene_media(scene, "zero_audio", ".wav", wav_path, True)
+                        refresh_scene_media(scene, "zero", ".mp4", new_zero, True)
+
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                print(f"✅ 已将背景音写入本故事各场景的 zero / zero_audio（{len(story_scenes)} 个场景）")
+
+            return
+
+
+        if not is_video_file(dropped_file):
+            return
+
         from gui.media_type_selector import MediaTypeSelector
-        selector = MediaTypeSelector(self.root, dropped_file, self.workflow.ffmpeg_processor.has_audio_stream(dropped_file), self.workflow.get_scene_by_index(self.current_scene_index))
+        selector = MediaTypeSelector(
+            self.root,
+            dropped_file,
+            self.workflow.ffmpeg_processor.has_audio_stream(dropped_file),
+            self.workflow.get_scene_by_index(self.current_scene_index),
+        )
         replace_media_audio, media_type = selector.show()
         if not media_type:
-            return  # 用户取消
+            return
         self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
         self.refresh_gui_scenes()
+
+    def _on_media_drop_single_clip_image(self, image_path: str) -> None:
+        """视频画布拖入单张图：仅更新当前场景 clip_image。"""
+        try:
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not scene:
+                return
+            fp = self.workflow.ffmpeg_processor
+            file_path = fp.resize_image_smart(image_path)
+            refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            self.display_image_on_canvas_for_track("clip_image")
+            print(f"✅ 已更新 clip_image（拖放）: {os.path.basename(file_path)}")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("错误", f"更新 clip_image 失败: {e}", parent=self.root)
+
+    def _on_media_drop_multi_clip_images(self, image_paths: list[str]) -> None:
+        """视频画布拖入多张图：第一张更新当前场景，其余按顺序插入克隆场景并各设 clip_image。"""
+        try:
+            scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not scene0:
+                return
+            k = self.current_scene_index
+            template = scene0.copy()
+            fp = self.workflow.ffmpeg_processor
+
+            file_path0 = fp.resize_image_smart(image_paths[0])
+            refresh_scene_media(scene0, "clip_image", ".webp", file_path0, True)
+
+            for i in range(1, len(image_paths)):
+                dup = template.copy()
+                dup["id"] = self.workflow.max_id(dup) + 1
+                self.workflow.scenes.insert(k + i, dup)
+                file_i = fp.resize_image_smart(image_paths[i])
+                refresh_scene_media(dup, "clip_image", ".webp", file_i, True)
+
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            self.display_image_on_canvas_for_track("clip_image")
+            print(
+                f"✅ 拖入 {len(image_paths)} 张图：当前场景 + "
+                f"{len(image_paths) - 1} 个克隆场景已写入 clip_image"
+            )
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("错误", f"多图拖放失败: {e}", parent=self.root)
+
+
+    def _media_drop_write_clip_audio_slices(
+        self, wav_path: str, story_scenes: list, slice_lengths: list[float], *, log_hint: str = ""
+    ) -> bool:
+        """按 slice_lengths 从 wav_path 顺序切分并写入各场景 clip_audio，并 mux 回 clip 视频。"""
+        fa = self.workflow.ffmpeg_audio_processor
+        n = len(story_scenes)
+        if n == 0 or len(slice_lengths) != n:
+            messagebox.showerror("错误", "分片数量与场景不一致", parent=self.root)
+            return False
+        try:
+            duration = float(fa.get_duration(wav_path) or 0.0)
+            if duration <= 0.1:
+                messagebox.showerror("错误", f"音频时长无效（{duration}s）", parent=self.root)
+                return False
+
+            s = float(sum(slice_lengths))
+            if s <= 0:
+                messagebox.showerror("错误", "分片时长无效", parent=self.root)
+                return False
+            if abs(s - duration) > 0.02:
+                slice_lengths = [float(L) * duration / s for L in slice_lengths]
+
+            offset = 0.0
+            for i, scene in enumerate(story_scenes):
+                out_len = float(slice_lengths[i])
+                if out_len <= 0:
+                    messagebox.showerror("错误", f"第 {i + 1}/{n} 段时长无效", parent=self.root)
+                    return False
+                clip_wav = fa.audio_cut_fade(wav_path, offset, out_len, fade_in=0, fade_out=0)
+                if not clip_wav or not os.path.isfile(clip_wav):
+                    messagebox.showerror("错误", f"切分第 {i + 1}/{n} 段失败", parent=self.root)
+                    return False
+                refresh_scene_media(scene, "clip_audio", ".wav", clip_wav, True)
+                clip_video = get_file_path(scene, "clip")
+                if clip_video:
+                    clip_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, clip_wav, True)
+                    refresh_scene_media(scene, "clip", ".mp4", clip_video, True)
+                offset += out_len
+
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            extra = f" {log_hint}" if log_hint else ""
+            print(f"✅ 已写入本故事 {n} 个场景 clip_audio（总长 {duration:.2f}s）{extra}".strip())
+            return True
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("错误", f"切分 clip_audio 失败: {e}", parent=self.root)
+            return False
+
+    def _media_drop_apply_equal_clip_audio_split(self, wav_path: str) -> bool:
+        scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene_anchor:
+            messagebox.showwarning("提示", "无当前场景", parent=self.root)
+            return False
+        story_scenes = self.workflow.scenes_in_story(scene_anchor)
+        n = len(story_scenes)
+        if n == 0:
+            messagebox.showwarning("提示", "本故事无场景", parent=self.root)
+            return False
+
+        fa = self.workflow.ffmpeg_audio_processor
+        duration = float(fa.get_duration(wav_path) or 0.0)
+        if duration <= 0.1:
+            messagebox.showerror("错误", f"音频时长无效（{duration}s）", parent=self.root)
+            return False
+
+        seg = duration / float(n)
+        lengths = [seg] * (n - 1)
+        lengths.append(max(0.01, duration - seg * (n - 1)))
+        return self._media_drop_write_clip_audio_slices(
+            wav_path, story_scenes, lengths, log_hint=f"均分，每段约 {seg:.2f}s"
+        )
+
+    def _media_drop_apply_ratio_clip_audio_split(self, wav_path: str) -> bool:
+        """按各场景现有 clip 音/视频时长比例，将拖入音频切成多段写入 clip_audio。"""
+        scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene_anchor:
+            messagebox.showwarning("提示", "无当前场景", parent=self.root)
+            return False
+        story_scenes = self.workflow.scenes_in_story(scene_anchor)
+        n = len(story_scenes)
+        if n == 0:
+            messagebox.showwarning("提示", "本故事无场景", parent=self.root)
+            return False
+
+        raw0 = [float(self.workflow.find_clip_duration(s) or 0.0) for s in story_scenes]
+        tw0 = sum(raw0)
+        if tw0 < 1e-6:
+            messagebox.showwarning(
+                "提示",
+                "各场景现有 clip 音/视频时长均为 0，无法按比例切分，已改为均分。",
+                parent=self.root,
+            )
+            return self._media_drop_apply_equal_clip_audio_split(wav_path)
+
+        raw = [max(r, 1e-6) for r in raw0]
+        tw = sum(raw)
+
+        fa = self.workflow.ffmpeg_audio_processor
+        duration = float(fa.get_duration(wav_path) or 0.0)
+        if duration <= 0.1:
+            messagebox.showerror("错误", f"音频时长无效（{duration}s）", parent=self.root)
+            return False
+
+        lengths: list[float] = []
+        acc = 0.0
+        for i in range(n - 1):
+            L = duration * (raw[i] / tw)
+            lengths.append(L)
+            acc += L
+        lengths.append(max(0.01, duration - acc))
+
+        pct = ", ".join(f"{100.0 * raw0[i] / tw0:.1f}%" for i in range(n))
+        return self._media_drop_write_clip_audio_slices(
+            wav_path, story_scenes, lengths, log_hint=f"比例权重 [{pct}]（依各场景现有 clip 时长）"
+        )
 
 
     def on_video_canvas_configure(self, event):

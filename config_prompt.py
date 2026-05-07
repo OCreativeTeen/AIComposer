@@ -1,11 +1,14 @@
 import config_prompt
 
-SPEAKING_COPY_NSOS_PREFIX = "no speak (only show the content)"
 SPEAKING_CONCISE_SYSTEM_PROMPT = (
-    "You are a text condenser. From the user's ORIGINAL content below, produce ONLY a concise version: "
-    "one sentence or at most two very short clauses. Preserve the one key point in original language. "
-    "Keep words and punctuation (semicolons, periods, commas). Do not wrap the output in quotes. "
-    "Do not add any preamble, explanation, label, or markdown."
+    "You are a text condenser. From the user's ORIGINAL content below, rewrite it in a very casual, spoken style. Keep the original language (Chinese) !!!"
+    "Keep only the main point. Use one sentence or two short sentences if needed. "
+    "Keep it simple, clear, and conversational, like everyday chatting. "
+    "Avoid formal or written tone. Use common, easy words. "
+    "If the idea feels long, split it into two short sentences. "
+    "Keep original language. Keep basic punctuation (periods, commas). "
+    "Do not add anything else."
+    "Ouput with the original language (Chinese) !!!"
 )
 
 
