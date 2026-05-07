@@ -1034,7 +1034,13 @@ class MagicWorkflow:
         video_title = video_title.strip().replace(" ", "_").replace("\n", "_")
         final_video_path = f"{self.publish_path}/{video_title}_final.mp4"
         # get "summary" from project_manager.PROJECT_CONFIG
-        summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])[0].get("voiceover","")
+        summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])
+        if isinstance(summary, dict):
+            summary = summary.get("voiceover", "")
+        elif isinstance(summary, list):
+            summary = summary[0].get("voiceover", "")
+        else:
+            summary = ""
         summary = config.chinese_convert(summary, self.language)
 
         # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
@@ -1185,14 +1191,25 @@ class MagicWorkflow:
 
 
         if with_transitions:
-            video_temp = self.ffmpeg_processor.concat_videos_simple_transitions(video_segments, keep_audio_if_has=True)
+            video_temp = self.ffmpeg_processor.concat_videos_with_transitions(video_segments, keep_audio_if_has=True)
         else:
             video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
         if replace_final_audio_with_zero:
-            current_zero = get_file_path(self.scenes[0], "zero_audio")
-            if current_zero:
-                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, current_zero, True)
+            full_zero = get_file_path(self.scenes[0], "zero_audio")
+            if full_zero:
+                t_cursor = 0.0
+                for i, scene in enumerate(self.scenes):
+                    seg_path = video_segments[i]["path"]
+                    seg_dur = self.ffmpeg_processor.get_duration(seg_path)
+                    if i > 0:
+                        zero = get_file_path(scene, "zero_audio")
+                        zero_dur = self.ffmpeg_audio_processor.get_duration(zero)
+                        if zero and zero_dur <= seg_dur+0.05:
+                            full_zero = self.ffmpeg_audio_processor.audio_mix( full_zero, 1.0, t_cursor, zero, 1.0 )
+                    t_cursor += seg_dur
+
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_zero, True)
 
         title = self.title.strip().replace(' ', '_').replace('\n', '_')
         title = config.chinese_convert(title, self.language)

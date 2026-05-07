@@ -9,6 +9,8 @@ import tkinter.scrolledtext as scrolledtext
 import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import os
+import sys
+import subprocess
 import json
 import threading
 import time
@@ -396,7 +398,8 @@ class WorkflowGUI:
 
         ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT) 
         ttk.Button(row1_frame, text="Video发布", command=lambda:self.publish_video()).pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
+        #ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="Video播放", command=lambda:self.play_finalize_video()).pack(side=tk.LEFT)
         # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -533,6 +536,139 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
+    def _build_volume_adjusted_mp4_wav_pair(self, src_mp4: str, volume: float):
+        """预览对话框确定：按试听增益产出临时 mp4 + wav（供 video_simple_replacement）。"""
+        wf = self.workflow
+        if not wf:
+            raise RuntimeError("工作流未就绪")
+        ap = wf.ffmpeg_audio_processor
+        fp = wf.ffmpeg_processor
+        raw = ap.extract_audio_from_video(src_mp4)
+        if raw:
+            raw_len = ap.get_duration(raw)
+            if raw_len is None:
+                raw_len = fp.get_duration(src_mp4) or 0.0
+            wav_out = ap.audio_cut_fade(raw, 0, raw_len, 0, 0, volume=volume)
+        else:
+            dur = fp.get_duration(src_mp4) or 0.0
+            wav_out = ap.make_silence(dur) if dur > 0 else None
+        if not wav_out:
+            raise RuntimeError("无法生成增益后的临时 wav")
+        mp4_out = fp.add_audio_to_video(src_mp4, wav_out)
+        if not mp4_out or not os.path.isfile(mp4_out):
+            raise RuntimeError("无法生成增益后的临时 mp4")
+        return mp4_out, wav_out
+
+    def _video_simple_replacement_async(
+        self,
+        scene,
+        tmp_mp4,
+        tmp_wav,
+        handle_audio,
+        track,
+        *,
+        track_status: str,
+    ):
+        """在后台线程执行 ``video_simple_replacement``（内含 resize、混音等密集 FFmpeg），避免主界面假死。"""
+
+        def work():
+            err = None
+            try:
+                self.media_scanner.video_simple_replacement(
+                    scene, tmp_mp4, tmp_wav, handle_audio, track
+                )
+            except Exception as e:
+                err = str(e)
+
+            def done():
+                try:
+                    self.root.config(cursor="")
+                except tk.TclError:
+                    pass
+                if err:
+                    messagebox.showerror("错误", f"视频处理失败：{err}", parent=self.root)
+                else:
+                    scene[track + "_status"] = track_status
+                    self.refresh_gui_scenes()
+
+            try:
+                self.root.after(0, done)
+            except tk.TclError:
+                pass
+
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _clip_overlay_ffmpeg_batch_async(
+        self,
+        target_scenes,
+        overlay_path,
+        opts,
+        dialog_title,
+        failure_verb,
+        apply_overlay,
+    ):
+        """对多个场景的 clip 依次调用 FFmpeg 叠加顶标/水印；在后台线程执行，避免界面假死。"""
+
+        def work():
+            fp = self.workflow.ffmpeg_processor
+            failed = []
+            for scene in target_scenes:
+                oldv = get_file_path(scene, "clip")
+                if not oldv or not os.path.isfile(oldv):
+                    failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
+                    continue
+                oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
+                temp_out = config.get_temp_file(self.workflow.pid, "mp4")
+                moved = False
+                try:
+                    ok = apply_overlay(fp, oldv_ref, temp_out, overlay_path, opts)
+                    if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
+                        scene["clip"] = oldv_ref
+                        failed.append(f"场景 id={scene.get('id', '?')}: {failure_verb}")
+                        continue
+                    os.replace(temp_out, newv)
+                    moved = True
+                except Exception as e:
+                    scene["clip"] = oldv_ref
+                    failed.append(f"场景 id={scene.get('id', '?')}: {e}")
+                finally:
+                    if not moved and os.path.isfile(temp_out):
+                        try:
+                            os.remove(temp_out)
+                        except OSError:
+                            pass
+
+            def done():
+                try:
+                    self.root.config(cursor="")
+                except tk.TclError:
+                    pass
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                if failed:
+                    messagebox.showwarning(
+                        dialog_title,
+                        "部分场景未处理：\n" + "\n".join(failed[:12]),
+                        parent=self.root,
+                    )
+
+            try:
+                self.root.after(0, done)
+            except tk.TclError:
+                pass
+
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+        threading.Thread(target=work, daemon=True).start()
+
     def choose_from_channel_media(self, track, audio_action):
         try:
             channel = project_manager.PROJECT_CONFIG.get('channel')
@@ -593,18 +729,34 @@ class WorkflowGUI:
                 return (2, 0, f)
 
             matching = sorted(candidates, key=_channel_media_sort_key)
-            chosen = askchoice_media_preview(
+            mp4_track = track in ("clip", "narration", "zero")
+            pv_kw = {}
+            if mp4_track:
+                pv_kw = {
+                    "use_mp4_video_preview": True,
+                    "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+                }
+            pick = askchoice_media_preview(
                 "从频道媒体选择文件 ({})".format(scene_name),
-                matching, source_folder, self.root
+                matching, source_folder, self.root,
+                **pv_kw,
             )
-            if not chosen:
+            if not pick:
                 return
 
-            media_path = os.path.join(source_folder, chosen)
-            if track == "clip" or track == "narration" or track == "zero":
-                self.media_scanner.video_simple_replacement(current_scene, media_path, audio_action, track)
-                current_scene[track+"_status"] = "ENH2"
+            if mp4_track:
+                _fn, tmp_mp4, tmp_wav = pick
+                self._video_simple_replacement_async(
+                    current_scene,
+                    tmp_mp4,
+                    tmp_wav,
+                    audio_action,
+                    track,
+                    track_status="ENH2",
+                )
+                return
             else:
+                media_path = os.path.join(source_folder, pick)
                 webp_path = self.workflow.ffmpeg_processor.to_webp(media_path)
                 refresh_scene_media(current_scene, track, ".webp", webp_path, True)
 
@@ -616,20 +768,16 @@ class WorkflowGUI:
 
     def choose_from_download(self, track, media_post):
         media_path = None
+        temp_adj_mp4 = None
+        temp_adj_wav = None
 
-        audio_choice = None
-        if media_post == ".mp4":
-            choices = [
-                ("keep", "保留新视频音轨（提取并写入场景 *_audio）"),
-                ("replace", "保留场景原音轨（画面用新视频）"),
-                ("mix", "混音: 新轨音量 1.0"),
-                ("mix1", "混音: 新轨音量 1.5"),
-                ("mix2", "混音: 新轨音量 2.0"),
-            ]
-            picked = askchoice("下载视频替换：音频如何处理？", choices, self.root)
-            if picked is None:
-                return
-            _, audio_choice = picked
+        is_mp4 = media_post == ".mp4"
+        pv_kw = {}
+        if is_mp4:
+            pv_kw = {
+                "use_mp4_video_preview": True,
+                "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+            }
 
         for folder in ["L:"]:
             if check_folder_files(folder, media_post):
@@ -637,9 +785,18 @@ class WorkflowGUI:
                             if f.lower().endswith(media_post) and os.path.isfile(os.path.join(folder, f))]
                 if matching:
                     matching.sort()
-                    chosen = askchoice_media_preview("从下载盘选择视频", matching, folder, self.root)
-                    if chosen:
-                        media_path = os.path.join(folder, chosen)
+                    r = askchoice_media_preview(
+                        "从下载盘选择视频",
+                        matching, folder,
+                        self.root,
+                        **pv_kw,
+                    )
+                    if r:
+                        if is_mp4:
+                            _fn, temp_adj_mp4, temp_adj_wav = r
+                            media_path = os.path.join(folder, _fn)
+                        else:
+                            media_path = os.path.join(folder, r)
                     break
 
         download_path = config.get_project_path(self.workflow.pid) + "/download"
@@ -647,7 +804,11 @@ class WorkflowGUI:
             os.makedirs(download_path, exist_ok=True)
 
         if media_path:
-            rename = os.path.join(download_path, track+"_"+str(self.workflow.get_scene_by_index(self.current_scene_index)["id"]) + "_" + datetime.now().strftime("%H%M%S") + media_post)
+            rename = os.path.join(
+                download_path,
+                track + "_" + str(self.workflow.get_scene_by_index(self.current_scene_index)["id"])
+                + "_" + datetime.now().strftime("%H%M%S") + media_post,
+            )
             shutil.move(media_path, rename)
         else:
             matching = []
@@ -656,32 +817,78 @@ class WorkflowGUI:
                             if f.lower().endswith(media_post) and os.path.isfile(os.path.join(download_path, f))]
             if matching:
                 matching.sort()
-                chosen = askchoice_media_preview("从项目下载目录选择视频", matching, download_path, self.root)
-                if chosen:
-                    media_path = os.path.join(download_path, chosen)
+                r = askchoice_media_preview(
+                    "从项目下载目录选择视频",
+                    matching, download_path,
+                    self.root,
+                    **pv_kw,
+                )
+                if not r:
+                    return
+                if is_mp4:
+                    _fn, temp_adj_mp4, temp_adj_wav = r
+                    media_path = os.path.join(download_path, _fn)
                     rename = media_path
                 else:
-                    return
+                    media_path = os.path.join(download_path, r)
+                    rename = media_path
             else:
                 media_path = filedialog.askopenfilename(
                     title="从频道媒体文件夹选择文件",
                     initialdir=download_path,
                     filetypes=[("视频文件", "*"+media_post)]
                 )
-                if not media_path: 
+                if not media_path:
                     return
                 rename = media_path
+                if is_mp4:
+                    dn = os.path.dirname(media_path)
+                    bn = os.path.basename(media_path)
+                    r = askchoice_media_preview(
+                        "确认视频与试听音量",
+                        [bn],
+                        dn,
+                        self.root,
+                        **pv_kw,
+                    )
+                    if not r:
+                        return
+                    _, temp_adj_mp4, temp_adj_wav = r
 
-        if media_post == ".mp4":
-            scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            self.media_scanner.video_simple_replacement(scene, rename, audio_choice, track)
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+
+        if is_mp4:
+            if temp_adj_mp4 is None or temp_adj_wav is None:
+                messagebox.showerror("错误", "内部错误：未取得音量处理后的临时视频/音频。", parent=self.root)
+                return
+            picked = askchoice(
+                "下载视频替换：音频如何处理？",
+                [
+                    ("replace", "用场景现有音轨替换"),
+                    ("keep", "保留输入自带音频"),
+                    ("mix", "混音到ZERO"),
+                ],
+                self.root,
+            )
+            if picked is None:
+                return
+            _, audio_choice = picked
+            self._video_simple_replacement_async(
+                scene,
+                temp_adj_mp4,
+                temp_adj_wav,
+                audio_choice,
+                track,
+                track_status="ORIG",
+            )
+            return
         else: # audio
-            olda, newa = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
-            vtrack = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), track)
+            olda, newa = refresh_scene_media(scene, track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
+            vtrack = get_file_path(scene, track)
             if not vtrack:
-                vtrack = get_file_path(self.workflow.get_scene_by_index(self.current_scene_index), "clip")
+                vtrack = get_file_path(scene, "clip")
             newv = self.workflow.ffmpeg_processor.add_audio_to_video(vtrack, newa)
-            refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), track, ".mp4", newv)
+            refresh_scene_media(scene, track, ".mp4", newv)
 
         self.workflow.get_scene_by_index(self.current_scene_index)[track+"_status"] = "ORIG"
         self.refresh_gui_scenes()
@@ -2304,18 +2511,36 @@ class WorkflowGUI:
         dlg.protocol("WM_DELETE_WINDOW", on_cancel)
 
 
-    def run_finalize_video(self):
-        # ask user to confirm if they want to add watermark
-        if messagebox.askyesno("提示", "是否添加水印？", parent=self.root):
-            self.add_watermark()
+    def play_finalize_video(self):
+        """与 magic_workflow.finalize_video 相同的路径规则；用系统默认播放器打开（独立窗口、含声音）。"""
+        title = self.workflow.title.strip().replace(" ", "_").replace("\n", "_")
+        title = config.chinese_convert(title, self.workflow.language)
+        final_path = f"{self.workflow.publish_path}/{title}_final.mp4"
+        if not os.path.isfile(final_path):
+            messagebox.showwarning(
+                "Video播放",
+                f"未找到最终成片：\n{final_path}\n请先使用「Video生成」导出。",
+                parent=self.root,
+            )
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(os.path.normpath(final_path))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", final_path], start_new_session=True)
+            else:
+                subprocess.Popen(["xdg-open", final_path], start_new_session=True)
+        except Exception as e:
+            messagebox.showerror("Video播放", f"无法打开播放器：{e}", parent=self.root)
 
+    def run_finalize_video(self):
         picked = askchoice(
             "最终视频生成方式",
             [
-                ("transitions", "带转场（extension>0 时延长片尾后再拼接）"),
-                ("transitions_zero", "带转场，成片音轨替换为 zero_audio"),
-                ("plain", "无转场（简单拼接，保留各场景合成音轨）"),
-                ("plain_zero", "无转场，成片音轨替换为 zero_audio"),
+                ("plain_zero", "无转场，用ZERO音轨"),
+                ("plain", "无转场 (简单拼接)"),
+                ("transitions", "带转场"),
+                ("transitions_zero", "带转场，用ZERO音轨"),
             ],
             self.root,
         )
@@ -3806,41 +4031,14 @@ class WorkflowGUI:
 
         target_scenes = self.workflow.scenes_in_story(current_scene) if scope else [current_scene]
 
-        fp = self.workflow.ffmpeg_processor
-        failed = []
-        for scene in target_scenes:
-            oldv = get_file_path(scene, "clip")
-            if not oldv or not os.path.isfile(oldv):
-                failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
-                continue
-            oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
-            temp_out = config.get_temp_file(self.workflow.pid, "mp4")
-            moved = False
-            try:
-                ok = fp.headmark_clip_with_preprocess(oldv_ref, temp_out, hm_path, hm_opts)
-                if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
-                    scene["clip"] = oldv_ref
-                    failed.append(f"场景 id={scene.get('id', '?')}: 加顶标失败")
-                    continue
-                os.replace(temp_out, newv)
-                moved = True
-            except Exception as e:
-                scene["clip"] = oldv_ref
-                failed.append(f"场景 id={scene.get('id', '?')}: {e}")
-            finally:
-                if not moved and os.path.isfile(temp_out):
-                    try:
-                        os.remove(temp_out)
-                    except OSError:
-                        pass
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-        if failed:
-            messagebox.showwarning(
-                "顶标",
-                "部分场景未处理：\n" + "\n".join(failed[:12]),
-                parent=self.root,
-            )
+        self._clip_overlay_ffmpeg_batch_async(
+            target_scenes,
+            hm_path,
+            hm_opts,
+            "顶标",
+            "加顶标失败",
+            lambda fp, sr, dt, op, ot: fp.headmark_clip_with_preprocess(sr, dt, op, ot),
+        )
 
 
     def add_watermark(self):
@@ -3875,41 +4073,14 @@ class WorkflowGUI:
 
         target_scenes = self.workflow.scenes_in_story(current_scene) if scope else [current_scene]
 
-        fp = self.workflow.ffmpeg_processor
-        failed = []
-        for scene in target_scenes:
-            oldv = get_file_path(scene, "clip")
-            if not oldv or not os.path.isfile(oldv):
-                failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
-                continue
-            oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
-            temp_out = config.get_temp_file(self.workflow.pid, "mp4")
-            moved = False
-            try:
-                ok = fp.watermark_clip_with_preprocess(oldv_ref, temp_out, wm_path, wm_opts)
-                if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
-                    scene["clip"] = oldv_ref
-                    failed.append(f"场景 id={scene.get('id', '?')}: 加水印失败")
-                    continue
-                os.replace(temp_out, newv)
-                moved = True
-            except Exception as e:
-                scene["clip"] = oldv_ref
-                failed.append(f"场景 id={scene.get('id', '?')}: {e}")
-            finally:
-                if not moved and os.path.isfile(temp_out):
-                    try:
-                        os.remove(temp_out)
-                    except OSError:
-                        pass
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-        if failed:
-            messagebox.showwarning(
-                "水印",
-                "部分场景未处理：\n" + "\n".join(failed[:12]),
-                parent=self.root,
-            )
+        self._clip_overlay_ffmpeg_batch_async(
+            target_scenes,
+            wm_path,
+            wm_opts,
+            "水印",
+            "加水印失败",
+            lambda fp, sr, dt, op, ot: fp.watermark_clip_with_preprocess(sr, dt, op, ot),
+        )
 
 
     def print_title(self):
@@ -6705,14 +6876,17 @@ class WorkflowGUI:
             picked = askchoice(
                 "拖入音频：分配到本故事 CLIP 或 ZERO",
                 [
-                    ("equal_clip", "均分：按时长均分，依次写入各场景 clip_audio"),
+                    (
+                        "equal_clip", 
+                        "均分：按时长均分音频，依次写入各场景"
+                    ),
                     (
                         "ratio_clip",
-                        "按比例：按各场景现有 clip 音/视频时长比例切分 clip_audio",
+                        "按比例：按各场景现有时长比例切分新音频",
                     ),
                     (
                         "zero_bg",
-                        "ZERO 背景：同一音轨写入各场景 zero_audio，并 mux 进 zero 视频",
+                        "ZERO 背景：同一音/视频写入各场景 zero/zero_audio",
                     ),
                 ],
                 self.root,

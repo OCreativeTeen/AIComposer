@@ -926,7 +926,7 @@ class FfmpegProcessor:
         return output_path
 
 
-    def add_audio_to_video(self, video_path, audio_path, match_audio_length=True, change_ratio_to_match_audio_length=False):
+    def add_audio_to_video(self, video_path, audio_path, match_audio_length=True, change_ratio_to_match_audio_length=True):
         temp_file = config.get_temp_file(self.pid, "mp4")
         
         try:
@@ -1833,7 +1833,7 @@ class FfmpegProcessor:
             raise RuntimeError(f"Simple demuxer concatenation failed: {e}") from e
 
 
-    def concat_videos_simple_transitions(self, video_segments, keep_audio_if_has=False, extend_sec=1.0, transition_sec=0.5):
+    def concat_videos_with_transitions(self, video_segments, keep_audio_if_has=False, extend_sec=1.0, transition_sec=0.5):
         """将多段视频先各延长 extend_sec（末帧定格），再经 xfade 的 **fade** 过渡拼接。
 
         **稳定性说明**（相对其它过渡）：

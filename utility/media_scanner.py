@@ -296,82 +296,70 @@ class MediaScanner:
         return gen_video
 
 
-    def video_simple_replacement(self, current_scene, video_path_in, handle_audio, media_type):
-        """处理音频替换"""
+    def video_simple_replacement(self, current_scene, video_path_in, wav_path_in, handle_audio, media_type):
+        """处理视频替换与音轨策略。video_path_in 为（可能已缩放的）候选视频；wav_path_in 为与源片对应、已做音量等处理的临时 wav，若为 None 则从 video_path_in 抽取。"""
+        input_video = self.workflow.ffmpeg_processor.resize_video(video_path_in, width=None, height=self.workflow.ffmpeg_processor.height)
+        current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(input_video)
+        current_scene[media_type + "_status"] = "ORIG"
+
+        if wav_path_in and os.path.isfile(wav_path_in):
+            input_audio = wav_path_in
+        else:
+            input_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(input_video)
+
         scene_video = current_scene.get(media_type, None)
         scene_audio = current_scene.get(media_type+"_audio", None)
-        if not scene_video or not scene_audio:
+        if not scene_video or not scene_audio: # keep 
+            refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
+            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
             return
-
-        current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path_in)
-        current_scene[media_type + "_status"] = "ORIG"
-        input_video = self.workflow.ffmpeg_processor.resize_video(video_path_in, width=None, height=self.workflow.ffmpeg_processor.height)
-        input_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(input_video)
 
         # 仅当显式为 "replace" 时用场景已有 *_audio 替换；字符串 "keep" 须为假（勿用 if replace_audio: 非空串皆真）
         if handle_audio == "keep":
             refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
         elif handle_audio == "replace":
-            scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
-        else:
+            input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
+            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
+        else: # mix
             next_scene = self.workflow.next_scene_of_story(current_scene)
-            if not next_scene:
+            if not next_scene: # replace
+                input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
+                oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+                self.last_image_replacement(current_scene, scene_video, media_type)
                 return
 
-            if handle_audio == "mix":
-                scene_video = self._video_replace_spill_audio_to_next(current_scene, next_scene, input_video, media_type, 1.0)
-                #mix_audio = self.workflow.ffmpeg_audio_processor.audio_mix(scene_audio, 1.0, 0.0, input_audio, 1.0)
-                #scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(scene_video, mix_audio)
-                #olda, scene_audio = refresh_scene_media(current_scene, media_type+"_audio", ".wav", mix_audio)
-                #scene_video = self.workflow.ffmpeg_processor.video_overlap(scene_video, 0.0, input_video)
-            elif handle_audio == "mix1":
-                scene_video = self._video_replace_spill_audio_to_next(current_scene, next_scene, input_video, media_type, 1.5)
-            elif handle_audio == "mix2":
-                scene_video = self._video_replace_spill_audio_to_next(current_scene, next_scene, input_video, media_type, 2.0)
+            scene_audio = get_file_path(current_scene, media_type + "_audio")
+            oldza,input_audio = refresh_scene_media(current_scene, "zero_audio", ".wav", input_audio)
+            oldzv,input_video = refresh_scene_media(current_scene, "zero", ".mp4", input_video)
 
-        if scene_video:
-            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
+            d_vid = self.workflow.ffmpeg_audio_processor.get_duration(input_video)
+            d_aud = self.workflow.ffmpeg_audio_processor.get_duration(scene_audio)
+            tail_len = d_aud - d_vid
+
+            tol = 0.05
+            if d_vid + tol >= d_aud or tail_len < tol: # replace
+                scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
+                oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
+                self.last_image_replacement(current_scene, scene_video, media_type)
+                return
+
+            audio_head = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, 0.0, d_vid, 0, 0)
+            audio_tail = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, d_vid, tail_len, 0, 0)
+
+            scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, audio_head)
+            olda, scene_audio = refresh_scene_media(current_scene, media_type+"_audio", ".wav", audio_head)
+            olda, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
             self.last_image_replacement(current_scene, scene_video, media_type)
 
-
-    def _video_replace_spill_audio_to_next(self, current_scene, next_scene, input_video: str, media_type: str, volume: float):
-        """新视频比当前轨原音短时：本镜画面用新视频 + 原音前段；余下原音 prepend 到下一场景音轨并拉长下镜视频。无下镜时退回普通 replace。"""
-
-        def _warn(msg: str) -> None:
-            try:
-                messagebox.showwarning("余音接下镜", msg)
-            except Exception:
-                print(f"⚠️ 余音接下镜: {msg}")
-
-        scene_audio = get_file_path(current_scene, media_type + "_audio")
-        track_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(input_video)
-
-        d_vid = self.workflow.ffmpeg_audio_processor.get_duration(track_audio)
-        d_aud = self.workflow.ffmpeg_audio_processor.get_duration(scene_audio)
-        tail_len = d_aud - d_vid
-
-        tol = 0.05
-        if d_vid + tol >= d_aud or tail_len < tol:
-            return self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
-
-        audio_head = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, 0.0, d_vid, 0, 0)
-        audio_tail = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, d_vid, tail_len, 0, 0)
-
-        mix_audio = self.workflow.ffmpeg_audio_processor.audio_mix(audio_head, 1.0, 0.0, track_audio, volume)
-        scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, mix_audio)
-        olda, scene_audio = refresh_scene_media(current_scene, media_type+"_audio", ".wav", mix_audio)
-        olda, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
-
-        npa = get_file_path(next_scene, media_type + "_audio")
-        npv = get_file_path(next_scene, media_type)
-        merged = self.workflow.ffmpeg_audio_processor.concat_audios([audio_tail, npa])
-
-        next_v_out = self.workflow.ffmpeg_processor.add_audio_to_video(npv, merged, True)
-        refresh_scene_media(next_scene, media_type, ".mp4", next_v_out)
-        refresh_scene_media(next_scene, media_type + "_audio", ".wav", merged)
-        
-        return scene_video
+            npa = get_file_path(next_scene, media_type + "_audio")
+            merged = self.workflow.ffmpeg_audio_processor.concat_audios([audio_tail, npa])
+            next_v_out = self.workflow.ffmpeg_processor.add_audio_to_video(get_file_path(next_scene, media_type), merged, True)
+            refresh_scene_media(next_scene, media_type, ".mp4", next_v_out)
+            refresh_scene_media(next_scene, media_type + "_audio", ".wav", merged)
 
 
     def last_image_replacement(self, current_scene, video_path, media_type):
