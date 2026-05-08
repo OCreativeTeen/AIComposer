@@ -309,6 +309,7 @@ class MediaScanner:
 
         scene_video = current_scene.get(media_type, None)
         scene_audio = current_scene.get(media_type+"_audio", None)
+
         if not scene_video or not scene_audio: # keep 
             refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
@@ -325,30 +326,32 @@ class MediaScanner:
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
             self.last_image_replacement(current_scene, scene_video, media_type)
         else: # mix
-            next_scene = self.workflow.next_scene_of_story(current_scene)
-            if not next_scene: # replace
-                input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
-                oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
-                self.last_image_replacement(current_scene, scene_video, media_type)
-                return
+            d_input = self.workflow.ffmpeg_audio_processor.get_duration(input_video)
+            d_scene = self.workflow.ffmpeg_audio_processor.get_duration(scene_audio)
+            if d_input > d_scene:
+                input_video = self.workflow.ffmpeg_processor.trim_video(input_video, start_time=0, end_time=d_scene, volume=1.0)
+                input_audio = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, 0.0, d_scene, 0, 0)
+                d_input = d_scene
 
-            scene_audio = get_file_path(current_scene, media_type + "_audio")
             oldza,input_audio = refresh_scene_media(current_scene, "zero_audio", ".wav", input_audio)
             oldzv,input_video = refresh_scene_media(current_scene, "zero", ".mp4", input_video)
 
-            d_vid = self.workflow.ffmpeg_audio_processor.get_duration(input_video)
-            d_aud = self.workflow.ffmpeg_audio_processor.get_duration(scene_audio)
-            tail_len = d_aud - d_vid
-
-            tol = 0.05
-            if d_vid + tol >= d_aud or tail_len < tol: # replace
+            # if d_input & d_scene are close (within 0.05s), replace the scene with the input video
+            if abs(d_input - d_scene) <= 0.05:
                 scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
                 oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
                 self.last_image_replacement(current_scene, scene_video, media_type)
                 return
 
-            audio_head = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, 0.0, d_vid, 0, 0)
-            audio_tail = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, d_vid, tail_len, 0, 0)
+            next_scene = self.workflow.next_scene_of_story(current_scene)
+            if handle_audio == "mix_flat" or not next_scene:
+                scene_video = self.workflow.ffmpeg_processor.add_video_on_video(scene_video, input_video, 0.0)
+                oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
+                self.last_image_replacement(current_scene, scene_video, media_type)
+                return
+
+            audio_head = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, 0.0, d_input, 0, 0)
+            audio_tail = self.workflow.ffmpeg_audio_processor.audio_cut_fade(scene_audio, d_input, d_scene-d_input, 0, 0)
 
             scene_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, audio_head)
             olda, scene_audio = refresh_scene_media(current_scene, media_type+"_audio", ".wav", audio_head)

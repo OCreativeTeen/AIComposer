@@ -1892,7 +1892,7 @@ CHANNEL_CONFIG = {
         "scene_min_length": 20,
         "watermark": {
             "path": "media/counseling_watermark.png",
-            "margin_x": 10,
+            "margin_x": 8,
             "margin_y": 10,
         },
         "headmark": {

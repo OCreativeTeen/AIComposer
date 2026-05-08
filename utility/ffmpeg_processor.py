@@ -926,6 +926,86 @@ class FfmpegProcessor:
         return output_path
 
 
+    def add_video_on_video(self, background_video, mix_video, start_time):
+        """
+        将 mix_video 全画幅叠在 background_video 之上：从 start_time 秒开始，持续到
+        min(mix 时长, 背景剩余时长)；输出总时长与背景一致（不延长背景）。mix 更长则裁切。
+        音频：背景与 mix 的音轨按时对齐混合（mix 从 start_time 起参与，时长与画面对齐）。
+        """
+        output_path = config.get_temp_file(self.pid, "mp4")
+        bg_duration = self.get_duration(background_video)
+        mix_duration = self.get_duration(mix_video)
+        start_time = float(start_time)
+
+        if bg_duration <= 0:
+            print(f"add_video_on_video: invalid background duration for {background_video}")
+            return None
+        if mix_duration <= 0:
+            print(f"add_video_on_video: invalid mix duration for {mix_video}")
+            return None
+        if start_time < 0:
+            print("add_video_on_video: start_time must be >= 0")
+            return None
+        if start_time >= bg_duration:
+            print(f"add_video_on_video: start_time {start_time}s beyond background duration {bg_duration:.2f}s")
+            return None
+
+        overlay_dur = min(mix_duration, bg_duration - start_time)
+        if overlay_dur <= 0.001:
+            print("add_video_on_video: overlay duration is zero")
+            return None
+
+        bg_w, bg_h = self.get_resolution(background_video)
+        has0a = self.has_audio_stream(background_video)
+        has1a = self.has_audio_stream(mix_video)
+        delay_ms = max(0, int(round(start_time * 1000)))
+
+        en_end = start_time + overlay_dur
+        vf = (
+            f"[0:v]setpts=PTS-STARTPTS[bgv];"
+            f"[1:v]trim=duration={overlay_dur:.6f},setpts=PTS-STARTPTS+{start_time:.6f}/TB,"
+            f"scale={bg_w}:{bg_h}:force_original_aspect_ratio=decrease,"
+            f"pad={bg_w}:{bg_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[ov];"
+            f"[bgv][ov]overlay=0:0:enable='between(t,{start_time:.6f},{en_end:.6f})'[outv]"
+        )
+
+        cmd = self._ffmpeg_input_args(background_video, mix_video)
+        if has0a and has1a:
+            filter_complex = (
+                vf
+                + f";[0:a]volume=1.0[bgA];"
+                f"[1:a]atrim=duration={overlay_dur:.6f},asetpts=PTS-STARTPTS,adelay={delay_ms}|{delay_ms}[mxA];"
+                f"[bgA][mxA]amix=inputs=2:duration=first:dropout_transition=2[outa]"
+            )
+            cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]", "-map", "[outa]"])
+        elif has0a:
+            cmd.extend(["-filter_complex", vf, "-map", "[outv]", "-map", "0:a:0"])
+        elif has1a:
+            filter_complex = (
+                vf
+                + f";anullsrc=r={STANDARD_AUDIO_RATE}:cl=stereo,atrim=duration={bg_duration:.6f},"
+                f"asetpts=PTS-STARTPTS[bgA];"
+                f"[1:a]atrim=duration={overlay_dur:.6f},asetpts=PTS-STARTPTS,adelay={delay_ms}|{delay_ms}[mxA];"
+                f"[bgA][mxA]amix=inputs=2:duration=first:dropout_transition=2[outa]"
+            )
+            cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]", "-map", "[outa]"])
+        else:
+            cmd.extend(["-filter_complex", vf, "-map", "[outv]", "-an"])
+
+        if has0a or has1a:
+            cmd.extend(self._get_audio_encode_args())
+
+        cmd.extend(self._get_video_output_args(keyframe_interval=False))
+        cmd.extend(self._get_output_optimization_args())
+        cmd.extend(["-t", f"{bg_duration:.6f}", output_path])
+
+        print(
+            f"🎬 add_video_on_video: bg={bg_duration:.2f}s, mix={mix_duration:.2f}s, "
+            f"start={start_time:.2f}s, overlay={overlay_dur:.2f}s → {output_path}"
+        )
+        self.run_ffmpeg_command(cmd)
+        return output_path
+
     def add_audio_to_video(self, video_path, audio_path, match_audio_length=True, change_ratio_to_match_audio_length=True):
         temp_file = config.get_temp_file(self.pid, "mp4")
         

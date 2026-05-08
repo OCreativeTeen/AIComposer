@@ -669,6 +669,15 @@ class WorkflowGUI:
             pass
         threading.Thread(target=work, daemon=True).start()
 
+
+    def clean_channel_media(self, track):
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        current_scene.pop(track, None)
+        current_scene.pop(track+"_audio", None)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+
+
     def choose_from_channel_media(self, track, audio_action):
         try:
             channel = project_manager.PROJECT_CONFIG.get('channel')
@@ -866,7 +875,8 @@ class WorkflowGUI:
                 [
                     ("replace", "用场景现有音轨替换"),
                     ("keep", "保留输入自带音频"),
-                    ("mix", "混音到ZERO"),
+                    ("mix", "ZERO混音伸缩"),
+                    ("mix_flat", "ZERO混音平铺"),
                 ],
                 self.root,
             )
@@ -1675,7 +1685,7 @@ class WorkflowGUI:
         ttk.Button(visual_button_frame, text="CLIP", width=5, command=lambda: self.choose_from_download("clip", ".mp4")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="NARR", width=5, command=lambda: self.choose_from_download("narration", ".mp4")).pack(side=tk.LEFT, padx=1)
 
-        ttk.Button(visual_button_frame, text="ZERO", width=5, command=lambda: self.choose_from_channel_media("zero", "keep")).pack(side=tk.LEFT, padx=1)
+        ttk.Button(visual_button_frame, text="ZERO", width=5, command=lambda: self.clean_channel_media("zero")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="SCEN", width=5, command=lambda: self.choose_from_channel_media("clip", "keep")).pack(side=tk.LEFT, padx=1)
         ttk.Button(visual_button_frame, text="SC_R", width=5, command=lambda: self.choose_from_channel_media("clip", "replace")).pack(side=tk.LEFT, padx=1)
 
@@ -6735,13 +6745,10 @@ class WorkflowGUI:
                 return
 
             if media_type != "clip" and media_type != "narration":
-                if transcribe_way == "multiple":
-                    scenes_same_story = self.workflow.scenes_in_story(current_scene)
-                    for sss in scenes_same_story:
-                        sss[media_type] = current_scene.get(media_type, None)
-                        sss[media_type+"_audio"]  = current_scene.get(media_type+"_audio", None)
-                        sss[media_type+"_image"]  = current_scene.get(media_type+"_image", None)
-                        sss[media_type+"_image_last"]  = current_scene.get(media_type+"_image_last", None)
+                if media_type == "zero":
+                    mix_video = self.workflow.ffmpeg_processor.add_video_on_video(current_scene["clip"], current_scene["zero"], 0.0)
+                    refresh_scene_media(current_scene, "clip", ".mp4", mix_video)
+
                 self.workflow.save_scenes_to_json()
                 return
 
