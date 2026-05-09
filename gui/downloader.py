@@ -1744,6 +1744,7 @@ class MediaGUIManager:
         self.root = root
         self.workflow_gui = workflow_gui
 
+        self.channel = channel
         channel_path = config.get_channel_path(config_channel.get_channel_id(channel))
         self.channel_path = channel_path
         self.youtube_dir = f"{channel_path}/Download"
@@ -3406,7 +3407,20 @@ class MediaGUIManager:
 
                 header_parts["id"] = video_detail.get('id')
                 header_parts["To_cover_following_Case_Study_Content____adjust(not_replace)_the_description_of_"] = "topic_category: " + video_detail.get('topic_category', '') + ",  topic_subtype: " + video_detail.get('topic_subtype', '')
-                header_parts["Case_Study_Content"] = json.dumps(video_detail.get('analyzed_content').get(config.LANGUAGES[self.language], {}), ensure_ascii=False, indent=2)
+
+                content = video_detail.get('analyzed_content')
+                if isinstance(content, dict):
+                    content = content.get(config.LANGUAGES[self.language], '')
+
+                if not content:
+                    content = video_detail.get('scene_content')
+                    if isinstance(content, dict):
+                        content = json.dumps(content, ensure_ascii=False, indent=2)
+
+                if not content:
+                    content = video_detail.get("content", '')
+
+                header_parts["Case_Study_Content"] = content
 
                 input_media_path = config.INPUT_MEDIA_PATH
                 _cat_raw = (category_var.get() or "").strip()
@@ -3487,12 +3501,23 @@ class MediaGUIManager:
                 reference = "\n\n\n----------------------------------------------------------\n".join(reference_parts) if reference_parts else ""
                 story_title = video_detail.get('title', '').strip()
 
-                content = video_detail.get('analyzed_content', {}).get(config.LANGUAGES[self.language], '').strip()
+                content = video_detail.get('analyzed_content')
+                if isinstance(content, dict):
+                    content = content.get(config.LANGUAGES[self.language], '')
+
+                if not content:
+                    content = video_detail.get('scene_content')
+                    if isinstance(content, dict):
+                        content = json.dumps(content, ensure_ascii=False, indent=2)
+
+                if not content:
+                    content = video_detail.get("content", '')
+
                 if not content:
                     content = video_detail.get('content', '').strip()
 
                 link = video_detail.get('url', '').strip()
-                soul, choices, categories, features = project_manager.build_soul(self.channel_path, category_var.get().strip(), subtype_var.get().strip())
+                soul, choices, categories, features = project_manager.build_soul(self.channel, category_var.get().strip(), subtype_var.get().strip())
                 instruction = (initial_content_holder[0] or "").strip()
                 prompt = _format_nb_prompt_template(
                     template,
@@ -3521,8 +3546,9 @@ class MediaGUIManager:
                         pass
                 
 
-            def open_initial_content_dialog(on_done=None):
-                """弹出窗口编辑导向说明；确定后执行 on_done（默认刷新 LM prompt）。"""
+            def open_initial_content_dialog(on_done=None, *, refresh_on_cancel=False):
+                """弹出窗口编辑导向说明；确定后执行 on_done（默认刷新 LM prompt）。
+                refresh_on_cancel: 为 True 时（如摘要窗首次打开），用户点「取消」仍会执行 on_done，以便仍能生成提示词（导向说明留空）。"""
                 dlg = tk.Toplevel(summary_window)
                 dlg.title("Initial content（导向说明）")
                 dlg.geometry("640x320")
@@ -3553,6 +3579,9 @@ class MediaGUIManager:
 
                 def _cancel():
                     dlg.destroy()
+                    if refresh_on_cancel:
+                        fn = on_done or refresh_notebooklm_prompt
+                        fn()
 
                 bf = ttk.Frame(dlg)
                 bf.pack(pady=(0, 12))
@@ -3571,7 +3600,11 @@ class MediaGUIManager:
             category_combo.bind('<<ComboboxSelected>>', on_category_change)
             subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
 
-            refresh_notebooklm_prompt()  # 初始生成（不弹窗）
+            # 首次打开与「选LM提示」切换一样：先弹导向说明窗口，再生成提示词
+            open_initial_content_dialog(
+                lambda: refresh_notebooklm_prompt(),
+                refresh_on_cancel=True,
+            )
 
             LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
             last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...

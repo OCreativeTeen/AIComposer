@@ -39,7 +39,7 @@ The content is on the topic - '{topic}'.
 
 
 ----------------------------------------------------
-Content:
+Reference Content:
 ----------------------------------------------------
 {content}
 
@@ -53,6 +53,64 @@ Core-insight ('soul'):
 
 
 NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE = """
+You are a psychological counselor and a master of high-empathy storytelling.
+Your goal is to transform deep psychological insights into a vivid, three-act narrative and a gentle counseling message.
+
+--------------------------------------------------
+STEP 1 — Deconstruct the Psychological Core
+--------------------------------------------------
+Analyze the provided case to identify:
+• The "Invisible Knot": The hidden root (e.g., a child trying to "save" a parent, fear of being seen as "ordinary").
+• The "Emotional Cost": How this manifests as pain, avoidance, or self-sabotage.
+• The "Light at the Tunnel": What small shift in perspective or action leads to healing?
+
+--------------------------------------------------
+STEP 2 — Create the Reflective Output (The Storytelling)
+--------------------------------------------------
+Craft a story that is "alive." Do not just state the problem; let the character breathe.
+
+1) **Title**: A poetic, evocative title.
+2) **Heart Message (Voiceover)**: 2-3 short, rhythmic sentences. Not a lecture, but a sigh of relief.
+3) **The Story (Vivid Narrative)**:
+   - **The Setup**: A relatable scene where the psychological issue creates friction.
+   - **The Core Conflict**: A moment of internal tension where the character faces their "Shadow" or "Fear." Use sensory details (a cold hand, a held breath).
+   - **The Turning Point & Resolution**: The character experiences a "re-understanding" or takes a small, brave step toward the "Way Out" identified in Step 1.
+4) **Concise Caption**: A single, powerful line the character might say or think.
+5) **Actor/Speaker**: Define the persona clearly.
+
+** WRITING GUIDELINES **
+• **Show, Don't Tell**: Don't say they are "anxious"; describe the "tightness in their chest."
+• **The "Way Out"**: The ending must offer hope or a concrete emotional shift, not just a dead end.
+• **Humanity Over Theory**: Use the language of daily life, not the DSM-5.
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "title": "A poetic title. In English.",
+            "voiceover": "Gentle, rhythmic life guidance. In English.",
+            "story": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In English.",
+            "speaking": "A poignant 1st-person caption. In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "title": "意蕴深远的标题。中文。",
+            "voiceover": "像耳边低语般的心理寄语，富有韵律感。中文。",
+            "story": "一个活灵活现的心理故事：包含日常的冲突、深层的心理挣扎、以及最终发现的‘出路’或心态转变。中文。",
+            "speaking": "一句扎心的、体现主题的第一人称对白。中文。",
+            "actor": "性别/年龄/族裔 | 情绪状态 | 肢体动作"
+        }}
+    ]
+}}
+"""
+
+
+
+NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_2 = """
 You are a psychological counselor and reflective storyteller.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
 
@@ -90,7 +148,7 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
         1) Short title (title of this scene; but the title of 1st scene is the title of whole story)
         2) Heart message (voiceover -- to express the psychological life guidance. Reflective tone)
         3) Micro-story (story -- psychological story & analysis, but avoid technical psychology terminology)
-        4) 9-10 seconds concise caption speaking (speaking -- concise 1st person speaking to express the message)
+        4) Concise caption speaking (speaking -- concise 1st person speaking to express the message)
         5) Speaker (gender/age/race | mood | actions)
             - gender: man,woman
             - age: young,mature,teen
@@ -116,18 +174,18 @@ OUTPUT FORMAT (STRICT JSON)
     "english": [
         {{
             "title": "A short title capturing the psychological theme. In English.",
-            "voiceover": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "story": "psychological_micro_story (5–8 sentences). Human story that illustrates the message. In English.",
-            "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English).",
+            "voiceover": "heart_message (short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+            "story": "psychological_micro_story. Human story that illustrates the message. In English.",
+            "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story. in English",
             "actor": "gender/age/race | mood | actions"
         }}
     ],
     "chinese": [
         {{
             "title": "A short title capturing the psychological theme. In Chinese.",
-            "voiceover": "heart_message (2–4 short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
-            "story": "psychological_micro_story (5–8 sentences). Human story that illustrates the message. In English.",
-            "speaking": "Very concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in Chinese).",
+            "voiceover": "heart_message (short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
+            "story": "psychological story. Human story that illustrates the message. In English.",
+            "speaking": "Concise caption speaking to express the Heart Message & Psychological Story. In Chinese.",
             "actor": "gender/age/race | mood | actions"
         }}
     ]
@@ -930,21 +988,12 @@ You will analyze the music from the specified YouTube link or music-description 
 
 
 4) Output format: always produce detailed SUNO prompts
-    After analysis, output 1-3 detailed SUNO prompts that are:
+    ** After analysis, output 1-3 detailed SUNO prompts that are:
         has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
         include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
-
-
-*** Input Content:
-    ** Song resource Link:
-{link}
-
-    ** Content instruction:
-{instruction}
-
-    ** Music-reference:
-{content}
+    ** Title of the song
+    ** Lyrics of the song
 
 """
 
@@ -1013,11 +1062,7 @@ You will analyze the music from the specified YouTube link or music-description 
 
 
 NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS = """
-You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a {language} song (provided at the bottom of this prompt).
-
-*** Music Information:
-    Topic: {topic}
-    Style: {tags}
+You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
 
 *** Objective:
     Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
@@ -1043,42 +1088,32 @@ You are a professional storyteller and creative director. Your task is to create
     The visuals and narrative should feel synchronized with the music
 
 
-*** Input Content:
-    ** Content instruction:
-{instruction}
-
-    ** Lyrics (or Raw Story):
-{content}
-
-
-
-📝 OUTPUT FORMAT  (in {language} — 中文):
+📝 OUTPUT FORMAT:
 
 {{
     "english": {{
         "title": "title of the story. In English.",
-        "key_message": "key points of the story. In English",
+        "speaking": "key points of the story. In English",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
+        "voiceover": "A short summary of the content (for youtube program description). In English.",
+        "actor": "gender/age/race | mood | actions"
+    }}
     "chinese": {{
         "title": "title of the story. In Chinese.",
-        "key_message": "key points of the story. In Chinese",
+        "speaking": "key points of the story. In Chinese",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
+        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
+        "actor": "gender/age/race | mood | actions"
     }}
 }}
+
 
 """
 
 
 NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
 *** ROLE
-    ** you are a professional storyteller, music dramaturg, and creative director. Your task is to create a cinematic dual-layer story based on the content instruction, & the lyrics (or raw story) of a {language} song (provided at the bottom of this prompt).
-
-*** Music Information
-    ** Topic: {topic}
-    ** Style / Tags: {tags}
+    ** you are a professional storyteller, music dramaturg, and creative director. Your task is to create a cinematic dual-layer story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
 
 *** OBJECTIVE
     ** Create a music video (MV) story concept that interprets the emotional and thematic essence of the song through a 2-layer narrative architecture:
@@ -1168,37 +1203,24 @@ NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
             * Drop / chorus → visual impact or turning point
 
 
-*** Input Content:
-    ** Content instruction:
-{instruction}
-
-    ** Lyrics (or Raw Story):
-{content}
-
-
 *** Output Format:
+
 {{
     "english": {{
         "title": "title of the story. In English.",
-        "key_message": "key points of the story. In English",
+        "speaking": "key points of the story. In English",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
+        "voiceover": "A short summary of the content (for youtube program description). In English.",
+        "actor": "gender/age/race | mood | actions"
+    }}
     "chinese": {{
         "title": "title of the story. In Chinese.",
-        "key_message": "key points of the story. In Chinese",
+        "speaking": "key points of the story. In Chinese",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
+        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
+        "actor": "gender/age/race | mood | actions"
     }}
 }}
-
-FYI: the story has details like:
-    ** Core Theme Interpretation (2–3 sentences)
-    * A-world Description (tone, visuals, conflict)
-    * B-world Description (tone, visuals, emotional role)
-    * Motif Design (what repeats & how it transforms)
-    * Full Story (cinematic narrative with interwoven A/B layers)
-    * Key MV Moments (highlight 5–8 major synced scenes)
 
 """
 
@@ -1892,7 +1914,7 @@ CHANNEL_CONFIG = {
         "scene_min_length": 20,
         "watermark": {
             "path": "media/counseling_watermark.png",
-            "margin_x": 8,
+            "margin_x": 10,
             "margin_y": 10,
         },
         "headmark": {
@@ -1934,6 +1956,11 @@ CHANNEL_CONFIG = {
             "path": "media/mv_watermark.png",
             "margin_x": 10,
             "margin_y": 10,
+        },
+        "headmark": {
+            "path": "media/mv_headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [

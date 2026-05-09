@@ -1313,9 +1313,9 @@ ANIMATION_PROMPTS = [
 # Host 显示方式（英文 value，UI 与 JSON 一致）- 供 downloader、GUI、project_manager 共享
 # =============================================================================
 HARRATOR_DISPLAY_OPTIONS = [
+    "",
     "speaking-at-image-left",
-    "speaking-at-image-right",
-    ""
+    "speaking-at-image-right"
 ]
 
 

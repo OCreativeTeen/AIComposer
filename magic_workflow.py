@@ -714,6 +714,12 @@ class MagicWorkflow:
         if isinstance(scene_content, dict):
             scene_content = [scene_content]
 
+        # take first scene_content 's title as the title of the story
+        if scene_content and scene_content[0].get("title"):
+            self.title = scene_content[0].get("title")
+        else:
+            self.title = config_channel.get_channel_config(self.channel)["channel_name"]
+
         if scene_content:
             for scene_index, scene_item in enumerate(scene_content):
                 scene_item["caption"] = scene_item.pop("title","")

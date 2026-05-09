@@ -25,17 +25,6 @@ from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
 from gui.downloader import MediaGUIManager, _format_nb_prompt_template
 
-
-def _analyzed_content_preview_text(val) -> str:
-    """列表/对象仅在预览时再 json.dumps；字符串原样截取。"""
-    content = val.get('analyzed_content')
-    if not content:
-        return ''
-
-    content = (content[:40] + '…') if len(content) > 40 else content
-    return content.strip()
-
- 
 def _story_value_nonempty(sv) -> bool:
     if sv is None:
         return False
@@ -46,6 +35,51 @@ def _story_value_nonempty(sv) -> bool:
     if isinstance(sv, dict):
         return len(sv) > 0
     return True
+
+
+def _jsonish_preview_fragment(val, max_len: int = 200) -> str:
+    """将字符串 / dict / list 压成单行预览（截断）。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        s = val.strip()
+    elif isinstance(val, (dict, list)):
+        try:
+            s = json.dumps(val, ensure_ascii=False)
+        except TypeError:
+            s = str(val)
+    else:
+        s = str(val)
+    return s[:max_len] + ("…" if len(s) > max_len else "")
+
+
+def _raw_story_preview_text(story_result) -> str:
+    """RAW 区预览：优先 analyzed_content，其次 scene_content，再次 content。"""
+    if isinstance(story_result, dict):
+        if _story_value_nonempty(story_result.get("analyzed_content")):
+            return _jsonish_preview_fragment(story_result.get("analyzed_content"))
+        if _story_value_nonempty(story_result.get("scene_content")):
+            return _jsonish_preview_fragment(story_result.get("scene_content"))
+        if _story_value_nonempty(story_result.get("content")):
+            return _jsonish_preview_fragment(story_result.get("content"))
+    return ""
+
+
+def _title_from_scene_content(scene_content) -> str:
+    """从 scene_content 取标题：若为 list 则取首元素的 title；若为 dict 则取其 title。"""
+    if isinstance(scene_content, list) and scene_content:
+        first = scene_content[0]
+        if isinstance(first, dict):
+            t = first.get('title')
+            if t is not None and str(t).strip():
+                return str(t).strip()
+        return ''
+    if isinstance(scene_content, dict):
+        t = scene_content.get('title')
+        if t is not None and str(t).strip():
+            return str(t).strip()
+        return ''
+    return ''
 
 
 def _raw_content_valid_for_create(ac) -> bool:
@@ -502,7 +536,8 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="标题:").pack(side=tk.LEFT, padx=(0, 4))
         title_entry = ttk.Entry(top_fields_row, width=28)
         title_entry.pack(side=tk.LEFT, padx=(0, 16))
-        title_entry.insert(0, self.default_project_config['default_title'])
+        _derived_title = _title_from_scene_content(self.story_result.get('scene_content'))
+        title_entry.insert(0, _derived_title or self.default_project_config['default_title'])
 
         ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
         resolution_frame = ttk.Frame(top_fields_row)
@@ -731,9 +766,11 @@ class ProjectSelectionDialog:
 
         def update_previews():
             """根据 story_result 更新 RAW 预览文本"""
-            # RAW
-            preview = _analyzed_content_preview_text(self.story_result)
-            raw_preview.config(text=f"RAW: {preview}", foreground="black")
+            preview = _raw_story_preview_text(self.story_result)
+            if preview:
+                raw_preview.config(text=f"RAW: {preview}", foreground="black")
+            else:
+                raw_preview.config(text="RAW: (未生成)", foreground="gray")
 
         # 根据 topic 启用/禁用 RAW 编辑按钮
         def update_buttons_state(*args):
@@ -844,10 +881,8 @@ class ProjectSelectionDialog:
 
         edit_raw_btn.config(command=open_project_content_editor)
 
-
+        update_previews()
         if self.story_result.get('analyzed_content'):
-            update_previews()
-            update_buttons_state()
             new_project_dialog.after(300, lambda: open_project_content_editor(initial_text=self.story_result.get('analyzed_content')))
 
         # 初始状态：按钮禁用（topic 未选时）
@@ -870,7 +905,8 @@ class ProjectSelectionDialog:
                 return
             
             ac = self.story_result.get('analyzed_content')
-            if not ac:
+            sc = self.story_result.get('scene_content')
+            if not ac and not sc:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
 

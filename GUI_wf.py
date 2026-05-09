@@ -439,26 +439,15 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def swap_zero(self):
-        """交换第一轨道与旁白轨道"""
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        clip_video_path = get_file_path(current_scene, 'clip')
-        clip_audio_path = get_file_path(current_scene, 'clip_audio')
-        zero_path = get_file_path(current_scene, "zero")
-        if not zero_path:
-            messagebox.showwarning("警告", "zero轨道视频文件不存在")
-            return
-
-        refresh_scene_media(current_scene, "back", '.mp4', clip_video_path)
-
-        start_time_in_story, clip_duration, story_duration, indx, count, is_story_last_clip = self.workflow.get_scene_detail(current_scene)
-        end_time = start_time_in_story + clip_duration
-
-        temp_track = self.workflow.ffmpeg_processor.trim_video(zero_path, start_time_in_story, end_time)
-        temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(temp_track, clip_audio_path)
-
-        refresh_scene_media(current_scene, 'clip', '.mp4', temp_track)
-        self.refresh_gui_scenes()
+    def _backup_clip_to_scene_back(self, scene):
+        """在改写主轨 clip 前，将当前 clip 文件路径压入 scene['back']（供 track_recover / 「恢復Back」恢复）。"""
+        clip_path = get_file_path(scene, "clip")
+        if not clip_path or not os.path.isfile(clip_path):
+            return False
+        prev = scene.get("back", "") or ""
+        prev = prev.strip() if isinstance(prev, str) else ""
+        scene["back"] = (clip_path + "," + prev) if prev else clip_path
+        return True
 
 
     def track_recover(self):
@@ -622,6 +611,9 @@ class WorkflowGUI:
                 if not oldv or not os.path.isfile(oldv):
                     failed.append(f"场景 id={scene.get('id', '?')}: 无有效 clip 视频")
                     continue
+                prior_back = scene.get("back")
+                prior_back = prior_back.strip() if isinstance(prior_back, str) else ""
+                self._backup_clip_to_scene_back(scene)
                 oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
                 temp_out = config.get_temp_file(self.workflow.pid, "mp4")
                 moved = False
@@ -629,12 +621,20 @@ class WorkflowGUI:
                     ok = apply_overlay(fp, oldv_ref, temp_out, overlay_path, opts)
                     if not ok or not os.path.isfile(temp_out) or os.path.getsize(temp_out) < 1000:
                         scene["clip"] = oldv_ref
+                        if prior_back:
+                            scene["back"] = prior_back
+                        else:
+                            scene.pop("back", None)
                         failed.append(f"场景 id={scene.get('id', '?')}: {failure_verb}")
                         continue
                     os.replace(temp_out, newv)
                     moved = True
                 except Exception as e:
                     scene["clip"] = oldv_ref
+                    if prior_back:
+                        scene["back"] = prior_back
+                    else:
+                        scene.pop("back", None)
                     failed.append(f"场景 id={scene.get('id', '?')}: {e}")
                 finally:
                     if not moved and os.path.isfile(temp_out):
@@ -1843,7 +1843,7 @@ class WorkflowGUI:
         ttk.Button(self.track_frame, text="💫NN", command=lambda:self.choose_secondary_track("narration"), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(self.track_frame, text="💫ZZ", command=lambda:self.choose_secondary_track('zero'), width=5).pack(side=tk.LEFT, padx=1)
         #ttk.Button(self.track_frame, text="💫", command=self.swap_narration, width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="✨", command=self.swap_zero, width=3).pack(side=tk.LEFT, padx=2)
+        #ttk.Button(self.track_frame, text="✨", width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔊", command=self.pip_narration_sound, width=3).pack(side=tk.LEFT, padx=2)
         #ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=1)
         ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=1)
@@ -1869,6 +1869,7 @@ class WorkflowGUI:
         mix_scenes_combo = ttk.Combobox(self.track_frame, textvariable=self.mix_scenes_var, values=["1", "2", "3", "4", "5"], width=3, state="readonly")
         mix_scenes_combo.pack(side=tk.LEFT, padx=1)
         ttk.Button(self.track_frame, text="混零到clip", command=self.mix_zero_audio_to_clips, width=8).pack(side=tk.LEFT, padx=(1, 10))
+        ttk.Button(self.track_frame, text="恢復Back", command=self.track_recover, width=8).pack(side=tk.LEFT, padx=(1, 10))
         
 
 
@@ -3269,6 +3270,8 @@ class WorkflowGUI:
                 messagebox.showerror("错误", "没有当前场景")
                 return
 
+            self._backup_clip_to_scene_back(current_scene)
+
             clip_audio_path = get_file_path(current_scene, "clip_audio")
             if not clip_audio_path or not os.path.exists(clip_audio_path):
                 messagebox.showerror("错误", "找不到主轨音频 clip_audio")
@@ -3856,6 +3859,7 @@ class WorkflowGUI:
     def reverse_video(self):
         """翻转视频"""
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        self._backup_clip_to_scene_back(current_scene)
         oldv, newv = refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.reverse_video(oldv), newv)
         self.workflow.save_scenes_to_json()
@@ -3897,6 +3901,7 @@ class WorkflowGUI:
     def mirror_video(self):
         """镜像视频"""
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        self._backup_clip_to_scene_back(current_scene)
         oldv, newv = refresh_scene_media(current_scene, "clip", ".mp4")
         os.replace(self.workflow.ffmpeg_processor.mirror_video(oldv), newv)
         self.workflow.save_scenes_to_json()
@@ -4114,9 +4119,8 @@ class WorkflowGUI:
         else:
             font = self.workflow.font_title
 
+        self._backup_clip_to_scene_back(current_scene)
         v = self.workflow.ffmpeg_processor.add_script_to_video(clip_video, content, font)
-        back = current_scene.get('back', '')
-        current_scene['back'] = clip_video + "," + back
         refresh_scene_media(current_scene, "clip", ".mp4", v)
 
         self.workflow.save_scenes_to_json()
