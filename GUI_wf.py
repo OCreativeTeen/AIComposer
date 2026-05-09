@@ -33,7 +33,6 @@ from utility.file_util import (
     is_video_file,
     is_image_file,
     is_audio_file,
-    check_folder_files,
     safe_copy_overwrite,
     make_safe_file_name,
     safe_clipboard_json_copy,
@@ -117,6 +116,30 @@ VIDEO_ACTION_CHOICES = {
 }
 
 
+
+
+def _normalize_download_suffixes(media_post):
+    """'.mp4' 或 ('.mp3', '.mp4') 等 → 小写后缀元组。"""
+    if isinstance(media_post, str):
+        s = media_post.strip().lower()
+        return (("." + s) if not s.startswith(".") else s,)
+    seq = []
+    for x in media_post:
+        s = str(x).strip().lower()
+        seq.append(("." + s) if not s.startswith(".") else s)
+    return tuple(seq)
+
+
+def _download_folder_list_matching_suffixes(folder_path: str, suffixes: tuple) -> list:
+    """目录下文件名（仅文件）后缀匹配任一 suffixes。"""
+    if not folder_path or not os.path.isdir(folder_path):
+        return []
+    out = []
+    for fn in os.listdir(folder_path):
+        fp = os.path.join(folder_path, fn)
+        if os.path.isfile(fp) and any(fn.lower().endswith(s) for s in suffixes):
+            out.append(fn)
+    return sorted(out)
 
 
 class WorkflowGUI:
@@ -775,101 +798,199 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def choose_from_download(self, track, media_post):
-        media_path = None
-        temp_adj_mp4 = None
-        temp_adj_wav = None
+    def _pick_media_from_download_to_project_folder(self, suffixes_tuple, *, track_rename_key: str):
+        """从 L: 或项目 download 选一文件→整理到 download 路径。suffixes_tuple: '.mp4' 或 ('.mp3', '.mp4') 等。
 
-        is_mp4 = media_post == ".mp4"
-        pv_kw = {}
-        if is_mp4:
+        Returns:
+            ``{"final_path", "temp_adj_mp4", "temp_adj_wav"}`` ，取消或未选时 ``None`` 。
+            仅后缀为 ``.mp4`` 时需要 ``temp_adj_*`` （音量试听产物）；音频文件二者为 ``None`` 。
+        """
+        suffixes = _normalize_download_suffixes(suffixes_tuple)
+        single_mp4_only = suffixes == (".mp4",)
+        pv_kw: dict = {}
+        if single_mp4_only:
             pv_kw = {
                 "use_mp4_video_preview": True,
                 "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
             }
 
+        title_drive = "从下载盘选择视频" if single_mp4_only else "从下载盘选择媒体（MP3/MP4）"
+        title_proj = "从项目下载目录选择视频" if single_mp4_only else "从项目下载目录选择媒体（MP3/MP4）"
+
+        media_path = None
+        temp_adj_mp4 = None
+        temp_adj_wav = None
+
+        scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
+        sid = scene0["id"] if scene0 else 0
+
         for folder in ["L:"]:
-            if check_folder_files(folder, media_post):
-                matching = [f for f in os.listdir(folder)
-                            if f.lower().endswith(media_post) and os.path.isfile(os.path.join(folder, f))]
-                if matching:
-                    matching.sort()
-                    r = askchoice_media_preview(
-                        "从下载盘选择视频",
-                        matching, folder,
-                        self.root,
-                        **pv_kw,
-                    )
-                    if r:
-                        if is_mp4:
-                            _fn, temp_adj_mp4, temp_adj_wav = r
-                            media_path = os.path.join(folder, _fn)
-                        else:
-                            media_path = os.path.join(folder, r)
-                    break
+            matching = _download_folder_list_matching_suffixes(folder, suffixes)
+            if not matching:
+                continue
+            r = askchoice_media_preview(title_drive, matching, folder, self.root, **pv_kw)
+            if not r:
+                return None
+            if single_mp4_only:
+                fn, temp_adj_mp4, temp_adj_wav = r
+                media_path = os.path.join(folder, fn)
+            else:
+                media_path = os.path.join(folder, r)
+            break
 
         download_path = config.get_project_path(self.workflow.pid) + "/download"
         if not os.path.exists(download_path):
             os.makedirs(download_path, exist_ok=True)
 
         if media_path:
-            rename = os.path.join(
+            ext = os.path.splitext(media_path)[1].lower() or (suffixes[0] if suffixes else ".mp4")
+            rename_dest = os.path.join(
                 download_path,
-                track + "_" + str(self.workflow.get_scene_by_index(self.current_scene_index)["id"])
-                + "_" + datetime.now().strftime("%H%M%S") + media_post,
+                f'{track_rename_key}_{sid}_{datetime.now().strftime("%H%M%S")}{ext}',
             )
-            shutil.move(media_path, rename)
-        else:
-            matching = []
-            if os.path.isdir(download_path):
-                matching = [f for f in os.listdir(download_path)
-                            if f.lower().endswith(media_post) and os.path.isfile(os.path.join(download_path, f))]
-            if matching:
-                matching.sort()
-                r = askchoice_media_preview(
-                    "从项目下载目录选择视频",
-                    matching, download_path,
+            shutil.move(media_path, rename_dest)
+            media_final = rename_dest
+            if (
+                media_final.lower().endswith(".mp4")
+                and not single_mp4_only
+                and (temp_adj_mp4 is None or temp_adj_wav is None)
+            ):
+                dn = os.path.dirname(media_final)
+                bn = os.path.basename(media_final)
+                pv2 = {
+                    "use_mp4_video_preview": True,
+                    "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+                }
+                rv = askchoice_media_preview(
+                    "确认视频与试听音量",
+                    [bn],
+                    dn,
                     self.root,
-                    **pv_kw,
+                    **pv2,
                 )
+                if not rv:
+                    return None
+                _, temp_adj_mp4, temp_adj_wav = rv
+            if media_final.lower().endswith(".mp4"):
+                if temp_adj_mp4 is None or temp_adj_wav is None:
+                    messagebox.showerror(
+                        "错误",
+                        "内部错误：未取得音量处理后的临时视频/音频。",
+                        parent=self.root,
+                    )
+                    return None
+        else:
+            matching = _download_folder_list_matching_suffixes(download_path, suffixes)
+            if matching:
+                r = askchoice_media_preview(title_proj, matching, download_path, self.root, **pv_kw)
                 if not r:
-                    return
-                if is_mp4:
-                    _fn, temp_adj_mp4, temp_adj_wav = r
-                    media_path = os.path.join(download_path, _fn)
-                    rename = media_path
+                    return None
+                if single_mp4_only:
+                    fn, temp_adj_mp4, temp_adj_wav = r
+                    media_final = os.path.join(download_path, fn)
                 else:
-                    media_path = os.path.join(download_path, r)
-                    rename = media_path
-            else:
-                media_path = filedialog.askopenfilename(
-                    title="从频道媒体文件夹选择文件",
-                    initialdir=download_path,
-                    filetypes=[("视频文件", "*"+media_post)]
-                )
-                if not media_path:
-                    return
-                rename = media_path
-                if is_mp4:
-                    dn = os.path.dirname(media_path)
-                    bn = os.path.basename(media_path)
-                    r = askchoice_media_preview(
+                    bn = r
+                    media_final = os.path.join(download_path, bn)
+                if (
+                    media_final.lower().endswith(".mp4")
+                    and not single_mp4_only
+                    and (temp_adj_mp4 is None or temp_adj_wav is None)
+                ):
+                    dn = os.path.dirname(media_final)
+                    pv2 = {
+                        "use_mp4_video_preview": True,
+                        "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+                    }
+                    rv = askchoice_media_preview(
                         "确认视频与试听音量",
                         [bn],
                         dn,
                         self.root,
-                        **pv_kw,
+                        **pv2,
                     )
-                    if not r:
-                        return
-                    _, temp_adj_mp4, temp_adj_wav = r
+                    if not rv:
+                        return None
+                    _, temp_adj_mp4, temp_adj_wav = rv
+                if media_final.lower().endswith(".mp4"):
+                    if temp_adj_mp4 is None or temp_adj_wav is None:
+                        messagebox.showerror(
+                            "错误",
+                            "内部错误：未取得音量处理后的临时视频/音频。",
+                            parent=self.root,
+                        )
+                        return None
+            else:
+                star_patterns = " ".join(f"*{s}" for s in suffixes)
+                ftypes = [("所选格式", star_patterns)] + [(s.upper().lstrip("."), f"*{s}") for s in suffixes]
+                media_path = filedialog.askopenfilename(
+                    title="从磁盘选择文件",
+                    initialdir=download_path,
+                    filetypes=ftypes,
+                )
+                if not media_path:
+                    return None
+                low = media_path.lower()
+                if not any(low.endswith(s) for s in suffixes):
+                    messagebox.showerror("错误", "所选文件扩展名不匹配。", parent=self.root)
+                    return None
+                media_final = media_path
+                rename_dest = os.path.join(
+                    download_path,
+                    f'{track_rename_key}_{sid}_{datetime.now().strftime("%H%M%S")}{os.path.splitext(media_final)[1].lower()}',
+                )
+                try:
+                    shutil.copy2(media_final, rename_dest)
+                except OSError:
+                    shutil.copy(media_final, rename_dest)
+                media_final = rename_dest
+                if media_final.lower().endswith(".mp4"):
+                    dn = os.path.dirname(media_final)
+                    bn = os.path.basename(media_final)
+                    pv2 = {
+                        "use_mp4_video_preview": True,
+                        "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+                    }
+                    rv = askchoice_media_preview(
+                        "确认视频与试听音量",
+                        [bn],
+                        dn,
+                        self.root,
+                        **pv2,
+                    )
+                    if not rv:
+                        return None
+                    _, temp_adj_mp4, temp_adj_wav = rv
 
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        lowf = media_final.lower()
+        if lowf.endswith((".mp3", ".wav")):
+            return {"final_path": media_final, "temp_adj_mp4": None, "temp_adj_wav": None}
 
-        if is_mp4:
+        if lowf.endswith(".mp4"):
             if temp_adj_mp4 is None or temp_adj_wav is None:
-                messagebox.showerror("错误", "内部错误：未取得音量处理后的临时视频/音频。", parent=self.root)
-                return
+                messagebox.showerror(
+                    "错误",
+                    "内部错误：未取得音量处理后的临时视频/音频。",
+                    parent=self.root,
+                )
+                return None
+            return {"final_path": media_final, "temp_adj_mp4": temp_adj_mp4, "temp_adj_wav": temp_adj_wav}
+
+        messagebox.showerror("错误", f"暂不支持的格式：{media_final}", parent=self.root)
+        return None
+
+    def choose_from_download(self, track, media_post=".mp4"):
+        res = self._pick_media_from_download_to_project_folder(
+            media_post,
+            track_rename_key=track,
+        )
+        if not res:
+            return
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        rename = res["final_path"]
+        temp_adj_mp4 = res.get("temp_adj_mp4")
+        temp_adj_wav = res.get("temp_adj_wav")
+
+        if rename.lower().endswith(".mp4"):
             picked = askchoice(
                 "下载视频替换：音频如何处理？",
                 [
@@ -892,16 +1013,86 @@ class WorkflowGUI:
                 track_status="ORIG",
             )
             return
-        else: # audio
-            olda, newa = refresh_scene_media(scene, track+"_audio", ".wav", self.workflow.ffmpeg_audio_processor.to_wav(rename))
-            vtrack = get_file_path(scene, track)
-            if not vtrack:
-                vtrack = get_file_path(scene, "clip")
-            newv = self.workflow.ffmpeg_processor.add_audio_to_video(vtrack, newa)
-            refresh_scene_media(scene, track, ".mp4", newv)
 
-        self.workflow.get_scene_by_index(self.current_scene_index)[track+"_status"] = "ORIG"
+        olda, newa = refresh_scene_media(
+            scene,
+            track + "_audio",
+            ".wav",
+            self.workflow.ffmpeg_audio_processor.to_wav(rename),
+        )
+        vtrack = get_file_path(scene, track)
+        if not vtrack:
+            vtrack = get_file_path(scene, "clip")
+        newv = self.workflow.ffmpeg_processor.add_audio_to_video(vtrack, newa)
+        refresh_scene_media(scene, track, ".mp4", newv)
+
+        self.workflow.get_scene_by_index(self.current_scene_index)[track + "_status"] = "ORIG"
         self.refresh_gui_scenes()
+
+    def apply_zero_background_media_from_path(
+        self,
+        source_path: str,
+        *,
+        mp4_adjusted_path: str | None = None,
+        mp4_adjusted_wav_path: str | None = None,
+    ) -> bool:
+        """与本故事拖放「ZERO 背景」一致：将同一音频或 MP4 写入各场景 ``zero`` / ``zero_audio``。"""
+        if not source_path or not os.path.isfile(source_path):
+            messagebox.showwarning("提示", "媒体文件不存在", parent=self.root)
+            return False
+        scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+        story_scenes = self.workflow.scenes_in_story(scene_anchor) if scene_anchor else []
+        if not story_scenes:
+            messagebox.showwarning("提示", "没有当前故事场景", parent=self.root)
+            return False
+
+        low = source_path.lower()
+
+        if low.endswith(".mp4"):
+            video_src = mp4_adjusted_path or source_path
+            wav_src = mp4_adjusted_wav_path
+            if not wav_src:
+                wav_src = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(video_src, "wav")
+            try:
+                for scene in story_scenes:
+                    refresh_scene_media(scene, "zero_audio", ".wav", wav_src, True)
+                    refresh_scene_media(scene, "zero", ".mp4", video_src, True)
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                print(f"✅ 已用 MP4 写入本故事各场景 zero/zero_audio（共 {len(story_scenes)} 个场景）")
+                return True
+            except Exception as e:
+                messagebox.showerror("错误", f"写入 ZERO 失败：{e}", parent=self.root)
+                return False
+
+        if low.endswith(".mp3"):
+            wav_path = self.workflow.ffmpeg_audio_processor.to_wav(source_path)
+        elif low.endswith(".wav"):
+            wav_path = source_path
+        else:
+            messagebox.showerror("错误", "仅支持从零导入 MP3 / WAV / MP4", parent=self.root)
+            return False
+
+        zero_video_path = get_file_path(scene_anchor, "zero")
+        if not zero_video_path:
+            messagebox.showwarning(
+                "提示",
+                "当前锚点场景没有 zero 视频，无法用纯音频套背景。\n请先设置 zero 视频，或使用 MP4 作为整条 ZERO。",
+                parent=self.root,
+            )
+            return False
+        try:
+            new_zero = self.workflow.ffmpeg_processor.add_audio_to_video(zero_video_path, wav_path)
+            for scene in story_scenes:
+                refresh_scene_media(scene, "zero_audio", ".wav", wav_path, True)
+                refresh_scene_media(scene, "zero", ".mp4", new_zero, True)
+            self.workflow.save_scenes_to_json()
+            self.refresh_gui_scenes()
+            print(f"✅ 已写入本故事 zero/zero_audio（音频背景，共 {len(story_scenes)} 个场景）")
+            return True
+        except Exception as e:
+            messagebox.showerror("错误", f"写入 ZERO 失败：{e}", parent=self.root)
+            return False
 
     def apply_tts_audio_to_scene_track(
         self,
@@ -2566,6 +2757,29 @@ class WorkflowGUI:
             with_transitions, replace_final_audio_with_zero = False, False
         else:
             with_transitions, replace_final_audio_with_zero = False, True
+
+        if replace_final_audio_with_zero:
+            if messagebox.askyesno(
+                "ZERO 轨道",
+                "是否在成片生成前重新导入 ZERO 音视频？\n\n"
+                "将从「下载盘 L:」「项目 download」中选 MP3 或 MP4：\n"
+                "• MP3：与原拖放「ZERO 背景」相同，音频套到现有 zero 画面上。\n"
+                "• MP4：整条 ZERO 音视频写入本故事每一镜。\n"
+                "选「否」则沿用场景中已设的 zero/zero_audio。",
+                parent=self.root,
+            ):
+                res = self._pick_media_from_download_to_project_folder(
+                    (".mp3", ".mp4"),
+                    track_rename_key="zero",
+                )
+                if res:
+                    ok = self.apply_zero_background_media_from_path(
+                        res["final_path"],
+                        mp4_adjusted_path=res.get("temp_adj_mp4"),
+                        mp4_adjusted_wav_path=res.get("temp_adj_wav"),
+                    )
+                    if not ok:
+                        return
 
         pid = self.get_pid()
         task_id = str(uuid.uuid4())
@@ -6911,19 +7125,7 @@ class WorkflowGUI:
             elif mode == "ratio_clip":
                 self._media_drop_apply_ratio_clip_audio_split(wav_path)
             elif mode == "zero_bg":
-                # 作为 ZERO 背景音：同一 WAV（MP3 先转 WAV）写入本故事各 zero_audio，并 mux 进各场景 zero 视频
-                scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
-                story_scenes = self.workflow.scenes_in_story(scene_anchor) if scene_anchor else []
-                zero_video_path = get_file_path(scene_anchor, "zero") if scene_anchor else None
-                if zero_video_path:
-                    new_zero = self.workflow.ffmpeg_processor.add_audio_to_video(zero_video_path, wav_path)
-                    for scene in story_scenes:
-                        refresh_scene_media(scene, "zero_audio", ".wav", wav_path, True)
-                        refresh_scene_media(scene, "zero", ".mp4", new_zero, True)
-
-                self.workflow.save_scenes_to_json()
-                self.refresh_gui_scenes()
-                print(f"✅ 已将背景音写入本故事各场景的 zero / zero_audio（{len(story_scenes)} 个场景）")
+                self.apply_zero_background_media_from_path(wav_path)
 
             return
 
