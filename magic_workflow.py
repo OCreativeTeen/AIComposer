@@ -1333,4 +1333,36 @@ class MagicWorkflow:
             if is_append:
                 self.scenes.insert(story_index+1, story)
             else:
-                self.scenes.insert(story_index, story) 
+                self.scenes.insert(story_index, story)
+
+
+    def reapply_all_scenes_template_medias(self, video_width: int, video_height: int):
+        """切换输出分辨率（横/竖屏）后，按 ``add_story_scene`` 同源逻辑批量重绑各场景的模板底稿。
+
+        - 重建 ``ffmpeg_processor`` 以使 ``make_backgroud_medias`` 按宽高选择 169_ / 916_ 模板；
+        - 对每个场景重写 zero / zero_image / zero_audio / clip / clip_audio / clip_image；
+        - 结束时 ``save_scenes_to_json()``（无场景时仅更新处理器与模板路径缓存）。"""
+        vw, vh = int(video_width), int(video_height)
+        self.ffmpeg_processor = FfmpegProcessor(self.pid, self.language, vw, vh)
+
+        self.background_image, self.background_video, background_music = config.make_backgroud_medias(
+            self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor
+        )
+        if not self.background_video or not self.background_image:
+            raise FileNotFoundError(
+                f"未找到与 {vw}×{vh} 匹配的频道模板（clip / clip_image 下的 169_ 或 916_），channel={self.channel}"
+            )
+
+        zero_audio_extracted = self.ffmpeg_audio_processor.extract_audio_from_video(background_music)
+        if background_music and zero_audio_extracted is None:
+            print("⚠️ 模板配乐未提取音轨成功，zero_audio / clip_audio 仍按既有流程写入路径")
+
+        for story in self.scenes:
+            oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)
+            oldi, zero_image = refresh_scene_media(story, "zero_image", ".webp", self.background_image, True)
+            olda, zero_audio = refresh_scene_media(story, "zero_audio", ".wav", zero_audio_extracted, True)
+            refresh_scene_media(story, "clip", ".mp4", zero, True)
+            refresh_scene_media(story, "clip_audio", ".wav", zero_audio, True)
+            refresh_scene_media(story, "clip_image", ".webp", zero_image, True)
+
+        self.save_scenes_to_json()

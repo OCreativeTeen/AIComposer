@@ -4,6 +4,7 @@ import uuid
 import random
 import glob
 import json
+import unicodedata
 import zhconv
 
 from utility.file_util import safe_clipboard_json_copy
@@ -517,6 +518,52 @@ def get_channel_path(channel: str) -> str:
     path = f"{BASE_PROGRAM_PATH}/{channel}"
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def channel_list_json_dir_abs(channel_path: str) -> str:
+    """频道下所有热门/主题 list JSON 根目录：``program/<channel_id>/list``（与 ``Download`` 等媒体子目录并列）。"""
+    return os.path.join(channel_path, "list")
+
+
+def ensure_channel_list_json_dir(channel_path: str) -> str:
+    d = channel_list_json_dir_abs(channel_path)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def normalize_topic_category_list_key(topic_category):
+    """规范主题分类字符串，使同一逻辑栏目只对应一个 list 文件（strip、压缩空白、Unicode NFC）。"""
+    s = (topic_category or "").strip()
+    if not s:
+        return "_uncategorized"
+    s = unicodedata.normalize("NFC", s)
+    s = " ".join(s.split())
+    return s
+
+
+def topic_category_list_file_basename(topic_category) -> str:
+    """``list/<可读安全名>.json``（相对频道目录），无哈希后缀。
+
+    分类唯一性由用户在确定 ``topic_category`` 时保证；非法路径字符与长度由 ``make_safe_file_name`` 处理。
+    """
+    from utility.file_util import make_safe_file_name
+
+    key = normalize_topic_category_list_key(topic_category)
+    safe = make_safe_file_name(key, title_length=200)
+    return f"{safe}.json"
+
+
+def topic_category_list_json_abspath(channel_field: str, topic_category: str) -> str:
+    """``program/<channel>/list/<basename>``，与 ``gui.downloader`` 主题列表一致。"""
+    ch_key = (channel_field or "").strip()
+    ch_id = config_channel.get_channel_id(ch_key) if ch_key else None
+    if not ch_id:
+        keys = list(config_channel.CHANNEL_CONFIG.keys())
+        ch_id = ch_key or (keys[0] if keys else "default")
+    base = get_channel_path(ch_id)
+    d = ensure_channel_list_json_dir(base)
+    return os.path.join(d, topic_category_list_file_basename(topic_category))
+
 
 def get_project_path(pid: str) -> str:
     path = f"{PROJECT_DATA_PATH}/{pid}"

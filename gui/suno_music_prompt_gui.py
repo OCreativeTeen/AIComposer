@@ -178,7 +178,7 @@ class SunoMusicPromptGUI:
             # 保存到文件
             pid = config_data.get('pid')
             if pid:
-                save_project_config()
+                save_project_config(parent=self.root)
                 self.current_project_config = config_data
                 print(f"✅ 项目配置已保存: {pid}")
                 

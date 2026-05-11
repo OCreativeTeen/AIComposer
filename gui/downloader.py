@@ -9,6 +9,8 @@ import re
 import string
 import threading
 import glob
+import copy
+import uuid
 
 import config
 import config_prompt
@@ -73,6 +75,170 @@ def _treeview_item_tags_safe(tree, item):
     return ()
 
 
+def _channel_list_dir_for_media_downloader(youtube_dir: str) -> str:
+    """若 ``youtube_dir`` 为 ``<频道>/Download``，列表目录为 ``<频道>/list``；否则（如项目路径）为 ``<youtube_dir>/list``。"""
+    norm = os.path.normpath(youtube_dir)
+    if os.path.basename(norm) == "Download":
+        return config.channel_list_json_dir_abs(os.path.dirname(norm))
+    return os.path.join(norm, "list")
+
+
+def _topic_category_program_list_path(channel_path: str, topic_category: str) -> str:
+    d = config.ensure_channel_list_json_dir(channel_path)
+    return os.path.join(d, config.topic_category_list_file_basename(topic_category))
+
+
+def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> None:
+    """为 topics.json 中每个 topic_category 在频道 program 下放空列表 JSON（尚无文件时）。"""
+    if not channel_path or not os.path.isdir(channel_path):
+        return
+    seen = set()
+    for cat in topic_categories or []:
+        c = (cat or "").strip()
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        p = _topic_category_program_list_path(channel_path, c)
+        if os.path.isfile(p):
+            continue
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+
+def _append_to_topic_category_program_list(channel_path: str, topic_category: str, entry: dict) -> str:
+    """将一条视频详情追加到对应主题的列表文件，返回写过的路径。"""
+    path = _topic_category_program_list_path(channel_path, topic_category or "")
+    arr = []
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            arr = []
+    if not isinstance(arr, list):
+        arr = []
+    arr.append(entry)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(arr, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> dict:
+    """基于当前列表项生成新条目：独立 url，标题与 RAW 等与新建项目对齐；不落盘。"""
+    if not isinstance(base, dict):
+        raise ValueError("base 无效")
+    if not isinstance(selected_config, dict):
+        raise ValueError("selected_config 无效")
+    pid = (selected_config.get("pid") or "").strip()
+    if not pid:
+        raise ValueError("缺少项目 pid")
+    clone = copy.deepcopy(base)
+    clone["url"] = f"localproj:{pid}:{uuid.uuid4().hex[:12]}"
+    vt = (selected_config.get("video_title") or "").strip()
+    if vt:
+        clone["title"] = vt
+    lang = selected_config.get("language")
+    if lang:
+        clone["language"] = lang
+    if "scene_content" in selected_config:
+        clone["scene_content"] = copy.deepcopy(selected_config["scene_content"])
+    if "analyzed_content" in selected_config:
+        clone["analyzed_content"] = copy.deepcopy(selected_config["analyzed_content"])
+    if "topic_category" in selected_config:
+        tc = selected_config.get("topic_category")
+        clone["topic_category"] = tc if tc else None
+    if "topic_subtype" in selected_config:
+        clone["topic_subtype"] = selected_config.get("topic_subtype")
+    if "tags" in selected_config:
+        tg = selected_config.get("tags")
+        if tg:
+            clone["tags"] = copy.deepcopy(tg)
+        else:
+            clone.pop("tags", None)
+    if selected_config.get("soul"):
+        clone["soul"] = copy.deepcopy(selected_config["soul"])
+    for k in (
+        "video_path",
+        "audio_path",
+        "transcribed_file",
+        "captions",
+        "publish",
+        "content",
+        "summary",
+        "playlist_id",
+        "playlist_index",
+        "thumb_url",
+        "youtube_channel_id",
+        "youtube_channel_name",
+        "youtube_channel_thumbnail",
+    ):
+        clone.pop(k, None)
+    clone.pop("id", None)
+    clone["status"] = ""
+    clone["project_id"] = pid
+    clone["project_pid"] = pid
+    clone[project_manager.PROJECT_PROFILE_KEY] = project_manager.export_profile_for_storage(
+        copy.deepcopy(selected_config)
+    )
+    orig_url = (base.get("url") or "").strip()
+    if orig_url:
+        clone["cloned_from_url"] = orig_url
+    return clone
+
+
+def _video_detail_project_pid(vd) -> str:
+    """列表项绑定的工作流项目 ID：优先 project_id，其次 project_pid。"""
+    if not isinstance(vd, dict):
+        return ""
+    for key in ("project_id", "project_pid"):
+        val = vd.get(key)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s:
+            return s
+    return ""
+
+
+def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
+    """另起进程启动 ``GUI_wf.py --open-pid``，与在主窗口用 ``--open-pid`` /「选择项目→打开」后的加载逻辑一致。"""
+    pid = (pid or "").strip()
+    if not pid:
+        return False
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(repo_root, "GUI_wf.py")
+    if not os.path.isfile(script):
+        messagebox.showerror("无法启动魔法工作流", f"找不到工作流脚本：\n{script}", parent=parent)
+        return False
+    cmd = [sys.executable, script, "--open-pid", pid]
+    try:
+        subprocess.Popen(cmd, cwd=repo_root)
+        return True
+    except Exception as e:
+        messagebox.showerror("无法启动魔法工作流", str(e), parent=parent)
+        return False
+
+
+def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=None) -> bool:
+    """启动 ``GUI_wf.py --open-from-list-json``，从频道热门列表 JSON 的一行载入完整 ``project_profile``。"""
+    list_json_path = (list_json_path or "").strip()
+    if not list_json_path or not os.path.isfile(list_json_path):
+        return False
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(repo_root, "GUI_wf.py")
+    if not os.path.isfile(script):
+        messagebox.showerror("无法启动魔法工作流", f"找不到工作流脚本：\n{script}", parent=parent)
+        return False
+    cmd = [sys.executable, script, "--open-from-list-json", os.path.normpath(list_json_path), str(int(index))]
+    try:
+        subprocess.Popen(cmd, cwd=repo_root)
+        return True
+    except Exception as e:
+        messagebox.showerror("无法启动魔法工作流", str(e), parent=parent)
+        return False
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。"""
     if not isinstance(v, dict):
@@ -568,6 +734,8 @@ class MediaDownloader:
         print("YoutubeDownloader init...")
         self.pid = pid
         self.youtube_dir = youtube_path
+        self.channel_list_dir = _channel_list_dir_for_media_downloader(youtube_path)
+        os.makedirs(self.channel_list_dir, exist_ok=True)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
 
         self.channel_list_json = ""
@@ -1328,7 +1496,7 @@ class MediaDownloader:
             if not info or 'entries' not in info:
                 return None
 
-            self.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
+            self.channel_list_json = os.path.join(self.channel_list_dir, f"{channel_name}.json")
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
@@ -1750,7 +1918,6 @@ class MediaGUIManager:
         self.youtube_dir = f"{channel_path}/Download"
 
         os.makedirs(self.youtube_dir, exist_ok=True)
-        os.makedirs(f"{self.youtube_dir}/list", exist_ok=True)
         os.makedirs(f"{self.youtube_dir}/media", exist_ok=True)
         os.makedirs(f"{self.youtube_dir}/work", exist_ok=True)
 
@@ -1772,6 +1939,10 @@ class MediaGUIManager:
         self.active_threads_lock = threading.Lock()
 
         self.topic_choices, self.topic_categories, self.tag_features_map = config.load_topics(channel)
+        try:
+            _ensure_topic_category_list_files(self.channel_path, self.topic_categories)
+        except Exception:
+            pass
         
         # 初始化主主题分类变量
         self.main_topic_category = None
@@ -1832,7 +2003,7 @@ class MediaGUIManager:
         if not new_name or not new_name.strip():
             return None
         channel_name = new_name.strip()
-        self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
+        self.downloader.channel_list_json = os.path.join(self.downloader.channel_list_dir, f"{channel_name}.json")
         self.downloader.channel_videos = []
         os.makedirs(os.path.dirname(self.downloader.channel_list_json), exist_ok=True)
         if channel_url and messagebox.askyesno("获取视频", f"是否从该频道获取热门视频列表？\n\n频道: {channel_name}", parent=self.root):
@@ -1857,7 +2028,7 @@ class MediaGUIManager:
         self.downloader.language = selected
 
         # 查找所有热门视频JSON文件
-        pattern = f"{self.youtube_dir}/list/*.json.txt"
+        pattern = os.path.join(self.downloader.channel_list_dir, "*.json")
         json_files = glob.glob(pattern)
         
         # 无已有文件时，直接进入创建新频道流程
@@ -1870,8 +2041,8 @@ class MediaGUIManager:
         channel_data = []
         for json_file in json_files:
             filename = os.path.basename(json_file)
-            # 从文件名中提取频道名：频道名.json.txt -> 频道名
-            match = re.match(r'(.+?)\.json\.txt', filename)
+            # 从文件名中提取频道名：频道名.json -> 频道名
+            match = re.match(r'(.+?)\.json', filename)
             if match:
                 channel_name = match.group(1)
                 # 读取文件获取视频数量
@@ -2992,6 +3163,56 @@ class MediaGUIManager:
 
 
             def on_raw_start_project():
+                existing_pid = _video_detail_project_pid(video_detail)
+                list_idx = -1
+                try:
+                    list_idx = (self.downloader.channel_videos or []).index(video_detail)
+                except ValueError:
+                    pass
+                list_path = (self.downloader.channel_list_json or "").strip()
+
+                if existing_pid:
+                    cfg = None
+                    if list_idx >= 0 and list_path and os.path.isfile(list_path):
+                        cfg = project_manager.project_config_from_list_item(
+                            video_detail, list_path, list_idx
+                        )
+                    if not cfg or not cfg.get("pid"):
+                        cfg = project_manager.load_project_config_by_pid(existing_pid)
+
+                    if isinstance(cfg, dict) and (cfg.get("pid") or "").strip():
+                        cfg_pid = (cfg.get("pid") or "").strip()
+                        if cfg_pid != existing_pid:
+                            messagebox.showwarning(
+                                "项目配置不一致",
+                                f"列表项 project_id 为「{existing_pid}」，但配置内 pid 为「{cfg_pid}」。\n"
+                                "将按「新建项目」流程继续（需有 RAW 内容）。",
+                                parent=summary_window,
+                            )
+                        else:
+                            opened = False
+                            if list_idx >= 0 and list_path and os.path.isfile(list_path):
+                                opened = _launch_gui_wf_from_list_json(
+                                    list_path, list_idx, parent=summary_window
+                                )
+                            if not opened:
+                                opened = _launch_gui_wf_open_pid(cfg_pid, parent=summary_window)
+                            if opened:
+                                messagebox.showinfo(
+                                    "打开已有项目",
+                                    "已为新进程启动魔法工作流。\n"
+                                    "若本条在频道列表中，将优先从列表项的 project_profile 载入（含整份 JSON）。",
+                                    parent=summary_window,
+                                )
+                            return
+                    else:
+                        messagebox.showwarning(
+                            "无法打开已有项目",
+                            f"未找到 pid「{existing_pid}」的项目配置（列表中无 project_profile，且无存盘 .config）。\n"
+                            "将按「新建项目」流程继续。",
+                            parent=summary_window,
+                        )
+
                 analyzed_content = video_detail.get('analyzed_content')
                 scene_content = video_detail.get('scene_content')
                 if not analyzed_content and not scene_content:
@@ -3005,7 +3226,7 @@ class MediaGUIManager:
                 from project_manager import (
                     create_project_with_initial_raw,
                     LAST_NARRATOR,
-                    LAST_VISUAL_STYLE
+                    LAST_VISUAL_STYLE,
                 )
                 ch = os.path.basename(self.channel_path)
                 lang = getattr(self, "language", "tw") or "tw"
@@ -3027,13 +3248,53 @@ class MediaGUIManager:
                     _pid = selected_config.get('pid', '')
                     if not _pid:
                         return
+                    video_detail["project_id"] = _pid
+                    video_detail[project_manager.PROJECT_PROFILE_KEY] = project_manager.export_profile_for_storage(
+                        copy.deepcopy(selected_config)
+                    )
+                    try:
+                        with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    except OSError:
+                        pass
+                    try:
+                        populate_tree()
+                    except Exception:
+                        pass
+
                     messagebox.showinfo(
                         "项目已创建",
                         "新项目已建立。\n\n"
                         f"PID：{_pid}\n\n"
-                        "请运行 GUI_wf.py，在主界面使用「选择项目」打开该项目后继续编辑。",
+                        "请运行 GUI_wf.py：从频道列表打开（project_profile）或使用「选择项目」。",
                         parent=summary_window,
                     )
+
+                    yn_clone = messagebox.askyesno(
+                        "写入主题分类列表",
+                        "是否将本条「项目副本」写入当前频道 program 下的「按主题分类」列表？\n\n"
+                        "• 不会写入当前打开的频道热门列表（list/*.json）\n"
+                        "• 路径：频道目录/list/<主题>.json\n"
+                        "• topics.json 里有多少 topic_category，对应会有多少份列表文件（首次为空 []）\n"
+                        "• 标题与 RAW 与刚创建的项目一致，并带 project_id\n\n"
+                        "选「否」则不写入分类列表。",
+                        parent=summary_window,
+                    )
+                    if yn_clone:
+                        try:
+                            new_row = _clone_channel_video_for_new_project(video_detail, selected_config)
+                            tc = (new_row.get("topic_category") or selected_config.get("topic_category") or "").strip()
+                            list_path = _append_to_topic_category_program_list(self.channel_path, tc, new_row)
+                            messagebox.showinfo(
+                                "已写入主题列表",
+                                "已追加到分类专用列表（当前树中的热门列表未改变）。\n\n"
+                                f"主题分类：{tc or '（未归类）'}\n"
+                                f"文件：\n{list_path}\n\n"
+                                f"标题：{str(new_row.get('title') or '')[:120]}",
+                                parent=summary_window,
+                            )
+                        except Exception as exc:
+                            messagebox.showerror("写入主题列表失败", str(exc), parent=summary_window)
 
 
             def on_find_similar_cases():
@@ -3520,7 +3781,7 @@ class MediaGUIManager:
                 soul, choices, categories, features = project_manager.build_soul(self.channel, category_var.get().strip(), subtype_var.get().strip())
                 instruction = (initial_content_holder[0] or "").strip()
                 prompt = _format_nb_prompt_template(
-                    template,
+                    template=template,
                     topic=topic,
                     tags=tags_var.get().strip(),
                     language=config.LANGUAGES[self.language],
@@ -4237,7 +4498,7 @@ class MediaGUIManager:
         # 统一频道选择：用较宽松的匹配在已有文件中查找，找到则问用户是否选用；不选则保持空
         self.downloader.channel_list_json = None
         self.downloader.channel_videos = []
-        channel_list_json_files = glob.glob(f"{self.youtube_dir}/list/*.json.txt")
+        channel_list_json_files = glob.glob(os.path.join(self.downloader.channel_list_dir, "*.json"))
         channel_to_file = {}
         channel_names = []
         for json_file in channel_list_json_files:
@@ -4286,7 +4547,7 @@ class MediaGUIManager:
             new_name = simpledialog.askstring("创建新频道", "频道名称（可修改）:", initialvalue=channel_name, parent=self.root)
             if new_name and new_name.strip():
                 channel_name = new_name.strip()
-            self.downloader.channel_list_json = f"{self.youtube_dir}/list/{channel_name}.json.txt"
+            self.downloader.channel_list_json = os.path.join(self.downloader.channel_list_dir, f"{channel_name}.json")
             self.downloader.channel_videos = []
             print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
 

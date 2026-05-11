@@ -23,7 +23,7 @@ import config
 import config_channel
 import config_prompt
 from PIL import Image, ImageTk
-from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media, save_project_config
+from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media, save_project_config, project_config_from_list_item
 import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
@@ -171,6 +171,7 @@ class WorkflowGUI:
         # 初始化配置加载标志
         self._loading_config = False
         self._scene_widgets_loading = False  # True 时跳过讲员「同步本故事」提示（避免切换场景时弹窗）
+        self._programmatic_video_size = False  # True 时不响应尺寸 Combobox 的「应用」逻辑
         self.current_scene_index = 0
 
         self.llm_api = llm_api.LLMApi()
@@ -323,31 +324,18 @@ class WorkflowGUI:
 
 
     def show_project_selection(self):
-        # 使用新的项目管理器
+        """仅「选择项目」列表（无欢迎屏新建入口；新建走 downloader / create_project_with_initial_raw 等）。"""
         result, selected_config = create_project_dialog(self.root, youtube_gui=getattr(self, 'youtube_gui', None))
-        
+
         if result == 'cancel':
             return False
-        elif result == 'new':
-            # 立即创建ProjectConfigManager并保存新项目配置
-            pid = selected_config.get('pid')
-            try:
-                ProjectConfigManager.set_global_config(selected_config)
-                save_project_config()
-                print(f"✅ 新项目配置已保存: {pid}")
-            except Exception as e:
-                print(f"❌ 保存新项目配置失败: {e}")
-            
-            return True
-        elif result == 'open':
-            # 打开现有项目
+        if result == 'open':
             if selected_config is None:
                 print("❌ 错误：selected_config 为 None")
                 return False
-            # 注意：project_manager.PROJECT_CONFIG 已经在 open_selected() 中设置了，这里再次确认设置
             ProjectConfigManager.set_global_config(selected_config)
             return True
-        
+
         return False
 
    
@@ -405,6 +393,13 @@ class WorkflowGUI:
         ttk.Label(title_frame, text="频道").pack(side=tk.LEFT)
         self.shared_channel = ttk.Label(title_frame, width=15, relief="sunken", background="white")
         self.shared_channel.pack(side=tk.LEFT)
+        ttk.Label(title_frame, text="尺寸").pack(side=tk.LEFT, padx=(10, 0))
+        self._video_size_presets = ("1920×1080", "1080×1920")
+        self.video_size_combo = ttk.Combobox(
+            title_frame, width=12, state="readonly", values=self._video_size_presets
+        )
+        self.video_size_combo.pack(side=tk.LEFT, padx=(4, 0))
+        self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
         ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
         ttk.Button(row1_frame, text="全文演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
@@ -434,6 +429,98 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
 
    
+    def _parse_video_size_combo_label(self, lbl: str):
+        s = (lbl or "").replace("×", "x").replace("X", "x").strip()
+        a, b = s.lower().split("x", 1)
+        return int(a.strip()), int(b.strip())
+
+    def _set_video_size_combo_values(self, vw: int, vh: int):
+        if not hasattr(self, "video_size_combo"):
+            return
+        label = f"{int(vw)}×{int(vh)}"
+        vals = list(self._video_size_presets)
+        if label not in vals:
+            vals = list(vals) + [label]
+        self.video_size_combo["values"] = vals
+        self._programmatic_video_size = True
+        self.video_size_combo.set(label)
+        self._programmatic_video_size = False
+
+    def _revert_video_size_combo(self):
+        if not project_manager.PROJECT_CONFIG:
+            return
+        vw = int(project_manager.PROJECT_CONFIG.get("video_width", 1920))
+        vh = int(project_manager.PROJECT_CONFIG.get("video_height", 1080))
+        self._set_video_size_combo_values(vw, vh)
+
+    def _on_video_output_size_selected(self, event=None):
+        if self._programmatic_video_size or self._loading_config:
+            return
+        wf = getattr(self, "workflow", None)
+        if wf is None:
+            return
+        sel = self.video_size_combo.get()
+        try:
+            nw, nh = self._parse_video_size_combo_label(sel)
+        except (ValueError, TypeError, AttributeError):
+            messagebox.showerror("尺寸", f"无法解析分辨率：{sel!r}", parent=self.root)
+            self._revert_video_size_combo()
+            return
+        pc = project_manager.PROJECT_CONFIG
+        if not pc:
+            return
+        cur_w = int(pc.get("video_width", 1920))
+        cur_h = int(pc.get("video_height", 1080))
+        if (nw, nh) == (cur_w, cur_h):
+            return
+
+        if not messagebox.askyesno(
+            "更改成片尺寸",
+            f"将输出尺寸由 {cur_w}×{cur_h} 改为 {nw}×{nh}。\n\n"
+            "将按频道模板（config.make_backgroud_medias：169_ 横屏 / 916_ 竖屏）"
+            "重写所有场景的 zero、zero_image、zero_audio、clip、clip_audio、clip_image。\n\n是否继续？",
+            parent=self.root,
+        ):
+            self._revert_video_size_combo()
+            return
+
+        old_w, old_h = cur_w, cur_h
+        try:
+            pc["video_width"] = nw
+            pc["video_height"] = nh
+            wf.reapply_all_scenes_template_medias(nw, nh)
+            ProjectConfigManager.set_global_config(pc)
+            save_project_config(parent=self.root)
+            self.refresh_gui_scenes()
+            messagebox.showinfo(
+                "尺寸",
+                f"已更新为 {nw}×{nh}，各场景模板底稿已刷新，项目配置已保存。",
+                parent=self.root,
+            )
+        except Exception as e:
+            pc["video_width"] = old_w
+            pc["video_height"] = old_h
+            ProjectConfigManager.set_global_config(pc)
+            try:
+                wf.ffmpeg_processor = FfmpegProcessor(wf.pid, wf.language, old_w, old_h)
+            except Exception:
+                pass
+            self._revert_video_size_combo()
+            try:
+                wf.load_scenes()
+            except Exception:
+                pass
+            try:
+                save_project_config(parent=self.root)
+            except Exception:
+                pass
+            self.refresh_gui_scenes()
+            messagebox.showerror(
+                "尺寸",
+                f"更新失败，已恢复配置为 {old_w}×{old_h} 并从磁盘重载场景列表：\n{e}",
+                parent=self.root,
+            )
+
     def _open_suno_gui(self):
         """打开SUNO音乐提示词管理窗口"""
         try:
@@ -2700,7 +2787,7 @@ class WorkflowGUI:
             text = body.get("1.0", tk.END).strip()
             if project_manager.PROJECT_CONFIG is not None:
                 project_manager.PROJECT_CONFIG["summary"] = text
-                save_project_config()
+                save_project_config(parent=self.root)
             dlg.destroy()
             messagebox.showinfo("SUMMARIZE", "摘要已写入项目配置。", parent=self.root)
 
@@ -6553,6 +6640,10 @@ class WorkflowGUI:
             channel = config_data.get('channel', 'strange_zh')
             if hasattr(self, 'shared_channel'):
                 self.shared_channel.config(text=channel)
+
+            vw = int(config_data.get('video_width', 1920))
+            vh = int(config_data.get('video_height', 1080))
+            self._set_video_size_combo_values(vw, vh)
                 
             # 加载视频标题
             video_title = config_data.get('video_title', '默认标题')
@@ -6694,7 +6785,7 @@ class WorkflowGUI:
 
             # 更新当前项目配置（统一通过 set_global_config）
             ProjectConfigManager.set_global_config(config_data)
-            save_project_config()
+            save_project_config(parent=self.root)
                 
         except Exception as e:
             print(f"❌ 保存项目配置失败: {e}")
@@ -7464,9 +7555,34 @@ def main():
     import sys
     root = TkinterDnD.Tk()
 
-    # 支持 --open-pid <pid>：跳过欢迎屏，直接打开指定项目（可选，便于脚本或快捷方式）
     initial_pid = None
-    if len(sys.argv) >= 3 and sys.argv[1] == '--open-pid':
+    if len(sys.argv) >= 4 and sys.argv[1] == "--open-from-list-json":
+        list_path = sys.argv[2]
+        try:
+            idx = int(sys.argv[3])
+        except ValueError:
+            messagebox.showerror("启动错误", "--open-from-list-json 需要整数 index")
+            root.destroy()
+            return
+        try:
+            with open(list_path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+            if not isinstance(arr, list) or idx < 0 or idx >= len(arr):
+                raise ValueError("index 超出列表范围")
+            item = arr[idx]
+            cfg = project_config_from_list_item(item, os.path.normpath(list_path), idx)
+            ProjectConfigManager.set_global_config(cfg)
+            initial_pid = (cfg or {}).get("pid")
+            if not initial_pid:
+                raise ValueError("列表项中无有效 pid / project_profile")
+        except Exception as e:
+            try:
+                messagebox.showerror("启动错误", f"无法从频道列表项载入项目：{e}")
+            except Exception:
+                pass
+            root.destroy()
+            return
+    elif len(sys.argv) >= 3 and sys.argv[1] == '--open-pid':
         initial_pid = sys.argv[2]
 
     try:

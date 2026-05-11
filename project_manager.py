@@ -14,6 +14,7 @@ import re
 import json
 import glob
 import copy
+import base64
 from datetime import datetime
 import config
 import config_prompt
@@ -23,7 +24,7 @@ from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
 from utility.tags_text import merge_tag_pick, parse_tags_list
 from config import LANGUAGES
-from gui.downloader import MediaGUIManager, _format_nb_prompt_template
+from gui.downloader import MediaGUIManager
 
 def _story_value_nonempty(sv) -> bool:
     if sv is None:
@@ -142,6 +143,253 @@ LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
 LAST_HOST_DISPLAY = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
 
+# 频道「热门/视频列表」JSON 里每项的完整工作流配置（替代或并存 *.config）
+PROJECT_PROFILE_KEY = "project_profile"
+
+_LIST_REF_PREFIX = "chanlist:"
+
+
+def iter_channel_list_json_files():
+    """扫描各频道 program/*/list/*.json。"""
+    for cid in list(config_channel.CHANNEL_CONFIG.keys()):
+        list_dir = config.channel_list_json_dir_abs(config.get_channel_path(cid))
+        if not os.path.isdir(list_dir):
+            continue
+        for fp in sorted(glob.glob(os.path.join(list_dir, "*.json"))):
+            yield fp
+
+
+def encode_list_item_ref(list_path: str, index: int) -> str:
+    """Treeview tag：指向列表文件中某一行的项目配置。"""
+    raw = json.dumps([os.path.normpath(list_path), int(index)], ensure_ascii=False)
+    return _LIST_REF_PREFIX + base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def decode_list_item_ref(tag: str):
+    """返回 (list_path, index) 或 (None, None)。"""
+    if not isinstance(tag, str) or not tag.startswith(_LIST_REF_PREFIX):
+        return None, None
+    try:
+        raw = base64.urlsafe_b64decode(tag[len(_LIST_REF_PREFIX) :].encode("ascii")).decode("utf-8")
+        path, idx = json.loads(raw)
+        return os.path.normpath(path), int(idx)
+    except Exception:
+        return None, None
+
+
+def export_profile_for_storage(cfg: dict) -> dict:
+    """写入 list / 文件前去掉仅内存用的 ``_`` 元数据，并保证可 JSON 序列化。"""
+    out = {}
+    for k, v in (cfg or {}).items():
+        if str(k).startswith("_"):
+            continue
+        try:
+            json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            continue
+        out[k] = v
+    return out
+
+
+def project_config_from_list_item(item: dict, list_path: str = "", index: int = -1) -> dict:
+    """从视频列表的一行构造与原先 ``*.config`` 等价的 PROJECT_CONFIG 字典。"""
+    if not isinstance(item, dict):
+        return {}
+    prof = item.get(PROJECT_PROFILE_KEY)
+    cfg = {}
+    if isinstance(prof, dict) and prof:
+        cfg = copy.deepcopy(prof)
+    pid = (cfg.get("pid") or item.get("project_id") or item.get("project_pid") or "").strip()
+    if pid:
+        cfg["pid"] = pid
+    for k in (
+        "language",
+        "channel",
+        "video_width",
+        "video_height",
+        "visual_style",
+        "narrator",
+        "host_display",
+        "watermark",
+        "headmark",
+        "scene_min_length",
+    ):
+        if k not in cfg and item.get(k) is not None:
+            cfg[k] = copy.deepcopy(item[k])
+    if list_path:
+        cfg["_channel_list_json"] = os.path.normpath(list_path)
+    if index >= 0:
+        cfg["_channel_list_index"] = int(index)
+    return cfg
+
+
+def load_project_config_by_pid(wanted_pid: str):
+    """按 pid 在所有频道 ``list/*.json``（含热门列表与 topic 分列表）中查找。"""
+    wanted_pid = (wanted_pid or "").strip()
+    if not wanted_pid:
+        return None
+    for list_path in iter_channel_list_json_files():
+        try:
+            with open(list_path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(arr, list):
+            continue
+        for idx, item in enumerate(arr):
+            if not isinstance(item, dict):
+                continue
+            pr = item.get(PROJECT_PROFILE_KEY)
+            cand = ""
+            if isinstance(pr, dict):
+                cand = (pr.get("pid") or "").strip()
+            if not cand:
+                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            if cand == wanted_pid:
+                return project_config_from_list_item(item, list_path, idx)
+    return None
+
+
+def _write_profile_to_list_at_index(list_path: str, index: int, profile_dict: dict) -> bool:
+    try:
+        with open(list_path, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except Exception:
+        return False
+    if not isinstance(arr, list) or index < 0 or index >= len(arr):
+        return False
+    if not isinstance(arr[index], dict):
+        return False
+    arr[index][PROJECT_PROFILE_KEY] = copy.deepcopy(profile_dict)
+    p = (profile_dict or {}).get("pid")
+    if p:
+        arr[index]["project_id"] = p
+    try:
+        with open(list_path, "w", encoding="utf-8") as f:
+            json.dump(arr, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def _try_save_profile_to_lists_by_pid(file_pid: str, profile_dict: dict) -> bool:
+    for list_path in iter_channel_list_json_files():
+        try:
+            with open(list_path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(arr, list):
+            continue
+        for idx, item in enumerate(arr):
+            if not isinstance(item, dict):
+                continue
+            pr = item.get(PROJECT_PROFILE_KEY)
+            cand = ""
+            if isinstance(pr, dict):
+                cand = (pr.get("pid") or "").strip()
+            if not cand:
+                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            if cand == file_pid:
+                return _write_profile_to_list_at_index(list_path, idx, profile_dict)
+    return False
+
+
+def topic_category_list_json_path(channel_field: str, topic_category: str) -> str:
+    """与 ``config.topic_category_list_json_abspath`` / ``gui.downloader`` 主题列表路径完全一致。"""
+    return config.topic_category_list_json_abspath(channel_field, topic_category)
+
+
+def _prompt_topic_category_if_needed(parent) -> str:
+    if parent is None:
+        return ""
+    try:
+        import tkinter.simpledialog as simpledialog
+
+        s = simpledialog.askstring(
+            "主题分类 (topic_category)",
+            "保存项目需要主题分类。\n请输入与当前频道 topics.json 中一致的 topic_category：",
+            parent=parent,
+        )
+        return (s or "").strip()
+    except Exception:
+        return ""
+
+
+def _sync_project_config_list_meta(wanted_pid: str) -> None:
+    """保存成功后，回填 ``_channel_list_json`` / ``_channel_list_index`` 便于下次精确定位。"""
+    global PROJECT_CONFIG
+    if not PROJECT_CONFIG or not (wanted_pid or "").strip():
+        return
+    wanted_pid = wanted_pid.strip()
+    for list_path in iter_channel_list_json_files():
+        try:
+            with open(list_path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(arr, list):
+            continue
+        for idx, item in enumerate(arr):
+            if not isinstance(item, dict):
+                continue
+            pr = item.get(PROJECT_PROFILE_KEY)
+            cand = ""
+            if isinstance(pr, dict):
+                cand = (pr.get("pid") or "").strip()
+            if not cand:
+                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            if cand == wanted_pid:
+                PROJECT_CONFIG["_channel_list_json"] = os.path.normpath(list_path)
+                PROJECT_CONFIG["_channel_list_index"] = int(idx)
+                return
+
+
+def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, profile_dict: dict) -> bool:
+    """在指定 list JSON 内按 pid 更新或追加一行。"""
+    arr = []
+    if os.path.isfile(list_path):
+        try:
+            with open(list_path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            arr = []
+    if not isinstance(arr, list):
+        arr = []
+    found = False
+    file_pid = (file_pid or "").strip()
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        pr = item.get(PROJECT_PROFILE_KEY)
+        cand = ""
+        if isinstance(pr, dict):
+            cand = (pr.get("pid") or "").strip()
+        if not cand:
+            cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+        if cand == file_pid:
+            item[PROJECT_PROFILE_KEY] = copy.deepcopy(profile_dict)
+            item["project_id"] = file_pid
+            if profile_dict.get("topic_category") is not None:
+                item["topic_category"] = profile_dict.get("topic_category")
+            found = True
+            break
+    if not found:
+        arr.append(
+            {
+                "project_id": file_pid,
+                "title": profile_dict.get("video_title") or profile_dict.get("title") or file_pid,
+                PROJECT_PROFILE_KEY: copy.deepcopy(profile_dict),
+                "topic_category": profile_dict.get("topic_category"),
+            }
+        )
+    try:
+        with open(list_path, "w", encoding="utf-8") as f:
+            json.dump(arr, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError:
+        return False
+
 
 media_count = 0
 pid = None
@@ -186,49 +434,59 @@ class ProjectConfigManager:
     """管理每个项目的配置文件 - 可重用的项目配置管理器"""
     
     def __init__(self, pid=None):
-        self.config_dir = "config"
-        os.makedirs(self.config_dir, exist_ok=True)
         self.pid = pid
 
         self.load_config(pid)
 
-    
 
     def list_projects(self):
-        """列出所有项目配置"""
-        config_files = glob.glob(os.path.join(self.config_dir, "*.config"))
+        """列出项目：扫描各频道 ``list/*.json``（热门 + ``topic_category`` 分列表），含 ``project_profile`` 或 ``project_id`` 的条目。"""
+        seen_pid = set()
         projects = []
-        
-        for config_file in config_files:
+
+        for list_path in iter_channel_list_json_files():
             try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config_data = json.load(f)
-                    
-                pid = config_data.get('pid', '')
-                title = config_data.get('video_title', config_data.get('title', ''))
-                language = config_data.get('language', 'zh')
-                channel = config_data.get('channel', '')
-                video_size = f"{config_data.get('video_width', '1920')}x{config_data.get('video_height', '1080')}"
-                
-                # 获取最后修改时间
-                mtime = os.path.getmtime(config_file)
+                mtime = os.path.getmtime(list_path)
                 last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-                
-                projects.append({
-                    'pid': pid,
-                    'title': title,
-                    'language': language,
-                    'channel': channel,
-                    'video_size': video_size,
-                    'last_modified': last_modified,
-                    'config_file': config_file,
-                    'config_data': config_data
-                })
+            except OSError:
+                last_modified = ""
+            try:
+                with open(list_path, "r", encoding="utf-8") as f:
+                    arr = json.load(f)
             except Exception as e:
-                print(f"⚠️ 无法读取配置文件 {config_file}: {e}")
-        
-        # 按最后修改时间排序
-        projects.sort(key=lambda x: x['last_modified'], reverse=True)
+                print(f"⚠️ 无法读取列表 {list_path}: {e}")
+                continue
+            if not isinstance(arr, list):
+                continue
+            for idx, item in enumerate(arr):
+                if not isinstance(item, dict):
+                    continue
+                cfg = project_config_from_list_item(item, list_path, idx)
+                tpid = (cfg.get("pid") or "").strip()
+                if not tpid:
+                    continue
+                if tpid in seen_pid:
+                    continue
+                seen_pid.add(tpid)
+                title = cfg.get("video_title", cfg.get("title", ""))
+                language = cfg.get("language", "zh")
+                channel = cfg.get("channel", "")
+                video_size = f"{cfg.get('video_width', '1920')}x{cfg.get('video_height', '1080')}"
+                ref = encode_list_item_ref(list_path, idx)
+                projects.append(
+                    {
+                        "pid": tpid,
+                        "title": title,
+                        "language": language,
+                        "channel": channel,
+                        "video_size": video_size,
+                        "last_modified": last_modified,
+                        "config_file": ref,
+                        "config_data": cfg,
+                    }
+                )
+
+        projects.sort(key=lambda x: x["last_modified"], reverse=True)
         return projects
     
 
@@ -236,21 +494,14 @@ class ProjectConfigManager:
         global PROJECT_CONFIG
         if not pid:
             return PROJECT_CONFIG
-        
+
         self.pid = pid
-        config_path = os.path.join(self.config_dir, f"{pid}.config")
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    loaded_config = json.load(f)
-                    PROJECT_CONFIG = loaded_config
-                    print(f"🔍 load_config: 从文件加载配置成功，PID: {PROJECT_CONFIG.get('pid') if PROJECT_CONFIG else 'None'}")
-            except Exception as e:
-                print(f"⚠️ load_config: 从文件加载配置失败: {e}，保持现有 PROJECT_CONFIG")
-                # 如果文件读取失败，保持现有的 PROJECT_CONFIG 不变
+        merged = load_project_config_by_pid(pid)
+        if merged is not None:
+            PROJECT_CONFIG = merged
+            print(f"🔍 load_config: 已从频道 list/ 加载，PID: {PROJECT_CONFIG.get('pid') if PROJECT_CONFIG else 'None'}")
         else:
-            print(f"🔍 load_config: 配置文件不存在，保持现有 PROJECT_CONFIG，PID: {PROJECT_CONFIG.get('pid') if PROJECT_CONFIG else 'None'}")
-        # 如果文件不存在但 PROJECT_CONFIG 已经设置（例如新建项目），保持现有值
+            print(f"🔍 load_config: 未在任何 list/*.json 中找到 pid={pid}")
         return PROJECT_CONFIG
     
     @staticmethod
@@ -262,53 +513,99 @@ class ProjectConfigManager:
             PROJECT_CONFIG.pop('debut_content', None)
 
     def load_project_config(self, config_file):
-        """加载项目配置"""
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"❌ 加载项目配置失败: {e}")
+        """加载项目配置：仅支持 ``chanlist:`` 列表引用（某 ``list/*.json`` 的行）。"""
+        lp, ix = decode_list_item_ref(config_file)
+        if lp is not None and ix is not None:
+            try:
+                with open(lp, "r", encoding="utf-8") as f:
+                    arr = json.load(f)
+                if isinstance(arr, list) and 0 <= ix < len(arr) and isinstance(arr[ix], dict):
+                    return project_config_from_list_item(arr[ix], lp, ix)
+            except Exception as e:
+                print(f"❌ 从频道列表加载失败: {e}")
             return None
+        return None
     
     def delete_project_config(self, config_file):
-        """删除项目配置"""
-        try:
-            os.remove(config_file)
-            print(f"🗑️ 已删除项目配置: {config_file}")
-            return True
-        except Exception as e:
-            print(f"❌ 删除项目配置失败: {e}")
-            return False
+        """删除项目：仅支持 ``chanlist:`` 引用——清空该行的 ``project_profile`` 与 ``project_id``。"""
+        lp, ix = decode_list_item_ref(config_file)
+        if lp is not None and ix is not None:
+            try:
+                with open(lp, "r", encoding="utf-8") as f:
+                    arr = json.load(f)
+                if not isinstance(arr, list) or ix < 0 or ix >= len(arr):
+                    return False
+                if isinstance(arr[ix], dict):
+                    arr[ix].pop(PROJECT_PROFILE_KEY, None)
+                    arr[ix].pop("project_id", None)
+                    arr[ix].pop("project_pid", None)
+                with open(lp, "w", encoding="utf-8") as f:
+                    json.dump(arr, f, ensure_ascii=False, indent=2)
+                print(f"🗑️ 已从频道列表移除项目配置: {lp}[{ix}]")
+                return True
+            except Exception as e:
+                print(f"❌ 删除列表项目配置失败: {e}")
+                return False
+        print("❌ 不支持删除：请从「选择项目」列表产生的引用删除")
+        return False
 
 
-def save_project_config():
-    """将全局 PROJECT_CONFIG 写入 config/{pid}.config。"""
+def save_project_config(parent=None):
+    """写回 ``project_profile``：优先精确定位行 → 按 pid 搜全部 ``list/*.json`` → 再写入 ``topic_category`` 对应分表文件。
+
+    不再使用 ``PROJECT_DATA_PATH/config/{pid}.config``。若无 ``topic_category`` 且尚未写入任一行，在有 ``parent`` 时弹窗请求。
+    """
     global PROJECT_CONFIG, pid
     if not PROJECT_CONFIG:
         print("❌ 项目配置未加载，无法保存项目配置")
         return False
-    file_pid = PROJECT_CONFIG.get('pid') or pid
+    file_pid = PROJECT_CONFIG.get("pid") or pid
     if not file_pid:
         print("❌ 项目ID未设置，无法保存项目配置")
         return False
-    config_dir = "config"
-    os.makedirs(config_dir, exist_ok=True)
-    config_path = os.path.join(config_dir, f"{file_pid}.config")
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(PROJECT_CONFIG, f, ensure_ascii=False, indent=2)
+    to_store = export_profile_for_storage(copy.deepcopy(PROJECT_CONFIG))
+    lp = PROJECT_CONFIG.get("_channel_list_json")
+    ix = PROJECT_CONFIG.get("_channel_list_index")
+    if lp and ix is not None and isinstance(ix, int) and os.path.isfile(lp):
+        if _write_profile_to_list_at_index(lp, ix, to_store):
+            pid = file_pid
+            _sync_project_config_list_meta(file_pid)
+            print(f"✅ 项目配置已写入频道列表: {lp} (index {ix})")
+            return True
+    if _try_save_profile_to_lists_by_pid(file_pid, to_store):
         pid = file_pid
-        print(f"✅ 项目配置已保存: {config_path}")
+        _sync_project_config_list_meta(file_pid)
+        print("✅ 项目配置已写入频道列表（按 pid 匹配）")
         return True
-    except Exception as e:
-        print(f"❌ 保存项目配置失败: {e}")
+
+    ch = (PROJECT_CONFIG.get("channel") or "").strip()
+    if not ch:
+        print("❌ 缺少 channel，无法定位 list/ 下的主题列表文件")
         return False
+
+    tc = (PROJECT_CONFIG.get("topic_category") or "").strip()
+    if not tc:
+        tc = _prompt_topic_category_if_needed(parent)
+        if not tc:
+            print("❌ 缺少 topic_category，已取消保存（请在工作流中设置主题或在弹窗中输入）")
+            return False
+        PROJECT_CONFIG["topic_category"] = tc
+        to_store = export_profile_for_storage(copy.deepcopy(PROJECT_CONFIG))
+
+    tpath = topic_category_list_json_path(ch, tc)
+    if _upsert_profile_in_topic_list_file(tpath, file_pid, to_store):
+        pid = file_pid
+        _sync_project_config_list_meta(file_pid)
+        print(f"✅ 项目配置已写入主题列表: {tpath}")
+        return True
+    print(f"❌ 无法写入主题列表文件: {tpath}")
+    return False
 
 
 class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
     
-    def __init__(self, parent, config_manager, youtube_gui, create_only, selection_only, 
+    def __init__(self, parent, config_manager, youtube_gui, create_only,
                  initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None):
 
@@ -398,16 +695,12 @@ class ProjectSelectionDialog:
             if self.story_result.get('action') != 'new' and self.dialog.winfo_exists():
                 self.dialog.destroy()
         else:
-            self.create_dialog(selection_only=selection_only)
+            self.create_dialog()
 
 
 
-    def create_dialog(self, selection_only=False):
-        """创建对话框
-
-        Args:
-            selection_only: 若为 True，不显示「新建项目」按钮（该入口已移至启动首屏）
-        """
+    def create_dialog(self):
+        """项目列表：打开 / 删除 / 刷新；不提供「新建项目」（新建走 downloader 等单独入口）。"""
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("选择项目")
         self.dialog.geometry("1000x600")
@@ -460,8 +753,6 @@ class ProjectSelectionDialog:
         right_buttons = ttk.Frame(button_frame)
         right_buttons.pack(side=tk.RIGHT)
         ttk.Button(right_buttons, text="打开选中", command=self.open_selected).pack(side=tk.LEFT, padx=(0, 10))
-        if not selection_only:
-            ttk.Button(right_buttons, text="新建项目", command=self.create_new_project).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(right_buttons, text="取消", command=self.cancel).pack(side=tk.LEFT)
 
         self.refresh_projects()
@@ -1054,11 +1345,10 @@ def launch_yt_media_tool(
     parent.after(450, _poll_standalone_exit)
 
 
-def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
-    """GUI / YT 工具启动时的选项（频道、语言、风格、旁白、HOST）。
+def show_initial_choice_dialog(parent):
+    """``GUI_pm.py`` 独立入口：频道 / 语言 / 风格 / 旁白 / HOST + 四个 YT 功能按钮。
 
-    - ``for_yt_tools=False``（默认）：仅「选择项目」「创建新项目」——供 ``GUI_wf.py`` 使用。
-    - ``for_yt_tools=True``：仅四个 YT 按钮——供 ``GUI_pm.py`` 独立入口使用。
+    魔法工作流 ``GUI_wf.py`` 启动时不再经此函数，直接进入「选择项目」列表。
     """
     result = {
         'choice': 'cancel',
@@ -1070,7 +1360,7 @@ def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
     }
 
     dialog = tk.Toplevel(parent)
-    dialog.title("YT 工具" if for_yt_tools else "欢迎")
+    dialog.title("YT 工具")
     dialog.transient(parent)
     dialog.grab_set()
     dialog.resizable(False, False)
@@ -1143,10 +1433,11 @@ def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
     )
     host_display_combo_welcome.pack(side=tk.LEFT)
 
-    ttk.Label(main_frame, text="请选择操作", font=('TkDefaultFont', 14, 'bold')).pack(pady=(0, 25))
 
     btn_frame = ttk.Frame(main_frame)
-    btn_frame.pack(pady=15)
+    btn_frame.pack(pady=15, fill=tk.X)
+
+    ttk.Label(btn_frame, text="请选择项目管理工具", font=('TkDefaultFont', 14, 'bold')).pack(pady=(0, 25))
 
     def _sync_result_narrator():
         global LAST_NARRATOR
@@ -1167,20 +1458,6 @@ def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
         _sync_result_narrator()
         _sync_result_visual_style()
         _sync_result_host_display()
-
-    def on_new():
-        result['choice'] = 'new'
-        result['channel'] = channel_var.get().strip()
-        result['language'] = language_var.get().strip()
-        _sync_welcome_choices()
-        dialog.destroy()
-
-    def on_open():
-        result['choice'] = 'open'
-        result['channel'] = channel_var.get().strip()
-        result['language'] = language_var.get().strip()
-        _sync_welcome_choices()
-        dialog.destroy()
 
     def on_cancel():
         result['choice'] = 'cancel'
@@ -1205,47 +1482,46 @@ def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
             yt_method_args=method_args,
         )
 
-    # 按钮：主 GUI 仅项目；YT 独立入口仅四个 YT 功能
-    if not for_yt_tools:
-        project_frame = ttk.Frame(btn_frame)
-        project_frame.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(project_frame, text="选择项目", command=on_open, width=32).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(project_frame, text="创建新项目", command=on_new, width=32).pack(side=tk.LEFT)
-    else:
-        yt_frame1 = ttk.Frame(btn_frame)
-        yt_frame1.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(
-            yt_frame1,
-            text="YT管理",
-            command=lambda: _run_yt_tool("manage_hot_videos"),
-            width=32,
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(
-            yt_frame1,
-            text="文字转译",
-            command=lambda: _run_yt_tool("transcribe_media", True),
-            width=32,
-        ).pack(side=tk.LEFT, padx=(0, 5))
+    yt_row1 = ttk.Frame(btn_frame)
+    yt_row1.pack(fill=tk.X, pady=(0, 8))
+    ttk.Button(
+        yt_row1,
+        text="项目管理",
+        command=lambda: _run_yt_tool("manage_hot_videos"),
+    ).pack(fill=tk.X, expand=True)
 
-        yt_frame2 = ttk.Frame(btn_frame)
-        yt_frame2.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(
-            yt_frame2,
-            text="YT文字",
-            command=lambda: _run_yt_tool("download_youtube", True),
-            width=32,
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(
-            yt_frame2,
-            text="YT視頻",
-            command=lambda: _run_yt_tool("download_youtube", False),
-            width=32,
-        ).pack(side=tk.LEFT)
+    yt_row2 = ttk.Frame(btn_frame)
+    yt_row2.pack(fill=tk.X, pady=(0, 8))
+    ttk.Button(
+        yt_row2,
+        text="文字转译",
+        command=lambda: _run_yt_tool("transcribe_media", True),
+        width=32,
+    ).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(
+        yt_row2,
+        text="YT文字",
+        command=lambda: _run_yt_tool("download_youtube", True),
+        width=32,
+    ).pack(side=tk.LEFT)
 
-    ttk.Button(btn_frame, text="取消", command=on_cancel, width=32).pack(fill=tk.X, pady=8)
+    yt_row3 = ttk.Frame(btn_frame)
+    yt_row3.pack(fill=tk.X)
+    ttk.Button(
+        yt_row3,
+        text="YT視頻",
+        command=lambda: _run_yt_tool("download_youtube", False),
+        width=32,
+    ).pack(side=tk.LEFT, padx=(0, 5))
+    ttk.Button(
+        yt_row3,
+        text="取消",
+        command=on_cancel,
+        width=32,
+    ).pack(side=tk.LEFT)
 
     dialog.update_idletasks()
-    w, h = 450, (520 if for_yt_tools else 430)
+    w, h = 450, 520
     x = (dialog.winfo_screenwidth() - w) // 2
     y = (dialog.winfo_screenheight() - h) // 2
     dialog.geometry(f"{w}x{h}+{x}+{y}")
@@ -1263,36 +1539,25 @@ def show_initial_choice_dialog(parent, *, for_yt_tools: bool = False):
 
 
 def create_project_dialog(parent, youtube_gui=None):
+    """``GUI_wf.py``：直接进入「选择项目」列表（无欢迎屏新建入口）。"""
     global PROJECT_CONFIG
-    # 欢迎屏：仅创建新项目 / 选择项目（YT 请使用 GUI_pm.py）
-    choice, initial_channel, initial_language, initial_narrator, initial_visual_style, initial_host_display = show_initial_choice_dialog(
-        parent, for_yt_tools=False
-    )
-    if choice == 'cancel':
-        return 'cancel', None
-
     config_manager = ProjectConfigManager()
+    available_channels = list(config_channel.CHANNEL_CONFIG.keys())
+    default_channel = available_channels[0] if available_channels else "default"
 
-    if choice == 'new':
-        # 直接打开创建新项目窗口，传入首层选择的 channel/language
-        dialog = ProjectSelectionDialog(
-            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, create_only=True, selection_only=False, 
-            initial_channel=initial_channel, initial_language=initial_language, initial_narrator=initial_narrator, initial_visual_style=initial_visual_style, initial_host_display=initial_host_display,
-        )
+    dialog = ProjectSelectionDialog(
+        parent=parent,
+        config_manager=config_manager,
+        youtube_gui=youtube_gui,
+        create_only=False,
+        initial_channel=default_channel,
+        initial_language="tw",
+        initial_narrator=LAST_NARRATOR,
+        initial_visual_style=LAST_VISUAL_STYLE,
+        initial_host_display=LAST_HOST_DISPLAY,
+    )
+    result, selected_config = dialog.show()
 
-        result = dialog.story_result.get('action', 'cancel')
-        selected_config = dialog.selected_config
-        if dialog.dialog.winfo_exists():
-            dialog.dialog.destroy()
-    else:
-        # 选择项目：显示项目列表（不含「新建项目」按钮），传入 channel/language
-        dialog = ProjectSelectionDialog(
-            parent=parent, config_manager=config_manager, youtube_gui=youtube_gui, create_only=False, selection_only=True,
-            initial_channel=initial_channel, initial_language=initial_language, initial_narrator=initial_narrator, initial_visual_style=initial_visual_style, initial_host_display=initial_host_display,
-        )
-        result, selected_config = dialog.show()
-
-    # 确保在返回前 PROJECT_CONFIG 仍然有效
     if PROJECT_CONFIG is None and selected_config is not None:
         PROJECT_CONFIG = selected_config.copy()
     return result, selected_config
@@ -1315,7 +1580,6 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         config_manager=config_manager,
         youtube_gui=None,
         create_only=True,
-        selection_only=False,
 
         initial_channel=channel, 
         initial_language=language,
@@ -1343,7 +1607,7 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         if pid:
             try:
                 ProjectConfigManager.set_global_config(selected_config)
-                save_project_config()
+                save_project_config(parent=parent)
             except Exception:
                 pass
 

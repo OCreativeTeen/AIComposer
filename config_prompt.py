@@ -206,11 +206,6 @@ the uploaded txt file is a json list, each item in this list has "content" & "su
 """
 
 
-RENAME = """
-ls *.json | ren -NewName { $_.BaseName + ".txt" }
-ls *.txt | ren -NewName { $_.BaseName + ".json.txt" }
-"""
-
 
 
 SCENE_VIDEO_INSTRUCTION = """

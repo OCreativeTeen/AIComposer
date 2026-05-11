@@ -71,7 +71,7 @@ Craft a story that is "alive." Do not just state the problem; let the character 
 
 1) **Title**: A poetic, evocative title.
 2) **Heart Message (Voiceover)**: 2-3 short, rhythmic sentences. Not a lecture, but a sigh of relief.
-3) **The Story (Vivid Narrative)**:
+3) **The Story (Vivid Narrative Story with details and emotional textures)**:
    - **The Setup**: A relatable scene where the psychological issue creates friction.
    - **The Core Conflict**: A moment of internal tension where the character faces their "Shadow" or "Fear." Use sensory details (a cold hand, a held breath).
    - **The Turning Point & Resolution**: The character experiences a "re-understanding" or takes a small, brave step toward the "Way Out" identified in Step 1.
@@ -1949,7 +1949,7 @@ CHANNEL_CONFIG = {
         "channel_id": "music_story",
         "channel_category_id": "10",
         "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
-        "channel_key": "client_secret_creative4teen.json",
+        "channel_key": "client_secret_ocreativeteen.json",
 
         "scene_min_length": 20,
         "watermark": {
