@@ -1290,7 +1290,7 @@ class AVReviewDialog:
                     }
                     refresh_json_copy.append(new_item)
                 refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
-                refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+                refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
             except:
                 refresh_json = None
 
@@ -1305,7 +1305,7 @@ class AVReviewDialog:
                 }
             ]
             refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
-            refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+            refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
 
         if self.transcribe_way == "simple":
             selected_prompt_example_file = None

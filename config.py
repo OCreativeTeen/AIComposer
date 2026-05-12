@@ -4,6 +4,7 @@ import uuid
 import random
 import glob
 import json
+import copy
 import unicodedata
 import zhconv
 
@@ -30,6 +31,119 @@ LANGUAGES = {
     "de": "german",
     "es": "spanish",
 }
+
+
+_BILINGUAL_RAW_KEYS = frozenset(("english", "chinese"))
+
+
+def bilingual_branch_for_ui_language(ui_language_key: str) -> str:
+    """NotebookLM / Case-Study RAW 的双语分支名（仅 english | chinese）。"""
+    br = LANGUAGES.get(str(ui_language_key or "tw").strip().lower(), "chinese")
+    return br if br in _BILINGUAL_RAW_KEYS else "chinese"
+
+
+def scene_story_language_key_for_ui(ui_language_key: str) -> str:
+    """UI 语种码 → ``scene_content`` 顶层分支名，规则与 ``magic_workflow.load_scenes`` 中
+    ``config.LANGUAGES[self.language]`` 一致（tw/zh → chinese；en → english；…）。
+
+    若参数本身已是 ``english`` / ``chinese``（部分旧数据），则原样返回。
+    """
+    k = str(ui_language_key or "tw").strip().lower()
+    if k in _BILINGUAL_RAW_KEYS:
+        return k
+    return LANGUAGES.get(k, "chinese")
+
+
+def merge_analyzed_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
+    """将 LLM 返回的 analyzed_content 合并进 ``{english: {...}, chinese: {...}}``，保留另一语种。
+
+    ``rewritten`` 若为带 english/chinese 键的对象则按分支整体替换；否则只更新当前 UI 语种分支。
+    """
+    existing = existing if isinstance(existing, dict) else {}
+    rewritten = rewritten if isinstance(rewritten, dict) else {}
+    out: dict = {}
+    if _BILINGUAL_RAW_KEYS.intersection(existing.keys()):
+        for k in _BILINGUAL_RAW_KEYS:
+            v = existing.get(k)
+            out[k] = copy.deepcopy(v) if isinstance(v, dict) else {}
+    else:
+        branch0 = bilingual_branch_for_ui_language(ui_language_key)
+        out = {"english": {}, "chinese": {}}
+        out[branch0] = copy.deepcopy(existing)
+
+    if _BILINGUAL_RAW_KEYS.intersection(rewritten.keys()):
+        for k in _BILINGUAL_RAW_KEYS:
+            if k not in rewritten:
+                continue
+            sub = rewritten[k]
+            if isinstance(sub, dict):
+                out[k] = copy.deepcopy(sub)
+        return out
+
+    branch = bilingual_branch_for_ui_language(ui_language_key)
+    out.setdefault("english", {})
+    out.setdefault("chinese", {})
+    if not isinstance(out["english"], dict):
+        out["english"] = {}
+    if not isinstance(out["chinese"], dict):
+        out["chinese"] = {}
+    out[branch] = copy.deepcopy(rewritten)
+    return out
+
+
+def merge_scene_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
+    """将内容合并进 ``{english: [scenes], chinese: [scenes]}``；``rewritten`` 可为 list 或双语 dict。"""
+    existing = existing if isinstance(existing, dict) else {}
+    bi = _BILINGUAL_RAW_KEYS
+    out: dict = {}
+    if bi.intersection(existing.keys()):
+        for k in bi:
+            v = existing.get(k)
+            if isinstance(v, list):
+                out[k] = copy.deepcopy(v)
+            elif isinstance(v, dict):
+                out[k] = [copy.deepcopy(v)]
+            elif v is None:
+                out[k] = []
+            else:
+                out[k] = []
+    else:
+        branch0 = bilingual_branch_for_ui_language(ui_language_key)
+        out = {"english": [], "chinese": []}
+        if isinstance(existing, list):
+            out[branch0] = copy.deepcopy(existing)
+        elif isinstance(existing, dict):
+            out[branch0] = [copy.deepcopy(existing)]
+        else:
+            out[branch0] = []
+
+    if isinstance(rewritten, list):
+        branch = bilingual_branch_for_ui_language(ui_language_key)
+        out.setdefault("english", [])
+        out.setdefault("chinese", [])
+        out[branch] = copy.deepcopy(rewritten)
+        return out
+
+    if isinstance(rewritten, dict):
+        if bi.intersection(rewritten.keys()):
+            for k in bi:
+                if k not in rewritten:
+                    continue
+                v = rewritten[k]
+                if isinstance(v, list):
+                    out[k] = copy.deepcopy(v)
+                elif isinstance(v, dict):
+                    out[k] = [copy.deepcopy(v)]
+                elif v is None:
+                    out[k] = []
+            return out
+        branch = bilingual_branch_for_ui_language(ui_language_key)
+        out.setdefault("english", [])
+        out.setdefault("chinese", [])
+        out[branch] = [copy.deepcopy(rewritten)]
+        return out
+
+    return out
 
 
 

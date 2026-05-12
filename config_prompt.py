@@ -537,24 +537,6 @@ INSTRUCTIONS:
 """
 
 
-TITLE_SUMMARIZATION_SYSTEM_PROMPT = """
-You are specializing in summarizing titles  & tagsfrom a short text content (may not be in English).
-
-**Core requirements**:
-1. Extract less than {length} Titles from the short text content (keep the same language, which is {language}); 
-   The begining of each Title is more important to catch attention/curiosity
-
-2. Extract no more than {length} tags from the short text content (keep the same language, which is {language}); 
-   The tags should be very very Eye-catching, give Contrast words catch impression
-
-3. The Output format: Strictly in JSON format, like:
-    {{
-        "titles": ["Title1", "Title2", "Title3"],
-        "tags": ["Tag1", "Tag2", "Tag3"]
-    }}
-
-"""
-
 
 STORY_SYSTEM_PROMPT = """
 Based on the raw-story-outline provided in the user prompt, write a '{story_style}' for topic-'{topic}', with the following requirement:

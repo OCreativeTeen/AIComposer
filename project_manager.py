@@ -23,7 +23,6 @@ import utility.llm_api as llm_api
 from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
 from utility.tags_text import merge_tag_pick, parse_tags_list
-from config import LANGUAGES
 from gui.downloader import MediaGUIManager
 
 def _story_value_nonempty(sv) -> bool:
@@ -66,21 +65,84 @@ def _raw_story_preview_text(story_result) -> str:
     return ""
 
 
-def _title_from_scene_content(scene_content) -> str:
-    """从 scene_content 取标题：若为 list 则取首元素的 title；若为 dict 则取其 title。"""
-    if isinstance(scene_content, list) and scene_content:
-        first = scene_content[0]
-        if isinstance(first, dict):
-            t = first.get('title')
-            if t is not None and str(t).strip():
-                return str(t).strip()
-        return ''
+def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
+    """从 scene_content 取首场景标题：分支键与 ``magic_workflow.load_scenes`` 一致
+    （``scene_content[config.scene_story_language_key_for_ui(UI语种)][0]["title"]``）。
+
+    支持双语 ``{english: [...], chinese: [...]}``（键名大小写不敏感）、顶层 list、单层 dict。
+    """
+    if scene_content is None:
+        return ""
+
+    def _branch_val(d: dict, branch: str):
+        if not branch or not isinstance(d, dict):
+            return None
+        if branch in d:
+            return d[branch]
+        bl = branch.lower()
+        for k, v in d.items():
+            if isinstance(k, str) and k.lower() == bl:
+                return v
+        return None
+
+    def _title_from_scene_value(val):
+        """分支值为场景 list 或单场景 dict。"""
+        if val is None:
+            return ""
+        if isinstance(val, list) and val:
+            first = val[0]
+            if isinstance(first, dict):
+                for kk in ("title", "Title"):
+                    t = first.get(kk)
+                    if t is not None and str(t).strip():
+                        return str(t).strip()
+        if isinstance(val, dict):
+            for kk in ("title", "Title"):
+                t = val.get(kk)
+                if t is not None and str(t).strip():
+                    return str(t).strip()
+        return ""
+
+    pref = ""
+    if (ui_language_key or "").strip():
+        pref = config.scene_story_language_key_for_ui(ui_language_key)
+
     if isinstance(scene_content, dict):
-        t = scene_content.get('title')
-        if t is not None and str(t).strip():
-            return str(t).strip()
-        return ''
-    return ''
+        keys_lower = {str(k).lower() for k in scene_content.keys() if isinstance(k, str)}
+        has_bi = ("english" in keys_lower or "chinese" in keys_lower)
+
+        if has_bi:
+            candidates = []
+            if pref:
+                candidates.append(pref)
+            for br in ("chinese", "english"):
+                if br not in candidates:
+                    candidates.append(br)
+            for br in candidates:
+                v = _branch_val(scene_content, br)
+                got = _title_from_scene_value(v)
+                if got:
+                    return got
+            return ""
+
+        got = _title_from_scene_value(scene_content)
+        if got:
+            return got
+
+        if pref:
+            v = _branch_val(scene_content, pref)
+            got = _title_from_scene_value(v)
+            if got:
+                return got
+
+        return ""
+
+    if isinstance(scene_content, list) and scene_content:
+        got = _title_from_scene_value(scene_content)
+        if got:
+            return got
+
+    return ""
 
 
 def _raw_content_valid_for_create(ac) -> bool:
@@ -146,6 +208,33 @@ LAST_HOST_DISPLAY = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
 # 频道「热门/视频列表」JSON 里每项的完整工作流配置（替代或并存 *.config）
 PROJECT_PROFILE_KEY = "project_profile"
 
+# 落盘写入 project_profile 的键（不含 RAW / 分类 / tags / soul 等）
+PROJECT_PROFILE_STORAGE_KEYS = frozenset({
+    "channel",
+    "channel_template",
+    "prompts",
+    "language",
+    "narrator",
+    "visual_style",
+    "host_display",
+    "pid",
+    "video_width",
+    "video_height",
+    "scene_min_length",
+    "watermark",
+    "headmark",
+    "video_title",
+})
+
+# 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）
+LIST_ITEM_TOP_PROJECT_KEYS = (
+    "analyzed_content",
+    "scene_content",
+    "topic_category",
+    "topic_subtype",
+    "tags",
+)
+
 _LIST_REF_PREFIX = "chanlist:"
 
 
@@ -191,6 +280,71 @@ def export_profile_for_storage(cfg: dict) -> dict:
     return out
 
 
+def profile_for_list_storage(cfg: dict) -> dict:
+    """列表项内 ``project_profile`` 仅存白名单字段；不写 soul / analyzed_content / 分类等到 profile。"""
+    base = export_profile_for_storage(cfg or {})
+    out = {}
+    for k in PROJECT_PROFILE_STORAGE_KEYS:
+        if k not in base:
+            continue
+        v = base[k]
+        try:
+            json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            continue
+        out[k] = copy.deepcopy(v)
+    return out
+
+
+def resolve_soul_for_config(cfg: dict) -> str:
+    """不读缓存的 soul：由 channel + topic 动态 ``build_soul``。"""
+    if not isinstance(cfg, dict):
+        return ""
+    ch = (cfg.get("channel") or "").strip()
+    tc = (cfg.get("topic_category") or "").strip()
+    ts = (cfg.get("topic_subtype") or "").strip()
+    if not (ch and tc and ts):
+        return ""
+    soul, _, _, _ = build_soul(ch, tc, ts)
+    return soul if isinstance(soul, str) else ""
+
+
+def hydrate_config_soul_runtime(cfg: dict) -> None:
+    """运行时在 cfg 填入 soul，兼容仍读 cfg['soul'] 的路径；不写回列表 JSON。"""
+    if not isinstance(cfg, dict):
+        return
+    s = resolve_soul_for_config(cfg)
+    if s:
+        cfg["soul"] = s
+    else:
+        cfg.pop("soul", None)
+
+
+def sync_channel_list_item_from_full_config(item: dict, full_cfg_clean: dict) -> None:
+    """将 ``export_profile_for_storage`` 后的完整配置写入一行列表：不改变外层 ``title``（保留原视频列表标题）；同步 RAW/分类/tags + 窄 ``project_profile``（含 ``video_title``）。"""
+    if not isinstance(item, dict):
+        return
+    item[PROJECT_PROFILE_KEY] = profile_for_list_storage(full_cfg_clean)
+    item.pop("project_id", None)
+    item.pop("project_pid", None)
+    item.pop("pid", None)
+    item.pop("video_title", None)
+    fc = full_cfg_clean or {}
+    for k in LIST_ITEM_TOP_PROJECT_KEYS:
+        if k in fc:
+            item[k] = copy.deepcopy(fc[k])
+
+
+def list_json_row_workflow_pid(item: dict) -> str:
+    """频道列表 JSON 行对应的工作流 pid：仅从 ``project_profile.pid`` 读取。"""
+    if not isinstance(item, dict):
+        return ""
+    pr = item.get(PROJECT_PROFILE_KEY)
+    if isinstance(pr, dict):
+        return str(pr.get("pid") or "").strip()
+    return ""
+
+
 def project_config_from_list_item(item: dict, list_path: str = "", index: int = -1) -> dict:
     """从视频列表的一行构造与原先 ``*.config`` 等价的 PROJECT_CONFIG 字典。"""
     if not isinstance(item, dict):
@@ -198,10 +352,16 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
     prof = item.get(PROJECT_PROFILE_KEY)
     cfg = {}
     if isinstance(prof, dict) and prof:
-        cfg = copy.deepcopy(prof)
-    pid = (cfg.get("pid") or item.get("project_id") or item.get("project_pid") or "").strip()
+        cfg = profile_for_list_storage(copy.deepcopy(prof))
+    pid = list_json_row_workflow_pid(item)
     if pid:
         cfg["pid"] = pid
+    for k in LIST_ITEM_TOP_PROJECT_KEYS:
+        if k in item:
+            cfg[k] = copy.deepcopy(item[k])
+    vt = (cfg.get("video_title") or "").strip()
+    if vt:
+        cfg["video_title"] = vt
     for k in (
         "language",
         "channel",
@@ -220,6 +380,7 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
         cfg["_channel_list_json"] = os.path.normpath(list_path)
     if index >= 0:
         cfg["_channel_list_index"] = int(index)
+    hydrate_config_soul_runtime(cfg)
     return cfg
 
 
@@ -239,18 +400,14 @@ def load_project_config_by_pid(wanted_pid: str):
         for idx, item in enumerate(arr):
             if not isinstance(item, dict):
                 continue
-            pr = item.get(PROJECT_PROFILE_KEY)
-            cand = ""
-            if isinstance(pr, dict):
-                cand = (pr.get("pid") or "").strip()
-            if not cand:
-                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            cand = list_json_row_workflow_pid(item)
             if cand == wanted_pid:
                 return project_config_from_list_item(item, list_path, idx)
     return None
 
 
-def _write_profile_to_list_at_index(list_path: str, index: int, profile_dict: dict) -> bool:
+def _write_profile_to_list_at_index(list_path: str, index: int, full_exported_cfg: dict) -> bool:
+    """``full_exported_cfg`` 须为 ``export_profile_for_storage`` 的结果；整行同步外层 + 窄 profile。"""
     try:
         with open(list_path, "r", encoding="utf-8") as f:
             arr = json.load(f)
@@ -260,10 +417,7 @@ def _write_profile_to_list_at_index(list_path: str, index: int, profile_dict: di
         return False
     if not isinstance(arr[index], dict):
         return False
-    arr[index][PROJECT_PROFILE_KEY] = copy.deepcopy(profile_dict)
-    p = (profile_dict or {}).get("pid")
-    if p:
-        arr[index]["project_id"] = p
+    sync_channel_list_item_from_full_config(arr[index], full_exported_cfg or {})
     try:
         with open(list_path, "w", encoding="utf-8") as f:
             json.dump(arr, f, ensure_ascii=False, indent=2)
@@ -272,7 +426,7 @@ def _write_profile_to_list_at_index(list_path: str, index: int, profile_dict: di
         return False
 
 
-def _try_save_profile_to_lists_by_pid(file_pid: str, profile_dict: dict) -> bool:
+def _try_save_profile_to_lists_by_pid(file_pid: str, full_exported_cfg: dict) -> bool:
     for list_path in iter_channel_list_json_files():
         try:
             with open(list_path, "r", encoding="utf-8") as f:
@@ -284,14 +438,9 @@ def _try_save_profile_to_lists_by_pid(file_pid: str, profile_dict: dict) -> bool
         for idx, item in enumerate(arr):
             if not isinstance(item, dict):
                 continue
-            pr = item.get(PROJECT_PROFILE_KEY)
-            cand = ""
-            if isinstance(pr, dict):
-                cand = (pr.get("pid") or "").strip()
-            if not cand:
-                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            cand = list_json_row_workflow_pid(item)
             if cand == file_pid:
-                return _write_profile_to_list_at_index(list_path, idx, profile_dict)
+                return _write_profile_to_list_at_index(list_path, idx, full_exported_cfg)
     return False
 
 
@@ -333,20 +482,15 @@ def _sync_project_config_list_meta(wanted_pid: str) -> None:
         for idx, item in enumerate(arr):
             if not isinstance(item, dict):
                 continue
-            pr = item.get(PROJECT_PROFILE_KEY)
-            cand = ""
-            if isinstance(pr, dict):
-                cand = (pr.get("pid") or "").strip()
-            if not cand:
-                cand = (item.get("project_id") or item.get("project_pid") or "").strip()
+            cand = list_json_row_workflow_pid(item)
             if cand == wanted_pid:
                 PROJECT_CONFIG["_channel_list_json"] = os.path.normpath(list_path)
                 PROJECT_CONFIG["_channel_list_index"] = int(idx)
                 return
 
 
-def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, profile_dict: dict) -> bool:
-    """在指定 list JSON 内按 pid 更新或追加一行。"""
+def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, full_exported_cfg: dict) -> bool:
+    """在指定 list JSON 内按 pid 更新或追加一行（整行同步）。"""
     arr = []
     if os.path.isfile(list_path):
         try:
@@ -361,28 +505,14 @@ def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, profile_di
     for item in arr:
         if not isinstance(item, dict):
             continue
-        pr = item.get(PROJECT_PROFILE_KEY)
-        cand = ""
-        if isinstance(pr, dict):
-            cand = (pr.get("pid") or "").strip()
-        if not cand:
-            cand = (item.get("project_id") or item.get("project_pid") or "").strip()
-        if cand == file_pid:
-            item[PROJECT_PROFILE_KEY] = copy.deepcopy(profile_dict)
-            item["project_id"] = file_pid
-            if profile_dict.get("topic_category") is not None:
-                item["topic_category"] = profile_dict.get("topic_category")
+        if list_json_row_workflow_pid(item) == file_pid:
+            sync_channel_list_item_from_full_config(item, full_exported_cfg or {})
             found = True
             break
     if not found:
-        arr.append(
-            {
-                "project_id": file_pid,
-                "title": profile_dict.get("video_title") or profile_dict.get("title") or file_pid,
-                PROJECT_PROFILE_KEY: copy.deepcopy(profile_dict),
-                "topic_category": profile_dict.get("topic_category"),
-            }
-        )
+        new_item = {}
+        sync_channel_list_item_from_full_config(new_item, full_exported_cfg or {})
+        arr.append(new_item)
     try:
         with open(list_path, "w", encoding="utf-8") as f:
             json.dump(arr, f, ensure_ascii=False, indent=2)
@@ -440,7 +570,7 @@ class ProjectConfigManager:
 
 
     def list_projects(self):
-        """列出项目：扫描各频道 ``list/*.json``（热门 + ``topic_category`` 分列表），含 ``project_profile`` 或 ``project_id`` 的条目。"""
+        """列出项目：扫描各频道 ``list/*.json``（热门 + topic 分表）；行内 pid 优先 ``project_profile.pid``。"""
         seen_pid = set()
         projects = []
 
@@ -468,7 +598,7 @@ class ProjectConfigManager:
                 if tpid in seen_pid:
                     continue
                 seen_pid.add(tpid)
-                title = cfg.get("video_title", cfg.get("title", ""))
+                title = (cfg.get("video_title") or "").strip() or tpid
                 language = cfg.get("language", "zh")
                 channel = cfg.get("channel", "")
                 video_size = f"{cfg.get('video_width', '1920')}x{cfg.get('video_height', '1080')}"
@@ -511,6 +641,7 @@ class ProjectConfigManager:
         PROJECT_CONFIG = config_data.copy() if config_data else None
         if PROJECT_CONFIG is not None:
             PROJECT_CONFIG.pop('debut_content', None)
+            hydrate_config_soul_runtime(PROJECT_CONFIG)
 
     def load_project_config(self, config_file):
         """加载项目配置：仅支持 ``chanlist:`` 列表引用（某 ``list/*.json`` 的行）。"""
@@ -527,7 +658,7 @@ class ProjectConfigManager:
         return None
     
     def delete_project_config(self, config_file):
-        """删除项目：仅支持 ``chanlist:`` 引用——清空该行的 ``project_profile`` 与 ``project_id``。"""
+        """删除项目：仅支持 ``chanlist:`` 引用——清空该行的 ``project_profile``。"""
         lp, ix = decode_list_item_ref(config_file)
         if lp is not None and ix is not None:
             try:
@@ -539,6 +670,7 @@ class ProjectConfigManager:
                     arr[ix].pop(PROJECT_PROFILE_KEY, None)
                     arr[ix].pop("project_id", None)
                     arr[ix].pop("project_pid", None)
+                    arr[ix].pop("pid", None)
                 with open(lp, "w", encoding="utf-8") as f:
                     json.dump(arr, f, ensure_ascii=False, indent=2)
                 print(f"🗑️ 已从频道列表移除项目配置: {lp}[{ix}]")
@@ -652,10 +784,27 @@ class ProjectSelectionDialog:
         else:
             itags = None
 
-        # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get
-        ac_src = initial_analyzed_content if isinstance(initial_analyzed_content, dict) else {}
-        sc_src = initial_scene_content if isinstance(initial_scene_content, dict) else {}
-        _branch = config.LANGUAGES[default_lang]
+        # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get；字符串则解析为 dict（保留双语结构）
+        ac_src = {}
+        if isinstance(initial_analyzed_content, dict):
+            ac_src = initial_analyzed_content
+        elif isinstance(initial_analyzed_content, str) and initial_analyzed_content.strip():
+            try:
+                parsed_ac = json.loads(safe_clipboard_json_copy(initial_analyzed_content.strip()))
+                if isinstance(parsed_ac, dict):
+                    ac_src = parsed_ac
+            except json.JSONDecodeError:
+                ac_src = {}
+        sc_src = {}
+        if isinstance(initial_scene_content, dict):
+            sc_src = initial_scene_content
+        elif isinstance(initial_scene_content, str) and initial_scene_content.strip():
+            try:
+                parsed_sc = json.loads(safe_clipboard_json_copy(initial_scene_content.strip()))
+                if isinstance(parsed_sc, dict):
+                    sc_src = parsed_sc
+            except json.JSONDecodeError:
+                sc_src = {}
         self.story_result = {
             'channel': default_channel,
             'language': default_lang,
@@ -667,8 +816,8 @@ class ProjectSelectionDialog:
             'topic_subtype': isub,
             'tags': itags,
             'soul': None,
-            'analyzed_content': ac_src.get(_branch),
-            'scene_content': sc_src.get(_branch, ""),
+            'analyzed_content': ac_src,
+            'scene_content': sc_src,
             'action': None,
         }
 
@@ -827,8 +976,45 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="标题:").pack(side=tk.LEFT, padx=(0, 4))
         title_entry = ttk.Entry(top_fields_row, width=28)
         title_entry.pack(side=tk.LEFT, padx=(0, 16))
-        _derived_title = _title_from_scene_content(self.story_result.get('scene_content'))
-        title_entry.insert(0, _derived_title or self.default_project_config['default_title'])
+
+        title_manual_touch = [False]
+        prog_title_sync = {"on": False}
+
+        def _apply_title_programmatic(text: str):
+            prog_title_sync["on"] = True
+            title_entry.delete(0, tk.END)
+            title_entry.insert(0, text)
+
+            def _clear_prog_flag():
+                prog_title_sync["on"] = False
+
+            try:
+                new_project_dialog.after(1, _clear_prog_flag)
+            except tk.TclError:
+                prog_title_sync["on"] = False
+
+        def _on_title_keyrelease(_evt=None):
+            if prog_title_sync["on"]:
+                return
+            title_manual_touch[0] = True
+
+        title_entry.bind("<KeyRelease>", _on_title_keyrelease, add="+")
+
+        def refresh_title_entry_from_scene():
+            nt = title_from_scene_content(
+                self.story_result.get("scene_content"),
+                self.story_result.get("language") or "",
+            )
+            if not nt:
+                return
+            if title_manual_touch[0]:
+                return
+            _apply_title_programmatic(nt)
+
+        _dt = title_from_scene_content(
+            self.story_result.get("scene_content"), self.story_result.get("language") or ""
+        )
+        _apply_title_programmatic(_dt or self.default_project_config["default_title"])
 
         ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
         resolution_frame = ttk.Frame(top_fields_row)
@@ -1054,19 +1240,39 @@ class ProjectSelectionDialog:
         edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
         edit_raw_btn.pack(pady=5)
 
+        scene_story_frame = ttk.LabelFrame(content_panels_frame, text="Story / scene_content (JSON)", padding=10)
+        scene_story_frame.grid(row=1, column=0, padx=(5, 5), pady=(8, 0), sticky='nsew')
+        scene_preview = ttk.Label(
+            scene_story_frame,
+            text="Story: (未填写)",
+            foreground="gray",
+            wraplength=200,
+        )
+        scene_preview.pack(anchor='w', pady=(0, 10))
+        edit_scene_story_btn = ttk.Button(scene_story_frame, text="编辑 Story", command=lambda: None)
+        edit_scene_story_btn.pack(pady=5)
+
 
         def update_previews():
-            """根据 story_result 更新 RAW 预览文本"""
+            """根据 story_result 更新 RAW / scene_content 单行预览"""
             preview = _raw_story_preview_text(self.story_result)
             if preview:
                 raw_preview.config(text=f"RAW: {preview}", foreground="black")
             else:
                 raw_preview.config(text="RAW: (未生成)", foreground="gray")
 
+            sp = _jsonish_preview_fragment(self.story_result.get("scene_content"), max_len=260)
+            if sp:
+                scene_preview.config(text=f"Story: {sp}", foreground="black")
+            else:
+                scene_preview.config(text="Story: (未填写)", foreground="gray")
+
         # 根据 topic 启用/禁用 RAW 编辑按钮
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
-            edit_raw_btn.config(state='normal' if has_topic else 'disabled')
+            st = 'normal' if has_topic else 'disabled'
+            edit_raw_btn.config(state=st)
+            edit_scene_story_btn.config(state=st)
 
 
         def apply_initial_topic_selection():
@@ -1170,7 +1376,78 @@ class ProjectSelectionDialog:
             update_previews()
 
 
+        def open_scene_story_editor(initial_text=None):
+            """粘贴 / 编辑 ``scene_content`` JSON；确认后刷新预览并按需同步标题输入框。"""
+            if initial_text is None:
+                initial_text = self.story_result.get('scene_content')
+            if isinstance(initial_text, dict):
+                _scf = json.dumps(initial_text, ensure_ascii=False, indent=2)
+            elif isinstance(initial_text, str) and initial_text.strip():
+                _scf = initial_text.strip()
+            else:
+                _scf = None
+            dlg = tk.Toplevel(new_project_dialog)
+            dlg.title("Story / scene_content 输入")
+            dlg.geometry("820x620")
+            dlg.transient(new_project_dialog)
+            dlg.grab_set()
+            dlg.update_idletasks()
+            x = (dlg.winfo_screenwidth() - 820) // 2
+            y = (dlg.winfo_screenheight() - 620) // 2
+            dlg.geometry(f"820x620+{x}+{y}")
+            frame = ttk.Frame(dlg, padding=20)
+            frame.pack(fill=tk.BOTH, expand=True)
+            ttk.Label(
+                frame,
+                text="请输入 scene_content JSON（常与 NotebookLM bilingual 输出一致）：",
+                font=('TkDefaultFont', 10, 'bold'),
+            ).pack(anchor='w', pady=(0, 5))
+            text_w = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=94, height=28)
+            text_w.pack(fill=tk.BOTH, expand=True)
+            if _scf:
+                text_w.insert(tk.END, _scf)
+
+            def paste_sc(e=None):
+                try:
+                    s = safe_clipboard_json_copy(dlg.clipboard_get())
+                    if s:
+                        text_w.delete(1.0, tk.END)
+                        text_w.insert(tk.END, s)
+                except tk.TclError:
+                    pass
+
+            text_w.bind('<Double-1>', paste_sc)
+
+            holder = [None]
+
+            def ok_sc():
+                try:
+                    holder[0] = text_w.get('1.0', tk.END).strip()
+                except tk.TclError:
+                    holder[0] = ""
+                dlg.destroy()
+
+            bf = ttk.Frame(frame)
+            bf.pack(fill=tk.X, pady=(10, 0))
+            ttk.Button(bf, text="确认", command=ok_sc).pack(side=tk.LEFT, padx=5)
+
+            dlg.wait_window()
+
+            raw_txt = (holder[0] or "").strip()
+            if not raw_txt:
+                return
+            try:
+                parsed_sc = json.loads(safe_clipboard_json_copy(raw_txt))
+            except json.JSONDecodeError:
+                return
+            self.story_result['scene_content'] = parsed_sc
+            update_buttons_state()
+            update_previews()
+            refresh_title_entry_from_scene()
+
+
         edit_raw_btn.config(command=open_project_content_editor)
+        edit_scene_story_btn.config(command=open_scene_story_editor)
 
         update_previews()
         if self.story_result.get('analyzed_content'):
@@ -1197,9 +1474,13 @@ class ProjectSelectionDialog:
             
             ac = self.story_result.get('analyzed_content')
             sc = self.story_result.get('scene_content')
-            if not ac and not sc:
+            if not ac or not sc:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
+
+            _sc_title = title_from_scene_content(sc, self.story_result.get("language") or "")
+            if _sc_title:
+                title = _sc_title
 
             # 解析分辨率
             if resolution == "1920x1080":
@@ -1601,15 +1882,10 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         dialog.dialog.destroy()
     if PROJECT_CONFIG is None and selected_config is not None:
         PROJECT_CONFIG = selected_config.copy()
-    # 创建成功时保存项目配置，确保重启后能在项目列表中看到
-    if result == 'new' and selected_config:
-        pid = selected_config.get('pid')
-        if pid:
-            try:
-                ProjectConfigManager.set_global_config(selected_config)
-                save_project_config(parent=parent)
-            except Exception:
-                pass
+
+    # 不写盘：Downloader 等对「先有列表行再给 video_detail.project_profile」的路径必须在本函数返回后，
+    # 先更新内存中的该行再保存 JSON；若此处 save_project_config，磁盘上尚无 pid，
+    # 会落到 upsert「仅 profile」空行追加，与同 pid 的原视频重复一行。
 
     return result, selected_config
 

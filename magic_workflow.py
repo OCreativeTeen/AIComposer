@@ -710,15 +710,33 @@ class MagicWorkflow:
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
 
-        scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
-        if isinstance(scene_content, dict):
-            scene_content = [scene_content]
+        self.title = config_channel.get_channel_config(self.channel)["channel_name"]
 
+        scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
+        if scene_content:
+            if isinstance(scene_content, dict):
+                c = scene_content.get(config.LANGUAGES[self.language], [])
+                if isinstance(c, list) and len(c) > 0:
+                    scene_content = c
+                    self.title = scene_content[0].get("title", "")
+                elif isinstance(scene_content, dict):
+                    self.title = scene_content.get("title", "")
+                    scene_content = [scene_content]
+                else:
+                    scene_content = None
+            elif isinstance(scene_content, list):
+                if len(scene_content) > 0:
+                    if isinstance(scene_content[0], dict):
+                        self.title = scene_content[0].get("title", "")
+                    else:
+                        scene_content = None
+                else:
+                    scene_content = None
+            else:
+                scene_content = None
+
+            
         # take first scene_content 's title as the title of the story
-        if scene_content and scene_content[0].get("title"):
-            self.title = scene_content[0].get("title")
-        else:
-            self.title = config_channel.get_channel_config(self.channel)["channel_name"]
 
         if scene_content:
             for scene_index, scene_item in enumerate(scene_content):
@@ -743,7 +761,7 @@ class MagicWorkflow:
 
 
     def remix_conversation(self, current_scene, mode, _content, selected_prompt):
-        refresh_conversation = "content:\n" + _content + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.PROJECT_CONFIG.get('soul', '')
+        refresh_conversation = "content:\n" + _content + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
         new_scenes = self.llm_api.generate_json(
             system_prompt=selected_prompt,
             user_prompt=refresh_conversation,
