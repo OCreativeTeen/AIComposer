@@ -84,9 +84,9 @@ IMAGE_ACTION_CHOICES = {
         "Show title '心源谈天' in footer (creative)"
     ],
     "风格控制" : [
-        "Change visual style to Realistic Style",
-        "Change visual style to Pixar Style",
-        "Change visual style to Cinematic Style"
+        "Change Person to Realistic Style",
+        "Change Person to Pixar Style",
+        "Change Person to Cinematic Style"
     ]
 }
 
@@ -663,7 +663,7 @@ class WorkflowGUI:
         scene,
         tmp_mp4,
         tmp_wav,
-        handle_audio,
+        audio_choice,
         track,
         *,
         track_status: str,
@@ -674,7 +674,7 @@ class WorkflowGUI:
             err = None
             try:
                 self.media_scanner.video_simple_replacement(
-                    scene, tmp_mp4, tmp_wav, handle_audio, track
+                    scene, tmp_mp4, tmp_wav, audio_choice, track
                 )
             except Exception as e:
                 err = str(e)
@@ -1081,8 +1081,10 @@ class WorkflowGUI:
             picked = askchoice(
                 "下载视频替换：音频如何处理？",
                 [
-                    ("replace", "用场景现有音轨替换"),
+                    ("replace_speed", "场景音轨替换/SPEED"),
+                    ("replace_trim", "场景音轨替换/TRIM"),
                     ("keep", "保留输入自带音频"),
+                    ("keep_trim", "保留输入自带音频/TRIM"),
                     ("mix", "ZERO混音伸缩"),
                     ("mix_flat", "ZERO混音平铺"),
                 ],
@@ -2198,6 +2200,7 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         ttk.Button(video_control_frame, text="分离", command=self.split_scene, width=5).pack(side=tk.LEFT, padx=1) 
+        ttk.Button(video_control_frame, text="修剪", command=self.trim_scene, width=5).pack(side=tk.LEFT, padx=1) 
         ttk.Button(video_control_frame, text="拷贝", command=self.copy_story_scene, width=5).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(video_control_frame, text="下移", command=lambda: self.shift_scene(True), width=5).pack(side=tk.LEFT, padx=1)
@@ -3782,9 +3785,21 @@ class WorkflowGUI:
         self.root.after(300, self._demo_start_play_scene)
 
 
+
+    def trim_scene(self):
+        trim_audio = messagebox.askyesno("提示", "音频修剪？")
+        
+        self.update_current_scene()
+        position = pygame.mixer.music.get_pos() / 1000.0
+        self.workflow.trim_scene_at_position(self.current_scene_index, position+self.playing_delta, trim_audio)
+        self.playing_delta = 0.0
+        self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
+        self.refresh_gui_scenes()
+
+        
+
     def split_scene(self):
         """分离当前场景"""
-        # 先把界面上的讲话等写回当前 scene，再按时间轴切分，否则会按「上次落盘」的旧内容拆 speaking
         self.update_current_scene()
         position = pygame.mixer.music.get_pos() / 1000.0
         self.workflow.split_scene_at_position(self.current_scene_index, position+self.playing_delta)
@@ -3861,8 +3876,16 @@ class WorkflowGUI:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene or not self.workflow.first_scene_of_story(scene):
             return
+
         dup = scene.copy()
-        dup["id"] = self.workflow.max_id(dup) + 1
+
+        insert_story = messagebox.askyesno("提示", "插入场景是否为另一个故事？")
+        if insert_story:
+            mx = max((s.get("id", 0) for s in self.workflow.scenes), default=0)
+            dup["id"] = (int(mx / 10000) + 1) * 10000
+        else:
+            dup["id"] = self.workflow.max_id(scene) + 1
+
         self.workflow.scenes.insert(self.current_scene_index, dup)
         self.workflow.save_scenes_to_json()
         self.current_scene_index += 1
@@ -3874,7 +3897,14 @@ class WorkflowGUI:
         if not scene or not self.workflow.last_scene_of_story(scene):
             return
         dup = scene.copy()
-        dup["id"] = self.workflow.max_id(dup) + 1
+
+        insert_story = messagebox.askyesno("提示", "插入场景是否为另一个故事？")
+        if insert_story:
+            mx = max((s.get("id", 0) for s in self.workflow.scenes), default=0)
+            dup["id"] = (int(mx / 10000) + 1) * 10000
+        else:
+            dup["id"] = self.workflow.max_id(scene) + 1
+
         self.workflow.scenes.insert(self.current_scene_index + 1, dup)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -4090,7 +4120,7 @@ class WorkflowGUI:
             title="审阅文案 — 视频动作菜单",
         )
         if confirmed is None:
-            return "break"
+            confirmed =  original
         return post_nested_clipboard_menu(
             self.root,
             VIDEO_ACTION_CHOICES,
@@ -4121,7 +4151,7 @@ class WorkflowGUI:
             title="审阅文案 — 图像动作菜单",
         )
         if confirmed is None:
-            return "break"
+            confirmed =  original
         return post_nested_clipboard_menu(
             self.root,
             IMAGE_ACTION_CHOICES,
@@ -5904,17 +5934,10 @@ class WorkflowGUI:
             if (next_index < 0 or next_index >= len(self.workflow.scenes)) and position + self.playing_delta <= 0.0 :
                 return
 
-        self.workflow.shift_scene(current_index, next_index, position+self.playing_delta)
-        self.refresh_gui_scenes()
+        # pop dialog to ask user if want the video shift with audio change ?
+        only_audio = messagebox.askyesno("提示", "仅音频移动？")
 
-
-    def shift_before(self):
-        """下移当前场景"""
-        self.update_current_scene()
-        position = pygame.mixer.music.get_pos() / 1000.0
-        self.workflow.shift_scene(self.current_scene_index, self.current_scene_index-1, position+self.playing_delta)
-        self.playing_delta = 0.0
-
+        self.workflow.shift_scene(current_index, next_index, position+self.playing_delta, only_audio)
         self.refresh_gui_scenes()
 
 
@@ -7319,7 +7342,7 @@ class WorkflowGUI:
                 refresh_scene_media(scene, "clip_audio", ".wav", clip_wav, True)
                 clip_video = get_file_path(scene, "clip")
                 if clip_video:
-                    clip_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, clip_wav, True)
+                    clip_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, clip_wav)
                     refresh_scene_media(scene, "clip", ".mp4", clip_video, True)
                 offset += out_len
 

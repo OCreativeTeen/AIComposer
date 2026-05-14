@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 import config
+import tkinter.messagebox as messagebox
 import config_prompt
 import config_channel
 from io import BytesIO
@@ -562,7 +563,36 @@ class MagicWorkflow:
         return True
 
 
-    def shift_scene(self, n, m, position):
+
+
+    def trim_scene_at_position(self, n, position, trim_audio):
+        """分离当前场景"""
+        if n<0  or n >= len(self.scenes):
+            return False
+
+        current_scene = self.scenes[n]
+
+        original_duration = self.find_clip_duration(current_scene)
+        if position<=0 or position >= original_duration:
+            return False
+
+        original_audio_clip = get_file_path(current_scene, "clip_audio")
+        original_video_clip = get_file_path(current_scene, "clip")
+
+        if trim_audio:
+            f1st, s2nd = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
+            olda, original_audio_clip = refresh_scene_media(current_scene, "clip_audio", ".wav", f1st)
+            refresh_scene_media(current_scene, "clip", ".mp4", self.ffmpeg_processor.add_audio_to_video(original_video_clip, original_audio_clip))
+        else:
+            f1st, s2nd = self.ffmpeg_processor.split_video(original_video_clip, position)
+            refresh_scene_media(current_scene, "clip", ".mp4", self.ffmpeg_processor.add_audio_to_video(f1st, original_audio_clip, True, "trim"))
+
+        self.save_scenes_to_json()
+        return True
+
+
+
+    def shift_scene(self, n, m, position, only_audio):
         """分离为n张图片"""
         if n<0  or n > len(self.scenes) or m<0  or m > len(self.scenes):
             return False
@@ -581,22 +611,39 @@ class MagicWorkflow:
 
         f1sta, s2nda = self.ffmpeg_audio_processor.split_audio(original_audio_clip, position)
 
+        if not only_audio:
+            f1st, s2nd = self.ffmpeg_processor.split_video(original_video_clip, position)
+
         if n < m: 
             refresh_scene_media(current_scene, "clip_audio", ".wav", f1sta)
             mergeda = self.ffmpeg_audio_processor.concat_audios([s2nda, get_file_path(next_scene, "clip_audio")])
             refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
+            # video
+            if not only_audio:
+                refresh_scene_media(current_scene, "clip", ".mp4", f1st)
+                mergedv = self.ffmpeg_processor.concat_videos([s2nd, get_file_path(next_scene, "clip")], True)
+                refresh_scene_media(next_scene, "clip", ".mp4", mergedv)
+            else:
+                current_video = self.ffmpeg_processor.add_audio_to_video(original_video_clip, current_scene["clip_audio"])
+                refresh_scene_media(current_scene, "clip", ".mp4", current_video)
+
+                next_video = self.ffmpeg_processor.add_audio_to_video(get_file_path(next_scene, "clip"), next_scene["clip_audio"])  
+                refresh_scene_media(next_scene, "clip", ".mp4", next_video)
         else:
             refresh_scene_media(current_scene, "clip_audio", ".wav", s2nda)
             mergeda = self.ffmpeg_audio_processor.concat_audios([get_file_path(next_scene, "clip_audio"), f1sta])
             refresh_scene_media(next_scene, "clip_audio", ".wav", mergeda)
+            # video
+            if not only_audio:
+                refresh_scene_media(current_scene, "clip", ".mp4", s2nd)
+                mergedv = self.ffmpeg_processor.concat_videos([get_file_path(next_scene, "clip"), f1st], True)
+                refresh_scene_media(next_scene, "clip", ".mp4", mergedv)
+            else:
+                current_video = self.ffmpeg_processor.add_audio_to_video(original_video_clip, current_scene["clip_audio"])
+                refresh_scene_media(current_scene, "clip", ".mp4", current_video)
 
-        current_video = get_file_path(current_scene, "clip")
-        current_video = self.ffmpeg_processor.add_audio_to_video(current_video, current_scene["clip_audio"])
-        refresh_scene_media(current_scene, "clip", ".mp4", current_video)
-
-        next_video = get_file_path(next_scene, "clip")
-        next_video = self.ffmpeg_processor.add_audio_to_video(next_video, next_scene["clip_audio"])  
-        refresh_scene_media(next_scene, "clip", ".mp4", next_video)
+                next_video = self.ffmpeg_processor.add_audio_to_video(get_file_path(next_scene, "clip"), next_scene["clip_audio"])  
+                refresh_scene_media(next_scene, "clip", ".mp4", next_video)
 
         self.save_scenes_to_json()
 
@@ -1233,7 +1280,7 @@ class MagicWorkflow:
                             full_zero = self.ffmpeg_audio_processor.audio_mix( full_zero, 1.0, t_cursor, zero, 1.0 )
                     t_cursor += seg_dur
 
-                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_zero, True)
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_zero)
 
         title = self.title.strip().replace(' ', '_').replace('\n', '_')
         title = config.chinese_convert(title, self.language)
@@ -1305,7 +1352,9 @@ class MagicWorkflow:
 
     def max_id(self, current_scene):
         if hasattr(current_scene, "id"):
-           same_story_scenes = self.scenes_in_story(current_scene)
+            same_story_scenes = self.scenes_in_story(current_scene)
+        elif isinstance(current_scene, dict) and current_scene.get("id", 0):
+            same_story_scenes = self.scenes_in_story(current_scene)
         else:
             same_story_scenes = self.scenes
 

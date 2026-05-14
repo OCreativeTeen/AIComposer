@@ -296,7 +296,7 @@ class MediaScanner:
         return gen_video
 
 
-    def video_simple_replacement(self, current_scene, video_path_in, wav_path_in, handle_audio, media_type):
+    def video_simple_replacement(self, current_scene, video_path_in, wav_path_in, audio_choice, media_type):
         """处理视频替换与音轨策略。video_path_in 为（可能已缩放的）候选视频；wav_path_in 为与源片对应、已做音量等处理的临时 wav，若为 None 则从 video_path_in 抽取。"""
         input_video = self.workflow.ffmpeg_processor.resize_video(video_path_in, width=None, height=self.workflow.ffmpeg_processor.height)
         current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(input_video)
@@ -317,12 +317,24 @@ class MediaScanner:
             return
 
         # 仅当显式为 "replace" 时用场景已有 *_audio 替换；字符串 "keep" 须为假（勿用 if replace_audio: 非空串皆真）
-        if handle_audio == "keep":
+        if audio_choice == "keep":
             refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
             self.last_image_replacement(current_scene, scene_video, media_type)
-        elif handle_audio == "replace":
-            input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio)
+        elif audio_choice == "keep_trim":
+            dur_scens_audio = self.workflow.ffmpeg_audio_processor.get_duration(scene_audio)
+            dur_input_audio = self.workflow.ffmpeg_audio_processor.get_duration(input_audio)
+            if dur_input_audio > dur_scens_audio:
+                input_audio = self.workflow.ffmpeg_audio_processor.audio_cut_fade(input_audio, 0.0, dur_scens_audio, 0, 0)
+            refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
+            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
+        elif audio_choice == "replace_speed":
+            input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio, True, "speed")
+            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
+        elif audio_choice == "replace_trim":
+            input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio, True, "trim")
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
             self.last_image_replacement(current_scene, scene_video, media_type)
         else: # mix
@@ -344,7 +356,7 @@ class MediaScanner:
                 return
 
             next_scene = self.workflow.next_scene_of_story(current_scene)
-            if handle_audio == "mix_flat" or not next_scene:
+            if audio_choice == "mix_flat" or not next_scene:
                 scene_video = self.workflow.ffmpeg_processor.add_video_on_video(scene_video, input_video, 0.0)
                 oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", scene_video)
                 self.last_image_replacement(current_scene, scene_video, media_type)

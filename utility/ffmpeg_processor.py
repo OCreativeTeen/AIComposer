@@ -1006,7 +1006,14 @@ class FfmpegProcessor:
         self.run_ffmpeg_command(cmd)
         return output_path
 
-    def add_audio_to_video(self, video_path, audio_path, match_audio_length=True, change_ratio_to_match_audio_length=True):
+
+    def add_audio_to_video(
+        self,
+        video_path,
+        audio_path,
+        match_audio_length=True,
+        when_longer="speed",
+    ):
         temp_file = config.get_temp_file(self.pid, "mp4")
         
         try:
@@ -1019,10 +1026,10 @@ class FfmpegProcessor:
                 # Use a small tolerance (0.1s) to handle floating-point precision issues
                 duration_diff = audio_duration - self.get_duration(video_path)
                 
-                if duration_diff > 0.1 or change_ratio_to_match_audio_length:
-                    # Audio is significantly longer, or extend video to match audio duration
-                    #self.extend_video_with_last_frame(video_path, audio_path, temp_file)
-                    video_path = self.adjust_video_to_duration( video_path, audio_duration )
+                if duration_diff > 0.1 or duration_diff < -0.1:
+                    video_path = self.adjust_video_to_duration(
+                        video_path, audio_duration, when_longer=when_longer
+                    )
 
             cmd = self._ffmpeg_input_args(video_path, audio_path)
 
@@ -1855,6 +1862,7 @@ class FfmpegProcessor:
         """concat demuxer 的 file 行：路径中单引号必须写成 ''（FFmpeg 文档）。"""
         abs_path = os.path.abspath(video_path).replace("\\", "/").replace("'", "''")
         return f"file '{abs_path}'\n"
+
 
     def concat_videos(self, video_paths, keep_audio):
         if len(video_paths) == 0:
@@ -3646,66 +3654,91 @@ class FfmpegProcessor:
             raise last_err
         raise OSError("_copy_file_with_retry: no attempts made")
 
-    def adjust_video_to_duration(self, input_video_path, target_duration):
+
+    def _speed_match_video_duration(
+        self, input_video_path, output_video_path, target_duration, segment_duration=None
+    ):
+        """
+        用 setpts 拉伸/压缩时间轴，使画面时长接近 target_duration（输出无音频，与原先短于目标时的逻辑一致）。
+        """
+        if segment_duration is None:
+            segment_duration = self.get_duration(input_video_path)
+        if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
+            self._copy_file_with_retry(input_video_path, output_video_path)
+            return True
+
+        speed_factor = segment_duration / target_duration
+        print(f"🎬 Adjusting video speed, speed factor: {speed_factor:.3f}x")
+        result = self.run_ffmpeg_command([
+            ffprobe_path,
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_video_path
+        ])
+
+        fps_fraction = result.stdout.strip()
+        if "/" in fps_fraction:
+            num, den = fps_fraction.split("/")
+            original_fps = float(num) / float(den)
+        else:
+            original_fps = float(fps_fraction)
+
+        if original_fps <= 0:
+            original_fps = -original_fps
+
+        setpts_multiplier = 1.0 / speed_factor
+        video_filter = f"setpts={setpts_multiplier}*PTS,fps={original_fps}"
+
+        cmd = self._ffmpeg_input_args(input_video_path)
+        cmd.extend(self._get_audio_encode_args(bitrate=None))
+        cmd.extend(self._get_video_output_args(keyframe_interval=False))
+        cmd.extend(["-vf", video_filter, output_video_path])
+
+        print(f"🔧 FFmpeg command: {' '.join(cmd)}")
+        self.run_ffmpeg_command(cmd)
+        return True
+
+
+    def adjust_video_to_duration(self, input_video_path, target_duration, when_longer):
+        """
+        将视频时长对齐到 target_duration。
+
+        when_longer:
+            - "trim"：素材比目标长则裁剪到 target_duration（原行为）。
+            - "speed"：比目标长则加速（setpts，与比目标短时变慢相同方式），不裁剪。
+        """
         output_video_path = config.get_temp_file(self.pid, "mp4")
 
         segment_duration = self.get_duration(input_video_path)
         if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
             self._copy_file_with_retry(input_video_path, output_video_path)
             return output_video_path
-        elif segment_duration > target_duration:
-            new_clip_v = self.trim_video(input_video_path, 0, target_duration)
-            if not new_clip_v:
-                return input_video_path
-            self._copy_file_with_retry(new_clip_v, output_video_path)
-            try:
-                os.remove(new_clip_v)
-            except OSError:
-                pass
-            return output_video_path
 
-        try:
-            speed_factor = segment_duration / target_duration
-            print(f"🎬 Adjusting video speed, speed factor: {speed_factor:.3f}x")
-            # Get original video framerate
-            result = self.run_ffmpeg_command([
-                ffprobe_path,
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=r_frame_rate",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                input_video_path
-            ])
-            
-            fps_fraction = result.stdout.strip()
-            if '/' in fps_fraction:
-                num, den = fps_fraction.split('/')
-                original_fps = float(num) / float(den)
-            else:
-                original_fps = float(fps_fraction)
-            
-            if original_fps <= 0:
-                original_fps = -original_fps
-            
-            setpts_multiplier = 1.0 / speed_factor
-            video_filter = f"setpts={setpts_multiplier}*PTS,fps={original_fps}"
-            
-            cmd = self._ffmpeg_input_args(input_video_path)
-            cmd.extend(self._get_audio_encode_args(bitrate=None))
-            cmd.extend(self._get_video_output_args(keyframe_interval=False))
-            cmd.extend([
-                "-vf", video_filter,
-                output_video_path
-            ])
-            
-            # 打印完整的FFmpeg命令用于调试
-            print(f"🔧 FFmpeg command: {' '.join(cmd)}")
-            self.run_ffmpeg_command(cmd)
-            return output_video_path
-            
-        except Exception as e:
-            print(f"❌ Speed adjustment failed: {str(e)}")
+        want_speed = segment_duration < target_duration or (
+            segment_duration > target_duration and when_longer == "speed"
+        )
+
+        if want_speed:
+            try:
+                self._speed_match_video_duration(
+                    input_video_path, output_video_path, target_duration, segment_duration
+                )
+                return output_video_path
+            except Exception as e:
+                print(f"❌ Speed adjustment failed: {str(e)}")
+                return input_video_path
+
+        new_clip_v = self.trim_video(input_video_path, 0, target_duration)
+        if not new_clip_v:
             return input_video_path
+        self._copy_file_with_retry(new_clip_v, output_video_path)
+        try:
+            os.remove(new_clip_v)
+        except OSError:
+            pass
+        return output_video_path
 
 
     def add_subtitle(self, output_path, video_path, subtitle_path, font, font_size):
