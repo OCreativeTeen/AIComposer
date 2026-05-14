@@ -1981,8 +1981,7 @@ CHANNEL_CONFIG = {
                 "mode": "init_multiple",
                 "prompt": MV_STORY_DEVELOPMENT
             },
-        ],
-        "channel_key": "config/client_secret_main.json"
+        ]
     },
 
 

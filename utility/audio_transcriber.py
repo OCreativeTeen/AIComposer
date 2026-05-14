@@ -101,26 +101,6 @@ class AudioTranscriber:
         except Exception as e:
             print(f"⚠️ WhisperX 转录失败，回退 HTTP API：{type(e).__name__}: {e}")
 
-        print(f"📝 开始调用API转录 (language={lang})...")
-        try:
-            with open(audio_path, "rb") as f:
-                files = {"audio_file": f}
-                data = {"language": lang, "min_duration": min_duration, "max_duration": max_duration}
-                response = requests.post(self.api_url, files=files, data=data, timeout=600)
-
-            if response.status_code == 200:
-                srt_segments = response.json()
-                if srt_segments:
-                    print(f"✅ API 转录完成，共 {len(srt_segments)} 个片段")
-                    with open(transcribe_file, "w", encoding="utf-8") as f:
-                        json.dump(srt_segments, f, ensure_ascii=False, indent=2)
-                    return srt_segments
-
-            print(f"❌ API调用失败: HTTP {response.status_code} - {response.text}")
-
-        except Exception as e:
-            print(f"❌ API调用失败: {str(e)}")
-
         return []
 
     def translate_text(self, text, source_language, target_language):

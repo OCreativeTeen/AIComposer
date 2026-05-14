@@ -1812,7 +1812,7 @@ class MediaDownloader:
         scopes = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.force-ssl"]
 
         # 区分不同频道的 token 文件
-        token_file = f"config/token_{channel_id}.json"
+        token_file = config.get_channel_path(channel_id) + f"/token_{channel_id}.json"
         credentials = None
 
         # 检查是否存在已保存的凭证

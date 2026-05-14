@@ -1335,6 +1335,7 @@ class WorkflowGUI:
         )
         if scope is None:
             return
+
         if scope:
             targets = sorted(
                 self.workflow.scenes_in_story(current_scene),
@@ -2847,29 +2848,6 @@ class WorkflowGUI:
             with_transitions, replace_final_audio_with_zero = False, False
         else:
             with_transitions, replace_final_audio_with_zero = False, True
-
-        if replace_final_audio_with_zero:
-            if messagebox.askyesno(
-                "ZERO 轨道",
-                "是否在成片生成前重新导入 ZERO 音视频？\n\n"
-                "将从「下载盘 L:」「项目 download」中选 MP3 或 MP4：\n"
-                "• MP3：与原拖放「ZERO 背景」相同，音频套到现有 zero 画面上。\n"
-                "• MP4：整条 ZERO 音视频写入本故事每一镜。\n"
-                "选「否」则沿用场景中已设的 zero/zero_audio。",
-                parent=self.root,
-            ):
-                res = self._pick_media_from_download_to_project_folder(
-                    (".mp3", ".mp4"),
-                    track_rename_key="zero",
-                )
-                if res:
-                    ok = self.apply_zero_background_media_from_path(
-                        res["final_path"],
-                        mp4_adjusted_path=res.get("temp_adj_mp4"),
-                        mp4_adjusted_wav_path=res.get("temp_adj_wav"),
-                    )
-                    if not ok:
-                        return
 
         pid = self.get_pid()
         task_id = str(uuid.uuid4())

@@ -440,6 +440,37 @@ class FfmpegAudioProcessor:
             return None
 
 
+    def audio_trim_or_loop_to_duration(self, audio_path, target_duration_sec):
+        """长于目标则裁切；短于目标则循环拼接至恰好 target_duration_sec（WAV pcm_s16le）。"""
+        if target_duration_sec <= 0:
+            return None
+        if not audio_path or not os.path.exists(audio_path):
+            print("⚠️ audio_trim_or_loop_to_duration: 文件缺失，使用静音填补")
+            return self.make_silence(target_duration_sec)
+        inp_dur = self.get_duration(audio_path)
+        if inp_dur <= 0:
+            return self.make_silence(target_duration_sec)
+        if inp_dur + 1e-2 >= float(target_duration_sec):
+            return self.audio_cut_fade(audio_path, 0.0, float(target_duration_sec), 0, 0, 1.0)
+        output_path = config.get_temp_file(self.pid, "wav")
+        try:
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-stream_loop", "-1",
+                "-i", audio_path,
+                "-t", str(float(target_duration_sec)),
+                "-ac", "2",
+                "-ar", "44100",
+                "-c:a", "pcm_s16le",
+                output_path,
+            ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            return output_path if os.path.exists(output_path) else None
+        except subprocess.CalledProcessError as e:
+            print(f"❌ FFmpeg 错误 (audio_trim_or_loop_to_duration): {e.stderr}")
+        except Exception as e:
+            print(f"❌ audio_trim_or_loop_to_duration: {e}")
+        return self.make_silence(target_duration_sec)
+
 
     def audio_cut_fade(self, raw_auddio_path, start_time, output_length, fade_in=0, fade_out=0, volume=1.0):
         output_path = config.get_temp_file(self.pid, "wav")

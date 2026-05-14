@@ -1267,20 +1267,53 @@ class MagicWorkflow:
             video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
 
         if replace_final_audio_with_zero:
-            full_zero = get_file_path(self.scenes[0], "zero_audio")
-            if full_zero:
-                t_cursor = 0.0
-                for i, scene in enumerate(self.scenes):
-                    seg_path = video_segments[i]["path"]
-                    seg_dur = self.ffmpeg_processor.get_duration(seg_path)
-                    if i > 0:
-                        zero = get_file_path(scene, "zero_audio")
-                        zero_dur = self.ffmpeg_audio_processor.get_duration(zero)
-                        if zero and zero_dur <= seg_dur+0.05:
-                            full_zero = self.ffmpeg_audio_processor.audio_mix( full_zero, 1.0, t_cursor, zero, 1.0 )
-                    t_cursor += seg_dur
+            # 按时间线、连续同一 story（id 同一万档）分段。
+            # 首场景有 zero_audio：用其铺满本 story 成片总时长（必要时裁切或循环）。
+            # 否则：按场景顺序拼接本 story 内所有 clip_audio，再裁切/静音补齐到与本 story 成片总时长一致。
+            # 最后再按 story 顺序 concat 成整条成片音轨。
+            per_story_audios = []
+            n = len(self.scenes)
+            idx = 0
+            aud = self.ffmpeg_audio_processor
+            while idx < n:
+                scene0 = self.scenes[idx]
+                root_id = int(scene0.get("id", 0) / 10000)
+                story_dur = 0.0
+                j = idx
+                while j < n and int(self.scenes[j].get("id", 0) / 10000) == root_id:
+                    seg_path = video_segments[j]["path"]
+                    story_dur += self.ffmpeg_processor.get_duration(seg_path)
+                    j += 1
 
-                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_zero)
+                za = get_file_path(scene0, "zero_audio")
+                if za and os.path.isfile(za):
+                    tiled = aud.audio_trim_or_loop_to_duration(za, story_dur)
+                else:
+                    clip_paths = []
+                    for k in range(idx, j):
+                        ca = get_file_path(self.scenes[k], "clip_audio")
+                        if ca and os.path.isfile(ca):
+                            clip_paths.append(ca)
+                    if not clip_paths:
+                        tiled = aud.make_silence(story_dur)
+                    else:
+                        merged = aud.concat_audios(clip_paths)
+                        if not merged:
+                            tiled = aud.make_silence(story_dur)
+                        else:
+                            tiled = aud.extend_audio(merged, 0.0, story_dur)
+                            if not tiled:
+                                tiled = aud.make_silence(story_dur)
+
+                if not tiled:
+                    tiled = aud.make_silence(story_dur)
+                per_story_audios.append(tiled)
+
+                idx = j
+
+            full_story_audio = aud.concat_audios(per_story_audios) if per_story_audios else None
+            if full_story_audio:
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_story_audio)
 
         title = self.title.strip().replace(' ', '_').replace('\n', '_')
         title = config.chinese_convert(title, self.language)
