@@ -8,6 +8,15 @@ import copy
 import unicodedata
 import zhconv
 
+try:
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
+
 from utility.file_util import safe_clipboard_json_copy
 import config_channel
 
@@ -618,6 +627,8 @@ def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
+# 成片/拖放加水印输出目录（Youtube 摘要窗等处写入）
+INPUT_MEDIA_GEN_VIDEO_PATH = f"{INPUT_MEDIA_PATH}/gen_video"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
@@ -850,6 +861,65 @@ elevenlabs_base_url = "https://api.elevenlabs.io/v1"
 
 TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "circleclose"]
 
+
+# =============================================================================
+# Telegram：发布成片到 YouTube 成功后可选推送到私信/群组/频道（Bot API）
+# =============================================================================
+#
+# 【一次性设置概要】
+# 1) Telegram 搜索 @BotFather → /newbot → 按提示起名 → 拿到 ``bot_token``（形如 ``123456:AAH...``）。
+# 2) 目标为「自己与 Bot 的对话」：先对 Bot 点 Start；浏览器打开（把 <TOKEN> 换成 token）：
+#    ``https://api.telegram.org/bot<TOKEN>/getUpdates``
+#    在结果里找 ``message.chat.id`` 即为 ``chat_id``（可写成字符串）。
+# 3) 群组：把 Bot 拉进群后发一条消息，再刷 ``getUpdates``，使用该群的 ``chat.id``。
+# 4) 频道：把 Bot 加为频道管理员（需发消息权限）；``chat_id`` 可用 ``@频道公开名`` 或数字 ID（常为 -100…）。
+# 5) 在仓库根目录 ``.env`` 中设置（勿提交 Git；``.gitignore`` 已忽略 ``.env``）：
+#
+#      TELEGRAM_BOT_TOKEN=你的_bot_token
+#
+#    单个接收方::
+#
+#      TELEGRAM_CHAT_ID=单个_chat_id
+#
+#    或多个接收方（**同一 Bot 会向列表中每个会话各发一遍相同内容**），逗号 / 分号 / 竖线分隔均可::
+#
+#      TELEGRAM_CHAT_IDS=111111111,222222222,-100xxxxxxxxxx,@your_channel
+#
+#    若同时设置了 ``TELEGRAM_CHAT_IDS``（非空），则 **忽略** ``TELEGRAM_CHAT_ID``。
+#
+#    ``config.py`` 中的 ``enabled`` 等开关仍可在此文件填写。
+# 6) Bot 单文件上限约 50MB；超过 ``max_video_mb`` 时跳过视频文件，仍会发送标题/链接及 YouTube 描述文案（与上传时 ``summary`` 一致）。
+#
+
+def _telegram_publish_chat_ids_from_env():
+    """从环境变量解析 Telegram 接收方列表（去重保序）。"""
+    raw = (os.environ.get("TELEGRAM_CHAT_IDS") or "").strip()
+    out = []
+    if raw:
+        for segment in re.split(r"[,|;]+", raw):
+            for tok in segment.split():
+                t = tok.strip()
+                if t:
+                    out.append(t)
+    else:
+        one = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+        if one:
+            out.append(one)
+    seen = set()
+    dedup = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            dedup.append(x)
+    return dedup
+
+
+TELEGRAM_PUBLISH = {
+    "enabled": True,
+    "bot_token": (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(),
+    "chat_ids": _telegram_publish_chat_ids_from_env(),
+    "max_video_mb": 48,
+}
 
 # =============================================================================
 # 图像生成配置

@@ -79,7 +79,6 @@ class PublishReviewDialog:
 
         self.dlg = tk.Toplevel(parent)
         self.dlg._publish_review = self  # 供发布/归档前在主线程调用 _stop_play，释放 mp4 占用
-        self.dlg.title("审阅成品视频 — 发布前")
         self.dlg.transient(parent)
         self.dlg.geometry("900x720")
         self.dlg.minsize(640, 520)
@@ -93,6 +92,9 @@ class PublishReviewDialog:
         top = ttk.Frame(self.dlg, padding=8)
         top.pack(fill=tk.BOTH, expand=True)
 
+        self._publish_banner = ttk.Label(top, text="", wraplength=860, foreground="#0a6b0a")
+        self._publish_banner.pack(anchor="w", pady=(0, 6))
+
         ttk.Label(top, text=self.mp4_path, wraplength=860, font=("Arial", 9)).pack(anchor="w", pady=(0, 6))
 
         self.preview_canvas = tk.Canvas(top, bg="black", height=320, highlightthickness=1, highlightbackground="#444")
@@ -101,15 +103,35 @@ class PublishReviewDialog:
         self.time_lbl = ttk.Label(top, text="")
         self.time_lbl.pack(anchor="w")
 
-        ctrl = ttk.Frame(top)
-        ctrl.pack(fill=tk.X, pady=4)
-        self.play_btn = ttk.Button(ctrl, text="▶ 播放", command=self._toggle_play)
+        toolbar = ttk.Frame(top)
+        toolbar.pack(fill=tk.X, pady=(4, 6))
+        self.play_btn = ttk.Button(toolbar, text="▶ 播放", command=self._toggle_play)
         self.play_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(ctrl, text="停止", command=self._stop_play).pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="停止", command=self._stop_play).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Frame(toolbar, width=14).pack(side=tk.LEFT)  # 与后方操作钮分隔
+        self.btn_trans = ttk.Button(toolbar, text="Transcript（转写）", command=self._on_transcribe)
+        self.btn_trans.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_regen = ttk.Button(toolbar, text="重合成音频", command=self._on_regenerate)
+        self.btn_regen.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_pub = ttk.Button(toolbar, text="发布到 YouTube", command=self._on_publish)
+        self.btn_pub.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(toolbar, text="关闭", command=self._on_close).pack(side=tk.RIGHT)
+
+        narrator_row = ttk.Frame(top)
+        narrator_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(narrator_row, text="重合成旁白（说话人）", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 8))
+        self.narrator_pick = ttk.Combobox(
+            narrator_row,
+            width=34,
+            values=config.CHARACTER_PERSON_OPTIONS,
+            state="normal",
+        )
+        self.narrator_pick.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.narrator_pick.set(self._default_narrator())
 
         ttk.Label(
             top,
-            text="文稿 / 转写结果（重合成时使用下方「说话人」）",
+            text="文稿 / 转写结果（重合成时使用上方「说话人」）",
             font=("Arial", 9, "bold"),
         ).pack(anchor="w", pady=(8, 2))
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
@@ -127,47 +149,51 @@ class PublishReviewDialog:
 
         self.text_w.insert(tk.END, summary + "\n\n")
 
-        btn_row = ttk.Frame(top)
-        btn_row.pack(fill=tk.X, pady=8)
-
-        self.btn_trans = ttk.Button(btn_row, text="Transcript（转写）", command=self._on_transcribe)
-        self.btn_trans.pack(side=tk.LEFT, padx=(0, 8))
-        self.btn_regen = ttk.Button(btn_row, text="重合成音频", command=self._on_regenerate)
-        self.btn_regen.pack(side=tk.LEFT, padx=(0, 8))
-        self.btn_pub = ttk.Button(btn_row, text="发布到 YouTube", command=self._on_publish)
-        self.btn_pub.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="关闭", command=self._on_close).pack(side=tk.RIGHT)
-
+        self._sync_window_title()
+        self._sync_publish_banner()
         self._sync_publish_button_state()
-
-        narrator_row = ttk.Frame(top)
-        narrator_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(narrator_row, text="重合成旁白（说话人）", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 8))
-        self.narrator_pick = ttk.Combobox(
-            narrator_row,
-            width=34,
-            values=config.CHARACTER_PERSON_OPTIONS,
-            state="normal",
-        )
-        self.narrator_pick.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.narrator_pick.set(self._default_narrator())
 
         self.dlg.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.dlg.after(200, self._try_auto_play)
 
-    def _sync_publish_button_state(self):
-        """已有 publish 或上传成功后禁用「发布到 YouTube」。"""
+    def _sync_window_title(self):
         if (self.video_detail.get("publish") or "").strip():
+            self.dlg.title("审阅成品 — 本条已有发布记录（可再次上传）")
+        else:
+            self.dlg.title("审阅成品视频 — 发布前")
+
+    def _sync_publish_banner(self):
+        if not getattr(self, "_publish_banner", None):
+            return
+        pb = (self.video_detail.get("publish") or "").strip()
+        u = (self.video_detail.get("url") or "").strip()
+        ud = (self.video_detail.get("upload_date") or "").strip()
+        if pb or u or ud:
+            bits = []
+            if pb:
+                bits.append(f"发布/定时记录（publish）：{pb}")
+            if u:
+                bits.append(f"成片链接（url）：{u}")
+            if ud:
+                bits.append(f"upload_date：{ud}（本条最新一次成功上传写入）")
+            bits.append("可按「发布到 YouTube」再次上传。")
             try:
-                self.btn_pub.config(state="disabled")
+                self._publish_banner.config(text="  ".join(bits))
             except tk.TclError:
                 pass
         else:
             try:
-                self.btn_pub.config(state="normal")
+                self._publish_banner.config(text="")
             except tk.TclError:
                 pass
+
+    def _sync_publish_button_state(self):
+        """发布按钮始终可用（支持重投）；本条无成品时请从列表侧检查 gen_video/mp4。"""
+        try:
+            self.btn_pub.config(state=tk.NORMAL)
+        except tk.TclError:
+            pass
 
     def _ffmpeg_audio(self):
         return FfmpegAudioProcessor(self.media_gui.pid)
@@ -470,6 +496,8 @@ class PublishReviewDialog:
         def after():
             if self.on_refresh_after_publish:
                 self.on_refresh_after_publish()
+            self._sync_window_title()
+            self._sync_publish_banner()
             self._sync_publish_button_state()
 
         self.media_gui._open_publish_video_dialog(self.dlg, "", self.mp4_path, self.video_detail, after)

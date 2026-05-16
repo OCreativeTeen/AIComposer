@@ -13,9 +13,17 @@ import tkinter as tk
 
 from project_manager import show_initial_choice_dialog
 
+try:
+    import tkinterdnd2 as TkinterDnD
+
+    _ROOT_FACTORY = TkinterDnD.Tk
+except ImportError:
+    TkinterDnD = None  # type: ignore
+    _ROOT_FACTORY = tk.Tk
+
 
 def main():
-    root = tk.Tk()
+    root = _ROOT_FACTORY()
     root.title("AIComposer — YT 工具")
     # 切勿在此处 withdraw(root)。在 Windows 上父窗口被 withdraw 时，其子 Toplevel（YT 工具选择窗）
     # 往往完全不显示。根窗缩到极小并移到屏外，减少空白主窗干扰。

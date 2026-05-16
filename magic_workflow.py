@@ -1117,7 +1117,7 @@ class MagicWorkflow:
         # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
         thumbnail_path = None
 
-        video_id = self.downloader.upload_video(
+        video_id, _published_iso = self.downloader.upload_video(
             final_video_path,
             thumbnail_path,
             title=title,

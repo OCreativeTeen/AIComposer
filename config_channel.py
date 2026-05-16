@@ -1945,7 +1945,7 @@ CHANNEL_CONFIG = {
 
     "music_story": {
         "topic": "Musical myths and legends",
-        "channel_name": "音乐故事",
+        "channel_name": "心泉旋律",
         "channel_id": "music_story",
         "channel_category_id": "10",
         "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
