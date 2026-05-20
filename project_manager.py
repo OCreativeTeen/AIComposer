@@ -146,16 +146,23 @@ def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
 
 
 def _raw_content_valid_for_create(ac) -> bool:
-    """须为 { english: {story}, chinese: {story} }；story 可为非空 str / list / dict（无 summary）。"""
+    """``{ english: str, chinese: str }``；至少一个分支为非空字符串（另一分支可为 ``""``）。"""
     if not isinstance(ac, dict):
         return False
-    for lang in ('english', 'chinese'):
+    any_text = False
+    for lang in ("english", "chinese"):
         br = ac.get(lang)
-        if not isinstance(br, dict):
+        if br is None or br == "":
+            continue
+        if isinstance(br, str):
+            if br.strip():
+                any_text = True
+        elif isinstance(br, dict):
+            if _story_value_nonempty(br.get("story")):
+                any_text = True
+        else:
             return False
-        if not _story_value_nonempty(br.get('story')):
-            return False
-    return True
+    return any_text
 
 
 def build_soul(channel, topic_category, topic_subtype):
@@ -204,6 +211,7 @@ LAST_NARRATOR = config.CHARACTER_PERSON_OPTIONS[0]
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
 LAST_HOST_DISPLAY = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
+LAST_YT_LANGUAGE = "tw"
 
 # 频道「热门/视频列表」JSON 里每项的完整工作流配置（替代或并存 *.config）
 PROJECT_PROFILE_KEY = "project_profile"
@@ -333,14 +341,68 @@ def sync_channel_list_item_from_full_config(item: dict, full_cfg_clean: dict) ->
     for k in LIST_ITEM_TOP_PROJECT_KEYS:
         if k in fc:
             item[k] = copy.deepcopy(fc[k])
+    file_pid = str((full_cfg_clean or {}).get("pid") or "").strip()
+    if file_pid:
+        item["id"] = file_pid
+    sync_list_item_id_and_profile_pid(item)
+
+
+def list_json_row_id(item: dict) -> str:
+    """列表行主键：外层 ``id``（YouTube 视频 id 或项目 pid）。"""
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("id") or "").strip()
+
+
+def list_json_row_has_project_profile(item: dict) -> bool:
+    if not isinstance(item, dict):
+        return False
+    pr = item.get(PROJECT_PROFILE_KEY)
+    return isinstance(pr, dict) and bool(pr)
+
+
+def sync_list_item_id_and_profile_pid(item: dict) -> None:
+    """迁移旧 ``gen_video_stem`` / ``localproj:`` url；有项目绑定时保证 ``id`` 与 ``project_profile.pid`` 一致。"""
+    if not isinstance(item, dict):
+        return
+    legacy_stem = (item.pop("gen_video_stem", None) or "").strip()
+    url = (item.get("url") or "").strip()
+    if url.lower().startswith("localproj:"):
+        m = re.match(r"localproj:([^:]+):", url, flags=re.IGNORECASE)
+        if m and not list_json_row_id(item):
+            item["id"] = m.group(1).strip()
+        restore = (item.get("cloned_from_url") or "").strip()
+        if restore:
+            item["url"] = restore
+        else:
+            item.pop("url", None)
+    prof = item.get(PROJECT_PROFILE_KEY)
+    if isinstance(prof, dict) and prof:
+        pid = str(prof.get("pid") or "").strip()
+        outer = list_json_row_id(item)
+        if legacy_stem and not outer:
+            item["id"] = legacy_stem
+            outer = legacy_stem
+        if pid and outer and pid != outer:
+            item["id"] = pid
+            prof["pid"] = pid
+        elif pid and not outer:
+            item["id"] = pid
+        elif outer and not pid:
+            prof["pid"] = outer
+    elif legacy_stem and not list_json_row_id(item):
+        item["id"] = legacy_stem
 
 
 def list_json_row_workflow_pid(item: dict) -> str:
-    """频道列表 JSON 行对应的工作流 pid：仅从 ``project_profile.pid`` 读取。"""
+    """工作流 pid：有 ``project_profile`` 时与外层 ``id`` 一致（读 ``id``，兼容仅 profile 内 pid 的旧行）。"""
     if not isinstance(item, dict):
         return ""
     pr = item.get(PROJECT_PROFILE_KEY)
-    if isinstance(pr, dict):
+    if isinstance(pr, dict) and pr:
+        iid = list_json_row_id(item)
+        if iid:
+            return iid
         return str(pr.get("pid") or "").strip()
     return ""
 
@@ -948,15 +1010,15 @@ class ProjectSelectionDialog:
         form_parent = getattr(self, '_form_parent', self.dialog)
         new_project_dialog = tk.Toplevel(form_parent)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("800x500")
+        new_project_dialog.geometry("800x800")
         new_project_dialog.transient(form_parent)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
         x = (new_project_dialog.winfo_screenwidth() - 800) // 2
-        y = (new_project_dialog.winfo_screenheight() - 500) // 2
-        new_project_dialog.geometry(f"800x500+{x}+{y}")
+        y = (new_project_dialog.winfo_screenheight() - 800) // 2
+        new_project_dialog.geometry(f"800x800+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -1310,11 +1372,18 @@ class ProjectSelectionDialog:
 
 
         def open_project_content_editor(initial_text=None):
-            """输入 Raw Case-Story：JSON 对象，english / chinese 各为 { story }（story 可为字符串或数组/对象）。"""
+            """编辑 analyzed_content；确认后写回 ``story_result['analyzed_content']``。
+
+            支持双语 JSON（english/chinese 各为字符串）、单语分支、或纯文本（按当前项目 language 写入对应分支）。
+            """
             if initial_text is None:
                 initial_text = self.story_result.get('analyzed_content')
             if isinstance(initial_text, dict):
-                _prefill = json.dumps(initial_text, ensure_ascii=False, indent=2)
+                _prefill_ac = config.normalize_analyzed_content_from_editor(
+                    json.dumps(initial_text, ensure_ascii=False),
+                    self.story_result.get("language") or "tw",
+                )
+                _prefill = json.dumps(_prefill_ac, ensure_ascii=False, indent=2)
             elif isinstance(initial_text, str) and initial_text.strip():
                 _prefill = initial_text.strip()
             else:
@@ -1330,7 +1399,17 @@ class ProjectSelectionDialog:
             raw_dialog.geometry(f"700x400+{x}+{y}")
             frame = ttk.Frame(raw_dialog, padding=20)
             frame.pack(fill=tk.BOTH, expand=True)
-            ttk.Label(frame, text="请输入 Raw Case-Story 内容:", font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0, 5))
+            ttk.Label(
+                frame,
+                text=(
+                    "请输入 Raw Case-Story（双语 JSON 示例："
+                    '{"english": "…", "chinese": "…"}；各分支为字符串，非嵌套对象；'
+                    "也可直接粘贴纯文本，将按上方项目语言写入对应分支）："
+                ),
+                font=('TkDefaultFont', 10, 'bold'),
+                wraplength=640,
+                justify=tk.LEFT,
+            ).pack(anchor='w', pady=(0, 5))
             case_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=12)
             case_text.pack(fill=tk.BOTH, expand=True)
 
@@ -1366,12 +1445,17 @@ class ProjectSelectionDialog:
             raw_input = (raw_input_holder[0] or "").strip()
             if not raw_input:
                 return
-            try:
-                parsed = json.loads(safe_clipboard_json_copy(raw_input))
-            except json.JSONDecodeError:
+            ui_lang = (self.story_result.get("language") or "tw").strip()
+            normalized = config.normalize_analyzed_content_from_editor(raw_input, ui_lang)
+            if not _raw_content_valid_for_create(normalized):
+                messagebox.showwarning(
+                    "内容无效",
+                    "无法保存：须至少在一个语种分支（english 或 chinese）中有非空文本。",
+                    parent=new_project_dialog,
+                )
                 return
 
-            self.story_result['analyzed_content'] = parsed
+            self.story_result["analyzed_content"] = normalized
             update_buttons_state()
             update_previews()
 
@@ -1577,7 +1661,7 @@ def launch_yt_media_tool(
     """独立 YT 入口：不再创建额外的「YT 管理」占位窗。
 
     日志控件仅创建、不 pack。勿对 ``parent`` 使用 ``withdraw()``：在 Windows 下会导致后续
-    ``Toplevel(parent)``（选语言、选频道等）无法显示。改为将根窗移到屏外极小几何以保持 mapped。
+    ``Toplevel(parent)``（选频道等）无法显示。改为将根窗移到屏外极小几何以保持 mapped。
 
     当 ``parent`` 下没有任何 ``Toplevel`` 子窗口时，轮询 ``quit()`` 结束 ``mainloop``。
     """
@@ -1627,7 +1711,9 @@ def launch_yt_media_tool(
 
 
 def show_initial_choice_dialog(parent):
-    """``GUI_pm.py`` 独立入口：频道 / 语言 / 风格 / 旁白 / HOST + 四个 YT 功能按钮。
+    """``GUI_pm.py`` 独立入口：频道/语言、风格/预留、旁白/HOST；四个 YT 功能按钮。
+
+    视频/字幕语言在欢迎屏选择（``config.LANGUAGES``），不再在「项目管理」内二次弹窗。
 
     魔法工作流 ``GUI_wf.py`` 启动时不再经此函数，直接进入「选择项目」列表。
     """
@@ -1649,23 +1735,15 @@ def show_initial_choice_dialog(parent):
     main_frame = ttk.Frame(dialog, padding=30)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
-    # 顶部：频道、语言（从创建新项目移至此处，供所有后续操作使用）
+    # 第 1 行：频道、语言；第 2 行：风格、预留；第 3 行：旁白、HOST
     available_channels = list(config_channel.CHANNEL_CONFIG.keys())
     default_channel = available_channels[0] if available_channels else 'default'
-    languages = ['tw', 'zh', 'en']
-    default_lang = 'tw'
-
-    opt_frame = ttk.Frame(main_frame)
-    opt_frame.pack(fill=tk.X, pady=(0, 15))
-    ttk.Label(opt_frame, text="频道").pack(side=tk.LEFT)
-    channel_var = tk.StringVar(value=default_channel)
-    channel_combo = ttk.Combobox(opt_frame, textvariable=channel_var, values=available_channels, state="readonly", width=16)
-    channel_combo.pack(side=tk.LEFT, padx=(0, 5))
-
-    ttk.Label(opt_frame, text="语言").pack(side=tk.LEFT)
-    language_var = tk.StringVar(value=default_lang)
-    language_combo = ttk.Combobox(opt_frame, textvariable=language_var, values=languages, state="readonly", width=3)
-    language_combo.pack(side=tk.LEFT, padx=(0, 5))
+    default_lang_key = LAST_YT_LANGUAGE if LAST_YT_LANGUAGE in config.LANGUAGES else 'tw'
+    _lang_display_to_key = {
+        f"{label} ({key})": key for key, label in config.LANGUAGES.items()
+    }
+    _lang_options = list(_lang_display_to_key.keys())
+    _lang_default_display = f"{config.LANGUAGES[default_lang_key]} ({default_lang_key})"
 
     _styles = list(config.VISUAL_STYLE_OPTIONS)
     try:
@@ -1673,52 +1751,83 @@ def show_initial_choice_dialog(parent):
     except ValueError:
         _style_default = _styles[0]
 
-    ttk.Label(opt_frame, text="风格").pack(side=tk.LEFT)
+    opts_grid = ttk.Frame(main_frame)
+    opts_grid.pack(fill=tk.X, pady=(0, 15))
+    _combo_w = 28
+    _row_gap = (10, 0)
+
+    channel_var = tk.StringVar(value=default_channel)
+    channel_combo = ttk.Combobox(
+        opts_grid,
+        textvariable=channel_var,
+        values=available_channels,
+        state="readonly",
+        width=_combo_w,
+    )
+    language_var = tk.StringVar(value=_lang_default_display)
+    language_combo = ttk.Combobox(
+        opts_grid,
+        textvariable=language_var,
+        values=_lang_options,
+        state="readonly",
+        width=_combo_w,
+    )
+    language_combo.set(_lang_default_display)
     visual_style_var = tk.StringVar(value=_style_default)
     visual_style_combo = ttk.Combobox(
-        opt_frame,
+        opts_grid,
         textvariable=visual_style_var,
         values=_styles,
         state="readonly",
-        width=16,
+        width=_combo_w,
     )
-    visual_style_combo.pack(side=tk.LEFT)
-
-    opt_frame2 = ttk.Frame(main_frame)
-    opt_frame2.pack(fill=tk.X, pady=(0, 15))
-    ttk.Label(opt_frame2, text="旁白").pack(side=tk.LEFT)
-    narrator_var = tk.StringVar(
-        value=LAST_NARRATOR
-    )
+    narrator_var = tk.StringVar(value=LAST_NARRATOR)
     narrator_combo = ttk.Combobox(
-        opt_frame2,
+        opts_grid,
         textvariable=narrator_var,
         values=config.CHARACTER_PERSON_OPTIONS,
         state="readonly",
-        width=20,
+        width=_combo_w,
     )
-    narrator_combo.pack(side=tk.LEFT, padx=(0, 5))
 
     _hd_cur = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
     _host_opts = list(config_prompt.HARRATOR_DISPLAY_OPTIONS)
     _host_default = _hd_cur if _hd_cur in _host_opts else _host_opts[0]
-
-    ttk.Label(opt_frame2, text="HOST").pack(side=tk.LEFT)
     host_display_var = tk.StringVar(value=_host_default)
     host_display_combo_welcome = ttk.Combobox(
-        opt_frame2,
+        opts_grid,
         textvariable=host_display_var,
         values=_host_opts,
         state="readonly",
-        width=20,
+        width=_combo_w,
     )
-    host_display_combo_welcome.pack(side=tk.LEFT)
+    reserved_var = tk.StringVar(value="")
+    reserved_combo = ttk.Combobox(
+        opts_grid,
+        textvariable=reserved_var,
+        values=(),
+        state="disabled",
+        width=_combo_w,
+    )
 
+    # 每行 2 组 label+combo；两列 combo 等宽
+    ttk.Label(opts_grid, text="频道").grid(row=0, column=0, sticky="w", padx=(0, 6))
+    channel_combo.grid(row=0, column=1, sticky="ew", padx=(0, 16))
+    ttk.Label(opts_grid, text="语言").grid(row=0, column=2, sticky="w", padx=(0, 6))
+    language_combo.grid(row=0, column=3, sticky="ew")
 
-    btn_frame = ttk.Frame(main_frame)
-    btn_frame.pack(pady=15, fill=tk.X)
+    ttk.Label(opts_grid, text="风格").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
+    visual_style_combo.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
+    ttk.Label(opts_grid, text="预留").grid(row=1, column=2, sticky="w", padx=(0, 6), pady=_row_gap)
+    reserved_combo.grid(row=1, column=3, sticky="ew", pady=_row_gap)
 
-    ttk.Label(btn_frame, text="请选择项目管理工具", font=('TkDefaultFont', 14, 'bold')).pack(pady=(0, 25))
+    ttk.Label(opts_grid, text="旁白").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
+    narrator_combo.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
+    ttk.Label(opts_grid, text="HOST").grid(row=2, column=2, sticky="w", padx=(0, 6), pady=_row_gap)
+    host_display_combo_welcome.grid(row=2, column=3, sticky="ew", pady=_row_gap)
+
+    for col in (1, 3):
+        opts_grid.columnconfigure(col, weight=1, uniform="yt_welcome_combo")
 
     def _sync_result_narrator():
         global LAST_NARRATOR
@@ -1735,10 +1844,21 @@ def show_initial_choice_dialog(parent):
         result['host_display'] = host_display_var.get()
         LAST_HOST_DISPLAY = result['host_display']
 
+    def _resolve_language_key():
+        display = (language_var.get() or "").strip()
+        return _lang_display_to_key.get(display, default_lang_key)
+
+    def _sync_result_language():
+        global LAST_YT_LANGUAGE
+        key = _resolve_language_key()
+        result['language'] = key
+        LAST_YT_LANGUAGE = key
+
     def _sync_welcome_choices():
         _sync_result_narrator()
         _sync_result_visual_style()
         _sync_result_host_display()
+        _sync_result_language()
 
     def on_cancel():
         result['choice'] = 'cancel'
@@ -1755,7 +1875,7 @@ def show_initial_choice_dialog(parent):
         launch_yt_media_tool(
             parent,
             channel=ch,
-            language=language_var.get().strip(),
+            language=_resolve_language_key(),
             narrator=narrator_var.get(),
             visual_style=visual_style_var.get(),
             host_display=host_display_var.get(),
@@ -1763,46 +1883,38 @@ def show_initial_choice_dialog(parent):
             yt_method_args=method_args,
         )
 
-    yt_row1 = ttk.Frame(btn_frame)
-    yt_row1.pack(fill=tk.X, pady=(0, 8))
-    ttk.Button(
-        yt_row1,
+    _btn_row_gap = (0, 10)
+    tk.Button(
+        opts_grid,
         text="项目管理",
+        font=('TkDefaultFont', 14, 'bold'),
         command=lambda: _run_yt_tool("manage_hot_videos"),
-    ).pack(fill=tk.X, expand=True)
+    ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(15, 10))
 
-    yt_row2 = ttk.Frame(btn_frame)
-    yt_row2.pack(fill=tk.X, pady=(0, 8))
     ttk.Button(
-        yt_row2,
+        opts_grid,
         text="文字转译",
         command=lambda: _run_yt_tool("transcribe_media", True),
-        width=32,
-    ).pack(side=tk.LEFT, padx=(0, 5))
+    ).grid(row=4, column=1, sticky="ew", padx=(0, 16), pady=_btn_row_gap)
     ttk.Button(
-        yt_row2,
+        opts_grid,
         text="YT文字",
         command=lambda: _run_yt_tool("download_youtube", True),
-        width=32,
-    ).pack(side=tk.LEFT)
+    ).grid(row=4, column=3, sticky="ew", pady=_btn_row_gap)
 
-    yt_row3 = ttk.Frame(btn_frame)
-    yt_row3.pack(fill=tk.X)
     ttk.Button(
-        yt_row3,
+        opts_grid,
         text="YT視頻",
         command=lambda: _run_yt_tool("download_youtube", False),
-        width=32,
-    ).pack(side=tk.LEFT, padx=(0, 5))
+    ).grid(row=5, column=1, sticky="ew", padx=(0, 16))
     ttk.Button(
-        yt_row3,
+        opts_grid,
         text="取消",
         command=on_cancel,
-        width=32,
-    ).pack(side=tk.LEFT)
+    ).grid(row=5, column=3, sticky="ew")
 
     dialog.update_idletasks()
-    w, h = 450, 520
+    w, h = 520, 520
     x = (dialog.winfo_screenwidth() - w) // 2
     y = (dialog.winfo_screenheight() - h) // 2
     dialog.geometry(f"{w}x{h}+{x}+{y}")
@@ -1812,7 +1924,7 @@ def show_initial_choice_dialog(parent):
     return (
         result['choice'],
         result['channel'] or default_channel,
-        result['language'] or default_lang,
+        result['language'] or default_lang_key,
         result.get('narrator') or LAST_NARRATOR,
         result.get('visual_style') or LAST_VISUAL_STYLE,
         result.get('host_display') or config_prompt.HARRATOR_DISPLAY_OPTIONS[-1],

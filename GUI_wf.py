@@ -304,10 +304,10 @@ class WorkflowGUI:
             current_gui_title = self.video_title.get().strip()
             self.workflow.post_init(current_gui_title)
             
-            # 初始化YouTube GUI管理器
+            # 初始化YouTube GUI管理器（第二参数为频道 key/id，非 channel_path；路径在 MediaGUIManager 内解析）
             self.youtube_gui = MediaGUIManager(
-                self.root, 
-                config.get_channel_path(config_channel.get_channel_id(channel)),  # 传入项目路径（按 channel_id）
+                self.root,
+                channel,
                 self.get_pid(), 
                 self.tasks, 
                 self.log_to_output, 

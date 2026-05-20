@@ -63,40 +63,101 @@ def scene_story_language_key_for_ui(ui_language_key: str) -> str:
     return LANGUAGES.get(k, "chinese")
 
 
-def merge_analyzed_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
-    """将 LLM 返回的 analyzed_content 合并进 ``{english: {...}, chinese: {...}}``，保留另一语种。
+def analyzed_content_branch_to_string(val) -> str:
+    """``analyzed_content[english|chinese]`` 存 **字符串**；旧数据若为 ``{story: ...}`` 等 dict 则提取为文本。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        for key in ("story", "summary", "content"):
+            if key not in val:
+                continue
+            inner = val[key]
+            if isinstance(inner, str):
+                return inner
+            if inner is not None:
+                return json.dumps(inner, ensure_ascii=False)
+        return json.dumps(val, ensure_ascii=False, indent=2)
+    if isinstance(val, (list, int, float, bool)):
+        return json.dumps(val, ensure_ascii=False)
+    return str(val)
 
-    ``rewritten`` 若为带 english/chinese 键的对象则按分支整体替换；否则只更新当前 UI 语种分支。
+
+def merge_analyzed_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
+    """将内容合并进 ``{english: str, chinese: str}``，保留另一语种。
+
+    ``rewritten`` 若带 english/chinese 键则按分支整体替换为字符串；否则只更新当前 UI 语种分支。
     """
     existing = existing if isinstance(existing, dict) else {}
     rewritten = rewritten if isinstance(rewritten, dict) else {}
-    out: dict = {}
+    out: dict = {"english": "", "chinese": ""}
     if _BILINGUAL_RAW_KEYS.intersection(existing.keys()):
         for k in _BILINGUAL_RAW_KEYS:
-            v = existing.get(k)
-            out[k] = copy.deepcopy(v) if isinstance(v, dict) else {}
+            out[k] = analyzed_content_branch_to_string(existing.get(k))
     else:
         branch0 = bilingual_branch_for_ui_language(ui_language_key)
-        out = {"english": {}, "chinese": {}}
-        out[branch0] = copy.deepcopy(existing)
+        out[branch0] = analyzed_content_branch_to_string(existing)
 
     if _BILINGUAL_RAW_KEYS.intersection(rewritten.keys()):
         for k in _BILINGUAL_RAW_KEYS:
             if k not in rewritten:
                 continue
-            sub = rewritten[k]
-            if isinstance(sub, dict):
-                out[k] = copy.deepcopy(sub)
+            out[k] = analyzed_content_branch_to_string(rewritten[k])
         return out
 
     branch = bilingual_branch_for_ui_language(ui_language_key)
-    out.setdefault("english", {})
-    out.setdefault("chinese", {})
-    if not isinstance(out["english"], dict):
-        out["english"] = {}
-    if not isinstance(out["chinese"], dict):
-        out["chinese"] = {}
-    out[branch] = copy.deepcopy(rewritten)
+    out[branch] = analyzed_content_branch_to_string(rewritten)
+    return out
+
+
+def _analyzed_branch_string_from_parsed_dict(parsed: dict, branch_key: str) -> str:
+    """从解析后的对象取 english/chinese 分支字符串（键名大小写不敏感）。"""
+    if not isinstance(parsed, dict):
+        return ""
+    want = branch_key.lower()
+    for pk, pv in parsed.items():
+        if isinstance(pk, str) and pk.lower() == want:
+            return analyzed_content_branch_to_string(pv)
+    return ""
+
+
+def normalize_analyzed_content_from_editor(raw_input: str, ui_language_key: str) -> dict:
+    """将 RAW 编辑器文本规范为 ``{english: str, chinese: str}``（分支值为字符串，非嵌套 JSON）。
+
+    - 合法双语 JSON（含 english / chinese）：各分支转为字符串；缺失分支为 ``""``。
+    - 合法 JSON 但无顶层 english/chinese：整段序列化后写入当前项目语种分支。
+    - 非 JSON：全文写入当前语种分支字符串，另一分支为 ``""``。
+    - 若分支值为旧格式 ``{story: ...}``，提取 ``story``（或 summary/content）为字符串。
+    """
+    raw_input = (raw_input or "").strip()
+    empty_pair = {"english": "", "chinese": ""}
+    if not raw_input:
+        return dict(empty_pair)
+
+    branch = bilingual_branch_for_ui_language(ui_language_key)
+
+    try:
+        parsed = json.loads(safe_clipboard_json_copy(raw_input))
+    except json.JSONDecodeError:
+        out = dict(empty_pair)
+        out[branch] = raw_input
+        return out
+
+    if not isinstance(parsed, dict):
+        out = dict(empty_pair)
+        out[branch] = analyzed_content_branch_to_string(parsed)
+        return out
+
+    keys_lower = {str(k).lower() for k in parsed.keys() if isinstance(k, str)}
+    if keys_lower & _BILINGUAL_RAW_KEYS:
+        return {
+            "english": _analyzed_branch_string_from_parsed_dict(parsed, "english"),
+            "chinese": _analyzed_branch_string_from_parsed_dict(parsed, "chinese"),
+        }
+
+    out = dict(empty_pair)
+    out[branch] = analyzed_content_branch_to_string(parsed)
     return out
 
 
@@ -639,8 +700,34 @@ def create_project_path(pid: str):
     os.makedirs(PUBLISH_PATH, exist_ok=True)
 
 
+def _channel_id_from_program_path(channel: str) -> str:
+    """若误传入 ``program/<id>`` 或 ``/AI_MEDIA/program/<id>`` 等路径，只取频道 id，避免路径重复拼接。"""
+    ch = (channel or "default").strip()
+    if not ch:
+        return "default"
+    norm = ch.replace("\\", "/").rstrip("/")
+    for suffix in ("/Download", "/list"):
+        if norm.endswith(suffix):
+            norm = norm[: -len(suffix)]
+    prog = BASE_PROGRAM_PATH.replace("\\", "/").rstrip("/")
+    media_prog = f"{BASE_MEDIA_PATH}/program".replace("\\", "/").rstrip("/")
+    for prefix in (prog + "/", media_prog + "/"):
+        if norm.startswith(prefix):
+            slug = norm[len(prefix) :].split("/")[0]
+            return slug or "default"
+    if norm in (prog, media_prog):
+        return "default"
+    marker = "/program/"
+    idx = norm.lower().find(marker)
+    if idx != -1:
+        slug = norm[idx + len(marker) :].split("/")[0]
+        return slug or "default"
+    return ch
+
+
 def get_channel_path(channel: str) -> str:
-    path = f"{BASE_PROGRAM_PATH}/{channel}"
+    slug = _channel_id_from_program_path(channel)
+    path = f"{BASE_PROGRAM_PATH}/{slug}"
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -852,12 +939,6 @@ FONT_LIST = {
 # Azure 语音服务配置
 azure_subscription_key = ""
 azure_region = "eastus"
-
-# ElevenLabs 配置
-elevenlabs_api_key = ""
-elevenlabs_base_url = "https://api.elevenlabs.io/v1"
-
-
 
 TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "circleclose"]
 

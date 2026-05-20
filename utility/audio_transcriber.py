@@ -9,11 +9,6 @@ import requests
 import config
 
 
-VOICE_TEMP_PATH = "/AI_MEDIA/voice"
-if not os.path.exists(VOICE_TEMP_PATH):
-    os.makedirs(VOICE_TEMP_PATH)
-
-
 def remove_transcribe_cache_for_audio_path(audio_path: str) -> None:
     """删除与音频同名的 .srt.json 缓存，便于强制重新转写。"""
     if not audio_path:
