@@ -1,6 +1,8 @@
 import json
 import re
-from typing import List, Dict, Union, Any, Generator
+import base64
+from io import BytesIO
+from typing import List, Dict, Union, Any, Generator, Optional, Tuple
 from openai import OpenAI
 import time
 import os
@@ -9,6 +11,7 @@ import config
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
+from PIL import Image, ImageTk
 from . import file_util
 
 
@@ -180,6 +183,146 @@ class LLMApi:
                 print("所有重试尝试已用尽")
                 return [] if expect_list else {}
 
+   
+    def _get_dialog_parent(self):
+        """选择一个可见的父窗口作为 Toplevel parent。"""
+        parent = None
+        try:
+            parent = tk._default_root
+        except Exception:
+            parent = None
+        try:
+            if parent is not None:
+                w = parent.focus_get()
+                if w is not None:
+                    parent = w.winfo_toplevel()
+        except Exception:
+            pass
+        if parent is None:
+            parent = tk.Tk()
+            parent.withdraw()
+        return parent
+
+
+    def _image_path_to_data_url(self, image_path: str) -> str:
+        image = Image.open(image_path)
+        max_size = 1024
+        if max(image.size) > max_size:
+            image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        if image.mode == 'RGBA':
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[-1])
+            image = background
+        elif image.mode not in ('RGB',):
+            image = image.convert('RGB')
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG", quality=85)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        return f"data:image/jpeg;base64,{img_base64}"
+
+
+    def _create_vision_messages(self, system_prompt: str, image_path: str) -> List[Dict]:
+        data_url = self._image_path_to_data_url(image_path)
+        user_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": data_url},
+            }
+        ]
+        return [
+            self.create_message("system", system_prompt),
+            self.create_message("user", user_content),
+        ]
+
+
+    @staticmethod
+    def _copy_image_to_clipboard(image_path: str) -> bool:
+        try:
+            import win32clipboard  # type: ignore
+
+            img = Image.open(image_path)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            output = BytesIO()
+            img.save(output, 'BMP')
+            data = output.getvalue()[14:]
+            output.close()
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+            print(f"✅ 已复制图像到剪贴板: {os.path.basename(image_path)}")
+            return True
+        except ImportError:
+            print("⚠️ 需要安装 pywin32 才能复制图像到剪贴板: pip install pywin32")
+            return False
+        except Exception as e:
+            print(f"❌ 复制图像到剪贴板失败: {e}")
+            return False
+
+
+    def _chat_completions(self, model: str, messages: List[Dict]) -> Any:
+        if model == GPT_MINI:
+            request_params = {
+                "model": model,
+                "messages": messages,
+                "max_completion_tokens": 131072,
+                "stream": False,
+            }
+            return self.openai_client.chat.completions.create(**request_params)
+        if model == GEMINI_2_0_FLASH:
+            request_params = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.5,
+                "top_p": 0.9,
+                "max_tokens": 262144,
+                "stream": False,
+            }
+            return self.google_client.chat.completions.create(**request_params)
+        if model == LM_STUDIO:
+            request_params = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 262144,
+                "stream": False,
+            }
+            print(f"🔄 使用 LM Studio 模型 ({model}) 分析图片...")
+            return self.lm_studio_client.chat.completions.create(**request_params)
+        request_params = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 262144,
+            "stream": False,
+        }
+        print(f"🔄 使用 OLLAMA 模型 ({model}) 分析图片...")
+        return self.ollama_client.chat.completions.create(**request_params)
+
+
+    def analyze_image(self, analyze_prompt, image_path) -> Optional[str]:
+        """根据 prompt 分析图片；Manual 模式弹窗展示 system prompt 与图片供复制。"""
+        if not image_path or not os.path.exists(image_path):
+            print(f"⚠️ 图片不存在: {image_path}")
+            return None
+
+        system_prompt = analyze_prompt or ""
+        messages = self._create_vision_messages(system_prompt, image_path)
+
+        try:
+            if self.model == MANUAL or self.model is None:
+                model, manual_response = self._show_image_analyze_dialog(system_prompt, image_path)
+                if model == MANUAL:
+                    return manual_response
+            else:
+                model = self.model
+
+            response = self._chat_completions(model, messages)
+            return self.parse_response(response)
+        except Exception as e:
+            print(f"❌ 图片分析 API 调用失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
     def generate_text(self, system_prompt, user_prompt) -> str:
@@ -268,28 +411,167 @@ class LLMApi:
             return None
 
 
-    def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
-        """弹出对话框让用户选择模型并查看/编辑请求和响应"""
-        # 选择一个“可见的父窗口”作为 parent，避免对话框挂到 withdraw 的 root 上导致不显示/跑到后台
-        parent = None
+    def _show_image_analyze_dialog(self, system_prompt: str, image_path: str) -> Tuple[str, Optional[str]]:
+        """图片分析专用对话框：展示 System Prompt + 图片；Manual 模式粘贴分析结果。"""
+        parent = self._get_dialog_parent()
+        dialog = tk.Toplevel(parent)
+        dialog.title("分析图片 - 选择 LLM 模型")
+        dialog.geometry("1000x1000")
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - 1000) // 2
+        y = (dialog.winfo_screenheight() - 1000) // 2
+        dialog.geometry(f"1000x1000+{x}+{y}")
         try:
-            parent = tk._default_root
-        except Exception:
-            parent = None
-
-        # 优先使用当前焦点所在的顶层窗口作为父窗口（最符合用户预期）
-        try:
-            if parent is not None:
-                w = parent.focus_get()
-                if w is not None:
-                    parent = w.winfo_toplevel()
+            dialog.lift()
+            dialog.focus_force()
         except Exception:
             pass
 
-        # 如果还没有 root，则创建一个隐藏 root 兜底（CLI/无 GUI 场景）
-        if parent is None:
-            parent = tk.Tk()
-            parent.withdraw()
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        model_frame = ttk.LabelFrame(main_frame, text="选择 LLM 模型", padding=10)
+        model_frame.pack(fill=tk.X, pady=(0, 10))
+        selected_model = tk.StringVar(value=MANUAL)
+        ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
+        for mid, title in [
+            (GPT_MINI, f"GPT Mini ({GPT_MINI})"),
+            (GEMINI_2_0_FLASH, f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})"),
+            (OLLAMA, f"OLLAMA ({OLLAMA})"),
+            (MANUAL, f"Manual ({MANUAL})"),
+        ]:
+            ttk.Button(model_frame, text=title, command=lambda m=mid: selected_model.set(m)).pack(fill=tk.X, pady=3)
+        model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
+        model_status.pack(anchor=tk.W, pady=(6, 0))
+
+        request_frame = ttk.LabelFrame(main_frame, text="请求内容 (System Prompt + Image)", padding=10)
+        request_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        ttk.Label(
+            request_frame,
+            text="System Prompt（双击复制到剪贴板）:",
+            font=('TkDefaultFont', 9, 'bold'),
+        ).pack(anchor='w', pady=(0, 5))
+        system_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
+        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        if isinstance(system_prompt, str):
+            system_text.insert('1.0', system_prompt)
+
+        def on_system_double_click(_event):
+            content = system_text.get('1.0', tk.END).strip()
+            dialog.clipboard_clear()
+            dialog.clipboard_append(content)
+            dialog.update()
+
+        system_text.bind('<Double-Button-1>', on_system_double_click)
+
+        ttk.Separator(request_frame, orient='horizontal').pack(fill=tk.X, pady=5)
+
+        ttk.Label(
+            request_frame,
+            text=f"Image（双击复制图片）: {os.path.basename(image_path)}",
+            font=('TkDefaultFont', 9, 'bold'),
+        ).pack(anchor='w', pady=(5, 5))
+        image_holder = ttk.Frame(request_frame)
+        image_holder.pack(fill=tk.BOTH, expand=True)
+        photo_ref = []
+
+        try:
+            pil_img = Image.open(image_path)
+            pil_img.thumbnail((700, 500), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(pil_img)
+            photo_ref.append(photo)
+            image_label = ttk.Label(image_holder, image=photo)
+            image_label.pack(anchor=tk.CENTER, pady=5)
+
+            def on_image_double_click(_event):
+                self._copy_image_to_clipboard(image_path)
+
+            image_label.bind('<Double-Button-1>', on_image_double_click)
+        except Exception as e:
+            ttk.Label(image_holder, text=f"无法加载图片: {e}").pack(anchor=tk.W)
+
+        response_frame = ttk.LabelFrame(main_frame, text="分析结果 (Response) - 仅 Manual 模式", padding=10)
+        ttk.Label(response_frame, text="响应 (Response):", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+        response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, height=8)
+        response_text.pack(fill=tk.BOTH, expand=True)
+
+        def on_response_double_click_paste(_event):
+            try:
+                clipboard_content = file_util.safe_clipboard_json_copy(dialog.clipboard_get())
+                if clipboard_content:
+                    try:
+                        sel_start = response_text.index(tk.SEL_FIRST)
+                        sel_end = response_text.index(tk.SEL_LAST)
+                        response_text.delete(sel_start, sel_end)
+                        response_text.insert(sel_start, clipboard_content)
+                    except tk.TclError:
+                        response_text.insert(response_text.index(tk.INSERT), clipboard_content)
+            except tk.TclError:
+                pass
+
+        response_text.bind('<Double-Button-1>', on_response_double_click_paste)
+
+        result_model = [None]
+        result_response = [None]
+
+        def update_response_visibility():
+            if selected_model.get() == MANUAL:
+                response_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+            else:
+                response_frame.pack_forget()
+
+        def sync_model_status(*_):
+            model_status.config(text=f"当前模型: {selected_model.get()}")
+
+        def on_model_changed(*_):
+            update_response_visibility()
+            sync_model_status()
+
+        selected_model.trace("w", on_model_changed)
+        on_model_changed()
+
+        def on_ok():
+            model = selected_model.get()
+            result_model[0] = model
+            if model == MANUAL:
+                result_response[0] = response_text.get('1.0', tk.END).strip()
+                content = system_text.get('1.0', tk.END).strip()
+                dialog.clipboard_clear()
+                dialog.clipboard_append(content)
+                dialog.update()
+            else:
+                result_response[0] = None
+            dialog.destroy()
+
+        def on_cancel():
+            result_model[0] = MANUAL
+            result_response[0] = None
+            dialog.destroy()
+
+        def on_copy():
+            content = system_text.get('1.0', tk.END).strip()
+            dialog.clipboard_clear()
+            dialog.clipboard_append(content)
+            dialog.update()
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
+
+        on_copy()
+        dialog.wait_window()
+        model = result_model[0] if result_model[0] is not None else GPT_MINI
+        response = result_response[0] if result_response[0] is not None else None
+        return model, response
+
+
+    def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
+        """弹出对话框让用户选择模型并查看/编辑请求和响应"""
+        parent = self._get_dialog_parent()
 
         # 创建对话框
         dialog = tk.Toplevel(parent)

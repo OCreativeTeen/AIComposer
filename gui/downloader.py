@@ -117,6 +117,47 @@ def _resolve_watermark_for_media_downloader(channel_key: str):
     return None, {}
 
 
+def _apply_watermark_to_flat_image_file(
+    image_path: str,
+    watermark_path: str,
+    wm_opts: dict,
+    *,
+    pid: str,
+) -> str:
+    """静态图右下角叠水印（与 ``GUI_wf._apply_watermark_to_flat_image_webp`` 一致），输出临时 webp 路径。"""
+    from PIL import Image
+
+    base = Image.open(image_path).convert("RGBA")
+    wm = Image.open(watermark_path).convert("RGBA")
+    bw, bh = base.size
+    margin_x = int((wm_opts or {}).get("margin_x", 20))
+    margin_y = int((wm_opts or {}).get("margin_y", 20))
+    max_w = (wm_opts or {}).get("max_width")
+    max_h = (wm_opts or {}).get("max_height")
+    if max_w is not None and max_w >= bw:
+        max_w = None
+    if max_h is not None and max_h >= bh:
+        max_h = None
+    ww, wh = wm.size
+    if max_w is not None and max_h is not None:
+        wmc = wm.copy()
+        wmc.thumbnail((int(max_w), int(max_h)), Image.Resampling.LANCZOS)
+        wm = wmc
+    elif max_w is not None:
+        nw = int(max_w)
+        wm = wm.resize((nw, max(1, int(wh * nw / max(1, ww)))), Image.Resampling.LANCZOS)
+    elif max_h is not None:
+        nh = int(max_h)
+        wm = wm.resize((max(1, int(ww * nh / max(1, wh))), nh), Image.Resampling.LANCZOS)
+    ww, wh = wm.size
+    x = max(0, bw - ww - margin_x)
+    y = max(0, bh - wh - margin_y)
+    base.paste(wm, (x, y), wm)
+    out = config.get_temp_file(pid or "img_wm", "webp")
+    base.convert("RGB").save(out, "WEBP", quality=90, method=6)
+    return out
+
+
 def _sanitize_list_row_id_stem(raw_id: str) -> str:
     rid = (raw_id or "").strip()
     if not rid:
@@ -133,6 +174,46 @@ def _gen_video_watermark_dest_filename(video_detail: dict | None) -> str:
             if stem:
                 return stem + ".mp4"
     return datetime.now().strftime("%Y%m%d_%H%M%S") + ".mp4"
+
+
+def _gen_video_cover_webp_dest_filename(video_detail: dict | None) -> str:
+    """封面/配图 webp：与成片 mp4 同 stem，扩展名为 ``.webp``（``gen_video/<id>.webp``）。"""
+    if isinstance(video_detail, dict):
+        for stem in _gen_video_id_stem_candidates_for_row(video_detail):
+            if stem:
+                return stem + ".webp"
+    return datetime.now().strftime("%Y%m%d_%H%M%S") + ".webp"
+
+
+_SUMMARY_IMAGE_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".jfif",
+    ".heic",
+    ".heif",
+)
+
+
+def _is_summary_image_file_path(path: str) -> bool:
+    return (path or "").lower().endswith(_SUMMARY_IMAGE_SUFFIXES)
+
+
+def _tk_widget_accepts_text_paste(widget) -> bool:
+    if widget is None:
+        return False
+    try:
+        cls = widget.winfo_class()
+    except tk.TclError:
+        return False
+    if cls in ("Entry", "TEntry", "Text"):
+        return True
+    return isinstance(widget, (tk.Entry, tk.Text, scrolledtext.ScrolledText))
 
 
 def _gen_video_publish_mp4_if_ready(video: dict) -> str:
@@ -159,16 +240,16 @@ def _tkinter_dnd_root_capable(widget) -> bool:
     return isinstance(w, _TKINTER_DND_TK)
 
 
-def _register_summary_gen_video_drop_targets(
+def _register_summary_gen_media_drop_targets(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """注册 MP4 拖放：窗体 + 内容根及其子控件（否则光标落在子控件上会禁止拖放）。"""
+    """注册摘要窗拖放：``.mp4`` 加水印成片；图片转 webp 封面（同 ``gen_video/<id>.webp``）。"""
     if not (_TK_DND_AVAILABLE and summary_window):
         return
     if not callable(getattr(summary_window, "drop_target_register", None)):
         return
 
-    deb_attr = "_gen_video_drop_last_wall"
+    deb_attr = "_gen_media_drop_last_wall"
 
     def _drop(ev, sw=summary_window):
         now = time.time()
@@ -176,7 +257,7 @@ def _register_summary_gen_video_drop_targets(
         if last and (now - last) < 0.28:
             return
         setattr(sw, deb_attr, now)
-        _on_summary_mp4_watermark_drop(ev, sw)
+        _on_summary_gen_media_drop(ev, sw)
 
     def _bind_one(w: tk.Misc):
         try:
@@ -200,7 +281,28 @@ def _register_summary_gen_video_drop_targets(
         _walk_children(content_root)
 
 
-def _on_summary_mp4_watermark_drop(event, summary_window: tk.Toplevel):
+def _register_summary_gen_media_paste_bindings(
+    summary_window: tk.Toplevel, content_root: tk.Misc | None
+):
+    """Ctrl+V：焦点不在文本框时，若剪贴板为图片则写入 ``gen_video/<id>.webp``（不影响发布预览）。"""
+
+    def _on_paste_image(event=None):
+        try:
+            fw = summary_window.focus_get()
+        except tk.TclError:
+            fw = None
+        if _tk_widget_accepts_text_paste(fw):
+            return
+        if _on_summary_paste_image_from_clipboard(summary_window):
+            return "break"
+
+    for seq in ("<Control-v>", "<Control-V>"):
+        summary_window.bind(seq, _on_paste_image, add="+")
+        if content_root is not None:
+            content_root.bind(seq, _on_paste_image, add="+")
+
+
+def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
     ctx = getattr(summary_window, "_summary_drop_ctx", None)
     if not isinstance(ctx, dict):
         return
@@ -211,14 +313,170 @@ def _on_summary_mp4_watermark_drop(event, summary_window: tk.Toplevel):
     master = getattr(event, "widget", None) or summary_window
     paths = _dnd_paths_splitlist(master, getattr(event, "data", None))
     mp4_in = None
+    image_in = None
     for raw in paths:
         p = (raw or "").strip()
         if p.startswith("{") and p.endswith("}"):
             p = p[1:-1]
         p = os.path.normpath(p)
-        if os.path.isfile(p) and p.lower().endswith(".mp4"):
+        if not os.path.isfile(p):
+            continue
+        low = p.lower()
+        if low.endswith(".mp4"):
             mp4_in = p
             break
+        if _is_summary_image_file_path(p) and image_in is None:
+            image_in = p
+    if mp4_in:
+        _on_summary_mp4_watermark_drop(event, summary_window, mp4_path=mp4_in)
+    elif image_in:
+        _start_summary_cover_webp_save(image_in, summary_window, ctx)
+    else:
+        try:
+            messagebox.showinfo(
+                "拖放",
+                "请拖入单个 .mp4（加水印成片）或图片（PNG/JPEG/WebP 等，加水印后存为 gen_video/<id>.webp）。",
+                parent=summary_window,
+            )
+        except Exception:
+            pass
+
+
+def _on_summary_paste_image_from_clipboard(summary_window: tk.Toplevel) -> bool:
+    ctx = getattr(summary_window, "_summary_drop_ctx", None)
+    if not isinstance(ctx, dict):
+        return False
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return False
+    tmp_png = ""
+    try:
+        from PIL import ImageGrab
+
+        im = ImageGrab.grabclipboard()
+        if im is None:
+            return False
+        pid = getattr(mgr, "pid", "") or "yt_img"
+        os.makedirs(config.TEMP_PATH_BASE or ".", exist_ok=True)
+        tmp_png = config.get_temp_file(pid, "png")
+        if hasattr(im, "save"):
+            im.save(tmp_png, format="PNG")
+        else:
+            return False
+    except Exception:
+        return False
+    _start_summary_cover_webp_save(tmp_png, summary_window, ctx, cleanup_source=True)
+    return True
+
+
+def _start_summary_cover_webp_save(
+    image_path: str,
+    summary_window: tk.Toplevel,
+    ctx: dict,
+    *,
+    cleanup_source: bool = False,
+):
+    """图片加水印并转为 webp 写入 gen_video；不刷新「审阅并发布」行。"""
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return
+    if not image_path or not os.path.isfile(image_path):
+        return
+
+    wm_path, wm_opts = _resolve_watermark_for_media_downloader(
+        getattr(mgr, "channel", "") or "",
+    )
+    if not wm_path:
+        messagebox.showwarning(
+            "加水印失败",
+            r"未找到水印 PNG（频道 watermark 路径或仓库下 media\watermark.png）。",
+            parent=summary_window,
+        )
+        return
+
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+    dest_name = _gen_video_cover_webp_dest_filename(vd)
+    pid = getattr(mgr, "pid", "") or "yt_img"
+    lang = getattr(mgr, "language", "") or "zh"
+
+    def _worker():
+        out_ok = ""
+        err_msg = ""
+        wm_webp = ""
+        webp_tmp = ""
+        try:
+            os.makedirs(gen_dir, exist_ok=True)
+            wm_webp = _apply_watermark_to_flat_image_file(
+                image_path, wm_path, wm_opts or {}, pid=pid
+            )
+            if not wm_webp or not os.path.isfile(wm_webp):
+                err_msg = "图片叠加水印失败。"
+                return
+            ff = FfmpegProcessor(pid, lang)
+            webp_tmp = ff.image_to_webp(wm_webp)
+            if not webp_tmp or not os.path.isfile(webp_tmp):
+                err_msg = "图片转 WebP 失败。"
+                return
+            dest_abs = os.path.join(gen_dir, dest_name)
+            safe_copy_overwrite(webp_tmp, dest_abs)
+            out_ok = dest_abs
+        except Exception as ex:
+            err_msg = str(ex)
+        finally:
+            if cleanup_source and image_path and os.path.isfile(image_path):
+                try:
+                    safe_remove(image_path)
+                except Exception:
+                    pass
+            for tmp in (wm_webp, webp_tmp):
+                if tmp and tmp != out_ok and os.path.isfile(tmp):
+                    try:
+                        safe_remove(tmp)
+                    except Exception:
+                        pass
+
+        root = getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+
+        def _done_ui():
+            par = summary_window if summary_window.winfo_exists() else root
+            if out_ok:
+                messagebox.showinfo(
+                    "封面已保存",
+                    f"已加水印并保存为 WebP（不影响发布预览）：\n{out_ok}",
+                    parent=par,
+                )
+            elif err_msg:
+                messagebox.showerror("保存封面失败", err_msg, parent=par)
+
+        root.after(0, _done_ui)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _on_summary_mp4_watermark_drop(
+    event, summary_window: tk.Toplevel, *, mp4_path: str | None = None
+):
+    ctx = getattr(summary_window, "_summary_drop_ctx", None)
+    if not isinstance(ctx, dict):
+        return
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return
+    mp4_in = (mp4_path or "").strip()
+    if not mp4_in:
+        master = getattr(event, "widget", None) or summary_window
+        paths = _dnd_paths_splitlist(master, getattr(event, "data", None))
+        for raw in paths:
+            p = (raw or "").strip()
+            if p.startswith("{") and p.endswith("}"):
+                p = p[1:-1]
+            p = os.path.normpath(p)
+            if os.path.isfile(p) and p.lower().endswith(".mp4"):
+                mp4_in = p
+                break
     if not mp4_in:
         try:
             messagebox.showinfo("拖放", "请拖入单个 .mp4 文件。", parent=summary_window)
@@ -3456,8 +3714,9 @@ class MediaGUIManager:
             dialog,
             text=(
                 "「分析/场景/成片」列：✓=已摘要  ⚠=场景未齐  「片」=gen_video 下已有本条成片 "
-                "（成片 ``<id>.mp4``：``id`` 为 YouTube 视频 id 或项目 pid）；"
-                "拖放保存后自动刷新，也可点顶部「刷新」。"
+                "（成片 ``<id>.mp4``；封面 ``<id>.webp``，``id`` 为 YouTube 视频 id 或项目 pid）；"
+                "摘要窗可拖放 mp4 / 图片，或 Ctrl+V 粘贴图片（均加水印；封面 webp 不影响发布预览）；"
+                "拖放 mp4 后自动刷新，也可点顶部「刷新」。"
             ),
             font=("Arial", 9),
             foreground="#333",
@@ -3881,7 +4140,7 @@ class MediaGUIManager:
             elif not _tkinter_dnd_root_capable(summary_window):
                 _dnd_title_suffix = "（拖放需根窗为 TkinterDnD.Tk；GUI_pm 已改为该方式，请重开程序）"
             summary_window.title(
-                f"{selected_index} - {_sw_t or '—'} - 摘要 · 拖入 MP4 加水印{_dnd_title_suffix}"
+                f"{selected_index} - {_sw_t or '—'} - 摘要 · 拖入 MP4/图片 · Ctrl+V 贴图{_dnd_title_suffix}"
             )
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
@@ -5045,7 +5304,8 @@ class MediaGUIManager:
 
             _bind_nav_recursive(summary_window)
 
-            _register_summary_gen_video_drop_targets(summary_window, main_frame)
+            _register_summary_gen_media_drop_targets(summary_window, main_frame)
+            _register_summary_gen_media_paste_bindings(summary_window, main_frame)
 
             summary_window.focus_set()
         
