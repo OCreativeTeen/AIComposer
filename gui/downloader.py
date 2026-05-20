@@ -337,40 +337,87 @@ def _topic_category_program_list_path(channel_path: str, topic_category: str) ->
     return os.path.join(d, config.topic_category_list_file_basename(topic_category))
 
 
-# --- 频道目录 persistent 剪贴板：channel_clipboard.json ---
+# --- 全 program 共享 persistent 剪贴板：``{BASE_PROGRAM_PATH}/program_clipboard.json`` ---
 
-CHANNEL_CLIPBOARD_JSON_NAME = "channel_clipboard.json"
-_channel_clipboard_manager_windows: dict[str, "ChannelClipboardManagerWindow"] = {}
-
-
-def _channel_clipboard_file(channel_path: str) -> str:
-    return os.path.join(channel_path, CHANNEL_CLIPBOARD_JSON_NAME)
+PROGRAM_CLIPBOARD_JSON_NAME = "program_clipboard.json"
+LEGACY_CHANNEL_CLIPBOARD_JSON_NAME = "channel_clipboard.json"
+_program_clipboard_manager_window: "ChannelClipboardManagerWindow | None" = None
 
 
-def _load_channel_clipboard_data(channel_path: str) -> dict:
-    path = _channel_clipboard_file(channel_path)
-    if not os.path.isfile(path):
-        return {"items": []}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return {"items": []}
-        if not isinstance(data.get("items"), list):
-            data["items"] = []
+def _program_clipboard_file() -> str:
+    root = (config.BASE_PROGRAM_PATH or "").strip()
+    if not root:
+        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "program")
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, PROGRAM_CLIPBOARD_JSON_NAME)
+
+
+def _migrate_legacy_channel_clipboards(data: dict) -> dict:
+    """一次性合并各频道目录下旧 ``channel_clipboard.json`` 到全局剪贴板。"""
+    if not isinstance(data, dict):
+        data = {"items": []}
+    if data.get("_migrated_channel_clipboards_v1"):
         return data
-    except Exception:
-        return {"items": []}
+    items = data.setdefault("items", [])
+    seen = {str(x.get("id", "")) for x in items if isinstance(x, dict) and x.get("id")}
+    root = (config.BASE_PROGRAM_PATH or "").strip()
+    if root and os.path.isdir(root):
+        pattern = os.path.join(root, "*", LEGACY_CHANNEL_CLIPBOARD_JSON_NAME)
+        for fp in glob.glob(pattern):
+            ch_name = os.path.basename(os.path.dirname(fp))
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    legacy = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(legacy, dict):
+                continue
+            for it in legacy.get("items") or []:
+                if not isinstance(it, dict):
+                    continue
+                eid = str(it.get("id") or "").strip()
+                if eid and eid in seen:
+                    continue
+                if eid:
+                    seen.add(eid)
+                src = (it.get("source") or "").strip()
+                if ch_name and src and not src.startswith(ch_name + ":"):
+                    it = dict(it)
+                    it["source"] = f"{ch_name}:{src}"[:80]
+                elif ch_name and not src:
+                    it = dict(it)
+                    it["source"] = ch_name[:80]
+                items.append(it)
+    data["_migrated_channel_clipboards_v1"] = True
+    return data
 
 
-def _save_channel_clipboard_data(channel_path: str, data: dict) -> None:
-    if not channel_path:
-        return
-    os.makedirs(channel_path, exist_ok=True)
-    write_json(_channel_clipboard_file(channel_path), data)
+def _load_program_clipboard_data() -> dict:
+    path = _program_clipboard_file()
+    if not os.path.isfile(path):
+        data = {"items": []}
+    else:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {"items": []}
+    if not isinstance(data, dict):
+        data = {"items": []}
+    if not isinstance(data.get("items"), list):
+        data["items"] = []
+    need_save = not data.get("_migrated_channel_clipboards_v1")
+    data = _migrate_legacy_channel_clipboards(data)
+    if need_save and data.get("_migrated_channel_clipboards_v1"):
+        _save_program_clipboard_data(data)
+    return data
 
 
-def _channel_clipboard_make_id(existing: set) -> str:
+def _save_program_clipboard_data(data: dict) -> None:
+    write_json(_program_clipboard_file(), data)
+
+
+def _program_clipboard_make_id(existing: set) -> str:
     base = datetime.now().strftime("%Y%m%d_%H%M%S")
     uid = base
     n = 0
@@ -380,41 +427,55 @@ def _channel_clipboard_make_id(existing: set) -> str:
     return uid
 
 
-def channel_clipboard_append_item(channel_path: str, content: str, source: str) -> str:
-    """追加一条到频道目录下 JSON 剪贴板，返回新条目 id（秒级时间戳，同秒冲突加后缀）。"""
+def _program_clipboard_source_label(channel_path: str, source: str) -> str:
+    src = (source or "").strip()
+    ch = (channel_path or "").strip()
+    if ch:
+        ch_tag = os.path.basename(os.path.normpath(ch))
+        if ch_tag and src and not src.startswith(ch_tag + ":"):
+            return f"{ch_tag}:{src}"[:80]
+        if ch_tag and not src:
+            return ch_tag[:80]
+    return src[:80]
+
+
+def program_clipboard_append_item(content: str, source: str, *, channel_path: str = "") -> str:
+    """追加一条到 ``program`` 根目录 JSON 剪贴板（全频道共享），返回新条目 id。"""
     text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, indent=2)
-    data = _load_channel_clipboard_data(channel_path)
+    data = _load_program_clipboard_data()
     items = data.setdefault("items", [])
     existing = {str(x.get("id", "")) for x in items if isinstance(x, dict)}
-    eid = _channel_clipboard_make_id(existing)
+    eid = _program_clipboard_make_id(existing)
     items.append(
         {
             "id": eid,
             "preview": text[:64],
             "content": text,
-            "source": (source or "")[:80],
+            "source": _program_clipboard_source_label(channel_path, source),
         }
     )
-    _save_channel_clipboard_data(channel_path, data)
+    _save_program_clipboard_data(data)
     return eid
 
 
-def open_or_refresh_channel_clipboard_manager(
+def channel_clipboard_append_item(channel_path: str, content: str, source: str) -> str:
+    """兼容旧名：写入全局 program 剪贴板；``channel_path`` 仅用于 ``source`` 标注频道。"""
+    return program_clipboard_append_item(content, source, channel_path=channel_path)
+
+
+def open_or_refresh_program_clipboard_manager(
     parent,
-    channel_path: str,
     clipboard_host,
     *,
     select_last: bool = False,
     on_pick=None,
 ):
-    """打开或刷新频道剪贴板管理窗（列表 + 快捷键）。
+    """打开或刷新全 program 剪贴板管理窗（列表 + 快捷键）。
 
     on_pick: 若提供 ``callable(str)``，Enter 仅回调内容（用于填入对话框等），不弹全文窗、不写系统剪贴板。
     """
-    ch = os.path.normpath(channel_path or "")
-    if not ch or not os.path.isdir(ch):
-        return None
-    win = _channel_clipboard_manager_windows.get(ch)
+    global _program_clipboard_manager_window
+    win = _program_clipboard_manager_window
     if win is not None:
         try:
             if win.winfo_exists():
@@ -425,38 +486,53 @@ def open_or_refresh_channel_clipboard_manager(
                 win.after(10, lambda: win.listbox.focus_set())
                 return win
         except tk.TclError:
-            pass
+            _program_clipboard_manager_window = None
     nw = ChannelClipboardManagerWindow(
-        parent, ch, clipboard_host, select_last=select_last, on_pick=on_pick
+        parent, clipboard_host, select_last=select_last, on_pick=on_pick
     )
-    _channel_clipboard_manager_windows[ch] = nw
+    _program_clipboard_manager_window = nw
 
     def on_destroy(event):
-        if event.widget is nw:
-            if _channel_clipboard_manager_windows.get(ch) is nw:
-                _channel_clipboard_manager_windows.pop(ch, None)
+        global _program_clipboard_manager_window
+        if event.widget is nw and _program_clipboard_manager_window is nw:
+            _program_clipboard_manager_window = None
 
     nw.bind("<Destroy>", on_destroy)
     return nw
 
 
+def open_or_refresh_channel_clipboard_manager(
+    parent,
+    channel_path: str,
+    clipboard_host,
+    *,
+    select_last: bool = False,
+    on_pick=None,
+):
+    """兼容旧签名：``channel_path`` 已忽略，剪贴板为 ``BASE_PROGRAM_PATH`` 下全局共享。"""
+    return open_or_refresh_program_clipboard_manager(
+        parent,
+        clipboard_host,
+        select_last=select_last,
+        on_pick=on_pick,
+    )
+
+
 class ChannelClipboardManagerWindow(tk.Toplevel):
-    """频道 JSON 剪贴板：↑↓ 选择；Enter 默认复制到系统剪贴板并弹窗，或 on_pick 时仅回调；Delete 删项；Ctrl+Delete 清空。"""
+    """全 program JSON 剪贴板：↑↓ 选择；Enter 默认复制到系统剪贴板并弹窗，或 on_pick 时仅回调；Delete 删项；Ctrl+Delete 清空。"""
 
     def __init__(
         self,
         parent,
-        channel_path: str,
         clipboard_host,
         *,
         select_last: bool = False,
         on_pick=None,
     ):
         super().__init__(parent)
-        self.channel_path = channel_path
         self.clipboard_host = clipboard_host
         self.on_pick = on_pick
-        self.title(f"频道剪贴板 · {os.path.basename(channel_path)}")
+        self.title("程序剪贴板（全频道）")
         self.geometry("920x460")
         self.minsize(640, 280)
 
@@ -510,7 +586,7 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
             self._activate_btn.configure(text="复制并查看 (Enter)")
     def refresh(self, select_last: bool = False):
         self.listbox.delete(0, tk.END)
-        data = _load_channel_clipboard_data(self.channel_path)
+        data = _load_program_clipboard_data()
         raw = data.get("items", [])
         self._items = [x for x in raw if isinstance(x, dict)]
         for it in self._items:
@@ -583,9 +659,9 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         if i < 0 or i >= len(self._items):
             return
         rm_id = self._items[i].get("id")
-        data = _load_channel_clipboard_data(self.channel_path)
+        data = _load_program_clipboard_data()
         data["items"] = [x for x in data.get("items", []) if isinstance(x, dict) and x.get("id") != rm_id]
-        _save_channel_clipboard_data(self.channel_path, data)
+        _save_program_clipboard_data(data)
         next_idx = max(0, i - 1)
         self.refresh(select_last=False)
         if self.listbox.size() > 0:
@@ -596,9 +672,15 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         return "break"
 
     def _on_clear_all(self, event=None):
-        if not messagebox.askyesno("清空频道剪贴板", "确定删除本频道 JSON 剪贴板中的全部条目？", parent=self):
+        if not messagebox.askyesno(
+            "清空程序剪贴板",
+            "确定删除 program 根目录 JSON 剪贴板中的全部条目？\n（所有频道共享，将一并清空。）",
+            parent=self,
+        ):
             return
-        _save_channel_clipboard_data(self.channel_path, {"items": []})
+        data = _load_program_clipboard_data()
+        data["items"] = []
+        _save_program_clipboard_data(data)
         self.refresh(select_last=False)
         return "break"
 
@@ -4633,13 +4715,12 @@ class MediaGUIManager:
                         summary_window.clipboard_clear()
                         summary_window.clipboard_append(txt or "")
                         summary_window.update()
-                        if self.channel_path and txt:
+                        if txt:
                             channel_clipboard_append_item(
-                                self.channel_path, txt, "analyzed_content"
+                                self.channel_path or "", txt, "analyzed_content"
                             )
-                            open_or_refresh_channel_clipboard_manager(
+                            open_or_refresh_program_clipboard_manager(
                                 summary_window,
-                                self.channel_path,
                                 summary_window,
                                 select_last=True,
                             )
@@ -4653,16 +4734,14 @@ class MediaGUIManager:
                         summary_window.clipboard_clear()
                         summary_window.clipboard_append(txt)
                         summary_window.update()
-                        if self.channel_path:
-                            channel_clipboard_append_item(
-                                self.channel_path, txt, "scene_content"
-                            )
-                            open_or_refresh_channel_clipboard_manager(
-                                summary_window,
-                                self.channel_path,
-                                summary_window,
-                                select_last=True,
-                            )
+                        channel_clipboard_append_item(
+                            self.channel_path or "", txt, "scene_content"
+                        )
+                        open_or_refresh_program_clipboard_manager(
+                            summary_window,
+                            summary_window,
+                            select_last=True,
+                        )
 
                     else: # if mode == "gen_instruction":
                         header_parts = {}
@@ -4854,7 +4933,7 @@ class MediaGUIManager:
                     text=(
                         "补充你希望 NotebookLM 侧重的方向、故事意图、受众等（可选）。\n"
                         "将填入 NotebookLM 提示模板中的「导向说明」占位符；留空则该段为空。\n"
-                        "Ctrl+Shift+C 或下方按钮可打开「频道剪贴板」，选中条目后 Enter 将内容填入本框（无弹窗）。"
+                        "Ctrl+Shift+C 或下方按钮可打开「程序剪贴板」（全频道共享），选中条目后 Enter 将内容填入本框（无弹窗）。"
                     ),
                     wraplength=660,
                     justify="left",
@@ -4877,13 +4956,8 @@ class MediaGUIManager:
                         pass
 
                 def _open_channel_clipboard_for_dialog():
-                    p = getattr(self, "channel_path", None)
-                    if not p:
-                        messagebox.showinfo("提示", "当前无频道路径，无法打开频道剪贴板。", parent=dlg)
-                        return
-                    open_or_refresh_channel_clipboard_manager(
+                    open_or_refresh_program_clipboard_manager(
                         dlg,
-                        p,
                         dlg,
                         select_last=False,
                         on_pick=_apply_picked_channel_clipboard,
@@ -4912,7 +4986,7 @@ class MediaGUIManager:
 
                 bf = ttk.Frame(dlg)
                 bf.pack(pady=(0, 12))
-                ttk.Button(bf, text="频道剪贴板", command=_open_channel_clipboard_for_dialog).pack(side=tk.LEFT, padx=6)
+                ttk.Button(bf, text="程序剪贴板", command=_open_channel_clipboard_for_dialog).pack(side=tk.LEFT, padx=6)
                 ttk.Button(bf, text="确定", command=_ok).pack(side=tk.LEFT, padx=6)
                 ttk.Button(bf, text="取消", command=_cancel).pack(side=tk.LEFT, padx=6)
 
