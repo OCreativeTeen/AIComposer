@@ -31,6 +31,119 @@ ffmpeg_path = "ffmpeg"
 ffprobe_path = "ffprobe"
 
 
+def repo_root() -> str:
+    """AIComposer 仓库根目录（utility/ 的上级）。"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def overlay_corner_opts(overlay_cfg: dict | None) -> dict:
+    overlay_cfg = overlay_cfg if isinstance(overlay_cfg, dict) else {}
+    return {
+        "margin_x": int(overlay_cfg.get("margin_x", 20)),
+        "margin_y": int(overlay_cfg.get("margin_y", 20)),
+        "max_width": overlay_cfg.get("max_width"),
+        "max_height": overlay_cfg.get("max_height"),
+    }
+
+
+def _find_overlay_png_file(
+    rel: str,
+    *,
+    repo_base: str,
+    default_media_path: str,
+    project_pid: str | None = None,
+    extra_relative_roots: tuple[str, ...] = (),
+) -> str | None:
+    rel = (rel or "").strip() or default_media_path
+    candidates: list[str] = []
+    if os.path.isabs(rel):
+        candidates.append(rel)
+    else:
+        if project_pid:
+            candidates.append(os.path.join(config.get_project_path(project_pid), rel))
+        candidates.append(os.path.join(repo_base, rel))
+        for sub in extra_relative_roots:
+            candidates.append(os.path.join(repo_base, sub, os.path.basename(rel)))
+    candidates.append(os.path.join(repo_base, default_media_path))
+    seen: set[str] = set()
+    for p in candidates:
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def resolve_watermark_for_channel(channel_key: str) -> tuple[str | None, dict]:
+    """从频道配置解析右下角水印 PNG 与 opts（media downloader 等）。"""
+    import config_channel
+
+    try:
+        ch_cfg = (
+            config_channel.get_channel_config(channel_key) if channel_key else None
+        ) or {}
+    except Exception:
+        ch_cfg = {}
+    wm = ch_cfg.get("watermark") if isinstance(ch_cfg, dict) else None
+    wm = wm if isinstance(wm, dict) else {}
+    rel = wm.get("path") or "media/watermark.png"
+    path = _find_overlay_png_file(
+        rel,
+        repo_base=repo_root(),
+        default_media_path="media/watermark.png",
+        extra_relative_roots=("media",),
+    )
+    return (path, overlay_corner_opts(wm)) if path else (None, {})
+
+
+def resolve_watermark_for_project(
+    project_config: dict | None,
+    *,
+    repo_base: str | None = None,
+) -> tuple[str | None, dict]:
+    """从 PROJECT_CONFIG 解析右下角水印 PNG 与 opts（工作流 GUI）。"""
+    pc = project_config if isinstance(project_config, dict) else {}
+    wm = pc.get("watermark") if isinstance(pc.get("watermark"), dict) else {}
+    rel = wm.get("path", "media/watermark.png")
+    path = _find_overlay_png_file(
+        rel,
+        repo_base=repo_base or repo_root(),
+        default_media_path="media/watermark.png",
+        project_pid=pc.get("pid"),
+    )
+    return (path, overlay_corner_opts(wm)) if path else (None, {})
+
+
+def resolve_headmark_for_project(
+    project_config: dict | None,
+    *,
+    repo_base: str | None = None,
+) -> tuple[str | None, dict]:
+    """从项目 + 频道配置解析左上角角标 PNG 与 opts。"""
+    import config_channel
+
+    pc = project_config if isinstance(project_config, dict) else {}
+    proj_hm = pc.get("headmark")
+    proj_hm = proj_hm if isinstance(proj_hm, dict) else {}
+    ch_key = pc.get("channel")
+    ch_hm: dict = {}
+    if ch_key:
+        try:
+            ch_hm = config_channel.get_channel_config(ch_key).get("headmark") or {}
+        except Exception:
+            ch_hm = {}
+    ch_hm = ch_hm if isinstance(ch_hm, dict) else {}
+    hm = {**ch_hm, **proj_hm}
+    rel = hm.get("path") or "media/headmark.png"
+    path = _find_overlay_png_file(
+        rel,
+        repo_base=repo_base or repo_root(),
+        default_media_path="media/headmark.png",
+        project_pid=pc.get("pid"),
+    )
+    return (path, overlay_corner_opts(hm)) if path else (None, {})
+
 
 class FfmpegProcessor:
     # Class-level cache for duration values (shared across all instances)
@@ -2421,6 +2534,48 @@ class FfmpegProcessor:
         except Exception as e:
             print(f"❌ Corner logo overlay failed ({corner}): {e}")
             return False
+
+    def apply_watermark_to_flat_image(
+        self,
+        image_path: str,
+        watermark_path: str,
+        wm_opts: dict | None = None,
+        *,
+        output_path: str | None = None,
+    ) -> str:
+        """静态图右下角叠水印，输出 webp 路径（默认写入临时文件）。"""
+        from PIL import Image
+
+        opts = wm_opts or {}
+        base = Image.open(image_path).convert("RGBA")
+        wm = Image.open(watermark_path).convert("RGBA")
+        bw, bh = base.size
+        margin_x = int(opts.get("margin_x", 20))
+        margin_y = int(opts.get("margin_y", 20))
+        max_w = opts.get("max_width")
+        max_h = opts.get("max_height")
+        if max_w is not None and max_w >= bw:
+            max_w = None
+        if max_h is not None and max_h >= bh:
+            max_h = None
+        ww, wh = wm.size
+        if max_w is not None and max_h is not None:
+            wmc = wm.copy()
+            wmc.thumbnail((int(max_w), int(max_h)), Image.Resampling.LANCZOS)
+            wm = wmc
+        elif max_w is not None:
+            nw = int(max_w)
+            wm = wm.resize((nw, max(1, int(wh * nw / max(1, ww)))), Image.Resampling.LANCZOS)
+        elif max_h is not None:
+            nh = int(max_h)
+            wm = wm.resize((max(1, int(ww * nh / max(1, wh))), nh), Image.Resampling.LANCZOS)
+        ww, wh = wm.size
+        x = max(0, bw - ww - margin_x)
+        y = max(0, bh - wh - margin_y)
+        base.paste(wm, (x, y), wm)
+        out = output_path or config.get_temp_file(self.pid or "img_wm", "webp")
+        base.convert("RGB").save(out, "WEBP", quality=90, method=6)
+        return out
 
     def apply_watermark_to_video(self, src_video, dest_video, watermark_path, opts):
         """

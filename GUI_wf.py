@@ -46,6 +46,7 @@ from tkinterdnd2 import DND_FILES
 from utility.media_scanner import MediaScanner
 import utility.llm_api as llm_api
 from gui.downloader import MediaGUIManager
+from utility.ffmpeg_processor import resolve_watermark_for_project, resolve_headmark_for_project
 from gui.suno_music_prompt_gui import SunoMusicPromptGUI
 import cv2
 import json
@@ -4219,70 +4220,12 @@ class WorkflowGUI:
 
     def _resolve_watermark_config(self):
         """解析水印 PNG 路径与选项（与 NotebookLM add_watermark_cli 的 config.watermark 一致）。"""
-        base = os.path.dirname(os.path.abspath(__file__))
-        pc = project_manager.PROJECT_CONFIG or {}
-        wm = pc.get("watermark") or {}
-        rel = wm.get("path", "media/watermark.png")
-        pid = pc.get("pid")
-        candidates = []
-        if os.path.isabs(rel):
-            candidates.append(rel)
-        else:
-            if pid:
-                candidates.append(os.path.join(config.get_project_path(pid), rel))
-            candidates.append(os.path.join(base, rel))
-        candidates.append(os.path.join(base, "media", "watermark.png"))
-        seen = set()
-        for p in candidates:
-            if not p or p in seen:
-                continue
-            seen.add(p)
-            if os.path.isfile(p):
-                opts = {
-                    "margin_x": wm.get("margin_x", 20),
-                    "margin_y": wm.get("margin_y", 20),
-                    "max_width": wm.get("max_width"),
-                    "max_height": wm.get("max_height"),
-                }
-                return p, opts
-        return None, {}
+        return resolve_watermark_for_project(project_manager.PROJECT_CONFIG or {})
 
 
     def _resolve_headmark_config(self):
-        """解析左上角角标：优先 PROJECT_CONFIG.headmark，缺字段时并入当前频道 headmark；再按路径探测文件。"""
-        base = os.path.dirname(os.path.abspath(__file__))
-        pc = project_manager.PROJECT_CONFIG or {}
-        proj_hm = pc.get("headmark")
-        proj_hm = proj_hm if isinstance(proj_hm, dict) else {}
-        ch_key = pc.get("channel")
-        ch_hm = config_channel.get_channel_config(ch_key).get("headmark") if ch_key else None
-        ch_hm = ch_hm if isinstance(ch_hm, dict) else {}
-        # 频道默认 + 项目覆盖（项目里可只写部分字段）
-        hm = {**ch_hm, **proj_hm}
-        rel = hm.get("path") or "media/headmark.png"
-        pid = pc.get("pid")
-        candidates = []
-        if os.path.isabs(rel):
-            candidates.append(rel)
-        else:
-            if pid:
-                candidates.append(os.path.join(config.get_project_path(pid), rel))
-            candidates.append(os.path.join(base, rel))
-        candidates.append(os.path.join(base, "media", "headmark.png"))
-        seen = set()
-        for p in candidates:
-            if not p or p in seen:
-                continue
-            seen.add(p)
-            if os.path.isfile(p):
-                opts = {
-                    "margin_x": int(hm.get("margin_x", 20)),
-                    "margin_y": int(hm.get("margin_y", 20)),
-                    "max_width": hm.get("max_width"),
-                    "max_height": hm.get("max_height"),
-                }
-                return p, opts
-        return None, {}
+        """解析左上角角标：优先 PROJECT_CONFIG.headmark，缺字段时并入当前频道 headmark。"""
+        return resolve_headmark_for_project(project_manager.PROJECT_CONFIG or {})
 
 
     def _apply_watermark_to_flat_image_webp(self, webp_path: str) -> str:
@@ -4290,37 +4233,9 @@ class WorkflowGUI:
         wm_path, wm_opts = self._resolve_watermark_config()
         if not wm_path or not os.path.isfile(webp_path):
             return webp_path
-        from PIL import Image
-
-        base = Image.open(webp_path).convert("RGBA")
-        wm = Image.open(wm_path).convert("RGBA")
-        bw, bh = base.size
-        margin_x = int(wm_opts.get("margin_x", 20))
-        margin_y = int(wm_opts.get("margin_y", 20))
-        max_w = wm_opts.get("max_width")
-        max_h = wm_opts.get("max_height")
-        if max_w is not None and max_w >= bw:
-            max_w = None
-        if max_h is not None and max_h >= bh:
-            max_h = None
-        ww, wh = wm.size
-        if max_w is not None and max_h is not None:
-            wmc = wm.copy()
-            wmc.thumbnail((int(max_w), int(max_h)), Image.Resampling.LANCZOS)
-            wm = wmc
-        elif max_w is not None:
-            nw = int(max_w)
-            wm = wm.resize((nw, max(1, int(wh * nw / max(1, ww)))), Image.Resampling.LANCZOS)
-        elif max_h is not None:
-            nh = int(max_h)
-            wm = wm.resize((max(1, int(ww * nh / max(1, wh))), nh), Image.Resampling.LANCZOS)
-        ww, wh = wm.size
-        x = max(0, bw - ww - margin_x)
-        y = max(0, bh - wh - margin_y)
-        base.paste(wm, (x, y), wm)
-        out = config.get_temp_file(self.workflow.pid, "webp")
-        base.convert("RGB").save(out, "WEBP", quality=90, method=6)
-        return out
+        return self.workflow.ffmpeg_processor.apply_watermark_to_flat_image(
+            webp_path, wm_path, wm_opts
+        )
 
 
     def add_headmark(self):

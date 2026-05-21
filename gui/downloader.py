@@ -22,7 +22,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.ffmpeg_processor import FfmpegProcessor
+from utility.ffmpeg_processor import FfmpegProcessor, resolve_watermark_for_channel
 from utility import llm_api
 from utility.audio_transcriber import AudioTranscriber
 from utility.file_util import (
@@ -77,87 +77,6 @@ def _format_nb_prompt_template(template: str, **kwargs) -> str:
     return template.format(**safe) + "\n\n" + config_channel.NOTEBOOKLM_CONTENT_GUIDE.format(**safe)
 
 
-def _repo_root_gui_downloader():
-    """AIComposer 仓库根目录（gui/downloader.py 的上两级）。"""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _resolve_watermark_for_media_downloader(channel_key: str):
-    """摘要窗拖放加水印：频道 watermark 配置，缺省仓库下 ``media/watermark.png``。"""
-    try:
-        ch_cfg = (
-            config_channel.get_channel_config(channel_key) if channel_key else None
-        ) or {}
-    except Exception:
-        ch_cfg = {}
-    wm = ch_cfg.get("watermark") if isinstance(ch_cfg, dict) else None
-    wm = wm if isinstance(wm, dict) else {}
-    rel = wm.get("path") or "media/watermark.png"
-    root = _repo_root_gui_downloader()
-    candidates = []
-    if os.path.isabs(rel):
-        candidates.append(rel)
-    else:
-        candidates.append(os.path.join(root, rel))
-        candidates.append(os.path.join(root, "media", os.path.basename(rel)))
-    candidates.append(os.path.join(root, "media", "watermark.png"))
-    seen = set()
-    for p in candidates:
-        if not p or p in seen:
-            continue
-        seen.add(p)
-        if os.path.isfile(p):
-            opts = {
-                "margin_x": int(wm.get("margin_x", 20)),
-                "margin_y": int(wm.get("margin_y", 20)),
-                "max_width": wm.get("max_width"),
-                "max_height": wm.get("max_height"),
-            }
-            return p, opts
-    return None, {}
-
-
-def _apply_watermark_to_flat_image_file(
-    image_path: str,
-    watermark_path: str,
-    wm_opts: dict,
-    *,
-    pid: str,
-) -> str:
-    """静态图右下角叠水印（与 ``GUI_wf._apply_watermark_to_flat_image_webp`` 一致），输出临时 webp 路径。"""
-    from PIL import Image
-
-    base = Image.open(image_path).convert("RGBA")
-    wm = Image.open(watermark_path).convert("RGBA")
-    bw, bh = base.size
-    margin_x = int((wm_opts or {}).get("margin_x", 20))
-    margin_y = int((wm_opts or {}).get("margin_y", 20))
-    max_w = (wm_opts or {}).get("max_width")
-    max_h = (wm_opts or {}).get("max_height")
-    if max_w is not None and max_w >= bw:
-        max_w = None
-    if max_h is not None and max_h >= bh:
-        max_h = None
-    ww, wh = wm.size
-    if max_w is not None and max_h is not None:
-        wmc = wm.copy()
-        wmc.thumbnail((int(max_w), int(max_h)), Image.Resampling.LANCZOS)
-        wm = wmc
-    elif max_w is not None:
-        nw = int(max_w)
-        wm = wm.resize((nw, max(1, int(wh * nw / max(1, ww)))), Image.Resampling.LANCZOS)
-    elif max_h is not None:
-        nh = int(max_h)
-        wm = wm.resize((max(1, int(ww * nh / max(1, wh))), nh), Image.Resampling.LANCZOS)
-    ww, wh = wm.size
-    x = max(0, bw - ww - margin_x)
-    y = max(0, bh - wh - margin_y)
-    base.paste(wm, (x, y), wm)
-    out = config.get_temp_file(pid or "img_wm", "webp")
-    base.convert("RGB").save(out, "WEBP", quality=90, method=6)
-    return out
-
-
 def _sanitize_list_row_id_stem(raw_id: str) -> str:
     rid = (raw_id or "").strip()
     if not rid:
@@ -202,18 +121,6 @@ _SUMMARY_IMAGE_SUFFIXES = (
 
 def _is_summary_image_file_path(path: str) -> bool:
     return (path or "").lower().endswith(_SUMMARY_IMAGE_SUFFIXES)
-
-
-def _tk_widget_accepts_text_paste(widget) -> bool:
-    if widget is None:
-        return False
-    try:
-        cls = widget.winfo_class()
-    except tk.TclError:
-        return False
-    if cls in ("Entry", "TEntry", "Text"):
-        return True
-    return isinstance(widget, (tk.Entry, tk.Text, scrolledtext.ScrolledText))
 
 
 def _gen_video_publish_mp4_if_ready(video: dict) -> str:
@@ -284,22 +191,31 @@ def _register_summary_gen_media_drop_targets(
 def _register_summary_gen_media_paste_bindings(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """Ctrl+V：焦点不在文本框时，若剪贴板为图片则写入 ``gen_video/<id>.webp``（不影响发布预览）。"""
+    """Ctrl+Shift+V：剪贴板为图片时写入 ``gen_video/<id>.webp``（专用快捷键，与文本框 Ctrl+V 不冲突）。"""
 
     def _on_paste_image(event=None):
-        try:
-            fw = summary_window.focus_get()
-        except tk.TclError:
-            fw = None
-        if _tk_widget_accepts_text_paste(fw):
-            return
         if _on_summary_paste_image_from_clipboard(summary_window):
             return "break"
 
-    for seq in ("<Control-v>", "<Control-V>"):
-        summary_window.bind(seq, _on_paste_image, add="+")
-        if content_root is not None:
-            content_root.bind(seq, _on_paste_image, add="+")
+    paste_seqs = (
+        "<Control-Shift-v>",
+        "<Control-Shift-V>",
+        "<Control-Shift-KeyPress-v>",
+        "<Control-Shift-KeyPress-V>",
+    )
+
+    def _bind_paste_subtree(widget):
+        for seq in paste_seqs:
+            widget.bind(seq, _on_paste_image, add="+")
+        for ch in widget.winfo_children():
+            _bind_paste_subtree(ch)
+
+    if not getattr(summary_window, "_summary_paste_root_bound", False):
+        for seq in paste_seqs:
+            summary_window.bind(seq, _on_paste_image)
+        summary_window._summary_paste_root_bound = True
+    if content_root is not None:
+        _bind_paste_subtree(content_root)
 
 
 def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
@@ -370,6 +286,56 @@ def _on_summary_paste_image_from_clipboard(summary_window: tk.Toplevel) -> bool:
     return True
 
 
+def _refresh_summary_window_title(
+    summary_window: tk.Toplevel,
+    video_detail: dict,
+) -> None:
+    """刷新摘要窗标题栏（含 scene_content 更新后的 video_title）。"""
+    try:
+        if not summary_window.winfo_exists():
+            return
+    except tk.TclError:
+        return
+    ctx = getattr(summary_window, "_summary_drop_ctx", None) or {}
+    idx = ctx.get("summary_title_index", "")
+    suf = ctx.get("summary_dnd_title_suffix", "")
+    title_part = _youtube_row_display_title(video_detail) or "—"
+    summary_window.title(
+        f"{idx} - {title_part} - 摘要 · 拖入 MP4/图片 · Ctrl+Shift+V 贴图{suf}"
+    )
+
+
+def _refresh_summary_ui_after_analyze(ctx: dict, summary_window: tk.Toplevel) -> None:
+    """图片分析写入 analyzed_content 后，刷新摘要窗「视频摘要」与列表分析标记。"""
+    try:
+        if not summary_window.winfo_exists():
+            return
+    except tk.TclError:
+        return
+    refresh_display = ctx.get("refresh_summary_display")
+    if callable(refresh_display):
+        try:
+            refresh_display()
+        except Exception as e:
+            print(f"刷新视频摘要失败: {e}")
+    refresh_tree = ctx.get("refresh_channel_tree")
+    if callable(refresh_tree):
+        try:
+            refresh_tree()
+        except Exception as e:
+            print(f"刷新频道列表失败: {e}")
+
+
+def _persist_channel_videos(mgr) -> bool:
+    try:
+        with open(mgr.downloader.channel_list_json, "w", encoding="utf-8") as f:
+            json.dump(mgr.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"保存 channel 列表失败: {e}")
+        return False
+
+
 def _start_summary_cover_webp_save(
     image_path: str,
     summary_window: tk.Toplevel,
@@ -377,7 +343,7 @@ def _start_summary_cover_webp_save(
     *,
     cleanup_source: bool = False,
 ):
-    """图片加水印并转为 webp 写入 gen_video；不刷新「审阅并发布」行。"""
+    """图片：LLM 分析写入 analyzed_content；加水印转 webp 写入 gen_video。"""
     mgr = ctx.get("mgr")
     vd = ctx.get("vd")
     if mgr is None or not isinstance(vd, dict):
@@ -385,9 +351,7 @@ def _start_summary_cover_webp_save(
     if not image_path or not os.path.isfile(image_path):
         return
 
-    wm_path, wm_opts = _resolve_watermark_for_media_downloader(
-        getattr(mgr, "channel", "") or "",
-    )
+    wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
             "加水印失败",
@@ -404,24 +368,41 @@ def _start_summary_cover_webp_save(
     def _worker():
         out_ok = ""
         err_msg = ""
+        analyze_ok = False
         wm_webp = ""
         webp_tmp = ""
         try:
-            os.makedirs(gen_dir, exist_ok=True)
-            wm_webp = _apply_watermark_to_flat_image_file(
-                image_path, wm_path, wm_opts or {}, pid=pid
+            analyzed = mgr.llm_api.analyze_image_json(
+                config_prompt.IMAGE_READ_SYSTEM_PROMPT,
+                image_path,
+                expect_list=False,
             )
-            if not wm_webp or not os.path.isfile(wm_webp):
-                err_msg = "图片叠加水印失败。"
-                return
+            if analyzed and isinstance(analyzed, dict):
+                vd["analyzed_content"] = config.merge_analyzed_content_bilingual(
+                    vd.get("analyzed_content"), analyzed, lang
+                )
+                _persist_channel_videos(mgr)
+                analyze_ok = True
+            else:
+                err_msg = "图片 LLM 分析失败或未返回有效 JSON。"
+
+            os.makedirs(gen_dir, exist_ok=True)
             ff = FfmpegProcessor(pid, lang)
+            wm_webp = ff.apply_watermark_to_flat_image(image_path, wm_path, wm_opts or {})
+            if not wm_webp or not os.path.isfile(wm_webp):
+                if not err_msg:
+                    err_msg = "图片叠加水印失败。"
+                return
             webp_tmp = ff.image_to_webp(wm_webp)
             if not webp_tmp or not os.path.isfile(webp_tmp):
-                err_msg = "图片转 WebP 失败。"
+                if not err_msg:
+                    err_msg = "图片转 WebP 失败。"
                 return
             dest_abs = os.path.join(gen_dir, dest_name)
             safe_copy_overwrite(webp_tmp, dest_abs)
             out_ok = dest_abs
+            if analyze_ok:
+                err_msg = ""
         except Exception as ex:
             err_msg = str(ex)
         finally:
@@ -441,14 +422,28 @@ def _start_summary_cover_webp_save(
 
         def _done_ui():
             par = summary_window if summary_window.winfo_exists() else root
-            if out_ok:
+            if analyze_ok:
+                _refresh_summary_ui_after_analyze(ctx, summary_window)
+            if out_ok and analyze_ok:
+                messagebox.showinfo(
+                    "封面与分析已保存",
+                    f"已写入 analyzed_content 并保存 WebP 封面：\n{out_ok}",
+                    parent=par,
+                )
+            elif out_ok:
                 messagebox.showinfo(
                     "封面已保存",
-                    f"已加水印并保存为 WebP（不影响发布预览）：\n{out_ok}",
+                    f"已加水印并保存为 WebP：\n{out_ok}\n\n（LLM 分析未成功，analyzed_content 未更新）",
+                    parent=par,
+                )
+            elif analyze_ok:
+                messagebox.showinfo(
+                    "分析已保存",
+                    "已写入本条 analyzed_content（封面 WebP 保存失败）。",
                     parent=par,
                 )
             elif err_msg:
-                messagebox.showerror("保存封面失败", err_msg, parent=par)
+                messagebox.showerror("保存失败", err_msg, parent=par)
 
         root.after(0, _done_ui)
 
@@ -484,9 +479,7 @@ def _on_summary_mp4_watermark_drop(
             pass
         return
 
-    wm_path, wm_opts = _resolve_watermark_for_media_downloader(
-        getattr(mgr, "channel", "") or "",
-    )
+    wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
             "加水印失败",
@@ -3715,7 +3708,7 @@ class MediaGUIManager:
             text=(
                 "「分析/场景/成片」列：✓=已摘要  ⚠=场景未齐  「片」=gen_video 下已有本条成片 "
                 "（成片 ``<id>.mp4``；封面 ``<id>.webp``，``id`` 为 YouTube 视频 id 或项目 pid）；"
-                "摘要窗可拖放 mp4 / 图片，或 Ctrl+V 粘贴图片（均加水印；封面 webp 不影响发布预览）；"
+                "摘要窗可拖放 mp4 / 图片，或 Ctrl+Shift+V 粘贴图片（均加水印；封面 webp 不影响发布预览）；"
                 "拖放 mp4 后自动刷新，也可点顶部「刷新」。"
             ),
             font=("Arial", 9),
@@ -4062,6 +4055,69 @@ class MediaGUIManager:
         # 摘要窗口单例：切换上一条/下一条时复用同一 Toplevel，仅重建内容
         summary_window_ref = {"w": None}
 
+        class _SummaryNavFakeEvt:
+            y = None
+
+        def _nav_summary_delta(delta):
+            """Ctrl+←/→：按列表顺序切换条目并刷新摘要窗。"""
+            sw = summary_window_ref.get("w")
+            if not sw or not sw.winfo_exists():
+                return "break"
+            ctx = getattr(sw, "_summary_drop_ctx", None)
+            if not isinstance(ctx, dict):
+                return "break"
+            items = list(tree.get_children())
+            if not items:
+                return "break"
+
+            i = None
+            selected = tree.selection()
+            if selected and selected[0] in items:
+                i = items.index(selected[0])
+            else:
+                vd = ctx.get("vd")
+                if isinstance(vd, dict):
+                    cur_key = _channel_list_row_tree_key(vd)
+                    if cur_key:
+                        try:
+                            i = next(
+                                idx
+                                for idx, it in enumerate(items)
+                                if (_treeview_item_tags_safe(tree, it) or [None])[0] == cur_key
+                            )
+                        except StopIteration:
+                            pass
+            if i is None:
+                return "break"
+
+            j = i + delta
+            if j < 0 or j >= len(items):
+                return "break"
+            nxt = items[j]
+            tree.selection_set(nxt)
+            tree.see(nxt)
+            tree.focus(nxt)
+            on_focus(_SummaryNavFakeEvt(), ctx.get("nav_low_priority", False))
+            return "break"
+
+        def _bind_ctrl_arrow_nav(widget):
+            for seq, delta in (
+                ("<Control-Left>", -1),
+                ("<Control-Right>", 1),
+                ("<Control-KeyPress-Left>", -1),
+                ("<Control-KeyPress-Right>", 1),
+            ):
+                widget.bind(
+                    seq,
+                    lambda e, d=delta: _nav_summary_delta(d),
+                    add="+",
+                )
+
+        def _bind_summary_nav_subtree(widget):
+            _bind_ctrl_arrow_nav(widget)
+            for ch in widget.winfo_children():
+                _bind_summary_nav_subtree(ch)
+
         def on_enter_key(event):
             on_focus(event, low_priority=False)
 
@@ -4125,7 +4181,7 @@ class MediaGUIManager:
             else:
                 summary_window = tk.Toplevel(dialog)
                 summary_window_ref["w"] = summary_window
-                summary_window.geometry("1400x1000")
+                summary_window.geometry("1500x1000")
                 summary_window.resizable(True, True)
                 summary_window.transient(dialog)
             if not getattr(summary_window, "_summary_drop_ctx", None):
@@ -4133,15 +4189,14 @@ class MediaGUIManager:
             summary_window._summary_drop_ctx["mgr"] = self
             summary_window._summary_drop_ctx["vd"] = video_detail
             summary_window._summary_drop_ctx["refresh_channel_tree"] = populate_tree
-            _sw_t = _youtube_row_display_title(video_detail)
             _dnd_title_suffix = ""
             if not _TK_DND_AVAILABLE:
                 _dnd_title_suffix = "（未安装 tkinterdnd2，拖放不可用）"
             elif not _tkinter_dnd_root_capable(summary_window):
                 _dnd_title_suffix = "（拖放需根窗为 TkinterDnD.Tk；GUI_pm 已改为该方式，请重开程序）"
-            summary_window.title(
-                f"{selected_index} - {_sw_t or '—'} - 摘要 · 拖入 MP4/图片 · Ctrl+V 贴图{_dnd_title_suffix}"
-            )
+            summary_window._summary_drop_ctx["summary_title_index"] = selected_index
+            summary_window._summary_drop_ctx["summary_dnd_title_suffix"] = _dnd_title_suffix
+            _refresh_summary_window_title(summary_window, video_detail)
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
             
@@ -4149,23 +4204,22 @@ class MediaGUIManager:
             topic_frame = ttk.LabelFrame(main_frame, text="主题信息", padding=10)
             topic_frame.pack(fill=tk.X, pady=(0, 10))
             
-            # 主题分类选择
-            ttk.Label(topic_frame, text="主题分类:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky='w', padx=5, pady=5)
+            # 主题信息单行：分类 | 子类型 | 标签 | 关联视频 ID
+            ttk.Label(topic_frame, text="主题分类:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky='w', padx=(5, 2), pady=5)
             category_var = tk.StringVar(value=topic_category)
-            category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=30)
-            category_combo.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
-            
-            # 主题子类型选择
-            ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=0, column=2, sticky='w', padx=5, pady=5)
+            category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=16)
+            category_combo.grid(row=0, column=1, padx=(0, 8), pady=5, sticky='ew')
+
+            ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=0, column=2, sticky='w', padx=(0, 2), pady=5)
             subtype_var = tk.StringVar(value=topic_subtype)
-            subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=30)
-            subtype_combo.grid(row=0, column=3, padx=5, pady=5, sticky='ew')
-            
-            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='nw', padx=5, pady=5)
+            subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=16)
+            subtype_combo.grid(row=0, column=3, padx=(0, 8), pady=5, sticky='ew')
+
+            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=0, column=4, sticky='w', padx=(0, 2), pady=5)
             tags_var = tk.StringVar(value=topic_tags)
             tags_row = ttk.Frame(topic_frame)
-            tags_row.grid(row=1, column=1, padx=5, pady=5, sticky='ew')
-            tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=24)
+            tags_row.grid(row=0, column=5, padx=(0, 8), pady=5, sticky='ew')
+            tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=14)
             tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
             def _on_tag_pick(feature: str, option: str):
@@ -4183,11 +4237,10 @@ class MediaGUIManager:
             tags_add_btn = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu)
             tags_add_btn.pack(side=tk.LEFT, padx=(6, 0))
 
-            # 关联视频 ID（| 分隔，网状关系；与列表「关联ID」列同一字段）
-            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=1, column=2, sticky='w', padx=5, pady=5)
+            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=0, column=6, sticky='w', padx=(0, 2), pady=5)
             status_var = tk.StringVar(value=topic_status)
-            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=30)
-            status_entry.grid(row=1, column=3, padx=5, pady=5, sticky='ew')
+            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=16)
+            status_entry.grid(row=0, column=7, padx=(0, 5), pady=5, sticky='ew')
             
             def update_subtypes(*args):
                 """根据选择的分类更新子类型选项"""
@@ -4726,13 +4779,17 @@ class MediaGUIManager:
                 except tk.TclError:
                     pass
 
-            # 右侧按钮组：粘贴 NotebookLM 结果启动新项目（从剪贴板读取→保存→启动）、保存主题信息
+            # 操作按钮区（整行宽；发布状态单独一行，避免挤掉右侧按钮）
             button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=3, column=1, columnspan=3, padx=5, pady=5, sticky='ew')
-            right_btns = ttk.Frame(button_frame)
-            right_btns.pack(side=tk.RIGHT)
+            button_frame.grid(row=1, column=0, columnspan=8, sticky="ew", padx=5, pady=(8, 5))
 
             publish_info_var = tk.StringVar(value="发布: …")
+            pub_row = ttk.Frame(button_frame)
+            pub_row.pack(fill=tk.X, anchor=tk.W)
+            ttk.Label(pub_row, textvariable=publish_info_var).pack(side=tk.LEFT, anchor=tk.W)
+
+            right_btns = ttk.Frame(button_frame)
+            right_btns.pack(fill=tk.X, anchor=tk.W, pady=(6, 0))
 
             def on_review_publish():
                 imap = _scan_input_media_publish_map()
@@ -4769,7 +4826,6 @@ class MediaGUIManager:
 
                 self._open_publish_review_dialog(summary_window, mp4, video_detail, after_publish)
 
-            ttk.Label(right_btns, textvariable=publish_info_var).pack(side=tk.LEFT, padx=(0, 6))
             pub_btn = ttk.Button(right_btns, text="审阅并发布", command=on_review_publish)
             pub_btn.pack(side=tk.LEFT, padx=(0, 6))
 
@@ -4811,13 +4867,15 @@ class MediaGUIManager:
             if isinstance(summary_window._summary_drop_ctx, dict):
                 summary_window._summary_drop_ctx["refresh_publish_row"] = refresh_publish_row
 
-            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
             ttk.Button(right_btns, text="启动项目", command=on_project_start).pack(side=tk.LEFT, padx=(0, 5))
             ttk.Button(right_btns, text="保存信息", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
 
 
-            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
             ttk.Button(right_btns, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(5, 5))
             ttk.Button(right_btns, text="找类似案例", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
@@ -4830,15 +4888,16 @@ class MediaGUIManager:
             copy_lm_btn.pack(side=tk.LEFT, padx=(5, 5))
 
 
-            ttk.Label(right_btns, text="  |  ").pack(side=tk.LEFT, padx=(10, 10))
+            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
             image_en_btn = ttk.Button(right_btns, text="拷贝场景内容", command=lambda: copy_style_character())
             image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             
-            # 两列输入区同宽：第 1、3 列均分扩展：仅配 weight=1 会让多余宽度只进第 1 列，导致分类/标签 比 子类型/关联ID 更宽
-            topic_frame.columnconfigure(1, weight=1, uniform='topic_inputs')
-            topic_frame.columnconfigure(3, weight=1, uniform='topic_inputs')
+            # 四个输入列（分类/子类型/标签/关联ID）均分剩余宽度
+            for _c in (1, 3, 5, 7):
+                topic_frame.columnconfigure(_c, weight=1, uniform='topic_inputs')
             
             # 初始化子类型选项
             if topic_category:
@@ -4965,6 +5024,7 @@ class MediaGUIManager:
                         _sync_youtube_row_title_after_scene_edit(
                             video_detail, scene_dict, self.language
                         )
+                        _refresh_summary_window_title(summary_window, video_detail)
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                         dialog.after(0, populate_tree)
@@ -5261,6 +5321,8 @@ class MediaGUIManager:
             category_combo.bind('<<ComboboxSelected>>', on_category_change)
             subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
 
+            summary_window._summary_drop_ctx["refresh_summary_display"] = refresh_notebooklm_prompt
+
             # 首次打开与「选LM提示」切换一样：先弹导向说明窗口，再生成提示词
             open_initial_content_dialog(
                 lambda: refresh_notebooklm_prompt(),
@@ -5270,49 +5332,25 @@ class MediaGUIManager:
             LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
             last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...
 
-            class _FakeNavEvt:
-                y = None
-
-            def _nav_summary(delta):
-                items = list(tree.get_children())
-                cur = (video_detail.get("url") or "").strip()
-                if not cur:
-                    return "break"
-                try:
-                    i = next(
-                        idx
-                        for idx, it in enumerate(items)
-                        if (_treeview_item_tags_safe(tree, it) or [None])[0] == cur
-                    )
-                except StopIteration:
-                    return "break"
-                j = i + delta
-                if j < 0 or j >= len(items):
-                    return "break"
-                nxt = items[j]
-                tree.selection_set(nxt)
-                tree.see(nxt)
-                tree.focus(nxt)
-                on_focus(_FakeNavEvt(), low_priority)
-                return "break"
-
-            def _bind_nav_recursive(w):
-                w.bind("<Control-Left>", lambda e: _nav_summary(-1))
-                w.bind("<Control-Right>", lambda e: _nav_summary(1))
-                for ch in w.winfo_children():
-                    _bind_nav_recursive(ch)
-
-            _bind_nav_recursive(summary_window)
+            summary_window._summary_drop_ctx["nav_low_priority"] = low_priority
+            if not getattr(summary_window, "_summary_nav_root_bound", False):
+                _bind_ctrl_arrow_nav(summary_window)
+                summary_window._summary_nav_root_bound = True
+            _bind_summary_nav_subtree(main_frame)
 
             _register_summary_gen_media_drop_targets(summary_window, main_frame)
             _register_summary_gen_media_paste_bindings(summary_window, main_frame)
 
             summary_window.focus_set()
-        
+
         # 绑定双击事件
         tree.bind("<Double-1>", on_double_click)
         # 绑定 Enter 键（键盘）
         tree.bind("<Return>", on_enter_key)
+        if not getattr(dialog, "_summary_nav_tree_bound", False):
+            _bind_ctrl_arrow_nav(tree)
+            _bind_ctrl_arrow_nav(dialog)
+            dialog._summary_nav_tree_bound = True
         
         # 底部按钮框架（先创建框架，按钮在后面定义函数后添加）
         bottom_frame = ttk.Frame(dialog)

@@ -310,7 +310,7 @@ class LLMApi:
 
         try:
             if self.model == MANUAL or self.model is None:
-                model, manual_response = self._show_image_analyze_dialog(system_prompt, image_path)
+                model, manual_response = self._show_model_dialog(system_prompt, image_path=image_path)
                 if model == MANUAL:
                     return manual_response
             else:
@@ -323,6 +323,36 @@ class LLMApi:
             import traceback
             traceback.print_exc()
             return None
+
+
+    def analyze_image_json(
+        self,
+        analyze_prompt,
+        image_path,
+        output_path=None,
+        expect_list=False,
+    ) -> Union[Dict, List]:
+        """分析图片并解析为 JSON（与 generate_json 相同的清洗/解析流程）。"""
+        content = self.analyze_image(analyze_prompt, image_path)
+        if not content or not str(content).strip():
+            return [] if expect_list else {}
+
+        content_string = str(content).strip()
+        content_string = content_string.replace("```json", "").replace("```", "")
+        content_string = re.sub(r'\s+', ' ', content_string)
+        content_string = content_string.replace("\r\n", " ")
+        content_string = content_string.replace("\n", " ")
+        content_string = content_string.replace("\r", " ")
+        content_string = " ".join(content_string.splitlines())
+
+        if output_path:
+            try:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(content_string)
+            except Exception as e:
+                print(f"警告：无法保存 JSON 文件到 {output_path}: {e}")
+
+        return file_util.parse_json(content_string=content_string, expect_list=expect_list)
 
 
     def generate_text(self, system_prompt, user_prompt) -> str:
@@ -411,18 +441,27 @@ class LLMApi:
             return None
 
 
-    def _show_image_analyze_dialog(self, system_prompt: str, image_path: str) -> Tuple[str, Optional[str]]:
-        """图片分析专用对话框：展示 System Prompt + 图片；Manual 模式粘贴分析结果。"""
+    def _show_model_dialog(
+        self,
+        system_prompt,
+        user_prompt=None,
+        *,
+        image_path: Optional[str] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """弹出对话框：选模型；左栏 System+Response，右栏 Image 或 User Prompt。"""
+        is_image_mode = bool(image_path)
+        dialog_w = dialog_h = 1000
         parent = self._get_dialog_parent()
         dialog = tk.Toplevel(parent)
-        dialog.title("分析图片 - 选择 LLM 模型")
-        dialog.geometry("1000x1000")
+        dialog.title("分析图片 - 选择 LLM 模型" if is_image_mode else "选择 LLM 模型")
+        dialog.geometry(f"{dialog_w}x{dialog_h}")
+        dialog.minsize(900, 900)
         dialog.transient(parent)
         dialog.grab_set()
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 1000) // 2
-        y = (dialog.winfo_screenheight() - 1000) // 2
-        dialog.geometry(f"1000x1000+{x}+{y}")
+        x = (dialog.winfo_screenwidth() - dialog_w) // 2
+        y = (dialog.winfo_screenheight() - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
         try:
             dialog.lift()
             dialog.focus_force()
@@ -431,72 +470,124 @@ class LLMApi:
 
         main_frame = ttk.Frame(dialog, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
 
-        model_frame = ttk.LabelFrame(main_frame, text="选择 LLM 模型", padding=10)
-        model_frame.pack(fill=tk.X, pady=(0, 10))
+        top_frame = ttk.Frame(main_frame)
+        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top_frame.columnconfigure(0, weight=1)
+
+        model_frame = ttk.LabelFrame(top_frame, text="选择 LLM 模型", padding=8)
+        model_frame.grid(row=0, column=0, sticky="ew")
         selected_model = tk.StringVar(value=MANUAL)
         ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
+        model_btn_row = ttk.Frame(model_frame)
+        model_btn_row.pack(fill=tk.X)
         for mid, title in [
             (GPT_MINI, f"GPT Mini ({GPT_MINI})"),
             (GEMINI_2_0_FLASH, f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})"),
             (OLLAMA, f"OLLAMA ({OLLAMA})"),
             (MANUAL, f"Manual ({MANUAL})"),
         ]:
-            ttk.Button(model_frame, text=title, command=lambda m=mid: selected_model.set(m)).pack(fill=tk.X, pady=3)
+            ttk.Button(
+                model_btn_row,
+                text=title,
+                command=lambda m=mid: selected_model.set(m),
+            ).pack(side=tk.LEFT, padx=(0, 6), pady=2)
         model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
         model_status.pack(anchor=tk.W, pady=(6, 0))
 
-        request_frame = ttk.LabelFrame(main_frame, text="请求内容 (System Prompt + Image)", padding=10)
-        request_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        body = ttk.Frame(main_frame)
+        body.grid(row=1, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=2, uniform="cols")
+        body.columnconfigure(1, weight=3, uniform="cols")
+        body.rowconfigure(0, weight=1)
 
-        ttk.Label(
-            request_frame,
-            text="System Prompt（双击复制到剪贴板）:",
-            font=('TkDefaultFont', 9, 'bold'),
-        ).pack(anchor='w', pady=(0, 5))
-        system_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
-        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        left_col = ttk.Frame(body, padding=(0, 4))
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        left_col.rowconfigure(0, weight=1)
+        left_col.rowconfigure(1, weight=0)
+        left_col.rowconfigure(2, weight=1)
+        left_col.columnconfigure(0, weight=1)
+
+        system_frame = ttk.LabelFrame(left_col, text="System Prompt", padding=8)
+        system_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+        system_frame.rowconfigure(1, weight=1)
+        system_frame.columnconfigure(0, weight=1)
+        system_label = (
+            "双击复制到剪贴板"
+            if is_image_mode
+            else ""
+        )
+        if system_label:
+            ttk.Label(system_frame, text=system_label, font=("TkDefaultFont", 8)).grid(
+                row=0, column=0, sticky="w", pady=(0, 4)
+            )
+        system_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, height=10)
+        system_text.grid(row=1, column=0, sticky="nsew")
         if isinstance(system_prompt, str):
-            system_text.insert('1.0', system_prompt)
+            system_text.insert("1.0", system_prompt)
+        if is_image_mode:
+            def on_system_double_click(_event):
+                content = system_text.get("1.0", tk.END).strip()
+                dialog.clipboard_clear()
+                dialog.clipboard_append(content)
+                dialog.update()
 
-        def on_system_double_click(_event):
-            content = system_text.get('1.0', tk.END).strip()
-            dialog.clipboard_clear()
-            dialog.clipboard_append(content)
-            dialog.update()
+            system_text.bind("<Double-Button-1>", on_system_double_click)
 
-        system_text.bind('<Double-Button-1>', on_system_double_click)
+        button_frame = ttk.Frame(left_col)
+        button_frame.grid(row=1, column=0, sticky="e", pady=(0, 6))
 
-        ttk.Separator(request_frame, orient='horizontal').pack(fill=tk.X, pady=5)
-
-        ttk.Label(
-            request_frame,
-            text=f"Image（双击复制图片）: {os.path.basename(image_path)}",
-            font=('TkDefaultFont', 9, 'bold'),
-        ).pack(anchor='w', pady=(5, 5))
-        image_holder = ttk.Frame(request_frame)
-        image_holder.pack(fill=tk.BOTH, expand=True)
-        photo_ref = []
-
-        try:
-            pil_img = Image.open(image_path)
-            pil_img.thumbnail((700, 500), Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(pil_img)
-            photo_ref.append(photo)
-            image_label = ttk.Label(image_holder, image=photo)
-            image_label.pack(anchor=tk.CENTER, pady=5)
-
-            def on_image_double_click(_event):
-                self._copy_image_to_clipboard(image_path)
-
-            image_label.bind('<Double-Button-1>', on_image_double_click)
-        except Exception as e:
-            ttk.Label(image_holder, text=f"无法加载图片: {e}").pack(anchor=tk.W)
-
-        response_frame = ttk.LabelFrame(main_frame, text="分析结果 (Response) - 仅 Manual 模式", padding=10)
-        ttk.Label(response_frame, text="响应 (Response):", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+        response_frame = ttk.LabelFrame(left_col, text="响应 (Response) - 仅 Manual", padding=8)
+        response_frame.grid(row=2, column=0, sticky="nsew")
+        response_frame.rowconfigure(1, weight=1)
+        response_frame.columnconfigure(0, weight=1)
+        ttk.Label(response_frame, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8)).grid(
+            row=0, column=0, sticky="w", pady=(0, 4)
+        )
         response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, height=8)
-        response_text.pack(fill=tk.BOTH, expand=True)
+        response_text.grid(row=1, column=0, sticky="nsew")
+
+        right_title = "Image" if is_image_mode else "User Prompt"
+        right_col = ttk.LabelFrame(body, text=right_title, padding=8)
+        right_col.grid(row=0, column=1, sticky="nsew")
+        right_col.rowconfigure(1, weight=1)
+        right_col.columnconfigure(0, weight=1)
+
+        user_text = None
+        if is_image_mode:
+            ttk.Label(
+                right_col,
+                text=f"{os.path.basename(image_path)}（双击复制图片）",
+                font=("TkDefaultFont", 9, "bold"),
+            ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+            image_holder = ttk.Frame(right_col)
+            image_holder.grid(row=1, column=0, sticky="nsew")
+            photo_ref = []
+            try:
+                pil_img = Image.open(image_path)
+                # 右栏竖向展示，按对话框高度缩放
+                pil_img.thumbnail((420, 880), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(pil_img)
+                photo_ref.append(photo)
+                dialog._llm_dialog_photo_ref = photo_ref
+                image_label = ttk.Label(image_holder, image=photo)
+                image_label.pack(anchor=tk.CENTER, expand=True)
+                image_label.bind(
+                    "<Double-Button-1>",
+                    lambda _e: self._copy_image_to_clipboard(image_path),
+                )
+            except Exception as e:
+                ttk.Label(image_holder, text=f"无法加载图片: {e}").pack(anchor=tk.W)
+        else:
+            ttk.Label(right_col, text="User Prompt:", font=("TkDefaultFont", 9, "bold")).grid(
+                row=0, column=0, sticky="w", pady=(0, 4)
+            )
+            user_text = scrolledtext.ScrolledText(right_col, wrap=tk.WORD, height=20)
+            user_text.grid(row=1, column=0, sticky="nsew")
+            if isinstance(user_prompt, str):
+                user_text.insert("1.0", user_prompt)
 
         def on_response_double_click_paste(_event):
             try:
@@ -517,173 +608,17 @@ class LLMApi:
         result_model = [None]
         result_response = [None]
 
-        def update_response_visibility():
-            if selected_model.get() == MANUAL:
-                response_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-            else:
-                response_frame.pack_forget()
-
-        def sync_model_status(*_):
-            model_status.config(text=f"当前模型: {selected_model.get()}")
-
-        def on_model_changed(*_):
-            update_response_visibility()
-            sync_model_status()
-
-        selected_model.trace("w", on_model_changed)
-        on_model_changed()
-
-        def on_ok():
-            model = selected_model.get()
-            result_model[0] = model
-            if model == MANUAL:
-                result_response[0] = response_text.get('1.0', tk.END).strip()
-                content = system_text.get('1.0', tk.END).strip()
-                dialog.clipboard_clear()
-                dialog.clipboard_append(content)
-                dialog.update()
-            else:
-                result_response[0] = None
-            dialog.destroy()
-
-        def on_cancel():
-            result_model[0] = MANUAL
-            result_response[0] = None
-            dialog.destroy()
-
-        def on_copy():
+        def get_request_copy_content() -> str:
             content = system_text.get('1.0', tk.END).strip()
-            dialog.clipboard_clear()
-            dialog.clipboard_append(content)
-            dialog.update()
-
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
-
-        on_copy()
-        dialog.wait_window()
-        model = result_model[0] if result_model[0] is not None else GPT_MINI
-        response = result_response[0] if result_response[0] is not None else None
-        return model, response
-
-
-    def _show_model_dialog(self, system_prompt, user_prompt) -> tuple:
-        """弹出对话框让用户选择模型并查看/编辑请求和响应"""
-        parent = self._get_dialog_parent()
-
-        # 创建对话框
-        dialog = tk.Toplevel(parent)
-        dialog.title("选择 LLM 模型")
-        dialog.geometry("1000x1000")
-        dialog.transient(parent)
-        dialog.grab_set()
-        
-        # 居中显示
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() - 1000) // 2
-        y = (dialog.winfo_screenheight() - 1000) // 2
-        dialog.geometry(f"1000x1000+{x}+{y}")
-        # 置顶/聚焦，避免被其它 Toplevel 压住看不到
-        try:
-            dialog.lift()
-            dialog.focus_force()
-        except Exception:
-            pass
-        
-        # 主框架
-        main_frame = ttk.Frame(dialog, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 模型选择区域（纯按钮，无 Radio；点选后更新「当前模型」与 Manual 响应区显隐）
-        model_frame = ttk.LabelFrame(main_frame, text="选择 LLM 模型", padding=10)
-        model_frame.pack(fill=tk.X, pady=(0, 10))
-
-        selected_model = tk.StringVar(value=MANUAL)
-
-        ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
-
-        _model_rows = [
-            (GPT_MINI, f"GPT Mini ({GPT_MINI})"),
-            (GEMINI_2_0_FLASH, f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})"),
-            (OLLAMA, f"OLLAMA ({OLLAMA})"),
-            (MANUAL, f"Manual ({MANUAL})"),
-        ]
-        for mid, title in _model_rows:
-            ttk.Button(
-                model_frame,
-                text=title,
-                command=lambda m=mid: selected_model.set(m),
-            ).pack(fill=tk.X, pady=3)
-
-        model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
-        model_status.pack(anchor=tk.W, pady=(6, 0))
-        
-        # 请求内容区域（分成两部分）
-        request_frame = ttk.LabelFrame(main_frame, text="请求内容 (Request)", padding=10)
-        request_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
-        # 上部：System Prompt
-        ttk.Label(request_frame, text="System Prompt:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
-        system_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
-        system_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        if isinstance(system_prompt, str):
-            system_text.insert('1.0', system_prompt)
-        
-        # 分隔线
-        separator = ttk.Separator(request_frame, orient='horizontal')
-        separator.pack(fill=tk.X, pady=5)
-        
-        # 下部：User Prompt
-        ttk.Label(request_frame, text="User Prompt:", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(5, 5))
-        user_text = scrolledtext.ScrolledText(request_frame, wrap=tk.WORD, height=8)
-        user_text.pack(fill=tk.BOTH, expand=True)
-        if isinstance(user_prompt, str):
-            user_text.insert('1.0', user_prompt)
-        
-        # 响应内容区域（只在 Manual 模式时显示）
-        response_frame = ttk.LabelFrame(main_frame, text="响应内容 (Response) - 仅 Manual 模式", padding=10)
-        ttk.Label(response_frame, text="响应 (Response):", font=('TkDefaultFont', 9, 'bold')).pack(anchor='w', pady=(0, 5))
-        response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, height=8)
-        response_text.pack(fill=tk.BOTH, expand=True)
-        response_text.insert('1.0', '')
-        
-        # 绑定双击事件：双击时自动从剪贴板粘贴内容
-        def on_double_click_paste(event):
-            """双击时从剪贴板粘贴内容到当前光标位置"""
-            try:
-                # 获取剪贴板内容
-                clipboard_content = file_util.safe_clipboard_json_copy(dialog.clipboard_get())
-                if clipboard_content:
-                    # 检查是否有选中的文本，如果有则先删除
-                    try:
-                        sel_start = response_text.index(tk.SEL_FIRST)
-                        sel_end = response_text.index(tk.SEL_LAST)
-                        # 删除选中的文本
-                        response_text.delete(sel_start, sel_end)
-                        # 在删除位置插入剪贴板内容
-                        response_text.insert(sel_start, clipboard_content)
-                    except tk.TclError:
-                        # 没有选中文本，在光标位置插入
-                        cursor_pos = response_text.index(tk.INSERT)
-                        response_text.insert(cursor_pos, clipboard_content)
-            except tk.TclError:
-                # 剪贴板为空或无法访问时忽略错误
-                pass
-        
-        response_text.bind('<Double-Button-1>', on_double_click_paste)
-        
-        # 用于存储结果
-        result_model = [None]
-        result_response = [None]
+            if not is_image_mode and user_text is not None:
+                content += " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
+            return content
 
         def update_response_visibility():
-            """根据选择的模型显示/隐藏响应区域"""
             if selected_model.get() == MANUAL:
-                response_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+                response_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
             else:
-                response_frame.pack_forget()
+                response_frame.grid_remove()
 
         def sync_model_status(*_):
             model_status.config(text=f"当前模型: {selected_model.get()}")
@@ -694,59 +629,34 @@ class LLMApi:
 
         selected_model.trace("w", on_model_changed)
         on_model_changed()
-        
 
         def on_ok():
             model = selected_model.get()
             result_model[0] = model
-            
-            # 只有在 Manual 模式时才获取响应内容
             if model == MANUAL:
-                response_content = response_text.get('1.0', tk.END).strip()
-                result_response[0] = response_content
-                
-                # 只有在 Manual 模式时才合并并复制到剪贴板
-                content = ""
-                if isinstance(system_prompt, str):
-                    content = content + system_prompt
-                if isinstance(user_prompt, str):
-                    content = content + " \n\n ----- user-promt ----\n\n" + user_prompt
+                result_response[0] = response_text.get("1.0", tk.END).strip()
                 dialog.clipboard_clear()
-                dialog.clipboard_append(content)
+                dialog.clipboard_append(get_request_copy_content())
                 dialog.update()
             else:
                 result_response[0] = None
-            
             dialog.destroy()
-        
 
         def on_cancel():
-            # 取消时返回 MANUAL 和 None
             result_model[0] = MANUAL
             result_response[0] = None
             dialog.destroy()
 
-
         def on_copy():
-            content = system_text.get('1.0', tk.END).strip() + " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
             dialog.clipboard_clear()
-            dialog.clipboard_append(content)
+            dialog.clipboard_append(get_request_copy_content())
             dialog.update()
 
-
-        # 按钮框架
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
 
         on_copy()
-
-        # 等待对话框关闭
         dialog.wait_window()
-        
-        # 返回模型和响应（如果选择的是 Manual）
         model = result_model[0] if result_model[0] is not None else GPT_MINI
         response = result_response[0] if result_response[0] is not None else None
         return model, response
