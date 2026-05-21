@@ -603,43 +603,63 @@ def _program_clipboard_file() -> str:
     return os.path.join(root, PROGRAM_CLIPBOARD_JSON_NAME)
 
 
+def _merge_legacy_clipboard_file_into_items(
+    fp: str,
+    items: list,
+    seen: set,
+    *,
+    ch_name: str = "",
+) -> None:
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+    except Exception:
+        return
+    if not isinstance(legacy, dict):
+        return
+    for it in legacy.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        eid = str(it.get("id") or "").strip()
+        if eid and eid in seen:
+            continue
+        if eid:
+            seen.add(eid)
+        src = (it.get("source") or "").strip()
+        if ch_name and src and not src.startswith(ch_name + ":"):
+            it = dict(it)
+            it["source"] = f"{ch_name}:{src}"[:80]
+        elif ch_name and not src:
+            it = dict(it)
+            it["source"] = ch_name[:80]
+        items.append(it)
+
+
 def _migrate_legacy_channel_clipboards(data: dict) -> dict:
-    """一次性合并各频道目录下旧 ``channel_clipboard.json`` 到全局剪贴板。"""
+    """一次性合并各频道子目录下旧剪贴板 JSON 到 ``program/program_clipboard.json``。"""
     if not isinstance(data, dict):
         data = {"items": []}
-    if data.get("_migrated_channel_clipboards_v1"):
-        return data
     items = data.setdefault("items", [])
     seen = {str(x.get("id", "")) for x in items if isinstance(x, dict) and x.get("id")}
     root = (config.BASE_PROGRAM_PATH or "").strip()
+    if not root:
+        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "program")
+    global_path = os.path.normcase(_program_clipboard_file())
     if root and os.path.isdir(root):
-        pattern = os.path.join(root, "*", LEGACY_CHANNEL_CLIPBOARD_JSON_NAME)
-        for fp in glob.glob(pattern):
-            ch_name = os.path.basename(os.path.dirname(fp))
-            try:
-                with open(fp, "r", encoding="utf-8") as f:
-                    legacy = json.load(f)
-            except Exception:
-                continue
-            if not isinstance(legacy, dict):
-                continue
-            for it in legacy.get("items") or []:
-                if not isinstance(it, dict):
+        if not data.get("_migrated_channel_clipboards_v1"):
+            pattern = os.path.join(root, "*", LEGACY_CHANNEL_CLIPBOARD_JSON_NAME)
+            for fp in glob.glob(pattern):
+                ch_name = os.path.basename(os.path.dirname(fp))
+                _merge_legacy_clipboard_file_into_items(fp, items, seen, ch_name=ch_name)
+            data["_migrated_channel_clipboards_v1"] = True
+        if not data.get("_migrated_channel_program_clipboards_v1"):
+            pattern2 = os.path.join(root, "*", PROGRAM_CLIPBOARD_JSON_NAME)
+            for fp in glob.glob(pattern2):
+                if os.path.normcase(fp) == global_path:
                     continue
-                eid = str(it.get("id") or "").strip()
-                if eid and eid in seen:
-                    continue
-                if eid:
-                    seen.add(eid)
-                src = (it.get("source") or "").strip()
-                if ch_name and src and not src.startswith(ch_name + ":"):
-                    it = dict(it)
-                    it["source"] = f"{ch_name}:{src}"[:80]
-                elif ch_name and not src:
-                    it = dict(it)
-                    it["source"] = ch_name[:80]
-                items.append(it)
-    data["_migrated_channel_clipboards_v1"] = True
+                ch_name = os.path.basename(os.path.dirname(fp))
+                _merge_legacy_clipboard_file_into_items(fp, items, seen, ch_name=ch_name)
+            data["_migrated_channel_program_clipboards_v1"] = True
     return data
 
 
@@ -657,8 +677,17 @@ def _load_program_clipboard_data() -> dict:
         data = {"items": []}
     if not isinstance(data.get("items"), list):
         data["items"] = []
-    need_save = not data.get("_migrated_channel_clipboards_v1")
+    need_save = not (
+        data.get("_migrated_channel_clipboards_v1")
+        and data.get("_migrated_channel_program_clipboards_v1")
+    )
     data = _migrate_legacy_channel_clipboards(data)
+    items = data.get("items", [])
+    if isinstance(items, list):
+        deduped = _dedupe_program_clipboard_items_by_preview(items)
+        if len(deduped) != len(items):
+            data["items"] = deduped
+            _save_program_clipboard_data(data)
     if need_save and data.get("_migrated_channel_clipboards_v1"):
         _save_program_clipboard_data(data)
     return data
@@ -666,6 +695,31 @@ def _load_program_clipboard_data() -> dict:
 
 def _save_program_clipboard_data(data: dict) -> None:
     write_json(_program_clipboard_file(), data)
+
+
+def _program_clipboard_preview_key(item: dict) -> str:
+    """用于去重的 preview 键（相同 preview 视为重复条目）。"""
+    pv = (item.get("preview") or "").strip()
+    if pv:
+        return pv
+    content = (item.get("content") or "").strip()
+    return content[:64] if content else ""
+
+
+def _dedupe_program_clipboard_items_by_preview(items: list) -> list:
+    """相同 preview 只保留最新一条（列表靠后的条目）。"""
+    kept: list = []
+    seen: set[str] = set()
+    for it in reversed(items):
+        if not isinstance(it, dict):
+            continue
+        key = _program_clipboard_preview_key(it)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        kept.append(it)
+    kept.reverse()
+    return kept
 
 
 def _program_clipboard_make_id(existing: set) -> str:
@@ -691,16 +745,23 @@ def _program_clipboard_source_label(channel_path: str, source: str) -> str:
 
 
 def program_clipboard_append_item(content: str, source: str, *, channel_path: str = "") -> str:
-    """追加一条到 ``program`` 根目录 JSON 剪贴板（全频道共享），返回新条目 id。"""
+    """追加一条到 ``program`` 根目录 JSON 剪贴板（全频道共享），返回条目 id。
+
+    相同 ``preview`` 已存在则不再追加，返回已有条目 id。
+    """
     text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, indent=2)
     data = _load_program_clipboard_data()
     items = data.setdefault("items", [])
+    new_preview = text[:64]
+    for it in items:
+        if isinstance(it, dict) and _program_clipboard_preview_key(it) == new_preview:
+            return str(it.get("id") or "")
     existing = {str(x.get("id", "")) for x in items if isinstance(x, dict)}
     eid = _program_clipboard_make_id(existing)
     items.append(
         {
             "id": eid,
-            "preview": text[:64],
+            "preview": new_preview,
             "content": text,
             "source": _program_clipboard_source_label(channel_path, source),
         }
@@ -712,6 +773,116 @@ def program_clipboard_append_item(content: str, source: str, *, channel_path: st
 def channel_clipboard_append_item(channel_path: str, content: str, source: str) -> str:
     """兼容旧名：写入全局 program 剪贴板；``channel_path`` 仅用于 ``source`` 标注频道。"""
     return program_clipboard_append_item(content, source, channel_path=channel_path)
+
+
+def _read_host_clipboard_text(clipboard_host) -> str:
+    try:
+        return safe_clipboard_json_copy(clipboard_host.clipboard_get() or "")
+    except tk.TclError:
+        return ""
+
+
+def _parse_json_object_from_clipboard_text(text: str):
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _scene_json_dedupe_key(data: dict) -> str:
+    try:
+        return json.dumps(data, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return repr(data)
+
+
+def program_clipboard_sync_system_clipboard_item(
+    clipboard_host,
+    *,
+    channel_path: str = "",
+) -> str | None:
+    """系统剪贴板有内容且与 program 剪贴板最后一条不同时，追加为 ``system_clipboard`` 条目。"""
+    text = _read_host_clipboard_text(clipboard_host).strip()
+    if not text:
+        return None
+    data = _load_program_clipboard_data()
+    items = data.get("items", []) or []
+    if items and isinstance(items[-1], dict):
+        if (items[-1].get("content") or "").strip() == text:
+            return None
+    return program_clipboard_append_item(text, "system_clipboard", channel_path=channel_path)
+
+
+def ask_cross_channel_clipboard_pick(
+    parent,
+    clipboard_host,
+    channel_path: str = "",
+) -> dict | None:
+    """全频道剪贴板：首项为 Windows 系统剪贴板，其余为 ``program_clipboard.json`` 条目。
+
+    返回可写入 scene_content 的 JSON 对象；取消或无效则返回 None。
+    """
+    entries: list[tuple[str, dict | None, str]] = []
+    choices: list[tuple[str, str]] = []
+
+    sys_text = _read_host_clipboard_text(clipboard_host).strip()
+    if sys_text:
+        sys_parsed = _parse_json_object_from_clipboard_text(sys_text)
+        pv = (sys_text[:48] + "…") if len(sys_text) > 48 else sys_text
+        pv = pv.replace("\n", " ")
+        lbl = f"【Windows 系统剪贴板】 {pv}"
+        if not sys_parsed:
+            lbl += " （非 JSON 对象）"
+        choices.append(("__windows__", lbl))
+        entries.append(("__windows__", sys_parsed, sys_text))
+
+    data = _load_program_clipboard_data()
+    items = _dedupe_program_clipboard_items_by_preview(
+        [x for x in data.get("items", []) if isinstance(x, dict)]
+    )
+    for it in reversed(items):
+        content = (it.get("content") or "").strip()
+        if not content:
+            continue
+        eid = str(it.get("id") or "").strip() or f"item_{len(entries)}"
+        parsed = _parse_json_object_from_clipboard_text(content)
+        src = (it.get("source") or "")[:20]
+        pv = (it.get("preview") or content[:44]).replace("\n", " ")
+        lbl = f"[{src}] {pv}…"
+        if not parsed:
+            lbl += " （非 JSON 对象）"
+        key = f"prog:{eid}"
+        choices.append((key, lbl))
+        entries.append((key, parsed, content))
+
+    if not choices:
+        messagebox.showinfo(
+            "全频道剪贴板",
+            f"无可用条目。\n文件: {_program_clipboard_file()}",
+            parent=parent,
+        )
+        return None
+
+    picked = askchoice("全频道剪贴板", choices, parent=parent)
+    if not picked:
+        return None
+    mode = picked[1]
+    for key, parsed, _raw in entries:
+        if key != mode:
+            continue
+        if parsed:
+            return copy.deepcopy(parsed)
+        messagebox.showwarning(
+            "无效 Scene JSON",
+            "所选内容须为 JSON 对象（dict），才能用于 scene_content 等后续操作。",
+            parent=parent,
+        )
+        return None
+    return None
 
 
 def open_or_refresh_program_clipboard_manager(
@@ -783,12 +954,16 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         super().__init__(parent)
         self.clipboard_host = clipboard_host
         self.on_pick = on_pick
-        self.title("程序剪贴板（全频道）")
+        self.title("全频道剪贴板")
         self.geometry("920x460")
         self.minsize(640, 280)
+        self._json_path = _program_clipboard_file()
 
         fr = ttk.Frame(self, padding=10)
         fr.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(fr, text=f"文件: {self._json_path}", font=("Consolas", 8), wraplength=880).pack(
+            anchor=tk.W, pady=(0, 4)
+        )
         self._hint_var = tk.StringVar(value="")
         ttk.Label(fr, textvariable=self._hint_var, wraplength=880, justify=tk.LEFT).pack(anchor=tk.W)
         self.listbox = tk.Listbox(fr, height=18, width=110, font=("Consolas", 9), exportselection=False)
@@ -839,7 +1014,9 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         self.listbox.delete(0, tk.END)
         data = _load_program_clipboard_data()
         raw = data.get("items", [])
-        self._items = [x for x in raw if isinstance(x, dict)]
+        self._items = _dedupe_program_clipboard_items_by_preview(
+            [x for x in raw if isinstance(x, dict)]
+        )
         for it in self._items:
             eid = it.get("id", "")
             src = (it.get("source") or "")[:16]
@@ -4955,6 +5132,8 @@ class MediaGUIManager:
 
             def copy_style_character():
                 try:
+                    pending_scene: list[dict | None] = [None]
+
                     def _analyzed_clip_text():
                         content = video_detail.get("analyzed_content")
                         if isinstance(content, dict):
@@ -4965,62 +5144,10 @@ class MediaGUIManager:
                             return json.dumps(content, ensure_ascii=False, indent=2)
                         return ""
 
-                    analyzed_txt = _analyzed_clip_text()
-                    has_analyzed = bool(analyzed_txt)
-
-                    if not has_analyzed:
-                        messagebox.showwarning(
-                            "无分析内容,请先分析本项目之内容",
-                            "本条无 analyzed_content",
-                            parent=summary_window,
-                        )
-                        return
-
-                    parsed_clipboard = None
-                    try:
-                        parsed_clipboard = json.loads(
-                            safe_clipboard_json_copy(summary_window.clipboard_get() or "")
-                        )
-                        if not isinstance(parsed_clipboard, dict):
-                            parsed_clipboard = None
-                    except Exception:
-                        parsed_clipboard = None
-
-
-                    sc = video_detail.get("scene_content")
-                    has_scene = isinstance(sc, dict) and bool(sc)
-
-                    choices = []
-                    if parsed_clipboard:
-                        choices.append(
-                            ("clipboard_scene", "剪贴板 → 写入Scene Content (JSON)"),
-                        )
-                    if has_scene:
-                        choices.append(
-                            ("gen_instruction", f"Scene JSON → 生成风格/指令 ({config.LANGUAGES[self.language]})")
-                        )
-                        choices.append(("scene_detail", "拷贝 Scene_content (JSON)"))
-                    if has_analyzed:
-                        choices.append(("analyzed", f"拷贝 Analyzed_content ({config.LANGUAGES[self.language]})"))
-
-                    if not choices:
-                        messagebox.showwarning(
-                            "无可拷贝",
-                            "本条无 scene_content / analyzed_content，且剪贴板无可用 JSON 对象。",
-                            parent=summary_window,
-                        )
-                        return
-
-
-                    picked = askchoice("请选择拷贝到剪贴板的内容", choices, parent=summary_window)
-                    if not picked:
-                        return
-                    mode = picked[1]
-
-
-                    if mode == "clipboard_scene" :
-                        scene_dict= copy.deepcopy(parsed_clipboard)
+                    def _apply_scene_dict(scene_dict: dict) -> None:
+                        scene_dict = copy.deepcopy(scene_dict)
                         video_detail["scene_content"] = scene_dict
+                        pending_scene[0] = None
                         _sync_youtube_row_title_after_scene_edit(
                             video_detail, scene_dict, self.language
                         )
@@ -5028,100 +5155,169 @@ class MediaGUIManager:
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                         dialog.after(0, populate_tree)
-                        
-                    elif mode == "analyzed":
-                        txt = _analyzed_clip_text()
-                        summary_window.clipboard_clear()
-                        summary_window.clipboard_append(txt or "")
-                        summary_window.update()
-                        if txt:
+
+                    def _video_scene_dict() -> dict:
+                        sc = video_detail.get("scene_content")
+                        return sc if isinstance(sc, dict) else {}
+
+                    sc = video_detail.get("scene_content")
+                    has_scene = isinstance(sc, dict) and bool(sc)
+
+                    analyzed_txt = _analyzed_clip_text()
+                    has_analyzed = bool(analyzed_txt)
+
+                    def _show_scene_clipboard_menu():
+                        choices: list[tuple[str, str]] = [("cross_channel", "全频道剪贴板")]
+                        if pending_scene[0]:
+                            choices.append(
+                                ("paste_scene", "将所选内容写入 scene_content (JSON)")
+                            )
+                        if has_scene:
+                            choices.append(
+                                (
+                                    "gen_instruction",
+                                    f"Scene JSON → 生成风格/指令 ({config.LANGUAGES[self.language]})",
+                                )
+                            )
+                            choices.append(("scene_detail", "拷贝 Scene_content (JSON)"))
+                        if has_analyzed:
+                            choices.append(
+                                (
+                                    "analyzed",
+                                    f"拷贝 Analyzed_content ({config.LANGUAGES[self.language]})",
+                                )
+                            )
+
+                        picked = askchoice("场景 / 剪贴板", choices, parent=summary_window)
+                        if not picked:
+                            return
+                        mode = picked[1]
+
+                        if mode == "cross_channel":
+                            picked_scene = ask_cross_channel_clipboard_pick(
+                                summary_window,
+                                summary_window,
+                                self.channel_path or "",
+                            )
+                            if picked_scene is not None:
+                                pending_scene[0] = picked_scene
+                            _show_scene_clipboard_menu()
+                            return
+
+                        if mode == "paste_scene":
+                            if not pending_scene[0]:
+                                messagebox.showwarning(
+                                    "未选择内容",
+                                    "请先在「全频道剪贴板」中选择一条 Scene JSON。",
+                                    parent=summary_window,
+                                )
+                                _show_scene_clipboard_menu()
+                                return
+                            _apply_scene_dict(pending_scene[0])
+                            _show_scene_clipboard_menu()
+                            return
+
+                        if mode == "analyzed":
+                            txt = _analyzed_clip_text()
+                            summary_window.clipboard_clear()
+                            summary_window.clipboard_append(txt or "")
+                            summary_window.update()
+                            if txt:
+                                channel_clipboard_append_item(
+                                    self.channel_path or "", txt, "analyzed_content"
+                                )
+                                open_or_refresh_program_clipboard_manager(
+                                    summary_window,
+                                    summary_window,
+                                    select_last=True,
+                                )
+                            return
+
+                        if mode == "scene_detail":
+                            src = _video_scene_dict()
+                            txt = json.dumps(src, ensure_ascii=False, indent=2)
+                            summary_window.clipboard_clear()
+                            summary_window.clipboard_append(txt)
+                            summary_window.update()
                             channel_clipboard_append_item(
-                                self.channel_path or "", txt, "analyzed_content"
+                                self.channel_path or "", txt, "scene_content"
                             )
-                            open_or_refresh_program_clipboard_manager(
-                                summary_window,
-                                summary_window,
-                                select_last=True,
-                            )
+                            return
 
-                    elif mode == "scene_detail":
-                        txt = json.dumps(
-                            video_detail.get("scene_content", {}),
-                            ensure_ascii=False,
-                            indent=2,
-                        )
-                        summary_window.clipboard_clear()
-                        summary_window.clipboard_append(txt)
-                        summary_window.update()
-                        channel_clipboard_append_item(
-                            self.channel_path or "", txt, "scene_content"
-                        )
-                        open_or_refresh_program_clipboard_manager(
-                            summary_window,
-                            summary_window,
-                            select_last=True,
-                        )
+                        if mode == "gen_instruction":
+                            scene_for_gen = _video_scene_dict()
+                            if not scene_for_gen:
+                                messagebox.showwarning(
+                                    "无 Scene JSON",
+                                    "本条无 scene_content，请先在当前条目填写 Scene JSON。",
+                                    parent=summary_window,
+                                )
+                                return
 
-                    else: # if mode == "gen_instruction":
-                        header_parts = {}
+                            header_parts = {}
 
-                        header_parts["id"] = video_detail.get("id")
-                        header_parts["Visual_Style"] = project_manager.LAST_VISUAL_STYLE
+                            header_parts["id"] = video_detail.get("id")
+                            header_parts["Visual_Style"] = project_manager.LAST_VISUAL_STYLE
 
-                        if character_var.get():
-                            header_parts["Main_Character"] = character_var.get()
+                            if character_var.get():
+                                header_parts["Main_Character"] = character_var.get()
 
-                        host_str = project_manager.LAST_NARRATOR
-                        if host_str:
-                            header_parts["Host_Voice"] = host_str
-                            hd = project_manager.LAST_HOST_DISPLAY
-                            if hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
-                                header_parts["Host_Display"] = (
-                                    "No Host. The main character performs and narrates."
+                            host_str = project_manager.LAST_NARRATOR
+                            if host_str:
+                                header_parts["Host_Voice"] = host_str
+                                hd = project_manager.LAST_HOST_DISPLAY
+                                if hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
+                                    header_parts["Host_Display"] = (
+                                        "No Host. The main character performs and narrates."
+                                    )
+                                else:
+                                    header_parts["Host_Display"] = hd
+
+                                header_parts["Instruction_for_video_generation"] = (
+                                    "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
+                                    "** If scene-image has only a main character (no Host) → use the main character as talking-avatar to speak about the content of the scene."
                                 )
                             else:
-                                header_parts["Host_Display"] = hd
+                                header_parts["Instruction_for_video_generation"] = (
+                                    "** No Host (Narrator). Use the main character as talking-avatar to speak about the content of scene."
+                                )
 
-                            header_parts["Instruction_for_video_generation"] = (
-                                "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
-                                "** If scene-image has only a main character (no Host) → use the main character as talking-avatar to speak about the content of the scene."
-                            )
-                        else:
-                            header_parts["Instruction_for_video_generation"] = (
-                                "** No Host (Narrator). Use the main character as talking-avatar to speak about the content of scene."
+                            header_parts["Instruction_for_Speaking_and_Visual_generation"] = (
+                                "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
+                                "** Avoid the words reach very left or right of the screen (try to keep words at the square-area of the screen)."
                             )
 
-                        header_parts["Instruction_for_Speaking_and_Visual_generation"] = (
-                            "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
-                            "** Avoid the words reach very left or right of the screen (try to keep words at the square-area of the screen)."
-                        )
+                            header_parts["Scene_Content"] = scene_for_gen.get(
+                                config.LANGUAGES[self.language], []
+                            )
 
-                        header_parts["Scene_Content"] = video_detail.get(
-                            "scene_content", {}
-                        ).get(config.LANGUAGES[self.language], [])
+                            header_parts["Case_Study_Category_and_Subtype"] = (
+                                "topic_category: "
+                                + str(video_detail.get("topic_category") or "")
+                                + ",  topic_subtype: "
+                                + str(video_detail.get("topic_subtype") or "")
+                            )
 
-                        header_parts["Case_Study_Category_and_Subtype"] = (
-                            "topic_category: "
-                            + str(video_detail.get("topic_category") or "")
-                            + ",  topic_subtype: "
-                            + str(video_detail.get("topic_subtype") or "")
-                        )
+                            summary_window.clipboard_clear()
+                            _clip_body = "\n\n".join(
+                                f"{_k}:\n{_v}" for _k, _v in header_parts.items()
+                            )
+                            summary_window.clipboard_append(_clip_body)
+                            summary_window.update()
+                            if _clip_body:
+                                channel_clipboard_append_item(
+                                    self.channel_path or "", _clip_body, "gen_instruction"
+                                )
+                            return
 
-                        # content_ac = video_detail.get("analyzed_content")
-                        # if isinstance(content_ac, dict):
-                        #     content_ac = content_ac.get(config.LANGUAGES[self.language], "")
-                        # if content_ac:
-                        #     header_parts["Case_Study_Content"] = content_ac
+                    _show_scene_clipboard_menu()
 
-                        summary_window.clipboard_clear()
-                        _clip_body = "\n\n".join(
-                            f"{_k}:\n{_v}" for _k, _v in header_parts.items()
-                        )
-                        summary_window.clipboard_append(_clip_body)
-                        summary_window.update()
-
-                except Exception:
-                    pass
+                except Exception as ex:
+                    messagebox.showerror(
+                        "场景/剪贴板",
+                        f"操作失败: {ex}",
+                        parent=summary_window,
+                    )
 
 
 
