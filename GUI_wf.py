@@ -2658,7 +2658,7 @@ class WorkflowGUI:
 
         ttk.Label(
             main,
-            text="标题（可直接编辑；将用于本地成片文件名与 YouTube 标题基础）",
+            text="YouTube 标题（可直接编辑；本地成片文件名为 项目PID_final.mp4）",
             wraplength=520,
         ).pack(anchor=tk.W, pady=(0, 6))
 
@@ -2730,7 +2730,6 @@ class WorkflowGUI:
         mode, publish_at = choice
         try:
             self.workflow.upload_video(
-                config.chinese_convert(self.video_title.get(), self.workflow.language),
                 title_slug,
                 publish_at=publish_at if mode == "scheduled" else None,
             )
@@ -2807,9 +2806,7 @@ class WorkflowGUI:
 
     def play_finalize_video(self):
         """与 magic_workflow.finalize_video 相同的路径规则；用系统默认播放器打开（独立窗口、含声音）。"""
-        title = self.workflow.title.strip().replace(" ", "_").replace("\n", "_")
-        title = config.chinese_convert(title, self.workflow.language)
-        final_path = f"{self.workflow.publish_path}/{title}_final.mp4"
+        final_path = config.publish_final_video_path(self.workflow.pid)
         if not os.path.isfile(final_path):
             messagebox.showwarning(
                 "Video播放",

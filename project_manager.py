@@ -146,23 +146,8 @@ def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
 
 
 def _raw_content_valid_for_create(ac) -> bool:
-    """``{ english: str, chinese: str }``；至少一个分支为非空字符串（另一分支可为 ``""``）。"""
-    if not isinstance(ac, dict):
-        return False
-    any_text = False
-    for lang in ("english", "chinese"):
-        br = ac.get(lang)
-        if br is None or br == "":
-            continue
-        if isinstance(br, str):
-            if br.strip():
-                any_text = True
-        elif isinstance(br, dict):
-            if _story_value_nonempty(br.get("story")):
-                any_text = True
-        else:
-            return False
-    return any_text
+    """``analyzed_content`` 为非空纯文本。"""
+    return bool(config.analyzed_content_text(ac).strip())
 
 
 def build_soul(channel, topic_category, topic_subtype):
@@ -847,16 +832,11 @@ class ProjectSelectionDialog:
             itags = None
 
         # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get；字符串则解析为 dict（保留双语结构）
-        ac_src = {}
-        if isinstance(initial_analyzed_content, dict):
-            ac_src = initial_analyzed_content
-        elif isinstance(initial_analyzed_content, str) and initial_analyzed_content.strip():
-            try:
-                parsed_ac = json.loads(safe_clipboard_json_copy(initial_analyzed_content.strip()))
-                if isinstance(parsed_ac, dict):
-                    ac_src = parsed_ac
-            except json.JSONDecodeError:
-                ac_src = {}
+        ac_src = ""
+        if isinstance(initial_analyzed_content, str):
+            ac_src = initial_analyzed_content.strip()
+        elif initial_analyzed_content is not None:
+            ac_src = config.analyzed_content_text(initial_analyzed_content)
         sc_src = {}
         if isinstance(initial_scene_content, dict):
             sc_src = initial_scene_content
@@ -1372,22 +1352,13 @@ class ProjectSelectionDialog:
 
 
         def open_project_content_editor(initial_text=None):
-            """编辑 analyzed_content；确认后写回 ``story_result['analyzed_content']``。
-
-            支持双语 JSON（english/chinese 各为字符串）、单语分支、或纯文本（按当前项目 language 写入对应分支）。
-            """
+            """编辑 analyzed_content；确认后写回 ``story_result['analyzed_content']``（纯文本）。"""
             if initial_text is None:
                 initial_text = self.story_result.get('analyzed_content')
-            if isinstance(initial_text, dict):
-                _prefill_ac = config.normalize_analyzed_content_from_editor(
-                    json.dumps(initial_text, ensure_ascii=False),
-                    self.story_result.get("language") or "tw",
-                )
-                _prefill = json.dumps(_prefill_ac, ensure_ascii=False, indent=2)
-            elif isinstance(initial_text, str) and initial_text.strip():
+            if isinstance(initial_text, str) and initial_text.strip():
                 _prefill = initial_text.strip()
             else:
-                _prefill = None
+                _prefill = config.analyzed_content_text(initial_text) or None
             raw_dialog = tk.Toplevel(new_project_dialog)
             raw_dialog.title("项目内容 输入")
             raw_dialog.geometry("700x400")
@@ -1401,11 +1372,7 @@ class ProjectSelectionDialog:
             frame.pack(fill=tk.BOTH, expand=True)
             ttk.Label(
                 frame,
-                text=(
-                    "请输入 Raw Case-Story（双语 JSON 示例："
-                    '{"english": "…", "chinese": "…"}；各分支为字符串，非嵌套对象；'
-                    "也可直接粘贴纯文本，将按上方项目语言写入对应分支）："
-                ),
+                text="请输入 Raw Case-Story（纯文本，当前项目语言）：",
                 font=('TkDefaultFont', 10, 'bold'),
                 wraplength=640,
                 justify=tk.LEFT,
@@ -1445,12 +1412,11 @@ class ProjectSelectionDialog:
             raw_input = (raw_input_holder[0] or "").strip()
             if not raw_input:
                 return
-            ui_lang = (self.story_result.get("language") or "tw").strip()
-            normalized = config.normalize_analyzed_content_from_editor(raw_input, ui_lang)
+            normalized = config.normalize_analyzed_content_text(raw_input)
             if not _raw_content_valid_for_create(normalized):
                 messagebox.showwarning(
                     "内容无效",
-                    "无法保存：须至少在一个语种分支（english 或 chinese）中有非空文本。",
+                    "无法保存：analyzed_content 须为非空文本。",
                     parent=new_project_dialog,
                 )
                 return
@@ -1693,7 +1659,6 @@ def launch_yt_media_tool(
             pass
 
     yt_gui = MediaGUIManager(parent, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang)
-    getattr(yt_gui, yt_method)(*yt_method_args)
 
     def _poll_standalone_exit():
         try:
@@ -1707,7 +1672,14 @@ def launch_yt_media_tool(
             return
         parent.after(350, _poll_standalone_exit)
 
-    parent.after(450, _poll_standalone_exit)
+    def _run_yt_job():
+        try:
+            getattr(yt_gui, yt_method)(*yt_method_args)
+        finally:
+            parent.after(350, _poll_standalone_exit)
+
+    # 须在 GUI_pm mainloop 启动后执行；勿在欢迎屏回调里同步跑长任务（否则 after(0) 弹窗不显示）
+    parent.after(0, _run_yt_job)
 
 
 def show_initial_choice_dialog(parent):
@@ -1735,9 +1707,9 @@ def show_initial_choice_dialog(parent):
     main_frame = ttk.Frame(dialog, padding=30)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
-    # 第 1 行：频道、语言；第 2 行：风格、预留；第 3 行：旁白、HOST
-    available_channels = list(config_channel.CHANNEL_CONFIG.keys())
-    default_channel = available_channels[0] if available_channels else 'default'
+    # 第 1 行：频道（YT_text_download.json）、语言；第 2 行：风格、预留；第 3 行：旁白、HOST
+    _yt_ch = config.load_yt_text_download_channel_options()
+    _yt_display_to_id = _yt_ch["display_to_id"]
     default_lang_key = LAST_YT_LANGUAGE if LAST_YT_LANGUAGE in config.LANGUAGES else 'tw'
     _lang_display_to_key = {
         f"{label} ({key})": key for key, label in config.LANGUAGES.items()
@@ -1756,11 +1728,11 @@ def show_initial_choice_dialog(parent):
     _combo_w = 28
     _row_gap = (10, 0)
 
-    channel_var = tk.StringVar(value=default_channel)
+    channel_var = tk.StringVar(value=_yt_ch["default_display"])
     channel_combo = ttk.Combobox(
         opts_grid,
         textvariable=channel_var,
-        values=available_channels,
+        values=_yt_ch["display_options"],
         state="readonly",
         width=_combo_w,
     )
@@ -1864,12 +1836,17 @@ def show_initial_choice_dialog(parent):
         result['choice'] = 'cancel'
         dialog.destroy()
 
+    def _resolve_welcome_channel_id():
+        disp = (channel_var.get() or "").strip()
+        return _yt_display_to_id.get(disp, _yt_ch["default_channel"])
+
     def _run_yt_tool(yt_method: str, *method_args):
-        ch = channel_var.get().strip()
+        ch = _resolve_welcome_channel_id()
         if not ch:
             messagebox.showwarning("提示", "请先选择频道", parent=dialog)
             return
         _sync_welcome_choices()
+        result["channel"] = ch
         result["choice"] = "yt"
         dialog.destroy()
         launch_yt_media_tool(
@@ -1886,26 +1863,26 @@ def show_initial_choice_dialog(parent):
     _btn_row_gap = (0, 10)
     tk.Button(
         opts_grid,
-        text="项目管理",
+        text="频道列表项目管理",
         font=('TkDefaultFont', 14, 'bold'),
         command=lambda: _run_yt_tool("manage_hot_videos"),
     ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(15, 10))
 
     ttk.Button(
         opts_grid,
-        text="文字转译",
+        text="媒体文字转译",
         command=lambda: _run_yt_tool("transcribe_media", True),
     ).grid(row=4, column=1, sticky="ew", padx=(0, 16), pady=_btn_row_gap)
     ttk.Button(
         opts_grid,
-        text="YT文字",
-        command=lambda: _run_yt_tool("download_youtube", True),
+        text="Download YT文字",
+        command=lambda: _run_yt_tool("download_youtube", True, True),
     ).grid(row=4, column=3, sticky="ew", pady=_btn_row_gap)
 
     ttk.Button(
         opts_grid,
-        text="YT視頻",
-        command=lambda: _run_yt_tool("download_youtube", False),
+        text="Download YT視頻",
+        command=lambda: _run_yt_tool("download_youtube", False, False),
     ).grid(row=5, column=1, sticky="ew", padx=(0, 16))
     ttk.Button(
         opts_grid,
@@ -1923,7 +1900,7 @@ def show_initial_choice_dialog(parent):
     dialog.wait_window()
     return (
         result['choice'],
-        result['channel'] or default_channel,
+        result['channel'] or _yt_ch["default_channel"],
         result['language'] or default_lang_key,
         result.get('narrator') or LAST_NARRATOR,
         result.get('visual_style') or LAST_VISUAL_STYLE,
@@ -1958,7 +1935,7 @@ def create_project_dialog(parent, youtube_gui=None):
 
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style, host_display,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags):
-    """用现有 RAW 材料（如 NotebookLM Story）直接启动创建新项目，跳过初始选择。analyzed_content 可为 dict 或 JSON 字符串。"""
+    """用现有 RAW 材料直接启动创建新项目。``analyzed_content`` 为纯文本字符串。"""
     global PROJECT_CONFIG
     if analyzed_content is None and scene_content is None:
         return 'cancel', None

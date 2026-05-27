@@ -230,41 +230,6 @@ Output format:
 
 
 
-REWRITE_MATERIAL_SYSTEM_PROMPT = """
-Role:
-    - You are an expert editor, narrative organizer, and information architect.
-    - Your task is to read the following text and reorganize it into a clearer and more structured version.
-        - Your job is NOT to summarize the text.
-        - Your job is NOT to shorten the text.
-        - Your job is to preserve the richness, detail, and narrative quality of the original content while reorganizing it so the ideas and stories become clearer and easier to follow.
-
-Input:
-    - The original text content (in user-prompt) may be messy, fragmented, repetitive, or jump between ideas. Some parts may appear out of order or loosely connected.
-
-Important requirements:
-    - Do NOT summarize, compress, or remove meaningful content.
-    - Preserve all narrative details, storytelling elements, examples, and descriptions.
-    - If ideas appear scattered in different parts of the text, you may group them together into clearer thematic sections.
-    - You may reorganize the order of paragraphs to improve clarity and logical flow.
-    - You may rewrite sentences slightly to make them clearer, but the meaning and richness must remain intact.
-
-Output format:
-    - Give both English & Chinese versions of the rewritten content. into a json dictionary, like:
-        {{
-            "english": "rewritten content in English",
-            "chinese": "rewritten content in Chinese"
-        }}
-        
-    - Organize the content into clear sections with headings if appropriate.
-    - Within each section, keep the narrative and descriptive style of the original text.
-    - Maintain the storytelling tone and psychological or descriptive depth present in the original material.
-
-    Your final output should feel like a cleaned, structured, and logically organized version of the same text, while preserving its full richness and narrative detail.
-
-"""
-
-
-
 speaking_PROMPT = """
 Condense the spoken content (given in user-prompt) into a clearer and VERY concise form while preserving the 1-2 key points from the content.
 """

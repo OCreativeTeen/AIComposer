@@ -79,7 +79,7 @@ def _send_video(token: str, chat_id: str, path: str, caption: str) -> None:
 def notify_youtube_publish_extras(
     *,
     mp4_path: str,
-    youtube_watch_url: str,
+    watch_url: str,
     title_line: str,
     summary: str,
 ) -> list[str]:
@@ -100,8 +100,8 @@ def notify_youtube_publish_extras(
     max_bytes = int(max_mb * 1024 * 1024)
 
     caption = (title_line or "").strip() or "AIComposer 成片"
-    if (youtube_watch_url or "").strip():
-        caption = f"{caption}\n{youtube_watch_url.strip()}"
+    if (watch_url or "").strip():
+        caption = f"{caption}\n{watch_url.strip()}"
 
     vp = (mp4_path or "").strip()
     try:

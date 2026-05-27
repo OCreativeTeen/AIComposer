@@ -27,7 +27,347 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
 
 
-NOTEBOOKLM_CONTENT_GUIDE = """
+
+
+
+
+MV_ANALYZE = """
+Role:
+    - You are a professional to analyze song & music, from the specified YouTube link ({url}), and then produce the musical DNA details like:
+        -- style, mood, emotion, atmosphere, regional and historical context, tempo, structure, harmony, melody, rhythm, groove, 
+        -- instrumentation, vocal speakeristics, backing vocals, lyrical themes, , expression style, , expression content, transitions, etc
+
+Steps:
+    1) Deep music analysis (extract reusable “finalized” details)
+        Analyze the track thoroughly and output a structured breakdown of the following attributes:
+        Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
+        Mood arc & emotional narrative: what the listener feels over time; how tension resolves
+        Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
+        Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
+        Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
+        Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
+        Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
+        Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
+        Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
+
+
+    2) Extract “DNA rules” (for future to generate a new song with a similar musical DNA) as output text content in {language}.
+        From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
+            signature atmosphere and expression style
+            signature chord cadence types
+            signature rhythm patterns
+            signature synth/texture choices
+            signature vocal production (double, harmony stack, adlibs)
+            signature transitions (risers, drum fills, key lift, half-time, etc.)
+"""
+
+
+
+MV_CONTENT_GUIDE = """
+
+----------------------------------------------------
+Topic & Instruction:
+----------------------------------------------------
+
+The content is on the topic - '{topic}'. 
+
+{instruction}
+
+
+----------------------------------------------------
+Reference Content:
+----------------------------------------------------
+{content}
+
+----------------------------------------------------
+Core-insight ('soul'):
+----------------------------------------------------
+{soul}
+"""
+
+
+
+NOTEBOOKLM__MV_LYRICS = """
+You are a professional to make the lyrics for a {language} song, which express the content instruction & the music-reference (provided at the bottom of this prompt).
+
+*** the music topic is:
+{topic}
+
+
+*** the music styles are:
+{tags}
+
+
+*** Requirement: 
+    ** Please make the lyrics (has details to describe the content / feelings / conflicts / etc)
+    ** make it transcend/distill/elevated realm of resonance that moves and inspires.
+    ** Lyrics should be concise, and carefully crafted with strong, consistent rhyme schemes.
+
+*** Input Content:
+
+    ** Content instruction:
+{instruction}
+
+    ** lyrics-reference:
+{content}
+"""
+
+
+
+NOTEBOOKLM__SUNO = """
+Role:
+    - You are a professional to make a new {language} song, which express the initial instruction & the music-reference provided in user prompt.
+
+Steps:
+    1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
+            signature atmosphere and expression style
+            signature chord cadence types
+            signature rhythm patterns
+            signature synth/texture choices
+            signature vocal production (double, harmony stack, adlibs)
+            signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+    2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
+            ** The detailed SUNO prompts, has detailed instruction to generate a new song with a similar musical DNA with the reference, and show the content in the initial instruction 
+            ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
+            ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
+ 
+"""
+
+
+NOTEBOOKLM__SUNO_2LAYER = """
+Role:
+    - You are a professional to make a new {language} song, which express the initial instruction & the music-reference provided in user prompt.
+
+Steps:
+    1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
+            signature atmosphere and expression style
+            signature chord cadence types
+            signature rhythm patterns
+            signature synth/texture choices
+            signature vocal production (double, harmony stack, adlibs)
+            signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+   2) Force the specific two-part melodic architecture, which have a clear contrast between two melodic worlds:
+        Front section (A-world): high conflict + dramatic movement
+            allow minor key / modal tension, dissonant passing tones, “push-pull” phrasing
+            big dynamic swings, dramatic rises/falls, sharper rhythmic accents
+            hook can feel edgy, restless, emotionally complex
+
+        Back section (B-world): stable + sunny + supportive melodic bed
+            shift toward major / brighter mode, stable stepwise melody, smoother rhythm
+            acts as “foundation / resolution” and supports the earlier motif
+            feels warm, optimistic, grounded, consistent
+            Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
+
+    3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
+            ** The detailed SUNO prompts, has detailed instruction to generate a new song with a similar musical DNA with the reference, and show the content in the initial instruction 
+            ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+            ** the generated song should have a clear contrast between two melodic worlds:
+                * Front section (A-world): high conflict + dramatic movement
+                * Back section (B-world): stable + sunny + supportive melodic bed
+            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
+            ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
+"""
+
+
+NOTEBOOKLM__MV_STORY_FROM_LYRICS = """
+You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
+
+*** Objective:
+    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
+
+
+*** Requirements:
+    Do NOT simply follow the lyrics line-by-line.
+    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
+    Build a complete narrative structure, including:
+    Beginning (setup / introduction of characters or situation)
+    Development (rising tension, conflict, or emotional progression)
+    Climax (a key turning point, high emotional or dramatic moment)
+    Resolution (ending that reflects the song’s message)
+    Translate musical elements into visual storytelling:
+    When the music becomes intense → show danger, conflict, or urgency
+    When the music is soft or emotional → show intimacy, reflection, or memory
+    When the beat drops or chorus hits → create impactful or visually striking moments
+    Use visual scenes instead of abstract explanation:
+    Show actions, environments, and character behavior
+    Avoid explaining the lyrics directly—let the story express them
+    Ensure the story enhances the song:
+    The audience should understand the feeling and meaning of the song through the story
+    The visuals and narrative should feel synchronized with the music
+
+
+📝 OUTPUT FORMAT:
+
+{{
+    "english": {{
+        "title": "title of the story. In English.",
+        "speaking": "key points of the story. In English",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
+        "voiceover": "A short summary of the content (for youtube program description). In English.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+    "chinese": {{
+        "title": "title of the story. In Chinese.",
+        "speaking": "key points of the story. In Chinese",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
+        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+}}
+
+
+"""
+
+
+NOTEBOOKLM__MV_STORY_2LAYER = """
+*** ROLE
+    ** you are a professional storyteller, music dramaturg, and creative director. Your task is to create a cinematic dual-layer story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
+
+*** OBJECTIVE
+    ** Create a music video (MV) story concept that interprets the emotional and thematic essence of the song through a 2-layer narrative architecture:
+        * FRONT Layer (A-world): high-conflict, unstable, dramatic reality
+        * Back Layer (B-world): stable, warm, resolving emotional foundation
+
+    The two layers should interact, contrast, and ultimately reconcile.
+
+*** Core Structure (MANDATORY)
+    ** A-world (Front Section — Conflict Layer)
+        * Represents tension, chaos, inner struggle, or external conflict
+        * Tone: dark, unstable, emotionally complex
+        * Visual pacing: dynamic, sharp, unpredictable
+
+        * Music Translation:
+            * Minor key / modal tension
+            * Dissonance, unresolved phrases
+            * Push–pull rhythm, syncopation
+            * Sudden dynamic changes
+
+        * Story Requirements:
+            * Show danger, urgency, emotional fracture, or contradiction
+            * Include rising stakes and instability
+            * Characters face conflict, loss, confusion, or pressure
+            * Visuals may include fragmentation, fast cuts, contrast lighting, symbolic disruption
+
+    ** B-world (Back Section — Resolution Layer)
+        * Represents emotional grounding, hope, memory, truth, or inner peace
+        * Tone: warm, stable, optimistic, supportive
+        * Visual pacing: smooth, flowing, continuous
+
+        * Music Translation:
+            * Shift toward major / brighter tonal center
+            * Stepwise melody, consonance
+            * Stable rhythm, consistent pulse
+
+        * Story Requirements:
+            * Acts as foundation or emotional “home”
+            * Provides contrast and healing to A-world
+            * Can appear as:
+                * Memory / flashback
+                * Parallel reality
+                * Inner emotional state
+                * Future resolution
+
+*** Motif Continuity (CRITICAL REQUIREMENT)
+    ** Identify a core motif (emotional + visual + symbolic) from A-world
+    ** Reintroduce it in B-world in a “healed / transformed” form:
+        * Same visual element but brighter context
+        * Same action but peaceful instead of chaotic
+        * Same relationship but reconciled
+
+    This creates a musical analogy:
+        * same melodic cell → re-harmonized from tension → resolution
+
+*** Narrative Structure
+    ** Build a full cinematic arc, but interwoven across A/B layers (not strictly linear):
+
+    ** Beginning
+        * Introduce A-world conflict
+        * Hint at B-world (subtle, incomplete, or distant)
+
+    ** Development
+        * Escalate A-world tension
+        * Intercut or gradually reveal B-world as contrast/support
+
+    ** Climax
+        * A-world reaches peak instability (danger, breakdown, decision moment)
+        * B-world begins to bleed into or influence A-world
+
+    ** Resolution
+        * A transformation occurs:
+            * Either A-world resolves into B-world
+            * OR both layers merge into a unified emotional state
+        * Motif returns in resolved / harmonious form
+
+*** Visual Storytelling Rules
+    ** Do NOT follow lyrics line-by-line
+    ** Do NOT explain lyrics literally
+
+    ** Instead:
+        * Translate emotion → action, environment, character behavior
+        * Use cinematic imagery (lighting, movement, contrast, pacing)
+        * Sync with music energy:
+            * Intense → conflict / danger / motion
+            * Soft → intimacy / memory / stillness
+            * Drop / chorus → visual impact or turning point
+
+
+*** Output Format:
+
+{{
+    "english": {{
+        "title": "title of the story. In English.",
+        "speaking": "key points of the story. In English",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
+        "voiceover": "A short summary of the content (for youtube program description). In English.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+    "chinese": {{
+        "title": "title of the story. In Chinese.",
+        "speaking": "key points of the story. In Chinese",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
+        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+}}
+
+"""
+
+
+
+
+COUNSELING_ANALYZE = """
+Role:
+    - You are an expert editor, narrative organizer, and information architect.
+    - Your task is to read the following text and reorganize it into a clearer and more structured version.
+        - NOT to summarize the text too much.
+        - Preserve the richness, and narrative quality of the original content while reorganizing it so the ideas and stories become clearer to follow.
+
+Input:
+    - The original text content (in user-prompt) may be messy, fragmented, repetitive, or jump between ideas. Some parts may appear out of order or loosely connected.
+
+Important requirements:
+    - Do NOT summarize, compress, or remove meaningful content.
+    - Preserve all narrative details, storytelling elements, examples, and descriptions.
+    - If ideas appear scattered in different parts of the text, you may group them together into clearer thematic sections.
+    - You may reorganize the order of paragraphs to improve clarity and logical flow.
+    - You may rewrite sentences slightly to make them clearer, but the meaning and richness must remain intact.
+
+Output format:
+    - Give the rewritten content in {language}.
+        
+    - Organize the content into clear sections with headings if appropriate.
+    - Within each section, keep the narrative and descriptive style of the original text.
+    - Maintain the storytelling tone and psychological or descriptive depth present in the original material.
+
+    Your final output should feel like a cleaned, structured, and logically organized version of the same text, while preserving narrative detail.
+
+"""
+
+
+COUNSELING_CONTENT_GUIDE = """
 
 ----------------------------------------------------
 Topic & Instruction:
@@ -52,7 +392,7 @@ Core-insight ('soul'):
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE = """
+NOTEBOOKLM__COUNSELING_MESSAGE = """
 You are a psychological counselor and a master of high-empathy storytelling.
 Your goal is to transform deep psychological insights into a vivid, three-act narrative and a gentle counseling message.
 
@@ -110,91 +450,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE_2 = """
-You are a psychological counselor and reflective storyteller.
-Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
-
-At the bottom of this prompt, provided:
-* Topic & Instruction (optional)
-* The Content of Psychological case discussion or story analysis.
-* Core-insight ("soul") of the topic.
-        * Core-insight ("soul") is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-
-
---------------------------------------------------
-STEP 1 — Identify the Psychological Core
---------------------------------------------------
-
-From the provided case content (Raw Content & Analyzed Content) at the bottom:
-
-Identify and summarize internally:
-
-• the core psychological theme
-• the emotional conflict
-• the possible psychological root (fear, attachment pattern, shame, control, abandonment, etc.)
-• the typical behavioral manifestation
-• the emotional turning point (if present)
-• Extract the **one essential psychological truth** behind the situation.
-      * This truth should feel universal, simple, and emotionally resonant.
-
-
---------------------------------------------------
-STEP 2 — Create the Reflective Output
---------------------------------------------------
-
-Based on the synthesized insight, produce a gentle counseling reflection consisting of:
-
-        1) Short title (title of this scene; but the title of 1st scene is the title of whole story)
-        2) Heart message (voiceover -- to express the psychological life guidance. Reflective tone)
-        3) Micro-story (story -- psychological story & analysis, but avoid technical psychology terminology)
-        4) Concise caption speaking (speaking -- concise 1st person speaking to express the message)
-        5) Speaker (gender/age/race | mood | actions)
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: chinese,english
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-            - actions: actions of the speaker in the scene
-
-The story should indirectly illustrate the psychological truth.
-
-** WRITING GUIDELINES **
-    • Avoid technical psychology terminology.
-    • Focus on emotional truth and self-reflection.
-    • Keep language simple and human.
-    • The story should feel natural and relatable.
-    • Do NOT mention the original case or sources.
-    • Do NOT add explanations outside the required structure.
-
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-{{
-    "english": [
-        {{
-            "title": "A short title capturing the psychological theme. In English.",
-            "voiceover": "heart_message (short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "story": "psychological_micro_story. Human story that illustrates the message. In English.",
-            "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story. in English",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "title": "A short title capturing the psychological theme. In Chinese.",
-            "voiceover": "heart_message (short sentences). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In Chinese.",
-            "story": "psychological story. Human story that illustrates the message. In English.",
-            "speaking": "Concise caption speaking to express the Heart Message & Psychological Story. In Chinese.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-}}
-"""
-
-
-
-NOTEBOOKLM_PROMPT__COUNSELING_STORY = """
+NOTEBOOKLM__COUNSELING_STORY = """
 You are a psychological counselor and reflective storyteller.
 Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
 
@@ -758,470 +1014,6 @@ OUTPUT:
 
     ** Case-Story (in {language}) **
     yyyyyy
-"""
-
-
-
-MV_RAW_FROM_OBSERVATIONS= """
-You are a professional storyteller and creative director. 
-Your task is to create a cinematic story based on the original rough or fragmented story or lyrics in {language} (provided at the bottom of this prompt).
-
-*** Music Information:
-    Topic: {topic}
-    Style: {tags}
-
-*** Objective:
-    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
-
-
-*** Requirements:
-    If the provided content is lyrics, Do NOT simply follow the lyrics line-by-line.
-    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
-    Build a complete narrative structure, including:
-    Beginning (setup / introduction of characters or situation)
-    Development (rising tension, conflict, or emotional progression)
-    Climax (a key turning point, high emotional or dramatic moment)
-    Resolution (ending that reflects the song’s message)
-    Translate musical elements into visual storytelling:
-    When the music becomes intense → show danger, conflict, or urgency
-    When the music is soft or emotional → show intimacy, reflection, or memory
-    When the beat drops or chorus hits → create impactful or visually striking moments
-    Use visual scenes instead of abstract explanation:
-    Show actions, environments, and character behavior
-    Avoid explaining the lyrics directly—let the story express them
-    Ensure the story enhances the song:
-    The audience should understand the feeling and meaning of the song through the story
-    The visuals and narrative should feel synchronized with the music
-
-
-*** Original Content:
-{content}
-
-"""
-
-
-
-MV_RAW = """
-ROLE
-    ** You are a cinematic music-video storyteller and emotional narrative designer specializing in symbolic visual storytelling, poetic imagery, and character-driven emotional arcs.
-
-    ** Your task is to transform the raw story elements (provided in user-prompt) into a vivid, cinematic MV story that visually expresses emotion, conflict, and inner transformation.
-
-
-OBJECTIVES
-
-    1️⃣ IDENTIFY THE EMOTIONAL CORE
-
-        Analyze the raw story and identify internally:
-
-            ** The core emotional wound
-            ** The central relationship tension or inner conflict
-            ** The dominant emotional tone of the song
-            ** Key emotional turning points
-            ** Hidden longing or unresolved desire
-            ** The emotional arc (loss → search → confrontation → transformation)
-
-        Preserve:
-            ** The emotional truth
-            ** The overall trajectory of the story
-            ** The feeling embedded in the song
-
-        Do NOT output analysis.  
-        This step is internal understanding only.
-
-
-    2️⃣ CINEMATIC TRANSFORMATION
-
-        Transform the raw story into a **visually powerful MV narrative**.
-
-        The story must be driven by:
-            ** visual actions
-            ** symbolic imagery
-            ** atmosphere and mood
-            ** small emotional gestures
-
-        Replace literal explanation with:
-            ** symbolic locations
-            ** poetic objects
-            ** visual metaphors
-            ** emotional body language
-
-        The story should feel like a sequence of vivid moments rather than a traditional plot.
-
-
-    3️⃣ EMOTIONAL INTENSIFICATION
-
-        Deepen the emotional impact by introducing:
-
-            ** visual contrasts (light vs shadow, distance vs closeness)
-            ** repeating symbolic motifs
-            ** moments of silence or stillness
-            ** subtle character reactions
-            ** escalating emotional tension
-
-        Strengthen the sense of:
-
-            • longing  
-            • misunderstanding  
-            • emotional distance  
-            • fragile connection  
-            • inner struggle  
-            • quiet revelation
-
-
-NARRATIVE RULES (CRITICAL)
-
-    ❌ No didactic storytelling
-
-    ✅ Emotion must be shown through images
-    ✅ Characters reveal themselves through behavior
-    ✅ Symbolic objects carry emotional meaning
-    ✅ Let the audience *feel* the story rather than be told
-
-
-STORY STRUCTURE (MV STYLE)
-
-    Create a cinematic progression aligned with a song's emotional flow:
-
-        ** Opening Atmosphere
-            Establish tone, location, and emotional mood.
-
-        ** The Connection
-            Show the relationship or inner desire.
-
-        ** The Fracture
-            A subtle event reveals emotional distance or conflict.
-
-        ** The Spiral
-            The character moves through memories, places, or symbolic moments.
-
-        ** The Confrontation
-            A visual moment where the emotional truth becomes unavoidable.
-
-        ** The Transformation
-            The character changes, lets go, or reaches a quiet realization.
-
-        ** Final Image
-            A powerful symbolic image that captures the song’s emotional essence.
-
-
-STYLE
-
-    The story should feel like:
-        ** a short film
-        ** visually poetic
-        ** emotionally immersive
-        ** symbolic and cinematic
-
-    Focus on:
-        ** mood
-        ** visual detail
-        ** sensory imagery
-        ** emotional subtlety
-
-
-OUTPUT
-
-    ** Cinematic MV Story (vivid, visual, emotionally immersive)
-"""
-
-
-
-NOTEBOOKLM_PROMPT__MV_LYRICS = """
-You are a professional to make the lyrics for a {language} song, which express the content instruction & the music-reference (provided at the bottom of this prompt).
-
-*** the music topic is:
-{topic}
-
-
-*** the music styles are:
-{tags}
-
-
-*** Requirement: 
-    ** Please make the lyrics (has details to describe the content / feelings / conflicts / etc)
-    ** make it transcend/distill/elevated realm of resonance that moves and inspires.
-    ** Lyrics should be concise, and carefully crafted with strong, consistent rhyme schemes.
-
-*** Input Content:
-
-    ** Content instruction:
-{instruction}
-
-    ** lyrics-reference:
-{content}
-"""
-
-
-
-NOTEBOOKLM_PROMPT__SUNO = """
-You are a professional to make {language} song, which express the initial instruction & the music-reference at the bottom of this prompt.
-
-*** the music topic is:
-{topic}
-
-*** the music styles are:
-{tags}
-
-You will analyze the music from the specified YouTube link or music-description (at the bottom of this prompt as well), and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
-
-1) Deep music analysis (extract reusable “finalized” details)
-    Analyze the track thoroughly and output a structured breakdown of the following attributes:
-    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
-    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
-    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
-    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
-    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
-    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
-    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
-    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
-    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
-
-
-2) Extract “DNA rules” for generating a similar new song
-    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
-        signature chord cadence types
-        signature rhythm patterns
-        signature synth/texture choices
-        signature vocal production (double, harmony stack, adlibs)
-        signature transitions (risers, drum fills, key lift, half-time, etc.)
-
-
-4) Output format: always produce detailed SUNO prompts
-    ** After analysis, output 1-3 detailed SUNO prompts that are:
-        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
-        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
-
-    ** Title of the song
-    ** Lyrics of the song
-
-"""
-
-
-NOTEBOOKLM_PROMPT__SUNO_2_LAYERS = """
-You are a professional to make {language} song, which express the content instruction & the music-reference (provided at the bottom of this prompt).
-
-*** the music topic is:
-{topic}
-
-*** the music styles are:
-{tags}
-
-You will analyze the music from the specified YouTube link or music-description (at the bottom of this prompt as well),  and then produce ready-to-use SUNO prompts to generate a new song with a similar musical DNA.
-
-1) Deep music analysis (extract reusable “finalized” details)
-    Analyze the track thoroughly and output a structured breakdown of the following attributes:
-    Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
-    Mood arc & emotional narrative: what the listener feels over time; how tension resolves
-    Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
-    Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
-    Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
-    Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
-    Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
-    Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
-    Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
-
-
-2) Extract “DNA rules” for generating a similar new song
-    From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
-        signature chord cadence types
-        signature rhythm patterns
-        signature synth/texture choices
-        signature vocal production (double, harmony stack, adlibs)
-        signature transitions (risers, drum fills, key lift, half-time, etc.)
-
-3) Force the specific two-part melodic architecture:
-
-    The new song must have a clear contrast between two melodic worlds:
-        Front section (A-world): high conflict + dramatic movement
-            allow minor key / modal tension, dissonant passing tones, “push-pull” phrasing
-            big dynamic swings, dramatic rises/falls, sharper rhythmic accents
-            hook can feel edgy, restless, emotionally complex
-
-        Back section (B-world): stable + sunny + supportive melodic bed
-            shift toward major / brighter mode, stable stepwise melody, smoother rhythm
-            acts as “foundation / resolution” and supports the earlier motif
-            feels warm, optimistic, grounded, consistent
-            Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
-
-4) Output format: always produce detailed SUNO prompts
-    After analysis, output 1-3 detailed SUNO prompts that are:
-        has detailed musical and directive (arrangement, harmony, motif, arc, instruments)
-        include: genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
-
-*** Input Content:
-    ** Song resource Link:
-{link}
-
-    ** Content instruction:
-{instruction}
-
-    ** Music-reference:
-{content}
-"""
-
-
-NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS = """
-You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
-
-*** Objective:
-    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
-
-
-*** Requirements:
-    Do NOT simply follow the lyrics line-by-line.
-    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
-    Build a complete narrative structure, including:
-    Beginning (setup / introduction of characters or situation)
-    Development (rising tension, conflict, or emotional progression)
-    Climax (a key turning point, high emotional or dramatic moment)
-    Resolution (ending that reflects the song’s message)
-    Translate musical elements into visual storytelling:
-    When the music becomes intense → show danger, conflict, or urgency
-    When the music is soft or emotional → show intimacy, reflection, or memory
-    When the beat drops or chorus hits → create impactful or visually striking moments
-    Use visual scenes instead of abstract explanation:
-    Show actions, environments, and character behavior
-    Avoid explaining the lyrics directly—let the story express them
-    Ensure the story enhances the song:
-    The audience should understand the feeling and meaning of the song through the story
-    The visuals and narrative should feel synchronized with the music
-
-
-📝 OUTPUT FORMAT:
-
-{{
-    "english": {{
-        "title": "title of the story. In English.",
-        "speaking": "key points of the story. In English",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "voiceover": "A short summary of the content (for youtube program description). In English.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-    "chinese": {{
-        "title": "title of the story. In Chinese.",
-        "speaking": "key points of the story. In Chinese",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-}}
-
-
-"""
-
-
-NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS = """
-*** ROLE
-    ** you are a professional storyteller, music dramaturg, and creative director. Your task is to create a cinematic dual-layer story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
-
-*** OBJECTIVE
-    ** Create a music video (MV) story concept that interprets the emotional and thematic essence of the song through a 2-layer narrative architecture:
-        * FRONT Layer (A-world): high-conflict, unstable, dramatic reality
-        * Back Layer (B-world): stable, warm, resolving emotional foundation
-
-    The two layers should interact, contrast, and ultimately reconcile.
-
-*** Core Structure (MANDATORY)
-    ** A-world (Front Section — Conflict Layer)
-        * Represents tension, chaos, inner struggle, or external conflict
-        * Tone: dark, unstable, emotionally complex
-        * Visual pacing: dynamic, sharp, unpredictable
-
-        * Music Translation:
-            * Minor key / modal tension
-            * Dissonance, unresolved phrases
-            * Push–pull rhythm, syncopation
-            * Sudden dynamic changes
-
-        * Story Requirements:
-            * Show danger, urgency, emotional fracture, or contradiction
-            * Include rising stakes and instability
-            * Characters face conflict, loss, confusion, or pressure
-            * Visuals may include fragmentation, fast cuts, contrast lighting, symbolic disruption
-
-    ** B-world (Back Section — Resolution Layer)
-        * Represents emotional grounding, hope, memory, truth, or inner peace
-        * Tone: warm, stable, optimistic, supportive
-        * Visual pacing: smooth, flowing, continuous
-
-        * Music Translation:
-            * Shift toward major / brighter tonal center
-            * Stepwise melody, consonance
-            * Stable rhythm, consistent pulse
-
-        * Story Requirements:
-            * Acts as foundation or emotional “home”
-            * Provides contrast and healing to A-world
-            * Can appear as:
-                * Memory / flashback
-                * Parallel reality
-                * Inner emotional state
-                * Future resolution
-
-*** Motif Continuity (CRITICAL REQUIREMENT)
-    ** Identify a core motif (emotional + visual + symbolic) from A-world
-    ** Reintroduce it in B-world in a “healed / transformed” form:
-        * Same visual element but brighter context
-        * Same action but peaceful instead of chaotic
-        * Same relationship but reconciled
-
-    This creates a musical analogy:
-        * same melodic cell → re-harmonized from tension → resolution
-
-*** Narrative Structure
-    ** Build a full cinematic arc, but interwoven across A/B layers (not strictly linear):
-
-    ** Beginning
-        * Introduce A-world conflict
-        * Hint at B-world (subtle, incomplete, or distant)
-
-    ** Development
-        * Escalate A-world tension
-        * Intercut or gradually reveal B-world as contrast/support
-
-    ** Climax
-        * A-world reaches peak instability (danger, breakdown, decision moment)
-        * B-world begins to bleed into or influence A-world
-
-    ** Resolution
-        * A transformation occurs:
-            * Either A-world resolves into B-world
-            * OR both layers merge into a unified emotional state
-        * Motif returns in resolved / harmonious form
-
-*** Visual Storytelling Rules
-    ** Do NOT follow lyrics line-by-line
-    ** Do NOT explain lyrics literally
-
-    ** Instead:
-        * Translate emotion → action, environment, character behavior
-        * Use cinematic imagery (lighting, movement, contrast, pacing)
-        * Sync with music energy:
-            * Intense → conflict / danger / motion
-            * Soft → intimacy / memory / stillness
-            * Drop / chorus → visual impact or turning point
-
-
-*** Output Format:
-
-{{
-    "english": {{
-        "title": "title of the story. In English.",
-        "speaking": "key points of the story. In English",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "voiceover": "A short summary of the content (for youtube program description). In English.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-    "chinese": {{
-        "title": "title of the story. In Chinese.",
-        "speaking": "key points of the story. In Chinese",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-}}
-
 """
 
 
@@ -1863,6 +1655,49 @@ def get_channel_id(channel_id_or_key):
     return cfg.get("channel_id", channel_id_or_key) if cfg else channel_id_or_key
 
 
+def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
+    """返回频道 ``channel_prompt.analyze_prompt``（analyzed_content / 摘要重写用）。
+
+    先查当前 config key；若无 ``analyze_prompt`` 则回退到同 ``channel_id`` 主配置；
+    仍无则使用 ``COUNSELING_ANALYZE``。
+    """
+    cfg = get_channel_config(channel_id_or_key)
+    prompt = ((cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
+    if not prompt:
+        ch_id = get_channel_id(channel_id_or_key)
+        if ch_id and ch_id != channel_id_or_key:
+            main_cfg = get_channel_config(ch_id)
+            prompt = ((main_cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
+    if not prompt:
+        prompt = COUNSELING_ANALYZE.strip()
+    if language and "{" in prompt:
+        import config as _config
+
+        lang_label = _config.LANGUAGES.get(language, language)
+        try:
+            prompt = prompt.format(language=lang_label)
+        except KeyError:
+            pass
+    return prompt
+
+
+def get_channel_content_guide(channel_id_or_key) -> str:
+    """返回频道 ``channel_prompt.content_guide``（NotebookLM 模板尾部共用块）。
+
+    先查当前 config key；若无则回退同 ``channel_id`` 主配置；仍无则 ``NOTEBOOKLM_CONTENT_GUIDE``。
+    """
+    cfg = get_channel_config(channel_id_or_key)
+    guide = ((cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
+    if not guide:
+        ch_id = get_channel_id(channel_id_or_key)
+        if ch_id and ch_id != channel_id_or_key:
+            main_cfg = get_channel_config(ch_id)
+            guide = ((main_cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
+    if not guide:
+        guide = COUNSELING_CONTENT_GUIDE.strip()
+    return guide
+
+
 def get_channel_templates(channel):
     """
     获取频道的模板。优先使用 channel_template（单一列表），兼容 channel_templates（多个模板）。
@@ -1924,14 +1759,16 @@ CHANNEL_CONFIG = {
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
-            ("Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
+            ("Story", NOTEBOOKLM__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
             ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION),
             ("Story with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
         ],
         "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "analyze_prompt": COUNSELING_ANALYZE,
+            "content_guide": COUNSELING_CONTENT_GUIDE
         },
         "channel_template": [
             {
@@ -1964,15 +1801,17 @@ CHANNEL_CONFIG = {
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Story from Lyrics", NOTEBOOKLM_PROMPT__MV_STORY_FROM_LYRICS),
-            ("Story 2 Layers", NOTEBOOKLM_PROMPT__MV_STORY_2_LAYERS),
-            ("SUNO Prompt", NOTEBOOKLM_PROMPT__SUNO),
-            ("SUNO 2 Layers", NOTEBOOKLM_PROMPT__SUNO_2_LAYERS),
-            ("Lyrics", NOTEBOOKLM_PROMPT__MV_LYRICS)
+            ("SUNO Prompt", NOTEBOOKLM__SUNO),
+            ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER),
+            ("Story from Lyrics", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
+            ("Story 2 Layers", NOTEBOOKLM__MV_STORY_2LAYER),
+            ("Lyrics", NOTEBOOKLM__MV_LYRICS)
         ],
 
         "channel_prompt": {
-            "prompt_reference_filter": MV_REFERENCE_FILTER
+            "prompt_reference_filter": MV_REFERENCE_FILTER,
+            "analyze_prompt": MV_ANALYZE,
+            "content_guide": MV_CONTENT_GUIDE
         },
 
         "channel_template": [
@@ -2012,8 +1851,8 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
         "notebooklm_prompt_choices": [
-            ("Message", NOTEBOOKLM_PROMPT__COUNSELING_MESSAGE),
-            ("Full Story", NOTEBOOKLM_PROMPT__COUNSELING_STORY),
+            ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
+            ("Full Story", NOTEBOOKLM__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
             ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
         ],

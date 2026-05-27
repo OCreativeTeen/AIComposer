@@ -63,102 +63,90 @@ def scene_story_language_key_for_ui(ui_language_key: str) -> str:
     return LANGUAGES.get(k, "chinese")
 
 
-def analyzed_content_branch_to_string(val) -> str:
-    """``analyzed_content[english|chinese]`` 存 **字符串**；旧数据若为 ``{story: ...}`` 等 dict 则提取为文本。"""
+def analyzed_content_text(val) -> str:
+    """``analyzed_content`` 为纯文本字符串；非 str 时仅作展示用序列化。"""
     if val is None:
         return ""
     if isinstance(val, str):
-        return val
+        return val.strip()
+    if isinstance(val, (dict, list)):
+        return json.dumps(val, ensure_ascii=False, indent=2).strip()
+    return str(val).strip()
+
+
+def normalize_analyzed_content_text(raw_input: str) -> str:
+    """RAW 编辑器：保存为去首尾空白的纯文本。"""
+    return (raw_input or "").strip()
+
+
+def _legacy_analyzed_branch_text(val) -> str:
+    """旧 ``analyzed_content[english|chinese]`` 分支 → 纯文本。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
     if isinstance(val, dict):
         for key in ("story", "summary", "content"):
-            if key not in val:
-                continue
-            inner = val[key]
-            if isinstance(inner, str):
-                return inner
-            if inner is not None:
-                return json.dumps(inner, ensure_ascii=False)
-        return json.dumps(val, ensure_ascii=False, indent=2)
+            inner = val.get(key)
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+        return json.dumps(val, ensure_ascii=False, indent=2).strip()
     if isinstance(val, (list, int, float, bool)):
-        return json.dumps(val, ensure_ascii=False)
-    return str(val)
+        return json.dumps(val, ensure_ascii=False).strip()
+    return str(val).strip()
 
 
-def merge_analyzed_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
-    """将内容合并进 ``{english: str, chinese: str}``，保留另一语种。
-
-    ``rewritten`` 若带 english/chinese 键则按分支整体替换为字符串；否则只更新当前 UI 语种分支。
-    """
-    existing = existing if isinstance(existing, dict) else {}
-    rewritten = rewritten if isinstance(rewritten, dict) else {}
-    out: dict = {"english": "", "chinese": ""}
-    if _BILINGUAL_RAW_KEYS.intersection(existing.keys()):
-        for k in _BILINGUAL_RAW_KEYS:
-            out[k] = analyzed_content_branch_to_string(existing.get(k))
-    else:
-        branch0 = bilingual_branch_for_ui_language(ui_language_key)
-        out[branch0] = analyzed_content_branch_to_string(existing)
-
-    if _BILINGUAL_RAW_KEYS.intersection(rewritten.keys()):
-        for k in _BILINGUAL_RAW_KEYS:
-            if k not in rewritten:
-                continue
-            out[k] = analyzed_content_branch_to_string(rewritten[k])
-        return out
-
-    branch = bilingual_branch_for_ui_language(ui_language_key)
-    out[branch] = analyzed_content_branch_to_string(rewritten)
-    return out
-
-
-def _analyzed_branch_string_from_parsed_dict(parsed: dict, branch_key: str) -> str:
-    """从解析后的对象取 english/chinese 分支字符串（键名大小写不敏感）。"""
-    if not isinstance(parsed, dict):
-        return ""
-    want = branch_key.lower()
-    for pk, pv in parsed.items():
-        if isinstance(pk, str) and pk.lower() == want:
-            return analyzed_content_branch_to_string(pv)
-    return ""
-
-
-def normalize_analyzed_content_from_editor(raw_input: str, ui_language_key: str) -> dict:
-    """将 RAW 编辑器文本规范为 ``{english: str, chinese: str}``（分支值为字符串，非嵌套 JSON）。
-
-    - 合法双语 JSON（含 english / chinese）：各分支转为字符串；缺失分支为 ``""``。
-    - 合法 JSON 但无顶层 english/chinese：整段序列化后写入当前项目语种分支。
-    - 非 JSON：全文写入当前语种分支字符串，另一分支为 ``""``。
-    - 若分支值为旧格式 ``{story: ...}``，提取 ``story``（或 summary/content）为字符串。
-    """
-    raw_input = (raw_input or "").strip()
-    empty_pair = {"english": "", "chinese": ""}
-    if not raw_input:
-        return dict(empty_pair)
-
-    branch = bilingual_branch_for_ui_language(ui_language_key)
-
-    try:
-        parsed = json.loads(safe_clipboard_json_copy(raw_input))
-    except json.JSONDecodeError:
-        out = dict(empty_pair)
-        out[branch] = raw_input
-        return out
-
-    if not isinstance(parsed, dict):
-        out = dict(empty_pair)
-        out[branch] = analyzed_content_branch_to_string(parsed)
-        return out
-
-    keys_lower = {str(k).lower() for k in parsed.keys() if isinstance(k, str)}
-    if keys_lower & _BILINGUAL_RAW_KEYS:
-        return {
-            "english": _analyzed_branch_string_from_parsed_dict(parsed, "english"),
-            "chinese": _analyzed_branch_string_from_parsed_dict(parsed, "chinese"),
+def migrate_analyzed_content_value_to_string(val):
+    """旧双语 JSON / 嵌套 dict → 纯文本；优先 ``chinese``，其次 ``english``。已是 str 则 strip 后返回。"""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        if s.startswith("{") or s.startswith("["):
+            try:
+                parsed = json.loads(safe_clipboard_json_copy(s))
+            except (json.JSONDecodeError, TypeError):
+                return s
+            return migrate_analyzed_content_value_to_string(parsed) or s
+        return s
+    if isinstance(val, dict):
+        keys_lower = {
+            str(k).lower(): k for k in val.keys() if isinstance(k, str)
         }
+        if keys_lower.keys() & _BILINGUAL_RAW_KEYS:
+            for branch in ("chinese", "english"):
+                rk = keys_lower.get(branch)
+                if rk is None:
+                    continue
+                text = _legacy_analyzed_branch_text(val.get(rk))
+                if text:
+                    return text
+            return None
+        text = _legacy_analyzed_branch_text(val)
+        return text or None
+    return _legacy_analyzed_branch_text(val) or None
 
-    out = dict(empty_pair)
-    out[branch] = analyzed_content_branch_to_string(parsed)
-    return out
+
+def migrate_analyzed_content_field(item: dict) -> bool:
+    """频道列表行：``analyzed_content`` 若为旧 JSON 结构则就地改为字符串。返回是否修改。"""
+    if not isinstance(item, dict) or "analyzed_content" not in item:
+        return False
+    ac = item.get("analyzed_content")
+    if isinstance(ac, str):
+        s = ac.strip()
+        if not s or not (s.startswith("{") or s.startswith("[")):
+            return False
+    elif not isinstance(ac, (dict, list)):
+        return False
+    new_text = migrate_analyzed_content_value_to_string(ac)
+    if new_text is None:
+        return False
+    if isinstance(ac, str) and ac.strip() == new_text:
+        return False
+    item["analyzed_content"] = new_text
+    return True
 
 
 def merge_scene_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
@@ -400,21 +388,59 @@ NEGATIVE_PROMPT_OPTIONS = [
 
 
 
+def _is_transcript_segment_list(data) -> bool:
+    """是否为 Whisper/字幕 JSON 片段列表（含 ``caption`` 字段）。"""
+    if not isinstance(data, list) or not data:
+        return False
+    for item in data[:5]:
+        if not isinstance(item, dict):
+            return False
+        if not (item.get("caption") or "").strip():
+            return False
+    return True
+
+
+def segments_captions_to_plain_text(segments) -> str:
+    """将 JSON 转录片段合并为纯文本，句间用 ``. `` 连接。"""
+    parts = []
+    for seg in segments or []:
+        if not isinstance(seg, dict):
+            continue
+        cap = (seg.get("caption") or "").strip()
+        if cap:
+            parts.append(cap)
+    return ". ".join(parts).strip()
+
+
+def _parse_transcript_file_raw(raw: str) -> str:
+    """从文件原始内容解析为纯文本（JSON 片段 / SRT / 纯文本）。"""
+    raw = raw or ""
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+            if _is_transcript_segment_list(data):
+                return segments_captions_to_plain_text(data)
+            if isinstance(data, dict) and (data.get("caption") or "").strip():
+                return str(data["caption"]).strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+    srt_text = extract_text_from_srt_content(raw)
+    if srt_text:
+        return srt_text.strip()
+    return stripped
+
+
 def fetch_text_from_json(script_path, output_path=None):
     try:
         with open(script_path, "r", encoding="utf-8") as f:
-            segments = json.load(f)
-        text_content = "\n".join([segment["caption"] for segment in segments])
-    except Exception as e:
-        try:
-            with open(script_path, "r", encoding="utf-8") as f:
-                text_content = f.read()
-        except Exception as e:
-            return ""
+            raw = f.read()
+    except OSError:
+        return ""
 
-    c = extract_text_from_srt_content(text_content)
-    if c:
-        text_content = c
+    text_content = _parse_transcript_file_raw(raw)
 
     # 如果提供了输出路径，保存到文件
     if output_path:
@@ -424,8 +450,104 @@ def fetch_text_from_json(script_path, output_path=None):
             print(f"✅ 文本已保存: {output_path}")
         except Exception as e:
             print(f"⚠️ 保存文本文件失败: {str(e)}")
-    
+
     return text_content
+
+
+def read_transcript_text_from_transcribed_file(transcribed_file: str) -> str:
+    """从 ``transcribed_file`` 读取纯文本。
+
+    支持：``.srt.json`` / ``.json``（带时间戳片段）、``.srt``、``.txt`` 及任意纯文本文件。
+    JSON 片段会合并为一句一段、以 ``. `` 连接的文稿。
+    """
+    path = (transcribed_file or "").strip()
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        return ""
+    return _parse_transcript_file_raw(raw)
+
+
+def load_transcript_segments_from_transcribed_file(transcribed_file: str) -> list | None:
+    """若 ``transcribed_file`` 为带时间戳的 JSON 片段列表则返回；否则 ``None``。
+
+    纯文本 / SRT 不在此合成单段 JSON——当前代码库无依赖时间轴的读取方。
+    """
+    path = (transcribed_file or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    stripped = (raw or "").strip()
+    if not stripped.startswith("["):
+        return None
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not _is_transcript_segment_list(data):
+        return None
+    return data
+
+
+def read_transcript_text_from_video_detail(video_detail: dict) -> str:
+    """频道列表 ``video_detail``：仅从 ``transcribed_file`` 读原文（不用冗余 ``content`` 字段）。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    return read_transcript_text_from_transcribed_file(
+        (video_detail.get("transcribed_file") or "").strip()
+    )
+
+
+def transcribed_file_is_usable(transcribed_file: str) -> bool:
+    """``transcribed_file`` 存在且能读出非空文本。"""
+    return bool(read_transcript_text_from_transcribed_file(transcribed_file))
+
+
+def migrate_content_to_transcribed_file(item: dict, *, media_dir: str = "") -> None:
+    """``content`` 退场前：若 ``transcribed_file`` 无效且有条目内 ``content``，则写入文件再 ``pop content``。"""
+    if not isinstance(item, dict):
+        return
+    tfp = (item.get("transcribed_file") or "").strip()
+    if transcribed_file_is_usable(tfp):
+        item.pop("content", None)
+        return
+    legacy = (item.get("content") or "").strip()
+    if not legacy:
+        item.pop("content", None)
+        return
+    out_path = tfp
+    if not out_path:
+        md = (media_dir or "").strip()
+        if not md:
+            return
+        os.makedirs(md, exist_ok=True)
+        stem = (item.get("id") or item.get("upload_date") or "legacy").strip()
+        stem = re.sub(r'[<>:"/\\|?*]', "_", stem)[:80] or "legacy"
+        out_path = os.path.join(md, f"{stem}_legacy.txt")
+        n = 0
+        while os.path.isfile(out_path) and not transcribed_file_is_usable(out_path):
+            n += 1
+            out_path = os.path.join(md, f"{stem}_legacy_{n}.txt")
+            if n > 99:
+                return
+    else:
+        parent = os.path.dirname(os.path.abspath(out_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    try:
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(legacy)
+        item["transcribed_file"] = os.path.abspath(out_path)
+        item.pop("content", None)
+    except OSError:
+        pass
 
 
 
@@ -688,13 +810,146 @@ def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
-# 成片/拖放加水印输出目录（Youtube 摘要窗等处写入）
-INPUT_MEDIA_GEN_VIDEO_PATH = f"{INPUT_MEDIA_PATH}/gen_video"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
+# 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗、审阅发布等）
+INPUT_MEDIA_GEN_VIDEO_PATH = f"{PUBLISH_PATH}/gen_video"
 TEMP_PATH_BASE = PROJECT_DATA_PATH  # temp 目录在各个项目下
+
+
+def publish_final_video_path(pid: str) -> str:
+    """成片路径：``{PUBLISH_PATH}/{pid}_final.mp4``（与 finalize / 发布 / 播放一致）。"""
+    pid = (pid or "").strip()
+    return os.path.join(PUBLISH_PATH, f"{pid}_final.mp4")
+
+
+YT_TEXT_DOWNLOAD_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_text_download.json")
+
+
+def _builtin_yt_text_download_config() -> dict:
+    return {
+        "default_channel": "counseling",
+        "channels": {
+            "counseling": {
+                "label": "counseling",
+                "list_json_basename": "counseling.json",
+            },
+            "music_story": {
+                "label": "心泉旋律",
+                "list_json_basename": "music_story.json",
+            },
+        },
+    }
+
+
+def _read_yt_text_download_json_file(path: str) -> dict | None:
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _merge_yt_text_download_configs(*configs: dict) -> dict:
+    """后者覆盖前者；合并各 ``channels`` 条目（同 id 时字段并集，后者优先）。"""
+    out = _builtin_yt_text_download_config()
+    for cfg in configs:
+        if not isinstance(cfg, dict):
+            continue
+        dc = (cfg.get("default_channel") or "").strip()
+        if dc:
+            out["default_channel"] = dc
+        merged_ch = dict(out.get("channels") or {})
+        for cid, ent in (cfg.get("channels") or {}).items():
+            cid = str(cid).strip()
+            if not cid:
+                continue
+            if not isinstance(ent, dict):
+                ent = {"label": cid, "list_json_basename": f"{cid}.json"}
+            prev = merged_ch.get(cid) if isinstance(merged_ch.get(cid), dict) else {}
+            merged_ch[cid] = {**prev, **ent}
+        out["channels"] = merged_ch
+    ch = out.get("channels") or {}
+    if not ch:
+        out = _builtin_yt_text_download_config()
+    elif out.get("default_channel") not in ch:
+        out["default_channel"] = next(iter(ch.keys()))
+    return out
+
+
+def load_yt_text_download_config() -> dict:
+    """合并：内置默认 → 仓库 ``YT_text_download.json`` → ``program/YT_text_download.json``。
+
+    若 program 文件缺少仓库/内置中的频道项，会自动补全并写回 program 路径。
+    """
+    repo_tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "YT_text_download.json")
+    repo_cfg = _read_yt_text_download_json_file(repo_tpl)
+    program_cfg = _read_yt_text_download_json_file(YT_TEXT_DOWNLOAD_JSON)
+    merged = _merge_yt_text_download_configs(_builtin_yt_text_download_config(), repo_cfg or {}, program_cfg or {})
+
+    if program_cfg is not None:
+        before_keys = set((program_cfg.get("channels") or {}).keys())
+        after_keys = set((merged.get("channels") or {}).keys())
+        if after_keys - before_keys or merged != program_cfg:
+            try:
+                os.makedirs(os.path.dirname(YT_TEXT_DOWNLOAD_JSON), exist_ok=True)
+                with open(YT_TEXT_DOWNLOAD_JSON, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+            except OSError:
+                pass
+    return merged
+
+
+def load_yt_text_download_channel_options() -> dict:
+    """欢迎屏频道下拉：``display_options``、``display_to_id``、``default_channel``、``default_display``。"""
+    cfg = load_yt_text_download_config()
+    channels = cfg.get("channels") or {}
+    if not isinstance(channels, dict):
+        channels = {}
+    channel_ids = [str(k).strip() for k in channels.keys() if str(k).strip()]
+    if not channel_ids:
+        channel_ids = ["counseling"]
+        channels = {"counseling": {"label": "counseling", "list_json_basename": "counseling.json"}}
+    default_id = (cfg.get("default_channel") or "").strip()
+    if default_id not in channel_ids:
+        default_id = channel_ids[0]
+    display_options: list[str] = []
+    display_to_id: dict[str, str] = {}
+    for cid in channel_ids:
+        ent = channels.get(cid) if isinstance(channels.get(cid), dict) else {}
+        label = (ent.get("label") or cid).strip()
+        disp = f"{label} ({cid})"
+        display_options.append(disp)
+        display_to_id[disp] = cid
+    default_display = f"{(channels.get(default_id) or {}).get('label', default_id) if isinstance(channels.get(default_id), dict) else default_id} ({default_id})"
+    if default_display not in display_to_id:
+        default_display = display_options[0]
+    return {
+        "channel_ids": channel_ids,
+        "default_channel": default_id,
+        "display_options": display_options,
+        "display_to_id": display_to_id,
+        "default_display": default_display,
+        "channels": channels,
+    }
+
+
+def yt_text_download_list_json_path(channel_id: str) -> str:
+    """``program/<channel_id>/list/<list_json_basename>``（见 ``YT_text_download.json``）。"""
+    channel_id = (channel_id or "").strip() or "counseling"
+    cfg = load_yt_text_download_config()
+    ent = (cfg.get("channels") or {}).get(channel_id)
+    if not isinstance(ent, dict):
+        ent = {}
+    basename = (ent.get("list_json_basename") or f"{channel_id}.json").strip()
+    ch_path = get_channel_path(channel_id)
+    return os.path.join(ensure_channel_list_json_dir(ch_path), basename)
+
 
 def create_project_path(pid: str):
     os.makedirs(PUBLISH_PATH, exist_ok=True)

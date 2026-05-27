@@ -65,16 +65,20 @@ import tkinter.simpledialog as simpledialog
 from tkinter import filedialog
 
 
-def _format_nb_prompt_template(template: str, **kwargs) -> str:
-    """对主模板与 NOTEBOOKLM_CONTENT_GUIDE 中出现的 {name} 占位符填入 kwargs，避免 str.format 缺键报错。"""
+def _format_nb_prompt_template(template: str, *, content_guide: str = "", **kwargs) -> str:
+    """对主模板与频道 ``content_guide`` 中的 ``{name}`` 占位符填入 kwargs。"""
+    guide = (content_guide or config_channel.COUNSELING_CONTENT_GUIDE or "").strip()
     names = set()
-    for src in (template, config_channel.NOTEBOOKLM_CONTENT_GUIDE):
+    for src in (template, guide):
         for _, field_name, _, _ in string.Formatter().parse(src):
             if not field_name:
                 continue
             names.add(field_name.split("!")[0].split(":")[0].strip())
     safe = {k: kwargs.get(k, "") for k in names}
-    return template.format(**safe) + "\n\n" + config_channel.NOTEBOOKLM_CONTENT_GUIDE.format(**safe)
+    body = template.format(**safe)
+    if guide:
+        body += "\n\n" + guide.format(**safe)
+    return body
 
 
 def _sanitize_list_row_id_stem(raw_id: str) -> str:
@@ -372,19 +376,16 @@ def _start_summary_cover_webp_save(
         wm_webp = ""
         webp_tmp = ""
         try:
-            analyzed = mgr.llm_api.analyze_image_json(
+            analyzed = mgr.llm_api.analyze_image(
                 config_prompt.IMAGE_READ_SYSTEM_PROMPT,
                 image_path,
-                expect_list=False,
             )
-            if analyzed and isinstance(analyzed, dict):
-                vd["analyzed_content"] = config.merge_analyzed_content_bilingual(
-                    vd.get("analyzed_content"), analyzed, lang
-                )
+            if analyzed and str(analyzed).strip():
+                vd["analyzed_content"] = str(analyzed).strip()
                 _persist_channel_videos(mgr)
                 analyze_ok = True
             else:
-                err_msg = "图片 LLM 分析失败或未返回有效 JSON。"
+                err_msg = "图片 LLM 分析失败或未返回有效文本。"
 
             os.makedirs(gen_dir, exist_ok=True)
             ff = FfmpegProcessor(pid, lang)
@@ -1140,7 +1141,25 @@ def _sync_youtube_row_title_after_scene_edit(video_detail: dict, scene_parsed, u
     video_detail[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(merged)
 
 
-def _normalize_channel_list_item_for_storage(item: dict) -> None:
+def _infer_channel_list_item_media_dir(item: dict, channel_path: str = "") -> str:
+    """推断频道列表条目字幕/媒体目录 ``program/<ch>/Download/media``。"""
+    if isinstance(item, dict):
+        for key in ("transcribed_file", "audio_path", "video_path"):
+            p = (item.get(key) or "").strip()
+            if not p:
+                continue
+            d = os.path.dirname(os.path.abspath(p))
+            if d and os.path.isdir(d):
+                return d
+            if d:
+                return d
+    ch = (channel_path or "").strip()
+    if ch:
+        return os.path.join(ch, "Download", "media")
+    return ""
+
+
+def _normalize_channel_list_item_for_storage(item: dict, channel_path: str = "") -> None:
     """无项目行：外层统一 ``title``，顶层 ``video_title`` 仅作旧数据合并进 ``title``。
     有 ``project_profile`` 的行：外层 ``title`` 表示原视频标题，不因顶层 ``video_title`` 改写 ``title``；收窄 ``project_profile``。"""
     if not isinstance(item, dict):
@@ -1156,18 +1175,44 @@ def _normalize_channel_list_item_for_storage(item: dict) -> None:
     item.pop("project_id", None)
     item.pop("project_pid", None)
     item.pop("pid", None)
+    item.pop("youtube_source_id", None)
+    item.pop("youtube_watch_url", None)
+    item.pop("published_watch_url", None)
+    config.migrate_content_to_transcribed_file(
+        item,
+        media_dir=_infer_channel_list_item_media_dir(item, channel_path),
+    )
     prof = item.get(project_manager.PROJECT_PROFILE_KEY)
     if isinstance(prof, dict):
         item[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(copy.deepcopy(prof))
     project_manager.sync_list_item_id_and_profile_pid(item)
 
 
-def _normalize_channel_videos_for_storage(items) -> None:
-    """就地规范化列表条目，便于写入 JSON。"""
+def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> bool:
+    """就地规范化列表条目；若 ``analyzed_content`` 自旧 JSON 迁移为字符串则返回 True。"""
     if not items:
-        return
+        return False
+    migrated = False
     for it in items:
-        _normalize_channel_list_item_for_storage(it)
+        if isinstance(it, dict) and config.migrate_analyzed_content_field(it):
+            migrated = True
+        _normalize_channel_list_item_for_storage(it, channel_path)
+    return migrated
+
+
+def _persist_channel_list_if_analyzed_migrated(downloader, migrated: bool) -> None:
+    if not migrated:
+        return
+    path = (getattr(downloader, "channel_list_json", None) or "").strip()
+    videos = getattr(downloader, "channel_videos", None)
+    if not path or not isinstance(videos, list):
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(videos, f, ensure_ascii=False, indent=2)
+        print(f"✅ analyzed_content 已迁移为纯文本并保存: {path}")
+    except OSError as e:
+        print(f"⚠️ 保存频道列表失败（analyzed_content 迁移）: {e}")
 
 
 def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> None:
@@ -1217,7 +1262,7 @@ def _channel_list_row_dedupe_key(video: dict) -> str:
 
 
 def _channel_list_row_complete_score(video: dict) -> int:
-    c = (video.get("content") or "").strip()
+    c = config.read_transcript_text_from_video_detail(video)
     cat = (video.get("topic_category") or "").strip()
     sub = (video.get("topic_subtype") or "").strip()
     content_len = len(c)
@@ -1350,6 +1395,9 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
         "youtube_channel_id",
         "youtube_channel_name",
         "youtube_channel_thumbnail",
+        "youtube_source_id",
+        "youtube_watch_url",
+        "published_watch_url",
     ):
         clone.pop(k, None)
     clone["status"] = ""
@@ -1439,13 +1487,19 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
         messagebox.showerror("无法启动魔法工作流", str(e), parent=parent)
         return False
 def _video_youtube_id(v):
-    """从频道视频项解析 YouTube 视频 id（11 位）。"""
+    """从频道视频项解析 YouTube 视频 id（11 位）。
+
+    有 ``project_profile`` 的行：外层 ``id`` 为项目 pid，YouTube id 仅从 ``url`` 等链接字段解析。
+    无项目行：``id`` 或 ``url`` 均可。
+    """
     if not isinstance(v, dict):
         return ""
-    vid = (v.get("id") or "").strip()
-    if vid:
-        return vid
-    for key in ("youtube_watch_url", "published_watch_url"):
+    has_proj = project_manager.list_json_row_has_project_profile(v)
+    if not has_proj:
+        vid = (v.get("id") or "").strip()
+        if vid and len(vid) == 11:
+            return vid
+    for key in ("url", "cloned_from_url"):
         u_pub = (v.get(key) or "").strip()
         if u_pub:
             m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", u_pub)
@@ -1454,13 +1508,11 @@ def _video_youtube_id(v):
             m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", u_pub)
             if m:
                 return m.group(1)
-    url = (v.get("url") or "").strip()
-    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
+    if has_proj:
+        return ""
+    vid = (v.get("id") or "").strip()
+    if vid and len(vid) == 11:
+        return vid
     return ""
 
 
@@ -2278,7 +2330,8 @@ class MediaDownloader:
             print(f"❌ 音频文件不存在")
             return None
 
-        scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
+        cfg = project_manager.PROJECT_CONFIG or {}
+        scene_min_length = cfg.get("scene_min_length", 9)
         script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, scene_min_length, int(scene_min_length*1.5))
         if script_json:
             write_json(src_path, script_json)  
@@ -2780,7 +2833,8 @@ class MediaDownloader:
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
-                    _normalize_channel_videos_for_storage(self.channel_videos)
+                    migrated_ac = _normalize_channel_videos_for_storage(self.channel_videos)
+                    _persist_channel_list_if_analyzed_migrated(self, migrated_ac)
                     self.latest_date = max(
                                             (
                                                 datetime.strptime(v["upload_date"], "%Y%m%d")
@@ -3253,6 +3307,20 @@ class MediaGUIManager:
         # 初始化主主题分类变量
         self.main_topic_category = None
 
+    def _channel_config_key(self) -> str:
+        """当前 GUI 对应的 ``CHANNEL_CONFIG`` 键或 ``channel_id``。"""
+        ch = (self.channel or "").strip()
+        if ch:
+            return ch
+        return os.path.basename(self.channel_path or "")
+
+    def _channel_analyze_prompt(self) -> str:
+        """当前频道 analyzed_content 生成用的 system prompt。"""
+        return config_channel.get_channel_analyze_prompt(
+            self._channel_config_key(),
+            language=self.language,
+        )
+
     def _do_create_new_channel_from_url(self):
         """创建新频道：弹窗输入频道/视频链接，解析出频道名，创建列表（可选获取视频）"""
         url = simpledialog.askstring("创建新频道", "输入 YouTube 频道链接或视频链接：", parent=self.root)
@@ -3371,7 +3439,6 @@ class MediaGUIManager:
 
         _normalize_channel_videos_for_storage(channel_videos)
 
-        # for each video, if it has analyzed_content, and analyzed_content is not json, convert it to json like : {"english": {"summary": "summary"}, "chinese": {"summary": "summary"}}
         for video in channel_videos:
             scene_content = video.get('scene_content')
             if scene_content and not isinstance(scene_content, dict):
@@ -3413,20 +3480,8 @@ class MediaGUIManager:
 
 
     def fetch_text_content(self, video_detail):
-        text_content = video_detail.get('content', '')
-        if text_content and len(text_content) > 100:
-            return config.extract_text_from_srt_content(text_content)
-            
-        srt_file = video_detail.get('transcribed_file', '')
-        if not srt_file:
-            return None
-
-        if srt_file.endswith('.json'):
-            return config.fetch_text_from_json(srt_file)
-
-        with open(srt_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return config.extract_text_from_srt_content(content)
+        text = config.read_transcript_text_from_video_detail(video_detail)
+        return text if text else None
 
 
     def check_video_status(self,video_detail):
@@ -3469,10 +3524,14 @@ class MediaGUIManager:
             status_parts.append("⬜ 未下载")
         
         # 检查是否已转录 - 检查 .srt 文件（转录生成的字幕文件）
-        has_transcript = video_detail.get('content', '') and len(video_detail.get('content', '')) > 100
+        has_transcript = bool((video_detail.get("transcribed_file") or "").strip())
         if not has_transcript:
             for filename in os.listdir(f"{self.youtube_dir}/media"):
-                if filename_prefix in filename and (filename.endswith('.srt') or filename.endswith('.json')):
+                if filename_prefix in filename and (
+                    filename.endswith(".srt")
+                    or filename.endswith(".json")
+                    or filename.endswith(".txt")
+                ):
                     video_detail['transcribed_file'] = os.path.join(f"{self.youtube_dir}/media", filename)
                     has_transcript = True
                     break
@@ -3510,29 +3569,163 @@ class MediaGUIManager:
 
 
     def update_text_content(self, video_detail, transcribed_file=None):
+        """确保 ``transcribed_file`` 已绑定；``content`` 仅在迁移到文件后移除。"""
         if not video_detail:
             return None
-
-        text_content = video_detail.get('content', '')
-        if not text_content or not text_content.strip():
-            if transcribed_file:
-                video_detail['transcribed_file'] = transcribed_file
-            else:    
-                transcribed_file = video_detail.get('transcribed_file', '')
-                if not transcribed_file:
-                    return video_detail
-            text_content = self.fetch_text_content(video_detail)
-            video_detail["content"] = text_content
-
+        if transcribed_file:
+            video_detail["transcribed_file"] = transcribed_file
+        config.migrate_content_to_transcribed_file(
+            video_detail,
+            media_dir=_infer_channel_list_item_media_dir(
+                video_detail, getattr(self, "channel_path", "") or ""
+            ),
+        )
         return video_detail
+
+    def _channel_content_guide(self) -> str:
+        return config_channel.get_channel_content_guide(self._channel_config_key())
+
+    def _format_analyze_prompt(self, video_detail=None) -> str:
+        raw = self._channel_analyze_prompt()
+        url = ""
+        if isinstance(video_detail, dict):
+            url = (video_detail.get("url") or "").strip()
+        lang_label = config.LANGUAGES.get(self.language, self.language)
+        try:
+            return raw.format(url=url, language=lang_label)
+        except KeyError:
+            return raw
+
+    def generate_analyzed_content_for_video(
+        self, video_detail, *, force_rewrite: bool = False
+    ) -> bool:
+        """用 LLM 从转录/字幕文本生成 ``analyzed_content``（纯文本，当前频道语言）。"""
+        if not isinstance(video_detail, dict):
+            return False
+        if not force_rewrite and config.analyzed_content_text(
+            video_detail.get("analyzed_content")
+        ):
+            return True
+        text_content = self.fetch_text_content(video_detail)
+        if not text_content or len(text_content) < 100:
+            return False
+        url = video_detail.get('url', '').strip()
+        prompt = self._format_analyze_prompt(video_detail)
+        rewritten = self.llm_api_local.generate_text(prompt.format(url=url, language=self.language), text_content)
+        rewritten = (rewritten or "").strip()
+        if not rewritten:
+            return False
+        video_detail["analyzed_content"] = rewritten
+        return True
+
+    def _analyzed_content_display_text(self, video_detail: dict) -> str:
+        return config.analyzed_content_text(video_detail.get("analyzed_content"))
+
+    def show_analyzed_content_popup(self, video_detail: dict, *, parent=None) -> None:
+        """弹窗展示 ``analyzed_content``（Download YT 文字 / 摘要等）。"""
+        parent = parent or self.root
+        body = self._analyzed_content_display_text(video_detail)
+        if not body.strip():
+            ac_raw = video_detail.get("analyzed_content")
+            if ac_raw is not None:
+                body = json.dumps(ac_raw, ensure_ascii=False, indent=2)
+        if not body.strip():
+            messagebox.showwarning(
+                "分析结果",
+                "未生成 analyzed_content 或内容为空。",
+                parent=parent,
+            )
+            return
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
+        top = tk.Toplevel(parent)
+        top.title("分析结果")
+        top.minsize(560, 400)
+
+        hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
+        hdr.pack(fill=tk.X)
+        ttk.Label(hdr, text="转录与分析已完成", font=("Arial", 10)).pack(anchor=tk.W)
+        ttk.Label(hdr, text=title, wraplength=860, font=("Arial", 11, "bold")).pack(
+            anchor=tk.W, pady=(4, 8)
+        )
+
+        tx = scrolledtext.ScrolledText(
+            top, wrap=tk.WORD, width=100, height=30, font=("Consolas", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        tx.insert("1.0", body)
+        tx.configure(state=tk.DISABLED)
+
+        bf = ttk.Frame(top, padding=(12, 0, 12, 12))
+        bf.pack(fill=tk.X)
+
+        def _copy():
+            try:
+                top.clipboard_clear()
+                top.clipboard_append(body)
+                top.update()
+            except tk.TclError:
+                pass
+
+        ttk.Button(bf, text="复制全文", command=_copy).pack(side=tk.LEFT)
+        ttk.Button(bf, text="关闭", command=top.destroy).pack(side=tk.RIGHT)
+
+        w, h = 900, 640
+        top.update_idletasks()
+        sw = top.winfo_screenwidth()
+        sh = top.winfo_screenheight()
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        top.geometry(f"{w}x{h}+{x}+{y}")
+        try:
+            top.deiconify()
+            top.lift()
+            top.focus_force()
+            top.attributes("-topmost", True)
+            top.after(200, lambda: top.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+        try:
+            top.grab_set()
+        except tk.TclError:
+            pass
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+
+    def _bind_yt_text_download_channel_list(self) -> None:
+        """按 ``YT_text_download.json`` 绑定当前欢迎屏频道的 list JSON（不再弹窗选频道文件）。"""
+        ch_id = config_channel.get_channel_id(self.channel)
+        list_path = config.yt_text_download_list_json_path(ch_id)
+        os.makedirs(os.path.dirname(list_path), exist_ok=True)
+        self.downloader.channel_list_json = list_path
+        self.downloader.channel_videos = []
+        self.downloader.latest_date = datetime.now()
+        if os.path.isfile(list_path):
+            try:
+                with open(list_path, "r", encoding="utf-8") as f:
+                    self.downloader.channel_videos = json.load(f)
+                if not isinstance(self.downloader.channel_videos, list):
+                    self.downloader.channel_videos = []
+                else:
+                    migrated_ac = _normalize_channel_videos_for_storage(
+                        self.downloader.channel_videos, self.channel_path or ""
+                    )
+                    _persist_channel_list_if_analyzed_migrated(self.downloader, migrated_ac)
+                    dates = [
+                        datetime.strptime(v["upload_date"], "%Y%m%d")
+                        for v in self.downloader.channel_videos
+                        if isinstance(v, dict) and v.get("upload_date")
+                    ]
+                    if dates:
+                        self.downloader.latest_date = max(dates)
+            except Exception as e:
+                print(f"❌ 读取视频列表失败: {e}")
+                self.downloader.channel_videos = []
+        print(f"✅ YT 文字下载列表: {list_path}")
 
 
     def prepare_category_for_content(self, video_detail, topic_choices):
-        valid_content = video_detail.get('analyzed_content')
-        if valid_content and isinstance(valid_content, dict):
-            valid_content = json.dumps(valid_content.get(config.LANGUAGES[self.language], {}), ensure_ascii=False, indent=2)
+        valid_content = config.analyzed_content_text(video_detail.get("analyzed_content"))
         if not valid_content:
-            valid_content = video_detail.get('content', '').strip()
+            valid_content = config.read_transcript_text_from_video_detail(video_detail)
 
         # LLM API 调用在信号量保护下（已在上层 with 语句中）
         result = self.llm_api_local.generate_json(
@@ -3587,9 +3780,9 @@ class MediaGUIManager:
             summary = summary.get(config.LANGUAGES[self.language], [{}])[0].get('story', '')
         else:
             title = _youtube_row_display_title(video_detail)
-            summary = video_detail.get('analyzed_content', {}).get(config.LANGUAGES[self.language], "")
+            summary = config.analyzed_content_text(video_detail.get("analyzed_content"))
             if not summary:
-                summary = video_detail.get('content', '').strip()
+                summary = config.read_transcript_text_from_video_detail(video_detail)
 
         disp_name = title_prefix + config.chinese_convert(title.strip().replace(" ", "_").replace("\n", "_"), self.language)
 
@@ -3643,11 +3836,7 @@ class MediaGUIManager:
                 vid_s = str(vid).strip() if vid is not None else ""
                 if vid_s:
                     watch = f"https://www.youtube.com/watch?v={vid_s}"
-                    list_url = (video_detail.get("url") or "").strip()
-                    if project_manager.list_json_row_has_project_profile(video_detail):
-                        video_detail["youtube_watch_url"] = watch
-                    else:
-                        video_detail["url"] = watch
+                    video_detail["url"] = watch
                 with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                     json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
 
@@ -3657,7 +3846,7 @@ class MediaGUIManager:
 
                     tg_lines = notify_youtube_publish_extras(
                         mp4_path=mp4_path,
-                        youtube_watch_url=watch or "",
+                        watch_url=watch or "",
                         title_line=disp_name,
                         summary=summary,
                     )
@@ -3858,7 +4047,11 @@ class MediaGUIManager:
                     continue
                 title = _youtube_row_display_title(video_detail).lower()
 
-                content = (video_detail.get('content') + "\n" + json.dumps(video_detail.get('analyzed_content'), ensure_ascii=False, indent=2))
+                transcript = config.read_transcript_text_from_video_detail(video_detail) or ""
+                analyzed = config.analyzed_content_text(
+                    video_detail.get("analyzed_content")
+                )
+                content = (transcript + "\n" + analyzed).strip().lower()
                 content = content.strip().lower()
                 if search_text in title or search_text in content:
                     tree.selection_add(item)
@@ -4080,7 +4273,7 @@ class MediaGUIManager:
                 if len(user_status) > 80:
                     user_status = user_status[:77] + "..."
                 analyzed_mark = ""
-                if video.get("analyzed_content"):
+                if config.analyzed_content_text(video.get("analyzed_content")):
                     analyzed_mark += "✓"
                 if not _scene_content_nonempty(video):
                     analyzed_mark += "⚠"
@@ -4115,7 +4308,7 @@ class MediaGUIManager:
                                     mp4_for_publish)
                                 )
             
-            _normalize_channel_videos_for_storage(self.downloader.channel_videos)
+            _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
             with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
 
@@ -4181,7 +4374,11 @@ class MediaGUIManager:
                     if filename_prefix in filename:
                         file_path = os.path.join(f"{self.youtube_dir}/media", filename)
                         # 收集SRT和TXT文件
-                        if filename.endswith('.srt') or filename.endswith('.json'):
+                        if (
+                            filename.endswith(".srt")
+                            or filename.endswith(".json")
+                            or filename.endswith(".txt")
+                        ):
                             files_to_delete.append(file_path)
                 for filename in os.listdir(f"{self.youtube_dir}/media"):
                     if filename_prefix in filename:
@@ -4457,25 +4654,14 @@ class MediaGUIManager:
 
 
             def do_content_summary():
-                if video_detail.get("summary", "").strip():
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(video_detail.get("summary", ""))
-                    self.root.update()
-                    messagebox.showinfo("提示", "summary 已存在，不重新生成", parent=summary_window)
-                    do_re_category()
-                    return
-
                 text_content = self.fetch_text_content(video_detail)
-                if not text_content or not text_content.strip():
-                    messagebox.showinfo("提示", "原文不存在或为空", parent=summary_window)
-                    return
-                # 1. 用 LLM 重写原文
-                prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api_local.generate_json(prompt, text_content, expect_list=False)
+                # 1. 用 LLM 重写原文（频道专属 analyze_prompt）
+                url = video_detail.get('url', '').strip()
+                prompt = self._format_analyze_prompt(video_detail)
+                rewritten = self.llm_api.generate_text(prompt.format(language=self.language, url=url), text_content)
+                rewritten = (rewritten or "").strip()
                 if rewritten:
-                    video_detail["analyzed_content"] = config.merge_analyzed_content_bilingual(
-                        video_detail.get("analyzed_content"), rewritten, self.language
-                    )
+                    video_detail["analyzed_content"] = rewritten
                     try:
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
@@ -4560,11 +4746,9 @@ class MediaGUIManager:
 
                 def _apply_project_config_to_list_row(row: dict, selected_config: dict) -> None:
                     _pid = (selected_config.get("pid") or "").strip()
-                    old_id = (row.get("id") or "").strip()
                     if _pid:
-                        if old_id and old_id != _pid and len(old_id) == 11:
-                            row.setdefault("youtube_source_id", old_id)
                         row["id"] = _pid
+                    row.pop("youtube_source_id", None)
                     row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
                         project_manager.export_profile_for_storage(copy.deepcopy(selected_config))
                     )
@@ -4581,7 +4765,7 @@ class MediaGUIManager:
                     row.pop("project_id", None)
                     row.pop("project_pid", None)
                     row.pop("pid", None)
-                    _normalize_channel_list_item_for_storage(row)
+                    _normalize_channel_list_item_for_storage(row, self.channel_path or "")
 
                 def _persist_channel_list_and_refresh_tree(
                     select_key: str = "",
@@ -4589,7 +4773,7 @@ class MediaGUIManager:
                     reopen_summary: bool = False,
                 ) -> None:
                     try:
-                        _normalize_channel_videos_for_storage(self.downloader.channel_videos)
+                        _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                     except OSError:
@@ -4715,10 +4899,12 @@ class MediaGUIManager:
                     topic_tags=None,
                     cloned_from_pid: str = "",
                 ):
-                    if not analyzed_content or not scene_content:
+                    if not config.analyzed_content_text(analyzed_content).strip() or not _scene_content_nonempty(
+                        {"scene_content": scene_content}
+                    ):
                         messagebox.showwarning(
                             "提示",
-                            "analyzed_content 或 scene_content 须为 JSON，且含 english/chinese，各分支 story 非空，无法启动新项目。",
+                            "analyzed_content 须为非空文本；scene_content 须已填写，无法启动新项目。",
                             parent=summary_window,
                         )
                         return
@@ -4894,7 +5080,9 @@ class MediaGUIManager:
 
                 editor = ReferenceEditorDialog(
                     summary_window,
-                    current_story = json.dumps(video_detail.get('analyzed_content'), ensure_ascii=False, indent=2),
+                    current_story = config.analyzed_content_text(
+                        video_detail.get("analyzed_content")
+                    ),
                     reference_filter=reference_filter_prompt,
                 )
 
@@ -4975,7 +5163,7 @@ class MediaGUIManager:
                     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "")
                     messagebox.showwarning(
                         "提示",
-                        "当前不可审阅：请先在「摘要」窗拖入 MP4 加水印，或在 input/gen_video 下放好\n"
+                        "当前不可审阅：请先在「摘要」窗拖入 MP4 加水印，或在 publish/gen_video 下放好\n"
                         f"与本条 YouTube id 同名的成品：\n"
                         f"{gen_dir or '(未配置路径)'}\\\\<视频id>.mp4\n\n"
                         "（仍支持旧逻辑：INPUT_MEDIA_PATH 下 __*__.txt + 同名 .mp4）",
@@ -5135,14 +5323,9 @@ class MediaGUIManager:
                     pending_scene: list[dict | None] = [None]
 
                     def _analyzed_clip_text():
-                        content = video_detail.get("analyzed_content")
-                        if isinstance(content, dict):
-                            return (content.get(config.LANGUAGES[self.language], "") or "").strip()
-                        if isinstance(content, str):
-                            return content.strip()
-                        if content is not None:
-                            return json.dumps(content, ensure_ascii=False, indent=2)
-                        return ""
+                        return config.analyzed_content_text(
+                            video_detail.get("analyzed_content")
+                        )
 
                     def _apply_scene_dict(scene_dict: dict) -> None:
                         scene_dict = copy.deepcopy(scene_dict)
@@ -5184,7 +5367,7 @@ class MediaGUIManager:
                             choices.append(
                                 (
                                     "analyzed",
-                                    f"拷贝 Analyzed_content ({config.LANGUAGES[self.language]})",
+                                    "拷贝 Analyzed_content",
                                 )
                             )
 
@@ -5386,26 +5569,21 @@ class MediaGUIManager:
                 reference = "\n\n\n----------------------------------------------------------\n".join(reference_parts) if reference_parts else ""
                 story_title = _youtube_row_display_title(video_detail)
 
-                content = video_detail.get('analyzed_content')
-                if isinstance(content, dict):
-                    content = content.get(config.LANGUAGES[self.language], '')
-
+                content = config.analyzed_content_text(video_detail.get("analyzed_content"))
                 if not content:
                     content = video_detail.get('scene_content')
                     if isinstance(content, dict):
                         content = json.dumps(content, ensure_ascii=False, indent=2)
 
                 if not content:
-                    content = video_detail.get("content", '')
-
-                if not content:
-                    content = video_detail.get('content', '').strip()
+                    content = config.read_transcript_text_from_video_detail(video_detail)
 
                 link = video_detail.get('url', '').strip()
                 soul, choices, categories, features = project_manager.build_soul(self.channel, category_var.get().strip(), subtype_var.get().strip())
                 instruction = (initial_content_holder[0] or "").strip()
                 prompt = _format_nb_prompt_template(
                     template=template,
+                    content_guide=self._channel_content_guide(),
                     topic=topic,
                     tags=tags_var.get().strip(),
                     language=config.LANGUAGES[self.language],
@@ -5642,7 +5820,7 @@ class MediaGUIManager:
                             v.pop("video_title", None)
                             updated_count += 1
                     if updated_count:
-                        _normalize_channel_videos_for_storage(self.downloader.channel_videos)
+                        _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
                         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                         if self.downloader.channel_videos and any(v.get('upload_date') for v in self.downloader.channel_videos):
@@ -5716,7 +5894,7 @@ class MediaGUIManager:
                     for v in to_add:
                         self.downloader.channel_videos.append(v)
                     self.downloader.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
-                    _normalize_channel_videos_for_storage(self.downloader.channel_videos)
+                    _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
                     with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                         json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                     popup.destroy()
@@ -5893,12 +6071,23 @@ class MediaGUIManager:
             videos_already_transcribed = []
             
             for video_detail in _unique_video_details_from_tree_selection():
-                content = video_detail.get('content', '')
-                if content and len(content) > 100:
+                if (video_detail.get("transcribed_file") or "").strip():
                     self.update_text_content(video_detail)
                     videos_already_transcribed.append(video_detail)
                 else:
-                    transcribed_file = self.match_media_file(video_detail,'transcribed_file', ['.srt','.zh.srt','.en.srt','.json','.zh.json','.en.json'])
+                    transcribed_file = self.match_media_file(
+                        video_detail,
+                        "transcribed_file",
+                        [
+                            ".srt",
+                            ".zh.srt",
+                            ".en.srt",
+                            ".json",
+                            ".zh.json",
+                            ".en.json",
+                            ".txt",
+                        ],
+                    )
                     if transcribed_file:
                         self.update_text_content(video_detail)
                         videos_already_transcribed.append(video_detail)
@@ -5992,9 +6181,11 @@ class MediaGUIManager:
                 if not url_key or url_key in seen_urls:
                     continue
                 seen_urls.add(url_key)
-                if video_detail.get('analyzed_content'):
+                if config.analyzed_content_text(video_detail.get("analyzed_content")):
                     summary_list.append({
-                        'analyzed_content': video_detail.get('analyzed_content', ''),
+                        'analyzed_content': config.analyzed_content_text(
+                            video_detail.get("analyzed_content")
+                        ),
                         'title': _youtube_row_display_title(video_detail),
                         'url': video_detail.get('url', ''),
                         'id': video_detail.get('id', ''),
@@ -6018,25 +6209,22 @@ class MediaGUIManager:
 
             summary_list = []
             for video_detail in _unique_video_details_from_tree_selection():
-                text_content = self.fetch_text_content(video_detail)
-                if not text_content or len(text_content) < 100:
+                if not rewrite and config.analyzed_content_text(
+                    video_detail.get("analyzed_content")
+                ):
+                    summary_list.append(
+                        config.analyzed_content_text(video_detail.get("analyzed_content"))
+                    )
                     continue
 
-                if not rewrite and video_detail.get('analyzed_content'):
-                    summary_list.append(json.dumps(video_detail.get('analyzed_content'), ensure_ascii=False, indent=2))
+                if not self.generate_analyzed_content_for_video(
+                    video_detail, force_rewrite=rewrite
+                ):
                     continue
 
-                prompt = config_prompt.REWRITE_MATERIAL_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language])
-                rewritten = self.llm_api_local.generate_json(prompt, text_content, expect_list=False)
-                if not rewritten or not isinstance(rewritten, dict):
-                    continue
-
-                merged_ac = config.merge_analyzed_content_bilingual(
-                    video_detail.get("analyzed_content"), rewritten, self.language
+                summary_list.append(
+                    config.analyzed_content_text(video_detail.get("analyzed_content"))
                 )
-                video_detail["analyzed_content"] = merged_ac
-
-                summary_list.append(json.dumps(merged_ac, ensure_ascii=False, indent=2))
 
                 self.prepare_category_for_content(video_detail, self.topic_choices)
 
@@ -6097,14 +6285,19 @@ class MediaGUIManager:
             return
         open_transcribe_media_dialog(self.root, self, path)
 
-    def download_youtube(self, transcribe):
+    def download_youtube(self, transcribe, analyze):
         """下载YouTube视频并转录"""
         # 弹出对话框让用户输入URL
         dialog = tk.Toplevel(self.root)
         dialog.title("YouTube下载")
-        dialog.geometry("600x200")
+        dialog.minsize(480, 160)
         dialog.transient(self.root)
         dialog.grab_set()
+        w, h = 600, 200
+        dialog.update_idletasks()
+        sw = dialog.winfo_screenwidth()
+        sh = dialog.winfo_screenheight()
+        dialog.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
         
         # YouTube URL输入
         url_frame = ttk.Frame(dialog)
@@ -6151,69 +6344,11 @@ class MediaGUIManager:
             self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
             return
 
-        channel_name = self.downloader.get_channel_name(video_data)
-
         if not transcribe:
             self.downloader.download_video_highest_resolution(video_data)
             return
-    
-        # 统一频道选择：用较宽松的匹配在已有文件中查找，找到则问用户是否选用；不选则保持空
-        self.downloader.channel_list_json = None
-        self.downloader.channel_videos = []
-        channel_list_json_files = glob.glob(os.path.join(self.downloader.channel_list_dir, "*.json"))
-        channel_to_file = {}
-        channel_names = []
-        for json_file in channel_list_json_files:
-            filename = os.path.basename(json_file)
-            m = re.match(r'(.+?)\.json\.txt', filename)
-            if m:
-                cn = m.group(1)
-                channel_names.append(cn)
-                channel_to_file[cn] = json_file
 
-        # 宽松匹配：精确匹配 > 包含关系（channel_name in cn 或 cn in channel_name）
-        def _norm(s):
-            return (s or "").strip().lower()
-        nch = _norm(channel_name)
-        exact_match = [cn for cn in channel_names if _norm(cn) == nch]
-        loose_match = [cn for cn in channel_names if cn not in exact_match and (nch in _norm(cn) or _norm(cn) in nch)]
-        candidates = exact_match + loose_match
-
-        selected_file = None
-        CREATE_NEW = "【创建新频道】"
-        if candidates:
-            choices = candidates + [CREATE_NEW]
-            picked = askchoice("选择频道列表", choices, parent=self.root)
-            if picked:
-                _, choice = picked
-                if choice == CREATE_NEW:
-                    selected_file = None  # 进入下方创建新频道分支
-                elif choice in channel_to_file:
-                    selected_file = channel_to_file[choice]
-
-        if selected_file:
-            self.downloader.channel_list_json = selected_file
-            try:
-                with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
-                    self.downloader.channel_videos = json.load(f)
-                    _normalize_channel_videos_for_storage(self.downloader.channel_videos)
-                    self.downloader.latest_date = max(
-                        (datetime.strptime(v["upload_date"], "%Y%m%d") for v in self.downloader.channel_videos if v.get("upload_date")),
-                        default=None
-                    )
-            except Exception as e:
-                print(f"❌ 读取视频列表失败: {e}")
-                self.downloader.channel_videos = []
-
-        if not self.downloader.channel_videos:
-            # 无已有频道或用户未选：弹窗让用户编辑频道名并创建新文件（video 里有 channel 信息则作为默认值）
-            new_name = simpledialog.askstring("创建新频道", "频道名称（可修改）:", initialvalue=channel_name, parent=self.root)
-            if new_name and new_name.strip():
-                channel_name = new_name.strip()
-            self.downloader.channel_list_json = os.path.join(self.downloader.channel_list_dir, f"{channel_name}.json")
-            self.downloader.channel_videos = []
-            print(f"✅ 已创建新的视频列表文件: {self.downloader.channel_list_json}")
-
+        self._bind_yt_text_download_channel_list()
 
         is_new_video = self.downloader.is_video_new(video_data)
         if not is_new_video:
@@ -6244,14 +6379,46 @@ class MediaGUIManager:
 
         video_data['transcribed_file'] = transcribed_file
         print(f"✅ YouTube视频转录完成！")
-        self.root.after(0, lambda: messagebox.showinfo("转录完成", "YouTube视频转录完成！"))
         self.downloader.channel_videos.append(video_data)
         this_video_date = datetime.strptime(video_data["upload_date"], "%Y%m%d")
         if this_video_date > self.downloader.latest_date:
             self.downloader.latest_date = this_video_date
         self.update_text_content(video_data)
-        _normalize_channel_videos_for_storage(self.downloader.channel_videos)
+        analyzed_ok = False
+        if analyze:
+            analyzed_ok = self.generate_analyzed_content_for_video(
+                video_data, force_rewrite=True
+            )
+            if analyzed_ok:
+                print("✅ analyzed_content 已生成")
+            else:
+                print("⚠️ analyzed_content 未生成（文本不足或 LLM 失败）")
+        _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
 
         with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
+
+        def _finish_download_ui():
+            if analyze:
+                if analyzed_ok:
+                    self.show_analyzed_content_popup(video_data, parent=self.root)
+                else:
+                    messagebox.showwarning(
+                        "分析未完成",
+                        "转录已完成，但 analyzed_content 未生成（文本不足或 LLM 失败）。",
+                        parent=self.root,
+                    )
+            else:
+                messagebox.showinfo(
+                    "转录完成",
+                    "YouTube 视频转录完成！",
+                    parent=self.root,
+                )
+
+        try:
+            self.root.update_idletasks()
+            _finish_download_ui()
+            self.root.update()
+        except Exception:
+            self.root.after(0, _finish_download_ui)

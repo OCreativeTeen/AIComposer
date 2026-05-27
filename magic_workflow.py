@@ -1097,13 +1097,16 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self, video_title, title, publish_at=None):
+    def upload_video(self, youtube_title, publish_at=None):
         """
         publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
         若为 datetime（建议带本地时区），则使用 YouTube 定时公开（API 要求先 private + publishAt）。
         """
-        video_title = video_title.strip().replace(" ", "_").replace("\n", "_")
-        final_video_path = f"{self.publish_path}/{video_title}_final.mp4"
+        final_video_path = config.publish_final_video_path(self.pid)
+        if not os.path.isfile(final_video_path):
+            raise FileNotFoundError(
+                f"未找到成片：{final_video_path}\n请先使用「Video生成」导出。"
+            )
         # get "summary" from project_manager.PROJECT_CONFIG
         summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])
         if isinstance(summary, dict):
@@ -1120,7 +1123,7 @@ class MagicWorkflow:
         video_id, _published_iso = self.downloader.upload_video(
             final_video_path,
             thumbnail_path,
-            title=title,
+            title=youtube_title,
             description=summary,
             language=self.language,
             script_path=None,
@@ -1131,10 +1134,14 @@ class MagicWorkflow:
             privacy="unlisted",
             publish_at=publish_at,
         )
-        # 必须用 project_manager.PROJECT_CONFIG，勿 from-import：reload 后本地名会仍指向 None
+        # 仅用 published_youtube_video_id 记录 YouTube 成片 id；不写入 pid / 列表行 id / project_profile.pid
         pc = project_manager.PROJECT_CONFIG
         if pc is not None:
-            pc["video_id"] = video_id
+            if video_id:
+                pc["published_youtube_video_id"] = video_id
+            else:
+                pc.pop("published_youtube_video_id", None)
+            pc.pop("video_id", None)
             if publish_at is not None:
                 try:
                     pc["youtube_scheduled_publish_at"] = publish_at.isoformat()
@@ -1143,9 +1150,9 @@ class MagicWorkflow:
             else:
                 pc.pop("youtube_scheduled_publish_at", None)
             save_project_config()
+            print(f"✅ Published YouTube video id saved to project config: {video_id}")
         else:
-            print("⚠️ project_manager.PROJECT_CONFIG 未加载，无法将 video_id 写入项目配置")
-        print(f"✅ Video ID saved to project config: {video_id}")
+            print("⚠️ project_manager.PROJECT_CONFIG 未加载，无法将 published_youtube_video_id 写入项目配置")
 
 
 
@@ -1315,9 +1322,7 @@ class MagicWorkflow:
             if full_story_audio:
                 video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, full_story_audio)
 
-        title = self.title.strip().replace(' ', '_').replace('\n', '_')
-        title = config.chinese_convert(title, self.language)
-        final_video_path = f"{self.publish_path}/{title}_final.mp4"
+        final_video_path = config.publish_final_video_path(self.pid)
         os.replace(video_temp, final_video_path)
 
         config.clear_temp_files()

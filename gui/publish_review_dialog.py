@@ -143,9 +143,11 @@ class PublishReviewDialog:
             summary = summary + "\n" + scene_content.get("speaking", "")
             summary = summary + "\n" + scene_content.get("story", "")
         else:
-            summary = self.video_detail.get("analyzed_content", {}).get(config.LANGUAGES[self.media_gui.language],"")
+            summary = config.analyzed_content_text(
+                self.video_detail.get("analyzed_content")
+            )
             if not summary:
-                summary = self.video_detail.get("content")
+                summary = config.read_transcript_text_from_video_detail(self.video_detail)
 
         self.text_w.insert(tk.END, summary + "\n\n")
 
