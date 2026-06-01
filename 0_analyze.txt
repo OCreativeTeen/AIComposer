@@ -1,5 +1,9 @@
 Create string video clip for "Mind Spring Melody" program -- (a song for the 心理咨询呃服务) : express content of 心理咨询 story :::  no speaker!!
 
+这个是一个歌曲的样本 从YouTube连接作为样本 有一些基本数据分析; 有歌词歌词放在story里头.  下面我们还有一些新的歌曲要添加到这个表里头; 你帮我添加进去. 也是要做同样的数据分析, 和找到歌词加到story里头 
+
+
+simplify the  words in the image,  突出重点, 可以减少项目
 
 
 One Sweet Day

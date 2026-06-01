@@ -71,11 +71,12 @@ Topic & Instruction:
 
 The content is on the topic - '{topic}'. 
 
+To express following content:
 {instruction}
 
 
 ----------------------------------------------------
-Reference Content:
+Following this styles :
 ----------------------------------------------------
 {content}
 
@@ -114,9 +115,44 @@ You are a professional to make the lyrics for a {language} song, which express t
 
 
 
-NOTEBOOKLM__SUNO = """
+NOTEBOOKLM__SUNO_FRANK = """
 Role:
-    - You are a professional to make a new {language} song, which express the initial instruction & the music-reference provided in user prompt.
+    - You are a professional to make a new {language} song, which express the content & following the music-styles provided in user prompt.
+
+Steps:
+    (1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
+            signature atmosphere and expression style
+            signature chord cadence types
+            signature rhythm patterns
+            signature synth/texture choices
+            signature vocal production (double, harmony stack, adlibs)
+            signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+    (2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
+            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+
+            ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+            ** Song structure: 
+                * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
+                * The overall feeling should be intimate, cinematic, emotionally intelligent, and artistically controlled rather than loud or chaotic.
+                * The beginning should feel narrative, reflective, and storytelling-oriented. As the song progresses, it can gradually become more melodic, rhythmic, or hypnotic. Later sections may evolve into a more rhythmic expression naturally. 
+
+            ** The climax should feel emotionally meaningful rather than physically loud; Use contrast and emotional reinterpretation instead of raw volume or intensity.
+                * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
+                * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
+
+           ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction.
+                *** The lyrics should be frank speaking style like naturally story-telling, not written style.
+                *** If possible, the lyrics should be in a specific rhyme scheme.
+
+            ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
+"""
+
+
+NOTEBOOKLM__SUNO_POETRY = """
+Role:
+    - You are a professional to make a new {language} song, which express the content & following the music-styles provided in user prompt.
 
 Steps:
     1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
@@ -128,17 +164,33 @@ Steps:
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The detailed SUNO prompts, has detailed instruction to generate a new song with a similar musical DNA with the reference, and show the content in the initial instruction 
+            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
-            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
+
+            ** Song structure: 
+                * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
+                * The overall feeling should be intimate, cinematic, emotionally intelligent, and artistically controlled rather than loud or chaotic.
+                * The beginning should feel narrative, reflective, and storytelling-oriented. As the song progresses, it can gradually become more melodic, rhythmic, or hypnotic. Later sections may evolve into a more rhythmic expression naturally. 
+
+            ** The climax should feel emotionally meaningful rather than physically loud; Use contrast and emotional reinterpretation instead of raw volume or intensity.
+                * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
+                * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
+
+            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction.
+                *** The lyrics should express indirectly and artistically; Lean toward metaphorical and symbolic writing.
+                *** Poetic rhyming structure.
+                *** Use poetic and cinematic imagery; maintain a dreamy, poetic lyrical tone.
+                *** Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements.
+
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
 """
 
 
-NOTEBOOKLM__SUNO_2LAYER = """
+NOTEBOOKLM__SUNO_2LAYER_FRANK = """
 Role:
-    - You are a professional to make a new {language} song, which express the initial instruction & the music-reference provided in user prompt.
+    - You are a professional to make a new {language} song, which express the content & following the music-styles provided in user prompt.
 
 Steps:
     1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
@@ -162,14 +214,83 @@ Steps:
             Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The detailed SUNO prompts, has detailed instruction to generate a new song with a similar musical DNA with the reference, and show the content in the initial instruction 
+            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+            ** Song structure: 
+                * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
+                * The overall feeling should be intimate, cinematic, emotionally intelligent, and artistically controlled rather than loud or chaotic.
+                * The beginning should feel narrative, reflective, and storytelling-oriented. As the song progresses, it can gradually become more melodic, rhythmic, or hypnotic. Later sections may evolve into a more rhythmic expression naturally. 
+
+            ** The climax should feel emotionally meaningful rather than physically loud; Use contrast and emotional reinterpretation instead of raw volume or intensity.
+                * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
+                * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
+
             ** the generated song should have a clear contrast between two melodic worlds:
                 * Front section (A-world): high conflict + dramatic movement
                 * Back section (B-world): stable + sunny + supportive melodic bed
+
             ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
+                *** The lyrics should be frank speaking style like naturally story-telling, not written style.
+                *** If possible, the lyrics should be in a specific rhyme scheme.
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
+
+
+
+NOTEBOOKLM__SUNO_2LAYER_POETRY = """
+Role:
+    - You are a professional to make a new {language} song, which express the content & following the music-styles provided in user prompt.
+
+Steps:
+    1) Refer to the music DNA details (provided in the user prompt), which gives musical fingerprints like:
+            signature atmosphere and expression style
+            signature chord cadence types
+            signature rhythm patterns
+            signature synth/texture choices
+            signature vocal production (double, harmony stack, adlibs)
+            signature transitions (risers, drum fills, key lift, half-time, etc.)
+
+   2) Force the specific two-part melodic architecture, which have a clear contrast between two melodic worlds:
+        Front section (A-world): high conflict + dramatic movement
+            allow minor key / modal tension, dissonant passing tones, “push-pull” phrasing
+            big dynamic swings, dramatic rises/falls, sharper rhythmic accents
+            hook can feel edgy, restless, emotionally complex
+
+        Back section (B-world): stable + sunny + supportive melodic bed
+            shift toward major / brighter mode, stable stepwise melody, smoother rhythm
+            acts as “foundation / resolution” and supports the earlier motif
+            feels warm, optimistic, grounded, consistent
+            Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
+
+    3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
+            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+
+            ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+
+            ** Song structure: 
+                * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
+                * The overall feeling should be intimate, cinematic, emotionally intelligent, and artistically controlled rather than loud or chaotic.
+                * The beginning should feel narrative, reflective, and storytelling-oriented. As the song progresses, it can gradually become more melodic, rhythmic, or hypnotic. Later sections may evolve into a more rhythmic expression naturally. 
+
+            ** The climax should feel emotionally meaningful rather than physically loud; Use contrast and emotional reinterpretation instead of raw volume or intensity.
+                * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
+                * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
+
+            ** the generated song should have a clear contrast between two melodic worlds:
+                * Front section (A-world): high conflict + dramatic movement
+                * Back section (B-world): stable + sunny + supportive melodic bed
+
+            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
+                *** The lyrics should express indirectly and artistically; Lean toward metaphorical and symbolic writing.
+                *** Poetic rhyming structure.
+                *** Use poetic and cinematic imagery; maintain a dreamy, poetic lyrical tone.
+                *** Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements.
+
+            ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
+"""
+
 
 
 NOTEBOOKLM__MV_STORY_FROM_LYRICS = """
@@ -1801,8 +1922,10 @@ CHANNEL_CONFIG = {
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("SUNO Prompt", NOTEBOOKLM__SUNO),
-            ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER),
+            ("SUNO Prompt", NOTEBOOKLM__SUNO_FRANK),
+            ("SUNO Poetry", NOTEBOOKLM__SUNO_POETRY),
+            ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER_FRANK),
+            ("SUNO 2 Layers Poetry", NOTEBOOKLM__SUNO_2LAYER_POETRY),
             ("Story from Lyrics", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
             ("Story 2 Layers", NOTEBOOKLM__MV_STORY_2LAYER),
             ("Lyrics", NOTEBOOKLM__MV_LYRICS)

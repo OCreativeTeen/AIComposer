@@ -3483,6 +3483,227 @@ class MediaGUIManager:
         text = config.read_transcript_text_from_video_detail(video_detail)
         return text if text else None
 
+    def _youtube_story_llm_source_text(self, video_detail) -> str:
+        text = config.analyzed_content_text(video_detail.get("analyzed_content"))
+        if text:
+            return text
+
+        sc = video_detail.get("scene_content")
+        if sc and isinstance(sc, dict):
+            branch = sc.get(config.LANGUAGES.get(self.language, "chinese"))
+            if not branch:
+                branch = sc.get(config.LANGUAGES.get(self.language, "english"))
+            if isinstance(branch, list) and branch:
+                first = branch[0]
+                if isinstance(first, dict):
+                    story = (first.get("story") or "").strip()
+                    if story:
+                        return story
+
+        return (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
+
+
+    def _youtube_story_title_from_video_detail(self, video_detail) -> str:
+        title = _youtube_row_display_title(video_detail or {})
+        if title:
+            return title
+
+        sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+        if sc and isinstance(sc, dict):
+            branch = sc.get(config.LANGUAGES.get(self.language, "chinese"))
+            if isinstance(branch, list) and branch:
+                first = branch[0]
+                if isinstance(first, dict):
+                    title = (first.get("title") or "").strip()
+                    if title:
+                        return title
+        return ""
+
+
+    def _generate_youtube_story_summary_text(self, video_detail) -> str:
+        source = self._youtube_story_llm_source_text(video_detail)
+        if not source:
+            return ""
+        prompt = config_prompt.YOUTUBE_SUMMARY_SYSTEM_PROMPT.format(
+            language=config.LANGUAGES[self.language]
+        )
+        result = self.llm_api_local.generate_text(prompt, source)
+        return config.chinese_convert(result or "", self.language).strip()
+
+    @staticmethod
+    def _merge_generated_story_text(existing: str, generated: str) -> str:
+        """智能添加：新内容在前，与已有 story 之间空一行。"""
+        new_part = (generated or "").strip()
+        if not new_part:
+            return (existing or "").strip()
+        prev = (existing or "").strip()
+        if prev:
+            return f"{new_part}\n\n{prev}"
+        return new_part
+
+    def _run_youtube_story_smart_add_async(
+        self,
+        parent,
+        video_detail: dict,
+        get_existing_text,
+        set_merged_text,
+        *,
+        on_busy=None,
+        on_idle=None,
+    ) -> bool:
+        source = self._youtube_story_llm_source_text(video_detail)
+        if not source:
+            messagebox.showwarning(
+                "提示",
+                "无 scene_content / analyzed_content / 转录原文，无法生成 story。",
+                parent=parent,
+            )
+            return False
+        if on_busy:
+            on_busy()
+
+        def work():
+            err_msg = ""
+            result = ""
+            try:
+                result = self._generate_youtube_story_summary_text(video_detail)
+            except Exception as ex:
+                err_msg = str(ex)
+
+            def apply():
+                if on_idle:
+                    on_idle()
+                if err_msg:
+                    messagebox.showerror("生成失败", err_msg, parent=parent)
+                    return
+                if not result:
+                    messagebox.showwarning("提示", "LLM 未返回内容。", parent=parent)
+                    return
+                merged = self._merge_generated_story_text(
+                    get_existing_text(), result
+                )
+                set_merged_text(merged)
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def _persist_video_detail_story(self, video_detail: dict, *, parent=None) -> bool:
+        try:
+            with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            return True
+        except OSError as e:
+            messagebox.showerror(
+                "保存失败",
+                f"写入频道列表失败：{e}",
+                parent=parent,
+            )
+            return False
+
+    def _show_video_story_editor(
+        self,
+        parent,
+        video_detail: dict,
+        *,
+        dialog_title: str = "故事 / Story",
+        header_text: str = "",
+        confirm_label: str = "确认",
+        allow_empty: bool = False,
+        auto_generate_if_empty: bool = False,
+    ) -> str | None:
+        """编辑 ``video_detail['story']``；确认后写回频道列表。取消返回 ``None``。"""
+        result_holder: list[str | None] = [None]
+        dlg = tk.Toplevel(parent)
+        dlg.title(dialog_title)
+        dlg.geometry("820x580")
+        dlg.minsize(560, 400)
+        dlg.transient(parent)
+        dlg.grab_set()
+        dlg.update_idletasks()
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"820x580+{(sw - 820) // 2}+{(sh - 580) // 2}")
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        if not header_text:
+            header_text = (
+                "YouTube 发布用 story 摘要（可编辑；确认后写回本条并保存频道列表）"
+            )
+        ttk.Label(frm, text=header_text, wraplength=760).pack(
+            anchor=tk.W, pady=(0, 8)
+        )
+
+        tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        initial = video_detail.get("story") or ""
+        if isinstance(initial, str):
+            tx.insert("1.0", initial.strip())
+        elif initial is not None:
+            tx.insert("1.0", str(initial))
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X)
+
+        def on_smart_add():
+            def _busy():
+                gen_btn.config(state=tk.DISABLED)
+                try:
+                    dlg.config(cursor="watch")
+                    dlg.update_idletasks()
+                except tk.TclError:
+                    pass
+
+            def _idle():
+                try:
+                    gen_btn.config(state=tk.NORMAL)
+                    dlg.config(cursor="")
+                except tk.TclError:
+                    pass
+
+            self._run_youtube_story_smart_add_async(
+                dlg,
+                video_detail,
+                lambda: (tx.get("1.0", tk.END) or ""),
+                lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
+                on_busy=_busy,
+                on_idle=_idle,
+            )
+
+        def on_confirm():
+            new_text = (tx.get("1.0", tk.END) or "").strip()
+            if not new_text and not allow_empty:
+                messagebox.showwarning(
+                    "提示", "story 不能为空。", parent=dlg
+                )
+                return
+            if new_text:
+                video_detail["story"] = new_text
+            else:
+                video_detail.pop("story", None)
+            if not self._persist_video_detail_story(video_detail, parent=dlg):
+                return
+            result_holder[0] = new_text
+            dlg.destroy()
+
+        gen_btn = ttk.Button(btn_row, text="智能添加", command=on_smart_add)
+        gen_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
+
+        if auto_generate_if_empty and not (video_detail.get("story") or "").strip():
+            dlg.after(250, on_smart_add)
+
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result_holder[0]
+
 
     def check_video_status(self,video_detail):
         """检查单个视频的下载、转录和摘要状态"""
@@ -3773,21 +3994,26 @@ class MediaGUIManager:
         mode, publish_at = choice
         publish_at = publish_at if mode == "scheduled" else None
 
-        title = ""
-        summary = video_detail.get('scene_content')
-        if summary and isinstance(summary, dict):
-            title = summary.get(config.LANGUAGES[self.language], [{}])[0].get('title', '')
-            summary = summary.get(config.LANGUAGES[self.language], [{}])[0].get('story', '')
-        else:
-            title = _youtube_row_display_title(video_detail)
-            summary = config.analyzed_content_text(video_detail.get("analyzed_content"))
-            if not summary:
-                summary = config.read_transcript_text_from_video_detail(video_detail)
+        story_text = self._show_video_story_editor(
+            parent,
+            video_detail,
+            dialog_title="发布前审阅 Story",
+            header_text=(
+                "请确认或编辑 YouTube 描述（story）。"
+                "若无内容将自动「智能添加」；确认后上传发布。"
+            ),
+            confirm_label="确认并发布",
+            allow_empty=False,
+            auto_generate_if_empty=True,
+        )
+        if story_text is None:
+            return
 
-        disp_name = title_prefix + config.chinese_convert(title.strip().replace(" ", "_").replace("\n", "_"), self.language)
-
-        summary = self.llm_api_local.generate_text(config_prompt.YOUTUBE_SUMMARY_SYSTEM_PROMPT.format(language=config.LANGUAGES[self.language]), summary)
-        summary = config.chinese_convert(summary, self.language)
+        title = self._youtube_story_title_from_video_detail(video_detail)
+        summary = story_text
+        disp_name = title_prefix + config.chinese_convert(
+            title.strip().replace(" ", "_").replace("\n", "_"), self.language
+        )
 
         def worker():
             watch = ""
@@ -4652,6 +4878,20 @@ class MediaGUIManager:
                 except Exception:
                     pass
 
+            def do_story_view():
+                text = self._show_video_story_editor(
+                    summary_window,
+                    video_detail,
+                    allow_empty=True,
+                )
+                if text is not None:
+                    messagebox.showinfo(
+                        "已保存", "story 已更新。", parent=summary_window
+                    )
+                    try:
+                        populate_tree()
+                    except Exception:
+                        pass
 
             def do_content_summary():
                 text_content = self.fetch_text_content(video_detail)
@@ -5068,9 +5308,12 @@ class MediaGUIManager:
                 if not cur_id:
                     messagebox.showwarning("提示", "当前视频缺少 YouTube id，无法建立关联", parent=summary_window)
                     return
-                ref_sum = (video_detail.get("summary") or "").strip()
+                ref_sum = (
+                    (video_detail.get("story") or video_detail.get("summary") or "")
+                    .strip()
+                )
                 if not ref_sum:
-                    messagebox.showwarning("提示", "当前视频摘要为空，请先完成摘要后再找类似案例", parent=summary_window)
+                    messagebox.showwarning("提示", "当前视频 story 为空，请先填写或生成 story 后再找类似案例", parent=summary_window)
                     return
 
                 _channel_key = os.path.basename(self.channel_path)
@@ -5243,6 +5486,9 @@ class MediaGUIManager:
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
             ttk.Button(right_btns, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(5, 5))
+
+            ttk.Button(right_btns, text="故事查看", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
+
             ttk.Button(right_btns, text="找类似案例", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
 
 
