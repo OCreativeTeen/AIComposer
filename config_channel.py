@@ -80,10 +80,6 @@ Following this styles :
 ----------------------------------------------------
 {content}
 
-----------------------------------------------------
-Core-insight ('soul'):
-----------------------------------------------------
-{soul}
 """
 
 
@@ -129,7 +125,7 @@ Steps:
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     (2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -164,7 +160,7 @@ Steps:
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -214,7 +210,7 @@ Steps:
             Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -265,7 +261,7 @@ Steps:
             Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 600 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -507,7 +503,7 @@ Reference Content:
 ----------------------------------------------------
 Core-insight ('soul'):
 ----------------------------------------------------
-{soul}
+
 
 """
 
