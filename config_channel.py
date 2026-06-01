@@ -1,33 +1,24 @@
-SIMPLE_REORGANIZE = """
-As professional speaker, rephrase in first person dialogue, the entire passage in "speaking" field of the input json, in orginal language, making it fluent and logical, but still sounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.
-
-*** Input:
-    ** Original conversation content provided in the user-prompt, example like:
-            {{
-                "name": "story",
-                "speaking": "xxxxxx",
-                "actor": "zzzzz"
-            }}
+import config
 
 
-*** Output format: 
-    ** Strictly output in json array, which contain only one single scene element with fields like: 
-        * actor : gender/age/race, choices: (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese) ~~~ in English language) 
-        * speaking: rephrase as first person dialogue, the original conversation content in a fluent and logical, ounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.  ~~~ in original language)
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
-        
-        Here is a Example:
-            {{
-                "speaking": "xxxxxx",
-                "actor": "zzzzz",
-                "visual": "yyyyy"
-            }}
+
+
+MV_CONTENT_GUIDE = """
+----------------------------------------------------
+Topic & Instruction:
+----------------------------------------------------
+
+The content is on the topic - '{topic}'. 
+
+To express following content:
+{instruction}
+
+
+----------------------------------------------------
+Following this styles :
+----------------------------------------------------
+{content}
 """
-
-
-
-
 
 
 
@@ -63,23 +54,244 @@ Steps:
 
 
 
-MV_CONTENT_GUIDE = """
+MV_SIMPLE_REORGANIZE = """
+As professional speaker, rephrase in first person dialogue, the entire passage in "speaking" field of the input json, in orginal language, making it fluent and logical, but still sounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.
 
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
+*** Input:
+    ** Original conversation content provided in the user-prompt
 
-The content is on the topic - '{topic}'. 
-
-To express following content:
-{instruction}
+*** Output format: 
+    ** Strictly output bilingual ``scene_content`` JSON (same schema as NotebookLM counseling prompts):
 
 
-----------------------------------------------------
-Following this styles :
-----------------------------------------------------
-{content}
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "Scene title. In English.",
+            "voiceover": "Optional heart message or host bridge. In English.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
+            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景標題。中文。",
+            "voiceover": "可選內心寄語或主持人銜接。中文。",
+            "visual": "故事场景描述，包括電影感場景描述（時間、天氣、建築、光線）。中文。",
+            "speaking": "改寫後的第一人稱對白——流暢、口語、可直接朗讀。中文。",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
+}}
+"""
 
+
+
+MV_REFERENCE_FILTER = """
+*** Role & Objective
+    As a music story writer to write story on lyrics / music-styles. 
+    And here is the list of Song's info as NotebookLM project source (other than the one named 'Pasted Text/粘贴的文字'), with info like Youtube-Link,  content / summary / topic_category / topic_subtype  etc. 
+    Then you will do cross-reference the Songs in the list against the current Song's summary (or content) in below, identify upto 10 most relevant ones as references.
+
+*** Operational Workflow
+    Identify the relavence by : 
+    ** compare the 'summary' ('content' if has no 'summary')
+    ** then compare the topic_category/topic_subtype
+    ** then compare the tags
+
+*** Input
+    1. Current Song's summary (or content) (Provided below)
+    2. on topic of 
+        {topic}
+    3. with tags like:
+        {tags}
+    2. "List of Song's info  (with Summary):
+        as selected sources in current notebooklm project (other than 'Pasted Text/粘贴的文字')
+
+*** Output Format
+    Pure JSON array with max 10 items; reason in original language & less than 120 words.
+            [
+                {{
+                    "summary": "the summary copy from the reference item (in original language)",
+                    "topic_category": "the topic_category copy from the reference item info",
+                    "topic_subtype": "the topic_subtype copy from the reference item info",
+                    "tags": "the tags copy from the reference item info",
+                    "id": "the id copy from the reference item info",
+                    "url": "the youtube url copy from the reference item info",
+                    "title": "the title copy from the reference item info (in original language)",
+                    "reason": "Explanation of relevance (in original language as summary)"
+                }},
+                ...
+            ]
+"""
+
+
+
+MV_STORY_DEVELOPMENT = """
+ROLE: Senior Music Story Director & Emotional Narrative Host
+    ** You are a senior music story director specializing in Emotional Storytelling, Sonic Atmosphere, and Narrative Composition.
+    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight".
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent narrative persona.
+        * It defines:
+            - your emotional interpretation of music
+            - your understanding of human experience through sound
+            - your assumptions about memory, rhythm, and feeling
+            - your storytelling and cinematic pacing principles
+        * In the story enhancement, may involve deep internal emotional and philosophical layering from this.
+
+    ** Your task is to INTENSIFY and DEEPEN (NOT summarize OR lightly enhance) the raw music-story concept into a "Cinematic Music Episode" (many scenes) that feels like a single immersive audiovisual journey rather than fragmented clips.
+
+    ** Then transform the enhanced music-story into a series of professional, emotionally resonant short scenes for a music-driven storytelling experience.
+        * Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time, emotion, or location, the Narrator must guide transitions so the audience never feels lost.
+        * Emotional Expression Through Sound: Use the "Show, Don't Tell" rule. Emotions should manifest through:
+            - rhythm
+            - silence
+            - environment
+            - micro-actions (hands, breath, gaze)
+          NOT through explicit explanation.
+
+*** OBJECTIVES
+    ** Deconstruct the original raw music-story concept and expand it into detailed, structured scenes, adding:
+        - sensory details
+        - musical atmosphere
+        - emotional subtext
+      while keeping the core narrative intact.
+
+    PHASE 1 - Deepening the Music-Story:
+        • Add sensory and sonic layers:
+            - ambient sounds
+            - musical cues (piano, strings, bass, silence, distortion)
+            - emotional timing (pause, interruption, repetition)
+        • Show emotional states through:
+            - body language
+            - interaction with environment
+            - rhythm of movement
+            - contrast between sound and silence
+
+    PHASE 2 - Generate the Scenes:
+        ** Keep each scene concise:
+            * Dialogue or narration should fit within ~10 seconds.
+            * Split into more scenes if needed to maintain natural flow.
+            * Transitions must feel fluid and cinematic, never abrupt.
+
+        ** Scene flow pattern:
+            - Character expression → music cue → narrator insight → next emotional beat
+
+RULES:
+    ** Narrative Continuity:
+        Ensure seamless transitions across time, space, and emotional states.
+        Narrator must guide shifts when needed.
+
+    ** Show Through Music:
+        Emotions must be expressed through:
+            - sound design
+            - silence
+            - pacing
+            - visual rhythm
+        Avoid direct explanation of feelings.
+
+    ** Musical Storytelling:
+        Each scene should feel like part of a song progression:
+            - intro (setup)
+            - build (tension)
+            - drop (emotional peak)
+            - echo (aftermath)
+
+    ** The Cliffhanger:
+        The final scene must leave an unresolved emotional or narrative tension —
+        a lingering note, silence, or unanswered moment.
+
+    ** Core Insight Integration:
+        * Do NOT explicitly reference the core insight.
+        * Do NOT use its original metaphors or terminology.
+        * Instead:
+            - Let it shape emotional pacing
+            - Influence character behavior
+            - Guide narrative rhythm
+            - Exist beneath the surface
+        * The audience should FEEL the depth, not be told.
+
+
+INPUT (the original case+analysis content):
+    ** Each scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (host/narrator bridge — emotional depth, sonic atmosphere cues)
+        3) story or visual (cinematic scene + musical atmosphere — rhythm, silence, environment)
+        4) speaking (character dialogue; ~10 seconds; early scenes weave background)
+        5) actor (gender/age/race | mood | actions — mood/actions may note music cue)
+
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "Scene title capturing the emotional beat. In English.",
+            "voiceover": "Host narration bridging scenes; may reference sonic atmosphere. In English.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
+            "speaking": "Character dialogue (~10 seconds). In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景標題——捕捉情緒節拍。中文。",
+            "voiceover": "主持人旁白銜接場景；可提及音樂氛圍。中文。",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In Chinese.",
+            "speaking": "角色對白（約10秒）。中文。",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
+}}
+
+"""
+
+
+
+MV_SIMPLE_REORGANIZE = """
+As professional speaker, rephrase in first person dialogue, the entire passage in "speaking" field of the input json, in orginal language, making it fluent and logical, but still sounding like a natural, spoken version, suitable for you to say directly in meetings, demos, or oral presentations.
+
+*** Input:
+    ** Original conversation content provided in the user-prompt
+
+*** Output format: 
+    ** Strictly output bilingual ``scene_content`` JSON (same schema as NotebookLM counseling prompts):
+
+    Each scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (heart message / host narration / analysis — reflective tone)
+        3) visual or story(story/scene description, including cinematic setting (time, weather, architecture, lighting))
+        4) speaking (rephrased 1st-person dialogue from input ``speaking``; ~9 seconds)
+        5) actor (gender/age/race | mood | actions)
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "Scene title. In English.",
+            "voiceover": "Optional heart message or host bridge. In English.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
+            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景標題。中文。",
+            "voiceover": "可選內心寄語或主持人銜接。中文。",
+            "visual": "故事场景描述，包括電影感場景描述（時間、天氣、建築、光線）。中文。",
+            "speaking": "改寫後的第一人稱對白——流暢、口語、可直接朗讀。中文。",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
+}}
 """
 
 
@@ -320,14 +532,14 @@ You are a professional storyteller and creative director. Your task is to create
 
 {{
     "english": {{
-        "title": "title of the story. In English.",
+        "caption": "title of the story. In English.",
         "speaking": "key points of the story. In English",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
         "voiceover": "A short summary of the content (for youtube program description). In English.",
         "actor": "gender/age/race | mood | actions"
     }}
     "chinese": {{
-        "title": "title of the story. In Chinese.",
+        "caption": "title of the story. In Chinese.",
         "speaking": "key points of the story. In Chinese",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
         "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
@@ -435,14 +647,14 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 
 {{
     "english": {{
-        "title": "title of the story. In English.",
+        "caption": "title of the story. In English.",
         "speaking": "key points of the story. In English",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
         "voiceover": "A short summary of the content (for youtube program description). In English.",
         "actor": "gender/age/race | mood | actions"
     }}
     "chinese": {{
-        "title": "title of the story. In Chinese.",
+        "caption": "title of the story. In Chinese.",
         "speaking": "key points of the story. In Chinese",
         "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
         "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
@@ -452,6 +664,36 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 
 """
 
+
+
+
+
+
+
+
+
+
+
+
+COUNSELING_CONTENT_GUIDE = """
+----------------------------------------------------
+Topic & Instruction:
+----------------------------------------------------
+
+The content is on the topic - '{topic}'. 
+
+{instruction}
+
+
+----------------------------------------------------
+Reference Content:
+----------------------------------------------------
+{content}
+
+----------------------------------------------------
+Core-insight ('soul'):
+----------------------------------------------------
+"""
 
 
 
@@ -484,29 +726,6 @@ Output format:
 """
 
 
-COUNSELING_CONTENT_GUIDE = """
-
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
-
-The content is on the topic - '{topic}'. 
-
-{instruction}
-
-
-----------------------------------------------------
-Reference Content:
-----------------------------------------------------
-{content}
-
-----------------------------------------------------
-Core-insight ('soul'):
-----------------------------------------------------
-
-
-"""
-
 
 
 NOTEBOOKLM__COUNSELING_MESSAGE = """
@@ -526,7 +745,7 @@ STEP 2 — Create the Reflective Output (The Storytelling)
 --------------------------------------------------
 Craft a story that is "alive." Do not just state the problem; let the character breathe.
 
-1) **Title**: A poetic, evocative title.
+1) **Caption**: A poetic, evocative title.
 2) **Heart Message (Voiceover)**: 2-3 short, rhythmic sentences. Not a lecture, but a sigh of relief.
 3) **The Story (Vivid Narrative Story with details and emotional textures)**:
    - **The Setup**: A relatable scene where the psychological issue creates friction.
@@ -546,18 +765,18 @@ OUTPUT FORMAT (STRICT JSON)
 {{
     "english": [
         {{
-            "title": "A poetic title. In English.",
-            "voiceover": "Gentle, rhythmic life guidance. In English.",
-            "story": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In English.",
+            "caption": "A poetic title. In English.",
+            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
+            "visual": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In English.",
             "speaking": "A poignant 1st-person caption. In English.",
             "actor": "gender/age/race | mood | actions"
         }}
     ],
     "chinese": [
         {{
-            "title": "意蕴深远的标题。中文。",
-            "voiceover": "像耳边低语般的心理寄语，富有韵律感。中文。",
-            "story": "一个活灵活现的心理故事：包含日常的冲突、深层的心理挣扎、以及最终发现的‘出路’或心态转变。中文。",
+            "caption": "意蕴深远的标题。中文。",
+            "voiceover": "像耳边低语般的心理寄语，富有韵律感。表達人生心理指引的內心寄語。中文。",
+            "visual": "一个活灵活现的心理故事：包含日常的冲突、深层的心理挣扎、以及最终发现的‘出路’或心态转变。中文。",
             "speaking": "一句扎心的、体现主题的第一人称对白。中文。",
             "actor": "性别/年龄/族裔 | 情绪状态 | 肢体动作"
         }}
@@ -604,9 +823,9 @@ Based on the synthesized insight, produce a gentle counseling reflection consist
 
 *** 2-4 (prefer 3) continuous Scenes:
     ** Each scene focus on one message, and include fields like:
-        1) title (title of this scene; but the title of 1st scene is the title of whole story)
+        1) caption (title of this scene; but the caption of 1st scene is the title of whole story)
         2) voiceover (Heart message -- to express the psychological life guidance. Reflective tone)
-        3) story (story scene description - All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis. Please avoid technical psychology terminology)
+        3) visual (story scene description - All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis. Please avoid technical psychology terminology)
         4) speaking (speaking in this scene -- 1st person speaking to express the heart message)
         5) Actor (actor in this story scene, format in -- gender/age/race | mood | actions) 
             - gender: man,woman
@@ -626,18 +845,18 @@ OUTPUT FORMAT (STRICT JSON)
 {{
     "english": [
         {{
-            "title": "A short title capturing the psychological theme. In English.",
+            "caption": "A short title capturing the psychological theme. In English.",
             "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "story": "A story scene in English.  All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis",
+            "visual": "A story scene in English.  All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis",
             "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English).",
             "actor": "gender/age/race | mood | actions"
         }}
     ],
     "chinese": [
         {{
-            "title": "場景的標題；但对第一個場景, 给出整個故事的標題",
-            "voiceover": "表達人生心理指引的內心寄語。用反思的語氣",
-            "story": "故事场景描述. 所有场景都深入挖掘同一个心理问题，从开始 / 发展到高潮 / 结局 / 后续影响",
+            "caption": "場景的標題；但对第一個場景, 给出整個故事的標題",
+            "voiceover": "像耳边低语般的心理寄语，富有韵律感。表達人生心理指引的內心寄語。中文。",
+            "visual": "故事场景描述. 所有场景都深入挖掘同一个心理问题，从开始 / 发展到高潮 / 结局 / 后续影响",
             "speaking": "用簡潔的旁白表達內心寄語和心理微故事(約9秒旁白)",
             "actor": "gender/age/race | mood | actions"
         }}
@@ -708,17 +927,40 @@ RULES:
 
 INPUT (the original case+analysis content):
     ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
 
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * narrator: [gender/age/race | mood] (Pychological Counselor,In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-        * voiceover: The Host's narration/analysis that give summary of the story and sub-insights of the story (In {language}).
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+--------------------------------------------------
+SCENE FIELDS (one scene per language branch)
+--------------------------------------------------
+    ** Output exactly ONE scene in each of ``english`` and ``chinese`` arrays:
+        1) caption (story title / scene title)
+        2) voiceover (Host narrator summary + sub-insights; reflective tone)
+        3) visual (cinematic visual setting — time, weather, architecture, lighting)
+        4) speaking (optional brief host spoken line; ~9 seconds)
+        5) actor (counselor/host: gender/age/race | mood | actions)
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "A short title capturing the psychological theme. In English.",
+            "voiceover": "Host narration — summary of the story and sub-insights. Warm, reflective. In English.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
+            "speaking": "Optional brief host spoken line (~9 seconds). In English.",
+            "actor": "woman/mature/english | calm | seated, welcoming gesture"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景標題；首場 caption 即整個故事標題",
+            "voiceover": "主持人旁白——故事摘要與子洞察。溫暖、反思語氣。中文。",
+            "visual": "故事/場景描述, 包括電影感描述（時間、天氣、建築、光線）。中文。",
+            "speaking": "可選的簡短主持人口白（約9秒）。中文。",
+            "actor": "woman/mature/chinese | calm | 端坐、歡迎手勢"
+        }}
+    ]
+}}
 
 """
 
@@ -767,27 +1009,43 @@ INPUT (the original case+analysis content):
     ** story content text : 
         *   {{ "story": "..完整的故事描述/分析.." }} 
 
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * actor: [gender/age/race | mood | actions] (One Character in the story, In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-            - actions: actions of the Character in the scene
+--------------------------------------------------
+SCENE FIELDS (multiple scenes per language branch)
+--------------------------------------------------
+    ** Each scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (host analysis / background / scene connections when needed)
+        3) visual (story scene description — sensory, cinematic; avoid clinical jargon)
+        4) speaking (character dialogue OR narrator speech; natural, ~10 seconds)
+        5) actor (character OR counselor: gender/age/race | mood | actions)
+            - gender: man, woman
+            - age: young, mature, teen
+            - race: chinese, english
+            - mood: happy, sad, angry, fearful, disgusted, surprised, calm
 
-        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
-            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
-
-        * narrator: [gender/age/race | mood] (Pychological Counselor,In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-
-        * voiceover: give analysis about current event or background or connections if need.
-
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "A short title capturing the psychological theme. In English.",
+            "voiceover": "Host analysis about current event, background, or connections. In English.",
+            "visual": "Story/scene description, including sensory, cinematic. In English.",
+            "speaking": "Character dialogue or narrator speech (~10 seconds). In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景的標題；首場 caption 即整個故事的標題",
+            "voiceover": "主持人對當前事件、背景或場景銜接的分析。中文。",
+            "visual": "故事/場景描述, 包括生動、有感官細節、電影感。中文。",
+            "speaking": "角色對白或旁白（約10秒）。中文。",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
+}}
 
 """
 
@@ -804,16 +1062,13 @@ ROLE: Senior Psychological Counselor & TV Host
 
 
 SCENE STRUCTURE & CONSTRAINTS
-    ** Deconstruct the original raw case-story content and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
-    ** Structure like following:
-        * speaker: One Character in the story
-        * speaking: Character dialogue (1st person). This must feel like a natural, coherent conversation. 
-            - In early scenes, Characters must explain their background, include "Exposition through Dialogue" (naturally weave their identity profession, status, history of the conflict, and their current situation to others so the audience understands the "ins and outs" (来龙去脉).
-        * voiceover: Host's narration, give background description about current scene & connections if need. CRITICAL: The VO must connect the current scene to the previous one and provide psychological "piercing" insights.
-
-    ** Language Rules: 
-        * visual, actions, speaker (metadata): Always English.
-        * speaking, voiceover: in {language}.
+    ** Deconstruct the original raw case-story content and expand into detailed scenes.
+    ** Each scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (host narration — background, scene connections, psychological insights; MUST bridge to previous scene)
+        3) story (story scene description — sensory, cinematic)
+        4) speaking (character dialogue, 1st person; natural conversation; early scenes weave background/exposition)
+        5) actor (character: gender/age/race | mood | actions)
 
 
 RULES:
@@ -829,30 +1084,41 @@ RULES:
 
 
 INPUT (the original case+analysis content):
-    ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** ..完整的故事描述/分析..
 
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * actor: [gender/age/race | mood | actions] (One Character in the story, In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-            - actions: actions of the Character in the scene
+--------------------------------------------------
+SCENE FIELDS (multiple scenes per language branch)
+--------------------------------------------------
+    ** Each scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (host narration — MUST connect to previous scene + psychological insight)
+        3) visual (story scene description — sensory, cinematic)
+        4) speaking (character dialogue; exposition through dialogue in early scenes; ~10 seconds)
+        5) actor (gender/age/race | mood | actions)
 
-        * speaking: The Character's dialogue | Narrator's narration (must feel like a natural, coherent conversation, in {language}).
-            - In early scenes, Characters must explain their background (naturally weave their identity, status, history of the conflict)
-
-        * narrator: [Gender/Age/Race | mood] (Pychological Counselor,In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-
-        * voiceover: give analysis about current event or background or connections if need.
-
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "A short title capturing the psychological theme. In English.",
+            "voiceover": "Host narration bridging scenes and piercing psychological insight. In English.",
+            "visual": "Story scene — vivid, sensory, cinematic. In English.",
+            "speaking": "Character dialogue (~10 seconds). In English.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "場景的標題；首場 caption 即整個故事的標題",
+            "voiceover": "主持人旁白——銜接場景並给出心理洞察。中文。",
+            "visual": "故事場景描述——生動、有感官細節、電影感。中文。",
+            "speaking": "角色對白（約10秒）。中文。",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
+}}
 
 """
 
@@ -885,18 +1151,37 @@ COUNSELING_ANALYSIS_DEVELOPMENT = """
 
 
 INPUT (the original case+analysis content):
-    ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** Include interactive analysis scene includes:
+        1) caption (scene title; 1st scene caption = whole-story title)
+        2) voiceover (random audience member sharing a personal life fragment — NOT commenting on story characters; per Separation Protocol)
+        3) visual or story (Story/Scene details, include cinematic salon/live setting — time, weather, architecture, lighting)
+        4) speaking (counselor host: Acknowledge → Analyze → Call to Action; warm, ~10 seconds)
+        5) actor (counselor OR audience member: gender/age/race | mood | actions)
 
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * narrator: [Gender/Age/Race | mood] (Pychological Counselor,In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-        * voiceover: The Host's narration/analysis that speak about current event and sub-insights of the story (In {language}).
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "english": [
+        {{
+            "caption": "A short title for this analysis beat. In English.",
+            "voiceover": "Random audience member's personal sharing (never names story characters). In English.",
+            "visual": "Story/Scene description, including cinematic salon/live setting. In English.",
+            "speaking": "Counselor host — acknowledge, analyze, invite interaction (~10 seconds). In English.",
+            "actor": "woman/mature/english | calm | warm eye contact, open posture"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "本分析場景標題；首場 caption 即整個故事標題",
+            "voiceover": "隨機聽眾分享個人生活片段（不得評論故事角色）。中文。",
+            "visual": "故事/場景描述, 包括電影感描述。中文。",
+            "speaking": "諮詢師主持人——承接、分析、互動提問（約10秒）。中文。",
+            "actor": "woman/mature/chinese | calm | 溫暖目光、開放姿態"
+        }}
+    ]
+}}
+
 """
 
 
@@ -919,19 +1204,339 @@ COUNSELING_INTRO = """
 
 
 INPUT (the original case+analysis content):
-    ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
+    ** ..完整的故事描述/分析..
 
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * narrator: [Gender/Age/Race | mood] (Pychological Counselor,In English).
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: {language}
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-        * voiceover: The Host's narration/analysis that introduce current story and sub-insights of the story (In {language}).
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+** Output exactly ONE scene in each of ``english`` and ``chinese`` arrays:
+    1) caption (intro / story title)
+    2) voiceover (host intro: Welcome → Normalcy → Shattering Moment; piercing yet welcoming)
+    3) visual (Story/Scene description, including cinematic visual of the shattering moment — vivid, brief)
+    4) speaking (optional brief host spoken hook; ~9 seconds)
+    5) actor (counselor/host: gender/age/race | mood | actions)
+
+{{
+    "english": [
+        {{
+            "caption": "Intro title — hooks the psychological conflict. In English.",
+            "voiceover": "Host intro: welcome to {channel_name}, who/where, then the shattering moment. In English.",
+            "visual": "Story/Scene description, including Vivid cinematic snapshot of the shattering moment. In English.",
+            "speaking": "Optional brief host spoken hook (~9 seconds). In English.",
+            "actor": "woman/mature/english | calm | direct gaze to camera"
+        }}
+    ],
+    "chinese": [
+        {{
+            "caption": "開場標題——抓住心理衝突。中文。",
+            "voiceover": "主持人開場：歡迎來到節目、人物/處境、再點出決裂瞬間。中文。",
+            "visual": "故事/场景描述, 包括決裂瞬間的電影感特寫畫面。中文。",
+            "speaking": "可選的簡短主持人口播鉤子（約9秒）。中文。",
+            "actor": "woman/mature/chinese | calm | 直視鏡頭"
+        }}
+    ]
+}}
+
 """
+
+
+
+NOTEBOOKLM_PROMPT__COUNSELING_TALK = """
+You are a professional podcast writer specializing in psychology and human behavior.
+
+And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
+    * This is not reference material — it is your FOUNDATION.
+    * You must INTERNALIZE it and let it shape:
+        - your value-judgment framework
+        - your trauma-understanding model
+        - your assumptions about human nature
+        - your narrative tone and therapeutic style
+
+--------------------------------------------------
+
+⚠️ CRITICAL INSTRUCTION (ANTI-SUMMARIZATION RULE)
+
+The original source material (provided in below 'Input Content' section) MUST NOT be compressed.
+
+You are NOT summarizing.
+You are NOT simplifying by removing detail.
+
+Instead, you MUST:
+• Preserve as much of the original content as possible  
+• Expand the content by adding:
+    - more real-life examples
+    - more micro-situations (very specific moments, behaviors, dialogues)
+    - more emotional layers (inner thoughts, contradictions, hesitation)
+    - more step-by-step psychological unfolding
+
+--------------------------------------------------
+
+🎯 YOUR TASK
+
+Transform the source material into a **two-section structured podcast-style output**:
+
+--------------------------------------------------
+
+🧩 SECTION 1 — Psychological Key Points (问题骨架提炼)
+
+Before storytelling, you MUST extract and present the core psychological structure of the content.
+
+Requirements:
+
+• Identify 2–4 KEY POINTS ONLY (do NOT over-expand)  
+• Each key point should clearly include:
+
+    1. 核心问题 / Core Conflict  
+       → 本质的心理矛盾是什么？
+
+    2. 表现形式 / Observable Behaviors  
+       → 在现实中是怎么体现出来的？（简要即可）
+
+    3. 心理根源 / Psychological Root  
+       → 可能来自哪里？（依附、创伤、自我价值等）
+
+    4. 影响范围 / Impact  
+       → 对关系 / 自我 / 决策产生什么影响？
+
+    5. 可能的修复方向 / Direction of Resolution  
+       → 给出方向，而不是完整方法论
+
+⚠️ STYLE:
+• Clear, sharp, structured  
+• Concise but insightful  
+• Not storytelling, not emotional expansion  
+• Like a therapist outlining the map before entering the case  
+
+--------------------------------------------------
+
+🧠 SECTION 2 — Podcast Narrative (故事展开)
+
+Then transform EVERYTHING into a **podcast-style single host talk**.
+
+The source text may contain:
+- theory
+- analysis
+- fragmented ideas
+- examples
+
+Your job is to:
+→ KEEP ALL ideas
+→ RESTRUCTURE them into a smooth, immersive narrative
+→ DEEPEN them with more detail, not less
+
+--------------------------------------------------
+
+🧠 DEPTH EXPANSION RULE (VERY IMPORTANT)
+
+For EVERY key idea in the source:
+
+You MUST:
+1. Restate it in natural spoken language
+2. Add at least ONE concrete real-life scenario
+3. Add internal emotional description (what the person feels but doesn’t say)
+4. Optionally add:
+    - contrast cases
+    - escalation over time
+    - subtle behaviors (tone, pause, micro-reactions)
+
+--------------------------------------------------
+
+🎙 PODCAST STYLE
+
+Single host:
+
+    * insightful, analytical, but NEVER lecture-like
+    * feels like thinking out loud with the audience
+    * uses “你有没有发现…”, “有些人其实会…” 等自然表达
+    * builds ideas gradually, layer by layer
+
+--------------------------------------------------
+
+🧩 CONVERSATION FLOW (SOFT STRUCTURE)
+
+** Opening Hook**
+    Start with a vivid, highly specific situation
+
+** Real-Life Situations (EXPANDED)**
+    Multiple detailed micro-scenarios
+
+** Emotional Layer (DEEPENED)**
+    Fear, insecurity, attachment anxiety, avoidance, validation need
+
+** Psychological Explanation (GRADUAL)**
+    Let theory emerge naturally
+
+** Micro-Behavior Analysis**
+    Tiny behaviors (delayed replies, tone shifts, testing, push-pull)
+
+** Metaphors & Analogies**
+    Make abstract ideas concrete
+
+** Insight Expansion**
+    Multiple waves of realization (NOT one conclusion)
+
+** Closing Reflection**
+    Open-ended, slightly unresolved
+
+--------------------------------------------------
+
+💬 STYLE REQUIREMENTS
+
+Encourage:
+    • layered reasoning  
+    • revisiting ideas from different angles  
+    • emotional vividness  
+    • immersive storytelling  
+
+Avoid:
+    • dry abstraction  
+    • compressed explanations  
+    • bullet-point thinking in Section 2  
+
+--------------------------------------------------
+
+📏 LENGTH & DENSITY CONTROL
+
+The podcast section should feel like a REAL 5–10 minute talk.
+
+If short → EXPAND:
+• more scenarios
+• more emotional nuance
+• slower pacing
+
+--------------------------------------------------
+
+📝 OUTPUT FORMAT  (in {language} — 中文):
+
+{{
+    "english": {{
+        "caption": "A short title capturing the psychological theme. In English.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
+        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "caption": "A short title capturing the psychological theme. In Chinese.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
+        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
+
+"""
+
+
+NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION = """
+You are a professional podcast writer specializing in psychology and human behavior.
+And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
+        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
+        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+
+Your task is to transform the following source material into a **podcast-style conversation** between two hosts discussing the topic.
+
+The source text may contain theory, analysis, examples, and scattered ideas. Your job is to **restructure the ideas into a smooth, engaging podcast dialogue** that listeners can easily follow.
+
+The final output should feel like a real episode of a thoughtful psychology podcast.
+
+--------------------------------
+
+PODCAST FORMAT
+
+Two hosts:
+
+Host A — curious, reflective, often introduces real-life situations or questions.
+
+Host B — insightful, analytical, gradually explains the deeper psychological patterns.
+
+Both hosts should sound natural, thoughtful, and conversational.
+
+--------------------------------
+
+CONVERSATION FLOW
+
+Organize the discussion in a clear progression:
+
+1. Opening Hook  
+Start with a relatable observation, story, or everyday situation that captures attention.
+
+Example:
+- a confusing behavior in relationships
+- a common emotional pattern
+- a surprising reaction people have
+
+2. Shared Curiosity  
+The hosts begin exploring the question together.
+
+Host A often says things like:
+"I’ve noticed something interesting..."
+"Why do people do this?"
+
+3. Real-Life Examples  
+Introduce concrete situations or behaviors people experience.
+
+4. Emotional Layer  
+Discuss the feelings behind the behavior (fear, anxiety, attachment, avoidance, validation, etc.)
+
+5. Psychological Explanation  
+Gradually introduce the psychological theory or concept from the source material.
+
+Avoid sounding like a lecture. The explanation should emerge naturally through the conversation.
+
+6. Metaphors and Analogies  
+Use simple metaphors or vivid comparisons to help listeners understand the concept.
+
+7. Insight Moment  
+Lead toward a deeper realization or perspective shift.
+
+8. Closing Reflection  
+End with a thoughtful reflection, question, or takeaway for the listener.
+
+--------------------------------
+
+STYLE REQUIREMENTS
+
+The conversation should be:
+
+• natural and conversational  
+• thoughtful and reflective  
+• emotionally engaging  
+• intellectually stimulating  
+• easy to understand for a general audience
+
+Avoid academic language unless it is explained simply.
+
+Use storytelling, examples, and metaphors to make the ideas vivid.
+
+The hosts should sometimes pause, react, or build on each other's ideas.
+
+--------------------------------
+
+OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
+
+{{
+    "english": {{
+        "caption": "A short title capturing the psychological theme. In English.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
+        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in English",
+        "summary": "A short summary of the content (for youtube program description). In English."
+    }},
+    "chinese": {{
+        "caption": "A short title capturing the psychological theme. In Chinese.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
+        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in Chinese",
+        "summary": "A short summary of the content (for youtube program description). In Chinese."
+    }}
+}}
+
+"""
+
+
+
+
+
+
+
 
 
 
@@ -1135,575 +1740,6 @@ OUTPUT:
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_TALK = """
-You are a professional podcast writer specializing in psychology and human behavior.
-
-And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
-    * This is not reference material — it is your FOUNDATION.
-    * You must INTERNALIZE it and let it shape:
-        - your value-judgment framework
-        - your trauma-understanding model
-        - your assumptions about human nature
-        - your narrative tone and therapeutic style
-
---------------------------------------------------
-
-⚠️ CRITICAL INSTRUCTION (ANTI-SUMMARIZATION RULE)
-
-The original source material (provided in below 'Input Content' section) MUST NOT be compressed.
-
-You are NOT summarizing.
-You are NOT simplifying by removing detail.
-
-Instead, you MUST:
-• Preserve as much of the original content as possible  
-• Expand the content by adding:
-    - more real-life examples
-    - more micro-situations (very specific moments, behaviors, dialogues)
-    - more emotional layers (inner thoughts, contradictions, hesitation)
-    - more step-by-step psychological unfolding
-
---------------------------------------------------
-
-🎯 YOUR TASK
-
-Transform the source material into a **two-section structured podcast-style output**:
-
---------------------------------------------------
-
-🧩 SECTION 1 — Psychological Key Points (问题骨架提炼)
-
-Before storytelling, you MUST extract and present the core psychological structure of the content.
-
-Requirements:
-
-• Identify 2–4 KEY POINTS ONLY (do NOT over-expand)  
-• Each key point should clearly include:
-
-    1. 核心问题 / Core Conflict  
-       → 本质的心理矛盾是什么？
-
-    2. 表现形式 / Observable Behaviors  
-       → 在现实中是怎么体现出来的？（简要即可）
-
-    3. 心理根源 / Psychological Root  
-       → 可能来自哪里？（依附、创伤、自我价值等）
-
-    4. 影响范围 / Impact  
-       → 对关系 / 自我 / 决策产生什么影响？
-
-    5. 可能的修复方向 / Direction of Resolution  
-       → 给出方向，而不是完整方法论
-
-⚠️ STYLE:
-• Clear, sharp, structured  
-• Concise but insightful  
-• Not storytelling, not emotional expansion  
-• Like a therapist outlining the map before entering the case  
-
---------------------------------------------------
-
-🧠 SECTION 2 — Podcast Narrative (故事展开)
-
-Then transform EVERYTHING into a **podcast-style single host talk**.
-
-The source text may contain:
-- theory
-- analysis
-- fragmented ideas
-- examples
-
-Your job is to:
-→ KEEP ALL ideas
-→ RESTRUCTURE them into a smooth, immersive narrative
-→ DEEPEN them with more detail, not less
-
---------------------------------------------------
-
-🧠 DEPTH EXPANSION RULE (VERY IMPORTANT)
-
-For EVERY key idea in the source:
-
-You MUST:
-1. Restate it in natural spoken language
-2. Add at least ONE concrete real-life scenario
-3. Add internal emotional description (what the person feels but doesn’t say)
-4. Optionally add:
-    - contrast cases
-    - escalation over time
-    - subtle behaviors (tone, pause, micro-reactions)
-
---------------------------------------------------
-
-🎙 PODCAST STYLE
-
-Single host:
-
-    * insightful, analytical, but NEVER lecture-like
-    * feels like thinking out loud with the audience
-    * uses “你有没有发现…”, “有些人其实会…” 等自然表达
-    * builds ideas gradually, layer by layer
-
---------------------------------------------------
-
-🧩 CONVERSATION FLOW (SOFT STRUCTURE)
-
-** Opening Hook**
-    Start with a vivid, highly specific situation
-
-** Real-Life Situations (EXPANDED)**
-    Multiple detailed micro-scenarios
-
-** Emotional Layer (DEEPENED)**
-    Fear, insecurity, attachment anxiety, avoidance, validation need
-
-** Psychological Explanation (GRADUAL)**
-    Let theory emerge naturally
-
-** Micro-Behavior Analysis**
-    Tiny behaviors (delayed replies, tone shifts, testing, push-pull)
-
-** Metaphors & Analogies**
-    Make abstract ideas concrete
-
-** Insight Expansion**
-    Multiple waves of realization (NOT one conclusion)
-
-** Closing Reflection**
-    Open-ended, slightly unresolved
-
---------------------------------------------------
-
-💬 STYLE REQUIREMENTS
-
-Encourage:
-    • layered reasoning  
-    • revisiting ideas from different angles  
-    • emotional vividness  
-    • immersive storytelling  
-
-Avoid:
-    • dry abstraction  
-    • compressed explanations  
-    • bullet-point thinking in Section 2  
-
---------------------------------------------------
-
-📏 LENGTH & DENSITY CONTROL
-
-The podcast section should feel like a REAL 5–10 minute talk.
-
-If short → EXPAND:
-• more scenarios
-• more emotional nuance
-• slower pacing
-
---------------------------------------------------
-
-📝 OUTPUT FORMAT  (in {language} — 中文):
-
-{{
-    "english": {{
-        "title": "A short title capturing the psychological theme. In English.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
-        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
-    "chinese": {{
-        "title": "A short title capturing the psychological theme. In Chinese.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
-        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
-    }}
-}}
-
-"""
-
-
-NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION = """
-You are a professional podcast writer specializing in psychology and human behavior.
-And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-
-Your task is to transform the following source material into a **podcast-style conversation** between two hosts discussing the topic.
-
-The source text may contain theory, analysis, examples, and scattered ideas. Your job is to **restructure the ideas into a smooth, engaging podcast dialogue** that listeners can easily follow.
-
-The final output should feel like a real episode of a thoughtful psychology podcast.
-
---------------------------------
-
-PODCAST FORMAT
-
-Two hosts:
-
-Host A — curious, reflective, often introduces real-life situations or questions.
-
-Host B — insightful, analytical, gradually explains the deeper psychological patterns.
-
-Both hosts should sound natural, thoughtful, and conversational.
-
---------------------------------
-
-CONVERSATION FLOW
-
-Organize the discussion in a clear progression:
-
-1. Opening Hook  
-Start with a relatable observation, story, or everyday situation that captures attention.
-
-Example:
-- a confusing behavior in relationships
-- a common emotional pattern
-- a surprising reaction people have
-
-2. Shared Curiosity  
-The hosts begin exploring the question together.
-
-Host A often says things like:
-"I’ve noticed something interesting..."
-"Why do people do this?"
-
-3. Real-Life Examples  
-Introduce concrete situations or behaviors people experience.
-
-4. Emotional Layer  
-Discuss the feelings behind the behavior (fear, anxiety, attachment, avoidance, validation, etc.)
-
-5. Psychological Explanation  
-Gradually introduce the psychological theory or concept from the source material.
-
-Avoid sounding like a lecture. The explanation should emerge naturally through the conversation.
-
-6. Metaphors and Analogies  
-Use simple metaphors or vivid comparisons to help listeners understand the concept.
-
-7. Insight Moment  
-Lead toward a deeper realization or perspective shift.
-
-8. Closing Reflection  
-End with a thoughtful reflection, question, or takeaway for the listener.
-
---------------------------------
-
-STYLE REQUIREMENTS
-
-The conversation should be:
-
-• natural and conversational  
-• thoughtful and reflective  
-• emotionally engaging  
-• intellectually stimulating  
-• easy to understand for a general audience
-
-Avoid academic language unless it is explained simply.
-
-Use storytelling, examples, and metaphors to make the ideas vivid.
-
-The hosts should sometimes pause, react, or build on each other's ideas.
-
---------------------------------
-
-OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
-
-{{
-    "english": {{
-        "title": "A short title capturing the psychological theme. In English.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
-        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
-    "chinese": {{
-        "title": "A short title capturing the psychological theme. In Chinese.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
-        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
-    }}
-}}
-
-"""
-
-
-
-NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF = """
-You are a psychological counselor and reflective storyteller.
-And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-
-ROLE:
-    ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
-    ** Input-below are ONE original psychotherapy case-study material + several reference case-studies which are similar with it. Your task is to: start from the original case-study, refer all reference case-studies, to build a new fully developed, emotionally immersive, multi-scene psychological case-study.
-
-OVERALL INSTRUCTIONS:
-    ** Internally identify different psychological patterns across all case-studies.
-	** Write like a compelling natural / vivid / detailed / immersive / emotionally engaging narrative, not a summary, that illustrates the psychological struggle
-	** output in {language}
-
-REQUIREMENTS FOR EACH STORY
-	** New case-study must be a fully reconstructed, original story synthesized from orginal & reference case-studies (may with added creative detail). 
-	** New Case-Study is NOT short-form content, SHOULD include multiple (3-5) scenes (progression, and emotional escalation), for example:
-	   - Scene 1: Everyday life or relationship setup, and with a striking emotional moment, contradiction, or revealing behavior
-	   - Scene 2: First conflict or tension
-	   - Scene 3: Escalation (argument, avoidance, breakdown, or crisis)
-	   - Scene 4: Key turning point or realization
-	   - Scene 5 (optional): Aftermath or unresolved ending
-
-	   * The tension must build across scenes, show how small patterns turn into bigger problems
-
-	** Each scene should feel concrete and cinematic, not summarized, has rich Scene Details:
-	   - Each scene must weave together an "Explicit Layer" (storyline) and an "Implicit Layer" (insight).
-		   ** "Explicit Layer" (storyline): may include visual description, and the story character's speaking. 
-		   ** "Implicit Layer" (insight): may include the narrator (psychological counselor)'s voiceover, to real: Core-issue /Root-causes /emotional triggers ( What truly afraid of) /Behavioral patterns (Why repeats?) /possible direction for change /etc
-	   - Include specific environments (e.g., late-night apartment, office meeting, family dinner)
-	   - Show actions, body language, silence, and emotional reactions
-	   - Use brief dialogue where helpful
-	   - Avoid jumping too quickly between ideas
-
-	** Deep Characterization
-	   - Clearly show personality traits, fears, desires, and contradictions
-	   - Make the character feel psychologically real
-	   - Highlight what the character wants vs. what they do
-	   - Show repeated patterns (self-sabotage, avoidance, dependency, etc.)
-
-OUTPUT FORMAT:
-
-    Case-Study Title: [Emotionally compelling title]
-
-            -----
-            "scene": "Title (like: Break point)"
-                    "explicit": 
-                            "[Setting, atmosphere, story/dialogue, in {language}]"
-                    "implicit": 
-                            "[Counselor's voiceover]"
-
-            -----
-            "scene": "Title (like: Specific prominent event)"
-                    "explicit": 
-                            "[Setting, atmosphere, story/dialogue, in {language}]"
-                    "implicit": 
-                            "[Counselor's voiceover]"
-
-            -----
-            ...
-
----
-
-
-----------------------------------------------------
-User guidance / 导向说明 (optional):
-----------------------------------------------------
-{instruction}
-
-BELOW ARE INPUT: 
-...
-
-Original Case-Study:
-=======================
-Title: {story_title}
-Summary: {story_summary}
-
-
-Reference Case-Studies: 
-=======================
-{reference}
-
-"""
-
-
-
-
-MV_REFERENCE_FILTER = """
-*** Role & Objective
-    As a music story writer to write story on lyrics / music-styles. 
-    And here is the list of Song's info as NotebookLM project source (other than the one named 'Pasted Text/粘贴的文字'), with info like Youtube-Link,  content / summary / topic_category / topic_subtype  etc. 
-    Then you will do cross-reference the Songs in the list against the current Song's summary (or content) in below, identify upto 10 most relevant ones as references.
-
-*** Operational Workflow
-    Identify the relavence by : 
-    ** compare the 'summary' ('content' if has no 'summary')
-    ** then compare the topic_category/topic_subtype
-    ** then compare the tags
-
-*** Input
-    1. Current Song's summary (or content) (Provided below)
-    2. on topic of 
-        {topic}
-    3. with tags like:
-        {tags}
-    2. "List of Song's info  (with Summary):
-        as selected sources in current notebooklm project (other than 'Pasted Text/粘贴的文字')
-
-*** Output Format
-    Pure JSON array with max 10 items; reason in original language & less than 120 words.
-            [
-                {{
-                    "summary": "the summary copy from the reference item (in original language)",
-                    "topic_category": "the topic_category copy from the reference item info",
-                    "topic_subtype": "the topic_subtype copy from the reference item info",
-                    "tags": "the tags copy from the reference item info",
-                    "id": "the id copy from the reference item info",
-                    "url": "the youtube url copy from the reference item info",
-                    "title": "the title copy from the reference item info (in original language)",
-                    "reason": "Explanation of relevance (in original language as summary)"
-                }},
-                ...
-            ]
-"""
-
-
-
-MV_STORY_DEVELOPMENT = """
-ROLE: Senior Music Story Director & Emotional Narrative Host
-    ** You are a senior music story director specializing in Emotional Storytelling, Sonic Atmosphere, and Narrative Composition.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight".
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent narrative persona.
-        * It defines:
-            - your emotional interpretation of music
-            - your understanding of human experience through sound
-            - your assumptions about memory, rhythm, and feeling
-            - your storytelling and cinematic pacing principles
-        * In the story enhancement, may involve deep internal emotional and philosophical layering from this.
-
-    ** Your task is to INTENSIFY and DEEPEN (NOT summarize OR lightly enhance) the raw music-story concept into a "Cinematic Music Episode" (many scenes) that feels like a single immersive audiovisual journey rather than fragmented clips.
-
-    ** Then transform the enhanced music-story into a series of professional, emotionally resonant short scenes for a music-driven storytelling experience.
-        * Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time, emotion, or location, the Narrator must guide transitions so the audience never feels lost.
-        * Emotional Expression Through Sound: Use the "Show, Don't Tell" rule. Emotions should manifest through:
-            - rhythm
-            - silence
-            - environment
-            - micro-actions (hands, breath, gaze)
-          NOT through explicit explanation.
-
-*** OBJECTIVES
-    ** Deconstruct the original raw music-story concept and expand it into detailed, structured scenes, adding:
-        - sensory details
-        - musical atmosphere
-        - emotional subtext
-      while keeping the core narrative intact.
-
-    PHASE 1 - Deepening the Music-Story:
-        • Add sensory and sonic layers:
-            - ambient sounds
-            - musical cues (piano, strings, bass, silence, distortion)
-            - emotional timing (pause, interruption, repetition)
-        • Show emotional states through:
-            - body language
-            - interaction with environment
-            - rhythm of movement
-            - contrast between sound and silence
-
-    PHASE 2 - Generate the Scenes:
-        ** Keep each scene concise:
-            * Dialogue or narration should fit within ~10 seconds.
-            * Split into more scenes if needed to maintain natural flow.
-            * Transitions must feel fluid and cinematic, never abrupt.
-
-        ** Scene flow pattern:
-            - Character expression → music cue → narrator insight → next emotional beat
-
-RULES:
-    ** Narrative Continuity:
-        Ensure seamless transitions across time, space, and emotional states.
-        Narrator must guide shifts when needed.
-
-    ** Show Through Music:
-        Emotions must be expressed through:
-            - sound design
-            - silence
-            - pacing
-            - visual rhythm
-        Avoid direct explanation of feelings.
-
-    ** Musical Storytelling:
-        Each scene should feel like part of a song progression:
-            - intro (setup)
-            - build (tension)
-            - drop (emotional peak)
-            - echo (aftermath)
-
-    ** The Cliffhanger:
-        The final scene must leave an unresolved emotional or narrative tension —
-        a lingering note, silence, or unanswered moment.
-
-    ** Core Insight Integration:
-        * Do NOT explicitly reference the core insight.
-        * Do NOT use its original metaphors or terminology.
-        * Instead:
-            - Let it shape emotional pacing
-            - Influence character behavior
-            - Guide narrative rhythm
-            - Exist beneath the surface
-        * The audience should FEEL the depth, not be told.
-
-
-INPUT (the original case+analysis content):
-    ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
-    ** or scene list of the story: 
-        *   {{
-                "story": [ 
-                    {{
-                        "title": "場景標題",
-                        "message": "简短核心信息/寄語",
-                        "story": "..故事场景描述/分析..",
-                        "speaking": "故事主人公/主持人(gender/age/race/mood) + 讲话/旁白"
-                    }},
-                    ...
-                ]
-            }}
-
-OUTPUT FORMAT (JSON Array)
-    ** Strictly output a JSON array of objects with these fields:
-        * actor: [Gender/Age/{language} Name/Tone] (One Character in the story, In English).
-        * actions: [Mood/Emotion + physical movements or expressions] (Character's actions in the scene, In English).
-        * speaking: The Character's dialogue (In {language}).
-            - In early scenes, Characters must explain background (naturally weave identity, status, history of the conflict).
-        * narrator: [Gender/Age/{language}] (Pychological Counselor,In English).
-        * voiceover: The Host's narration/analysis that bridges scenes and adds depth (In {language}).
-        * visual: Detailed cinematic setting (Time, weather, architecture, lighting) (In English).
-
-"""
-
-
-
-MV_STORY = """
-You are expert to extend & split the story (in a song) into scenes: 
-
-*** Input:
-    ** the story content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
-        Here is a example:
-        [
-            {{
-                "name": "musicvideo",
-                "explicit": "视觉开启于一个被雨水打湿的都市深夜，霓虹灯光在积水中扭曲成斑斓的色块。男主角独自坐在路边的一辆旧巴士内，车窗玻璃上的水滴映射着他模糊的面孔。女主角出现在街道对面的旧书摊前，身披一件半透明的雨衣，她在翻找一张泛黄的海报，动作迟缓而犹豫。两人目光在雾气昭昭的空气中短暂交汇，却又迅速像陌生人一样错开。随后的副歌部分，画面切换至一个废弃且昏暗的剧院舞台，舞台中央堆满了散乱的胶片拷贝。男主角在空荡的观众席中机械地鼓掌，而女主角在舞台上跳着一段没有音乐的独舞，光影在他们之间撕裂，光圈不断缩小。进入桥段（Bridge）时，画面色彩由冷调转为极度饱和的暖调，他们并肩走在光影错落的长廊，却始终保持着一个拳头的距离。结尾处，女主角消失在尽头的强光中，只留下男主角站在原地，手中紧握着那张在雨中湿透的海报，海报上的画像已被水迹模糊得无法辨认，镜头缓缓拉远，只剩下一盏明灭不定的路灯。",
-                "implicit": "这不仅仅是一场错过的爱恋，而是一个关于‘受虐式依恋’与‘自我解构’的心理隐喻。霓虹与雨滴代表了记忆的不可靠性与流动性，暗示主人公沉溺于一种被美化了的痛苦中。剧院与舞台的意象揭示了两人关系的本质：一场明知是虚假的表演，一方甘愿作为‘观众’去配合另一方的‘剧本’，以此来确认自己依然存在。‘撕裂的勇敢’与‘圆满的碎裂’通过光影的剧烈反差得以具象化，表达了人在面对注定失败的感情时，通过主动拥抱痛苦来获得某种病态的圣洁感。最后的模糊海报象征着执念的最终消解——我们所爱上的往往不是那个人，而是自己笔下那个被粉饰过的幻影。这种‘浪漫的灾难’是灵魂在荒原中唯一能感受到的剧烈波动，哪怕它是毁灭性的。",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "actor": "zzzzz",
-                "content": "ttttt"
-            }}
-        ]
-
-*** Objective: 
-    ** According to its Explicit storyline & Implicit storyline, split it into several scenes, which build the whole story-driven short dramas.
-        * In each scene of the story, let the conflicts appear naturally in daily-life 
-        * Each Scene corresponds to a specific visual frame and action, and is a vivid story / analysis snapshot. 
-
-*** Output format: 
-    ** Strictly output in ({json}), which contain scene with fields like: 
-        * speaker : gender/age/race (choices (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)) /name/key-features (like: girl/Su Qing/thin, quiet, habitually hiding in corners, the overlooked middle child) ~~~ in English language) 
-        * speaking: 1st person dialogue ~~~ all scenes' speaking should connect coherently like a smooth conversation / natural complete narrative;  between adjacent scenes, add connection info to make all scenes to give a whole story smoothly (if need, add transition info like time/age/location change etc) ~~~ in original language)
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
-
-    Here is a Example:  
-        {example}
-
-"""
-
 
 
 BROADWAY_PROGRAM = """
@@ -1773,26 +1809,13 @@ def get_channel_id(channel_id_or_key):
 
 
 def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
-    """返回频道 ``channel_prompt.analyze_prompt``（analyzed_content / 摘要重写用）。
-
-    先查当前 config key；若无 ``analyze_prompt`` 则回退到同 ``channel_id`` 主配置；
-    仍无则使用 ``COUNSELING_ANALYZE``。
-    """
     cfg = get_channel_config(channel_id_or_key)
     prompt = ((cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
     if not prompt:
-        ch_id = get_channel_id(channel_id_or_key)
-        if ch_id and ch_id != channel_id_or_key:
-            main_cfg = get_channel_config(ch_id)
-            prompt = ((main_cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
-    if not prompt:
         prompt = COUNSELING_ANALYZE.strip()
-    if language and "{" in prompt:
-        import config as _config
-
-        lang_label = _config.LANGUAGES.get(language, language)
+    if language:
         try:
-            prompt = prompt.format(language=lang_label)
+            prompt = prompt.format(language=config.LANGUAGES.get(language, language))
         except KeyError:
             pass
     return prompt
@@ -1815,41 +1838,59 @@ def get_channel_content_guide(channel_id_or_key) -> str:
     return guide
 
 
-def get_channel_templates(channel):
-    """
-    获取频道的模板。优先使用 channel_template（单一列表），兼容 channel_templates（多个模板）。
-    返回: (templates_list, template_labels)
-    - templates_list: 模板列表，通常只有一项（单一 channel_template）
-    - template_labels: 用于 UI 显示的标题列表
-    """
-    cfg = get_channel_config(channel)
-    if not cfg:
-        return [], []
-    # 优先 channel_template（单一列表），否则 channel_templates（兼容：可为单一列表或数组的数组，取第一个模板）
-    raw = cfg.get("channel_template")
-    if raw is None:
-        raw_list = cfg.get("channel_templates", [])
-        if raw_list:
-            first_el = raw_list[0]
-            raw = first_el if isinstance(first_el, list) else raw_list
-    if not raw:
-        return [], []
-    # 判断是否为「数组的数组」：第一项是 list 且其元素为 dict
-    first = raw[0]
-    if isinstance(first, list) and len(first) > 0 and isinstance(first[0], dict):
-        templates_list = raw
-        template_labels = []
-        for i, tpl in enumerate(templates_list):
-            names = [s.get("name", "") for s in tpl if isinstance(s, dict)]
-            label = f"模板 {i + 1}: {' → '.join(names)}"
-            template_labels.append(label)
-        return templates_list, template_labels
-    # 否则为单一模板（数组）
-    if isinstance(first, dict):
-        return [raw], [f"模板 1: {' → '.join(s.get('name', '') for s in raw if isinstance(s, dict))}"]
-    return [], []
+CHANNEL_PROMPT_META_KEYS = frozenset({
+    "prompt_reference_filter",
+    "analyze_prompt",
+    "content_guide",
+})
+
+CHANNEL_PROMPT_MODE_ORDER = (
+    "init_single",
+    "raw_single",
+    "init_multiple",
+    "debut_multiple",
+)
 
 
+def get_channel_prompt_snapshot(channel_id_or_key) -> dict:
+    """项目 ``channel_prompt`` 字段：频道配置的完整快照（meta + remix modes）。"""
+    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
+    return dict(cp)
+
+
+def get_channel_prompt_modes(
+    channel_id_or_key, channel_prompt_override: dict | None = None
+) -> dict[str, str]:
+    """``channel_prompt`` 中的 remix prompt：``{mode_key: prompt_text}``。"""
+    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
+    if isinstance(channel_prompt_override, dict):
+        cp.update(channel_prompt_override)
+    modes: dict[str, str] = {}
+    for k, v in cp.items():
+        if k in CHANNEL_PROMPT_META_KEYS:
+            continue
+        if isinstance(v, str) and v.strip():
+            modes[k] = v.strip()
+    return modes
+
+
+def get_channel_template_prompt_choices(
+    channel_id_or_key, channel_prompt_override: dict | None = None
+) -> list[tuple[str, dict]]:
+    """``[(mode_key, {mode, prompt}), ...]``，供 media review 等手工选择 remix prompt。"""
+    if isinstance(channel_prompt_override, dict) and channel_prompt_override:
+        modes = get_channel_prompt_modes(
+            channel_id_or_key, channel_prompt_override=channel_prompt_override
+        )
+    else:
+        modes = get_channel_prompt_modes(channel_id_or_key)
+
+    ordered_keys = [k for k in CHANNEL_PROMPT_MODE_ORDER if k in modes]
+    ordered_keys += sorted(k for k in modes if k not in ordered_keys)
+    return [
+        (k, {"mode": k, "prompt": modes[k]})
+        for k in ordered_keys
+    ]
 
 
 CHANNEL_CONFIG = {
@@ -1879,21 +1920,15 @@ CHANNEL_CONFIG = {
             ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
             ("Story", NOTEBOOKLM__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION),
-            ("Story with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
+            ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION)
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "analyze_prompt": COUNSELING_ANALYZE,
-            "content_guide": COUNSELING_CONTENT_GUIDE
+            "content_guide": COUNSELING_CONTENT_GUIDE,
+            "init_multiple": COUNSELING_CASE_DEVELOPMENT,
+            "init_single": COUNSELING_CASE_SUMMARY
         },
-        "channel_template": [
-            {
-                "name": "story",
-                "mode": "init_multiple",
-                "prompt": COUNSELING_CASE_DEVELOPMENT
-            },
-        ]
     },
 
 
@@ -1930,16 +1965,10 @@ CHANNEL_CONFIG = {
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
             "analyze_prompt": MV_ANALYZE,
-            "content_guide": MV_CONTENT_GUIDE
+            "content_guide": MV_CONTENT_GUIDE,
+            "init_multiple": MV_STORY_DEVELOPMENT,
+            "init_single": MV_SIMPLE_REORGANIZE
         },
-
-        "channel_template": [
-            {
-                "name": "story",
-                "mode": "init_multiple",
-                "prompt": MV_STORY_DEVELOPMENT
-            },
-        ]
     },
 
 
@@ -1952,15 +1981,9 @@ CHANNEL_CONFIG = {
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
         ],
         "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "raw_single": COUNSELING_CASE_SUMMARY,
         },
-        "channel_template": [
-            {
-                "name": "starting",
-                "mode": "raw_single",
-                "prompt": COUNSELING_CASE_SUMMARY
-            }
-        ],
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
@@ -1972,35 +1995,14 @@ CHANNEL_CONFIG = {
         "notebooklm_prompt_choices": [
             ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
             ("Full Story", NOTEBOOKLM__COUNSELING_STORY),
-            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Message with Ref", NOTEBOOKLM_PROMPT__COUNSELING_STORY_WITH_REF),
+            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
         ],
         "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER
+            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "init_single": COUNSELING_INTRO,
+            "init_multiple": COUNSELING_STORY_DEVELOPMENT,
+            "debut_multiple": COUNSELING_ANALYSIS_DEVELOPMENT,
         },
-        "channel_template": [
-            {
-                "name": "starting"
-            },
-            {
-                "name": "intro",
-                "mode": "init_single",
-                "prompt": COUNSELING_INTRO
-            },
-            {
-                "name": "story",
-                "mode": "init_multiple",
-                "prompt": COUNSELING_STORY_DEVELOPMENT
-            },
-            {
-                "name": "analysis",
-                "mode": "debut_multiple",
-                "prompt": COUNSELING_ANALYSIS_DEVELOPMENT
-            },
-            {
-                "name": "ending"
-            }
-        ],
         "channel_key": "config/client_secret_creative4teen.json"
     },
 
@@ -2010,22 +2012,8 @@ CHANNEL_CONFIG = {
         "channel_name": "圣经百老汇",
         "channel_id": "broadway",
         "channel_prompt": {
-            "prompt_reference_filter": MV_REFERENCE_FILTER
+            "prompt_reference_filter": MV_REFERENCE_FILTER,
         },
-        "channel_templates": [
-            {
-                "name": "starting"
-            },
-            {
-                "name": "intro"
-            },
-            {
-                "name": "story"
-            },
-            {
-                "name": "ending"
-            }
-        ],
         "channel_key": "config/client_secret_main.json"
     }
 

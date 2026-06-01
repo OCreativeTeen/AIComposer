@@ -1114,16 +1114,40 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         return "break"
 
 
-def _youtube_row_display_title(video_detail: dict) -> str:
-    """列表树展示用标题：若有 ``project_profile`` 则优先 ``video_title``（项目成片名）；否则用外层 ``title``（原视频标题），兼容顶层旧 ``video_title``。"""
+def _youtube_row_source_title(video_detail: dict) -> str:
+    """原视频标题（列表行外层 ``title``，兼容旧顶层 ``video_title``）。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    return (video_detail.get("title") or video_detail.get("video_title") or "").strip()
+
+
+def _youtube_row_project_title(video_detail: dict) -> str:
+    """项目成片名（``project_profile.video_title``）。"""
     if not isinstance(video_detail, dict):
         return ""
     prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
     if isinstance(prof, dict):
-        vt = (prof.get("video_title") or "").strip()
-        if vt:
-            return vt
-    return (video_detail.get("title") or video_detail.get("video_title") or "").strip()
+        return (prof.get("video_title") or "").strip()
+    return ""
+
+
+def _youtube_row_display_title(video_detail: dict) -> str:
+    """业务逻辑用标题：若有 ``project_profile.video_title`` 则优先成片名；否则原视频标题。"""
+    proj = _youtube_row_project_title(video_detail)
+    if proj:
+        return proj
+    return _youtube_row_source_title(video_detail)
+
+
+def _youtube_row_list_display_title(video_detail: dict) -> str:
+    """列表树展示用标题：``原视频标题 / 项目成片名``（有 project_profile 时两者均可见）。"""
+    src = _youtube_row_source_title(video_detail)
+    proj = _youtube_row_project_title(video_detail)
+    if proj:
+        if src:
+            return f"{src} / {proj}"
+        return proj
+    return src
 
 
 def _sync_youtube_row_title_after_scene_edit(video_detail: dict, scene_parsed, ui_language_key: str) -> None:
@@ -1370,6 +1394,8 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
         clone["scene_content"] = copy.deepcopy(selected_config["scene_content"])
     if "analyzed_content" in selected_config:
         clone["analyzed_content"] = copy.deepcopy(selected_config["analyzed_content"])
+    if (base.get("story") or "").strip():
+        clone["story"] = copy.deepcopy(base["story"])
     if "topic_category" in selected_config:
         tc = selected_config.get("topic_category")
         clone["topic_category"] = tc if tc else None
@@ -3308,18 +3334,11 @@ class MediaGUIManager:
         self.main_topic_category = None
 
     def _channel_config_key(self) -> str:
-        """当前 GUI 对应的 ``CHANNEL_CONFIG`` 键或 ``channel_id``。"""
         ch = (self.channel or "").strip()
         if ch:
             return ch
         return os.path.basename(self.channel_path or "")
 
-    def _channel_analyze_prompt(self) -> str:
-        """当前频道 analyzed_content 生成用的 system prompt。"""
-        return config_channel.get_channel_analyze_prompt(
-            self._channel_config_key(),
-            language=self.language,
-        )
 
     def _do_create_new_channel_from_url(self):
         """创建新频道：弹窗输入频道/视频链接，解析出频道名，创建列表（可选获取视频）"""
@@ -3514,7 +3533,7 @@ class MediaGUIManager:
             if isinstance(branch, list) and branch:
                 first = branch[0]
                 if isinstance(first, dict):
-                    title = (first.get("title") or "").strip()
+                    title = project_manager.caption_from_scene_content_item(first)
                     if title:
                         return title
         return ""
@@ -3807,7 +3826,11 @@ class MediaGUIManager:
         return config_channel.get_channel_content_guide(self._channel_config_key())
 
     def _format_analyze_prompt(self, video_detail=None) -> str:
-        raw = self._channel_analyze_prompt()
+        raw = config_channel.get_channel_analyze_prompt(
+            self._channel_config_key(),
+            language=self.language,
+        )
+
         url = ""
         if isinstance(video_detail, dict):
             url = (video_detail.get("url") or "").strip()
@@ -4271,7 +4294,11 @@ class MediaGUIManager:
                 video_detail = self.get_video_detail(url)
                 if not video_detail:
                     continue
-                title = _youtube_row_display_title(video_detail).lower()
+                title = (
+                    _youtube_row_source_title(video_detail)
+                    + " "
+                    + _youtube_row_project_title(video_detail)
+                ).lower()
 
                 transcript = config.read_transcript_text_from_video_detail(video_detail) or ""
                 analyzed = config.analyzed_content_text(
@@ -4509,7 +4536,7 @@ class MediaGUIManager:
                 mp4_for_publish = _resolve_review_publish_mp4_path(
                     video, input_publish_map
                 )
-                row_title = _youtube_row_display_title(video)
+                row_title = _youtube_row_list_display_title(video)
                 tree.insert("", tk.END, text=str(idx), 
                            values=(
                                row_title[:60],
@@ -4993,6 +5020,7 @@ class MediaGUIManager:
                         project_manager.export_profile_for_storage(copy.deepcopy(selected_config))
                     )
                     for k in (
+                        "story",
                         "analyzed_content",
                         "scene_content",
                         "topic_category",
@@ -5076,55 +5104,41 @@ class MediaGUIManager:
                         select_key,
                         reopen_summary=bool(append_new_list_row or cloned_from_pid),
                     )
-                    extra = ""
-                    if cloned_from_pid:
-                        extra = (
-                            f"\n\n（内容参照已有项目「{cloned_from_pid}」；原视频行仍保留原项目绑定。）"
+                    tc = (
+                        (list_row.get("topic_category") or selected_config.get("topic_category") or "")
+                        .strip()
+                    )
+                    if not tc:
+                        messagebox.showwarning(
+                            "项目已创建",
+                            f"PID：{_pid}\n\n缺少 topic_category，未写入主题分表。\n"
+                            "请先保存主题分类后再打开工作流。",
+                            parent=summary_window,
                         )
-                    list_note = ""
-                    if append_new_list_row or cloned_from_pid:
-                        list_note = (
-                            "\n\n已在当前频道热门列表中新增一行并选中，可直接在本窗口继续「审阅并发布」等操作。"
+                        return
+                    try:
+                        topic_list_path = _upsert_topic_category_program_list_row(
+                            self.channel_path, tc, list_row
                         )
-                    else:
-                        list_note = (
-                            "\n\n已更新当前列表行中的 project_profile，列表已刷新。"
+                    except Exception as exc:
+                        messagebox.showerror(
+                            "项目已创建",
+                            f"PID：{_pid}\n\n写入主题分表失败：\n{exc}",
+                            parent=summary_window,
                         )
-                    messagebox.showinfo(
+                        return
+
+                    if not messagebox.askyesno(
                         "项目已创建",
-                        "新项目已建立。\n\n"
-                        f"PID：{_pid}\n\n"
-                        "请运行 GUI_wf.py：从频道列表打开（project_profile）或使用「选择项目」。"
-                        f"{list_note}"
-                        f"{extra}",
+                        f"PID：{_pid}\n\n要打开魔法工作流吗？",
                         parent=summary_window,
+                    ):
+                        return
+                    _open_bound_project(
+                        selected_config,
+                        _pid,
+                        topic_list_path=topic_list_path,
                     )
-                    yn_clone = messagebox.askyesno(
-                        "写入主题分类列表",
-                        "是否再将该新项目写入 program 下「按主题分类」的 list/<主题>.json？\n\n"
-                        "（当前频道热门列表 JSON 已包含新项目行；此项为额外的主题分表副本。）\n\n"
-                        "选「否」则仅保留热门列表中的新行。",
-                        parent=summary_window,
-                    )
-                    if yn_clone:
-                        try:
-                            tc = (
-                                (list_row.get("topic_category") or selected_config.get("topic_category") or "")
-                                .strip()
-                            )
-                            upsert_path = _upsert_topic_category_program_list_row(
-                                self.channel_path, tc, list_row
-                            )
-                            messagebox.showinfo(
-                                "已写入主题列表",
-                                "已按 PID 写入或更新分类专用列表。\n\n"
-                                f"主题分类：{tc or '（未归类）'}\n"
-                                f"文件：\n{upsert_path}\n\n"
-                                f"标题：{_youtube_row_display_title(list_row)[:120]}",
-                                parent=summary_window,
-                            )
-                        except Exception as exc:
-                            messagebox.showerror("写入主题列表失败", str(exc), parent=summary_window)
 
                 def _create_new_project_from_raw(
                     analyzed_content,
@@ -5170,64 +5184,75 @@ class MediaGUIManager:
                             append_new_list_row=bool(cloned_from_pid),
                         )
 
-                def _open_bound_project(cfg: dict, cfg_pid: str) -> None:
-                    preferred_tc = (
-                        (video_detail.get("topic_category") or "").strip()
+                def _open_bound_project(
+                    cfg: dict,
+                    cfg_pid: str,
+                    *,
+                    topic_list_path: str | None = None,
+                ) -> None:
+                    tc = (
+                        (cfg.get("topic_category") or "").strip()
+                        or (video_detail.get("topic_category") or "").strip()
                         or (category_var.get() or "").strip()
-                        or (cfg.get("topic_category") or "").strip()
                     )
-                    tc_hit, _split_path = _topic_split_list_find_pid_for_channel(
-                        self.channel_path,
-                        preferred_topic_category=preferred_tc,
-                        topic_categories=list(self.topic_categories or []),
-                        pid=cfg_pid,
-                    )
-                    if tc_hit is None:
-                        repair_tc = preferred_tc or (cfg.get("topic_category") or "").strip()
-                        if not repair_tc:
-                            messagebox.showwarning(
-                                "无法在主题分表校验",
-                                f"本条 ``project_profile`` 已有 pid「{cfg_pid}」，但在任何「list/<主题>.json」分表中都找不到对应记录。\n\n"
-                                "请先在本对话框保存「主题分类」，或在工作流配置中填写 topic_category，再点「启动项目」以写入分表修复关联。",
-                                parent=summary_window,
-                            )
-                            return
+                    if not tc:
+                        messagebox.showwarning(
+                            "无法打开",
+                            f"PID：{cfg_pid}\n\n缺少 topic_category，请先保存主题分类。",
+                            parent=summary_window,
+                        )
+                        return
+
+                    launch_cfg = dict(cfg)
+                    launch_cfg["topic_category"] = tc
+                    if not (launch_cfg.get("channel") or "").strip():
+                        launch_cfg["channel"] = os.path.basename(self.channel_path)
+
+                    target_path = (topic_list_path or "").strip()
+                    target_ix = -1
+                    if target_path:
+                        target_ix = project_manager.find_list_row_index_by_pid(
+                            target_path, cfg_pid
+                        )
+                    else:
+                        target_path, target_ix, _ = project_manager.find_project_topic_list_row(
+                            launch_cfg
+                        )
+
+                    if target_ix < 0 and not topic_list_path:
                         yn_fix = messagebox.askyesno(
                             "主题分表缺少该项目",
-                            f"热门列表本条 ``project_profile.pid`` 已绑定「{cfg_pid}」，但在频道 program/list 下的主题分表中未找到相同 PID。\n\n"
-                            f"是否向主题「{repair_tc}」对应的分表写入一条记录（与「写入主题分类列表」逻辑一致），以与工作流保持一致？",
+                            f"list/{config.topic_category_list_file_basename(tc)} 中未找到 pid「{cfg_pid}」。\n\n"
+                            "是否写入主题分表？",
                             parent=summary_window,
                         )
                         if not yn_fix:
                             return
                         try:
-                            new_row = _clone_channel_video_for_new_project(video_detail, cfg)
-                            upsert_path = _upsert_topic_category_program_list_row(
-                                self.channel_path, repair_tc, new_row
+                            new_row = _clone_channel_video_for_new_project(video_detail, launch_cfg)
+                            target_path = _upsert_topic_category_program_list_row(
+                                self.channel_path, tc, new_row
                             )
-                            messagebox.showinfo(
-                                "已同步主题分表",
-                                f"已写入 / 更新：\n{upsert_path}\n\nPID：{cfg_pid}",
-                                parent=summary_window,
+                            target_ix = project_manager.find_list_row_index_by_pid(
+                                target_path, cfg_pid
                             )
                         except Exception as exc:
                             messagebox.showerror("写入主题分表失败", str(exc), parent=summary_window)
                             return
 
-                    opened = False
-                    if list_idx >= 0 and list_path and os.path.isfile(list_path):
-                        opened = _launch_gui_wf_from_list_json(
-                            list_path, list_idx, parent=summary_window
-                        )
-                    if not opened:
-                        opened = _launch_gui_wf_open_pid(cfg_pid, parent=summary_window)
-                    if opened:
-                        messagebox.showinfo(
-                            "打开已有项目",
-                            "已为新进程启动魔法工作流。\n"
-                            "若本条在频道列表中，将优先从列表项的 project_profile 载入（含整份 JSON）。",
+                    if target_ix < 0:
+                        messagebox.showerror(
+                            "无法打开",
+                            f"主题分表中找不到 pid「{cfg_pid}」。",
                             parent=summary_window,
                         )
+                        return
+
+                    opened = _launch_gui_wf_from_list_json(
+                        target_path, target_ix, parent=summary_window
+                    )
+                    if not opened:
+                        _launch_gui_wf_open_pid(cfg_pid, parent=summary_window)
 
                 if existing_pid:
                     cfg = None

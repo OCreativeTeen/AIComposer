@@ -33,7 +33,7 @@ def main():
     except tk.TclError:
         pass
 
-    choice, *_rest = show_initial_choice_dialog(root)
+    choice, *_rest = show_initial_choice_dialog(root) 
 
     if choice == "cancel":
         root.destroy()

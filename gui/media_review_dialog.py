@@ -82,7 +82,7 @@ class AVReviewDialog:
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
         self.transcriber = AudioTranscriber(self.workflow.pid, model_size="medium", device="cuda")
-        self.llm_api = LLMApi(GPT_MINI)
+        self.llm_api = LLMApi()
         #self.speech_service = MinimaxSpeechService(self.workflow.pid)
         self.speech_service = VoiceboxService(self.workflow.pid)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(self.workflow.pid)
@@ -430,11 +430,36 @@ class AVReviewDialog:
         self.speaker.bind("<<ComboboxSelected>>", lambda e: self.on_speaker_changed(e))
         self.speaker.bind("<FocusOut>", lambda e: self.on_speaker_changed(e))
 
-        # transcribe exsiting conversation (if >>30 sec), then remix single conversation
-        ttk.Button(fresh_buttons_frame, text="间重建", command=lambda: self.remix_conversation("simple", False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="单重建", command=lambda: self.remix_conversation("single", False)).pack(side=tk.LEFT)
-        ttk.Button(fresh_buttons_frame, text="多重建", command=lambda: self.remix_conversation("multiple", False)).pack(side=tk.LEFT)
-        # transcribe exsiting conversation (if >>30 sec), then remix multiple conversation
+        ttk.Label(fresh_buttons_frame, text="Prompt").pack(side=tk.LEFT, padx=(10, 5))
+        self._remix_template_choices = self._load_remix_template_choices()
+        _remix_labels = [lb for lb, _ in self._remix_template_choices]
+        self.remix_prompt_var = tk.StringVar(
+            value=_remix_labels[0] if _remix_labels else ""
+        )
+        self.remix_prompt_combo = ttk.Combobox(
+            fresh_buttons_frame,
+            textvariable=self.remix_prompt_var,
+            values=_remix_labels or ["(无可用 prompt)"],
+            state="readonly" if _remix_labels else "disabled",
+            width=24,
+        )
+        self.remix_prompt_combo.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(fresh_buttons_frame, text="内容").pack(side=tk.LEFT, padx=(0, 5))
+        self._remix_content_source_labels = self._build_remix_content_source_labels()
+        self.remix_content_source_var = tk.StringVar(
+            value=self._remix_content_source_labels[0]
+        )
+        self.remix_content_source_combo = ttk.Combobox(
+            fresh_buttons_frame,
+            textvariable=self.remix_content_source_var,
+            values=self._remix_content_source_labels,
+            state="readonly",
+            width=14,
+        )
+        self.remix_content_source_combo.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Button( fresh_buttons_frame, text="重建", command=lambda: self.remix_conversation()).pack(side=tk.LEFT, padx=(0, 8))
 
         ttk.Button(fresh_buttons_frame, text="单转录", command=lambda: self.transcribe_audio("single")).pack(side=tk.LEFT)
         ttk.Button(fresh_buttons_frame, text="多转录", command=lambda: self.transcribe_audio("multiple")).pack(side=tk.LEFT)
@@ -1254,130 +1279,357 @@ class AVReviewDialog:
         self._update_fresh_json_text()
 
 
-    def remix_conversation(self, mode, transcribe):
-        self.transcribe_way = mode
-        self.dialog.title( f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way}" )
-        
+    _REMIX_CONTENT_LABEL_SCENE = "对话/场景"
+    _REMIX_CONTENT_LABEL_STORY = "列表 Story"
+
+    def _build_remix_content_source_labels(self) -> list[str]:
+        labels = [self._REMIX_CONTENT_LABEL_SCENE]
+        if project_manager.story_text_from_config(
+            project_manager.PROJECT_CONFIG or {}
+        ):
+            labels.append(self._REMIX_CONTENT_LABEL_STORY)
+        return labels
+
+
+    def _content_text_from_fresh_or_scene(self) -> str:
+        parts: list[str] = []
+        fresh_text = (self.fresh_json_text.get(1.0, tk.END) or "").strip()
+        if fresh_text:
+            try:
+                arr = json.loads(fresh_text)
+                if isinstance(arr, list):
+                    for item in arr:
+                        if not isinstance(item, dict):
+                            continue
+                        for key in ("speaking", "voiceover", "caption", "visual", self.SPEAKING_KEY):
+                            t = (item.get(key) or "").strip()
+                            if t and t not in parts:
+                                parts.append(t)
+                elif isinstance(arr, dict):
+                    for key in ("speaking", "voiceover", "caption", "visual", self.SPEAKING_KEY):
+                        t = (arr.get(key) or "").strip()
+                        if t:
+                            parts.append(t)
+            except Exception:
+                parts.append(fresh_text)
+        if not parts and isinstance(self.current_scene, dict):
+            for key in ("speaking", "voiceover", "caption", "visual", self.SPEAKING_KEY):
+                t = (self.current_scene.get(key) or "").strip()
+                if t:
+                    parts.append(t)
+        return "\n\n".join(parts)
+
+
+    def _refresh_remix_content_source_combo(self) -> None:
+        labels = self._build_remix_content_source_labels()
+        self._remix_content_source_labels = labels
+        if hasattr(self, "remix_content_source_combo"):
+            self.remix_content_source_combo.configure(values=labels)
+        cur = (self.remix_content_source_var.get() or "").strip()
+        if cur not in labels:
+            self.remix_content_source_var.set(labels[0])
+
+    def _uses_list_story_remix_source(self) -> bool:
+        return (
+            self.remix_content_source_var.get() or ""
+        ).strip() == self._REMIX_CONTENT_LABEL_STORY
+
+    def _remix_soul_suffix(self) -> str:
+        return (
+            "\n\n\nAnd the core-insight ('soul') is: \n"
+            + project_manager.resolve_soul_for_config(
+                project_manager.PROJECT_CONFIG or {}
+            )
+        )
+
+    def _build_remix_refresh_conversation(self, content: str, mode_key: str) -> str:
+        """组装 remix LLM 的 user_prompt。
+
+        - 「列表 Story」：与 ``magic_workflow.remix_conversation`` 一致，纯 story 文本；
+        - 「对话/场景」：由 ``fresh_json_text`` / 当前场景 JSON 包装，``content`` 字段填入场景文本。
+        """
+        if self._uses_list_story_remix_source():
+            return f"content:\n{content}{self._remix_soul_suffix()}"
+
+        fresh_text = (self.fresh_json_text.get(1.0, tk.END) or "").strip()
+        refresh_json = None
+        if fresh_text:
+            try:
+                parsed = json.loads(fresh_text)
+                if isinstance(parsed, list):
+                    refresh_json = parsed
+                elif isinstance(parsed, dict):
+                    refresh_json = [parsed]
+            except Exception:
+                refresh_json = None
+
+        if refresh_json:
+            refresh_json_copy = []
+            for item in refresh_json:
+                if not isinstance(item, dict):
+                    continue
+                refresh_json_copy.append(
+                    {
+                        "content": content,
+                        "speaking": item.get("speaking", ""),
+                        "actor": item.get("actor", ""),
+                        "visual": item.get("visual", ""),
+                        "voiceover": item.get("voiceover", ""),
+                    }
+                )
+            if refresh_json_copy:
+                body = json.dumps(
+                    refresh_json_copy, indent=2, ensure_ascii=False
+                )
+                return body + self._remix_soul_suffix()
+
+        scene_label = mode_key or "story"
+        fallback = [
+            {
+                "name": scene_label,
+                "content": content,
+                "speaking": self.current_scene.get("speaking", ""),
+                "actor": self.current_scene.get("actor", ""),
+                "visual": self.current_scene.get("visual", ""),
+                "voiceover": self.current_scene.get("voiceover", ""),
+            }
+        ]
+        return (
+            json.dumps(fallback, indent=2, ensure_ascii=False)
+            + self._remix_soul_suffix()
+        )
+
+    def _resolve_remix_llm_content(self) -> str:
+        sel = (self.remix_content_source_var.get() or "").strip()
+        if sel == self._REMIX_CONTENT_LABEL_STORY:
+            text = project_manager.story_text_from_config(
+                project_manager.PROJECT_CONFIG or {}
+            )
+            if not text:
+                messagebox.showwarning(
+                    "提示",
+                    "项目无 story 内容，已改用「对话/场景」。",
+                    parent=self.dialog,
+                )
+                self.remix_content_source_var.set(self._REMIX_CONTENT_LABEL_SCENE)
+                return self._content_text_from_fresh_or_scene()
+            return text
+        return self._content_text_from_fresh_or_scene()
+
+    def _project_channel_prompt_override(self) -> dict | None:
+        cfg = project_manager.PROJECT_CONFIG or {}
+        merged = dict(cfg.get("channel_prompt") or {})
+        leg_p = cfg.get("prompts")
+        if isinstance(leg_p, dict):
+            merged.update(leg_p)
+        leg_t = cfg.get("channel_template")
+        if isinstance(leg_t, dict):
+            merged.update(leg_t)
+        return merged if merged else None
+
+    def _load_remix_template_choices(self):
+        """从项目 ``channel_prompt`` 或频道配置加载 remix prompt 选项。"""
+        override = self._project_channel_prompt_override()
+        return config_channel.get_channel_template_prompt_choices(
+            self.workflow.channel, channel_prompt_override=override
+        )
+
+    def _effective_remix_prompt_modes(self) -> dict[str, str]:
+        override = self._project_channel_prompt_override()
+        return config_channel.get_channel_prompt_modes(
+            self.workflow.channel, channel_prompt_override=override
+        )
+
+    @staticmethod
+    def _remix_transcribe_way_from_prompt_key(mode_key: str) -> str:
+        """由 ``channel_prompt`` 的 prompt 键推断重建模式。"""
+        k = (mode_key or "").strip().lower()
+        if not k:
+            return "single"
+        if "multiple" in k:
+            return "multiple"
+        if k == "init_single":
+            return "simple"
+        if "single" in k:
+            return "single"
+        return "single"
+
+    def _resolve_selected_remix_prompt(self):
+        """返回 ``(system_prompt, mode_key)``；无法解析时返回 ``(None, None)``。"""
+        choices = self._remix_template_choices or self._load_remix_template_choices()
+        modes = self._effective_remix_prompt_modes()
+
+        sel = (self.remix_prompt_var.get() or "").strip()
+        mode_key = None
+        for label, step in choices:
+            if label == sel:
+                mode_key = step.get("mode")
+                break
+        if mode_key is None and choices:
+            mode_key = choices[0][1].get("mode")
+            self.remix_prompt_var.set(choices[0][0])
+
+        if not mode_key:
+            messagebox.showwarning(
+                "提示",
+                "请先在 Prompt 下拉框中选择 remix prompt（如 init_single / init_multiple）。",
+                parent=self.dialog,
+            )
+            return None, None
+
+        prompt = (modes.get(mode_key) or "").strip()
+        if not prompt:
+            messagebox.showwarning(
+                "提示",
+                f"未找到「{mode_key}」对应的 prompt 文本。",
+                parent=self.dialog,
+            )
+            return None, None
+        return prompt, mode_key
+
+
+    def remix_conversation(self):
         if self.media_type != 'clip' and self.media_type != 'narration':
             return
 
-        if transcribe:
-            self._transcribe_recorded_audio()
-            self._update_fresh_json_text()
+        self._refresh_remix_content_source_combo()
 
-        _name = self.current_scene.get("name", "")
-        _ac = project_manager.PROJECT_CONFIG.get('content', {}).get('story')
-        if isinstance(_ac, (dict, list)):
-            _content = json.dumps(_ac, ensure_ascii=False)
-        else:
-            _content = _ac or ""
-
-        selected_prompt = self.current_scene.get("prompt", "")
-
-        refresh_conversation = self.fresh_json_text.get(1.0, tk.END).strip()
-
-        refresh_json = None
-        if refresh_conversation:
-            try:
-                refresh_json = json.loads(refresh_conversation)
-                refresh_json_copy = []
-                for item in refresh_json:
-                    new_item = {
-                        "content": _content,
-                        "speaking": item.get("speaking", ""),
-                        "actor": item.get("actor", ""),
-                        "voiceover": item.get("voiceover", "")
-                    }
-                    refresh_json_copy.append(new_item)
-                refresh_conversation = json.dumps(refresh_json_copy, indent=2, ensure_ascii=False)
-                refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
-            except:
-                refresh_json = None
-
-        if not refresh_json:
-            refresh_json = [
-                {
-                    "name": self.current_scene.get("name", "story"),
-                    "content": _content,
-                    "speaking": self.current_scene.get("speaking", ""),
-                    "actor": self.current_scene.get("actor", ""),
-                    "voiceover": self.current_scene.get("voiceover", "")
-                }
-            ]
-            refresh_conversation = json.dumps(refresh_json, indent=2, ensure_ascii=False)
-            refresh_conversation = refresh_conversation + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
-
-        if self.transcribe_way == "simple":
-            selected_prompt_example_file = None
-        else:
-            selected_prompt_example_file = self.workflow.channel + "_" + self.current_scene["name"] + ".json"
-
-
-        if selected_prompt_example_file:
-            channel_name = config_channel.get_channel_config(self.workflow.channel).get("channel_name", "")
-            topic_type = project_manager.PROJECT_CONFIG.get('topic_category', '') + " - " + project_manager.PROJECT_CONFIG.get('topic_subtype', '')
-            # read file from media folder
-            example_file = os.path.join(os.path.dirname(__file__), "../media", selected_prompt_example_file)
-            with open(example_file, "r", encoding="utf-8") as f:
-                selected_prompt_example_text = f.read()
-            selected_prompt_example = parse_json_from_text(selected_prompt_example_text)
-            if not selected_prompt_example or not isinstance(selected_prompt_example, list) or len(selected_prompt_example) == 0:
-                messagebox.showerror("错误", f"无法解析示例文件: {example_file}")
-                return
-
-            if self.transcribe_way == "multiple":
-                selected_prompt = selected_prompt.format(language=self.workflow.language, topic=topic_type)
-                selected_prompt = selected_prompt + "\n\n" + "split the whole program into several scenes. Like the following example:\n" + json.dumps(selected_prompt_example, indent=2, ensure_ascii=False)
-            else:
-                selected_prompt = selected_prompt.format(language=self.workflow.language, topic=topic_type)
-                selected_prompt = selected_prompt + "\n\n" + "output only has a single json item describing the whole program. Like the following example:\n" + json.dumps(selected_prompt_example[0], indent=2, ensure_ascii=False)
-
-        else:
-            selected_prompt = config_channel.SIMPLE_REORGANIZE
-
-        #format_args = selected_prompt.get("format_args", {}).copy()  # 复制预设参数
-        new_scenes = self.llm_api.generate_json(
-            system_prompt=selected_prompt,
-            user_prompt=refresh_conversation,
-            expect_list=True
-        )
-        if not new_scenes or len(new_scenes) == 0:
+        selected_prompt, mode_key = self._resolve_selected_remix_prompt()
+        if selected_prompt is None:
             return
 
-        if self.transcribe_way == "single" or (len(self.audio_json) == 1 and len(new_scenes) == 1):
-            self.current_scene[self.SPEAKER_KEY] = new_scenes[0].get(self.SPEAKER_KEY, "")
-            self.current_scene[self.SPEAKER_KEY+"_audio"] = self.source_audio_path
-            self.current_scene["visual"] = new_scenes[0].get("visual", "")
-            self.current_scene["start"] = 0.0
-            self.current_scene["end"] = self.audio_duration
-            self.current_scene["duration"] = self.audio_duration
-            self.current_scene["caption"] = ". ".join([item.get("caption", "") for item in new_scenes])
-            self.current_scene["speaking"] = ". ".join([item.get("speaking", "") for item in new_scenes])
-            self.current_scene["voiceover"] = ". ".join([item.get("voiceover", "") for item in new_scenes])
-            self.audio_json = [self.current_scene]
+        self.transcribe_way = self._remix_transcribe_way_from_prompt_key(mode_key)
+        self.dialog.title(
+            f"{self.media_type_names.get(self.media_type)} - {self.transcribe_way} ({mode_key})"
+        )
 
+        _content = self._resolve_remix_llm_content()
+        refresh_conversation = self._build_remix_refresh_conversation(_content, mode_key)
+
+        if self.transcribe_way != "simple" and mode_key:
+            selected_prompt_example_file = (
+                self.workflow.channel + "_" + mode_key + ".json"
+            )
         else:
-            start_id = self.current_scene.get("id", 0)
-            start_time = 0.0
-            for i, scene in enumerate(new_scenes):
-                fresh_scene = self.audio_json[i] if i < len(self.audio_json) else self.audio_json[-1]
-                scene["caption"] = fresh_scene.get("caption", "")
-                duration = fresh_scene.get("duration", self.audio_duration)
-                scene["duration"] = duration if len(self.audio_json) == len(new_scenes) else self.audio_duration / len(new_scenes)
-                scene["start"] = start_time
-                start_time = start_time + scene["duration"]
-                scene["end"] = start_time
-                scene["id"] = start_id + 1
-                start_id = scene["id"]
+            selected_prompt_example_file = None
 
-                scene[self.SPEAKER_KEY+"_audio"] = None
+        topic_type = (
+            project_manager.PROJECT_CONFIG.get("topic_category", "")
+            + " - "
+            + project_manager.PROJECT_CONFIG.get("topic_subtype", "")
+        )
+        if self.transcribe_way != "simple":
+            try:
+                selected_prompt = selected_prompt.format(
+                    language=self.workflow.language, topic=topic_type
+                )
+            except KeyError:
+                pass
 
-            self.audio_json = self.align_json_to_current_scene(new_scenes)
+        if selected_prompt_example_file:
+            example_file = os.path.join(
+                os.path.dirname(__file__), "../media", selected_prompt_example_file
+            )
+            if not os.path.isfile(example_file):
+                selected_prompt_example_file = None
+            else:
+                with open(example_file, "r", encoding="utf-8") as f:
+                    selected_prompt_example_text = f.read()
+                selected_prompt_example = parse_json_from_text(
+                    selected_prompt_example_text
+                )
+                if (
+                    not selected_prompt_example
+                    or not isinstance(selected_prompt_example, list)
+                    or len(selected_prompt_example) == 0
+                ):
+                    messagebox.showerror(
+                        "错误", f"无法解析示例文件: {example_file}", parent=self.dialog
+                    )
+                    return
 
+                if self.transcribe_way == "multiple":
+                    selected_prompt = (
+                        selected_prompt
+                        + "\n\n"
+                        + "split the whole program into several scenes. Like the following example:\n"
+                        + json.dumps(
+                            selected_prompt_example, indent=2, ensure_ascii=False
+                        )
+                    )
+                else:
+                    selected_prompt = (
+                        selected_prompt
+                        + "\n\n"
+                        + "output only has a single json item describing the whole program. Like the following example:\n"
+                        + json.dumps(
+                            selected_prompt_example[0], indent=2, ensure_ascii=False
+                        )
+                    )
+
+        raw_llm_scenes = self.llm_api.generate_json(
+            system_prompt=selected_prompt,
+            user_prompt=refresh_conversation,
+            expect_list=False,
+        )
+        new_scenes = config.scene_list_from_bilingual_llm_output(
+            raw_llm_scenes, self.workflow.language
+        )
+        if not new_scenes:
+            return
+        for scene in new_scenes:
+            if isinstance(scene, dict):
+                project_manager.normalize_scene_content_item_for_workflow(scene)
+
+        self._apply_llm_scenes_to_audio_json(new_scenes)
         self._update_fresh_json_text()
 
 
-    def align_json_to_current_scene(self, json_array):
+    def _apply_llm_scenes_to_audio_json(self, new_scenes: list) -> None:
+        """将 LLM 返回的场景 list 写入 ``audio_json``；场景数与文案以 LLM 为准。"""
+        scenes = [s for s in (new_scenes or []) if isinstance(s, dict)]
+        if not scenes:
+            return
+
+        n = len(scenes)
+        base_id = int(self.current_scene.get("id", 0) or 0)
+        section_base = int(base_id // 100) * 100
+
+        if n > 1:
+            raw_id = section_base
+            has_timing = all("start" in s and "end" in s for s in scenes)
+            start_time = 0.0
+            per = self.audio_duration / n if self.audio_duration > 0 else 0.0
+            for scene in scenes:
+                raw_id += 100
+                scene["id"] = raw_id
+                if not has_timing:
+                    scene["start"] = start_time
+                    scene["duration"] = per
+                    start_time += per
+                    scene["end"] = start_time
+                elif "duration" not in scene:
+                    scene["duration"] = float(scene["end"]) - float(scene["start"])
+                scene.setdefault(
+                    self.SPEAKER_KEY,
+                    scene.get(self.SPEAKER_KEY) or self.current_scene.get(self.SPEAKER_KEY, ""),
+                )
+                scene[self.SPEAKER_KEY + "_audio"] = None
+        else:
+            scene = scenes[0]
+            scene.setdefault("id", base_id)
+            scene.setdefault(
+                self.SPEAKER_KEY,
+                scene.get(self.SPEAKER_KEY) or self.current_scene.get(self.SPEAKER_KEY, ""),
+            )
+            # 单场景：不写 start/end，避免 align 清掉整段 clip 媒体路径
+            if scene.get(self.SPEAKER_KEY + "_audio") is None:
+                scene[self.SPEAKER_KEY + "_audio"] = self.source_audio_path
+
+        self.audio_json = self.align_json_to_current_scene(scenes, from_llm=True)
+
+
+    def align_json_to_current_scene(self, json_array, *, from_llm=False):
         """将转录/输入的 JSON 片段对齐到场景结构。若 item 有 start/end（来自转录），
         不继承 clip_audio/clip 等媒体字段，这些段需从 source_audio_path 切割得到。"""
         new_json_array = []
@@ -1391,19 +1643,37 @@ class AVReviewDialog:
                 new_item[self.SPEAKER_KEY] = item[self.SPEAKER_KEY]
             if self.SPEAKER_KEY+"_audio" in item:
                 new_item[self.SPEAKER_KEY+"_audio"] = item[self.SPEAKER_KEY+"_audio"]
+            if from_llm:
+                new_item["caption"] = item.get("caption", "")
+                new_item["visual"] = item.get("visual", "")
+                new_item["speaking"] = item.get("speaking", "")
+                new_item["voiceover"] = item.get("voiceover", "")
+                sp = item.get(self.SPEAKING_KEY)
+                if sp is None or not str(sp).strip():
+                    sp = item.get("voiceover") or item.get("speaking") or item.get("caption", "")
+                new_item[self.SPEAKING_KEY] = sp or ""
+            else:
+                if "duration" in item:
+                    new_item["duration"] = item["duration"]
+                if "visual" in item:
+                    new_item["visual"] = item["visual"]
+                if "speaking" in item:
+                    new_item["speaking"] = item["speaking"]
+                if "voiceover" in item:
+                    new_item["voiceover"] = item["voiceover"]
+                if "caption" in item:
+                    new_item["caption"] = item["caption"]
+                new_item[self.SPEAKING_KEY] = item.get(
+                    self.SPEAKING_KEY,
+                    item.get("caption", new_item.get(self.SPEAKING_KEY, "")),
+                )
             if "duration" in item:
                 new_item["duration"] = item["duration"]
-            if "visual" in item:
-                new_item["visual"] = item["visual"]
             if "start" in item:
                 new_item["start"] = item["start"]
             if "end" in item:
                 new_item["end"] = item["end"]
-            if "caption" in item:
-                new_item["caption"] = item["caption"]
-            # caption 只复制到当前 media_type 对应的 SPEAKING_KEY（speaking 或 voiceover 二选一），不复制到另一个
-            new_item[self.SPEAKING_KEY] = item.get(self.SPEAKING_KEY, item.get("caption", new_item.get(self.SPEAKING_KEY, "")))
-            if "start" in item and "end" in item:
+            if not from_llm and "start" in item and "end" in item:
                 # 转录产生的段：清除另一字段，避免继承 current_scene 的旧值
                 other_key = "voiceover" if self.SPEAKING_KEY == "speaking" else "speaking"
                 new_item[other_key] = ""
@@ -1420,16 +1690,13 @@ class AVReviewDialog:
         fresh_text = self.fresh_json_text.get(1.0, tk.END).strip()
         try:
             fresh_json = json.loads(fresh_text)
-            if self.transcribe_way == "single":
-                self.current_scene[self.SPEAKER_KEY] = fresh_json[0].get(self.SPEAKER_KEY, "")
-                self.current_scene["visual"] = fresh_json[0].get("visual", "")
-                self.current_scene["caption"] = ". ".join([item.get("caption", "") for item in fresh_json])
-                self.current_scene["speaking"] = ". ".join([item.get("speaking", "") for item in fresh_json])
-                self.current_scene["voiceover"] = ". ".join([item.get("voiceover", "") for item in fresh_json])
-                self.audio_json = [self.current_scene]
-            else:
-                self.audio_json = self.align_json_to_current_scene(fresh_json)
-        except:
+            if not isinstance(fresh_json, list):
+                raise ValueError("expected list")
+            for scene in fresh_json:
+                if isinstance(scene, dict):
+                    project_manager.normalize_scene_content_item_for_workflow(scene)
+            self._apply_llm_scenes_to_audio_json(fresh_json)
+        except Exception:
             messagebox.showerror("错误", "Fresh JSON格式不正确")
             return
 

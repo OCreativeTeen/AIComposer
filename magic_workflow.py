@@ -765,16 +765,17 @@ class MagicWorkflow:
                 c = scene_content.get(config.LANGUAGES[self.language], [])
                 if isinstance(c, list) and len(c) > 0:
                     scene_content = c
-                    self.title = scene_content[0].get("title", "")
+                    if isinstance(scene_content[0], dict):
+                        self.title = project_manager.caption_from_scene_content_item(scene_content[0])
                 elif isinstance(scene_content, dict):
-                    self.title = scene_content.get("title", "")
+                    self.title = project_manager.caption_from_scene_content_item(scene_content)
                     scene_content = [scene_content]
                 else:
                     scene_content = None
             elif isinstance(scene_content, list):
                 if len(scene_content) > 0:
                     if isinstance(scene_content[0], dict):
-                        self.title = scene_content[0].get("title", "")
+                        self.title = project_manager.caption_from_scene_content_item(scene_content[0])
                     else:
                         scene_content = None
                 else:
@@ -782,20 +783,17 @@ class MagicWorkflow:
             else:
                 scene_content = None
 
-            
         # take first scene_content 's title as the title of the story
-
         if scene_content:
             for scene_index, scene_item in enumerate(scene_content):
-                scene_item["caption"] = scene_item.pop("title","")
-                scene_item["visual"] = scene_item.pop("story","")
+                if isinstance(scene_item, dict):
+                    project_manager.normalize_scene_content_item_for_workflow(scene_item)
                 self.add_story_scene(scene_index, scene_item, False, is_append=False)
         #else:
         #    stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
         #     for story_index, element in enumerate(stories_template):
         #          element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
         #          self.add_story_scene(story_index, element, True, is_append=False)
-
         for story_scene in self.scenes:
             if not story_scene.get("host_display"):
                 story_scene["host_display"] = _host_display_default
@@ -805,6 +803,7 @@ class MagicWorkflow:
                 story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
 
         self.save_scenes_to_json()
+
 
 
     def remix_conversation(self, current_scene, mode, _content, selected_prompt):

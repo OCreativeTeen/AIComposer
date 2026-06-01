@@ -37,6 +37,98 @@ def _story_value_nonempty(sv) -> bool:
     return True
 
 
+def story_text_from_config(cfg: dict) -> str:
+    """从 ``PROJECT_CONFIG`` 或绑定的频道列表行外层 ``story`` 读取 remix / YouTube 用文本。"""
+    if not isinstance(cfg, dict):
+        return ""
+    st = (cfg.get("story") or "").strip()
+    if st:
+        return st
+
+    row = load_video_detail_row_for_config(cfg)
+    if isinstance(row, dict):
+        st = (row.get("story") or row.get("summary") or "").strip()
+        if st:
+            return st
+    return ""
+
+
+def project_topic_list_json_path(cfg: dict) -> str:
+    """由 ``project_profile`` 的 ``channel`` + ``topic_category`` 解析目标主题分表 list JSON 路径。"""
+    if not isinstance(cfg, dict):
+        return ""
+    ch = (cfg.get("channel") or "").strip()
+    tc = (cfg.get("topic_category") or "").strip()
+    if not ch or not tc:
+        return ""
+    return topic_category_list_json_path(ch, tc)
+
+
+def find_list_row_index_by_pid(list_path: str, wanted_pid: str) -> int:
+    """在指定 list JSON 中按 ``list_json_row_workflow_pid`` 查找行下标。"""
+    wanted_pid = (wanted_pid or "").strip()
+    if not wanted_pid or not list_path or not os.path.isfile(list_path):
+        return -1
+    try:
+        with open(list_path, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return -1
+    if not isinstance(arr, list):
+        return -1
+    for idx, item in enumerate(arr):
+        if not isinstance(item, dict):
+            continue
+        if list_json_row_workflow_pid(item) == wanted_pid:
+            return idx
+    return -1
+
+
+def load_video_detail_row_for_config(cfg: dict) -> dict | None:
+    """在目标主题分表（``channel`` + ``topic_category``）中按 ``pid`` == 行 ``id`` 定位 video detail。"""
+    if not isinstance(cfg, dict):
+        return None
+    lp = project_topic_list_json_path(cfg)
+    file_pid = (cfg.get("pid") or "").strip()
+    if not lp or not file_pid or not os.path.isfile(lp):
+        return None
+    try:
+        with open(lp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(arr, list):
+        return None
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        if list_json_row_workflow_pid(item) == file_pid:
+            return item
+    return None
+
+
+def find_project_topic_list_row(cfg: dict) -> tuple[str, int, dict | None]:
+    """返回 ``(list_path, index, row)``；未找到时 ``index`` 为 ``-1``、``row`` 为 ``None``。"""
+    if not isinstance(cfg, dict):
+        return "", -1, None
+    lp = project_topic_list_json_path(cfg)
+    file_pid = (cfg.get("pid") or "").strip()
+    if not lp or not file_pid:
+        return lp, -1, None
+    ix = find_list_row_index_by_pid(lp, file_pid)
+    if ix < 0 or not os.path.isfile(lp):
+        return lp, -1, None
+    try:
+        with open(lp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        if isinstance(arr, list) and 0 <= ix < len(arr):
+            row = arr[ix]
+            return lp, ix, row if isinstance(row, dict) else None
+    except (OSError, json.JSONDecodeError):
+        pass
+    return lp, -1, None
+
+
 def _jsonish_preview_fragment(val, max_len: int = 200) -> str:
     """将字符串 / dict / list 压成单行预览（截断）。"""
     if val is None:
@@ -60,14 +152,51 @@ def _raw_story_preview_text(story_result) -> str:
             return _jsonish_preview_fragment(story_result.get("analyzed_content"))
         if _story_value_nonempty(story_result.get("scene_content")):
             return _jsonish_preview_fragment(story_result.get("scene_content"))
-        if _story_value_nonempty(story_result.get("content")):
-            return _jsonish_preview_fragment(story_result.get("content"))
+        if _story_value_nonempty(story_result.get("story")):
+            return _jsonish_preview_fragment(story_result.get("story"))
     return ""
+
+
+def caption_from_scene_content_item(item: dict) -> str:
+    """场景 dict 上的标题/字幕行：优先 ``caption``，兼容旧 ``title``。"""
+    if not isinstance(item, dict):
+        return ""
+    for kk in ("caption", "title", "Title"):
+        t = item.get(kk)
+        if t is not None and str(t).strip():
+            return str(t).strip()
+    return ""
+
+
+def normalize_scene_content_item_for_workflow(item: dict) -> None:
+    if not isinstance(item, dict):
+        return
+    cap = item.get("caption")
+    if cap is None or not str(cap).strip():
+        cap = item.pop("title", "") or item.pop("Title", "")
+    else:
+        item.pop("title", None)
+        item.pop("Title", None)
+    if cap is not None and str(cap).strip():
+        item["caption"] = str(cap).strip()
+
+    story = item.pop("story", None)
+    if not story:
+        story = item.get("visual", None)
+    if story:
+        item["visual"] = story
+
+    message = item.pop("message", None)
+    if not message:
+        message = item.get("voiceover", None)
+    if message:
+        item["voiceover"] = message
+
 
 
 def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
     """从 scene_content 取首场景标题：分支键与 ``magic_workflow.load_scenes`` 一致
-    （``scene_content[config.scene_story_language_key_for_ui(UI语种)][0]["title"]``）。
+    （``scene_content[config.scene_story_language_key_for_ui(UI语种)][0]["caption"]``）。
 
     支持双语 ``{english: [...], chinese: [...]}``（键名大小写不敏感）、顶层 list、单层 dict。
     """
@@ -92,15 +221,13 @@ def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
         if isinstance(val, list) and val:
             first = val[0]
             if isinstance(first, dict):
-                for kk in ("title", "Title"):
-                    t = first.get(kk)
-                    if t is not None and str(t).strip():
-                        return str(t).strip()
+                got = caption_from_scene_content_item(first)
+                if got:
+                    return got
         if isinstance(val, dict):
-            for kk in ("title", "Title"):
-                t = val.get(kk)
-                if t is not None and str(t).strip():
-                    return str(t).strip()
+            got = caption_from_scene_content_item(val)
+            if got:
+                return got
         return ""
 
     pref = ""
@@ -204,8 +331,7 @@ PROJECT_PROFILE_KEY = "project_profile"
 # 落盘写入 project_profile 的键（不含 RAW / 分类 / tags / soul 等）
 PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "channel",
-    "channel_template",
-    "prompts",
+    "channel_prompt",
     "language",
     "narrator",
     "visual_style",
@@ -217,10 +343,13 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "watermark",
     "headmark",
     "video_title",
+    "topic_category",
+    "topic_subtype",
 })
 
 # 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）
 LIST_ITEM_TOP_PROJECT_KEYS = (
+    "story",
     "analyzed_content",
     "scene_content",
     "topic_category",
@@ -273,9 +402,29 @@ def export_profile_for_storage(cfg: dict) -> dict:
     return out
 
 
+def migrate_legacy_project_channel_prompt(cfg: dict) -> dict:
+    """将旧 ``prompts`` + ``channel_template`` 合并为 ``channel_prompt``。"""
+    if not isinstance(cfg, dict):
+        return {}
+    cp = dict(cfg.get("channel_prompt") or {})
+    leg_p = cfg.get("prompts")
+    if isinstance(leg_p, dict):
+        cp.update(leg_p)
+    leg_t = cfg.get("channel_template")
+    if isinstance(leg_t, dict):
+        cp.update(leg_t)
+    if cp:
+        cfg["channel_prompt"] = cp
+    cfg.pop("prompts", None)
+    cfg.pop("channel_template", None)
+    cfg.pop("content", None)
+    return cp
+
+
 def profile_for_list_storage(cfg: dict) -> dict:
-    """列表项内 ``project_profile`` 仅存白名单字段；不写 soul / analyzed_content / 分类等到 profile。"""
+    """列表项内 ``project_profile`` 仅存白名单字段（含 topic_category / topic_subtype；不含 RAW / soul）。"""
     base = export_profile_for_storage(cfg or {})
+    migrate_legacy_project_channel_prompt(base)
     out = {}
     for k in PROJECT_PROFILE_STORAGE_KEYS:
         if k not in base:
@@ -424,18 +573,21 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
         if k not in cfg and item.get(k) is not None:
             cfg[k] = copy.deepcopy(item[k])
     if list_path:
-        cfg["_channel_list_json"] = os.path.normpath(list_path)
-    if index >= 0:
-        cfg["_channel_list_index"] = int(index)
+        pass  # 列表路径由 topic_category 动态解析，不落盘
+    cfg.pop("channel_list_json", None)
+    cfg.pop("_channel_list_json", None)
+    cfg.pop("_channel_list_index", None)
     hydrate_config_soul_runtime(cfg)
     return cfg
 
 
 def load_project_config_by_pid(wanted_pid: str):
-    """按 pid 在所有频道 ``list/*.json``（含热门列表与 topic 分列表）中查找。"""
+    """按 pid 在各频道 ``list/*.json`` 中查找；优先匹配 ``list/<topic_category>.json`` 分表行。"""
     wanted_pid = (wanted_pid or "").strip()
     if not wanted_pid:
         return None
+    best = None
+    best_rank = -1
     for list_path in iter_channel_list_json_files():
         try:
             with open(list_path, "r", encoding="utf-8") as f:
@@ -448,9 +600,17 @@ def load_project_config_by_pid(wanted_pid: str):
             if not isinstance(item, dict):
                 continue
             cand = list_json_row_workflow_pid(item)
-            if cand == wanted_pid:
-                return project_config_from_list_item(item, list_path, idx)
-    return None
+            if cand != wanted_pid:
+                continue
+            tc = (item.get("topic_category") or "").strip()
+            prof = item.get(PROJECT_PROFILE_KEY)
+            if not tc and isinstance(prof, dict):
+                tc = (prof.get("topic_category") or "").strip()
+            rank = 2 if tc and os.path.basename(list_path) == config.topic_category_list_file_basename(tc) else 0
+            if rank > best_rank:
+                best_rank = rank
+                best = project_config_from_list_item(item, list_path, idx)
+    return best
 
 
 def _write_profile_to_list_at_index(list_path: str, index: int, full_exported_cfg: dict) -> bool:
@@ -487,7 +647,8 @@ def _try_save_profile_to_lists_by_pid(file_pid: str, full_exported_cfg: dict) ->
                 continue
             cand = list_json_row_workflow_pid(item)
             if cand == file_pid:
-                return _write_profile_to_list_at_index(list_path, idx, full_exported_cfg)
+                if _write_profile_to_list_at_index(list_path, idx, full_exported_cfg):
+                    return True
     return False
 
 
@@ -510,30 +671,6 @@ def _prompt_topic_category_if_needed(parent) -> str:
         return (s or "").strip()
     except Exception:
         return ""
-
-
-def _sync_project_config_list_meta(wanted_pid: str) -> None:
-    """保存成功后，回填 ``_channel_list_json`` / ``_channel_list_index`` 便于下次精确定位。"""
-    global PROJECT_CONFIG
-    if not PROJECT_CONFIG or not (wanted_pid or "").strip():
-        return
-    wanted_pid = wanted_pid.strip()
-    for list_path in iter_channel_list_json_files():
-        try:
-            with open(list_path, "r", encoding="utf-8") as f:
-                arr = json.load(f)
-        except Exception:
-            continue
-        if not isinstance(arr, list):
-            continue
-        for idx, item in enumerate(arr):
-            if not isinstance(item, dict):
-                continue
-            cand = list_json_row_workflow_pid(item)
-            if cand == wanted_pid:
-                PROJECT_CONFIG["_channel_list_json"] = os.path.normpath(list_path)
-                PROJECT_CONFIG["_channel_list_index"] = int(idx)
-                return
 
 
 def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, full_exported_cfg: dict) -> bool:
@@ -730,9 +867,9 @@ class ProjectConfigManager:
 
 
 def save_project_config(parent=None):
-    """写回 ``project_profile``：优先精确定位行 → 按 pid 搜全部 ``list/*.json`` → 再写入 ``topic_category`` 对应分表文件。
+    """写回 ``project_profile`` 到 ``list/<topic_category>.json``（由 profile 内 channel + topic_category 定位）。
 
-    不再使用 ``PROJECT_DATA_PATH/config/{pid}.config``。若无 ``topic_category`` 且尚未写入任一行，在有 ``parent`` 时弹窗请求。
+    不再使用 ``PROJECT_DATA_PATH/config/{pid}.config``。若无 ``topic_category``，在有 ``parent`` 时弹窗请求。
     """
     global PROJECT_CONFIG, pid
     if not PROJECT_CONFIG:
@@ -743,19 +880,6 @@ def save_project_config(parent=None):
         print("❌ 项目ID未设置，无法保存项目配置")
         return False
     to_store = export_profile_for_storage(copy.deepcopy(PROJECT_CONFIG))
-    lp = PROJECT_CONFIG.get("_channel_list_json")
-    ix = PROJECT_CONFIG.get("_channel_list_index")
-    if lp and ix is not None and isinstance(ix, int) and os.path.isfile(lp):
-        if _write_profile_to_list_at_index(lp, ix, to_store):
-            pid = file_pid
-            _sync_project_config_list_meta(file_pid)
-            print(f"✅ 项目配置已写入频道列表: {lp} (index {ix})")
-            return True
-    if _try_save_profile_to_lists_by_pid(file_pid, to_store):
-        pid = file_pid
-        _sync_project_config_list_meta(file_pid)
-        print("✅ 项目配置已写入频道列表（按 pid 匹配）")
-        return True
 
     ch = (PROJECT_CONFIG.get("channel") or "").strip()
     if not ch:
@@ -772,9 +896,13 @@ def save_project_config(parent=None):
         to_store = export_profile_for_storage(copy.deepcopy(PROJECT_CONFIG))
 
     tpath = topic_category_list_json_path(ch, tc)
+    ix = find_list_row_index_by_pid(tpath, file_pid)
+    if ix >= 0 and _write_profile_to_list_at_index(tpath, ix, to_store):
+        pid = file_pid
+        print(f"✅ 项目配置已写入主题列表: {tpath} (pid {file_pid})")
+        return True
     if _upsert_profile_in_topic_list_file(tpath, file_pid, to_store):
         pid = file_pid
-        _sync_project_config_list_meta(file_pid)
         print(f"✅ 项目配置已写入主题列表: {tpath}")
         return True
     print(f"❌ 无法写入主题列表文件: {tpath}")
@@ -853,7 +981,7 @@ class ProjectSelectionDialog:
             'narrator': _nar,
             'visual_style': _vs,
             'host_display': _hd,
-            'channel_template': None,
+            'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
             'tags': itags,
@@ -1110,12 +1238,15 @@ class ProjectSelectionDialog:
         ).pack(side=tk.LEFT, padx=(0, 8))
         row += 1
 
-        def sync_channel_template(*args):
-            """频道变更时同步单一 channel_template 到 story_result"""
-            templates_list, _ = config_channel.get_channel_templates(self.story_result['channel'])
-            self.story_result['channel_template'] = templates_list[0] if templates_list else None
+        def sync_channel_prompt(*args):
+            """频道变更时同步完整 ``channel_prompt`` 快照到项目配置。"""
+            self.story_result["channel_prompt"] = config_channel.get_channel_prompt_snapshot(
+                self.story_result["channel"]
+            )
+            self.story_result.pop("prompts", None)
+            self.story_result.pop("channel_template", None)
 
-        sync_channel_template()
+        sync_channel_prompt()
 
         # 主题分类、主题子类型：同一行横向排列
         topic_row = ttk.Frame(main_frame)
@@ -1267,7 +1398,7 @@ class ProjectSelectionDialog:
 
         # 频道/语言已从首层传入，无需绑定变更事件；初始化加载主题分类与模板
         update_topic_choices()
-        sync_channel_template()
+        sync_channel_prompt()
 
         # 内容编辑区域：RAW
         content_panels_frame = ttk.Frame(main_frame)
@@ -1563,7 +1694,9 @@ class ProjectSelectionDialog:
             ch_id = config_channel.get_channel_id(self.story_result['channel'])
             self.story_result['channel'] = ch_id
             _ch_cfg = config_channel.get_channel_config(ch_id)
-            self.story_result['prompts'] = _ch_cfg.get('channel_prompt', {})
+            self.story_result['channel_prompt'] = config_channel.get_channel_prompt_snapshot(ch_id)
+            self.story_result.pop('prompts', None)
+            self.story_result.pop('channel_template', None)
             self.story_result['scene_min_length'] = _ch_cfg.get('scene_min_length', 9)
             self.story_result['watermark'] = dict(_ch_cfg.get('watermark') or {})
             self.story_result['headmark'] = dict(_ch_cfg.get('headmark') or {})

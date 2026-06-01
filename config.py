@@ -63,6 +63,59 @@ def scene_story_language_key_for_ui(ui_language_key: str) -> str:
     return LANGUAGES.get(k, "chinese")
 
 
+def _dict_branch_val(d: dict, branch: str):
+    if not branch or not isinstance(d, dict):
+        return None
+    if branch in d:
+        return d[branch]
+    bl = branch.lower()
+    for k, v in d.items():
+        if isinstance(k, str) and k.lower() == bl:
+            return v
+    return None
+
+
+def scene_list_from_bilingual_llm_output(data, ui_language_key: str) -> list:
+    """从 LLM 场景 JSON 取当前 UI 语种分支的场景 list（en→english，否则 chinese）。
+
+    支持 ``{english: [...], chinese: [...]}``、顶层 list、单场景 dict；
+    ``expect_list=True`` 误包一层 ``[{english:..., chinese:...}]`` 时也会拆开。
+    """
+    if data is None:
+        return []
+
+    def _as_scene_list(val):
+        if isinstance(val, list):
+            return val
+        if isinstance(val, dict):
+            return [val]
+        return []
+
+    if isinstance(data, list):
+        if len(data) == 1 and isinstance(data[0], dict):
+            lone = data[0]
+            keys_lower = {str(k).lower() for k in lone.keys() if isinstance(k, str)}
+            if keys_lower & _BILINGUAL_RAW_KEYS:
+                data = lone
+            else:
+                return data
+        else:
+            return data
+
+    if isinstance(data, dict):
+        keys_lower = {str(k).lower() for k in data.keys() if isinstance(k, str)}
+        if keys_lower & _BILINGUAL_RAW_KEYS:
+            pref = scene_story_language_key_for_ui(ui_language_key)
+            for br in (pref, "chinese", "english"):
+                scenes = _as_scene_list(_dict_branch_val(data, br))
+                if scenes:
+                    return scenes
+            return []
+        return _as_scene_list(data)
+
+    return []
+
+
 def analyzed_content_text(val) -> str:
     """``analyzed_content`` 为纯文本字符串；非 str 时仅作展示用序列化。"""
     if val is None:

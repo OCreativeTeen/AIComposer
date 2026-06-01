@@ -140,6 +140,8 @@ class PublishReviewDialog:
         scene_content = self.video_detail.get('scene_content', {}).get(config.LANGUAGES[self.media_gui.language], [{}])[0]
         if scene_content:
             summary = scene_content.get("message", "")
+            if not summary:
+                summary = scene_content.get("voiceover", "")
             summary = summary + "\n" + scene_content.get("speaking", "")
             summary = summary + "\n" + scene_content.get("story", "")
         else:

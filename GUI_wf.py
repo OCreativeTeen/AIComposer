@@ -402,6 +402,19 @@ class WorkflowGUI:
         self.video_size_combo.pack(side=tk.LEFT, padx=(4, 0))
         self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
+        ttk.Button(
+            row1_frame, text="Story",
+            command=lambda: self._show_video_detail_field("story"),
+        ).pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Button(
+            row1_frame, text="分析",
+            command=lambda: self._show_video_detail_field("analyzed_content"),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            row1_frame, text="Scene",
+            command=lambda: self._show_video_detail_field("scene_content"),
+        ).pack(side=tk.LEFT, padx=2)
+
         ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
         ttk.Button(row1_frame, text="全文演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
 
@@ -521,6 +534,180 @@ class WorkflowGUI:
                 f"更新失败，已恢复配置为 {old_w}×{old_h} 并从磁盘重载场景列表：\n{e}",
                 parent=self.root,
             )
+
+    def _load_current_video_detail_row(self) -> dict | None:
+        """当前项目绑定的 video detail：目标主题分表 list/<topic_category>.json，按 pid == id 匹配。"""
+        return project_manager.load_video_detail_row_for_config(
+            project_manager.PROJECT_CONFIG or {}
+        )
+
+    def _video_detail_field_raw(self, field: str):
+        """优先读列表行外层字段；无绑定时回退 ``PROJECT_CONFIG``。"""
+        row = self._load_current_video_detail_row()
+        pc = project_manager.PROJECT_CONFIG or {}
+
+        def _non_empty(v):
+            return v not in (None, "", {}, [])
+
+        if row is not None and field in row and _non_empty(row.get(field)):
+            return row.get(field)
+        if field == "story":
+            st = project_manager.story_text_from_config(pc)
+            return st if st else None
+        pc_val = pc.get(field)
+        return pc_val if _non_empty(pc_val) else None
+
+    def _format_video_detail_field_text(self, field: str, val) -> str:
+        if val is None:
+            return ""
+        if field == "analyzed_content":
+            text = config.analyzed_content_text(val)
+            if text.strip():
+                return text.strip()
+            if isinstance(val, (dict, list)):
+                return json.dumps(val, ensure_ascii=False, indent=2)
+            return str(val).strip()
+        if field == "scene_content":
+            if isinstance(val, (dict, list)):
+                return json.dumps(val, ensure_ascii=False, indent=2)
+            return str(val).strip()
+        if field == "story":
+            return str(val).strip()
+        if isinstance(val, (dict, list)):
+            return json.dumps(val, ensure_ascii=False, indent=2)
+        return str(val).strip()
+
+    def _parse_video_detail_field_for_save(self, field: str, raw_text: str, *, parent) -> tuple[bool, object]:
+        """将编辑器文本解析为可写入列表行的字段值；失败时弹窗并返回 ``(False, None)``。"""
+        text = (raw_text or "").strip()
+        if field == "story":
+            return True, text if text else None
+        if field == "analyzed_content":
+            if not text:
+                return True, None
+            return True, config.normalize_analyzed_content_text(text)
+        if field == "scene_content":
+            if not text:
+                return True, None
+            try:
+                parsed = json.loads(safe_clipboard_json_copy(text))
+            except json.JSONDecodeError as e:
+                messagebox.showwarning(
+                    "格式错误",
+                    f"scene_content 须为合法 JSON：\n{e}",
+                    parent=parent,
+                )
+                return False, None
+            if not isinstance(parsed, (dict, list)):
+                messagebox.showwarning(
+                    "格式错误",
+                    "scene_content 须为 JSON 对象或数组。",
+                    parent=parent,
+                )
+                return False, None
+            return True, parsed
+        messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
+        return False, None
+
+    def _save_video_detail_field(self, field: str, raw_text: str, *, parent) -> bool:
+        """解析并写入 ``PROJECT_CONFIG``，再 ``save_project_config`` 同步到列表 JSON。"""
+        pc = project_manager.PROJECT_CONFIG
+        if not pc:
+            messagebox.showerror("保存失败", "未加载项目配置。", parent=parent)
+            return False
+        ok, parsed = self._parse_video_detail_field_for_save(field, raw_text, parent=parent)
+        if not ok:
+            return False
+        if parsed is None:
+            pc.pop(field, None)
+        else:
+            pc[field] = parsed
+        if save_project_config(parent=parent):
+            return True
+        messagebox.showerror(
+            "保存失败",
+            "无法写入频道列表 JSON，请确认已绑定列表行或已设置 topic_category。",
+            parent=parent,
+        )
+        return False
+
+    def _show_video_detail_field(self, field: str) -> None:
+        """编辑弹窗：修改频道列表行上的 ``story`` / ``analyzed_content`` / ``scene_content`` 并存盘。"""
+        labels = {
+            "story": (
+                "编辑 Story",
+                "YouTube 发布用 story（纯文本；保存后写入列表行外层字段）",
+            ),
+            "analyzed_content": (
+                "编辑 analyzed_content",
+                "转录/分析 RAW 文本（纯文本；保存后写入列表行外层字段）",
+            ),
+            "scene_content": (
+                "编辑 scene_content",
+                "场景 JSON（须为合法 JSON 对象或数组；保存后写入列表行外层字段）",
+            ),
+        }
+        dlg_title, header_hint = labels.get(field, (f"编辑 {field}", ""))
+        if not project_manager.PROJECT_CONFIG:
+            messagebox.showwarning("提示", "请先加载或创建项目。", parent=self.root)
+            return
+
+        val = self._video_detail_field_raw(field)
+        body = self._format_video_detail_field_text(field, val)
+
+        pid = (project_manager.PROJECT_CONFIG or {}).get("pid") or ""
+        top = tk.Toplevel(self.root)
+        top.title(dlg_title)
+        top.transient(self.root)
+        top.grab_set()
+        top.minsize(560, 400)
+        top.update_idletasks()
+        sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
+        w, h = 900, 640
+        top.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
+        hdr.pack(fill=tk.X)
+        if pid:
+            ttk.Label(hdr, text=f"PID: {pid}", font=("Arial", 10)).pack(anchor=tk.W)
+        if header_hint:
+            ttk.Label(hdr, text=header_hint, wraplength=860).pack(anchor=tk.W, pady=(2, 4))
+        ttk.Label(
+            hdr,
+            text="保存目标：频道列表 JSON 行（非 project_profile 内字段）",
+            foreground="gray",
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        tx = scrolledtext.ScrolledText(
+            top, wrap=tk.WORD, width=100, height=30, font=("Consolas", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        if body:
+            tx.insert("1.0", body)
+
+        bf = ttk.Frame(top, padding=(12, 0, 12, 12))
+        bf.pack(fill=tk.X)
+
+        def _paste_json(e=None):
+            try:
+                clip = safe_clipboard_json_copy(top.clipboard_get())
+                if clip:
+                    tx.delete("1.0", tk.END)
+                    tx.insert("1.0", clip)
+            except tk.TclError:
+                pass
+
+        if field == "scene_content":
+            tx.bind("<Double-1>", _paste_json)
+
+        def _on_save():
+            raw = tx.get("1.0", tk.END)
+            if self._save_video_detail_field(field, raw, parent=top):
+                top.destroy()
+
+        ttk.Button(bf, text="保存", command=_on_save).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(bf, text="取消", command=top.destroy).pack(side=tk.RIGHT)
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
 
     def _open_suno_gui(self):
         """打开SUNO音乐提示词管理窗口"""
@@ -2216,7 +2403,7 @@ class WorkflowGUI:
         ttk.Button(video_control_frame, text="反转", command=self.reverse_video, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="静音", command=self.mute_scene_clip_audio, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="镜像", command=self.mirror_video, width=5).pack(side=tk.LEFT, padx=1)
-        ttk.Button(video_control_frame, text="标题", command=self.print_title, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="加标题", command=self.print_title, width=6).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="LOGO", command=self.add_watermark, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="顶标", command=self.add_headmark, width=5).pack(side=tk.LEFT, padx=1)
 
@@ -3498,9 +3685,12 @@ class WorkflowGUI:
         self.scene_host_display.set(scene_data.get("host_display", project_manager.PROJECT_CONFIG.get("host_display")))
         self.scene_visual_style.set(scene_data.get("visual_style", project_manager.PROJECT_CONFIG.get("visual_style")))
 
-        _slang = scene_data.get("content_language") or self.shared_language.cget("text")
-        if _slang in config.FONT_LIST:
-            self.scene_language.set(_slang)
+        _title_font = (
+            scene_data.get("title_font")
+            or self.shared_language.cget("text")
+        )
+        if _title_font in config.FONT_LIST:
+            self.scene_language.set(_title_font)
         else:
             self.scene_language.set(self.shared_language.cget("text"))
 
@@ -4320,23 +4510,23 @@ class WorkflowGUI:
 
 
     def print_title(self):
-        """打印标题"""
+        """将 caption 烧录为视频标题字幕（字体由场景 ``title_font`` / 字体下拉框决定）。"""
         current_scene = self.update_current_scene()
         content = current_scene['caption']
         if not content or content.strip() == "":
-            messagebox.showinfo("标题", "标题为空")
+            messagebox.showinfo("加标题", "标题为空")
             return
         clip_video = get_file_path(current_scene, "clip")
         if not clip_video:
-            messagebox.showinfo("标题", "视频为空")
+            messagebox.showinfo("加标题", "视频为空")
             return
        
         content = config.chinese_convert(content, self.workflow.language)
 
-        content_language = self.scene_language.get()
-        if content_language in config.FONT_LIST:
-            current_scene["content_language"] = content_language
-            font = config.FONT_LIST[content_language]
+        title_font_key = self.scene_language.get()
+        if title_font_key in config.FONT_LIST:
+            current_scene["title_font"] = title_font_key
+            font = config.FONT_LIST[title_font_key]
         else:
             font = self.workflow.font_title
 
@@ -6495,9 +6685,9 @@ class WorkflowGUI:
             "clip_animation": self.clip_animate.get(),
             "narration_animation": self.narration_animation.get()
         })
-        _cl = (self.scene_language.get() or "").strip()
-        if _cl in config.FONT_LIST:
-            scene["content_language"] = _cl
+        _tf = (self.scene_language.get() or "").strip()
+        if _tf in config.FONT_LIST:
+            scene["title_font"] = _tf
         self.workflow.save_scenes_to_json()
         return scene
 
