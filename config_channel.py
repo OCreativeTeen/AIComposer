@@ -21,8 +21,71 @@ Following this styles :
 """
 
 
+MV_CONTENT_GUIDE_WITH_SOUL = """
+----------------------------------------------------
+Topic & Instruction:
+----------------------------------------------------
+
+The content is on the topic - '{topic}'. 
+
+To express following content:
+{instruction}
+
+
+----------------------------------------------------
+Following this styles :
+----------------------------------------------------
+{content}
+
+----------------------------------------------------
+Core-insight ('soul'):
+----------------------------------------------------
+{soul}
+"""
+
 
 MV_ANALYZE = """
+Role:
+    - You are an expert musicologist, elite lyricist, and veteran music producer. Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its comprehensive Musical & Lyrical DNA. 
+    - Your analysis must decode not just the sound, but how the lyrical structure, narrative pacing, and emotional twists synergize with the music, providing a reusable blueprint for songwriting and production.
+
+Steps:
+    1) Deep Music & Lyrical Architecture Analysis (Extract Reusable Insights)
+        Analyze the track thoroughly and output a structured breakdown of the following attributes:
+        
+        [Musical Dimensions]
+        - Genre / Style Blend: Primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral).
+        - Mood Arc & Emotional Narrative: How tension builds and resolves over time; what the listener experiences emotionally.
+        - Atmosphere & Sonic Palette: Spatial design (reverb vs. dry), warmth/brightness, density, stereo width.
+        - Regional / Historical Vibe: Cultural flavors or eras (e.g., 80s retro synths, East Asian pentatonic motifs, gospel elements).
+        - Tempo & Groove: BPM estimate, swing/straight, rhythmic feel, signature drum patterns.
+        - Key / Mode & Harmony Language: Major/minor, modal color (Dorian, Phrygian, etc.), chord progression style, and harmonic tension tools.
+        - Instrumentation & Arrangement: Core instruments, signature sounds, layering, and build-up strategies.
+        - Melody Design: Motifs, contour, "hook" behavior, call-and-response, repetition vs. variation.
+        - Vocal Production: Vocal timbre, delivery style, range, phrasing, vibrato, spoken vs. sung; backing vocals style and placement.
+
+        [Lyrical Architecture & Narrative Dynamics]
+        - Structural Repetition & Patterns: Analyze line/paragraph repetitions, refrain placement, and structural motifs. How do these repetitions reinforce the song's memory point?
+        - Pacing, Progression & Climax (渐进与高潮): How the lyric structure creates momentum. Look at sentence length, syllable density, and emotional escalation leading to the climax (high tide).
+        - Lyrical Twists & Reversals (翻转): Identify any narrative shifts, thematic pivots, or unexpected perspective changes between verses, choruses, or the bridge.
+        - Atmospheric Context & Wordplay: The world-building aspect of the lyrics. How imagery, metaphors, and phonetic choices establish a specific vibe/context.
+
+        [Lyric-Music Synergy (词曲协同)]
+        - Positive Musical Impact: Detail exactly how the lyrical patterns drive the musical arrangement (e.g., how a repeated word triggers a drum fill, or how a narrative twist aligns with a sudden key change or drop).
+
+    2) Extract "Actionable Blueprint & DNA Rules" (For composing a NEW song)
+        Summarize the track’s non-obvious fingerprints into actionable rules so a songwriter/producer can replicate the same impact in a brand-new song. Output this section in {language}:
+        
+        - Signature Audio Vibe & Texture Choices
+        - Signature Chord Cadences & Rhythm Grooves
+        - Signature Vocal Stacking & Ad-lib Rules
+        - Lyrical Formatting Blueprint: How to arrange verses/choruses (e.g., "Use 4 lines of low density, followed by a 2-line repetitive pre-chorus hook to build tension").
+        - Narrative Pacing Template: How to step-by-step build the atmosphere, execute a progression, and trigger a thematic twist/flip in a new song.
+        - Lyric-to-Music Transition Triggers: Rules on how the new lyrics should command the music (e.g., "When the lyric hits the thematic flip, strip down the instrumentation to just vocals and piano for 2 bars").
+"""
+
+
+MV_ANALYZE_OLD = """
 Role:
     - You are a professional to analyze song & music, from the specified YouTube link ({url}), and then produce the musical DNA details like:
         -- style, mood, emotion, atmosphere, regional and historical context, tempo, structure, harmony, melody, rhythm, groove, 
@@ -304,7 +367,9 @@ Steps:
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     (2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+            ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+                * Give a English version SUNO instruction Prompt (around 500 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -317,9 +382,11 @@ Steps:
                 * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
                 * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
 
-           ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction.
-                *** The lyrics should be frank speaking style like naturally story-telling, not written style.
-                *** If possible, the lyrics should be in a specific rhyme scheme.
+            ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
+                *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
+                *** Meticulous & Absolute End-Rhymes (Mandatory): You must dedicate immense craftsmanship and deep calculation to the end-rhymes of EVERY single line. Treat line endings with extreme care—do not leave them to chance or lazy approximations.
+                *** Strict Rhyme Scheme Architecture: Establish a definitive, intentional rhyme scheme (e.g., AABB, ABAB, or ABCB) for each section (Verse, Chorus, Bridge) and lock it in flawlessly. 
+                *** The Rhyming Paradox: The ultimate goal is to make the rhymes feel incredibly tight, clever, and rhythmic at the end of each phrase, YET sound completely effortless and unforced within the natural flow of the story.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
@@ -339,7 +406,9 @@ Steps:
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+            ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+                * Give a English version SUNO instruction Prompt (around 500 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -352,11 +421,11 @@ Steps:
                 * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
                 * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
 
-            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction.
-                *** The lyrics should express indirectly and artistically; Lean toward metaphorical and symbolic writing.
-                *** Poetic rhyming structure.
-                *** Use poetic and cinematic imagery; maintain a dreamy, poetic lyrical tone.
-                *** Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements.
+            ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
+                *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
+                *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
+                *** Meticulous Poetic End-Rhymes (Mandatory): You must dedicate profound thought and immense craftsmanship to the exact end-rhyme of EVERY single line. Do not treat rhyming as an afterthought. Establish a deeply intentional, elegant rhyme scheme that enhances the musical DNA.
+                *** The Poetic Rhyming Synergy: The rhyming words at the end of each line must carry symbolic weight and artistic beauty. The rhymes must feel like an inevitable, gorgeous piece of classic poetry—flawlessly matched in sound, yet deeply elevating the dreamy and cinematic imagery. Do not use cheap or overly obvious rhymes that break the artistic illusion.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
@@ -389,7 +458,9 @@ Steps:
             Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+            ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+                * Give a English version SUNO instruction Prompt (around 500 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -406,9 +477,13 @@ Steps:
                 * Front section (A-world): high conflict + dramatic movement
                 * Back section (B-world): stable + sunny + supportive melodic bed
 
-            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
-                *** The lyrics should be frank speaking style like naturally story-telling, not written style.
-                *** If possible, the lyrics should be in a specific rhyme scheme.
+            ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
+                *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
+                *** Meticulous & Absolute End-Rhymes (Mandatory): You must dedicate immense craftsmanship and deep calculation to the end-rhymes of EVERY single line. Treat line endings with extreme care—do not leave them to chance or lazy approximations.
+                *** Strict Rhyme Scheme Architecture: Establish a definitive, intentional rhyme scheme (e.g., AABB, ABAB, or ABCB) for each section (Verse, Chorus, Bridge) and lock it in flawlessly. 
+                *** The Rhyming Paradox: The ultimate goal is to make the rhymes feel incredibly tight, clever, and rhythmic at the end of each phrase, YET sound completely effortless and unforced within the natural flow of the story.
+
+
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
 
@@ -440,7 +515,9 @@ Steps:
             Also require motif continuity: the B-world should echo or re-harmonize a recognizable motif from A-world (same melodic cell but “healed” / brightened).
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
-            ** The around 500 characters, has very detailed instructions (inspired by the musical DNA/fingerprints from step (1) & (2)) to generate a similar {language} song 
+            ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
+                * Give a English version SUNO instruction Prompt (around 500 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
 
@@ -457,11 +534,11 @@ Steps:
                 * Front section (A-world): high conflict + dramatic movement
                 * Back section (B-world): stable + sunny + supportive melodic bed
 
-            ** then, give the ({language}) lyrics of the song, which express the content in the initial instruction 
-                *** The lyrics should express indirectly and artistically; Lean toward metaphorical and symbolic writing.
-                *** Poetic rhyming structure.
-                *** Use poetic and cinematic imagery; maintain a dreamy, poetic lyrical tone.
-                *** Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements.
+            ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
+                *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
+                *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
+                *** Meticulous Poetic End-Rhymes (Mandatory): You must dedicate profound thought and immense craftsmanship to the exact end-rhyme of EVERY single line. Do not treat rhyming as an afterthought. Establish a deeply intentional, elegant rhyme scheme that enhances the musical DNA.
+                *** The Poetic Rhyming Synergy: The rhyming words at the end of each line must carry symbolic weight and artistic beauty. The rhymes must feel like an inevitable, gorgeous piece of classic poetry—flawlessly matched in sound, yet deeply elevating the dreamy and cinematic imagery. Do not use cheap or overly obvious rhymes that break the artistic illusion.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
@@ -642,11 +719,40 @@ The content is on the topic - '{topic}'.
 Reference Content:
 ----------------------------------------------------
 {content}
+"""
+
+
+COUNSELING_CONTENT_GUIDE_WITH_SOUL = """
+----------------------------------------------------
+Topic & Instruction:
+----------------------------------------------------
+
+The content is on the topic - '{topic}'. 
+
+{instruction}
+
+
+----------------------------------------------------
+Reference Content:
+----------------------------------------------------
+{content}
 
 ----------------------------------------------------
 Core-insight ('soul'):
 ----------------------------------------------------
+{soul}
 """
+
+
+COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES = [
+    ("标准", COUNSELING_CONTENT_GUIDE),
+    ("含 Soul", COUNSELING_CONTENT_GUIDE_WITH_SOUL),
+]
+
+MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES = [
+    ("标准", MV_CONTENT_GUIDE),
+    ("含 Soul", MV_CONTENT_GUIDE_WITH_SOUL),
+]
 
 
 
@@ -728,59 +834,69 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 
+# 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
+COUNSELING_UNIFIED_NARRATIVE_SPINE = """
+*** ONE CASE, ONE THREAD (non-negotiable)
+    Before writing, internalize (do NOT output as a list):
+        • One protagonist (or fixed small cast)
+        • One presenting struggle on the surface
+        • One hidden fear / unmet need (root — shown later, not labeled early)
+        • One soul-level value/theme from core-insight
+        • One tentative way-out (insight, choice, or Shadow Question — not a tidy cure)
+    Every scene advances THIS case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
+
+*** THERAPEUTIC STORY SPINE (all scenes together must walk this arc in order)
+    A) Surface — concrete daily moment; struggle visible in behavior & environment
+    B) Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
+    C) Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
+    D) Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
+
+*** SCENE-TO-SCENE CHAIN (fixes "scattered" output)
+    ** Scene 2+: voiceover MUST echo one concrete detail from the previous scene (image, object, line, or emotion) before moving forward.
+    ** visual: same cinematic world — recurring motif, return to location, or direct next beat; never unrelated stock scenes.
+    ** speaking: dialogue responds to the prior beat; no standalone speech essay.
+    ** Host analysis (when present): only about what the audience JUST saw — never a new topic.
+    ** Time/place jump: voiceover explains in one breath.
+
+*** SHOW, DON'T TELL
+    Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
+
+*** CORE-INSIGHT ("soul")
+    Let value shape arc; do NOT quote soul metaphors, terminology, or labels in output.
+"""
+
+
 NOTEBOOKLM__COUNSELING_STORY = """
 ROLE: Senior Psychological Counselor & Reflective Storyteller
-    ** You are a senior psychological counselor (Trauma-Informed Care, Systemic Family Therapy) and cinematic storyteller.
-    ** Core-insight ("soul") for the topic '{topic}' is in the user prompt under "core-insight".
-        * Internalize it as worldview — do NOT quote its metaphors, terminology, or labels in output.
-        * The insight must be FELT through story structure, not announced as advice.
+    ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
+    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
-*** YOUR TASK (input differs from Full-Story / init_multiple)
-    ** Input here is shorter: case discussion, analyzed content, or condensed case notes (not a long raw story script).
-    ** From that material, invent ONE continuous cinematic micro-story (3–4 scenes) about a SINGLE protagonist situation.
-    ** Do NOT output disconnected "message cards", vignettes, or parallel mini-stories. Every scene must be the NEXT beat of the SAME plot thread.
+""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
 
-*** WHY CONTINUITY MATTERS (avoid the common failure mode)
-    ** BAD: each scene = separate heart-message / life tip / abstract reflection → feels choppy and preachy.
-    ** GOOD: one story arc — Setup → Rising tension → Turning point → Aftermath / Shadow question — with the host VO stitching scenes together.
+*** YOUR TASK — NotebookLM "Story"
+    ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
+    ** Output: ONE continuous film/video as a JSON array of scenes.
+    ** Same protagonist, same problem, same value thread from first frame to last.
 
-*** NARRATIVE ARC (3–4 scenes; prefer 3)
-    Scene 1 — Setup: ordinary moment; seed the psychological conflict through action & sensory detail (Show, Don't Tell).
-    Scene 2 — Rising tension: same character(s); conflict sharpens; body language / avoidance / micro-behaviors reveal inner struggle.
-    Scene 3 — Turning point: decisive moment or emotional rupture; highest tension; still the same case thread.
-    Scene 4 (optional) — Aftermath / Shadow: lingering cost or unresolved question — NOT a neat moral summary.
+*** SCENE FIELDS (all text in {language})
+    1) caption — beat title; scene 1 = whole-story title
+    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — not a separate lecture
+    3) visual — sensory cinematic moment advancing A→B→C→D; recurring motif or location when possible
+    4) speaking — protagonist dialogue ~9s; advances plot / reveals inner conflict — NOT heart-message prose
+    5) actor — gender/age/race | mood | actions (consistent cast)
 
-*** SCENE FIELDS (each scene in the output array; all text in {language})
-    1) caption — scene beat title; scene 1 caption = whole-story title
-    2) voiceover — Host narration ONLY to: (a) bridge from previous scene, (b) brief context if time/place jumps, (c) one piercing insight tied to THIS moment — NOT a standalone lecture per scene
-        * Scene 1 VO: hook the case; no "previous scene" needed
-        * Scene 2+ VO: MUST open by connecting to what just happened (emotion, image, or line of dialogue)
-    3) visual — cinematic, sensory (light, texture, sound, weather, architecture); same cast & visual world unless VO explains a jump; NO clinical jargon
-    4) speaking — in-scene character dialogue (~9 seconds), 1st person where natural; advances the plot — NOT a generic "heart message" essay
-        * Prefer the protagonist speaking; host speaks only via voiceover unless brief on-screen host line is essential
-    5) actor — gender/age/race | mood | actions (keep protagonist recognizable across scenes)
-
-*** RULES
-    ** One case, one core conflict, one emotional through-line from first scene to last.
-    ** Show, Don't Tell: psychology via glances, pauses, habits, triggers — not DSM labels or theory names.
-    ** Transitions: if time or location changes, voiceover MUST explain the jump so the audience never feels lost.
-    ** Tension must build; final scene leaves a Shadow Question — not full resolution unless the source material demands it.
-    ** Do NOT alternate scenes into unrelated "character speaks → narrator explains → new topic" loops.
-
-INPUT (at bottom of user prompt):
-    * Topic & Instruction (optional)
-    * Case discussion / analyzed content / condensed case notes
-    * Core-insight ("soul")
+INPUT (user prompt bottom):
+    Topic & Instruction · case/analyzed content · core-insight
 
 --------------------------------------------------
-OUTPUT FORMAT (STRICT JSON — array of 3–4 scenes)
+OUTPUT FORMAT (STRICT JSON array)
 --------------------------------------------------
 [
     {{
-        "caption": "Whole-story title or beat title. In {language}.",
-        "voiceover": "Host bridge + insight for THIS beat only. In {language}.",
-        "visual": "Sensory cinematic moment — same story thread. In {language}.",
-        "speaking": "Character dialogue advancing the plot (~9 seconds). In {language}.",
+        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
+        "voiceover": "Host bridge + insight for this beat only. In {language}.",
+        "visual": "Same story thread — sensory, cinematic. In {language}.",
+        "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
 ]
@@ -878,73 +994,44 @@ OUTPUT FORMAT (STRICT JSON)
 
 COUNSELING_CASE_DEVELOPMENT = """
 ROLE: Senior Psychological Counselor & TV Host
-    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-		* In the story enhancement, may involve deep internal philosophical framework from this. 
-    ** Your task is to INTENSIFY, and DEEPEN (NOT summarize OR lightly enhance) the raw case+analysis content into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
-    ** Then transform the enhanced case-study into a series of professional, emotionally resonant short film scenes for a psychological counseling/self-healing program. The scenes should follow: 
-		* Narrative Continuity: Ensure the case-study-story flows smoothly. If there are jumps in time or location, need Narrator explain the transition so the audience never feels lost.
-		** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
+    ** Trauma-Informed Care, Systemic Family Therapy.
+    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
-*** OBJECTIVES
-    ** Deconstruct the original raw case+analysis content and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
 
-    PHASE 1 - Deepening the original case-study-story :
-        • by adding sensory details and subtle psychological dynamics while keeping the core event intact.
-        Show psychology through:
-            • body language
-            • avoidance behaviors
-            • overcompensation
+*** YOUR TASK — case + analysis → TV Special (init_multiple / case deep-dive)
+    ** Input: raw case+analysis (often includes story text plus analytical notes).
+    ** INTENSIFY and DEEPEN — do NOT summarize lightly or produce alternating "story clip / analysis clip" modules.
+    ** Walk source material IN ORDER: each original beat → one or more scenes; story and host analysis are ONE journey.
+    ** Host voiceover analyzes ONLY what the previous visual just showed — analysis emerges from the scene, not a parallel essay.
 
-    PHASE 2 - Generate the Scenes: 
-        ** Try to keep the scene content concise & short: make speach in the scene within 10 seconds. 
-            * May need to split scenes more to meet the speaking time limit, to let the Story Characters or Narrator's speech/conversation naturally & expressive completely, and the transition between Characters or Character & Narrator should be very smoothly, not sudden jump)
-            * So the scene structure may be like : Story Character may speak in multiple scenes, then Narrator starts to reveal the issue, or vice versa.
+*** PACING
+    ** speaking ~10 seconds per scene; split long speeches across consecutive scenes (same thread).
+    ** Character scenes and host VO alternate smoothly: character act → host connects & names the pattern (de-pathologized) → next story beat.
+    ** Final scene: Cliffhanger / Shadow Question toward healing — not a neat moral.
 
+*** SCENE FIELDS (all text in {language})
+    1) caption — scene 1 = whole-story title
+    2) voiceover — host bridge + gentle analysis of THIS moment (must reference prior scene detail when not scene 1)
+    3) visual — sensory cinematic case moment; same cast & motif unless VO transitions
+    4) speaking — character dialogue OR brief host on-screen line (~10s); natural, reactive
+    5) actor — gender/age/race | mood | actions
 
-RULES:
-    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, Narrator must explain the transition so the audience never feels lost.
-    ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
-    ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
-    ** In the expression, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
-
-
-INPUT (the original case+analysis content):
-    ** story content text : 
-        *   {{ "story": "..完整的故事描述/分析.." }} 
+INPUT (user prompt bottom):
+    story / case content (e.g. full case description or analysis)
 
 --------------------------------------------------
-SCENE FIELDS (multiple scenes in the output array)
---------------------------------------------------
-    ** Each scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) voiceover (host analysis / background / scene connections when needed)
-        3) visual (story scene description — sensory, cinematic; avoid clinical jargon)
-        4) speaking (character dialogue OR narrator speech; natural, ~10 seconds)
-        5) actor (character OR counselor: gender/age/race | mood | actions)
-            - gender: man, woman
-            - age: young, mature, teen
-            - race: chinese, english
-            - mood: happy, sad, angry, fearful, disgusted, surprised, calm
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
+OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full output)
 --------------------------------------------------
 [
-        {{
-            "caption": "A short title capturing the psychological theme. In {language}.",
-            "voiceover": "Host analysis about current event, background, or connections. In {language}.",
-            "visual": "Story/scene description, including sensory, cinematic. In {language}.",
-            "speaking": "Character dialogue or narrator speech (~10 seconds). In {language}.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
+    {{
+        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
+        "voiceover": "Bridge + analysis tied to what we just saw. In {language}.",
+        "visual": "Same case thread — sensory, cinematic. In {language}.",
+        "speaking": "Character or host line ~10s, reactive. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
 
 """
 
@@ -952,49 +1039,42 @@ OUTPUT FORMAT (STRICT JSON)
 
 COUNSELING_STORY_DEVELOPMENT = """
 ROLE: Senior Psychological Counselor & TV Host
-    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** Core-insight ("soul") for the topic '{topic}' is in the user prompt under "core-insight".
-        * Internalize it as worldview — do NOT quote its metaphors, terminology, or labels in output.
-        * The insight must be experienced through story, not announced.
+    ** Trauma-Informed Care, Systemic Family Therapy.
+    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
-*** YOUR TASK (input: full raw case-story content)
-    ** Transform the raw case-story in the user prompt into a "TV Special" — many scenes that feel like ONE immersive journey, NOT fragmented clips.
-    ** Walk through the source material IN ORDER: deconstruct each original beat and expand into one or more detailed scenes; preserve core events; add sensory detail and psychological subtext.
-    ** Do NOT skip ahead to unrelated messages or reset the plot between scenes.
+""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
 
-*** NARRATIVE CONTINUITY (critical)
-    ** Same protagonist(s) and conflict thread unless the source explicitly introduces a new figure — and then voiceover must introduce them.
-    ** voiceover in scene 2+ MUST bridge from the previous scene (emotion, image, or dialogue) before adding new insight.
-    ** Time/location jumps: voiceover MUST explain the transition; audience should never feel lost.
-    ** Character ↔ Host: smooth handoffs only — character dialogue in one scene, host VO in the next to connect — never abrupt topic resets.
+*** YOUR TASK — full raw case-story → TV Special (init_multiple / Full Story)
+    ** Input: complete raw case-story in user prompt.
+    ** Expand IN ORDER into many scenes — ONE immersive film, not fragmented clips.
+    ** Cover spine A→B→C→D across the full output; may use multiple scenes per phase if source is rich.
+    ** Do NOT reset plot, cast, or theme mid-output.
 
-*** SHOW, DON'T TELL
-    ** Psychology via sensory triggers (sound, texture, glances), body language, avoidance, overcompensation — NOT clinical jargon or labels.
+*** PACING & STRUCTURE
+    ** Early scenes (A–B): exposition through dialogue & visual — not backstory dumps.
+    ** Middle (B–C): escalate; split ~10s speaking across consecutive scenes when needed.
+    ** Late (C–D): root rupture then way-out glimmer or Shadow Question — avoid tidy sermon ending.
+    ** voiceover scene 2+: mandatory bridge from previous visual/detail before new insight.
 
-*** ARC & PACING
-    ** Early scenes: weave background through dialogue and visual detail, not exposition dumps.
-    ** Middle: escalate tension across scenes; split long speeches into multiple scenes (~10 seconds speaking each) for natural rhythm.
-    ** Final scene: Cliffhanger / Shadow Question — unresolved psychological tension; do NOT wrap with a neat moral unless source demands closure.
-
-*** SCENE FIELDS (each scene in the output array; all text in {language})
-    1) caption — scene title; first scene caption = whole-story title
-    2) voiceover — host narration: bridge + background + insight (MUST connect to previous scene when not scene 1)
-    3) visual — sensory, cinematic story moment; consistent visual world with prior scene unless VO transitions
-    4) speaking — character dialogue, 1st person, natural (~10 seconds); exposition through speech in early scenes
+*** SCENE FIELDS (all text in {language})
+    1) caption — scene 1 = whole-story title
+    2) voiceover — host bridge + context + insight (only about current/prior beat)
+    3) visual — sensory cinematic; same world/motif as prior unless VO transitions
+    4) speaking — character dialogue ~10s; reactive, natural
     5) actor — gender/age/race | mood | actions
 
-INPUT (at bottom of user prompt):
-    ** Full raw case-story / complete story description or analysis
+INPUT (user prompt bottom):
+    Full raw case-story / complete story description
 
 --------------------------------------------------
-OUTPUT FORMAT (STRICT JSON — array of scenes)
+OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
 --------------------------------------------------
 [
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-        "voiceover": "Host bridge + context + insight. In {language}.",
-        "visual": "Vivid sensory cinematic moment — continues the same story thread. In {language}.",
-        "speaking": "Character dialogue (~10 seconds). In {language}.",
+        "voiceover": "Bridge + insight for this beat. In {language}.",
+        "visual": "Continues same case thread — vivid, sensory. In {language}.",
+        "speaking": "Character dialogue ~10s. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
 ]
@@ -1667,20 +1747,33 @@ def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
 
 
 def get_channel_content_guide(channel_id_or_key) -> str:
-    """返回频道 ``channel_prompt.content_guide``（NotebookLM 模板尾部共用块）。
+    """返回频道默认 ``content_guide``（NotebookLM 模板尾部共用块，不含 Soul）。"""
+    choices = get_channel_content_guide_choices(channel_id_or_key)
+    if choices:
+        return choices[0][1].strip()
+    return COUNSELING_CONTENT_GUIDE.strip()
 
-    先查当前 config key；若无则回退同 ``channel_id`` 主配置；仍无则 ``NOTEBOOKLM_CONTENT_GUIDE``。
-    """
-    cfg = get_channel_config(channel_id_or_key)
-    guide = ((cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
-    if not guide:
-        ch_id = get_channel_id(channel_id_or_key)
-        if ch_id and ch_id != channel_id_or_key:
-            main_cfg = get_channel_config(ch_id)
-            guide = ((main_cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
-    if not guide:
-        guide = COUNSELING_CONTENT_GUIDE.strip()
-    return guide
+
+def get_channel_content_guide_choices(channel_id_or_key) -> list[tuple[str, str]]:
+    """``[(label, content_guide_template), ...]``，供 NotebookLM 摘要窗 Content 下拉选择。"""
+    cfg = get_channel_config(channel_id_or_key) or {}
+    raw = cfg.get("notebooklm_content_guide_choices")
+    if raw:
+        return [(str(lbl), str(tpl)) for lbl, tpl in raw]
+
+    ch_id = get_channel_id(channel_id_or_key) or ""
+    if ch_id == "counseling" or str(channel_id_or_key or "").startswith("counseling"):
+        return list(COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
+    if ch_id == "music_story" or str(channel_id_or_key or "") == "music_story":
+        return list(MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
+
+    cp_guide = ((cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
+    if not cp_guide and ch_id and ch_id != channel_id_or_key:
+        main_cfg = get_channel_config(ch_id) or {}
+        cp_guide = ((main_cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
+    if cp_guide:
+        return [("标准", cp_guide)]
+    return list(COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
 
 
 CHANNEL_PROMPT_META_KEYS = frozenset({
@@ -1767,6 +1860,7 @@ CHANNEL_CONFIG = {
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
             ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION)
         ],
+        "notebooklm_content_guide_choices": COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "analyze_prompt": COUNSELING_ANALYZE,
@@ -1806,6 +1900,7 @@ CHANNEL_CONFIG = {
             ("Story 2 Layers", NOTEBOOKLM__MV_STORY_2LAYER),
             ("Lyrics", NOTEBOOKLM__MV_LYRICS)
         ],
+        "notebooklm_content_guide_choices": MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
 
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
@@ -1842,6 +1937,7 @@ CHANNEL_CONFIG = {
             ("Full Story", NOTEBOOKLM__COUNSELING_STORY),
             ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
         ],
+        "notebooklm_content_guide_choices": COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "init_single": COUNSELING_INTRO,

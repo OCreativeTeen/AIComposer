@@ -5555,6 +5555,7 @@ class MediaGUIManager:
             # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
             _channel_key = os.path.basename(self.channel_path)
             NOTEBOOKLM_PROMPT_CHOICES = config_channel.get_channel_config(_channel_key).get("notebooklm_prompt_choices", [])
+            NOTEBOOKLM_CONTENT_GUIDE_CHOICES = config_channel.get_channel_content_guide_choices(_channel_key)
             prompt_choice_frame = ttk.Frame(main_frame)
             prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
             ttk.Label(prompt_choice_frame, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
@@ -5574,6 +5575,32 @@ class MediaGUIManager:
                 command=lambda: open_initial_content_dialog(lambda: refresh_notebooklm_prompt()),
             )
             prompt_initial_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
+
+            ttk.Label(prompt_choice_frame, text="选Content").pack(side=tk.LEFT, padx=(0, 5))
+            content_guide_combo_var = tk.StringVar(
+                value=NOTEBOOKLM_CONTENT_GUIDE_CHOICES[0][0]
+            )
+            content_guide_combo = ttk.Combobox(
+                prompt_choice_frame,
+                textvariable=content_guide_combo_var,
+                values=[opt[0] for opt in NOTEBOOKLM_CONTENT_GUIDE_CHOICES],
+                state="readonly",
+                width=12,
+            )
+            content_guide_combo.pack(side=tk.LEFT)
+
+            def _selected_content_guide_template() -> str:
+                sel = content_guide_combo_var.get()
+                return next(
+                    (
+                        tpl
+                        for lbl, tpl in NOTEBOOKLM_CONTENT_GUIDE_CHOICES
+                        if lbl == sel
+                    ),
+                    NOTEBOOKLM_CONTENT_GUIDE_CHOICES[0][1],
+                )
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
@@ -5848,11 +5875,19 @@ class MediaGUIManager:
                     content = config.read_transcript_text_from_video_detail(video_detail)
 
                 link = video_detail.get('url', '').strip()
-                soul, choices, categories, features = project_manager.build_soul(self.channel, category_var.get().strip(), subtype_var.get().strip())
+                content_guide_tpl = _selected_content_guide_template()
+                needs_soul = "{soul}" in (template + content_guide_tpl)
+                soul = ""
+                if needs_soul:
+                    soul, choices, categories, features = project_manager.build_soul(
+                        self.channel,
+                        category_var.get().strip(),
+                        subtype_var.get().strip(),
+                    )
                 instruction = (initial_content_holder[0] or "").strip()
                 prompt = _format_nb_prompt_template(
                     template=template,
-                    content_guide=self._channel_content_guide(),
+                    content_guide=content_guide_tpl,
                     topic=topic,
                     tags=tags_var.get().strip(),
                     language=config.llm_language_label(self.language),
@@ -5952,6 +5987,9 @@ class MediaGUIManager:
                 ttk.Button(bf, text="确定", command=_ok).pack(side=tk.LEFT, padx=6)
                 ttk.Button(bf, text="取消", command=_cancel).pack(side=tk.LEFT, padx=6)
 
+            def on_content_guide_change(e):
+                refresh_notebooklm_prompt()
+
             def on_prompt_combo_selected(e):
                 open_initial_content_dialog(lambda: refresh_notebooklm_prompt())
 
@@ -5961,6 +5999,7 @@ class MediaGUIManager:
             def on_subtype_change(e):
                 refresh_notebooklm_prompt()
             prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
+            content_guide_combo.bind("<<ComboboxSelected>>", on_content_guide_change)
             category_combo.bind('<<ComboboxSelected>>', on_category_change)
             subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
 
