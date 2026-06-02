@@ -81,6 +81,19 @@ def _format_nb_prompt_template(template: str, *, content_guide: str = "", **kwar
     return body
 
 
+def _copy_text_to_clipboard(widget, text: str) -> None:
+    """打开内容审阅窗时同步写入系统剪贴板。"""
+    s = (text or "").strip()
+    if not s:
+        return
+    try:
+        widget.clipboard_clear()
+        widget.clipboard_append(s)
+        widget.update()
+    except tk.TclError:
+        pass
+
+
 def _sanitize_list_row_id_stem(raw_id: str) -> str:
     rid = (raw_id or "").strip()
     if not rid:
@@ -3727,6 +3740,223 @@ class MediaGUIManager:
         dlg.wait_window()
         return result_holder[0]
 
+    def _show_analyzed_content_editor(
+        self,
+        parent,
+        video_detail: dict,
+        *,
+        on_saved=None,
+    ) -> str | None:
+        """编辑 ``video_detail['analyzed_content']``（纯文本）；确认后写回频道列表。"""
+        result_holder: list[str | None] = [None]
+        dlg = tk.Toplevel(parent)
+        dlg.title("分析内容 / Analyzed")
+        dlg.geometry("820x580")
+        dlg.minsize(560, 400)
+        dlg.transient(parent)
+        dlg.grab_set()
+        dlg.update_idletasks()
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"820x580+{(sw - 820) // 2}+{(sh - 580) // 2}")
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
+        ttk.Label(
+            frm,
+            text=f"{title}\n分析内容 analyzed_content（可编辑；确认后写回本条并保存频道列表）",
+            wraplength=760,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        initial = self._analyzed_content_display_text(video_detail)
+        if initial:
+            tx.insert("1.0", initial)
+            _copy_text_to_clipboard(dlg, initial)
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X)
+
+        def on_confirm():
+            new_text = config.normalize_analyzed_content_text(tx.get("1.0", tk.END))
+            if new_text:
+                video_detail["analyzed_content"] = new_text
+            else:
+                video_detail.pop("analyzed_content", None)
+            if not self._persist_video_detail_story(video_detail, parent=dlg):
+                return
+            result_holder[0] = new_text
+            dlg.destroy()
+            if callable(on_saved):
+                on_saved()
+
+        ttk.Button(btn_row, text="保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
+
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result_holder[0]
+
+    def _show_scene_content_editor(
+        self,
+        parent,
+        video_detail: dict,
+        *,
+        on_saved=None,
+    ) -> list | None:
+        """编辑 ``video_detail['scene_content']``（JSON array）；确认后写回频道列表。"""
+        result_holder: list[list | None] = [None]
+        dlg = tk.Toplevel(parent)
+        dlg.title("场景内容 / Scene")
+        dlg.geometry("900x640")
+        dlg.minsize(640, 480)
+        dlg.transient(parent)
+        dlg.grab_set()
+        dlg.update_idletasks()
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"900x640+{(sw - 900) // 2}+{(sh - 640) // 2}")
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
+        ttk.Label(
+            frm,
+            text=(
+                f"{title}\n"
+                "场景内容 scene_content（JSON 数组；可编辑；确认后写回本条并保存频道列表）"
+            ),
+            wraplength=820,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=100, height=28, font=("Consolas", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        scenes = config.scene_content_as_list(
+            video_detail.get("scene_content"), self.language
+        )
+        scene_json = ""
+        if scenes:
+            scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
+            tx.insert("1.0", scene_json)
+            _copy_text_to_clipboard(dlg, scene_json)
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X)
+
+        def on_confirm():
+            raw = (tx.get("1.0", tk.END) or "").strip()
+            if not raw:
+                if not messagebox.askyesno(
+                    "清空场景",
+                    "内容为空，将删除本条 scene_content。继续？",
+                    parent=dlg,
+                ):
+                    return
+                video_detail.pop("scene_content", None)
+                result_holder[0] = []
+            else:
+                try:
+                    parsed = json.loads(safe_clipboard_json_copy(raw))
+                except (json.JSONDecodeError, TypeError) as e:
+                    messagebox.showerror(
+                        "JSON 无效",
+                        f"无法解析 scene_content：\n{e}",
+                        parent=dlg,
+                    )
+                    return
+                normalized = config.normalize_scene_content_value(
+                    parsed, self.language
+                )
+                if not normalized:
+                    messagebox.showwarning(
+                        "无效场景",
+                        "解析后无有效场景条目，请检查 JSON 结构。",
+                        parent=dlg,
+                    )
+                    return
+                video_detail["scene_content"] = normalized
+                _sync_youtube_row_title_after_scene_edit(
+                    video_detail, normalized, self.language
+                )
+                result_holder[0] = normalized
+            if not self._persist_video_detail_story(video_detail, parent=dlg):
+                return
+            dlg.destroy()
+            if callable(on_saved):
+                on_saved()
+
+        ttk.Button(btn_row, text="保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
+
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result_holder[0]
+
+    def _show_transcript_script_viewer(self, parent, video_detail: dict) -> None:
+        """只读展示转录原文（来自 transcribed_file，不可保存回列表）。"""
+        body = (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
+        tf = (video_detail.get("transcribed_file") or "").strip()
+        if not body:
+            hint = f"\n\n文件：{tf}" if tf else ""
+            messagebox.showwarning(
+                "转录脚本",
+                f"无转录原文。请先下载并完成转录。{hint}",
+                parent=parent,
+            )
+            return
+
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
+        top = tk.Toplevel(parent)
+        top.title("转录脚本 / Script")
+        top.minsize(560, 400)
+        top.transient(parent)
+        top.grab_set()
+
+        hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
+        hdr.pack(fill=tk.X)
+        ttk.Label(
+            hdr,
+            text="转录原文（只读，来自 transcribed_file；不可在此保存）",
+            font=("Arial", 10),
+        ).pack(anchor=tk.W)
+        ttk.Label(hdr, text=title, wraplength=860, font=("Arial", 11, "bold")).pack(
+            anchor=tk.W, pady=(4, 2)
+        )
+        if tf:
+            ttk.Label(hdr, text=tf, wraplength=860, font=("Arial", 9)).pack(
+                anchor=tk.W, pady=(0, 8)
+            )
+
+        tx = scrolledtext.ScrolledText(
+            top, wrap=tk.WORD, width=100, height=30, font=("Consolas", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        tx.insert("1.0", body)
+        tx.configure(state=tk.DISABLED)
+        _copy_text_to_clipboard(top, body)
+
+        bf = ttk.Frame(top, padding=(12, 0, 12, 12))
+        bf.pack(fill=tk.X)
+
+        def _copy():
+            _copy_text_to_clipboard(top, body)
+
+        ttk.Button(bf, text="复制全文", command=_copy).pack(side=tk.LEFT)
+        ttk.Button(bf, text="关闭", command=top.destroy).pack(side=tk.RIGHT)
+
+        w, h = 900, 640
+        top.update_idletasks()
+        x = max(0, (top.winfo_screenwidth() - w) // 2)
+        y = max(0, (top.winfo_screenheight() - h) // 2)
+        top.geometry(f"{w}x{h}+{x}+{y}")
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+
 
     def check_video_status(self,video_detail):
         """检查单个视频的下载、转录和摘要状态"""
@@ -5524,6 +5754,43 @@ class MediaGUIManager:
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
             ttk.Button(right_btns, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(5, 5))
+
+            def _after_content_field_saved():
+                try:
+                    populate_tree()
+                except Exception:
+                    pass
+                try:
+                    refresh_notebooklm_prompt()
+                except Exception:
+                    pass
+
+            def do_review_analyzed():
+                self._show_analyzed_content_editor(
+                    summary_window,
+                    video_detail,
+                    on_saved=_after_content_field_saved,
+                )
+
+            def do_review_scene():
+                self._show_scene_content_editor(
+                    summary_window,
+                    video_detail,
+                    on_saved=_after_content_field_saved,
+                )
+
+            def do_review_script():
+                self._show_transcript_script_viewer(summary_window, video_detail)
+
+            ttk.Button(right_btns, text="分析内容", command=do_review_analyzed).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
+            ttk.Button(right_btns, text="场景内容", command=do_review_scene).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
+            ttk.Button(right_btns, text="转录脚本", command=do_review_script).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
 
             ttk.Button(right_btns, text="故事查看", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
 

@@ -286,14 +286,41 @@ Story Json-Content:
 # 勿用 SLIDESHOW_GENERATION_INSTRUCTION 直接喂 NotebookLM：过程说明过多，易生成「如何做片」的技术报告而非故事画面。
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = """
-** Goal: One story section illustration per scene (slideshow). Depict the STORY in Scene_Scenes_Content — NOT a tutorial, NOT steps about generation, NOT a technical analysis report.
-** 1 image = 1 scene. Keep Visual_Style consistent; add per-scene detail from each scene's "visual" field.
-** Story_Character must look the same across scenes when present.
-** Host / narrator: show Host as talking-avatar only when the scene calls for host/narrator speech, 'Voice' field saying that the host narrates.
-** Use caption, visual, speaking, voiceover from Scene_Content — cinematic story frames only.
-** DO NOT render this instruction, JSON field names, or meta commentary inside images.
-** On-image text (if any): very concise; keep text away from left/right edges (square safe area).
+** Goal: Cinematic story illustration per scene — scene + character express the story. NOT a slide deck. NOT subtitles. NOT a text poster.
+** IMAGE SOURCE: each scene's "visual" field (+ "actor" for character look). Ignore any other fields for typography.
+** DEFAULT: ZERO designed text on the image. No paragraphs. No quotes. No bullet lists. No captions bars. No duplicated JSON content.
+** IF text is absolutely unavoidable (rare): at most ONE short title — 2–4 words max, single line, very large font, center or top — like a movie title card. Never detail, analysis, or dialogue.
+** FORBIDDEN on image: voiceover text, speaking/dialogue, caption body, host analysis, therapy labels, small font, multi-line blocks, infographic layout, PowerPoint slides.
+** Host/narrator: visual avatar only when needed — never as a text lecture overlay.
+** 1 image = 1 scene. Keep Visual_Style consistent. Story_Character same look across scenes.
 """
+
+NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
+    "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and generate the Slide-Show. "
+    "Images must be story illustrations with NO subtitles and NO copied voiceover/speaking text. "
+    "Default: no words on image; if any title, max 2–4 large-font words only."
+)
+
+
+def scene_payload_for_slideshow_images(scenes: list) -> list[dict]:
+    """Slideshow 图像指令：只保留 visual/actor/narrator，去掉易被画成屏上字的字段。"""
+    out: list[dict] = []
+    for i, raw in enumerate(scenes or []):
+        if not isinstance(raw, dict):
+            continue
+        item: dict = {"scene_number": i + 1}
+        vis = (raw.get("visual") or "").strip()
+        if vis:
+            item["visual"] = vis
+        actor = (raw.get("actor") or "").strip()
+        if actor:
+            item["actor"] = actor
+        narr = (raw.get("narrator") or "").strip()
+        if narr:
+            item["narrator"] = narr
+        if len(item) > 1:
+            out.append(item)
+    return out
 
 NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 ** Prerequisite: start from slideshow scene images already generated for the same Scene_Content.
@@ -343,18 +370,28 @@ def build_notebooklm_gen_instruction_clipbody(
     )
 
     scenes = scene_content if isinstance(scene_content, list) else []
-    parts["Story_Scenes_Content"] = json.dumps(scenes, ensure_ascii=False, indent=2)
-
     if mode == "slideshow":
+        parts["CRITICAL__NO_TEXT_ON_IMAGES"] = (
+            "Default: ZERO words on the image — express the story with scene and character only. "
+            "voiceover / speaking / caption are omitted from Story_Scenes_Content below on purpose — "
+            "never infer or paste them as image text. "
+            "If a title is truly needed: max 2–4 words, one line, very large font only."
+        )
+        parts["Story_Scenes_Content"] = json.dumps(
+            scene_payload_for_slideshow_images(scenes),
+            ensure_ascii=False,
+            indent=2,
+        )
         parts["Instruction_for_slideshow_image_generation"] = (
             NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION.strip()
         )
         parts["Instruction_for_Speaking_and_Visual_generation"] = (
-            "** Generate visual-image from speaking, voiceover, caption, and visual fields in Scene_Content. "
-            "** Illustrate the story itself — never slides about these instructions or the generation process. "
-            "** Avoid words at the very left or right of the screen (square safe area)."
+            "** Paint ONLY from each scene's \"visual\" (and \"actor\" for character appearance). "
+            "** Pure cinematic illustration — no subtitles, no dialogue quotes, no voiceover paragraphs on the image. "
+            "** Prefer no text at all; optional title card: 2–4 words max, huge font, single line."
         )
     elif mode == "video":
+        parts["Story_Scenes_Content"] = json.dumps(scenes, ensure_ascii=False, indent=2)
         if host and host != HARRATOR_DISPLAY_OPTIONS[-1]:
             parts["Instruction_for_video_generation"] = (
                 "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "

@@ -6465,7 +6465,7 @@ class WorkflowGUI:
         def _on_double_click_paste_hint(e):
             try:
                 self.root.clipboard_clear()
-                self.root.clipboard_append("Use the source named 'Pasted Text / 粘贴的文字' as prompt instruction, and generate the Slide-Show \n\nUse Narrator image from source 'Narrator: Woman/Mature/Chinese'")
+                self.root.clipboard_append(config_prompt.NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT + "\n\nUse Narrator image from source 'Narrator: Woman/Mature/Chinese'")
                 self.root.update()
             except Exception:
                 pass

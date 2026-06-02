@@ -382,11 +382,11 @@ Steps:
                 * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
                 * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
 
-            ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
-                *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
-                *** Meticulous & Absolute End-Rhymes (Mandatory): You must dedicate immense craftsmanship and deep calculation to the end-rhymes of EVERY single line. Treat line endings with extreme care—do not leave them to chance or lazy approximations.
-                *** Strict Rhyme Scheme Architecture: Establish a definitive, intentional rhyme scheme (e.g., AABB, ABAB, or ABCB) for each section (Verse, Chorus, Bridge) and lock it in flawlessly. 
-                *** The Rhyming Paradox: The ultimate goal is to make the rhymes feel incredibly tight, clever, and rhythmic at the end of each phrase, YET sound completely effortless and unforced within the natural flow of the story.
+                ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
+                    *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
+                    *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
+                    *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
+                    *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
@@ -424,8 +424,9 @@ Steps:
             ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
                 *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
                 *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
-                *** Meticulous Poetic End-Rhymes (Mandatory): You must dedicate profound thought and immense craftsmanship to the exact end-rhyme of EVERY single line. Do not treat rhyming as an afterthought. Establish a deeply intentional, elegant rhyme scheme that enhances the musical DNA.
-                *** The Poetic Rhyming Synergy: The rhyming words at the end of each line must carry symbolic weight and artistic beauty. The rhymes must feel like an inevitable, gorgeous piece of classic poetry—flawlessly matched in sound, yet deeply elevating the dreamy and cinematic imagery. Do not use cheap or overly obvious rhymes that break the artistic illusion.
+                *** Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
+                *** Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
+                *** The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
@@ -479,10 +480,9 @@ Steps:
 
             ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
                 *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
-                *** Meticulous & Absolute End-Rhymes (Mandatory): You must dedicate immense craftsmanship and deep calculation to the end-rhymes of EVERY single line. Treat line endings with extreme care—do not leave them to chance or lazy approximations.
-                *** Strict Rhyme Scheme Architecture: Establish a definitive, intentional rhyme scheme (e.g., AABB, ABAB, or ABCB) for each section (Verse, Chorus, Bridge) and lock it in flawlessly. 
-                *** The Rhyming Paradox: The ultimate goal is to make the rhymes feel incredibly tight, clever, and rhythmic at the end of each phrase, YET sound completely effortless and unforced within the natural flow of the story.
-
+                *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
+                *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
+                *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
@@ -537,8 +537,9 @@ Steps:
             ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
                 *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
                 *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
-                *** Meticulous Poetic End-Rhymes (Mandatory): You must dedicate profound thought and immense craftsmanship to the exact end-rhyme of EVERY single line. Do not treat rhyming as an afterthought. Establish a deeply intentional, elegant rhyme scheme that enhances the musical DNA.
-                *** The Poetic Rhyming Synergy: The rhyming words at the end of each line must carry symbolic weight and artistic beauty. The rhymes must feel like an inevitable, gorgeous piece of classic poetry—flawlessly matched in sound, yet deeply elevating the dreamy and cinematic imagery. Do not use cheap or overly obvious rhymes that break the artistic illusion.
+                *** Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
+                *** Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
+                *** The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """
@@ -861,6 +862,13 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 *** SHOW, DON'T TELL
     Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
 
+*** VISUAL = STORY IMAGE ONLY (slideshow / scene illustration)
+    ** visual = what a camera sees ONLY: place, time, light, weather, faces, body language, action, props, atmosphere — pure cinematic shot description in short prose.
+    ** visual must NOT contain dialogue quotes, voiceover lines, caption wording, or any text meant to appear on screen.
+    ** FORBIDDEN in visual: therapy/analysis language, lesson titles, bullet points, slide copy, host commentary, meta phrases, field names, instructions.
+    ** Put insight & analysis in voiceover/speaking ONLY — those fields are for audio, NOT for image typography.
+    ** Slideshow images: default NO on-image text; story is shown through scene + character only. At most a 2–4 word title if essential — never detail blocks.
+
 *** CORE-INSIGHT ("soul")
     Let value shape arc; do NOT quote soul metaphors, terminology, or labels in output.
 """
@@ -881,7 +889,7 @@ ROLE: Senior Psychological Counselor & Reflective Storyteller
 *** SCENE FIELDS (all text in {language})
     1) caption — beat title; scene 1 = whole-story title
     2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — not a separate lecture
-    3) visual — sensory cinematic moment advancing A→B→C→D; recurring motif or location when possible
+    3) visual — pure cinematic shot (see VISUAL rules in spine): place, light, action, emotion through body & environment — NO analysis text, NO slide copy
     4) speaking — protagonist dialogue ~9s; advances plot / reveals inner conflict — NOT heart-message prose
     5) actor — gender/age/race | mood | actions (consistent cast)
 
@@ -895,7 +903,7 @@ OUTPUT FORMAT (STRICT JSON array)
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Host bridge + insight for this beat only. In {language}.",
-        "visual": "Same story thread — sensory, cinematic. In {language}.",
+        "visual": "Film-still description — sensory, cinematic, NO on-image text or analysis. In {language}.",
         "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
@@ -1013,7 +1021,7 @@ ROLE: Senior Psychological Counselor & TV Host
 *** SCENE FIELDS (all text in {language})
     1) caption — scene 1 = whole-story title
     2) voiceover — host bridge + gentle analysis of THIS moment (must reference prior scene detail when not scene 1)
-    3) visual — sensory cinematic case moment; same cast & motif unless VO transitions
+    3) visual — pure cinematic shot (see VISUAL rules in spine): place, light, action, body & environment — NO analysis text, NO slide copy; same cast & motif unless VO transitions
     4) speaking — character dialogue OR brief host on-screen line (~10s); natural, reactive
     5) actor — gender/age/race | mood | actions
 
@@ -1027,7 +1035,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full 
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Bridge + analysis tied to what we just saw. In {language}.",
-        "visual": "Same case thread — sensory, cinematic. In {language}.",
+        "visual": "Film-still — same case thread, sensory, cinematic, NO on-image text or analysis. In {language}.",
         "speaking": "Character or host line ~10s, reactive. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
@@ -1059,7 +1067,7 @@ ROLE: Senior Psychological Counselor & TV Host
 *** SCENE FIELDS (all text in {language})
     1) caption — scene 1 = whole-story title
     2) voiceover — host bridge + context + insight (only about current/prior beat)
-    3) visual — sensory cinematic; same world/motif as prior unless VO transitions
+    3) visual — pure cinematic shot (see VISUAL rules in spine): sensory, same world/motif as prior unless VO transitions — NO on-image text or analysis
     4) speaking — character dialogue ~10s; reactive, natural
     5) actor — gender/age/race | mood | actions
 
@@ -1073,7 +1081,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Bridge + insight for this beat. In {language}.",
-        "visual": "Continues same case thread — vivid, sensory. In {language}.",
+        "visual": "Film-still — continues same case thread, vivid & sensory, NO on-image text or analysis. In {language}.",
         "speaking": "Character dialogue ~10s. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
