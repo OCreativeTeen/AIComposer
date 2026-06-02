@@ -45,10 +45,9 @@ LANGUAGES = {
 _BILINGUAL_RAW_KEYS = frozenset(("english", "chinese"))
 
 
-def bilingual_branch_for_ui_language(ui_language_key: str) -> str:
-    """NotebookLM / Case-Study RAW 的双语分支名（仅 english | chinese）。"""
-    br = LANGUAGES.get(str(ui_language_key or "tw").strip().lower(), "chinese")
-    return br if br in _BILINGUAL_RAW_KEYS else "chinese"
+def llm_language_label(ui_language_key: str) -> str:
+    """UI 语种码 → LLM 提示词语言名：``en`` → ``English``，其余 → ``Chinese``。"""
+    return "English" if str(ui_language_key or "tw").strip().lower() == "en" else "Chinese"
 
 
 def scene_story_language_key_for_ui(ui_language_key: str) -> str:
@@ -75,22 +74,20 @@ def _dict_branch_val(d: dict, branch: str):
     return None
 
 
-def scene_list_from_bilingual_llm_output(data, ui_language_key: str) -> list:
-    """从 LLM 场景 JSON 取当前 UI 语种分支的场景 list（en→english，否则 chinese）。
+def _as_scene_list(val) -> list:
+    if isinstance(val, list):
+        return val
+    if isinstance(val, dict):
+        return [val]
+    return []
 
-    支持 ``{english: [...], chinese: [...]}``、顶层 list、单场景 dict；
-    ``expect_list=True`` 误包一层 ``[{english:..., chinese:...}]`` 时也会拆开。
-    """
-    if data is None:
+
+def scene_content_as_list(scene_content, ui_language_key: str = "") -> list:
+    """``scene_content`` → 场景 list。兼容旧 ``{{english|chinese: [...]}}`` 与单场景 dict。"""
+    if scene_content is None:
         return []
 
-    def _as_scene_list(val):
-        if isinstance(val, list):
-            return val
-        if isinstance(val, dict):
-            return [val]
-        return []
-
+    data = scene_content
     if isinstance(data, list):
         if len(data) == 1 and isinstance(data[0], dict):
             lone = data[0]
@@ -116,15 +113,19 @@ def scene_list_from_bilingual_llm_output(data, ui_language_key: str) -> list:
     return []
 
 
-def analyzed_content_text(val) -> str:
-    """``analyzed_content`` 为纯文本字符串；非 str 时仅作展示用序列化。"""
-    if val is None:
-        return ""
-    if isinstance(val, str):
-        return val.strip()
-    if isinstance(val, (dict, list)):
-        return json.dumps(val, ensure_ascii=False, indent=2).strip()
-    return str(val).strip()
+def scene_list_from_llm_output(data, ui_language_key: str = "") -> list:
+    """从 LLM JSON 取场景 list（顶层 array；兼容旧双语 dict）。"""
+    return scene_content_as_list(data, ui_language_key)
+
+
+def scene_list_from_bilingual_llm_output(data, ui_language_key: str) -> list:
+    """兼容旧名；请改用 ``scene_list_from_llm_output``。"""
+    return scene_list_from_llm_output(data, ui_language_key)
+
+
+def normalize_scene_content_value(data, ui_language_key: str = "") -> list:
+    """粘贴/生成后持久化：统一为 scene_content array。"""
+    return scene_list_from_llm_output(data, ui_language_key)
 
 
 def normalize_analyzed_content_text(raw_input: str) -> str:
@@ -132,58 +133,46 @@ def normalize_analyzed_content_text(raw_input: str) -> str:
     return (raw_input or "").strip()
 
 
-def _legacy_analyzed_branch_text(val) -> str:
-    """旧 ``analyzed_content[english|chinese]`` 分支 → 纯文本。"""
+def normalize_analyzed_content_value(val, ui_language_key: str = "") -> str:
+    """``analyzed_content`` 统一为纯文本；旧双语 dict / JSON 字符串一次性展平。"""
     if val is None:
         return ""
     if isinstance(val, str):
-        return val.strip()
-    if isinstance(val, dict):
-        for key in ("story", "summary", "content"):
-            inner = val.get(key)
-            if isinstance(inner, str) and inner.strip():
-                return inner.strip()
-        return json.dumps(val, ensure_ascii=False, indent=2).strip()
-    if isinstance(val, (list, int, float, bool)):
-        return json.dumps(val, ensure_ascii=False).strip()
-    return str(val).strip()
-
-
-def migrate_analyzed_content_value_to_string(val):
-    """旧双语 JSON / 嵌套 dict → 纯文本；优先 ``chinese``，其次 ``english``。已是 str 则 strip 后返回。"""
-    if val is None:
-        return None
-    if isinstance(val, str):
         s = val.strip()
         if not s:
-            return None
+            return ""
         if s.startswith("{") or s.startswith("["):
             try:
                 parsed = json.loads(safe_clipboard_json_copy(s))
             except (json.JSONDecodeError, TypeError):
                 return s
-            return migrate_analyzed_content_value_to_string(parsed) or s
+            flat = normalize_analyzed_content_value(parsed, ui_language_key)
+            return flat if flat else s
         return s
     if isinstance(val, dict):
-        keys_lower = {
-            str(k).lower(): k for k in val.keys() if isinstance(k, str)
-        }
-        if keys_lower.keys() & _BILINGUAL_RAW_KEYS:
-            for branch in ("chinese", "english"):
-                rk = keys_lower.get(branch)
-                if rk is None:
+        keys_lower = {str(k).lower() for k in val.keys() if isinstance(k, str)}
+        if keys_lower & _BILINGUAL_RAW_KEYS:
+            pref = scene_story_language_key_for_ui(ui_language_key)
+            for br in (pref, "chinese", "english"):
+                branch_val = _dict_branch_val(val, br)
+                if branch_val is None:
                     continue
-                text = _legacy_analyzed_branch_text(val.get(rk))
+                text = normalize_analyzed_content_value(branch_val, ui_language_key)
                 if text:
                     return text
-            return None
-        text = _legacy_analyzed_branch_text(val)
-        return text or None
-    return _legacy_analyzed_branch_text(val) or None
+            return ""
+        for key in ("story", "summary", "content", "text"):
+            inner = val.get(key)
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+        return json.dumps(val, ensure_ascii=False, indent=2).strip()
+    if isinstance(val, list):
+        return json.dumps(val, ensure_ascii=False, indent=2).strip()
+    return str(val).strip()
 
 
 def migrate_analyzed_content_field(item: dict) -> bool:
-    """频道列表行：``analyzed_content`` 若为旧 JSON 结构则就地改为字符串。返回是否修改。"""
+    """列表行：``analyzed_content`` 若非 str 则就地改为纯文本。返回是否修改。"""
     if not isinstance(item, dict) or "analyzed_content" not in item:
         return False
     ac = item.get("analyzed_content")
@@ -193,8 +182,13 @@ def migrate_analyzed_content_field(item: dict) -> bool:
             return False
     elif not isinstance(ac, (dict, list)):
         return False
-    new_text = migrate_analyzed_content_value_to_string(ac)
-    if new_text is None:
+    lang = (item.get("language") or "").strip()
+    if not lang:
+        prof = item.get("project_profile")
+        if isinstance(prof, dict):
+            lang = (prof.get("language") or "").strip()
+    new_text = normalize_analyzed_content_value(ac, lang)
+    if not new_text:
         return False
     if isinstance(ac, str) and ac.strip() == new_text:
         return False
@@ -202,73 +196,41 @@ def migrate_analyzed_content_field(item: dict) -> bool:
     return True
 
 
-def merge_scene_content_bilingual(existing, rewritten, ui_language_key: str) -> dict:
-    """将内容合并进 ``{english: [scenes], chinese: [scenes]}``；``rewritten`` 可为 list 或双语 dict。"""
-    existing = existing if isinstance(existing, dict) else {}
-    bi = _BILINGUAL_RAW_KEYS
-    out: dict = {}
-    if bi.intersection(existing.keys()):
-        for k in bi:
-            v = existing.get(k)
-            if isinstance(v, list):
-                out[k] = copy.deepcopy(v)
-            elif isinstance(v, dict):
-                out[k] = [copy.deepcopy(v)]
-            elif v is None:
-                out[k] = []
-            else:
-                out[k] = []
-    else:
-        branch0 = bilingual_branch_for_ui_language(ui_language_key)
-        out = {"english": [], "chinese": []}
-        if isinstance(existing, list):
-            out[branch0] = copy.deepcopy(existing)
-        elif isinstance(existing, dict):
-            out[branch0] = [copy.deepcopy(existing)]
-        else:
-            out[branch0] = []
+def analyzed_content_text(val, ui_language_key: str = "") -> str:
+    """``analyzed_content`` 为纯文本字符串；非 str 时展平或序列化（展示/读取用）。"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return ""
+        if s.startswith("{") or s.startswith("["):
+            flat = normalize_analyzed_content_value(s, ui_language_key)
+            return flat if flat else s
+        return s
+    return normalize_analyzed_content_value(val, ui_language_key)
 
-    if isinstance(rewritten, list):
-        branch = bilingual_branch_for_ui_language(ui_language_key)
-        out.setdefault("english", [])
-        out.setdefault("chinese", [])
-        out[branch] = copy.deepcopy(rewritten)
-        return out
 
-    if isinstance(rewritten, dict):
-        if bi.intersection(rewritten.keys()):
-            for k in bi:
-                if k not in rewritten:
-                    continue
-                v = rewritten[k]
-                if isinstance(v, list):
-                    out[k] = copy.deepcopy(v)
-                elif isinstance(v, dict):
-                    out[k] = [copy.deepcopy(v)]
-                elif v is None:
-                    out[k] = []
-            return out
-        branch = bilingual_branch_for_ui_language(ui_language_key)
-        out.setdefault("english", [])
-        out.setdefault("chinese", [])
-        out[branch] = [copy.deepcopy(rewritten)]
-        return out
+def merge_scene_content_list(existing, rewritten, ui_language_key: str = "") -> list:
+    """合并 scene_content：``rewritten`` 优先，统一返回 list。"""
+    rewritten_list = scene_list_from_llm_output(rewritten, ui_language_key)
+    if rewritten_list:
+        return copy.deepcopy(rewritten_list)
+    return scene_content_as_list(existing, ui_language_key)
 
-    return out
 
+def merge_scene_content_bilingual(existing, rewritten, ui_language_key: str) -> list:
+    """兼容旧名；请改用 ``merge_scene_content_list``。"""
+    return merge_scene_content_list(existing, rewritten, ui_language_key)
 
 
 def chinese_convert(text, language):
     if language == "zh":
-        # Convert to simplified Chinese
         return zhconv.convert(text, 'zh-cn')
     elif language == "tw":
-        # Convert to traditional Chinese
         return zhconv.convert(text, 'zh-tw')
     else:
         return text
-
-
 
 
 # =============================================================================

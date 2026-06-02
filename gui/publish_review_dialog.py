@@ -137,7 +137,10 @@ class PublishReviewDialog:
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
         self.text_w.pack(fill=tk.BOTH, expand=True, pady=4)
 
-        scene_content = self.video_detail.get('scene_content', {}).get(config.LANGUAGES[self.media_gui.language], [{}])[0]
+        scenes = config.scene_content_as_list(
+            self.video_detail.get('scene_content'), self.media_gui.language
+        )
+        scene_content = scenes[0] if scenes and isinstance(scenes[0], dict) else {}
         if scene_content:
             summary = scene_content.get("message", "")
             if not summary:

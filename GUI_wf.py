@@ -601,11 +601,13 @@ class WorkflowGUI:
             if not isinstance(parsed, (dict, list)):
                 messagebox.showwarning(
                     "格式错误",
-                    "scene_content 须为 JSON 对象或数组。",
+                    "scene_content 须为 JSON 数组（或旧版对象，将自动转换）。",
                     parent=parent,
                 )
                 return False, None
-            return True, parsed
+            lang = (project_manager.PROJECT_CONFIG or {}).get("language") or ""
+            normalized = config.normalize_scene_content_value(parsed, lang)
+            return True, normalized if normalized else None
         messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
         return False, None
 
@@ -644,7 +646,7 @@ class WorkflowGUI:
             ),
             "scene_content": (
                 "编辑 scene_content",
-                "场景 JSON（须为合法 JSON 对象或数组；保存后写入列表行外层字段）",
+                "场景 JSON（须为合法 JSON 数组；保存后写入列表行外层字段）",
             ),
         }
         dlg_title, header_hint = labels.get(field, (f"编辑 {field}", ""))
@@ -2463,7 +2465,8 @@ class WorkflowGUI:
         self.enhance_level.pack(side=tk.LEFT, padx=2)
         self.enhance_level.set("30")
 
-        ttk.Button(duration_promo_frame, text="故事描述", width=10, command=self.describe_story_content).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="故事Slide-Show", width=14, command=self.describe_story_slideshow).pack(side=tk.LEFT)
+        ttk.Button(duration_promo_frame, text="故事视频", width=10, command=self.describe_story_video).pack(side=tk.LEFT)
         ttk.Button(duration_promo_frame, text="场景描述", width=10, command=self.describe_scene_content).pack(side=tk.LEFT)
         #ttk.Button(duration_promo_frame, text="精配", width=5, command=lambda: self.concise_scene_speak("voiceover")).pack(side=tk.LEFT)
 
@@ -2937,7 +2940,7 @@ class WorkflowGUI:
 
     def _do_speaking_summarize(self):
         _lang_code = (project_manager.PROJECT_CONFIG or {}).get("language", "tw")
-        _lang_name = config.LANGUAGES.get(_lang_code, "Chinese")
+        _lang_name = config.llm_language_label(_lang_code)
         # 
         system_prompt = config_prompt.SPEAKING_SUMMARY_SYSTEM_PROMPT.format(language=_lang_name)
         user_prompt = json.dumps(self.workflow.scenes, ensure_ascii=False)
@@ -6186,8 +6189,25 @@ class WorkflowGUI:
         return scene_video_desc
 
 
-    def _build_and_show_story_content(self, current_story_scenes, visual_style, narrator, host_display, include_visual=True, include_voiceover=True):
-        """根据选项构建 Story Content JSON。Speaker/Host 共用 visual_style；narrator 为 NARRATOR id；host_display 为英文 value。"""
+    def _build_and_show_story_content(
+        self,
+        current_story_scenes,
+        visual_style,
+        narrator,
+        host_display,
+        *,
+        nb_mode: str = "slideshow",
+        include_visual=True,
+        include_voiceover=True,
+    ):
+        """根据选项构建 Story Content JSON，并按 ``nb_mode`` 复制 NotebookLM 指令到剪贴板。"""
+        if nb_mode not in ("slideshow", "video"):
+            raise ValueError(f"nb_mode must be slideshow or video, got {nb_mode!r}")
+        mode_titles = {
+            "slideshow": ("Story Slideshow 图像指令", "Slideshow 图像指令（已复制到剪贴板）"),
+            "video": ("Story Video+Audio 指令", "Video+Audio 指令（已复制到剪贴板）"),
+        }
+        dialog_title, header_label = mode_titles[nb_mode]
         scenes_data = []
         for s in current_story_scenes:
             item = {
@@ -6213,7 +6233,7 @@ class WorkflowGUI:
         initial_text = json.dumps(payload, indent=2, ensure_ascii=False)
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("Story Content")
+        dialog.title(dialog_title)
         sw, sh = int(1000 * 1.3), 800  # 加宽约30%
         dialog.geometry(f"{sw}x{sh}")
         dialog.transient(self.root)
@@ -6223,7 +6243,7 @@ class WorkflowGUI:
         y = (dialog.winfo_screenheight() - sh) // 2
         dialog.geometry(f"{sw}x{sh}+{x}+{y}")
 
-        ttk.Label(dialog, text="Story Content（已复制到剪贴板）").pack(anchor="w", padx=15, pady=(15, 5))
+        ttk.Label(dialog, text=header_label).pack(anchor="w", padx=15, pady=(15, 5))
 
         opts_frame = ttk.Frame(dialog)
         opts_frame.pack(fill=tk.X, padx=15, pady=(0, 5))
@@ -6252,7 +6272,7 @@ class WorkflowGUI:
                 messagebox.showwarning("REMIX SPEAKING", "需要顶层包含非空 \"scenes\" 数组。", parent=dialog)
                 return
             _lang_code = (project_manager.PROJECT_CONFIG or {}).get("language", "tw")
-            _lang_name = config.LANGUAGES.get(_lang_code, "Chinese")
+            _lang_name = config.llm_language_label(_lang_code)
             system_prompt = config_prompt.STORY_REMIX_SPEAKING_SYSTEM_PROMPT.format(language=_lang_name)
 
             payload_in = []
@@ -6406,8 +6426,26 @@ class WorkflowGUI:
             text_widget.delete("1.0", tk.END)
             text_widget.insert("1.0", new_text)
             try:
+                pc = project_manager.PROJECT_CONFIG or {}
+                _clip = config_prompt.build_notebooklm_gen_instruction_clipbody(
+                    mode=nb_mode,
+                    video_detail={
+                        "id": pc.get("pid"),
+                        "topic_category": pc.get("topic_category"),
+                        "topic_subtype": pc.get("topic_subtype"),
+                    },
+                    scene_content=scenes_data,
+                    visual_style=visual_style,
+                    main_character=(
+                        str(current_story_scenes[0].get("actor", "")).strip()
+                        if current_story_scenes
+                        else ""
+                    ),
+                    host_narrator=(narrator or "").strip(),
+                    host_display=host_display,
+                )
                 self.root.clipboard_clear()
-                self.root.clipboard_append(config_prompt.SLIDESHOW_GENERATION_INSTRUCTION.format(visual_style=visual_style) + "\n\n" + new_text.strip())
+                self.root.clipboard_append(_clip)
                 self.root.update()
             except Exception:
                 pass
@@ -6445,15 +6483,17 @@ class WorkflowGUI:
             _cat = ""
 
         filename = project_manager.PROJECT_CONFIG.get('video_title', '').strip() + '_'
-        file_path = os.path.join(input_media_path, 'story__' + _cat + '__' + filename + '.txt')
+        file_path = os.path.join(
+            input_media_path,
+            f"story__{nb_mode}__{_cat}__{filename}.txt",
+        )
         if os.path.exists(file_path):
             os.remove(file_path)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(new_text)
 
 
-    def describe_story_content(self):
-        """直接使用默认值生成 Story Content（不再弹出选项对话框）"""
+    def _describe_story_gen_instruction(self, nb_mode: str) -> None:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("提示", "没有当前场景")
@@ -6463,18 +6503,33 @@ class WorkflowGUI:
             messagebox.showwarning("提示", "当前故事无场景")
             return
 
-        visual_style = project_manager.PROJECT_CONFIG.get("visual_style", config.VISUAL_STYLE_OPTIONS[0])
-        narrator = project_manager.PROJECT_CONFIG.get("narrator", config.CHARACTER_PERSON_OPTIONS[0])
-        host_display = project_manager.PROJECT_CONFIG.get("host_display", config_prompt.HARRATOR_DISPLAY_OPTIONS[0])
+        visual_style = project_manager.PROJECT_CONFIG.get(
+            "visual_style", config.VISUAL_STYLE_OPTIONS[0]
+        )
+        narrator = project_manager.PROJECT_CONFIG.get(
+            "narrator", config.CHARACTER_PERSON_OPTIONS[0]
+        )
+        host_display = project_manager.PROJECT_CONFIG.get(
+            "host_display", config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
+        )
 
         self._build_and_show_story_content(
             current_story_scenes,
             visual_style=visual_style,
             narrator=narrator,
             host_display=host_display,
+            nb_mode=nb_mode,
             include_visual=True,
             include_voiceover=True,
         )
+
+    def describe_story_slideshow(self):
+        """生成整故事 NotebookLM Slideshow（分镜图）指令并复制到剪贴板。"""
+        self._describe_story_gen_instruction("slideshow")
+
+    def describe_story_video(self):
+        """生成整故事 NotebookLM Video+Audio 指令并复制到剪贴板。"""
+        self._describe_story_gen_instruction("video")
 
 
     def _show_scene_payload_export_dialog(self, title: str, preface: str, payload: dict) -> None:

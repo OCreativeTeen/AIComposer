@@ -1521,7 +1521,8 @@ class AVReviewDialog:
         if self.transcribe_way != "simple":
             try:
                 selected_prompt = selected_prompt.format(
-                    language=self.workflow.language, topic=topic_type
+                    language=config.llm_language_label(self.workflow.language),
+                    topic=topic_type,
                 )
             except KeyError:
                 pass
@@ -1572,7 +1573,7 @@ class AVReviewDialog:
             user_prompt=refresh_conversation,
             expect_list=False,
         )
-        new_scenes = config.scene_list_from_bilingual_llm_output(
+        new_scenes = config.scene_list_from_llm_output(
             raw_llm_scenes, self.workflow.language
         )
         if not new_scenes:

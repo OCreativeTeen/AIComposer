@@ -791,7 +791,7 @@ def _parse_json_object_from_clipboard_text(text: str):
         parsed = json.loads(text)
     except json.JSONDecodeError:
         return None
-    return parsed if isinstance(parsed, dict) else None
+    return parsed if isinstance(parsed, (dict, list)) else None
 
 
 def _scene_json_dedupe_key(data: dict) -> str:
@@ -855,7 +855,7 @@ def ask_cross_channel_clipboard_pick(
         pv = (it.get("preview") or content[:44]).replace("\n", " ")
         lbl = f"[{src}] {pv}…"
         if not parsed:
-            lbl += " （非 JSON 对象）"
+            lbl += " （非 JSON 对象/数组）"
         key = f"prog:{eid}"
         choices.append((key, lbl))
         entries.append((key, parsed, content))
@@ -879,7 +879,7 @@ def ask_cross_channel_clipboard_pick(
             return copy.deepcopy(parsed)
         messagebox.showwarning(
             "无效 Scene JSON",
-            "所选内容须为 JSON 对象（dict），才能用于 scene_content 等后续操作。",
+            "所选内容须为 JSON 对象或数组，才能用于 scene_content 等后续操作。",
             parent=parent,
         )
         return None
@@ -1152,7 +1152,7 @@ def _youtube_row_list_display_title(video_detail: dict) -> str:
 
 def _sync_youtube_row_title_after_scene_edit(video_detail: dict, scene_parsed, ui_language_key: str) -> None:
     """粘贴或保存 scene_content 后，若有 ``project_profile``，用首场景标题仅更新 ``project_profile.video_title``，不改动外层原视频 ``title``。"""
-    if not isinstance(video_detail, dict) or not isinstance(scene_parsed, dict):
+    if not isinstance(video_detail, dict) or scene_parsed is None:
         return
     hint = project_manager.title_from_scene_content(scene_parsed, ui_language_key or "tw")
     if not hint:
@@ -3460,12 +3460,20 @@ class MediaGUIManager:
 
         for video in channel_videos:
             scene_content = video.get('scene_content')
-            if scene_content and not isinstance(scene_content, dict):
+            if isinstance(scene_content, str):
                 try:
                     scene_content = json.loads(scene_content)
-                    video['scene_content'] = scene_content
-                except Exception as e:
-                    video.pop('scene_content', '')
+                except Exception:
+                    video.pop('scene_content', None)
+                    continue
+            if scene_content is not None:
+                normalized = config.normalize_scene_content_value(
+                    scene_content, self.language
+                )
+                if normalized:
+                    video['scene_content'] = normalized
+                else:
+                    video.pop('scene_content', None)
 
         cleaned = dedupe_channel_video_list(channel_videos)
 
@@ -3508,16 +3516,13 @@ class MediaGUIManager:
             return text
 
         sc = video_detail.get("scene_content")
-        if sc and isinstance(sc, dict):
-            branch = sc.get(config.LANGUAGES.get(self.language, "chinese"))
-            if not branch:
-                branch = sc.get(config.LANGUAGES.get(self.language, "english"))
-            if isinstance(branch, list) and branch:
-                first = branch[0]
-                if isinstance(first, dict):
-                    story = (first.get("story") or "").strip()
-                    if story:
-                        return story
+        scenes = config.scene_content_as_list(sc, self.language)
+        if scenes:
+            first = scenes[0]
+            if isinstance(first, dict):
+                story = (first.get("story") or first.get("visual") or "").strip()
+                if story:
+                    return story
 
         return (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
 
@@ -3528,14 +3533,13 @@ class MediaGUIManager:
             return title
 
         sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
-        if sc and isinstance(sc, dict):
-            branch = sc.get(config.LANGUAGES.get(self.language, "chinese"))
-            if isinstance(branch, list) and branch:
-                first = branch[0]
-                if isinstance(first, dict):
-                    title = project_manager.caption_from_scene_content_item(first)
-                    if title:
-                        return title
+        scenes = config.scene_content_as_list(sc, self.language)
+        if scenes:
+            first = scenes[0]
+            if isinstance(first, dict):
+                title = project_manager.caption_from_scene_content_item(first)
+                if title:
+                    return title
         return ""
 
 
@@ -3544,7 +3548,7 @@ class MediaGUIManager:
         if not source:
             return ""
         prompt = config_prompt.YOUTUBE_SUMMARY_SYSTEM_PROMPT.format(
-            language=config.LANGUAGES[self.language]
+            language=config.llm_language_label(self.language)
         )
         result = self.llm_api_local.generate_text(prompt, source)
         return config.chinese_convert(result or "", self.language).strip()
@@ -3834,7 +3838,7 @@ class MediaGUIManager:
         url = ""
         if isinstance(video_detail, dict):
             url = (video_detail.get("url") or "").strip()
-        lang_label = config.LANGUAGES.get(self.language, self.language)
+        lang_label = config.llm_language_label(self.language)
         try:
             return raw.format(url=url, language=lang_label)
         except KeyError:
@@ -3855,7 +3859,10 @@ class MediaGUIManager:
             return False
         url = video_detail.get('url', '').strip()
         prompt = self._format_analyze_prompt(video_detail)
-        rewritten = self.llm_api_local.generate_text(prompt.format(url=url, language=self.language), text_content)
+        rewritten = self.llm_api_local.generate_text(
+            prompt.format(url=url, language=config.llm_language_label(self.language)),
+            text_content,
+        )
         rewritten = (rewritten or "").strip()
         if not rewritten:
             return False
@@ -4387,15 +4394,21 @@ class MediaGUIManager:
             sc = v.get("scene_content")
             if not sc:
                 return False
-            if isinstance(sc, dict):
+            if isinstance(sc, list):
                 return bool(sc)
+            if isinstance(sc, dict):
+                return bool(config.scene_content_as_list(sc))
             if isinstance(sc, str):
                 t = sc.strip()
                 if not t:
                     return False
                 try:
                     parsed = json.loads(t)
-                    return bool(parsed) if isinstance(parsed, dict) else True
+                    if isinstance(parsed, list):
+                        return bool(parsed)
+                    if isinstance(parsed, dict):
+                        return bool(config.scene_content_as_list(parsed))
+                    return bool(parsed)
                 except json.JSONDecodeError:
                     return bool(t)
             return True
@@ -5598,24 +5611,29 @@ class MediaGUIManager:
                             video_detail.get("analyzed_content")
                         )
 
-                    def _apply_scene_dict(scene_dict: dict) -> None:
-                        scene_dict = copy.deepcopy(scene_dict)
-                        video_detail["scene_content"] = scene_dict
+                    def _apply_scene_dict(scene_raw) -> None:
+                        scene_list = config.normalize_scene_content_value(
+                            scene_raw, self.language
+                        )
+                        if not scene_list:
+                            return
+                        video_detail["scene_content"] = scene_list
                         pending_scene[0] = None
                         _sync_youtube_row_title_after_scene_edit(
-                            video_detail, scene_dict, self.language
+                            video_detail, scene_list, self.language
                         )
                         _refresh_summary_window_title(summary_window, video_detail)
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                         dialog.after(0, populate_tree)
 
-                    def _video_scene_dict() -> dict:
-                        sc = video_detail.get("scene_content")
-                        return sc if isinstance(sc, dict) else {}
+                    def _video_scene_list() -> list:
+                        return config.scene_content_as_list(
+                            video_detail.get("scene_content"), self.language
+                        )
 
                     sc = video_detail.get("scene_content")
-                    has_scene = isinstance(sc, dict) and bool(sc)
+                    has_scene = bool(_video_scene_list())
 
                     analyzed_txt = _analyzed_clip_text()
                     has_analyzed = bool(analyzed_txt)
@@ -5629,8 +5647,14 @@ class MediaGUIManager:
                         if has_scene:
                             choices.append(
                                 (
-                                    "gen_instruction",
-                                    f"Scene JSON → 生成风格/指令 ({config.LANGUAGES[self.language]})",
+                                    "gen_slideshow_instruction",
+                                    f"Scene JSON → Slideshow 图像指令 ({config.llm_language_label(self.language)})",
+                                )
+                            )
+                            choices.append(
+                                (
+                                    "gen_video_instruction",
+                                    f"Scene JSON → Video+Audio 指令 ({config.llm_language_label(self.language)})",
                                 )
                             )
                             choices.append(("scene_detail", "拷贝 Scene_content (JSON)"))
@@ -5688,7 +5712,7 @@ class MediaGUIManager:
                             return
 
                         if mode == "scene_detail":
-                            src = _video_scene_dict()
+                            src = _video_scene_list()
                             txt = json.dumps(src, ensure_ascii=False, indent=2)
                             summary_window.clipboard_clear()
                             summary_window.clipboard_append(txt)
@@ -5698,8 +5722,8 @@ class MediaGUIManager:
                             )
                             return
 
-                        if mode == "gen_instruction":
-                            scene_for_gen = _video_scene_dict()
+                        if mode in ("gen_slideshow_instruction", "gen_video_instruction"):
+                            scene_for_gen = _video_scene_list()
                             if not scene_for_gen:
                                 messagebox.showwarning(
                                     "无 Scene JSON",
@@ -5708,59 +5732,33 @@ class MediaGUIManager:
                                 )
                                 return
 
-                            header_parts = {}
-
-                            header_parts["id"] = video_detail.get("id")
-                            header_parts["Visual_Style"] = project_manager.LAST_VISUAL_STYLE
-
-                            if character_var.get():
-                                header_parts["Main_Character"] = character_var.get()
-
+                            nb_mode = (
+                                "slideshow"
+                                if mode == "gen_slideshow_instruction"
+                                else "video"
+                            )
                             host_str = project_manager.LAST_NARRATOR
-                            if host_str:
-                                header_parts["Host_Voice"] = host_str
-                                hd = project_manager.LAST_HOST_DISPLAY
-                                if hd == config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]:
-                                    header_parts["Host_Display"] = (
-                                        "No Host. The main character performs and narrates."
-                                    )
-                                else:
-                                    header_parts["Host_Display"] = hd
-
-                                header_parts["Instruction_for_video_generation"] = (
-                                    "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
-                                    "** If scene-image has only a main character (no Host) → use the main character as talking-avatar to speak about the content of the scene."
-                                )
-                            else:
-                                header_parts["Instruction_for_video_generation"] = (
-                                    "** No Host (Narrator). Use the main character as talking-avatar to speak about the content of scene."
-                                )
-
-                            header_parts["Instruction_for_Speaking_and_Visual_generation"] = (
-                                "** Generate speaking or visual-image,  according to speaking (and/or message, title and story) fields inside object of the json array, and/or the content in the image."
-                                "** Avoid the words reach very left or right of the screen (try to keep words at the square-area of the screen)."
+                            _clip_body = config_prompt.build_notebooklm_gen_instruction_clipbody(
+                                mode=nb_mode,
+                                video_detail=video_detail,
+                                scene_content=scene_for_gen,
+                                visual_style=project_manager.LAST_VISUAL_STYLE,
+                                main_character=(character_var.get() or "").strip(),
+                                host_narrator=(host_str or "").strip(),
+                                host_display=project_manager.LAST_HOST_DISPLAY,
                             )
-
-                            header_parts["Scene_Content"] = scene_for_gen.get(
-                                config.LANGUAGES[self.language], []
-                            )
-
-                            header_parts["Case_Study_Category_and_Subtype"] = (
-                                "topic_category: "
-                                + str(video_detail.get("topic_category") or "")
-                                + ",  topic_subtype: "
-                                + str(video_detail.get("topic_subtype") or "")
+                            clip_tag = (
+                                "gen_slideshow_instruction"
+                                if nb_mode == "slideshow"
+                                else "gen_video_instruction"
                             )
 
                             summary_window.clipboard_clear()
-                            _clip_body = "\n\n".join(
-                                f"{_k}:\n{_v}" for _k, _v in header_parts.items()
-                            )
                             summary_window.clipboard_append(_clip_body)
                             summary_window.update()
                             if _clip_body:
                                 channel_clipboard_append_item(
-                                    self.channel_path or "", _clip_body, "gen_instruction"
+                                    self.channel_path or "", _clip_body, clip_tag
                                 )
                             return
 
@@ -5857,7 +5855,7 @@ class MediaGUIManager:
                     content_guide=self._channel_content_guide(),
                     topic=topic,
                     tags=tags_var.get().strip(),
-                    language=config.LANGUAGES[self.language],
+                    language=config.llm_language_label(self.language),
                     reference=reference,
                     soul=soul,
                     story_title=story_title,

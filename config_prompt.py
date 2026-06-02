@@ -1,3 +1,5 @@
+import json
+
 import config_prompt
 
 IMAGE_WORDS_SUMMERIZE_SYSTEM_PROMPT = """
@@ -278,6 +280,97 @@ Audio generation / Words-in-image generation instruction:
 --------------
 Story Json-Content:
 """
+
+
+# NotebookLM：由 downloader「Scene JSON → 指令」成功路径拆出的 slideshow / video 两段。
+# 勿用 SLIDESHOW_GENERATION_INSTRUCTION 直接喂 NotebookLM：过程说明过多，易生成「如何做片」的技术报告而非故事画面。
+
+NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = """
+** Goal: One story section illustration per scene (slideshow). Depict the STORY in Scene_Scenes_Content — NOT a tutorial, NOT steps about generation, NOT a technical analysis report.
+** 1 image = 1 scene. Keep Visual_Style consistent; add per-scene detail from each scene's "visual" field.
+** Story_Character must look the same across scenes when present.
+** Host / narrator: show Host as talking-avatar only when the scene calls for host/narrator speech, 'Voice' field saying that the host narrates.
+** Use caption, visual, speaking, voiceover from Scene_Content — cinematic story frames only.
+** DO NOT render this instruction, JSON field names, or meta commentary inside images.
+** On-image text (if any): very concise; keep text away from left/right edges (square safe area).
+"""
+
+NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
+** Prerequisite: start from slideshow scene images already generated for the same Scene_Content.
+** Lip-sync / talking-avatar: follow Instruction_for_video_generation (Host vs main character rules).
+** If the image has no actor/narrator avatar, DO NOT add talking-avatars in video (voice / ambience only).
+** Narrator commenting on prior scene: keep prior scene as stable background; hold starting frame — do not jump backgrounds because of narration.
+** Audio: speaking / voiceover from Scene_Content; target ~10s; voice matches actor/narrator gender-age-race; sound-effects OK; no background music unless scene has no speech.
+** Words-in-image (if any): very concise key points only.
+"""
+
+
+def build_notebooklm_gen_instruction_clipbody(
+    *,
+    mode: str,
+    video_detail: dict | None,
+    scene_content: list,
+    visual_style: str,
+    main_character: str = "",
+    host_narrator: str = "",
+    host_display: str = "",
+) -> str:
+    """组装 NotebookLM 视觉/视频指令剪贴板正文。``mode`` 为 ``slideshow`` 或 ``video``。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    parts: dict[str, object] = {}
+
+    vid = vd.get("id")
+    if vid is not None and str(vid).strip():
+        parts["id"] = vid
+    parts["Visual_Style"] = (visual_style or "").strip() or "realistic"
+
+    mc = (main_character or "").strip()
+    if mc:
+        parts["Story_Character"] = mc
+
+    host = (host_narrator or "").strip()
+    hd = (host_display or "").strip()
+    if not host or host==HARRATOR_DISPLAY_OPTIONS[-1]:
+        parts["Voice"] = mc + " ~ Story-character performs and narrates"
+    else:
+        parts["Voice"] = host + " ~ Host/Narrator narrates (" + hd + ")"
+
+    parts["Case_Study_Category_and_Subtype"] = (
+        "topic_category: "
+        + str(vd.get("topic_category") or "")
+        + ",  topic_subtype: "
+        + str(vd.get("topic_subtype") or "")
+    )
+
+    scenes = scene_content if isinstance(scene_content, list) else []
+    parts["Story_Scenes_Content"] = json.dumps(scenes, ensure_ascii=False, indent=2)
+
+    if mode == "slideshow":
+        parts["Instruction_for_slideshow_image_generation"] = (
+            NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION.strip()
+        )
+        parts["Instruction_for_Speaking_and_Visual_generation"] = (
+            "** Generate visual-image from speaking, voiceover, caption, and visual fields in Scene_Content. "
+            "** Illustrate the story itself — never slides about these instructions or the generation process. "
+            "** Avoid words at the very left or right of the screen (square safe area)."
+        )
+    elif mode == "video":
+        if host and host != HARRATOR_DISPLAY_OPTIONS[-1]:
+            parts["Instruction_for_video_generation"] = (
+                "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
+                "** If scene-image has only a Story character (no Host) → use the Story character as talking-avatar to speak about the content of the scene."
+            )
+        else:
+            parts["Instruction_for_video_generation"] = (
+                "** No Host (Narrator). Use the Story character as talking-avatar to speak about the content of scene."
+            )
+        parts["Instruction_for_video_and_audio_generation"] = (
+            NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
+        )
+    else:
+        raise ValueError(f"unknown notebooklm gen instruction mode: {mode!r}")
+
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
 SLIDESHOW_GENERATION_INSTRUCTION = """

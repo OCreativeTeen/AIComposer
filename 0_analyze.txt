@@ -1,13 +1,24 @@
 Create string video clip for "Mind Spring Melody" program -- (a song for the 心理咨询呃服务) : express content of 心理咨询 story :::  no speaker!!
 
+
+
 这个是一个歌曲的样本 从YouTube连接作为样本 有一些基本数据分析; 有歌词歌词放在story里头.  下面我们还有一些新的歌曲要添加到这个表里头; 你帮我添加进去. 也是要做同样的数据分析, 和找到歌词加到story里头 
+
 
 歌词　再细腻些　，长些，标注旋律／乐器指引　等等
 
 
 把下面的这些给SUNO生成歌曲的指示内容, 缩减到950个英文字符之内  >>> 
 
+
 simplify the  words in the image,  突出重点, 可以减少项目
+
+
+Generate the Slide-Show, following the info from the source named 'Pasted Text / 粘贴的文字'
+* The slide-show content (Image & Words) is purely about the "Story Json-Content" section (2nd half) of the source (named 'Pasted Text / 粘贴的文字')
+* The generation instruction in the 1st half of "'Pasted Text / 粘贴的文字'" is just only guide about how to generate the slide-show (NOT the slide-show content at all).
+* For the image of the Character in the story, please refer to the source 'Story-Character: Young/Chinese'
+
 
 
 man vocal:

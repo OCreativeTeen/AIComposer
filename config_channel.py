@@ -61,32 +61,21 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
     ** Original conversation content provided in the user-prompt
 
 *** Output format: 
-    ** Strictly output bilingual ``scene_content`` JSON (same schema as NotebookLM counseling prompts):
+    ** Strictly output ``scene_content`` as a JSON array (all text in {language}):
 
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "Scene title. In English.",
-            "voiceover": "Optional heart message or host bridge. In English.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
-            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In English.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景標題。中文。",
-            "voiceover": "可選內心寄語或主持人銜接。中文。",
-            "visual": "故事场景描述，包括電影感場景描述（時間、天氣、建築、光線）。中文。",
-            "speaking": "改寫後的第一人稱對白——流暢、口語、可直接朗讀。中文。",
+            "caption": "Scene title. In {language}.",
+            "voiceover": "Optional heart message or host bridge. In {language}.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
+            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
     ]
-}}
 """
 
 
@@ -228,26 +217,15 @@ INPUT (the original case+analysis content):
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "Scene title capturing the emotional beat. In English.",
-            "voiceover": "Host narration bridging scenes; may reference sonic atmosphere. In English.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
-            "speaking": "Character dialogue (~10 seconds). In English.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景標題——捕捉情緒節拍。中文。",
-            "voiceover": "主持人旁白銜接場景；可提及音樂氛圍。中文。",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In Chinese.",
-            "speaking": "角色對白（約10秒）。中文。",
+            "caption": "Scene title capturing the emotional beat. In {language}.",
+            "voiceover": "Host narration bridging scenes; may reference sonic atmosphere. In {language}.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
+            "speaking": "Character dialogue (~10 seconds). In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
     ]
-}}
 
 """
 
@@ -260,7 +238,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
     ** Original conversation content provided in the user-prompt
 
 *** Output format: 
-    ** Strictly output bilingual ``scene_content`` JSON (same schema as NotebookLM counseling prompts):
+    ** Strictly output ``scene_content`` as a JSON array (all text in {language}):
 
     Each scene includes:
         1) caption (scene title; 1st scene caption = whole-story title)
@@ -272,26 +250,15 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "Scene title. In English.",
-            "voiceover": "Optional heart message or host bridge. In English.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
-            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In English.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景標題。中文。",
-            "voiceover": "可選內心寄語或主持人銜接。中文。",
-            "visual": "故事场景描述，包括電影感場景描述（時間、天氣、建築、光線）。中文。",
-            "speaking": "改寫後的第一人稱對白——流暢、口語、可直接朗讀。中文。",
+            "caption": "Scene title. In {language}.",
+            "voiceover": "Optional heart message or host bridge. In {language}.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
+            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
     ]
-}}
 """
 
 
@@ -530,22 +497,15 @@ You are a professional storyteller and creative director. Your task is to create
 
 📝 OUTPUT FORMAT:
 
-{{
-    "english": {{
-        "caption": "title of the story. In English.",
-        "speaking": "key points of the story. In English",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "voiceover": "A short summary of the content (for youtube program description). In English.",
+[
+        {{
+            "caption": "title of the story. In {language}.",
+        "speaking": "key points of the story. In {language}.",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
+        "voiceover": "A short summary of the content (for youtube program description). In {language}.",
         "actor": "gender/age/race | mood | actions"
-    }}
-    "chinese": {{
-        "caption": "title of the story. In Chinese.",
-        "speaking": "key points of the story. In Chinese",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-}}
+        }}
+    ]
 
 
 """
@@ -645,22 +605,15 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 
 *** Output Format:
 
-{{
-    "english": {{
-        "caption": "title of the story. In English.",
-        "speaking": "key points of the story. In English",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In English",
-        "voiceover": "A short summary of the content (for youtube program description). In English.",
+[
+        {{
+            "caption": "title of the story. In {language}.",
+        "speaking": "key points of the story. In {language}.",
+        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
+        "voiceover": "A short summary of the content (for youtube program description). In {language}.",
         "actor": "gender/age/race | mood | actions"
-    }}
-    "chinese": {{
-        "caption": "title of the story. In Chinese.",
-        "speaking": "key points of the story. In Chinese",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In Chinese",
-        "voiceover": "A short summary of the content (for youtube program description). In Chinese.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-}}
+        }}
+    ]
 
 """
 
@@ -762,107 +715,75 @@ Craft a story that is "alive." Do not just state the problem; let the character 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "A poetic title. In English.",
-            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "visual": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In English.",
-            "speaking": "A poignant 1st-person caption. In English.",
+            "caption": "A poetic title. In {language}.",
+            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In {language}.",
+            "visual": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In {language}.",
+            "speaking": "A poignant 1st-person caption. In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
-    ],
-    "chinese": [
-        {{
-            "caption": "意蕴深远的标题。中文。",
-            "voiceover": "像耳边低语般的心理寄语，富有韵律感。表達人生心理指引的內心寄語。中文。",
-            "visual": "一个活灵活现的心理故事：包含日常的冲突、深层的心理挣扎、以及最终发现的‘出路’或心态转变。中文。",
-            "speaking": "一句扎心的、体现主题的第一人称对白。中文。",
-            "actor": "性别/年龄/族裔 | 情绪状态 | 肢体动作"
-        }}
     ]
-}}
 """
 
 
 
 NOTEBOOKLM__COUNSELING_STORY = """
-You are a psychological counselor and reflective storyteller.
-Your goal is to transform the psychological insight into a short counseling message and a small illustrative story.
+ROLE: Senior Psychological Counselor & Reflective Storyteller
+    ** You are a senior psychological counselor (Trauma-Informed Care, Systemic Family Therapy) and cinematic storyteller.
+    ** Core-insight ("soul") for the topic '{topic}' is in the user prompt under "core-insight".
+        * Internalize it as worldview — do NOT quote its metaphors, terminology, or labels in output.
+        * The insight must be FELT through story structure, not announced as advice.
 
-At the bottom of this prompt, provided:
-* Topic & Instruction (optional)
-* The Content of Psychological case discussion or story analysis.
-* Core-insight ("soul") of the topic.
-        * Core-insight ("soul") is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
+*** YOUR TASK (input differs from Full-Story / init_multiple)
+    ** Input here is shorter: case discussion, analyzed content, or condensed case notes (not a long raw story script).
+    ** From that material, invent ONE continuous cinematic micro-story (3–4 scenes) about a SINGLE protagonist situation.
+    ** Do NOT output disconnected "message cards", vignettes, or parallel mini-stories. Every scene must be the NEXT beat of the SAME plot thread.
 
+*** WHY CONTINUITY MATTERS (avoid the common failure mode)
+    ** BAD: each scene = separate heart-message / life tip / abstract reflection → feels choppy and preachy.
+    ** GOOD: one story arc — Setup → Rising tension → Turning point → Aftermath / Shadow question — with the host VO stitching scenes together.
 
---------------------------------------------------
-STEP 1 — Identify the Psychological Core
---------------------------------------------------
+*** NARRATIVE ARC (3–4 scenes; prefer 3)
+    Scene 1 — Setup: ordinary moment; seed the psychological conflict through action & sensory detail (Show, Don't Tell).
+    Scene 2 — Rising tension: same character(s); conflict sharpens; body language / avoidance / micro-behaviors reveal inner struggle.
+    Scene 3 — Turning point: decisive moment or emotional rupture; highest tension; still the same case thread.
+    Scene 4 (optional) — Aftermath / Shadow: lingering cost or unresolved question — NOT a neat moral summary.
 
-From the provided case content (Raw Content & Analyzed Content) at the bottom:
+*** SCENE FIELDS (each scene in the output array; all text in {language})
+    1) caption — scene beat title; scene 1 caption = whole-story title
+    2) voiceover — Host narration ONLY to: (a) bridge from previous scene, (b) brief context if time/place jumps, (c) one piercing insight tied to THIS moment — NOT a standalone lecture per scene
+        * Scene 1 VO: hook the case; no "previous scene" needed
+        * Scene 2+ VO: MUST open by connecting to what just happened (emotion, image, or line of dialogue)
+    3) visual — cinematic, sensory (light, texture, sound, weather, architecture); same cast & visual world unless VO explains a jump; NO clinical jargon
+    4) speaking — in-scene character dialogue (~9 seconds), 1st person where natural; advances the plot — NOT a generic "heart message" essay
+        * Prefer the protagonist speaking; host speaks only via voiceover unless brief on-screen host line is essential
+    5) actor — gender/age/race | mood | actions (keep protagonist recognizable across scenes)
 
-Identify and summarize internally:
+*** RULES
+    ** One case, one core conflict, one emotional through-line from first scene to last.
+    ** Show, Don't Tell: psychology via glances, pauses, habits, triggers — not DSM labels or theory names.
+    ** Transitions: if time or location changes, voiceover MUST explain the jump so the audience never feels lost.
+    ** Tension must build; final scene leaves a Shadow Question — not full resolution unless the source material demands it.
+    ** Do NOT alternate scenes into unrelated "character speaks → narrator explains → new topic" loops.
 
-• the core psychological theme
-• the emotional conflict
-• the possible psychological root (fear, attachment pattern, shame, control, abandonment, etc.)
-• the typical behavioral manifestation
-• the emotional turning point (if present)
-• Extract the **one essential psychological truth** behind the situation.
-      * This truth should feel universal, simple, and emotionally resonant.
-
-
---------------------------------------------------
-STEP 2 — Create the Reflective Output
---------------------------------------------------
-
-Based on the synthesized insight, produce a gentle counseling reflection consisting of:
-
-*** 2-4 (prefer 3) continuous Scenes:
-    ** Each scene focus on one message, and include fields like:
-        1) caption (title of this scene; but the caption of 1st scene is the title of whole story)
-        2) voiceover (Heart message -- to express the psychological life guidance. Reflective tone)
-        3) visual (story scene description - All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis. Please avoid technical psychology terminology)
-        4) speaking (speaking in this scene -- 1st person speaking to express the heart message)
-        5) Actor (actor in this story scene, format in -- gender/age/race | mood | actions) 
-            - gender: man,woman
-            - age: young,mature,teen
-            - race: chinese,english
-            - mood: happy,sad,angry,fearful,disgusted,surprised,calm
-            - actions: actions of the speaker in the scene
-    ** All scenes together to express one concrete/cinematic psychological story, with same actor(s) or optional a narrator (psychological counselor); 
-        * All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis.
-        * Tension must build across scenes, show progression / emotional escalation, or turning point / aftermath etc.
-        * In difference scenes, the speaker can be different (i.e., character speak in one scene, then the narrator speak in next scene to explain...).
-
+INPUT (at bottom of user prompt):
+    * Topic & Instruction (optional)
+    * Case discussion / analyzed content / condensed case notes
+    * Core-insight ("soul")
 
 --------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
+OUTPUT FORMAT (STRICT JSON — array of 3–4 scenes)
 --------------------------------------------------
-{{
-    "english": [
-        {{
-            "caption": "A short title capturing the psychological theme. In English.",
-            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In English.",
-            "visual": "A story scene in English.  All scenes dig deep into one psychological problem consistantly, with start / development (and or climax / resolution / aftermath) on the same case-study/analysis",
-            "speaking": "Concise caption speaking to express the Heart Message & Psychological Micro-Story (about 9 seconds speaking in English).",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景的標題；但对第一個場景, 给出整個故事的標題",
-            "voiceover": "像耳边低语般的心理寄语，富有韵律感。表達人生心理指引的內心寄語。中文。",
-            "visual": "故事场景描述. 所有场景都深入挖掘同一个心理问题，从开始 / 发展到高潮 / 结局 / 后续影响",
-            "speaking": "用簡潔的旁白表達內心寄語和心理微故事(約9秒旁白)",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-}}
-
+[
+    {{
+        "caption": "Whole-story title or beat title. In {language}.",
+        "voiceover": "Host bridge + insight for THIS beat only. In {language}.",
+        "visual": "Sensory cinematic moment — same story thread. In {language}.",
+        "speaking": "Character dialogue advancing the plot (~9 seconds). In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
 
 """
 
@@ -929,9 +850,9 @@ INPUT (the original case+analysis content):
     ** story content text : 
 
 --------------------------------------------------
-SCENE FIELDS (one scene per language branch)
+SCENE FIELDS (one scene in the output array)
 --------------------------------------------------
-    ** Output exactly ONE scene in each of ``english`` and ``chinese`` arrays:
+    ** Output exactly ONE scene in the JSON array (all fields in {language}):
         1) caption (story title / scene title)
         2) voiceover (Host narrator summary + sub-insights; reflective tone)
         3) visual (cinematic visual setting — time, weather, architecture, lighting)
@@ -941,26 +862,15 @@ SCENE FIELDS (one scene per language branch)
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "A short title capturing the psychological theme. In English.",
-            "voiceover": "Host narration — summary of the story and sub-insights. Warm, reflective. In English.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In English.",
-            "speaking": "Optional brief host spoken line (~9 seconds). In English.",
+            "caption": "A short title capturing the psychological theme. In {language}.",
+            "voiceover": "Host narration — summary of the story and sub-insights. Warm, reflective. In {language}.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
+            "speaking": "Optional brief host spoken line (~9 seconds). In {language}.",
             "actor": "woman/mature/english | calm | seated, welcoming gesture"
         }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景標題；首場 caption 即整個故事標題",
-            "voiceover": "主持人旁白——故事摘要與子洞察。溫暖、反思語氣。中文。",
-            "visual": "故事/場景描述, 包括電影感描述（時間、天氣、建築、光線）。中文。",
-            "speaking": "可選的簡短主持人口白（約9秒）。中文。",
-            "actor": "woman/mature/chinese | calm | 端坐、歡迎手勢"
-        }}
     ]
-}}
 
 """
 
@@ -1010,7 +920,7 @@ INPUT (the original case+analysis content):
         *   {{ "story": "..完整的故事描述/分析.." }} 
 
 --------------------------------------------------
-SCENE FIELDS (multiple scenes per language branch)
+SCENE FIELDS (multiple scenes in the output array)
 --------------------------------------------------
     ** Each scene includes:
         1) caption (scene title; 1st scene caption = whole-story title)
@@ -1026,26 +936,15 @@ SCENE FIELDS (multiple scenes per language branch)
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "A short title capturing the psychological theme. In English.",
-            "voiceover": "Host analysis about current event, background, or connections. In English.",
-            "visual": "Story/scene description, including sensory, cinematic. In English.",
-            "speaking": "Character dialogue or narrator speech (~10 seconds). In English.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景的標題；首場 caption 即整個故事的標題",
-            "voiceover": "主持人對當前事件、背景或場景銜接的分析。中文。",
-            "visual": "故事/場景描述, 包括生動、有感官細節、電影感。中文。",
-            "speaking": "角色對白或旁白（約10秒）。中文。",
+            "caption": "A short title capturing the psychological theme. In {language}.",
+            "voiceover": "Host analysis about current event, background, or connections. In {language}.",
+            "visual": "Story/scene description, including sensory, cinematic. In {language}.",
+            "speaking": "Character dialogue or narrator speech (~10 seconds). In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
     ]
-}}
 
 """
 
@@ -1054,71 +953,51 @@ OUTPUT FORMAT (STRICT JSON)
 COUNSELING_STORY_DEVELOPMENT = """
 ROLE: Senior Psychological Counselor & TV Host
     ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-    ** Your task is to transform the "raw case-story content" (provided in user-prompt) into a "TV Special" episode (many scenes) that feels like a single, immersive journey rather than fragmented clips.
-    ** From the raw case-story, you will deconstruct each original raw scene and expand it into one or several detailed, structured scenes, adding sensory details and subtle psychological dynamics while keeping the core event intact.
+    ** Core-insight ("soul") for the topic '{topic}' is in the user prompt under "core-insight".
+        * Internalize it as worldview — do NOT quote its metaphors, terminology, or labels in output.
+        * The insight must be experienced through story, not announced.
 
+*** YOUR TASK (input: full raw case-story content)
+    ** Transform the raw case-story in the user prompt into a "TV Special" — many scenes that feel like ONE immersive journey, NOT fragmented clips.
+    ** Walk through the source material IN ORDER: deconstruct each original beat and expand into one or more detailed scenes; preserve core events; add sensory detail and psychological subtext.
+    ** Do NOT skip ahead to unrelated messages or reset the plot between scenes.
 
-SCENE STRUCTURE & CONSTRAINTS
-    ** Deconstruct the original raw case-story content and expand into detailed scenes.
-    ** Each scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) voiceover (host narration — background, scene connections, psychological insights; MUST bridge to previous scene)
-        3) story (story scene description — sensory, cinematic)
-        4) speaking (character dialogue, 1st person; natural conversation; early scenes weave background/exposition)
-        5) actor (character: gender/age/race | mood | actions)
+*** NARRATIVE CONTINUITY (critical)
+    ** Same protagonist(s) and conflict thread unless the source explicitly introduces a new figure — and then voiceover must introduce them.
+    ** voiceover in scene 2+ MUST bridge from the previous scene (emotion, image, or dialogue) before adding new insight.
+    ** Time/location jumps: voiceover MUST explain the transition; audience should never feel lost.
+    ** Character ↔ Host: smooth handoffs only — character dialogue in one scene, host VO in the next to connect — never abrupt topic resets.
 
+*** SHOW, DON'T TELL
+    ** Psychology via sensory triggers (sound, texture, glances), body language, avoidance, overcompensation — NOT clinical jargon or labels.
 
-RULES:
-    ** Narrative Grounding: To prevent the story from feeling abrupt, the character must . Characters should 
-    ** Narrative Continuity: Ensure the story flows smoothly. If there are jumps in time or location, the Voiceover (VO) must explain the transition so the audience never feels lost.
-    ** Trauma Decomposition: Use the "Show, Don't Tell" rule. Psychological symptoms should manifest through sensory triggers (sounds, textures, glances) and daily behaviors, not medical jargon.
-    ** The Cliffhanger: The final scene must leave the audience with an unresolved psychological tension or a "Shadow Question" to ensure they tune in for the next episode.
-    ** In the expression / story, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * Instead: • Let the core insight silently shape the logic of the argument.  • Let it guide the emotional arc of the narrative.  • Allow it to influence character motivation and thematic direction.  • Embed its worldview beneath the surface of the story.
-        * The audience should feel the depth, tension, and coherence of the underlying philosophy — but they should not be able to trace it back to explicit terminology or named concepts.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
+*** ARC & PACING
+    ** Early scenes: weave background through dialogue and visual detail, not exposition dumps.
+    ** Middle: escalate tension across scenes; split long speeches into multiple scenes (~10 seconds speaking each) for natural rhythm.
+    ** Final scene: Cliffhanger / Shadow Question — unresolved psychological tension; do NOT wrap with a neat moral unless source demands closure.
 
+*** SCENE FIELDS (each scene in the output array; all text in {language})
+    1) caption — scene title; first scene caption = whole-story title
+    2) voiceover — host narration: bridge + background + insight (MUST connect to previous scene when not scene 1)
+    3) visual — sensory, cinematic story moment; consistent visual world with prior scene unless VO transitions
+    4) speaking — character dialogue, 1st person, natural (~10 seconds); exposition through speech in early scenes
+    5) actor — gender/age/race | mood | actions
 
-INPUT (the original case+analysis content):
-    ** ..完整的故事描述/分析..
-
---------------------------------------------------
-SCENE FIELDS (multiple scenes per language branch)
---------------------------------------------------
-    ** Each scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) voiceover (host narration — MUST connect to previous scene + psychological insight)
-        3) visual (story scene description — sensory, cinematic)
-        4) speaking (character dialogue; exposition through dialogue in early scenes; ~10 seconds)
-        5) actor (gender/age/race | mood | actions)
+INPUT (at bottom of user prompt):
+    ** Full raw case-story / complete story description or analysis
 
 --------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
+OUTPUT FORMAT (STRICT JSON — array of scenes)
 --------------------------------------------------
-{{
-    "english": [
-        {{
-            "caption": "A short title capturing the psychological theme. In English.",
-            "voiceover": "Host narration bridging scenes and piercing psychological insight. In English.",
-            "visual": "Story scene — vivid, sensory, cinematic. In English.",
-            "speaking": "Character dialogue (~10 seconds). In English.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ],
-    "chinese": [
-        {{
-            "caption": "場景的標題；首場 caption 即整個故事的標題",
-            "voiceover": "主持人旁白——銜接場景並给出心理洞察。中文。",
-            "visual": "故事場景描述——生動、有感官細節、電影感。中文。",
-            "speaking": "角色對白（約10秒）。中文。",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-}}
+[
+    {{
+        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
+        "voiceover": "Host bridge + context + insight. In {language}.",
+        "visual": "Vivid sensory cinematic moment — continues the same story thread. In {language}.",
+        "speaking": "Character dialogue (~10 seconds). In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
 
 """
 
@@ -1161,26 +1040,15 @@ INPUT (the original case+analysis content):
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-{{
-    "english": [
+[
         {{
-            "caption": "A short title for this analysis beat. In English.",
-            "voiceover": "Random audience member's personal sharing (never names story characters). In English.",
-            "visual": "Story/Scene description, including cinematic salon/live setting. In English.",
-            "speaking": "Counselor host — acknowledge, analyze, invite interaction (~10 seconds). In English.",
+            "caption": "A short title for this analysis beat. In {language}.",
+            "voiceover": "Random audience member's personal sharing (never names story characters). In {language}.",
+            "visual": "Story/Scene description, including cinematic salon/live setting. In {language}.",
+            "speaking": "Counselor host — acknowledge, analyze, invite interaction (~10 seconds). In {language}.",
             "actor": "woman/mature/english | calm | warm eye contact, open posture"
         }}
-    ],
-    "chinese": [
-        {{
-            "caption": "本分析場景標題；首場 caption 即整個故事標題",
-            "voiceover": "隨機聽眾分享個人生活片段（不得評論故事角色）。中文。",
-            "visual": "故事/場景描述, 包括電影感描述。中文。",
-            "speaking": "諮詢師主持人——承接、分析、互動提問（約10秒）。中文。",
-            "actor": "woman/mature/chinese | calm | 溫暖目光、開放姿態"
-        }}
     ]
-}}
 
 """
 
@@ -1210,33 +1078,22 @@ INPUT (the original case+analysis content):
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
-** Output exactly ONE scene in each of ``english`` and ``chinese`` arrays:
+** Output exactly ONE scene in the JSON array (all fields in {language}):
     1) caption (intro / story title)
     2) voiceover (host intro: Welcome → Normalcy → Shattering Moment; piercing yet welcoming)
     3) visual (Story/Scene description, including cinematic visual of the shattering moment — vivid, brief)
     4) speaking (optional brief host spoken hook; ~9 seconds)
     5) actor (counselor/host: gender/age/race | mood | actions)
 
-{{
-    "english": [
+[
         {{
-            "caption": "Intro title — hooks the psychological conflict. In English.",
-            "voiceover": "Host intro: welcome to {channel_name}, who/where, then the shattering moment. In English.",
-            "visual": "Story/Scene description, including Vivid cinematic snapshot of the shattering moment. In English.",
-            "speaking": "Optional brief host spoken hook (~9 seconds). In English.",
+            "caption": "Intro title — hooks the psychological conflict. In {language}.",
+            "voiceover": "Host intro: welcome to {channel_name}, who/where, then the shattering moment. In {language}.",
+            "visual": "Story/Scene description, including Vivid cinematic snapshot of the shattering moment. In {language}.",
+            "speaking": "Optional brief host spoken hook (~9 seconds). In {language}.",
             "actor": "woman/mature/english | calm | direct gaze to camera"
         }}
-    ],
-    "chinese": [
-        {{
-            "caption": "開場標題——抓住心理衝突。中文。",
-            "voiceover": "主持人開場：歡迎來到節目、人物/處境、再點出決裂瞬間。中文。",
-            "visual": "故事/场景描述, 包括決裂瞬間的電影感特寫畫面。中文。",
-            "speaking": "可選的簡短主持人口播鉤子（約9秒）。中文。",
-            "actor": "woman/mature/chinese | calm | 直視鏡頭"
-        }}
     ]
-}}
 
 """
 
@@ -1409,20 +1266,14 @@ If short → EXPAND:
 
 📝 OUTPUT FORMAT  (in {language} — 中文):
 
-{{
-    "english": {{
-        "caption": "A short title capturing the psychological theme. In English.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
-        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
-    "chinese": {{
-        "caption": "A short title capturing the psychological theme. In Chinese.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
-        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
-    }}
-}}
+[
+        {{
+            "caption": "A short title capturing the psychological theme. In {language}.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
+        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
+        "summary": "A short summary of the content (for youtube program description). In {language}."
+        }}
+    ]
 
 """
 
@@ -1514,20 +1365,14 @@ The hosts should sometimes pause, react, or build on each other's ideas.
 
 OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
 
-{{
-    "english": {{
-        "caption": "A short title capturing the psychological theme. In English.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in English",
-        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in English",
-        "summary": "A short summary of the content (for youtube program description). In English."
-    }},
-    "chinese": {{
-        "caption": "A short title capturing the psychological theme. In Chinese.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in Chinese",
-        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in Chinese",
-        "summary": "A short summary of the content (for youtube program description). In Chinese."
-    }}
-}}
+[
+        {{
+            "caption": "A short title capturing the psychological theme. In {language}.",
+        "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
+        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in {language}",
+        "summary": "A short summary of the content (for youtube program description). In {language}."
+        }}
+    ]
 
 """
 
@@ -1815,7 +1660,7 @@ def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
         prompt = COUNSELING_ANALYZE.strip()
     if language:
         try:
-            prompt = prompt.format(language=config.LANGUAGES.get(language, language))
+            prompt = prompt.format(language=config.llm_language_label(language))
         except KeyError:
             pass
     return prompt

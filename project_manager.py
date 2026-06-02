@@ -195,80 +195,13 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
 
 
 def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
-    """从 scene_content 取首场景标题：分支键与 ``magic_workflow.load_scenes`` 一致
-    （``scene_content[config.scene_story_language_key_for_ui(UI语种)][0]["caption"]``）。
-
-    支持双语 ``{english: [...], chinese: [...]}``（键名大小写不敏感）、顶层 list、单层 dict。
-    """
-    if scene_content is None:
+    """从 ``scene_content``（list 或旧双语 dict）取首场景 ``caption``。"""
+    scenes = config.scene_content_as_list(scene_content, ui_language_key)
+    if not scenes:
         return ""
-
-    def _branch_val(d: dict, branch: str):
-        if not branch or not isinstance(d, dict):
-            return None
-        if branch in d:
-            return d[branch]
-        bl = branch.lower()
-        for k, v in d.items():
-            if isinstance(k, str) and k.lower() == bl:
-                return v
-        return None
-
-    def _title_from_scene_value(val):
-        """分支值为场景 list 或单场景 dict。"""
-        if val is None:
-            return ""
-        if isinstance(val, list) and val:
-            first = val[0]
-            if isinstance(first, dict):
-                got = caption_from_scene_content_item(first)
-                if got:
-                    return got
-        if isinstance(val, dict):
-            got = caption_from_scene_content_item(val)
-            if got:
-                return got
-        return ""
-
-    pref = ""
-    if (ui_language_key or "").strip():
-        pref = config.scene_story_language_key_for_ui(ui_language_key)
-
-    if isinstance(scene_content, dict):
-        keys_lower = {str(k).lower() for k in scene_content.keys() if isinstance(k, str)}
-        has_bi = ("english" in keys_lower or "chinese" in keys_lower)
-
-        if has_bi:
-            candidates = []
-            if pref:
-                candidates.append(pref)
-            for br in ("chinese", "english"):
-                if br not in candidates:
-                    candidates.append(br)
-            for br in candidates:
-                v = _branch_val(scene_content, br)
-                got = _title_from_scene_value(v)
-                if got:
-                    return got
-            return ""
-
-        got = _title_from_scene_value(scene_content)
-        if got:
-            return got
-
-        if pref:
-            v = _branch_val(scene_content, pref)
-            got = _title_from_scene_value(v)
-            if got:
-                return got
-
-        return ""
-
-    if isinstance(scene_content, list) and scene_content:
-        got = _title_from_scene_value(scene_content)
-        if got:
-            return got
-
+    first = scenes[0]
+    if isinstance(first, dict):
+        return caption_from_scene_content_item(first)
     return ""
 
 
@@ -961,20 +894,31 @@ class ProjectSelectionDialog:
 
         # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get；字符串则解析为 dict（保留双语结构）
         ac_src = ""
+        ac_src = ""
         if isinstance(initial_analyzed_content, str):
             ac_src = initial_analyzed_content.strip()
         elif initial_analyzed_content is not None:
-            ac_src = config.analyzed_content_text(initial_analyzed_content)
-        sc_src = {}
-        if isinstance(initial_scene_content, dict):
-            sc_src = initial_scene_content
-        elif isinstance(initial_scene_content, str) and initial_scene_content.strip():
-            try:
-                parsed_sc = json.loads(safe_clipboard_json_copy(initial_scene_content.strip()))
-                if isinstance(parsed_sc, dict):
-                    sc_src = parsed_sc
-            except json.JSONDecodeError:
-                sc_src = {}
+            ac_src = config.normalize_analyzed_content_value(
+                initial_analyzed_content, default_lang
+            )
+        sc_src = []
+        if initial_scene_content is not None:
+            if isinstance(initial_scene_content, list):
+                sc_src = initial_scene_content
+            elif isinstance(initial_scene_content, dict):
+                sc_src = config.normalize_scene_content_value(
+                    initial_scene_content, default_lang
+                )
+            elif isinstance(initial_scene_content, str) and initial_scene_content.strip():
+                try:
+                    parsed_sc = json.loads(
+                        safe_clipboard_json_copy(initial_scene_content.strip())
+                    )
+                    sc_src = config.normalize_scene_content_value(
+                        parsed_sc, default_lang
+                    )
+                except json.JSONDecodeError:
+                    sc_src = []
         self.story_result = {
             'channel': default_channel,
             'language': default_lang,
@@ -1561,7 +1505,9 @@ class ProjectSelectionDialog:
             """粘贴 / 编辑 ``scene_content`` JSON；确认后刷新预览并按需同步标题输入框。"""
             if initial_text is None:
                 initial_text = self.story_result.get('scene_content')
-            if isinstance(initial_text, dict):
+            if isinstance(initial_text, list):
+                _scf = json.dumps(initial_text, ensure_ascii=False, indent=2)
+            elif isinstance(initial_text, dict):
                 _scf = json.dumps(initial_text, ensure_ascii=False, indent=2)
             elif isinstance(initial_text, str) and initial_text.strip():
                 _scf = initial_text.strip()
@@ -1580,7 +1526,7 @@ class ProjectSelectionDialog:
             frame.pack(fill=tk.BOTH, expand=True)
             ttk.Label(
                 frame,
-                text="请输入 scene_content JSON（常与 NotebookLM bilingual 输出一致）：",
+                text="请输入 scene_content JSON（NotebookLM 输出为场景 array，语言由项目语种决定）：",
                 font=('TkDefaultFont', 10, 'bold'),
             ).pack(anchor='w', pady=(0, 5))
             text_w = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=94, height=28)
@@ -1620,6 +1566,12 @@ class ProjectSelectionDialog:
             try:
                 parsed_sc = json.loads(safe_clipboard_json_copy(raw_txt))
             except json.JSONDecodeError:
+                return
+            parsed_sc = config.normalize_scene_content_value(
+                parsed_sc,
+                self.story_result.get("language") or "",
+            )
+            if not parsed_sc:
                 return
             self.story_result['scene_content'] = parsed_sc
             update_buttons_state()

@@ -760,32 +760,11 @@ class MagicWorkflow:
         self.title = config_channel.get_channel_config(self.channel)["channel_name"]
 
         scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
-        if scene_content:
-            if isinstance(scene_content, dict):
-                c = scene_content.get(config.LANGUAGES[self.language], [])
-                if isinstance(c, list) and len(c) > 0:
-                    scene_content = c
-                    if isinstance(scene_content[0], dict):
-                        self.title = project_manager.caption_from_scene_content_item(scene_content[0])
-                elif isinstance(scene_content, dict):
-                    self.title = project_manager.caption_from_scene_content_item(scene_content)
-                    scene_content = [scene_content]
-                else:
-                    scene_content = None
-            elif isinstance(scene_content, list):
-                if len(scene_content) > 0:
-                    if isinstance(scene_content[0], dict):
-                        self.title = project_manager.caption_from_scene_content_item(scene_content[0])
-                    else:
-                        scene_content = None
-                else:
-                    scene_content = None
-            else:
-                scene_content = None
-
-        # take first scene_content 's title as the title of the story
-        if scene_content:
-            for scene_index, scene_item in enumerate(scene_content):
+        scene_list = config.scene_content_as_list(scene_content, self.language)
+        if scene_list:
+            if isinstance(scene_list[0], dict):
+                self.title = project_manager.caption_from_scene_content_item(scene_list[0])
+            for scene_index, scene_item in enumerate(scene_list):
                 if isinstance(scene_item, dict):
                     project_manager.normalize_scene_content_item_for_workflow(scene_item)
                 self.add_story_scene(scene_index, scene_item, False, is_append=False)
