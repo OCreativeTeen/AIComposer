@@ -862,12 +862,13 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 *** SHOW, DON'T TELL
     Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
 
-*** VISUAL = STORY IMAGE ONLY (slideshow / scene illustration)
-    ** visual = what a camera sees ONLY: place, time, light, weather, faces, body language, action, props, atmosphere — pure cinematic shot description in short prose.
-    ** visual must NOT contain dialogue quotes, voiceover lines, caption wording, or any text meant to appear on screen.
-    ** FORBIDDEN in visual: therapy/analysis language, lesson titles, bullet points, slide copy, host commentary, meta phrases, field names, instructions.
-    ** Put insight & analysis in voiceover/speaking ONLY — those fields are for audio, NOT for image typography.
-    ** Slideshow images: default NO on-image text; story is shown through scene + character only. At most a 2–4 word title if essential — never detail blocks.
+*** VISUAL = CLEAN STORY IMAGE (slideshow — CRITICAL)
+    ** Purpose: ``visual`` guides a PAINTER/CINEMATOGRAPHER — what to SHOW, not what to WRITE on the image.
+    ** Write 2–4 short sentences max: location, light, weather, who is in frame, body language, action, props, mood — like a film still.
+    ** DEFAULT for slideshow: the image should have NO designed text at all — story told ONLY through scene + character + atmosphere.
+    ** IF any on-image words are essential (rare): max 2–3 words total, ONE line, huge background title font only — never small text, never paragraphs.
+    ** FORBIDDEN in ``visual`` (and therefore on image): dialogue quotes, voiceover lines, caption/speaking text, analysis, therapy labels, bullet points, slide titles, subtitles, multi-line blocks, story summary prose, "the character thinks…" essay text.
+    ** ``caption`` / ``voiceover`` / ``speaking`` are for audio & metadata — NEVER copy them into ``visual``; NotebookLM must NOT render those fields as image typography.
 
 *** CORE-INSIGHT ("soul")
     Let value shape arc; do NOT quote soul metaphors, terminology, or labels in output.
@@ -885,12 +886,13 @@ ROLE: Senior Psychological Counselor & Reflective Storyteller
     ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
     ** Output: ONE continuous film/video as a JSON array of scenes.
     ** Same protagonist, same problem, same value thread from first frame to last.
+    ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
 
 *** SCENE FIELDS (all text in {language})
-    1) caption — beat title; scene 1 = whole-story title
-    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — not a separate lecture
-    3) visual — pure cinematic shot (see VISUAL rules in spine): place, light, action, emotion through body & environment — NO analysis text, NO slide copy
-    4) speaking — protagonist dialogue ~9s; advances plot / reveals inner conflict — NOT heart-message prose
+    1) caption — beat title (metadata only; NOT text to paint on image); scene 1 = whole-story title
+    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — audio only, never for image text
+    3) visual — film-still shot list ONLY (see VISUAL rules): who/where/light/action/mood — zero slide copy, zero dialogue written into the shot
+    4) speaking — protagonist dialogue ~9s — audio only; do NOT put this line in visual
     5) actor — gender/age/race | mood | actions (consistent cast)
 
 INPUT (user prompt bottom):
@@ -903,7 +905,7 @@ OUTPUT FORMAT (STRICT JSON array)
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Host bridge + insight for this beat only. In {language}.",
-        "visual": "Film-still description — sensory, cinematic, NO on-image text or analysis. In {language}.",
+        "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
         "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
@@ -1019,10 +1021,10 @@ ROLE: Senior Psychological Counselor & TV Host
     ** Final scene: Cliffhanger / Shadow Question toward healing — not a neat moral.
 
 *** SCENE FIELDS (all text in {language})
-    1) caption — scene 1 = whole-story title
-    2) voiceover — host bridge + gentle analysis of THIS moment (must reference prior scene detail when not scene 1)
-    3) visual — pure cinematic shot (see VISUAL rules in spine): place, light, action, body & environment — NO analysis text, NO slide copy; same cast & motif unless VO transitions
-    4) speaking — character dialogue OR brief host on-screen line (~10s); natural, reactive
+    1) caption — metadata title only (NOT for image text); scene 1 = whole-story title
+    2) voiceover — host bridge + gentle analysis — audio only; never paste into visual
+    3) visual — clean film-still (see VISUAL rules): scene+character express the beat — NO words-to-paint, NO analysis on screen
+    4) speaking — character or host line ~10s — audio only
     5) actor — gender/age/race | mood | actions
 
 INPUT (user prompt bottom):
@@ -1035,7 +1037,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full 
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Bridge + analysis tied to what we just saw. In {language}.",
-        "visual": "Film-still — same case thread, sensory, cinematic, NO on-image text or analysis. In {language}.",
+        "visual": "Clean film-still — scene+character, sensory, NO on-image text or story prose. In {language}.",
         "speaking": "Character or host line ~10s, reactive. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}
@@ -1065,10 +1067,10 @@ ROLE: Senior Psychological Counselor & TV Host
     ** voiceover scene 2+: mandatory bridge from previous visual/detail before new insight.
 
 *** SCENE FIELDS (all text in {language})
-    1) caption — scene 1 = whole-story title
-    2) voiceover — host bridge + context + insight (only about current/prior beat)
-    3) visual — pure cinematic shot (see VISUAL rules in spine): sensory, same world/motif as prior unless VO transitions — NO on-image text or analysis
-    4) speaking — character dialogue ~10s; reactive, natural
+    1) caption — metadata title only; scene 1 = whole-story title
+    2) voiceover — host bridge + insight — audio only
+    3) visual — clean film-still (see VISUAL rules): pictures tell the story; almost no on-image text
+    4) speaking — character dialogue ~10s — audio only
     5) actor — gender/age/race | mood | actions
 
 INPUT (user prompt bottom):
@@ -1081,7 +1083,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
     {{
         "caption": "Beat title; scene 1 = whole-story title. In {language}.",
         "voiceover": "Bridge + insight for this beat. In {language}.",
-        "visual": "Film-still — continues same case thread, vivid & sensory, NO on-image text or analysis. In {language}.",
+        "visual": "Clean film-still — continues same thread, scene+character, NO on-image text. In {language}.",
         "speaking": "Character dialogue ~10s. In {language}.",
         "actor": "gender/age/race | mood | actions"
     }}

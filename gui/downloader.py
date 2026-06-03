@@ -81,6 +81,99 @@ def _format_nb_prompt_template(template: str, *, content_guide: str = "", **kwar
     return body
 
 
+def _normalize_youtube_watch_url(url: str) -> str:
+    """单视频 watch URL；去掉 list / start_radio 等，避免 yt-dlp 按播放列表解析。"""
+    url = (url or "").strip()
+    if not url:
+        return url
+    m = re.search(
+        r"(?:[?&]v=|youtu\.be/|/embed/|/shorts/)([a-zA-Z0-9_-]{11})",
+        url,
+    )
+    if m:
+        return f"https://www.youtube.com/watch?v={m.group(1)}"
+    return url
+
+
+def _iter_node_executable_candidates():
+    """常见 Node.js 路径（含 PATH 与 Windows 默认安装目录）。"""
+    seen: set[str] = set()
+    w = shutil.which("node")
+    if w:
+        ap = os.path.normcase(os.path.abspath(w))
+        seen.add(ap)
+        yield w
+    local = os.environ.get("LOCALAPPDATA", "")
+    pf = os.environ.get("ProgramFiles", "")
+    pf86 = os.environ.get("ProgramFiles(x86)", "")
+    for p in (
+        os.path.join(pf, "nodejs", "node.exe"),
+        os.path.join(pf86, "nodejs", "node.exe"),
+        os.path.join(local, "Programs", "nodejs", "node.exe"),
+        os.path.join(
+            local,
+            "Programs",
+            "cursor",
+            "resources",
+            "app",
+            "resources",
+            "helpers",
+            "node.exe",
+        ),
+    ):
+        if not p:
+            continue
+        ap = os.path.normcase(os.path.abspath(p))
+        if ap in seen or not os.path.isfile(p):
+            continue
+        seen.add(ap)
+        yield p
+
+
+def _verify_node_executable(node_path: str) -> bool:
+    try:
+        r = subprocess.run(
+            [node_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _youtube_format_error_message(raw_error: str, *, cookies_invalid: bool = False) -> str:
+    msg = (raw_error or "").strip()
+    hints = [
+        "YouTube 无法获取音视频格式。常见原因与处理：",
+        "1) Node.js — 需已安装并在 PATH 中（重启程序后应看到「检测到 JavaScript 运行时」）",
+    ]
+    if cookies_invalid:
+        hints.append(
+            "2) cookies 已过期（日志出现 no longer valid）— 请重新登录 YouTube 并导出 "
+            "www.youtube.com_cookies.txt 到「下载」文件夹，然后重启本程序"
+        )
+        hints.append("   导出说明: https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies")
+    else:
+        hints.append(
+            "2) cookies 过期 — 将新的 www.youtube.com_cookies.txt 放入「下载」文件夹"
+        )
+    hints.append("3) yt-dlp 过旧 — 在 venv 中执行: pip install -U yt-dlp")
+    if msg:
+        hints.append("")
+        hints.append(f"原始错误: {msg}")
+    return "\n".join(hints)
+
+
+YOUTUBE_AUDIO_FORMAT_FALLBACKS = (
+    "bestaudio/best",
+    "bestaudio",
+    "ba/b",
+    "best",
+)
+
+
 def _copy_text_to_clipboard(widget, text: str) -> None:
     """打开内容审阅窗时同步写入系统剪贴板。"""
     s = (text or "").strip()
@@ -2125,6 +2218,7 @@ class MediaDownloader:
         # 检测 JavaScript 运行时
         self.js_runtime = self._detect_js_runtime()
         self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
+        self._cookies_session_disabled = False
 
 
     def _find_cookies_file(self):
@@ -2217,42 +2311,41 @@ class MediaDownloader:
         Returns:
             tuple: (runtime_name, runtime_path) 或 (None, None)
         """
-        # 优先检测 Node.js
-        node_path = shutil.which('node')
-        if node_path:
+        for node_path in _iter_node_executable_candidates():
+            if not _verify_node_executable(node_path):
+                continue
             try:
-                # 验证 Node.js 是否可用
                 result = subprocess.run(
-                    ['node', '--version'],
+                    [node_path, "--version"],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
                 )
                 if result.returncode == 0:
-                    version = result.stdout.strip()
-                    print(f"✅ 检测到 JavaScript 运行时: Node.js {version}")
-                    return ('node', node_path)
+                    version = (result.stdout or "").strip().split("\n")[0]
+                    print(
+                        f"✅ 检测到 JavaScript 运行时: Node.js {version} ({node_path})"
+                    )
+                    return ("node", node_path)
             except Exception:
-                pass
-        
-        # 检测 Deno
-        deno_path = shutil.which('deno')
+                continue
+
+        deno_path = shutil.which("deno")
         if deno_path:
             try:
                 result = subprocess.run(
-                    ['deno', '--version'],
+                    ["deno", "--version"],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=5,
                 )
                 if result.returncode == 0:
-                    version = result.stdout.strip().split('\n')[0]
+                    version = result.stdout.strip().split("\n")[0]
                     print(f"✅ 检测到 JavaScript 运行时: Deno {version}")
-                    return ('deno', deno_path)
+                    return ("deno", deno_path)
             except Exception:
                 pass
-        
-        # 未找到 JavaScript 运行时
+
         print("⚠️ 未检测到 JavaScript 运行时（Node.js 或 Deno）")
         print("   这可能导致某些 YouTube 视频无法下载或格式缺失")
         print("   建议安装 Node.js: https://nodejs.org/")
@@ -2264,51 +2357,150 @@ class MediaDownloader:
         获取基础的 yt-dlp 选项，包含 cookies 支持
         
         Args:
-            **kwargs: 额外的选项参数（quiet, skip_download 等）
+            **kwargs: 额外的选项参数（quiet, skip_download 等）；``use_cookies=False`` 可禁用 cookies。
             
         Returns:
             dict: yt-dlp 选项字典
         """
-        # 从 kwargs 中提取基础选项，如果没有提供则使用默认值
+        use_cookies = kwargs.pop("use_cookies", True)
+        if getattr(self, "_cookies_session_disabled", False):
+            use_cookies = False
         opts = {}
-        
-        # 只使用 cookies 文件（不从浏览器提取，避免 DPAPI 错误）
-        if self.cookie_file and os.path.exists(self.cookie_file) and os.path.getsize(self.cookie_file) > 0:
-            opts['cookiefile'] = self.cookie_file
-            # 只在第一次使用时打印，避免重复输出
-            if not hasattr(self, '_cookies_logged'):
+
+        if (
+            use_cookies
+            and self.cookie_file
+            and os.path.exists(self.cookie_file)
+            and os.path.getsize(self.cookie_file) > 0
+        ):
+            opts["cookiefile"] = self.cookie_file
+            if not hasattr(self, "_cookies_logged"):
                 print(f"🍪 使用 cookies 文件: {self.cookie_file}")
                 self._cookies_logged = True
-        
-        # 添加请求间隔延迟，避免被 YouTube 限流
-        # sleep_interval: 每次请求之间的最小延迟（秒）
-        # sleep_interval_requests: 每 N 个请求后额外延迟
-        if 'sleep_interval' not in kwargs:
-            opts['sleep_interval'] = 2  # 每次请求之间至少延迟 2 秒（降低默认值以提高速度）
-        if 'sleep_interval_requests' not in kwargs:
-            opts['sleep_interval_requests'] = 5  # 每 5 个请求后额外延迟（降低以提高速度）
-        
-        # 配置 JavaScript 运行时（如果检测到）
-        # yt-dlp 期望格式: {runtime_name: {config_dict}}
-        if self.js_runtime[0] and 'js_runtimes' not in kwargs:
+
+        if "sleep_interval" not in kwargs:
+            opts["sleep_interval"] = 2
+        if "sleep_interval_requests" not in kwargs:
+            opts["sleep_interval_requests"] = 5
+
+        if self.js_runtime[0] and "js_runtimes" not in kwargs:
             runtime_name, runtime_path = self.js_runtime
-            # 构建配置字典
             runtime_config = {}
             if runtime_path:
-                runtime_config['path'] = runtime_path
-            
-            # yt-dlp 期望的格式: {runtime_name: {config}}
-            opts['js_runtimes'] = {runtime_name: runtime_config}
-        
-        # 启用远程组件下载，用于解决 YouTube JavaScript 挑战
-        # ejs:github 表示从 GitHub 下载 EJS (Extract JavaScript) 组件
-        if 'remote_components' not in kwargs:
-            opts['remote_components'] = ['ejs:github']
-        
-        # 添加所有传入的选项（会覆盖上面的默认值）
+                runtime_config["path"] = runtime_path
+            opts["js_runtimes"] = {runtime_name: runtime_config}
+
+        if "remote_components" not in kwargs:
+            opts["remote_components"] = ["ejs:github"]
+
+        if "noplaylist" not in kwargs:
+            opts["noplaylist"] = True
+
         opts.update(kwargs)
-        
+
+        ea = dict(opts.get("extractor_args") or {})
+        yt = dict(ea.get("youtube") or {})
+        if "player_client" not in yt:
+            if self.js_runtime[0]:
+                yt["player_client"] = ["mweb", "web", "android", "tv_embedded"]
+            else:
+                yt["player_client"] = ["android", "mweb", "web"]
+        ea["youtube"] = yt
+        opts["extractor_args"] = ea
+
         return opts
+
+
+    def _extract_youtube_info(self, video_url, *, use_cookies=True, **extra_opts):
+        """``extract_info``；URL 规范为单视频 watch 链接。"""
+        url = _normalize_youtube_watch_url(video_url)
+        opts = self._get_ydl_opts_base(
+            use_cookies=use_cookies,
+            quiet=True,
+            skip_download=True,
+            **extra_opts,
+        )
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False), url
+
+
+    def _disable_cookies_for_session(self, reason: str = "") -> None:
+        if getattr(self, "_cookies_session_disabled", False):
+            return
+        self._cookies_session_disabled = True
+        why = (reason or "").strip()
+        print("🍪 本次会话将跳过 cookies（可能已过期）" + (f"：{why}" if why else ""))
+        print("   请重新导出 www.youtube.com_cookies.txt 到「下载」文件夹后重启程序。")
+
+
+    def _yt_is_format_or_cookie_error(self, err: Exception | str) -> bool:
+        msg = str(err or "").lower()
+        return (
+            "format" in msg
+            or "no video formats" in msg
+            or "cookies are no longer valid" in msg
+            or "only images are available" in msg
+        )
+
+
+    def _yt_extract_download(
+        self,
+        video_url: str,
+        *,
+        use_cookies: bool = True,
+        download: bool = True,
+        format_string: str | None = None,
+        **extra_opts,
+    ):
+        url = _normalize_youtube_watch_url(video_url)
+        opts = self._get_ydl_opts_base(
+            use_cookies=use_cookies,
+            quiet=extra_opts.pop("quiet", True),
+            **extra_opts,
+        )
+        if format_string:
+            opts["format"] = format_string
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=download), url
+
+
+    def _yt_download_with_fallbacks(
+        self,
+        video_url: str,
+        *,
+        format_candidates: tuple[str, ...] = YOUTUBE_AUDIO_FORMAT_FALLBACKS,
+        **extra_opts,
+    ):
+        """先带 cookies，失败则本会话禁用 cookies 并重试多种 format。"""
+        last_err = ""
+        cookie_phases = (True, False) if self.cookie_file else (False,)
+        for use_ck in cookie_phases:
+            if use_ck and getattr(self, "_cookies_session_disabled", False):
+                continue
+            for fmt in format_candidates:
+                try:
+                    return self._yt_extract_download(
+                        video_url,
+                        use_cookies=use_ck,
+                        download=True,
+                        format_string=fmt,
+                        **extra_opts,
+                    )
+                except yt_dlp.utils.DownloadError as e:
+                    last_err = str(e)
+                    if "cookies are no longer valid" in last_err.lower() and use_ck:
+                        self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+                        break
+                    if not self._yt_is_format_or_cookie_error(e):
+                        raise
+                    print(f"⚠️ 下载失败 (cookies={use_ck}, format={fmt})，尝试下一方案…")
+                    continue
+                except Exception:
+                    raise
+        cookies_bad = "cookies are no longer valid" in last_err.lower()
+        raise Exception(
+            _youtube_format_error_message(last_err, cookies_invalid=cookies_bad)
+        )
 
 
     def find_video_basic(self, video_detail):
@@ -2331,33 +2523,54 @@ class MediaDownloader:
 
         download_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
         
-        if self.cookie_file:
-            ydl_opts = self._get_ydl_opts_base(
-                skip_download=True,
-                writesubtitles=True,
-                writeautomaticsub=True,
-                subtitleslangs=[target_lang],
-                subtitlesformat="srt",
-                outtmpl=download_prefix,
-                quiet=True,
-                no_warnings=True,
-            )
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                # 与 download_audio_only 保持一致：同次请求获取 upload_date 并更新 video_detail
-                if info and 'upload_date' in info:
-                    upload_date = info.get('upload_date', '')
+        video_url = _normalize_youtube_watch_url(video_url)
+        caption_opts = dict(
+            skip_download=True,
+            writesubtitles=True,
+            writeautomaticsub=True,
+            subtitleslangs=[target_lang],
+            subtitlesformat="srt",
+            outtmpl=download_prefix,
+            quiet=True,
+            no_warnings=True,
+            format="bestaudio/best",
+        )
+        for use_ck in (True, False):
+            if use_ck and (
+                not self.cookie_file
+                or getattr(self, "_cookies_session_disabled", False)
+            ):
+                continue
+            try:
+                info, _ = self._yt_extract_download(
+                    video_url,
+                    use_cookies=use_ck,
+                    download=True,
+                    **caption_opts,
+                )
+                if info and "upload_date" in info:
+                    upload_date = info.get("upload_date", "")
                     if upload_date:
                         upload_date = str(upload_date).strip()
                         if upload_date:
                             if len(upload_date) == 10:
-                                upload_date = upload_date.replace('-', '')
-                            video_detail['upload_date'] = upload_date[:8]
+                                upload_date = upload_date.replace("-", "")
+                            video_detail["upload_date"] = upload_date[:8]
                             print(f"✅ 已更新 upload_date: {upload_date[:8]}")
-            print(f"✅ 已下载字幕：语言 {target_lang}")
-            src_path = f"{download_prefix}.{target_lang}.srt"
-            if os.path.exists(src_path):
-                return src_path
+                print(f"✅ 已下载字幕：语言 {target_lang}")
+                src_path = f"{download_prefix}.{target_lang}.srt"
+                if os.path.exists(src_path):
+                    return src_path
+            except yt_dlp.utils.DownloadError as e:
+                err = str(e)
+                if "cookies are no longer valid" in err.lower() and use_ck:
+                    self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+                    continue
+                if self._yt_is_format_or_cookie_error(e) and use_ck:
+                    print("⚠️ 带 cookies 下载字幕失败，尝试无 cookies…")
+                    continue
+            except Exception:
+                break
 
         print(f"❌ 下载字幕失败，尝试转录...")
         src_path = f"{download_prefix}.{target_lang}.json"
@@ -2418,7 +2631,9 @@ class MediaDownloader:
         return None
 
     def download_audio_only(self, video_detail, sleep_interval=2):
-        video_url = video_detail.get('url', '')
+        video_url = _normalize_youtube_watch_url(video_detail.get("url", ""))
+        if video_url:
+            video_detail["url"] = video_url
         if not video_url:
             return None
 
@@ -2444,61 +2659,54 @@ class MediaDownloader:
                 return audio_path
 
         outtmpl = video_prefix + ".%(ext)s"
-        format_string = 'bestaudio'
-        # 使用基础选项，包含 cookies 支持
-        ydl_opts_kwargs = {
-            'format': format_string,
-            'outtmpl': outtmpl,
-            'quiet': False,
-            'progress_hooks': [self._progress_hook],
-            'skip_download': False,  # 需要下载
-            'ignoreerrors': False,  # 不忽略错误,让调用者处理
+        ydl_extra = {
+            "outtmpl": outtmpl,
+            "quiet": False,
+            "progress_hooks": [self._progress_hook],
+            "skip_download": False,
+            "ignoreerrors": False,
         }
         if sleep_interval is not None:
-            ydl_opts_kwargs['sleep_interval'] = sleep_interval
-        
-        ydl_opts = self._get_ydl_opts_base(**ydl_opts_kwargs)
-        
+            ydl_extra["sleep_interval"] = sleep_interval
+
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                
-                # 从 info 中提取 upload_date 并填充到 video_detail
-                if info and 'upload_date' in info:
-                    upload_date = info.get('upload_date', '')
-                    if upload_date:
-                        if len(upload_date) == 10:
-                            upload_date = upload_date.replace('-', '')
-                        video_detail['upload_date'] = upload_date
-                        print(f"✅ 已更新 upload_date: {upload_date}")
-                
-                # 检查各种可能的音频扩展名
-                for ext in audio_extensions:
-                    expected_path = os.path.abspath(f"{video_prefix}.{ext}")
-                    if os.path.exists(expected_path):
-                        print(f"✅ 找到下载的音频文件: {expected_path}")
-                        if not expected_path.endswith('.mp3'):
-                            a = self.ffmpeg_audio_processor.to_mp3(expected_path)
-                            #safe_remove(expected_path)
-                            expected_path = video_prefix + ".mp3"
-                            safe_copy_overwrite(a, expected_path)
-                        video_detail['audio_path'] = expected_path
-                        return expected_path
-                
-                # 如果找不到，尝试从 info 中获取实际文件名
-                if 'requested_downloads' in info and len(info['requested_downloads']) > 0:
-                    actual_path = info['requested_downloads'][0].get('filepath')
-                    if actual_path and os.path.exists(actual_path):
-                        expected_path = os.path.abspath(actual_path)
-                        if not expected_path.endswith('.mp3'):
-                            a = self.ffmpeg_audio_processor.to_mp3(expected_path)
-                            safe_remove(expected_path)
-                            expected_path = video_prefix + ".mp3"
-                            safe_copy_overwrite(a, expected_path)
-                        video_detail['audio_path'] = expected_path
-                        return expected_path
-                
-                return None
+            info, _ = self._yt_download_with_fallbacks(
+                video_url,
+                **ydl_extra,
+            )
+
+            if info and "upload_date" in info:
+                upload_date = info.get("upload_date", "")
+                if upload_date:
+                    if len(upload_date) == 10:
+                        upload_date = upload_date.replace("-", "")
+                    video_detail["upload_date"] = upload_date
+                    print(f"✅ 已更新 upload_date: {upload_date}")
+
+            for ext in audio_extensions:
+                expected_path = os.path.abspath(f"{video_prefix}.{ext}")
+                if os.path.exists(expected_path):
+                    print(f"✅ 找到下载的音频文件: {expected_path}")
+                    if not expected_path.endswith(".mp3"):
+                        a = self.ffmpeg_audio_processor.to_mp3(expected_path)
+                        expected_path = video_prefix + ".mp3"
+                        safe_copy_overwrite(a, expected_path)
+                    video_detail["audio_path"] = expected_path
+                    return expected_path
+
+            if info and info.get("requested_downloads"):
+                actual_path = info["requested_downloads"][0].get("filepath")
+                if actual_path and os.path.exists(actual_path):
+                    expected_path = os.path.abspath(actual_path)
+                    if not expected_path.endswith(".mp3"):
+                        a = self.ffmpeg_audio_processor.to_mp3(expected_path)
+                        safe_remove(expected_path)
+                        expected_path = video_prefix + ".mp3"
+                        safe_copy_overwrite(a, expected_path)
+                    video_detail["audio_path"] = expected_path
+                    return expected_path
+
+            return None
         except Exception as e:
             print(f"❌ 下载音频失败: {str(e)}")
             return None
@@ -2526,13 +2734,10 @@ class MediaDownloader:
         outtmpl = video_prefix + ".%(ext)s"
         # 优先级: MP4 高质量 -> 任何高质量 -> 最佳可用
         format_string = (
-            #'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/'  # 1. MP4 1080p + M4A
-            'bestvideo[ext=mp4]+bestaudio[ext=m4a]/'                # 2. 任何 MP4 + M4A
-            #'bestvideo[height<=1080]+bestaudio/'                    # 3. 1080p 视频 + 音频
-            #'bestvideo+bestaudio/'                                  # 4. 最佳视频 + 音频
-            #'best[ext=mp4][height<=1080]/'                          # 5. 单文件 MP4 1080p
-            #'best[ext=mp4]/'                                        # 6. 任何单文件 MP4
-            #'best'                                                  # 7. 最佳可用格式
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo+bestaudio/"
+            "best[ext=mp4]/"
+            "best"
         )
         
         # 使用基础选项，包含 cookies 支持
@@ -2613,45 +2818,70 @@ class MediaDownloader:
 
 
     def get_video_detail(self, video_url, channel_name='Unknown'):
-        # 获取详细信息，使用 cookies
-        video_info_opts = self._get_ydl_opts_base(
-            quiet=True,
-            skip_download=True
-        )
+        video_url = _normalize_youtube_watch_url(video_url)
+        video_detail = None
+        resolved_url = video_url
+        last_error = ""
+
         try:
-            with yt_dlp.YoutubeDL(video_info_opts) as video_ydl:
-                video_detail = video_ydl.extract_info(video_url, download=False)
-                
-                if not video_detail:
-                    raise Exception(f"无法获取视频信息: {video_url}")
-                
-                uploader = video_detail.get('uploader') or video_detail.get('channel') or channel_name
-                chan = video_detail.get('channel') or video_detail.get('uploader') or channel_name
-                video_data = {
-                    'title': video_detail.get('title', 'Unknown Title'),
-                    'url': video_url,
-                    'id': video_detail.get('id', ''),
-                    'duration': video_detail.get('duration', 0),
-                    'view_count': video_detail.get('view_count', 0),
-                    'uploader': uploader,
-                    'channel': chan,  # 优先使用 yt-dlp 提取的频道名，不覆盖
-                    'channel_id': video_detail.get('channel_id', ''),
-                    'upload_date': video_detail.get('upload_date', ''),
-                    'thumbnail': video_detail.get('thumbnail', ''),
-                    'description': video_detail.get('description', '')[:200] if video_detail.get('description') else ''
-                }
-                return video_data
+            video_detail, resolved_url = self._extract_youtube_info(
+                video_url, use_cookies=True
+            )
         except yt_dlp.utils.DownloadError as e:
-            error_msg = str(e)
-            if '403' in error_msg or 'Forbidden' in error_msg:
-                raise Exception(f"HTTP 403 Forbidden - YouTube 访问被拒绝，可能需要更新 cookies 或等待: {video_url}")
-            elif 'challenge' in error_msg.lower():
-                raise Exception(f"YouTube 挑战验证失败: {video_url}")
-            else:
-                raise Exception(f"下载错误: {error_msg}")
-        except Exception as e:
-            # 重新抛出异常，让调用者处理
-            raise
+            last_error = str(e)
+            if "cookies are no longer valid" in last_error.lower():
+                self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+            fmt_fail = (
+                "format" in last_error.lower()
+                or "No video formats" in last_error
+                or "only images are available" in last_error.lower()
+            )
+            if (fmt_fail or getattr(self, "_cookies_session_disabled", False)) and self.cookie_file:
+                try:
+                    print("⚠️ 带 cookies 拉取失败，尝试无 cookies / android 客户端…")
+                    video_detail, resolved_url = self._extract_youtube_info(
+                        video_url, use_cookies=False
+                    )
+                    last_error = ""
+                except Exception as retry_e:
+                    last_error = str(retry_e)
+
+            if video_detail is None:
+                if "403" in last_error or "Forbidden" in last_error:
+                    raise Exception(
+                        f"HTTP 403 Forbidden - YouTube 访问被拒绝，可能需要更新 cookies 或等待: {video_url}"
+                    )
+                if "challenge" in last_error.lower():
+                    raise Exception(f"YouTube 挑战验证失败: {video_url}")
+                if fmt_fail or "format" in last_error.lower():
+                    cookies_bad = "cookies are no longer valid" in last_error.lower()
+                    raise Exception(
+                        _youtube_format_error_message(
+                            last_error, cookies_invalid=cookies_bad
+                        )
+                    )
+                raise Exception(f"下载错误: {last_error}")
+
+        if not video_detail:
+            raise Exception(f"无法获取视频信息: {video_url}")
+
+        uploader = video_detail.get("uploader") or video_detail.get("channel") or channel_name
+        chan = video_detail.get("channel") or video_detail.get("uploader") or channel_name
+        return {
+            "title": video_detail.get("title", "Unknown Title"),
+            "url": resolved_url or video_url,
+            "id": video_detail.get("id", ""),
+            "duration": video_detail.get("duration", 0),
+            "view_count": video_detail.get("view_count", 0),
+            "uploader": uploader,
+            "channel": chan,
+            "channel_id": video_detail.get("channel_id", ""),
+            "upload_date": video_detail.get("upload_date", ""),
+            "thumbnail": video_detail.get("thumbnail", ""),
+            "description": video_detail.get("description", "")[:200]
+            if video_detail.get("description")
+            else "",
+        }
 
 
     def generate_video_prefix(self, video_detail, title_length=15):
@@ -6909,12 +7139,22 @@ class MediaGUIManager:
         
         # 在对话框关闭后，通过 StringVar 获取值（它们仍然存在）
         video_url = url_var.get().strip()
+        video_url = _normalize_youtube_watch_url(video_url)
         
         print(f"📥 开始下载YouTube视频并转录...")
         print(f"URL: {video_url}")
 
         self.downloader._check_and_update_cookies()
-        video_data = self.downloader.get_video_detail(video_url, channel_name='')
+        try:
+            video_data = self.downloader.get_video_detail(video_url, channel_name='')
+        except Exception as e:
+            err = str(e)
+            print(f"❌ {err}")
+            self.root.after(
+                0,
+                lambda m=err: messagebox.showerror("YouTube 下载失败", m, parent=self.root),
+            )
+            return
         if not video_data:
             self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
             return
