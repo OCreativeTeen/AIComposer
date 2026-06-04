@@ -3976,6 +3976,8 @@ class MediaGUIManager:
         video_detail: dict,
         *,
         on_saved=None,
+        on_content_summarized=None,
+        enable_content_summary: bool = True,
     ) -> str | None:
         """编辑 ``video_detail['analyzed_content']``（纯文本）；确认后写回频道列表。"""
         result_holder: list[str | None] = [None]
@@ -3995,7 +3997,10 @@ class MediaGUIManager:
         title = _youtube_row_display_title(video_detail) or "YouTube 视频"
         ttk.Label(
             frm,
-            text=f"{title}\n分析内容 analyzed_content（可编辑；确认后写回本条并保存频道列表）",
+            text=(
+                f"{title}\n"
+                "分析内容 analyzed_content（可编辑；「内容概括」可重新生成；确认后写回本条并保存频道列表）"
+            ),
             wraplength=760,
         ).pack(anchor=tk.W, pady=(0, 8))
 
@@ -4024,6 +4029,39 @@ class MediaGUIManager:
             if callable(on_saved):
                 on_saved()
 
+        def on_content_summary():
+            try:
+                summary_btn.config(state=tk.DISABLED)
+                dlg.config(cursor="watch")
+                dlg.update_idletasks()
+            except tk.TclError:
+                pass
+            try:
+                rewritten = self._generate_analyzed_content_summary_text(
+                    video_detail, parent=dlg
+                )
+            finally:
+                try:
+                    summary_btn.config(state=tk.NORMAL)
+                    dlg.config(cursor="")
+                except tk.TclError:
+                    pass
+            if not rewritten:
+                return
+            tx.delete("1.0", tk.END)
+            tx.insert("1.0", rewritten)
+            video_detail["analyzed_content"] = rewritten
+            _copy_text_to_clipboard(dlg, rewritten)
+            if not self._persist_video_detail_story(video_detail, parent=dlg):
+                return
+            if callable(on_content_summarized):
+                on_content_summarized()
+
+        if enable_content_summary:
+            summary_btn = ttk.Button(
+                btn_row, text="内容概括", command=on_content_summary
+            )
+            summary_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
 
@@ -4328,6 +4366,34 @@ class MediaGUIManager:
             return False
         video_detail["analyzed_content"] = rewritten
         return True
+
+    def _generate_analyzed_content_summary_text(
+        self, video_detail: dict, *, parent=None
+    ) -> str | None:
+        """LLM 内容概括 → ``analyzed_content`` 纯文本（与摘要窗原「内容概括」相同逻辑）。"""
+        text_content = self.fetch_text_content(video_detail)
+        if not text_content:
+            messagebox.showwarning(
+                "内容概括",
+                "无转录原文，无法生成 analyzed_content。",
+                parent=parent,
+            )
+            return None
+        url = (video_detail.get("url") or "").strip()
+        prompt = self._format_analyze_prompt(video_detail)
+        rewritten = self.llm_api.generate_text(
+            prompt.format(language=self.language, url=url),
+            text_content,
+        )
+        rewritten = (rewritten or "").strip()
+        if not rewritten:
+            messagebox.showwarning(
+                "内容概括",
+                "LLM 未返回内容。",
+                parent=parent,
+            )
+            return None
+        return rewritten
 
     def _analyzed_content_display_text(self, video_detail: dict) -> str:
         return config.analyzed_content_text(video_detail.get("analyzed_content"))
@@ -5393,30 +5459,6 @@ class MediaGUIManager:
                     except Exception:
                         pass
 
-            def do_content_summary():
-                text_content = self.fetch_text_content(video_detail)
-                # 1. 用 LLM 重写原文（频道专属 analyze_prompt）
-                url = video_detail.get('url', '').strip()
-                prompt = self._format_analyze_prompt(video_detail)
-                rewritten = self.llm_api.generate_text(prompt.format(language=self.language, url=url), text_content)
-                rewritten = (rewritten or "").strip()
-                if rewritten:
-                    video_detail["analyzed_content"] = rewritten
-                    try:
-                        with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                    except Exception as e:
-                        print(f"保存 channel 列表失败: {e}")
-
-                # 4. 弹窗展示概括结果
-                self.root.clipboard_clear()
-                self.root.clipboard_append(video_detail.get("summary", ""))
-                self.root.update()
-                messagebox.showinfo("提示", "summary 已存生成", parent=summary_window)
-                # 2. 重新分类（更新 topic_category, topic_subtype, tags）
-                do_re_category()
-
-
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
             def _on_category_var_write(*args):
                 update_subtypes()
@@ -5983,8 +6025,6 @@ class MediaGUIManager:
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
-            ttk.Button(right_btns, text="内容概括", command=do_content_summary).pack(side=tk.LEFT, padx=(5, 5))
-
             def _after_content_field_saved():
                 try:
                     populate_tree()
@@ -5996,10 +6036,14 @@ class MediaGUIManager:
                     pass
 
             def do_review_analyzed():
+                def _after_content_summary():
+                    do_re_category()
+
                 self._show_analyzed_content_editor(
                     summary_window,
                     video_detail,
                     on_saved=_after_content_field_saved,
+                    on_content_summarized=_after_content_summary,
                 )
 
             def do_review_scene():
@@ -6011,18 +6055,6 @@ class MediaGUIManager:
 
             def do_review_script():
                 self._show_transcript_script_viewer(summary_window, video_detail)
-
-            ttk.Button(right_btns, text="分析内容", command=do_review_analyzed).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
-            ttk.Button(right_btns, text="场景内容", command=do_review_scene).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
-            ttk.Button(right_btns, text="转录脚本", command=do_review_script).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
-
-            ttk.Button(right_btns, text="故事查看", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
 
             ttk.Button(right_btns, text="找类似案例", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
 
@@ -6039,6 +6071,17 @@ class MediaGUIManager:
 
             image_en_btn = ttk.Button(right_btns, text="拷贝场景内容", command=lambda: copy_style_character())
             image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+            ttk.Button(right_btns, text="分析内容", command=do_review_analyzed).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
+            ttk.Button(right_btns, text="场景内容", command=do_review_scene).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
+            ttk.Button(right_btns, text="转录脚本", command=do_review_script).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
+            ttk.Button(right_btns, text="故事查看", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
 
             
             # 四个输入列（分类/子类型/标签/关联ID）均分剩余宽度
@@ -6130,11 +6173,6 @@ class MediaGUIManager:
                 try:
                     pending_scene: list[dict | None] = [None]
 
-                    def _analyzed_clip_text():
-                        return config.analyzed_content_text(
-                            video_detail.get("analyzed_content")
-                        )
-
                     def _apply_scene_dict(scene_raw) -> None:
                         scene_list = config.normalize_scene_content_value(
                             scene_raw, self.language
@@ -6156,11 +6194,7 @@ class MediaGUIManager:
                             video_detail.get("scene_content"), self.language
                         )
 
-                    sc = video_detail.get("scene_content")
                     has_scene = bool(_video_scene_list())
-
-                    analyzed_txt = _analyzed_clip_text()
-                    has_analyzed = bool(analyzed_txt)
 
                     def _show_scene_clipboard_menu():
                         choices: list[tuple[str, str]] = [("cross_channel", "全频道剪贴板")]
@@ -6179,14 +6213,6 @@ class MediaGUIManager:
                                 (
                                     "gen_video_instruction",
                                     f"Scene JSON → Video+Audio 指令 ({config.llm_language_label(self.language)})",
-                                )
-                            )
-                            choices.append(("scene_detail", "拷贝 Scene_content (JSON)"))
-                        if has_analyzed:
-                            choices.append(
-                                (
-                                    "analyzed",
-                                    "拷贝 Analyzed_content",
                                 )
                             )
 
@@ -6217,33 +6243,6 @@ class MediaGUIManager:
                                 return
                             _apply_scene_dict(pending_scene[0])
                             _show_scene_clipboard_menu()
-                            return
-
-                        if mode == "analyzed":
-                            txt = _analyzed_clip_text()
-                            summary_window.clipboard_clear()
-                            summary_window.clipboard_append(txt or "")
-                            summary_window.update()
-                            if txt:
-                                channel_clipboard_append_item(
-                                    self.channel_path or "", txt, "analyzed_content"
-                                )
-                                open_or_refresh_program_clipboard_manager(
-                                    summary_window,
-                                    summary_window,
-                                    select_last=True,
-                                )
-                            return
-
-                        if mode == "scene_detail":
-                            src = _video_scene_list()
-                            txt = json.dumps(src, ensure_ascii=False, indent=2)
-                            summary_window.clipboard_clear()
-                            summary_window.clipboard_append(txt)
-                            summary_window.update()
-                            channel_clipboard_append_item(
-                                self.channel_path or "", txt, "scene_content"
-                            )
                             return
 
                         if mode in ("gen_slideshow_instruction", "gen_video_instruction"):

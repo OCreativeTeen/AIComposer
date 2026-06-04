@@ -837,46 +837,34 @@ OUTPUT FORMAT (STRICT JSON)
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
 COUNSELING_UNIFIED_NARRATIVE_SPINE = """
-*** ONE CASE, ONE THREAD (non-negotiable)
-    Before writing, internalize (do NOT output as a list):
-        • One protagonist (or fixed small cast)
-        • One presenting struggle on the surface
-        • One hidden fear / unmet need (root — shown later, not labeled early)
-        • One soul-level value/theme from core-insight
-        • One tentative way-out (insight, choice, or Shadow Question — not a tidy cure)
-    Every scene advances THIS case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
 
-*** THERAPEUTIC STORY SPINE (all scenes together must walk this arc in order)
-    A) Surface — concrete daily moment; struggle visible in behavior & environment
-    B) Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
-    C) Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
-    D) Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
+*** SCENE RULES:
+    ** ONE CASE, ONE THREAD (mandatory)
+        * Every scene advances ONE same case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
+        * SCENE-TO-SCENE CHAIN
+            * Scene 2+: voiceover echo one concrete detail from the previous scene before moving forward.
+            * speaking: dialogue responds to the prior beat; no standalone speech essay.
+            * Host analysis (if present): only about what the audience JUST saw — not a new topic.
 
-*** SCENE-TO-SCENE CHAIN (fixes "scattered" output)
-    ** Scene 2+: voiceover MUST echo one concrete detail from the previous scene (image, object, line, or emotion) before moving forward.
-    ** visual: same cinematic world — recurring motif, return to location, or direct next beat; never unrelated stock scenes.
-    ** speaking: dialogue responds to the prior beat; no standalone speech essay.
-    ** Host analysis (when present): only about what the audience JUST saw — never a new topic.
-    ** Time/place jump: voiceover explains in one breath.
+    ** Typical THERAPEUTIC STORY SPINE (across all scenes)
+        A) Surface — concrete daily moment; struggle visible in behavior & environment
+        B) Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
+        C) Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
+        D) Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
 
-*** SHOW, DON'T TELL
-    Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
+    ** SHOW, DON'T TELL
+        * Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
 
-*** VISUAL = CLEAN STORY IMAGE (slideshow — CRITICAL)
-    ** Purpose: ``visual`` guides a PAINTER/CINEMATOGRAPHER — what to SHOW, not what to WRITE on the image.
-    ** Write 2–4 short sentences max: location, light, weather, who is in frame, body language, action, props, mood — like a film still.
-    ** DEFAULT for slideshow: the image should have NO designed text at all — story told ONLY through scene + character + atmosphere.
-    ** IF any on-image words are essential (rare): max 2–3 words total, ONE line, huge background title font only — never small text, never paragraphs.
-    ** FORBIDDEN in ``visual`` (and therefore on image): dialogue quotes, voiceover lines, caption/speaking text, analysis, therapy labels, bullet points, slide titles, subtitles, multi-line blocks, story summary prose, "the character thinks…" essay text.
-    ** ``caption`` / ``voiceover`` / ``speaking`` are for audio & metadata — NEVER copy them into ``visual``; NotebookLM must NOT render those fields as image typography.
-
-*** CORE-INSIGHT ("soul")
-    Let value shape arc; do NOT quote soul metaphors, terminology, or labels in output.
+    ** VISUAL
+        * CLEAN STORY IMAGE (slideshow): frozen film-still for a painte.
+            * Slideshow image content : story via scene + character only 
+            * Only show very critical & short info (if absolutely necessary to express the content, less than 10 characters) as huge font in background)
+        * ``caption`` / ``voiceover`` / ``speaking`` = audio/metadata only — never in ``visual`` as words-to-paint.
 """
 
 
 NOTEBOOKLM__COUNSELING_STORY = """
-ROLE: Senior Psychological Counselor & Reflective Storyteller
+*** ROLE: Senior Psychological Counselor & Reflective Storyteller
     ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
@@ -1003,7 +991,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 COUNSELING_CASE_DEVELOPMENT = """
-ROLE: Senior Psychological Counselor & TV Host
+*** ROLE: Senior Psychological Counselor & TV Host
     ** Trauma-Informed Care, Systemic Family Therapy.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
@@ -1048,7 +1036,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full 
 
 
 COUNSELING_STORY_DEVELOPMENT = """
-ROLE: Senior Psychological Counselor & TV Host
+*** ROLE: Senior Psychological Counselor & TV Host
     ** Trauma-Informed Care, Systemic Family Therapy.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
