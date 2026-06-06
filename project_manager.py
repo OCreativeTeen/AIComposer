@@ -157,6 +157,48 @@ def _raw_story_preview_text(story_result) -> str:
     return ""
 
 
+def _raw_content_preview_body(story_result) -> str:
+    """创建项目对话框 RAW 预览区：展示完整 analyzed_content 文本。"""
+    if not isinstance(story_result, dict):
+        return ""
+    ac = story_result.get("analyzed_content")
+    if _story_value_nonempty(ac):
+        return config.analyzed_content_text(ac).strip()
+    for key in ("content", "story"):
+        val = story_result.get(key)
+        if _story_value_nonempty(val):
+            if isinstance(val, str):
+                return val.strip()
+            return _jsonish_preview_fragment(val, max_len=8000)
+    return ""
+
+
+def _scene_content_preview_body(story_result) -> str:
+    """创建项目对话框 scene_content 预览区：格式化 JSON。"""
+    if not isinstance(story_result, dict):
+        return ""
+    sc = story_result.get("scene_content")
+    if not _story_value_nonempty(sc):
+        return ""
+    if isinstance(sc, list):
+        return json.dumps(sc, ensure_ascii=False, indent=2)
+    if isinstance(sc, dict):
+        return json.dumps(sc, ensure_ascii=False, indent=2)
+    if isinstance(sc, str):
+        return sc.strip()
+    return str(sc)
+
+
+def _set_readonly_preview_text(tx, body: str, *, empty_placeholder: str) -> None:
+    tx.config(state=tk.NORMAL)
+    tx.delete("1.0", tk.END)
+    if (body or "").strip():
+        tx.insert("1.0", body.strip())
+    else:
+        tx.insert("1.0", empty_placeholder)
+    tx.config(state=tk.DISABLED)
+
+
 def caption_from_scene_content_item(item: dict) -> str:
     """场景 dict 上的标题/字幕行：优先 ``caption``，兼容旧 ``title``。"""
     if not isinstance(item, dict):
@@ -871,7 +913,7 @@ class ProjectSelectionDialog:
             'default_language': default_lang,
             'channels': available_channels,
             'default_channel': default_channel,
-            'default_title': '新项目',
+            'default_title': '',
             'default_video_width': '1920',
             'default_video_height': '1080'
         }
@@ -1062,18 +1104,20 @@ class ProjectSelectionDialog:
         form_parent = getattr(self, '_form_parent', self.dialog)
         new_project_dialog = tk.Toplevel(form_parent)
         new_project_dialog.title("创建新项目")
-        new_project_dialog.geometry("800x800")
+        new_project_dialog.geometry("920x780")
+        new_project_dialog.minsize(760, 640)
         new_project_dialog.transient(form_parent)
         new_project_dialog.grab_set()
         
         # 居中显示
         new_project_dialog.update_idletasks()
-        x = (new_project_dialog.winfo_screenwidth() - 800) // 2
-        y = (new_project_dialog.winfo_screenheight() - 800) // 2
-        new_project_dialog.geometry(f"800x800+{x}+{y}")
+        x = (new_project_dialog.winfo_screenwidth() - 920) // 2
+        y = (new_project_dialog.winfo_screenheight() - 780) // 2
+        new_project_dialog.geometry(f"920x780+{x}+{y}")
         
         main_frame = ttk.Frame(new_project_dialog, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.columnconfigure(0, weight=0)
         main_frame.columnconfigure(1, weight=1)
 
         row = 0
@@ -1344,45 +1388,61 @@ class ProjectSelectionDialog:
         update_topic_choices()
         sync_channel_prompt()
 
-        # 内容编辑区域：RAW
+        # 内容预览区域：固定高度、全宽，避免 Label wraplength 把文字挤成过高一列
         content_panels_frame = ttk.Frame(main_frame)
         content_panels_frame.grid(row=row, column=0, columnspan=2, sticky='ew', padx=5, pady=10)
         content_panels_frame.columnconfigure(0, weight=1)
         row += 1
 
         raw_label_frame = ttk.LabelFrame(content_panels_frame, text="RAW内容", padding=10)
-        raw_label_frame.grid(row=0, column=0, padx=(5, 5), sticky='nsew')
-        raw_preview = ttk.Label(raw_label_frame, text="RAW: (未生成)", foreground="gray", wraplength=200)
-        raw_preview.pack(anchor='w', pady=(0, 10))
-        edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
-        edit_raw_btn.pack(pady=5)
-
-        scene_story_frame = ttk.LabelFrame(content_panels_frame, text="Story / scene_content (JSON)", padding=10)
-        scene_story_frame.grid(row=1, column=0, padx=(5, 5), pady=(8, 0), sticky='nsew')
-        scene_preview = ttk.Label(
-            scene_story_frame,
-            text="Story: (未填写)",
-            foreground="gray",
-            wraplength=200,
+        raw_label_frame.grid(row=0, column=0, sticky='ew', padx=(5, 5), pady=(0, 8))
+        raw_label_frame.columnconfigure(0, weight=1)
+        raw_preview = scrolledtext.ScrolledText(
+            raw_label_frame,
+            wrap=tk.WORD,
+            height=5,
+            font=("Consolas", 9),
+            relief=tk.FLAT,
+            borderwidth=1,
         )
-        scene_preview.pack(anchor='w', pady=(0, 10))
-        edit_scene_story_btn = ttk.Button(scene_story_frame, text="编辑 Story", command=lambda: None)
-        edit_scene_story_btn.pack(pady=5)
+        raw_preview.grid(row=0, column=0, sticky='ew')
+        raw_preview.config(state=tk.DISABLED)
+        edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
+        edit_raw_btn.grid(row=1, column=0, sticky='w', pady=(8, 0))
+
+        scene_story_frame = ttk.LabelFrame(
+            content_panels_frame, text="Story / scene_content (JSON)", padding=10
+        )
+        scene_story_frame.grid(row=1, column=0, sticky='ew', padx=(5, 5), pady=(0, 0))
+        scene_story_frame.columnconfigure(0, weight=1)
+        scene_preview = scrolledtext.ScrolledText(
+            scene_story_frame,
+            wrap=tk.NONE,
+            height=8,
+            font=("Consolas", 9),
+            relief=tk.FLAT,
+            borderwidth=1,
+        )
+        scene_preview.grid(row=0, column=0, sticky='ew')
+        scene_preview.config(state=tk.DISABLED)
+        edit_scene_story_btn = ttk.Button(
+            scene_story_frame, text="编辑 Story", command=lambda: None
+        )
+        edit_scene_story_btn.grid(row=1, column=0, sticky='w', pady=(8, 0))
 
 
         def update_previews():
-            """根据 story_result 更新 RAW / scene_content 单行预览"""
-            preview = _raw_story_preview_text(self.story_result)
-            if preview:
-                raw_preview.config(text=f"RAW: {preview}", foreground="black")
-            else:
-                raw_preview.config(text="RAW: (未生成)", foreground="gray")
-
-            sp = _jsonish_preview_fragment(self.story_result.get("scene_content"), max_len=260)
-            if sp:
-                scene_preview.config(text=f"Story: {sp}", foreground="black")
-            else:
-                scene_preview.config(text="Story: (未填写)", foreground="gray")
+            """根据 story_result 更新 RAW / scene_content 预览（固定高度、可滚动）。"""
+            _set_readonly_preview_text(
+                raw_preview,
+                _raw_content_preview_body(self.story_result),
+                empty_placeholder="(未生成)",
+            )
+            _set_readonly_preview_text(
+                scene_preview,
+                _scene_content_preview_body(self.story_result),
+                empty_placeholder="(未填写)",
+            )
 
         # 根据 topic 启用/禁用 RAW 编辑按钮
         def update_buttons_state(*args):
@@ -1589,9 +1649,9 @@ class ProjectSelectionDialog:
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
         
-        # 按钮
+        # 按钮（固定在预览区下方，不参与垂直扩展）
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=20)
+        button_frame.grid(row=row, column=0, columnspan=2, sticky='ew', pady=(12, 0))
 
         def on_create():
             pid = pid_entry.get().strip()
@@ -1614,6 +1674,13 @@ class ProjectSelectionDialog:
             _sc_title = title_from_scene_content(sc, self.story_result.get("language") or "")
             if _sc_title:
                 title = _sc_title
+            elif not (title or "").strip() or (title or "").strip() in ("新项目", "未命名"):
+                messagebox.showerror(
+                    "错误",
+                    "请填写标题，或确保 scene_content 首场景含 caption。",
+                    parent=new_project_dialog,
+                )
+                return
 
             # 解析分辨率
             if resolution == "1920x1080":

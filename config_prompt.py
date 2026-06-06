@@ -322,8 +322,12 @@ def scene_payload_for_slideshow_images(scenes: list) -> list[dict]:
     new_scenes = []
     for scene in scenes:
         new_scene = scene.copy()
-        new_scene["paint_this_picture"] = new_scene["visual"]
-        del new_scene["visual"]
+        if new_scene.get("visual"):
+            new_scene["paint_this_picture"] = new_scene["visual"]
+            del new_scene["visual"]
+        elif new_scene.get("story"):
+            new_scene["paint_this_picture"] = new_scene["story"]
+            del new_scene["story"]
         new_scenes.append(new_scene)
     return new_scenes
 

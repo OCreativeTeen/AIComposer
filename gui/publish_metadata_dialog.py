@@ -18,6 +18,7 @@ DESCRIPTION_STORY_SEPARATOR = "────────────────"
 SOURCE_VOICEOVER = "voiceover"
 SOURCE_SCENE_FULL = "scene_full"
 SOURCE_ANALYZED = "analyzed"
+SOURCE_REVIEW_SCRIPT = "review_script"
 
 
 def build_caption_choices_from_scenes(
@@ -126,6 +127,7 @@ def ask_publish_metadata_then_schedule(
     schedule_dialog_fn: Callable[..., tuple | None],
     caption_scenes: list | None = None,
     mp4_path_hint: str | None = None,
+    review_script_text: str = "",
     metadata_dialog_title: str = "上传视频 — 标题与描述",
     metadata_confirm_label: str = "确定",
     schedule_dialog_title: str = "上传至 YouTube",
@@ -146,6 +148,7 @@ def ask_publish_metadata_then_schedule(
         scene_content_list=scene_content_list,
         analyzed_content=analyzed_content,
         story_text=story_text,
+        review_script_text=review_script_text,
         generate_text_fn=generate_text_fn,
         dialog_title=metadata_dialog_title,
         confirm_label=metadata_confirm_label,
@@ -199,6 +202,7 @@ def ask_publish_title_and_description(
     scene_content_list: list | None = None,
     analyzed_content: str = "",
     story_text: str = "",
+    review_script_text: str = "",
     generate_text_fn: Callable[[str, str], str],
     dialog_title: str = "上传视频 — 标题与描述",
     confirm_label: str = "确定",
@@ -208,6 +212,7 @@ def ask_publish_title_and_description(
     scenes = scene_content_list or []
     analyzed = config.chinese_convert((analyzed_content or "").strip(), lang)
     story = (story_text or "").strip()
+    review_script = config.chinese_convert((review_script_text or "").strip(), lang)
 
     cap_labels = caption_labels or ["— 从场景字幕选择（可选）—"]
     cap_payloads = caption_payloads if caption_payloads is not None else [None]
@@ -277,6 +282,8 @@ def ask_publish_title_and_description(
             return full_scene_content_text(scenes)
         if source == SOURCE_ANALYZED:
             return analyzed
+        if source == SOURCE_REVIEW_SCRIPT:
+            return review_script
         return ""
 
     def _load_source_raw(*, show_empty_warning: bool = False) -> bool:
@@ -291,6 +298,10 @@ def ask_publish_title_and_description(
                 elif src == SOURCE_SCENE_FULL:
                     messagebox.showwarning(
                         "提示", "场景内容为空。", parent=dlg
+                    )
+                elif src == SOURCE_REVIEW_SCRIPT:
+                    messagebox.showwarning(
+                        "提示", "审阅文稿 / 转写内容为空。", parent=dlg
                     )
                 else:
                     messagebox.showwarning(
@@ -324,13 +335,23 @@ def ask_publish_title_and_description(
         value=SOURCE_ANALYZED,
         command=lambda: _load_source_raw(show_empty_warning=True),
     )
-    rb_analyzed.pack(side=tk.LEFT)
+    rb_analyzed.pack(side=tk.LEFT, padx=(0, 10))
+    rb_review = ttk.Radiobutton(
+        src_row,
+        text="审阅文稿 / 转写",
+        variable=source_var,
+        value=SOURCE_REVIEW_SCRIPT,
+        command=lambda: _load_source_raw(show_empty_warning=True),
+    )
+    rb_review.pack(side=tk.LEFT)
 
     if not scenes:
         rb_voice.state(["disabled"])
         rb_scene.state(["disabled"])
     if not analyzed:
         rb_analyzed.state(["disabled"])
+    if not review_script:
+        rb_review.state(["disabled"])
 
     append_story_var = tk.BooleanVar(value=False)
     story_chk = ttk.Checkbutton(
@@ -437,7 +458,10 @@ def ask_publish_title_and_description(
     ttk.Button(footer, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=(6, 0))
     ttk.Button(footer, text=confirm_label, command=on_confirm).pack(side=tk.RIGHT)
 
-    if scenes:
+    if review_script:
+        source_var.set(SOURCE_REVIEW_SCRIPT)
+        _load_source_raw()
+    elif scenes:
         source_var.set(SOURCE_VOICEOVER)
         _load_source_raw()
     elif analyzed:

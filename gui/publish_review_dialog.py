@@ -507,7 +507,15 @@ class PublishReviewDialog:
             self._sync_publish_banner()
             self._sync_publish_button_state()
 
-        self.media_gui._open_publish_video_dialog(self.dlg, "", self.mp4_path, self.video_detail, after)
+        review_script = (self.text_w.get("1.0", tk.END) or "").strip()
+        self.media_gui._open_publish_video_dialog(
+            self.dlg,
+            "",
+            self.mp4_path,
+            self.video_detail,
+            after,
+            review_script_text=review_script,
+        )
 
     def _on_close(self):
         self._stop_play()

@@ -1075,11 +1075,21 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self, youtube_title, publish_at=None, description=None):
+    def upload_video(
+        self,
+        youtube_title,
+        publish_at=None,
+        description=None,
+        *,
+        telegram_title: str | None = None,
+    ):
         """
         publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
         若为 datetime（建议带本地时区），则使用 YouTube 定时公开（API 要求先 private + publishAt）。
         description: YouTube 描述；未提供时回退为首场景 voiceover（旧行为）。
+        telegram_title: Telegram 通知用展示标题；默认与 youtube_title 相同。
+
+        返回 Telegram 旁路状态行列表（与 downloader 发布一致）。
         """
         final_video_path = config.publish_final_video_path(self.pid)
         if not os.path.isfile(final_video_path):
@@ -1136,6 +1146,26 @@ class MagicWorkflow:
         else:
             print("⚠️ project_manager.PROJECT_CONFIG 未加载，无法将 published_youtube_video_id 写入项目配置")
 
+        watch = ""
+        vid_s = str(video_id).strip() if video_id is not None else ""
+        if vid_s:
+            watch = f"https://www.youtube.com/watch?v={vid_s}"
+
+        tg_lines: list[str] = []
+        try:
+            from utility.telegram_notify import notify_youtube_publish_extras
+
+            tg_lines = notify_youtube_publish_extras(
+                mp4_path=final_video_path,
+                watch_url=watch,
+                title_line=(telegram_title or youtube_title or "").strip(),
+                summary=summary,
+            )
+        except Exception as e:
+            tg_lines = [f"Telegram（旁路异常）: {e}"]
+        for line in tg_lines:
+            print(line)
+        return tg_lines
 
 
     def rebuild_scene_video(self, scene, video_type, animate_mode, image_path, image_last_path, sound_path, next_sound_path, action_path, wan_prompt):

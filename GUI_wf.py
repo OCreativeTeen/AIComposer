@@ -409,16 +409,16 @@ class WorkflowGUI:
         self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
         ttk.Button(
-            row1_frame, text="Story",
-            command=lambda: self._show_video_detail_field("story"),
+            row1_frame, text="故事",
+            command=lambda: self._open_workflow_content_field_editor("story"),
         ).pack(side=tk.LEFT, padx=(8, 2))
         ttk.Button(
             row1_frame, text="分析",
-            command=lambda: self._show_video_detail_field("analyzed_content"),
+            command=lambda: self._open_workflow_content_field_editor("analyzed_content"),
         ).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            row1_frame, text="Scene",
-            command=lambda: self._show_video_detail_field("scene_content"),
+            row1_frame, text="场景",
+            command=lambda: self._open_workflow_content_field_editor("scene_content"),
         ).pack(side=tk.LEFT, padx=2)
 
         ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
@@ -547,175 +547,68 @@ class WorkflowGUI:
             project_manager.PROJECT_CONFIG or {}
         )
 
-    def _video_detail_field_raw(self, field: str):
-        """优先读列表行外层字段；无绑定时回退 ``PROJECT_CONFIG``。"""
-        row = self._load_current_video_detail_row()
+    def _workflow_video_detail_for_edit(self) -> dict:
+        """合并列表行与 ``PROJECT_CONFIG``，供与 downloader 共用的内容编辑弹窗使用。"""
         pc = project_manager.PROJECT_CONFIG or {}
+        row = self._load_current_video_detail_row()
+        vd = copy.deepcopy(row) if row else {}
+        for field in ("story", "analyzed_content", "scene_content", "url", "title", "id"):
+            val = pc.get(field)
+            if val in (None, "", [], {}):
+                continue
+            if field not in vd or vd.get(field) in (None, "", [], {}):
+                vd[field] = copy.deepcopy(val)
+        file_pid = (pc.get("pid") or "").strip()
+        if file_pid and not (vd.get("id") or "").strip():
+            vd["id"] = file_pid
+        return vd
 
-        def _non_empty(v):
-            return v not in (None, "", {}, [])
-
-        if row is not None and field in row and _non_empty(row.get(field)):
-            return row.get(field)
-        if field == "story":
-            st = project_manager.story_text_from_config(pc)
-            return st if st else None
-        pc_val = pc.get(field)
-        return pc_val if _non_empty(pc_val) else None
-
-    def _format_video_detail_field_text(self, field: str, val) -> str:
-        if val is None:
-            return ""
-        if field == "analyzed_content":
-            text = config.analyzed_content_text(val)
-            if text.strip():
-                return text.strip()
-            if isinstance(val, (dict, list)):
-                return json.dumps(val, ensure_ascii=False, indent=2)
-            return str(val).strip()
-        if field == "scene_content":
-            if isinstance(val, (dict, list)):
-                return json.dumps(val, ensure_ascii=False, indent=2)
-            return str(val).strip()
-        if field == "story":
-            return str(val).strip()
-        if isinstance(val, (dict, list)):
-            return json.dumps(val, ensure_ascii=False, indent=2)
-        return str(val).strip()
-
-    def _parse_video_detail_field_for_save(self, field: str, raw_text: str, *, parent) -> tuple[bool, object]:
-        """将编辑器文本解析为可写入列表行的字段值；失败时弹窗并返回 ``(False, None)``。"""
-        text = (raw_text or "").strip()
-        if field == "story":
-            return True, text if text else None
-        if field == "analyzed_content":
-            if not text:
-                return True, None
-            return True, config.normalize_analyzed_content_text(text)
-        if field == "scene_content":
-            if not text:
-                return True, None
-            try:
-                parsed = json.loads(safe_clipboard_json_copy(text))
-            except json.JSONDecodeError as e:
-                messagebox.showwarning(
-                    "格式错误",
-                    f"scene_content 须为合法 JSON：\n{e}",
-                    parent=parent,
-                )
-                return False, None
-            if not isinstance(parsed, (dict, list)):
-                messagebox.showwarning(
-                    "格式错误",
-                    "scene_content 须为 JSON 数组（或旧版对象，将自动转换）。",
-                    parent=parent,
-                )
-                return False, None
-            lang = (project_manager.PROJECT_CONFIG or {}).get("language") or ""
-            normalized = config.normalize_scene_content_value(parsed, lang)
-            return True, normalized if normalized else None
-        messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
-        return False, None
-
-    def _save_video_detail_field(self, field: str, raw_text: str, *, parent) -> bool:
-        """解析并写入 ``PROJECT_CONFIG``，再 ``save_project_config`` 同步到列表 JSON。"""
+    def _workflow_persist_video_detail(self, video_detail: dict, *, parent=None) -> bool:
+        """将编辑结果写回 ``PROJECT_CONFIG`` 并同步主题列表 JSON。"""
         pc = project_manager.PROJECT_CONFIG
         if not pc:
             messagebox.showerror("保存失败", "未加载项目配置。", parent=parent)
             return False
-        ok, parsed = self._parse_video_detail_field_for_save(field, raw_text, parent=parent)
-        if not ok:
-            return False
-        if parsed is None:
-            pc.pop(field, None)
-        else:
-            pc[field] = parsed
-        if save_project_config(parent=parent):
-            return True
-        messagebox.showerror(
-            "保存失败",
-            "无法写入频道列表 JSON，请确认已绑定列表行或已设置 topic_category。",
-            parent=parent,
-        )
-        return False
+        for field in ("story", "analyzed_content", "scene_content"):
+            val = video_detail.get(field) if isinstance(video_detail, dict) else None
+            if val not in (None, "", [], {}):
+                pc[field] = copy.deepcopy(val)
+            else:
+                pc.pop(field, None)
+        return save_project_config(parent=parent)
 
-    def _show_video_detail_field(self, field: str) -> None:
-        """编辑弹窗：修改频道列表行上的 ``story`` / ``analyzed_content`` / ``scene_content`` 并存盘。"""
-        labels = {
-            "story": (
-                "编辑 Story",
-                "YouTube 发布用 story（纯文本；保存后写入列表行外层字段）",
-            ),
-            "analyzed_content": (
-                "编辑 analyzed_content",
-                "转录/分析 RAW 文本（纯文本；保存后写入列表行外层字段）",
-            ),
-            "scene_content": (
-                "编辑 scene_content",
-                "场景 JSON（须为合法 JSON 数组；保存后写入列表行外层字段）",
-            ),
-        }
-        dlg_title, header_hint = labels.get(field, (f"编辑 {field}", ""))
+    def _open_workflow_content_field_editor(self, field: str) -> None:
+        """与 downloader 摘要窗「故事 / 分析 / 场景」共用同一套编辑弹窗。"""
         if not project_manager.PROJECT_CONFIG:
             messagebox.showwarning("提示", "请先加载或创建项目。", parent=self.root)
             return
-
-        val = self._video_detail_field_raw(field)
-        body = self._format_video_detail_field_text(field, val)
-
-        pid = (project_manager.PROJECT_CONFIG or {}).get("pid") or ""
-        top = tk.Toplevel(self.root)
-        top.title(dlg_title)
-        top.transient(self.root)
-        top.grab_set()
-        top.minsize(560, 400)
-        top.update_idletasks()
-        sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
-        w, h = 900, 640
-        top.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
-
-        hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
-        hdr.pack(fill=tk.X)
-        if pid:
-            ttk.Label(hdr, text=f"PID: {pid}", font=("Arial", 10)).pack(anchor=tk.W)
-        if header_hint:
-            ttk.Label(hdr, text=header_hint, wraplength=860).pack(anchor=tk.W, pady=(2, 4))
-        ttk.Label(
-            hdr,
-            text="保存目标：频道列表 JSON 行（非 project_profile 内字段）",
-            foreground="gray",
-        ).pack(anchor=tk.W, pady=(0, 8))
-
-        tx = scrolledtext.ScrolledText(
-            top, wrap=tk.WORD, width=100, height=30, font=("Consolas", 10)
+        mgr = getattr(self, "youtube_gui", None)
+        if mgr is None:
+            messagebox.showerror(
+                "错误", "YouTube 管理器未初始化，无法打开内容编辑。", parent=self.root
+            )
+            return
+        vd = self._workflow_video_detail_for_edit()
+        persist = lambda v, parent=None: self._workflow_persist_video_detail(v, parent=parent)
+        ch = (getattr(self.workflow, "channel", None) or "").strip()
+        ch_path = ""
+        if ch:
+            ch_path = config.get_channel_path(config_channel.get_channel_id(ch))
+        main_char = ""
+        if hasattr(self, "scene_narrator"):
+            main_char = (self.scene_narrator.get() or "").strip()
+        if not main_char:
+            main_char = (project_manager.PROJECT_CONFIG or {}).get("narrator") or ""
+        result = mgr.open_content_field_editor(
+            self.root,
+            vd,
+            field,
+            persist_fn=persist,
+            main_character=main_char,
+            channel_path=ch_path or getattr(mgr, "channel_path", ""),
         )
-        tx.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-        if body:
-            tx.insert("1.0", body)
-
-        bf = ttk.Frame(top, padding=(12, 0, 12, 12))
-        bf.pack(fill=tk.X)
-
-        def _paste_json(e=None):
-            try:
-                clip = safe_clipboard_json_copy(top.clipboard_get())
-                if clip:
-                    tx.delete("1.0", tk.END)
-                    tx.insert("1.0", clip)
-            except tk.TclError:
-                pass
-
-        if field == "scene_content":
-            tx.bind("<Double-1>", _paste_json)
-
-        def _on_save():
-            raw = tx.get("1.0", tk.END)
-            if self._save_video_detail_field(field, raw, parent=top):
-                top.destroy()
-
-        ttk.Button(bf, text="保存", command=_on_save).pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(bf, text="取消", command=top.destroy).pack(side=tk.RIGHT)
-        top.protocol("WM_DELETE_WINDOW", top.destroy)
+        if result is not None and field == "story":
+            messagebox.showinfo("已保存", "story 已更新。", parent=self.root)
 
     def _open_suno_gui(self):
         """打开SUNO音乐提示词管理窗口"""
@@ -2181,7 +2074,7 @@ class WorkflowGUI:
 
 
         # 图片预览区域（原zero位置）
-        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (支持拖放)", padding=5)
+        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (拖放 / 左键双击复制 / 右键双击粘贴)", padding=5)
         images_preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # 创建3个图片预览canvas (clip_image, narration_image, zero_image)
@@ -2200,7 +2093,6 @@ class WorkflowGUI:
         self.clip_image_canvas.create_text(75, 37, text="Clip\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.clip_image_canvas.drop_target_register(DND_FILES)
         self.clip_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image'))
-        self.clip_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image'))
         self.clip_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("clip_image", "keep"))
 
         self.clip_image_last_canvas = tk.Canvas(clip_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='blue')
@@ -2208,7 +2100,6 @@ class WorkflowGUI:
         self.clip_image_last_canvas.create_text(75, 37, text="Clip\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.clip_image_last_canvas.drop_target_register(DND_FILES)
         self.clip_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'clip_image_last'))
-        self.clip_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'clip_image_last'))
 
         # Top: narration_image
         narration_img_frame = ttk.Frame(images_container)
@@ -2222,7 +2113,6 @@ class WorkflowGUI:
         self.narration_image_canvas.create_text(75, 37, text="Narration\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.narration_image_canvas.drop_target_register(DND_FILES)
         self.narration_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image"))
-        self.narration_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image"))
         self.narration_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("narration_image", "image"))
 
         self.narration_image_last_canvas = tk.Canvas(narration_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='green')
@@ -2230,7 +2120,6 @@ class WorkflowGUI:
         self.narration_image_last_canvas.create_text(75, 37, text="Narration\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.narration_image_last_canvas.drop_target_register(DND_FILES)
         self.narration_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, "narration_image_last"))
-        self.narration_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, "narration_image_last"))
         
 
         # Top: zero_image
@@ -2245,7 +2134,6 @@ class WorkflowGUI:
         self.zero_image_canvas.create_text(75, 37, text="Zero\nImage", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.zero_image_canvas.drop_target_register(DND_FILES)
         self.zero_image_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image'))
-        self.zero_image_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image'))
         self.zero_image_canvas.bind('<Control-Button-1>', lambda e: self.choose_from_channel_media("zero_image", "image"))
 
         self.zero_image_last_canvas = tk.Canvas(zero_canvas_container, bg='gray20', width=150, height=75, highlightthickness=2, highlightbackground='orange')
@@ -2253,7 +2141,23 @@ class WorkflowGUI:
         self.zero_image_last_canvas.create_text(75, 37, text="Zero\nLast", fill="gray", font=("Arial", 8), justify=tk.CENTER, tags="hint")
         self.zero_image_last_canvas.drop_target_register(DND_FILES)
         self.zero_image_last_canvas.dnd_bind('<<Drop>>', lambda e: self.on_image_drop(e, 'zero_image_last'))
-        self.zero_image_last_canvas.bind('<Double-Button-1>', lambda e: self.on_image_canvas_double_click(e, 'zero_image_last'))
+
+        for _img_canvas, _img_type in (
+            (self.clip_image_canvas, "clip_image"),
+            (self.clip_image_last_canvas, "clip_image_last"),
+            (self.narration_image_canvas, "narration_image"),
+            (self.narration_image_last_canvas, "narration_image_last"),
+            (self.zero_image_canvas, "zero_image"),
+            (self.zero_image_last_canvas, "zero_image_last"),
+        ):
+            _img_canvas.bind(
+                "<Double-Button-1>",
+                lambda e, t=_img_type: self.on_image_canvas_double_click(e, t),
+            )
+            _img_canvas.bind(
+                "<Double-Button-3>",
+                lambda e, t=_img_type: self.on_image_canvas_paste_from_clipboard(e, t),
+            )
 
         # 视频轨道预览区域 - 使用Tab控件（包含narration和zero）
         track_video_frame = ttk.LabelFrame(left_frame, text="轨道视频预览", padding=5)
@@ -2878,24 +2782,32 @@ class WorkflowGUI:
         mode = flow["mode"]
         publish_at = flow["publish_at"]
         try:
-            self.workflow.upload_video(
+            tg_lines = self.workflow.upload_video(
                 title_slug,
                 publish_at=publish_at,
                 description=flow["description"],
+                telegram_title=conv,
             )
         except Exception as e:
             messagebox.showerror("上传失败", str(e), parent=self.root)
             return
+        tg_block = ""
+        if tg_lines:
+            tg_block = "\n\n--- Telegram ---\n" + "\n".join(tg_lines)
         if mode == "scheduled":
             messagebox.showinfo(
                 "提示",
                 "视频已以「私有 + 定时公开」上传。\n"
                 "到点后将按 YouTube 规则自动公开。\n\n"
-                "若需「首映 Premiere」或改为不公开列出，请在 YouTube Studio 中调整。",
+                "若需「首映 Premiere」或改为不公开列出，请在 YouTube Studio 中调整。"
+                + tg_block,
                 parent=self.root,
             )
         else:
-            messagebox.showinfo("提示", "视频发布成功！", parent=self.root)
+            msg = "视频发布成功！"
+            if vid := (project_manager.PROJECT_CONFIG or {}).get("published_youtube_video_id"):
+                msg += f"\nhttps://www.youtube.com/watch?v={vid}"
+            messagebox.showinfo("提示", msg + tg_block, parent=self.root)
 
 
     def _do_speaking_summarize(self):
@@ -5217,49 +5129,64 @@ class WorkflowGUI:
         tip.after(ms, tip.destroy)
 
 
+    def _image_paths_from_clipboard(self) -> list[str]:
+        """从系统剪贴板读取图片：位图或文件路径列表。"""
+        image_ext = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
+        try:
+            from PIL import ImageGrab
+
+            clip = ImageGrab.grabclipboard()
+        except Exception:
+            return []
+        if clip is None:
+            return []
+        if isinstance(clip, list):
+            out: list[str] = []
+            for p in clip:
+                ps = os.path.expanduser(str(p).strip().strip('{}"'))
+                if os.path.isfile(ps) and ps.lower().endswith(image_ext):
+                    out.append(os.path.abspath(ps))
+            return out
+        if hasattr(clip, "save"):
+            pid = getattr(self.workflow, "pid", None) or "clipboard"
+            tmp_png = config.get_temp_file(pid, "png")
+            os.makedirs(os.path.dirname(tmp_png) or ".", exist_ok=True)
+            img = clip
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            img.save(tmp_png, format="PNG")
+            return [tmp_png]
+        return []
+
+    def on_image_canvas_paste_from_clipboard(self, event, image_type):
+        """右键双击：剪贴板有图则粘贴到当前预览槽。"""
+        try:
+            paths = self._image_paths_from_clipboard()
+            if not paths:
+                messagebox.showwarning("粘贴", "剪贴板中没有图片。", parent=self.root)
+                return "break"
+            self._apply_image_paths_to_preview_slot(image_type, paths)
+        except Exception as e:
+            messagebox.showerror("粘贴失败", str(e), parent=self.root)
+        return "break"
+
     def on_image_canvas_double_click(self, event, image_type):
+        """左键双击：将当前槽位图片复制到剪贴板。"""
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
-            # 与选择对话框同时：先把当前槽位已有图片复制到剪贴板，便于其他应用粘贴处理
             _preview_path = current_scene.get(image_type)
             if _preview_path and os.path.exists(_preview_path):
                 self.copy_image_to_clipboard(_preview_path, silent=True)
 
-            source_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
-            track = image_type.split("_")[0]  # clip_image -> clip, narration_image -> narration, etc.
-
             image_path = current_scene.get(image_type)
             if not image_path or not os.path.exists(image_path):
-                messagebox.showwarning("警告", f"场景中没有有效的 {image_type} 图像")
+                messagebox.showwarning(
+                    "警告", f"场景中没有有效的 {image_type} 图像", parent=self.root
+                )
                 return
             self.copy_image_to_clipboard(image_path)
-
-            #if need_enhance:
-            #    image_path = self.workflow.sd_processor._enhance_image_in_api(image_path, 0.3)
-            #    if not image_path:
-            #        messagebox.showerror("错误", "图像增强失败")
-            #        return
-            #    image_changed = True
-
-            #if image_changed:
-            #    image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
-            #    refresh_scene_media(current_scene, image_type, ".webp", image_path)
-            #    self.workflow.save_scenes_to_json()
-
-            # if need_gen_video:
-            #     audio_path = get_file_path(current_scene, track+"_audio") or get_file_path(current_scene, "clip_audio")
-            #    if not audio_path or not os.path.exists(audio_path):
-            #        messagebox.showwarning("警告", f"场景中没有有效的 {track}_audio 或 clip_audio")
-            #        return
-                # 未经过增强的图需要先缩放到视频尺寸
-            #    if not need_enhance:
-            #        image_path = self.workflow.ffmpeg_processor.resize_image_smart(image_path)
-            #    video_path = self.workflow.ffmpeg_processor.image_audio_to_video(image_path, audio_path, 1)
-            #    refresh_scene_media(current_scene, track, ".mp4", video_path, True)
-            #    self.media_scanner.last_image_replacement(current_scene, video_path, track)
-
             self.refresh_gui_scenes()
 
         except Exception as e:
@@ -5520,41 +5447,10 @@ class WorkflowGUI:
         dlg.wait_window()
         return result["v"]
 
-    def on_image_drop(self, event, image_type):
-        """处理图片拖放事件
-        
-        Args:
-            event: 拖放事件
-            image_type: 'clip_image', "narration_image", 或 'zero_image'
-        
-        竖屏项目 **1080×1920**：一次拖入 **三张** 横向 ≈16∶9 图 → 1152×648、每图裁底 20px，
-        自上而下顶对齐铺满宽度，底部留白叠水印（``compose_triple_landscape_vertical_mosaic_webp``）。
-        **三图 / 双图拼图前** 会对每张图依次弹出裁切审阅（←/→ 平移水平视窗，复原恢复居中）。
-
-        **两张** → 仍为双图居中拼接（1440×810、裁底 25px）；同样先逐张审阅。
-        否则单图 ``resize_image_smart``；多张非拼图时仅用首张并提示。
-        """
-        IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
-        try:
-            raw_paths = self.root.tk.splitlist(event.data)
-        except tk.TclError:
-            raw_paths = [event.data]
-
-        paths = []
-        seen = set()
-        for rp in raw_paths:
-            ps = os.path.expanduser(str(rp).strip().strip('{}"'))
-            ps = ps.strip('"')
-            if ps and ps not in seen:
-                seen.add(ps)
-                paths.append(ps)
-
-        img_paths = [
-            p for p in paths
-            if os.path.isfile(p) and p.lower().endswith(IMAGE_EXT)
-        ]
+    def _apply_image_paths_to_preview_slot(self, image_type: str, img_paths: list[str]) -> None:
+        """将一张或多张图片写入预览槽（拖放与剪贴板粘贴共用）。"""
         if not img_paths:
-            messagebox.showerror("错误", "请拖放图片文件 (PNG, JPG, WEBP等)")
+            messagebox.showerror("错误", "无有效图片", parent=self.root)
             return
 
         fp = self.workflow.ffmpeg_processor
@@ -5622,74 +5518,110 @@ class WorkflowGUI:
                 parent=self.root,
             )
 
+        if mosaic_mode == "triple":
+            sw, sh, btrim = 1152, 648, 20
+            shifts_src: list[int] = []
+            shifts_vp: list[int] = []
+            for i in range(3):
+                pair = self._review_mosaic_layer_crop_dialog(
+                    img_paths[i], i + 1, 3, sw, sh, btrim
+                )
+                if pair is None:
+                    return
+                shifts_src.append(pair[0])
+                shifts_vp.append(pair[1])
+            file_path = fp.compose_triple_landscape_vertical_mosaic_webp(
+                img_paths[0],
+                img_paths[1],
+                img_paths[2],
+                horizontal_crop_shifts=shifts_src,
+                viewport_crop_shifts=shifts_vp,
+            )
+            file_path = self._apply_watermark_to_flat_image_webp(file_path)
+        elif mosaic_mode == "dual":
+            sw, sh, btrim = 1440, 810, 25
+            shifts_src = []
+            shifts_vp = []
+            for i in range(2):
+                pair = self._review_mosaic_layer_crop_dialog(
+                    img_paths[i], i + 1, 2, sw, sh, btrim
+                )
+                if pair is None:
+                    return
+                shifts_src.append(pair[0])
+                shifts_vp.append(pair[1])
+            file_path = fp.compose_dual_landscape_vertical_mosaic_webp(
+                img_paths[0],
+                img_paths[1],
+                horizontal_crop_shifts=shifts_src,
+                viewport_crop_shifts=shifts_vp,
+            )
+            file_path = self._apply_watermark_to_flat_image_webp(file_path)
+        else:
+            file_path = fp.resize_image_smart(img_paths[0])
+
+        if not os.path.exists(file_path):
+            messagebox.showerror("错误", "文件不存在", parent=self.root)
+            return
+
+        selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)]
+        if not image_type.startswith('clip'):
+            dialog = messagebox.askyesno("确认替换", f"确定要替换所有当前故事的 {image_type} 吗？")
+            if dialog:
+                selected_scens = self.workflow.scenes_in_story(
+                    self.workflow.get_scene_by_index(self.current_scene_index)
+                )
+
+        for scene in selected_scens:
+            refresh_scene_media(scene, image_type, ".webp", file_path, True)
+
+        self.workflow.save_scenes_to_json()
+        self.display_image_on_canvas_for_track(image_type)
+        print(f"✅ 已更新 {image_type}: {os.path.basename(file_path)}")
+
+    def on_image_drop(self, event, image_type):
+        """处理图片拖放事件
+        
+        Args:
+            event: 拖放事件
+            image_type: 'clip_image', "narration_image", 或 'zero_image'
+        
+        竖屏项目 **1080×1920**：一次拖入 **三张** 横向 ≈16∶9 图 → 1152×648、每图裁底 20px，
+        自上而下顶对齐铺满宽度，底部留白叠水印（``compose_triple_landscape_vertical_mosaic_webp``）。
+        **三图 / 双图拼图前** 会对每张图依次弹出裁切审阅（←/→ 平移水平视窗，复原恢复居中）。
+
+        **两张** → 仍为双图居中拼接（1440×810、裁底 25px）；同样先逐张审阅。
+        否则单图 ``resize_image_smart``；多张非拼图时仅用首张并提示。
+        """
+        IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
         try:
-            if mosaic_mode == "triple":
-                sw, sh, btrim = 1152, 648, 20
-                shifts_src: list[int] = []
-                shifts_vp: list[int] = []
-                for i in range(3):
-                    pair = self._review_mosaic_layer_crop_dialog(
-                        img_paths[i], i + 1, 3, sw, sh, btrim
-                    )
-                    if pair is None:
-                        return
-                    shifts_src.append(pair[0])
-                    shifts_vp.append(pair[1])
-                file_path = fp.compose_triple_landscape_vertical_mosaic_webp(
-                    img_paths[0],
-                    img_paths[1],
-                    img_paths[2],
-                    horizontal_crop_shifts=shifts_src,
-                    viewport_crop_shifts=shifts_vp,
-                )
-                file_path = self._apply_watermark_to_flat_image_webp(file_path)
-            elif mosaic_mode == "dual":
-                sw, sh, btrim = 1440, 810, 25
-                shifts_src = []
-                shifts_vp = []
-                for i in range(2):
-                    pair = self._review_mosaic_layer_crop_dialog(
-                        img_paths[i], i + 1, 2, sw, sh, btrim
-                    )
-                    if pair is None:
-                        return
-                    shifts_src.append(pair[0])
-                    shifts_vp.append(pair[1])
-                file_path = fp.compose_dual_landscape_vertical_mosaic_webp(
-                    img_paths[0],
-                    img_paths[1],
-                    horizontal_crop_shifts=shifts_src,
-                    viewport_crop_shifts=shifts_vp,
-                )
-                file_path = self._apply_watermark_to_flat_image_webp(file_path)
-            else:
-                file_path = fp.resize_image_smart(img_paths[0])
+            raw_paths = self.root.tk.splitlist(event.data)
+        except tk.TclError:
+            raw_paths = [event.data]
 
-            if not os.path.exists(file_path):
-                messagebox.showerror("错误", "文件不存在")
-                return
+        paths = []
+        seen = set()
+        for rp in raw_paths:
+            ps = os.path.expanduser(str(rp).strip().strip('{}"'))
+            ps = ps.strip('"')
+            if ps and ps not in seen:
+                seen.add(ps)
+                paths.append(ps)
 
-            # 获取当前场景
-            # if image_type NOT start with 'clip', then  ask user if want to assigne this image to the current scene or all scenes of same story?
-            selected_scens = [self.workflow.get_scene_by_index(self.current_scene_index)]
-            if not image_type.startswith('clip'):
-                dialog = messagebox.askyesno("确认替换", f"确定要替换所有当前故事的 {image_type} 吗？")
-                if dialog:
-                    selected_scens = self.workflow.scenes_in_story(self.workflow.get_scene_by_index(self.current_scene_index))
+        img_paths = [
+            p for p in paths
+            if os.path.isfile(p) and p.lower().endswith(IMAGE_EXT)
+        ]
+        if not img_paths:
+            messagebox.showerror("错误", "请拖放图片文件 (PNG, JPG, WEBP等)", parent=self.root)
+            return
 
-            for scene in selected_scens:
-                oldi, image_path = refresh_scene_media(scene, image_type, ".webp", file_path, True)
-
-            self.workflow.save_scenes_to_json()
-
-            # 刷新显示
-            self.display_image_on_canvas_for_track(image_type)
-            print(f"✅ 已更新 {image_type}: {os.path.basename(file_path)}")
-            
+        try:
+            self._apply_image_paths_to_preview_slot(image_type, img_paths)
         except Exception as e:
             error_msg = f"更新图片失败: {str(e)}"
             print(f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
+            messagebox.showerror("错误", error_msg, parent=self.root)
 
 
     def display_image_on_canvas_for_track(self, image_type):

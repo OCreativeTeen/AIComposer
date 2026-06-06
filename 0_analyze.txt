@@ -11,7 +11,7 @@ Create string video clip for "Mind Spring Melody" program -- (a song for the 心
 把下面的这些给SUNO生成歌曲的指示内容, 缩减到950个英文字符之内  >>> 
 
 
-simplify the  words in the image,  突出重点, 可以减少项目
+speaking :  simplify the  words in the image,  突出重点, 可以减少项目
 
 
 Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt.

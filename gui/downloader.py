@@ -548,6 +548,12 @@ def _start_summary_cover_webp_save(
             par = summary_window if summary_window.winfo_exists() else root
             if analyze_ok:
                 _refresh_summary_ui_after_analyze(ctx, summary_window)
+            rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+            if callable(rfn_feat):
+                try:
+                    rfn_feat()
+                except Exception:
+                    pass
             if out_ok and analyze_ok:
                 messagebox.showinfo(
                     "封面与分析已保存",
@@ -678,6 +684,12 @@ def _on_summary_mp4_watermark_drop(
                 if callable(rfn_pub):
                     try:
                         rfn_pub()
+                    except Exception:
+                        pass
+                rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+                if callable(rfn_feat):
+                    try:
+                        rfn_feat()
                     except Exception:
                         pass
                 messagebox.showinfo("已保存", f"已加水印：\n{out_ok}", parent=par)
@@ -1288,6 +1300,33 @@ def _sync_youtube_row_title_after_scene_edit(video_detail: dict, scene_parsed, u
     video_detail[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(merged)
 
 
+def _apply_video_detail_titles_from_ui(
+    video_detail: dict,
+    *,
+    source_title: str,
+    project_title: str = "",
+    channel_path: str = "",
+) -> None:
+    """将摘要窗「视频名称」写回列表行：无项目时改 ``title``；有项目时改 ``title`` + ``project_profile.video_title``。"""
+    if not isinstance(video_detail, dict):
+        return
+    src = (source_title or "").strip()
+    proj = (project_title or "").strip()
+    prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+    if isinstance(prof, dict) and prof:
+        if src:
+            video_detail["title"] = src
+        if proj:
+            merged = copy.deepcopy(prof)
+            merged["video_title"] = proj
+            video_detail[project_manager.PROJECT_PROFILE_KEY] = (
+                project_manager.profile_for_list_storage(merged)
+            )
+    elif src:
+        video_detail["title"] = src
+    _normalize_channel_list_item_for_storage(video_detail, channel_path or "")
+
+
 def _infer_channel_list_item_media_dir(item: dict, channel_path: str = "") -> str:
     """推断频道列表条目字幕/媒体目录 ``program/<ch>/Download/media``。"""
     if isinstance(item, dict):
@@ -1333,6 +1372,116 @@ def _normalize_channel_list_item_for_storage(item: dict, channel_path: str = "")
     if isinstance(prof, dict):
         item[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(copy.deepcopy(prof))
     project_manager.sync_list_item_id_and_profile_pid(item)
+
+
+_GENERIC_PROJECT_VIDEO_TITLES = frozenset({"", "新项目", "未命名", "default_title"})
+
+
+def _sync_project_video_title_on_list_row(
+    row: dict, selected_config: dict | None = None
+) -> None:
+    """``project_profile.video_title`` 优先用 scene_content 首场景 caption，避免显示「新项目」。"""
+    if not isinstance(row, dict):
+        return
+    prof = row.get(project_manager.PROJECT_PROFILE_KEY)
+    if not isinstance(prof, dict) or not prof:
+        return
+    cfg = selected_config if isinstance(selected_config, dict) else {}
+    lang = (cfg.get("language") or row.get("language") or "tw").strip()
+    sc = row.get("scene_content") or cfg.get("scene_content")
+    sc_title = (project_manager.title_from_scene_content(sc, lang) or "").strip()
+    vt = (prof.get("video_title") or cfg.get("video_title") or "").strip()
+    if sc_title and (not vt or vt in _GENERIC_PROJECT_VIDEO_TITLES):
+        merged = copy.deepcopy(prof)
+        merged["video_title"] = sc_title
+        row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
+            merged
+        )
+
+
+def _drop_cloned_duplicates_of_row(videos: list, keeper: dict) -> list:
+    """从频道热门列表去掉同一源视频的旧克隆行，只保留 ``keeper``。"""
+    if not isinstance(keeper, dict):
+        return list(videos or [])
+    keep_pid = project_manager.list_json_row_workflow_pid(keeper)
+    keep_url = (keeper.get("url") or "").strip()
+    out = []
+    for v in videos or []:
+        if not isinstance(v, dict):
+            continue
+        if project_manager.list_json_row_workflow_pid(v) == keep_pid:
+            out.append(v)
+            continue
+        cfu = (v.get("cloned_from_url") or "").strip()
+        if keep_url and cfu == keep_url:
+            continue
+        out.append(v)
+    return out
+
+
+def _apply_project_config_to_list_row(
+    row: dict, selected_config: dict, *, channel_path: str = ""
+) -> None:
+    """将新建/更新后的项目配置写入频道热门列表中的源视频行（不克隆新行）。"""
+    _pid = (selected_config.get("pid") or "").strip()
+    if _pid:
+        row["id"] = _pid
+    row.pop("cloned_from_id", None)
+    row.pop("cloned_from_url", None)
+    row.pop("youtube_source_id", None)
+    row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
+        project_manager.export_profile_for_storage(copy.deepcopy(selected_config))
+    )
+    for k in (
+        "story",
+        "analyzed_content",
+        "scene_content",
+        "topic_category",
+        "topic_subtype",
+        "tags",
+        "language",
+    ):
+        if k in selected_config and selected_config.get(k) is not None:
+            row[k] = copy.deepcopy(selected_config[k])
+    row.pop("project_id", None)
+    row.pop("project_pid", None)
+    row.pop("pid", None)
+    _sync_project_video_title_on_list_row(row, selected_config)
+    _normalize_channel_list_item_for_storage(row, channel_path or "")
+
+
+def _remove_pid_from_topic_category_lists(channel_path: str, pid: str) -> None:
+    """项目 pid 变更后，从各主题分表中移除旧 pid 行。"""
+    pid = (pid or "").strip()
+    ch = (channel_path or "").strip()
+    if not pid or not ch:
+        return
+    list_dir = config.channel_list_json_dir_abs(ch)
+    if not os.path.isdir(list_dir):
+        return
+    for name in os.listdir(list_dir):
+        if not name.lower().endswith(".json"):
+            continue
+        path = os.path.join(list_dir, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(arr, list):
+            continue
+        new_arr = [
+            it
+            for it in arr
+            if not (isinstance(it, dict) and _list_json_item_matches_pid(it, pid))
+        ]
+        if len(new_arr) == len(arr):
+            continue
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(new_arr, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
 
 
 def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> bool:
@@ -1476,6 +1625,22 @@ def _topic_split_list_find_pid_for_channel(
     return None, None
 
 
+def _is_viewing_topic_category_program_list(
+    channel_path: str, list_json_path: str, topic_category: str
+) -> bool:
+    """当前打开的 ``channel_list_json`` 是否即为某主题分表（``list/<topic>.json``）。"""
+    list_json_path = (list_json_path or "").strip()
+    topic_category = (topic_category or "").strip()
+    if not list_json_path or not topic_category:
+        return False
+    topic_path = _topic_category_program_list_path(channel_path, topic_category)
+    if not topic_path:
+        return False
+    return os.path.normcase(os.path.normpath(list_json_path)) == os.path.normcase(
+        os.path.normpath(topic_path)
+    )
+
+
 def _upsert_topic_category_program_list_row(channel_path: str, topic_category: str, entry: dict) -> str:
     """按 ``pid`` 对指定主题分表做 upsert（去掉同 PID 旧行再追加），返回写入路径。"""
     path = _topic_category_program_list_path(channel_path, topic_category or "")
@@ -1582,6 +1747,7 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
     orig_url = (base.get("url") or "").strip()
     if orig_url:
         clone["cloned_from_url"] = orig_url
+    _sync_project_video_title_on_list_row(clone, selected_config)
     _normalize_channel_list_item_for_storage(clone)
     return clone
 
@@ -1705,6 +1871,93 @@ def _find_gen_video_mp4_for_row(video: dict) -> str:
         if os.path.isfile(p):
             return os.path.abspath(p)
     return ""
+
+
+def _find_gen_video_webp_for_row(video: dict) -> str:
+    """``gen_video/<id>.webp`` 封面（摘要窗拖入/粘贴图片并加水印后）。"""
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+    if not gen_dir:
+        return ""
+    for stem in _gen_video_id_stem_candidates_for_row(video):
+        p = os.path.join(gen_dir, stem + ".webp")
+        if os.path.isfile(p):
+            return os.path.abspath(p)
+    return ""
+
+
+def _gen_video_storage_dir() -> str:
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+    if gen_dir:
+        try:
+            os.makedirs(gen_dir, exist_ok=True)
+        except OSError:
+            pass
+    return gen_dir
+
+
+def _open_feature_media_in_explorer(*preferred_files: str) -> None:
+    """打开 ``publish/gen_video``；若已有成片/封面则选中对应文件。"""
+    gen_dir = _gen_video_storage_dir()
+    target = ""
+    for fp in preferred_files:
+        p = (fp or "").strip()
+        if p and os.path.isfile(p):
+            target = os.path.normpath(p)
+            break
+    if target:
+        if sys.platform == "win32":
+            subprocess.run(["explorer", "/select,", target], check=False)
+        else:
+            folder = os.path.dirname(target)
+            if folder and os.path.isdir(folder):
+                if sys.platform == "darwin":
+                    subprocess.run(["open", "-R", target], check=False)
+                else:
+                    subprocess.run(["xdg-open", folder], check=False)
+        return
+    if gen_dir and os.path.isdir(gen_dir):
+        if sys.platform == "win32":
+            os.startfile(gen_dir)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", gen_dir], check=False)
+        else:
+            subprocess.run(["xdg-open", gen_dir], check=False)
+
+
+def _copy_image_file_to_clipboard(parent, image_path: str) -> bool:
+    """将图片文件复制到 Windows 剪贴板（CF_DIB）。"""
+    from io import BytesIO
+
+    image_path = (image_path or "").strip()
+    if not image_path or not os.path.isfile(image_path):
+        messagebox.showwarning("提示", "图片文件不存在。", parent=parent)
+        return False
+    try:
+        import win32clipboard  # type: ignore
+        from PIL import Image
+
+        img = Image.open(image_path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        output = BytesIO()
+        img.save(output, "BMP")
+        data = output.getvalue()[14:]
+        output.close()
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+        win32clipboard.CloseClipboard()
+        return True
+    except ImportError:
+        messagebox.showwarning(
+            "提示",
+            "复制图片到剪贴板需要 pywin32 与 Pillow。\n请运行: pip install pywin32",
+            parent=parent,
+        )
+        return False
+    except Exception as exc:
+        messagebox.showerror("复制失败", str(exc), parent=parent)
+        return False
 
 
 def _merge_related_id_status(existing, new_id):
@@ -3788,6 +4041,84 @@ class MediaGUIManager:
 
 
 
+    def _youtube_story_llm_source_text(self, video_detail) -> str:
+        """Story 智能添加 / 生成的 LLM 输入原文。"""
+        if not isinstance(video_detail, dict):
+            return ""
+        scenes = config.scene_content_as_list(
+            video_detail.get("scene_content"), self.language
+        )
+        for item in scenes:
+            if not isinstance(item, dict):
+                continue
+            for key in ("story", "visual", "voiceover", "speaking"):
+                text = (item.get(key) or "").strip()
+                if text:
+                    return text
+        ac = config.analyzed_content_text(
+            video_detail.get("analyzed_content"), self.language
+        )
+        if ac.strip():
+            return ac.strip()
+        return (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
+
+    def _generate_youtube_story_summary_text(self, video_detail) -> str:
+        source = self._youtube_story_llm_source_text(video_detail)
+        if not source:
+            return ""
+        prompt = config_prompt.YOUTUBE_PUBLISH_DESCRIPTION_PROMPT.format(
+            language=config.llm_language_label(self.language)
+        )
+        result = self.llm_api_local.generate_text(prompt, source)
+        return config.chinese_convert(result or "", self.language).strip()
+
+    def _run_youtube_story_smart_add_async(
+        self,
+        parent,
+        video_detail: dict,
+        get_existing_text,
+        set_merged_text,
+        *,
+        on_busy=None,
+        on_idle=None,
+    ) -> bool:
+        if not self._youtube_story_llm_source_text(video_detail):
+            messagebox.showwarning(
+                "提示",
+                "无 scene_content / analyzed_content / 转录原文，无法生成 story。",
+                parent=parent,
+            )
+            return False
+        if on_busy:
+            on_busy()
+
+        def work():
+            err_msg = ""
+            result = ""
+            try:
+                result = self._generate_youtube_story_summary_text(video_detail)
+            except Exception as ex:
+                err_msg = str(ex)
+
+            def apply():
+                if on_idle:
+                    on_idle()
+                if err_msg:
+                    messagebox.showerror("生成失败", err_msg, parent=parent)
+                    return
+                if not result:
+                    messagebox.showwarning("提示", "LLM 未返回内容。", parent=parent)
+                    return
+                merged = self._merge_generated_story_text(
+                    get_existing_text(), result
+                )
+                set_merged_text(merged)
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
     @staticmethod
     def _merge_generated_story_text(existing: str, generated: str) -> str:
         """智能添加：新内容在前，与已有 story 之间空一行。"""
@@ -3823,8 +4154,12 @@ class MediaGUIManager:
         confirm_label: str = "保存",
         allow_empty: bool = False,
         auto_generate_if_empty: bool = False,
+        persist_fn=None,
     ) -> str | None:
         """编辑 ``video_detail['story']``；确认后写回频道列表。取消返回 ``None``。"""
+        persist = persist_fn or (
+            lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
+        )
         result_holder: list[str | None] = [None]
         dlg = tk.Toplevel(parent)
         dlg.title(dialog_title)
@@ -3862,6 +4197,30 @@ class MediaGUIManager:
         btn_row = ttk.Frame(frm)
         btn_row.pack(fill=tk.X)
 
+        def on_smart_add():
+            def _busy():
+                gen_btn.config(state=tk.DISABLED)
+                try:
+                    dlg.config(cursor="watch")
+                    dlg.update_idletasks()
+                except tk.TclError:
+                    pass
+
+            def _idle():
+                try:
+                    gen_btn.config(state=tk.NORMAL)
+                    dlg.config(cursor="")
+                except tk.TclError:
+                    pass
+
+            self._run_youtube_story_smart_add_async(
+                dlg,
+                video_detail,
+                lambda: (tx.get("1.0", tk.END) or ""),
+                lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
+                on_busy=_busy,
+                on_idle=_idle,
+            )
 
         def on_confirm():
             new_text = (tx.get("1.0", tk.END) or "").strip()
@@ -3874,7 +4233,7 @@ class MediaGUIManager:
                 video_detail["story"] = new_text
             else:
                 video_detail.pop("story", None)
-            if not self._persist_video_detail_story(video_detail, parent=dlg):
+            if not persist(video_detail, parent=dlg):
                 return
             result_holder[0] = new_text
             dlg.destroy()
@@ -3901,8 +4260,12 @@ class MediaGUIManager:
         on_saved=None,
         on_content_summarized=None,
         enable_content_summary: bool = True,
+        persist_fn=None,
     ) -> str | None:
         """编辑 ``video_detail['analyzed_content']``（纯文本）；确认后写回频道列表。"""
+        persist = persist_fn or (
+            lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
+        )
         result_holder: list[str | None] = [None]
         dlg = tk.Toplevel(parent)
         dlg.title("分析内容 / Analyzed")
@@ -3947,7 +4310,7 @@ class MediaGUIManager:
                 video_detail["analyzed_content"] = new_text
             else:
                 video_detail.pop("analyzed_content", None)
-            if not self._persist_video_detail_story(video_detail, parent=dlg):
+            if not persist(video_detail, parent=dlg):
                 return
             result_holder[0] = new_text
             dlg.destroy()
@@ -3977,7 +4340,7 @@ class MediaGUIManager:
             tx.insert("1.0", rewritten)
             video_detail["analyzed_content"] = rewritten
             _copy_text_to_clipboard(dlg, rewritten)
-            if not self._persist_video_detail_story(video_detail, parent=dlg):
+            if not persist(video_detail, parent=dlg):
                 return
             if callable(on_content_summarized):
                 on_content_summarized()
@@ -4040,8 +4403,12 @@ class MediaGUIManager:
         on_saved=None,
         main_character: str = "",
         channel_path: str = "",
+        persist_fn=None,
     ) -> list | None:
         """编辑 ``video_detail['scene_content']``（JSON array）；确认后写回频道列表。"""
+        persist = persist_fn or (
+            lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
+        )
         result_holder: list[list | None] = [None]
         dlg = tk.Toplevel(parent)
         dlg.title("场景内容 / Scene")
@@ -4178,7 +4545,7 @@ class MediaGUIManager:
                     video_detail, normalized, self.language
                 )
                 result_holder[0] = normalized
-            if not self._persist_video_detail_story(video_detail, parent=dlg):
+            if not persist(video_detail, parent=dlg):
                 return
             dlg.destroy()
             if callable(on_saved):
@@ -4200,6 +4567,46 @@ class MediaGUIManager:
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         dlg.wait_window()
         return result_holder[0]
+
+    def open_content_field_editor(
+        self,
+        parent,
+        video_detail: dict,
+        field: str,
+        *,
+        persist_fn=None,
+        on_saved=None,
+        on_content_summarized=None,
+        main_character: str = "",
+        channel_path: str = "",
+    ):
+        """统一入口：story / analyzed_content / scene_content 编辑（与摘要窗按钮相同）。"""
+        if field == "story":
+            return self._show_video_story_editor(
+                parent,
+                video_detail,
+                allow_empty=True,
+                persist_fn=persist_fn,
+            )
+        if field == "analyzed_content":
+            return self._show_analyzed_content_editor(
+                parent,
+                video_detail,
+                on_saved=on_saved,
+                on_content_summarized=on_content_summarized,
+                persist_fn=persist_fn,
+            )
+        if field == "scene_content":
+            return self._show_scene_content_editor(
+                parent,
+                video_detail,
+                on_saved=on_saved,
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
+                persist_fn=persist_fn,
+            )
+        messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
+        return None
 
     def _show_transcript_script_viewer(self, parent, video_detail: dict) -> None:
         """只读展示转录原文（来自 transcribed_file，不可保存回列表）。"""
@@ -4568,7 +4975,16 @@ class MediaGUIManager:
                 print(f"❌ 保存 channel_list_json 失败: {e}")
 
 
-    def _open_publish_video_dialog(self, parent, title_prefix: str, mp4_path: str, video_detail: dict, refresh_tree):
+    def _open_publish_video_dialog(
+        self,
+        parent,
+        title_prefix: str,
+        mp4_path: str,
+        video_detail: dict,
+        refresh_tree,
+        *,
+        review_script_text: str = "",
+    ):
         """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；顺序与 GUI_wf.publish_video 相同（先标题/描述，再定时）。"""
         ch_key = os.path.basename(self.channel_path)
         cfg = config_channel.get_channel_config(ch_key)
@@ -4593,6 +5009,7 @@ class MediaGUIManager:
                 self.language,
             ),
             story_text=story_text,
+            review_script_text=review_script_text,
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             mp4_path_hint=mp4_path,
@@ -4751,8 +5168,26 @@ class MediaGUIManager:
         #with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
         #    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
         
-        # 添加刷新按钮
-        ttk.Button(info_frame, text="🔄 刷新", command=lambda: populate_tree()).pack(side=tk.RIGHT, padx=5)
+        def _reload_channel_list_from_disk() -> None:
+            path = (self.downloader.channel_list_json or "").strip()
+            if not path or not os.path.isfile(path):
+                return
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return
+            if not isinstance(loaded, list):
+                return
+            _normalize_channel_videos_for_storage(loaded, self.channel_path or "")
+            self.downloader.channel_videos = loaded
+
+        # 添加刷新按钮（从磁盘重载列表，避免与 JSON 不同步）
+        ttk.Button(
+            info_frame,
+            text="🔄 刷新",
+            command=lambda: (_reload_channel_list_from_disk(), populate_tree()),
+        ).pack(side=tk.RIGHT, padx=5)
         
         # 第二行：过滤和排序控制
         control_frame = ttk.Frame(top_frame)
@@ -5424,30 +5859,6 @@ class MediaGUIManager:
                 LAST_VISUAL_STYLE,
             )
 
-            def _apply_project_config_to_list_row(row: dict, selected_config: dict) -> None:
-                _pid = (selected_config.get("pid") or "").strip()
-                if _pid:
-                    row["id"] = _pid
-                row.pop("youtube_source_id", None)
-                row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
-                    project_manager.export_profile_for_storage(copy.deepcopy(selected_config))
-                )
-                for k in (
-                    "story",
-                    "analyzed_content",
-                    "scene_content",
-                    "topic_category",
-                    "topic_subtype",
-                    "tags",
-                    "language",
-                ):
-                    if k in selected_config and selected_config.get(k) is not None:
-                        row[k] = copy.deepcopy(selected_config[k])
-                row.pop("project_id", None)
-                row.pop("project_pid", None)
-                row.pop("pid", None)
-                _normalize_channel_list_item_for_storage(row, self.channel_path or "")
-
             def _persist_channel_list_and_refresh_tree(
                 select_key: str = "",
                 *,
@@ -5525,9 +5936,12 @@ class MediaGUIManager:
                     if not yn_fix:
                         return
                     try:
-                        new_row = _clone_channel_video_for_new_project(vd, launch_cfg)
+                        topic_row = copy.deepcopy(vd)
+                        _apply_project_config_to_list_row(
+                            topic_row, launch_cfg, channel_path=self.channel_path or ""
+                        )
                         target_path = _upsert_topic_category_program_list_row(
-                            self.channel_path, tc, new_row
+                            self.channel_path, tc, topic_row
                         )
                         target_ix = project_manager.find_list_row_index_by_pid(
                             target_path, cfg_pid
@@ -5551,38 +5965,42 @@ class MediaGUIManager:
             def _after_new_project_created(
                 selected_config,
                 *,
-                cloned_from_pid: str = "",
-                append_new_list_row: bool = False,
+                superseded_pid: str = "",
             ):
                 _pid = (selected_config.get("pid") or "").strip()
                 if not _pid:
                     return
-                list_row = vd
-                select_key = _channel_list_row_tree_key(vd)
-                if append_new_list_row or cloned_from_pid:
-                    try:
-                        list_row = _clone_channel_video_for_new_project(vd, selected_config)
-                    except Exception as exc:
-                        messagebox.showerror(
-                            "写入频道列表失败",
-                            f"无法生成新项目列表行：{exc}",
-                            parent=parent,
-                        )
-                        return
-                    self.downloader.channel_videos.append(list_row)
-                    select_key = _channel_list_row_tree_key(list_row)
-                else:
-                    _apply_project_config_to_list_row(vd, selected_config)
-                    select_key = _channel_list_row_tree_key(vd)
-
-                _persist_channel_list_and_refresh_tree(
-                    select_key,
-                    reopen_summary=bool(append_new_list_row or cloned_from_pid),
-                )
+                ch_path = self.channel_path or ""
+                list_path = (self.downloader.channel_list_json or "").strip()
                 tc = (
-                    (list_row.get("topic_category") or selected_config.get("topic_category") or "")
+                    (vd.get("topic_category") or selected_config.get("topic_category") or "")
                     .strip()
                 )
+                viewing_topic_list = _is_viewing_topic_category_program_list(
+                    ch_path, list_path, tc
+                )
+                old_pid = (superseded_pid or "").strip()
+
+                if viewing_topic_list:
+                    # 在主题分表中「新建项目」：保留源行，追加独立项目行（计数 +1）
+                    new_row = _clone_channel_video_for_new_project(vd, selected_config)
+                    _normalize_channel_list_item_for_storage(new_row, ch_path)
+                    self.downloader.channel_videos.append(new_row)
+                    select_key = _channel_list_row_tree_key(new_row)
+                else:
+                    # 在频道热门总表中：仅更新源 YouTube 行，不向总表克隆重复行
+                    _apply_project_config_to_list_row(
+                        vd, selected_config, channel_path=ch_path
+                    )
+                    self.downloader.channel_videos = _drop_cloned_duplicates_of_row(
+                        self.downloader.channel_videos, vd
+                    )
+                    select_key = _channel_list_row_tree_key(vd)
+                    if old_pid and old_pid != _pid:
+                        _remove_pid_from_topic_category_lists(ch_path, old_pid)
+
+                _persist_channel_list_and_refresh_tree(select_key, reopen_summary=False)
+
                 if not tc:
                     messagebox.showwarning(
                         "项目已创建",
@@ -5591,17 +6009,21 @@ class MediaGUIManager:
                         parent=parent,
                     )
                     return
-                try:
-                    topic_list_path = _upsert_topic_category_program_list_row(
-                        self.channel_path, tc, list_row
-                    )
-                except Exception as exc:
-                    messagebox.showerror(
-                        "项目已创建",
-                        f"PID：{_pid}\n\n写入主题分表失败：\n{exc}",
-                        parent=parent,
-                    )
-                    return
+                if viewing_topic_list:
+                    # 当前列表即主题分表，persist 已写入；勿再 upsert 追加导致磁盘多一行而内存不同步
+                    topic_list_path = list_path
+                else:
+                    try:
+                        topic_list_path = _upsert_topic_category_program_list_row(
+                            ch_path, tc, copy.deepcopy(vd)
+                        )
+                    except Exception as exc:
+                        messagebox.showerror(
+                            "项目已创建",
+                            f"PID：{_pid}\n\n写入主题分表失败：\n{exc}",
+                            parent=parent,
+                        )
+                        return
 
                 if not messagebox.askyesno(
                     "项目已创建",
@@ -5622,7 +6044,7 @@ class MediaGUIManager:
                 topic_category_kw=None,
                 topic_subtype_kw=None,
                 topic_tags_kw=None,
-                cloned_from_pid: str = "",
+                superseded_pid: str = "",
             ):
                 if not config.analyzed_content_text(analyzed_content).strip() or not _scene_content_nonempty(
                     {"scene_content": scene_content}
@@ -5651,8 +6073,7 @@ class MediaGUIManager:
                 if result == "new" and selected_config:
                     _after_new_project_created(
                         selected_config,
-                        cloned_from_pid=cloned_from_pid,
-                        append_new_list_row=bool(cloned_from_pid),
+                        superseded_pid=superseded_pid,
                     )
 
             def _load_bound_project_cfg():
@@ -5695,7 +6116,7 @@ class MediaGUIManager:
                     topic_category_kw=_topic_category_val(),
                     topic_subtype_kw=_topic_subtype_val(),
                     topic_tags_kw=_topic_tags_val(),
-                    cloned_from_pid=existing_pid or "",
+                    superseded_pid=existing_pid or "",
                 )
                 return
 
@@ -5741,7 +6162,7 @@ class MediaGUIManager:
                                 topic_category_kw=_topic_category_val(cfg),
                                 topic_subtype_kw=_topic_subtype_val(cfg),
                                 topic_tags_kw=_topic_tags_val(cfg),
-                                cloned_from_pid=cfg_pid,
+                                superseded_pid=cfg_pid,
                             )
                             return
                 else:
@@ -5868,6 +6289,130 @@ class MediaGUIManager:
             _refresh_summary_window_title(summary_window, video_detail)
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
+
+            # 视频名称（第一行，可编辑；保存信息时一并写回列表）
+            has_project_profile = project_manager.list_json_row_has_project_profile(
+                video_detail
+            )
+            title_frame = ttk.LabelFrame(main_frame, text="视频名称", padding=10)
+            title_frame.pack(fill=tk.X, pady=(0, 10))
+            source_title_var = tk.StringVar(
+                value=_youtube_row_source_title(video_detail)
+            )
+            project_title_var = tk.StringVar(
+                value=_youtube_row_project_title(video_detail)
+            )
+            if has_project_profile:
+                ttk.Label(
+                    title_frame,
+                    text="原视频标题:",
+                    font=("Arial", 10, "bold"),
+                ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
+                source_title_entry = ttk.Entry(
+                    title_frame, textvariable=source_title_var, width=36
+                )
+                source_title_entry.grid(
+                    row=0, column=1, sticky="ew", padx=(0, 12), pady=4
+                )
+                ttk.Label(
+                    title_frame,
+                    text="项目成片名:",
+                    font=("Arial", 10, "bold"),
+                ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=4)
+                project_title_entry = ttk.Entry(
+                    title_frame, textvariable=project_title_var, width=36
+                )
+                project_title_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=4)
+                title_frame.columnconfigure(1, weight=1)
+                title_frame.columnconfigure(3, weight=1)
+            else:
+                ttk.Label(
+                    title_frame,
+                    text="标题:",
+                    font=("Arial", 10, "bold"),
+                ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
+                source_title_entry = ttk.Entry(
+                    title_frame, textvariable=source_title_var, width=80
+                )
+                source_title_entry.grid(
+                    row=0, column=1, sticky="ew", padx=5, pady=4, columnspan=3
+                )
+                title_frame.columnconfigure(1, weight=1)
+                project_title_entry = None
+
+            feature_media_var = tk.StringVar(value="")
+            media_btn_row = ttk.Frame(title_frame)
+            media_btn_row.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(6, 2))
+            ttk.Label(
+                media_btn_row,
+                textvariable=feature_media_var,
+                font=("Arial", 9),
+            ).pack(side=tk.LEFT, anchor=tk.W, padx=(5, 10))
+            open_feature_folder_btn = ttk.Button(
+                media_btn_row,
+                text="打开成片文件夹",
+                width=16,
+            )
+            open_feature_folder_btn.pack(side=tk.LEFT, padx=(0, 6))
+            copy_cover_clipboard_btn = ttk.Button(
+                media_btn_row,
+                text="复制封面到剪贴板",
+                width=18,
+            )
+            copy_cover_clipboard_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+            def refresh_feature_media_row():
+                if not summary_window.winfo_exists():
+                    return
+                mp4_p = _find_gen_video_mp4_for_row(video_detail)
+                webp_p = _find_gen_video_webp_for_row(video_detail)
+                parts = []
+                if mp4_p:
+                    parts.append(f"成片: {os.path.basename(mp4_p)}")
+                if webp_p:
+                    parts.append(f"封面: {os.path.basename(webp_p)}")
+                if parts:
+                    feature_media_var.set("  |  ".join(parts))
+                else:
+                    gen_hint = _gen_video_storage_dir() or "(未配置 publish/gen_video)"
+                    feature_media_var.set(
+                        f"尚未拖入成片/封面（拖入 MP4 或图片到本窗，保存至 {gen_hint}）"
+                    )
+                try:
+                    copy_cover_clipboard_btn.config(
+                        state=tk.NORMAL if webp_p else tk.DISABLED
+                    )
+                except tk.TclError:
+                    pass
+
+            def on_open_feature_media_folder():
+                mp4_p = _find_gen_video_mp4_for_row(video_detail)
+                webp_p = _find_gen_video_webp_for_row(video_detail)
+                _open_feature_media_in_explorer(mp4_p, webp_p)
+
+            def on_copy_cover_to_clipboard():
+                webp_p = _find_gen_video_webp_for_row(video_detail)
+                if not webp_p:
+                    messagebox.showwarning(
+                        "提示",
+                        "尚无封面 WebP。\n请拖入图片或 Ctrl+Shift+V 粘贴图片到本窗口。",
+                        parent=summary_window,
+                    )
+                    return
+                if _copy_image_file_to_clipboard(summary_window, webp_p):
+                    messagebox.showinfo(
+                        "已复制",
+                        f"封面已复制到剪贴板：\n{os.path.basename(webp_p)}",
+                        parent=summary_window,
+                    )
+
+            open_feature_folder_btn.config(command=on_open_feature_media_folder)
+            copy_cover_clipboard_btn.config(command=on_copy_cover_to_clipboard)
+            refresh_feature_media_row()
+            if isinstance(summary_window._summary_drop_ctx, dict):
+                summary_window._summary_drop_ctx[
+                    "refresh_feature_media_row"
+                ] = refresh_feature_media_row
             
             # 主题信息编辑区域
             topic_frame = ttk.LabelFrame(main_frame, text="主题信息", padding=10)
@@ -5948,10 +6493,10 @@ class MediaGUIManager:
                     pass
 
             def do_story_view():
-                text = self._show_video_story_editor(
+                text = self.open_content_field_editor(
                     summary_window,
                     video_detail,
-                    allow_empty=True,
+                    "story",
                 )
                 if text is not None:
                     messagebox.showinfo(
@@ -5970,6 +6515,14 @@ class MediaGUIManager:
             # 保存按钮
             def save_story_info():
                 """保存主题信息"""
+                _apply_video_detail_titles_from_ui(
+                    video_detail,
+                    source_title=source_title_var.get(),
+                    project_title=project_title_var.get()
+                    if has_project_profile
+                    else "",
+                    channel_path=self.channel_path or "",
+                )
                 category = category_var.get().strip()
                 subtype = subtype_var.get().strip()
                 tags_text = tags_var.get().strip()
@@ -6009,9 +6562,19 @@ class MediaGUIManager:
                     refresh_publish_row()
                 except Exception:
                     pass
+                try:
+                    _refresh_summary_window_title(summary_window, video_detail)
+                except Exception:
+                    pass
 
-                messagebox.showinfo("成功", f"主题信息已保存", parent=summary_window)
+                messagebox.showinfo("成功", f"视频名称与主题信息已保存", parent=summary_window)
 
+            def _on_title_entry_return(_event=None):
+                save_story_info()
+
+            source_title_entry.bind("<Return>", _on_title_entry_return)
+            if project_title_entry is not None:
+                project_title_entry.bind("<Return>", _on_title_entry_return)
 
             def on_find_similar_cases():
                 cur_id = _video_youtube_id(video_detail)
@@ -6180,6 +6743,10 @@ class MediaGUIManager:
                     pub_btn.config(state=btn_state)
                 except tk.TclError:
                     pass
+                try:
+                    refresh_feature_media_row()
+                except Exception:
+                    pass
 
             refresh_publish_row()
             if isinstance(summary_window._summary_drop_ctx, dict):
@@ -6208,17 +6775,19 @@ class MediaGUIManager:
                 def _after_content_summary():
                     do_re_category()
 
-                self._show_analyzed_content_editor(
+                self.open_content_field_editor(
                     summary_window,
                     video_detail,
+                    "analyzed_content",
                     on_saved=_after_content_field_saved,
                     on_content_summarized=_after_content_summary,
                 )
 
             def do_review_scene():
-                self._show_scene_content_editor(
+                self.open_content_field_editor(
                     summary_window,
                     video_detail,
+                    "scene_content",
                     on_saved=_after_content_field_saved,
                     main_character=(character_var.get() or "").strip(),
                     channel_path=self.channel_path or "",
@@ -6243,6 +6812,9 @@ class MediaGUIManager:
                 side=tk.LEFT, padx=(5, 5)
             )
             ttk.Button(right_btns, text="故事", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
+
+            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Button(right_btns, text="脚本", command=do_review_script).pack(
                 side=tk.LEFT, padx=(5, 5)
             )
@@ -6348,6 +6920,12 @@ class MediaGUIManager:
                         _sync_youtube_row_title_after_scene_edit(
                             video_detail, scene_list, self.language
                         )
+                        try:
+                            project_title_var.set(
+                                _youtube_row_project_title(video_detail)
+                            )
+                        except (NameError, tk.TclError):
+                            pass
                         _refresh_summary_window_title(summary_window, video_detail)
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
