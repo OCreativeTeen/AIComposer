@@ -1075,25 +1075,29 @@ class MagicWorkflow:
         self.save_scenes_to_json()
 
 
-    def upload_video(self, youtube_title, publish_at=None):
+    def upload_video(self, youtube_title, publish_at=None, description=None):
         """
         publish_at: None 表示立即按 privacy 上传（默认不公开列出）。
         若为 datetime（建议带本地时区），则使用 YouTube 定时公开（API 要求先 private + publishAt）。
+        description: YouTube 描述；未提供时回退为首场景 voiceover（旧行为）。
         """
         final_video_path = config.publish_final_video_path(self.pid)
         if not os.path.isfile(final_video_path):
             raise FileNotFoundError(
                 f"未找到成片：{final_video_path}\n请先使用「Video生成」导出。"
             )
-        # get "summary" from project_manager.PROJECT_CONFIG
-        summary = project_manager.PROJECT_CONFIG.get("scene_content",[{"voiceover",""}])
-        if isinstance(summary, dict):
-            summary = summary.get("voiceover", "")
-        elif isinstance(summary, list):
-            summary = summary[0].get("voiceover", "")
+        if description is not None:
+            summary = config.chinese_convert(description, self.language)
         else:
-            summary = ""
-        summary = config.chinese_convert(summary, self.language)
+            sc = project_manager.PROJECT_CONFIG.get("scene_content", [{"voiceover": ""}])
+            if isinstance(sc, dict):
+                summary = sc.get("voiceover", "")
+            elif isinstance(sc, list) and sc:
+                first = sc[0] if isinstance(sc[0], dict) else {}
+                summary = first.get("voiceover", "")
+            else:
+                summary = ""
+            summary = config.chinese_convert(summary, self.language)
 
         # thumbnail_path = f"{config.get_project_path(self.pid)}/thumbnail.png"
         thumbnail_path = None

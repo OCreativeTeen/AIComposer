@@ -37,15 +37,26 @@ Output format:
         }}
 """
 
-SPEAKING_CONCISE_SYSTEM_PROMPT = (
-    "You are a text condenser. From the user's ORIGINAL content below, rewrite it in a very casual, spoken style. Keep the original language (Chinese) !!!"
+SCREEN_CORE_PROMPT = (
+    "You are an expert at capturing the absolute essence of a narrative. Your task is to extract the single most critical 'punchline' or 'finishing touch' (画龙点睛) from the provided content (speech, story, or scene description).\n"
+    "This output will be displayed as HUGE text on a screen, so it must instantly convey the core point or theme of the scene at a glance.\n"
+    "Strict Constraints:\n"
+    "1. Language: Output MUST be in {language} only.\n"
+    "2. Length: If {language} is Chinese, MUST NOT exceed 10 characters. If English, MUST NOT exceed 4-5 words.\n"
+    "3. Style: Powerful, impactful, and ultra-concise. Eliminate all filler words, explanations, or conversational fluff.\n"
+    "Output ONLY the final short phrase or sentence. Do not include any introductory text, quotes, or explanations."
+)
+
+
+SPEAKING_CONCISE_PROMPT = (
+    "You are a text condenser. From the user's ORIGINAL content below, rewrite it in a very casual, spoken style.\n"
+    "Output language: {language} ONLY.\n"
     "Keep only the main point. Use one sentence or two short sentences if needed. "
     "Keep it simple, clear, and conversational, like everyday chatting. "
     "Avoid formal or written tone. Use common, easy words. "
     "If the idea feels long, split it into two short sentences. "
-    "Keep original language. Keep basic punctuation (periods, commas). "
+    "Keep basic punctuation (periods, commas). "
     "Do not add anything else."
-    "Ouput with the original language (Chinese) !!!"
 )
 
 
@@ -195,39 +206,36 @@ In {language}.
 
 
 
-
-YOUTUBE_SUMMARY_SYSTEM_PROMPT = """
+YOUTUBE_PUBLISH_DESCRIPTION_PROMPT = """
 Role:
-    - You are an expert editor, narrative organizer, and information architect specializing in YouTube content summaries and audience-focused storytelling.
+    - You are an expert editor, narrative organizer, and counselor-minded storyteller specializing in YouTube video descriptions and audience-focused psychological insight.
 
 Task:
-    - Read the provided article, script, transcript, or long-form video description.
-    - Create a concise and compelling YouTube video description in {language}.
-    - Focus only on the core essence of the content.
-    - Clearly explain:
-        • what the video is about
-        • the central story or theme
-        • important people, events, or emotional conflicts
-        • the key insight, message, or takeaway
-    - Preserve the emotional tone and narrative depth of the original content.
-    - If the content contains a powerful moment, surprising twist, historical background, human struggle, or meaningful lesson, briefly highlight it.
-    - Make the summary engaging and easy for viewers to immediately understand why the video matters.
+    - Read the provided source material below (voiceover, full scene script/JSON, analyzed editorial notes, transcript, or any mix the user supplies).
+    - Write a concise and compelling YouTube video description in {language}.
+    - Focus only on the core essence—especially the psychological heart of the story:
+        • what this video is really about (the lived problem or question)
+        • the central inner conflict, emotional wound, or root cause beneath the surface
+        • the key insight, turning point, or message
+        • a brief hint of relief, path forward, or takeaway—so viewers immediately understand why this video matters to them
+    - Preserve emotional tone and narrative depth; highlight a powerful moment or human struggle when present.
+    - Do NOT summarize line-by-line, scene-by-scene, or quote long passages from the source.
 
 Writing style:
-    - Natural, fluent, and modern English.
+    - Natural, fluent, modern {language}.
     - Concise but emotionally impactful.
-    - Avoid unnecessary details, repetition, or overly generic wording.
-    - Do NOT summarize line-by-line.
-    - Do NOT use bullet points unless explicitly requested.
-    - Write like a professional YouTube documentary/channel description.
+    - Avoid unnecessary details, repetition, or generic wording.
+    - Do NOT use bullet points unless essential.
+    - No hashtags, no "subscribe" boilerplate, no markdown headers.
+    - Write like a professional YouTube documentary / counseling channel description.
 
 Length:
     - Keep the description relatively short.
-    - Usually between 80–180 words unless otherwise specified.
+    - Usually between 80–180 words (or proportional brevity for {language}).
     - Prioritize clarity, emotional impact, and narrative focus over completeness.
 
 Output format:
-    - Output only the final rewritten YouTube description in {language}.
+    - Output only the final YouTube description in {language}.
 """
 
 

@@ -157,11 +157,11 @@ def ask_speaking_concise_review_dialog(
     remix_fn: Callable[[str], str],
     *,
     title: str = "审阅文案",
+    initial_edit: Optional[str] = None,
 ) -> Optional[str]:
-    """弹窗：只读「原文」+ 可编辑定稿区；「Remix」对当前编辑区全文调用 ``remix_fn``；「确定」返回定稿（用于 $$$/@@@ 同一正文）。
+    """弹窗：只读「原文」+ 可编辑定稿区；「Remix」对原文调用 ``remix_fn``；「确定」返回定稿。
 
-    remix_fn: 接受当前编辑文本，返回 LLM 摘要结果（调用方负责 ``chinese_convert`` 等）。
-    取消返回 None。
+    ``initial_edit`` 非空时定稿区初始值与之相同（原文仍为 ``original_content``，如字幕审阅用 speaking 作原文）。
     """
     result: list[Optional[str]] = [None]
 
@@ -206,14 +206,15 @@ def ask_speaking_concise_review_dialog(
         font=("Arial", 10),
     )
     edit_w.pack(fill=tk.BOTH, expand=True, pady=(2, 8))
-    edit_w.insert("1.0", original_content or "")
+    edit_seed = initial_edit if initial_edit is not None else (original_content or "")
+    edit_w.insert("1.0", edit_seed)
 
     btn_bar = ttk.Frame(main)
     btn_bar.pack(fill=tk.X, pady=(4, 0))
 
     def reset_from_original() -> None:
         edit_w.delete("1.0", tk.END)
-        edit_w.insert("1.0", original_content or "")
+        edit_w.insert("1.0", edit_seed)
 
     def do_remix() -> None:
         raw = original_content #edit_w.get("1.0", tk.END)
@@ -254,7 +255,17 @@ def ask_speaking_concise_review_dialog(
     return result[0]
 
 
-def post_nested_clipboard_menu(root, choices_dict, speaker, content, event, max_label_len=72):
+def post_nested_clipboard_menu(
+    root,
+    choices_dict,
+    speaker,
+    content,
+    event,
+    max_label_len=72,
+    *,
+    menu_x=None,
+    menu_y=None,
+):
     if not choices_dict:
         return "break"
 
@@ -289,13 +300,36 @@ def post_nested_clipboard_menu(root, choices_dict, speaker, content, event, max_
                 command=lambda t=text: _copy(t),
             )
         m.add_cascade(label=cn_key, menu=sub)
-    try:
+
+    if menu_x is None or menu_y is None:
         if event is not None:
-            m.post(event.x_root, event.y_root)
-        else:
-            m.post(root.winfo_rootx() + 40, root.winfo_rooty() + 40)
-    except tk.TclError:
-        pass
+            try:
+                menu_x = int(event.x_root)
+                menu_y = int(event.y_root)
+            except (AttributeError, tk.TclError, TypeError, ValueError):
+                menu_x = menu_y = None
+    if menu_x is None or menu_y is None:
+        root.update_idletasks()
+        menu_x = root.winfo_rootx() + 40
+        menu_y = root.winfo_rooty() + 40
+
+    def _show_menu() -> None:
+        try:
+            root.update_idletasks()
+            m.tk_popup(menu_x, menu_y)
+        except tk.TclError:
+            try:
+                m.post(menu_x, menu_y)
+            except tk.TclError:
+                pass
+        finally:
+            try:
+                m.grab_release()
+            except tk.TclError:
+                pass
+
+    # 审阅对话框关闭后 grab 可能尚未完全释放；延后到 idle 再弹出菜单
+    root.after_idle(_show_menu)
     return "break"
 
 

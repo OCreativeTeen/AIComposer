@@ -14,6 +14,9 @@ Create string video clip for "Mind Spring Melody" program -- (a song for the 心
 simplify the  words in the image,  突出重点, 可以减少项目
 
 
+Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt.
+
+
 Generate the Slide-Show, following the info from the source named 'Pasted Text / 粘贴的文字'
 * The slide-show content (Image & Words) is purely about the "Story Json-Content" section (2nd half) of the source (named 'Pasted Text / 粘贴的文字')
 * The generation instruction in the 1st half of "'Pasted Text / 粘贴的文字'" is just only guide about how to generate the slide-show (NOT the slide-show content at all).

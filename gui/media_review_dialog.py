@@ -485,6 +485,11 @@ class AVReviewDialog:
         self.media_split_combo.bind("<<ComboboxSelected>>", lambda e: _sync_media_split())
         _sync_media_split()
 
+        ttk.Button(
+            fresh_buttons_frame,
+            text="替视频",
+            command=self.confirm_video_only_replacement,
+        ).pack(side=tk.RIGHT, padx=(0, 5))
         ttk.Button(fresh_buttons_frame, text="替换", command=self.confirm_replacement).pack(side=tk.RIGHT)
         ttk.Button(fresh_buttons_frame, text="取消", command=self.cancel).pack(side=tk.RIGHT)
         
@@ -2002,6 +2007,95 @@ class AVReviewDialog:
             'transcribe_way': self.transcribe_way
         }
         self.close_dialog()
+
+
+    def confirm_video_only_replacement(self):
+        """仅替换视频：按标尺裁剪预览视频，拉伸/压缩画面以匹配场景原有音频时长，音频文件不变。"""
+        if not self.source_video_path or not os.path.isfile(self.source_video_path):
+            messagebox.showwarning("提示", "无可用预览视频。", parent=self.dialog)
+            return
+
+        self.confirm_edit_timeline_change()
+        fp = self.workflow.ffmpeg_processor
+        fa = self.workflow.ffmpeg_audio_processor
+
+        def _apply_video_keep_audio(scene_dict, start, end):
+            scene_audio_path = safe_file(get_file_path(scene_dict, self.audio_field))
+            if not scene_audio_path:
+                raise ValueError(f"场景缺少 {self.audio_field} 音频文件")
+            target_duration = float(fa.get_duration(scene_audio_path) or 0.0)
+            if target_duration <= 0.05:
+                raise ValueError("场景音频时长无效")
+
+            start_f = max(0.0, float(start))
+            end_f = float(end)
+            if end_f <= start_f + 0.05:
+                raise ValueError("剪辑区间无效")
+
+            src_dur = float(fp.get_duration(self.source_video_path) or 0.0)
+            if src_dur > 0:
+                end_f = min(end_f, src_dur)
+
+            if start_f > 0.05 or (src_dur > 0 and abs(end_f - src_dur) > 0.05):
+                trimmed = fp.trim_video(self.source_video_path, start_f, end_f)
+            else:
+                trimmed = self.source_video_path
+
+            final_v = fp.add_audio_to_video(
+                trimmed,
+                scene_audio_path,
+                match_audio_length=True,
+                when_longer="speed",
+            )
+            if not final_v or not os.path.isfile(final_v):
+                raise ValueError("生成视频失败")
+
+            _refresh_scene_media(scene_dict, self.video_field, ".mp4", final_v, True)
+
+            first_image = scene_dict.get(self.image_field)
+            if not first_image or not os.path.exists(first_image):
+                first_image = self._extract_or_fallback_frame(final_v, True)
+                if first_image:
+                    _refresh_scene_media(scene_dict, self.image_field, ".webp", first_image)
+            last_image = self._extract_or_fallback_frame(final_v, False)
+            if last_image:
+                _refresh_scene_media(
+                    scene_dict, self.image_field + "_last", ".webp", last_image, True
+                )
+
+        try:
+            if self.media_type != "clip" or len(self.audio_json) == 1:
+                scene = self.audio_json[0]
+                start = scene.get("start", 0.0)
+                end = scene.get("end", self.audio_duration)
+                _apply_video_keep_audio(scene, start, end)
+            elif self.clip_multiple_audio_changed():
+                if self.media_split != "split":
+                    messagebox.showwarning(
+                        "提示",
+                        "「替视频」需要按区间切割，请将「媒体分离」设为 split。",
+                        parent=self.dialog,
+                    )
+                    return
+                applied = 0
+                for item in self.audio_json:
+                    duration = item.get("duration", 0)
+                    if duration <= 0:
+                        continue
+                    _apply_video_keep_audio(item, item["start"], item["end"])
+                    applied += 1
+                print(f"✓ 已按区间替换 {applied} 个场景视频（音频未改动）")
+            else:
+                scene = self.audio_json[0]
+                _apply_video_keep_audio(scene, 0.0, self.audio_duration)
+
+            self.result = {
+                "audio_json": self.audio_json,
+                "transcribe_way": self.transcribe_way,
+            }
+            self.close_dialog()
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("错误", f"仅替换视频失败: {e}", parent=self.dialog)
 
 
     def _get_fallback_frame_image(self):

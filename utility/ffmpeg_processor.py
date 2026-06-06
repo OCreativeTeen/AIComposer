@@ -1136,13 +1136,14 @@ class FfmpegProcessor:
             audio_duration = self.get_duration(audio_path)
 
             if match_audio_length:
-                # Use a small tolerance (0.1s) to handle floating-point precision issues
-                duration_diff = audio_duration - self.get_duration(video_path)
-                
+                video_duration = self.get_video_stream_duration(video_path)
+                duration_diff = audio_duration - video_duration
+
                 if duration_diff > 0.1 or duration_diff < -0.1:
                     video_path = self.adjust_video_to_duration(
                         video_path, audio_duration, when_longer=when_longer
                     )
+                    self.invalidate_duration_cache(video_path)
 
             cmd = self._ffmpeg_input_args(video_path, audio_path)
 
@@ -2350,6 +2351,27 @@ class FfmpegProcessor:
             print(f"FFmpeg Error: {e}")
             return 0.0
 
+    def get_video_stream_duration(self, filename):
+        """视频流时长（忽略更长的音轨，避免 format duration 误判）。"""
+        if not filename:
+            return 0.0
+        try:
+            result = self.run_ffmpeg_command([
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filename,
+            ])
+            if result.returncode == 0 and result.stdout.strip():
+                duration = float(result.stdout.strip())
+                if duration > 0:
+                    return duration
+        except Exception as e:
+            print(f"FFmpeg video stream duration error: {e}")
+        return self.get_duration(filename)
+
     @classmethod
     def clear_duration_cache(cls):
         """Clear all cached duration values"""
@@ -3257,7 +3279,7 @@ class FfmpegProcessor:
 
     def add_script_to_video(self, input_video_path, content, font):
         position = "footer"
-        font_size = 90
+        font_size = 120
         if content.lower().startswith("h_"):
             position = "header"
             content = content[2:]   
@@ -3269,17 +3291,21 @@ class FfmpegProcessor:
             content = content[2:]
         elif content.lower().startswith("hm_"):
             position = "header"
+            font_size = 90
             content = content[3:]
         elif content.lower().startswith("bm_"):
             position = "body"
+            font_size = 90
             content = content[3:]
         elif content.lower().startswith("fm_"):
             position = "footer"
+            font_size = 90
+            font_size = 120
             content = content[3:]
         elif content.lower().startswith("hl_"):
             font_size = 150
             position = "header"
-            content = content[2:]   
+            content = content[3:]   
         elif content.lower().startswith("bl_"):
             font_size = 150
             position = "body"
@@ -3290,15 +3316,15 @@ class FfmpegProcessor:
             content = content[3:]
         elif content.lower().startswith("hs_"):
             position = "header"
-            font_size = 40
+            font_size = 60
             content = content[3:]
         elif content.lower().startswith("bs_"):
             position = "body"
-            font_size = 40
+            font_size = 60
             content = content[3:]
         elif content.lower().startswith("fs_"):
             position = "footer"
-            font_size = 40
+            font_size = 60
             content = content[3:]
 
         content = content.replace("\r", "")
@@ -3814,86 +3840,152 @@ class FfmpegProcessor:
         self, input_video_path, output_video_path, target_duration, segment_duration=None
     ):
         """
-        用 setpts 拉伸/压缩时间轴，使画面时长接近 target_duration（输出无音频，与原先短于目标时的逻辑一致）。
+        用 setpts 拉伸/压缩时间轴，使画面时长接近 target_duration（仅输出视频轨，不含音频）。
         """
         if segment_duration is None:
-            segment_duration = self.get_duration(input_video_path)
+            segment_duration = self.get_video_stream_duration(input_video_path)
         if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
             self._copy_file_with_retry(input_video_path, output_video_path)
             return True
 
         speed_factor = segment_duration / target_duration
-        print(f"🎬 Adjusting video speed, speed factor: {speed_factor:.3f}x")
-        result = self.run_ffmpeg_command([
-            ffprobe_path,
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=r_frame_rate",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            input_video_path
-        ])
-
-        fps_fraction = result.stdout.strip()
-        if "/" in fps_fraction:
-            num, den = fps_fraction.split("/")
-            original_fps = float(num) / float(den)
-        else:
-            original_fps = float(fps_fraction)
-
-        if original_fps <= 0:
-            original_fps = -original_fps
-
         setpts_multiplier = 1.0 / speed_factor
-        video_filter = f"setpts={setpts_multiplier}*PTS,fps={original_fps}"
+        print(
+            f"🎬 Speed match: {segment_duration:.3f}s → {target_duration:.3f}s "
+            f"(factor {speed_factor:.3f}x, setpts {setpts_multiplier:.6f})"
+        )
+        vf = (
+            f"setpts={setpts_multiplier:.9f}*PTS,"
+            f"trim=duration={target_duration:.6f},"
+            f"setpts=PTS-STARTPTS"
+        )
 
         cmd = self._ffmpeg_input_args(input_video_path)
-        cmd.extend(self._get_audio_encode_args(bitrate=None))
         cmd.extend(self._get_video_output_args(keyframe_interval=False))
-        cmd.extend(["-vf", video_filter, output_video_path])
+        cmd.extend([
+            "-map", "0:v:0",
+            "-an",
+            "-vf", vf,
+            "-t", f"{target_duration:.6f}",
+            output_video_path,
+        ])
 
         print(f"🔧 FFmpeg command: {' '.join(cmd)}")
         self.run_ffmpeg_command(cmd)
+        self.invalidate_duration_cache(output_video_path)
         return True
 
-
-    def adjust_video_to_duration(self, input_video_path, target_duration, when_longer):
-        """
-        将视频时长对齐到 target_duration。
-
-        when_longer:
-            - "trim"：素材比目标长则裁剪到 target_duration（原行为）。
-            - "speed"：比目标长则加速（setpts，与比目标短时变慢相同方式），不裁剪。
-        """
-        output_video_path = config.get_temp_file(self.pid, "mp4")
-
-        segment_duration = self.get_duration(input_video_path)
+    def _extend_video_only_to_duration(self, input_video_path, target_duration, output_video_path):
+        """视频短于目标：末帧 clone 延长到 target_duration（仅视频轨）。"""
+        segment_duration = self.get_video_stream_duration(input_video_path)
         if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
             self._copy_file_with_retry(input_video_path, output_video_path)
             return output_video_path
 
-        want_speed = segment_duration < target_duration or (
-            segment_duration > target_duration and when_longer == "speed"
-        )
+        extend_by = target_duration - segment_duration
+        if extend_by <= 0.01:
+            self._copy_file_with_retry(input_video_path, output_video_path)
+            return output_video_path
 
-        if want_speed:
+        print(
+            f"🎬 Extend video: {segment_duration:.3f}s → {target_duration:.3f}s "
+            f"(tpad +{extend_by:.3f}s)"
+        )
+        cmd = self._ffmpeg_input_args(input_video_path)
+        cmd.extend(self._get_video_output_args(keyframe_interval=True))
+        cmd.extend([
+            "-map", "0:v:0",
+            "-an",
+            "-vf", f"tpad=stop_duration={extend_by:.6f}:stop_mode=clone",
+            "-t", f"{target_duration:.6f}",
+            output_video_path,
+        ])
+        self.run_ffmpeg_command(cmd)
+        self.invalidate_duration_cache(output_video_path)
+        return output_video_path
+
+    def _trim_video_only_to_duration(self, input_video_path, target_duration, output_video_path):
+        """视频长于目标：裁剪到 target_duration（仅视频轨）。"""
+        segment_duration = self.get_video_stream_duration(input_video_path)
+        if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
+            self._copy_file_with_retry(input_video_path, output_video_path)
+            return output_video_path
+
+        if segment_duration <= target_duration + 0.05:
+            self._copy_file_with_retry(input_video_path, output_video_path)
+            return output_video_path
+
+        print(
+            f"🎬 Trim video: {segment_duration:.3f}s → {target_duration:.3f}s"
+        )
+        vf = f"trim=duration={target_duration:.6f},setpts=PTS-STARTPTS"
+        cmd = self._ffmpeg_input_args(input_video_path)
+        cmd.extend(self._get_video_output_args(keyframe_interval=False))
+        cmd.extend([
+            "-map", "0:v:0",
+            "-an",
+            "-vf", vf,
+            "-t", f"{target_duration:.6f}",
+            output_video_path,
+        ])
+        self.run_ffmpeg_command(cmd)
+        self.invalidate_duration_cache(output_video_path)
+        return output_video_path
+
+    def adjust_video_to_duration(self, input_video_path, target_duration, when_longer="trim"):
+        """
+        将视频画面时长对齐到 target_duration（仅处理视频轨，输出无音频）。
+
+        when_longer 作为对齐模式（不仅限于「更长」）:
+            - "speed": 任意长短均用 setpts 变速对齐（慢放或加速）
+            - "trim": 比目标长则裁剪；比目标短则末帧 clone 延长（tpad）
+        """
+        output_video_path = config.get_temp_file(self.pid, "mp4")
+
+        segment_duration = self.get_video_stream_duration(input_video_path)
+        if target_duration <= 0.0 or abs(segment_duration - target_duration) < 0.1:
+            self._copy_file_with_retry(input_video_path, output_video_path)
+            return output_video_path
+
+        if when_longer == "speed":
             try:
                 self._speed_match_video_duration(
                     input_video_path, output_video_path, target_duration, segment_duration
                 )
+                out_dur = self.get_video_stream_duration(output_video_path)
+                if out_dur > target_duration + 0.15:
+                    print(
+                        f"⚠️ Speed match still long ({out_dur:.3f}s > {target_duration:.3f}s), trimming"
+                    )
+                    return self._trim_video_only_to_duration(
+                        output_video_path, target_duration, config.get_temp_file(self.pid, "mp4")
+                    )
+                if out_dur < target_duration - 0.15:
+                    print(
+                        f"⚠️ Speed match still short ({out_dur:.3f}s < {target_duration:.3f}s), extending"
+                    )
+                    return self._extend_video_only_to_duration(
+                        output_video_path, target_duration, config.get_temp_file(self.pid, "mp4")
+                    )
                 return output_video_path
             except Exception as e:
-                print(f"❌ Speed adjustment failed: {str(e)}")
-                return input_video_path
+                print(f"❌ Speed adjustment failed: {e}")
+                if segment_duration < target_duration:
+                    return self._extend_video_only_to_duration(
+                        input_video_path, target_duration, output_video_path
+                    )
+                return self._trim_video_only_to_duration(
+                    input_video_path, target_duration, output_video_path
+                )
 
-        new_clip_v = self.trim_video(input_video_path, 0, target_duration)
-        if not new_clip_v:
-            return input_video_path
-        self._copy_file_with_retry(new_clip_v, output_video_path)
-        try:
-            os.remove(new_clip_v)
-        except OSError:
-            pass
-        return output_video_path
+        if segment_duration < target_duration:
+            return self._extend_video_only_to_duration(
+                input_video_path, target_duration, output_video_path
+            )
+
+        return self._trim_video_only_to_duration(
+            input_video_path, target_duration, output_video_path
+        )
 
 
     def add_subtitle(self, output_path, video_path, subtitle_path, font, font_size):

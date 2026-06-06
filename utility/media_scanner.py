@@ -308,7 +308,9 @@ class MediaScanner:
             input_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(input_video)
 
         scene_video = current_scene.get(media_type, None)
-        scene_audio = current_scene.get(media_type+"_audio", None)
+        scene_audio = get_file_path(current_scene, media_type + "_audio") or current_scene.get(
+            media_type + "_audio", None
+        )
 
         if not scene_video or not scene_audio: # keep 
             refresh_scene_media(current_scene, media_type+"_audio", ".wav", input_audio)
