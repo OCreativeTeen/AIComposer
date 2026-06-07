@@ -44,7 +44,7 @@ Core-insight ('soul'):
 """
 
 
-MV_ANALYZE = """
+MV_ANALYZE_OLD = """
 Role:
     - You are an expert musicologist, elite lyricist, and veteran music producer. Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its comprehensive Musical & Lyrical DNA. 
     - Your analysis must decode not just the sound, but how the lyrical structure, narrative pacing, and emotional twists synergize with the music, providing a reusable blueprint for songwriting and production.
@@ -85,36 +85,251 @@ Steps:
 """
 
 
-MV_ANALYZE_OLD = """
+MV_ANALYZE_2 = """
 Role:
-    - You are a professional to analyze song & music, from the specified YouTube link ({url}), and then produce the musical DNA details like:
-        -- style, mood, emotion, atmosphere, regional and historical context, tempo, structure, harmony, melody, rhythm, groove, 
-        -- instrumentation, vocal speakeristics, backing vocals, lyrical themes, , expression style, , expression content, transitions, etc
+    - You are an expert musicologist, elite lyricist, veteran music producer, and vocal-performance analyst.
+    - Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its complete Musical, Vocal, Emotional, and Lyrical DNA.
+    - Your analysis must decode not only the composition and production, but also the singer’s vocal identity, emotional delivery mechanics, performance psychology, and the subtle human imperfections that create emotional realism.
+    - The goal is to provide a reusable blueprint for composing and producing a NEW original song with a similarly powerful emotional impact, atmosphere, vocal personality, and narrative progression.
 
 Steps:
-    1) Deep music analysis (extract reusable “finalized” details)
+
+    1) Deep Music, Vocal & Lyrical Architecture Analysis (Extract Reusable Insights)
+
         Analyze the track thoroughly and output a structured breakdown of the following attributes:
-        Genre / Style blend: primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral, etc.)
-        Mood arc & emotional narrative: what the listener feels over time; how tension resolves
-        Atmosphere & sonic palette: space (dry vs reverb), warmth/brightness, density, stereo width
-        Regional / historical vibe (if any): e.g., East Asian pentatonic hints, 80s retro synths, gospel choir flavor, etc.
-        Tempo & groove: BPM estimate, swing/straight, rhythmic feel, drum pattern traits
-        Key / mode & harmony language: major/minor, modal color (Dorian/Phrygian), chord movement style, tension tools
-        Instrumentation & arrangement: core instruments, signature sounds, layers, build strategies
-        Melody design: motifs, contour, “hook” behavior, call/response, repetition/variation
-        Vocals: vocal timbre, delivery, range, phrasing, vibrato, spoken vs sung; backing vocals style and placement
 
+        [Musical Dimensions]
+        - Genre / Style Blend:
+            Primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral).
 
-    2) Extract “DNA rules” (for future to generate a new song with a similar musical DNA) as output text content in {language}.
-        From the analysis, summarize the track’s non-obvious musical fingerprints, such as:
-            signature atmosphere and expression style
-            signature chord cadence types
-            signature rhythm patterns
-            signature synth/texture choices
-            signature vocal production (double, harmony stack, adlibs)
-            signature transitions (risers, drum fills, key lift, half-time, etc.)
+        - Mood Arc & Emotional Narrative:
+            How tension builds and resolves over time; what the listener experiences emotionally.
+
+        - Atmosphere & Sonic Palette:
+            Spatial design (reverb vs. dry), warmth/brightness, density, stereo width, intimacy vs. cinematic scale.
+
+        - Regional / Historical Vibe:
+            Cultural flavors or eras (e.g., 80s retro synths, East Asian pentatonic motifs, gospel elements).
+
+        - Tempo & Groove:
+            BPM estimate, swing/straight feel, rhythmic character, signature drum patterns, groove psychology.
+
+        - Key / Mode & Harmony Language:
+            Major/minor, modal color (Dorian, Phrygian, etc.), chord progression style, harmonic tension/release tools.
+
+        - Instrumentation & Arrangement:
+            Core instruments, signature sounds, layering strategies, transitions, build-up/drop/climax techniques.
+
+        - Melody Design:
+            Motifs, melodic contour, hook behavior, repetition vs. variation, emotional peak placement.
+
+        [Singer Identity & Vocal DNA]
+        - Core Vocal Identity:
+            What makes the singer instantly recognizable within seconds?
+
+        - Vocal Timbre & Texture:
+            Analyze breathiness, warmth, fragility, rasp, brightness/darkness, chest/head balance, intimacy, tonal texture across ranges.
+
+        - Vocal Delivery & Emotional Mechanics:
+            Explain how emotions are transmitted through phrasing, restraint/explosion, breath leakage, whisper transitions, vibrato, delayed timing, tension/release, vocal cracks, and dynamic control.
+
+        - Vocal Motion & Expression:
+            Analyze slides, pitch scoops, sustained vowels, conversational phrasing, rhythmic dragging/pushing, ad-libs, and improvisational/live-performance energy.
+
+        - Pronunciation & Personality:
+            Analyze diction, consonant softness/hardness, vowel stretching, slurring, accent flavor, and articulation personality.
+
+        - Range Usage & Emotional Psychology:
+            Explain how low/mid/high/falsetto/mixed registers are used emotionally throughout the song.
+
+        - Human Imperfections & Authenticity:
+            Identify subtle imperfections that create realism:
+            breath noise, instability, rasp, emotional strain, imperfect timing, saturation, live unpredictability.
+
+        - Microphone Intimacy & Spatial Feeling:
+            Describe whether the performance feels whispered, close-mic intimate, cinematic, distant, confessional, or stage-projected.
+
+        - Temporal Vocal Evolution:
+            Track how the singer’s emotional delivery evolves throughout the song:
+            restraint → vulnerability → eruption → exhaustion → transcendence.
+
+        - Vocal Production:
+            Vocal layering, harmony stacks, doubles, ad-lib placement, backing vocal behavior, stereo positioning, vocal FX usage.
+
+        [Lyrical Architecture & Narrative Dynamics]
+        - Structural Repetition & Patterns:
+            Analyze repetitions, refrain placement, structural motifs, and how repetition reinforces memorability.
+
+        - Pacing, Progression & Climax (渐进与高潮):
+            Analyze sentence length, syllable density, emotional escalation, and climax-building structure.
+
+        - Lyrical Twists & Reversals (翻转):
+            Identify narrative pivots, emotional flips, perspective shifts, or thematic reversals.
+
+        - Atmospheric Context & Wordplay:
+            Analyze imagery, metaphors, phonetic choices, emotional vocabulary, and world-building atmosphere.
+
+        [Lyric-Music Synergy (词曲协同)]
+        - Positive Musical Impact:
+            Detail how lyrical structure drives arrangement, transitions, drops, dynamic changes, instrumentation shifts, or emotional peaks.
+
+            Examples:
+            repeated words triggering rhythmic intensification,
+            emotional flips aligning with arrangement breakdowns,
+            silence before lyrical impact moments,
+            harmonic lift during emotional revelation.
+
+        [Recording Environment & Spatial Performance DNA]
+        - Recording Environment Characteristics:
+            Analyze the perceived recording environment and acoustic signature:
+            studio booth, intimate room, concert hall, stadium live, rehearsal room, cinematic stage, club performance, unplugged session, outdoor ambience, etc.
+
+        - Spatial Acoustics & Room Behavior:
+            Analyze room reflections, natural reverb, crowd ambience, air absorption, stereo depth, environmental resonance, and spatial realism.
+
+        - Live vs Studio Energy:
+            Identify whether the performance feels tightly controlled, emotionally intimate, raw live, crowd-driven, or performance-stage amplified.
+            Explain how the environment changes vocal delivery, dynamics, emotional tension, and listener immersion.
+
+        - Microphone & Capture Feel:
+            Analyze microphone proximity, room mic usage, audience bleed, ambient pickup, compression behavior, PA-system coloration, and recording texture.
+
+        - Environmental Emotional Psychology:
+            Explain how the recording environment contributes to emotional perception:
+            loneliness, grandeur, confession, nostalgia, cinematic scale, live excitement, spiritual atmosphere, vulnerability, etc.
+
+    2) Extract "Actionable Blueprint & DNA Rules" (For composing a NEW song)
+
+        Summarize the track’s non-obvious fingerprints into actionable creative rules so a songwriter, producer, or AI music system can reproduce a similar emotional experience in a completely NEW original composition.
+
+        Output this section in {language}:
+
+        - Signature Audio Vibe & Texture Choices
+        - Signature Chord Cadences & Rhythm Grooves
+        - Signature Arrangement, Build-up & Climax Techniques
+        - Signature Vocal Delivery & Emotional Expression Rules
+        - Signature Vocal Layering, Harmony & Ad-lib Rules
+        - Singer Persona & Emotional Archetype
+        - Lyrical Formatting Blueprint
+        - Narrative Pacing & Emotional Progression Template
+        - Lyric-to-Music Transition Triggers
+        - Humanization Rules:
+            Which imperfections, phrasing habits, breathing styles, and emotional details must remain to preserve realism, intimacy, and soul.
+
 """
 
+MV_ANALYZE = """
+Role:
+    - You are an expert musicologist, elite lyricist, veteran music producer, and vocal-performance analyst.
+    - Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its complete Musical, Vocal, Emotional, and Lyrical DNA.
+    - Your analysis must decode not only the composition and production, but also the singer’s vocal identity, emotional delivery mechanics, performance psychology, and the subtle human imperfections that create emotional realism.
+    - The goal is to provide a reusable blueprint for composing and producing a NEW original song with a similarly powerful emotional impact, atmosphere, vocal personality, and narrative progression.
+
+Steps:
+
+    1) Deep Music, Vocal & Lyrical Architecture Analysis (Extract Reusable Insights)
+
+        Analyze the track thoroughly and output a structured breakdown of the following attributes:
+
+        [Musical Dimensions]
+        - Genre / Style Blend:
+            Primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral).
+
+        - Mood Arc & Emotional Narrative:
+            How tension builds and resolves over time; what the listener experiences emotionally.
+
+        - Atmosphere & Sonic Palette:
+            Spatial design (reverb vs. dry), warmth/brightness, density, stereo width, intimacy vs. cinematic scale.
+
+        - Regional / Historical Vibe:
+            Cultural flavors or eras (e.g., 80s retro synths, East Asian pentatonic motifs, gospel elements).
+
+        - Tempo & Groove:
+            BPM estimate, swing/straight feel, rhythmic character, signature drum patterns, groove psychology.
+
+        - Key / Mode & Harmony Language:
+            Major/minor, modal color (Dorian, Phrygian, etc.), chord progression style, harmonic tension/release tools.
+
+        - Instrumentation & Arrangement:
+            Core instruments, signature sounds, layering strategies, transitions, build-up/drop/climax techniques.
+
+        - Melody Design:
+            Motifs, melodic contour, hook behavior, repetition vs. variation, emotional peak placement.
+
+        [Singer Identity & Vocal DNA]
+        - Core Vocal Identity:
+            What makes the singer instantly recognizable within seconds?
+
+        - Vocal Timbre & Texture:
+            Analyze breathiness, warmth, fragility, rasp, brightness/darkness, chest/head balance, intimacy, tonal texture across ranges.
+
+        - Vocal Delivery & Emotional Mechanics:
+            Explain how emotions are transmitted through phrasing, restraint/explosion, breath leakage, whisper transitions, vibrato, delayed timing, tension/release, vocal cracks, and dynamic control.
+
+        - Vocal Motion & Expression:
+            Analyze slides, pitch scoops, sustained vowels, conversational phrasing, rhythmic dragging/pushing, ad-libs, and improvisational/live-performance energy.
+
+        - Pronunciation & Personality:
+            Analyze diction, consonant softness/hardness, vowel stretching, slurring, accent flavor, and articulation personality.
+
+        - Range Usage & Emotional Psychology:
+            Explain how low/mid/high/falsetto/mixed registers are used emotionally throughout the song.
+
+        - Human Imperfections & Authenticity:
+            Identify subtle imperfections that create realism:
+            breath noise, instability, rasp, emotional strain, imperfect timing, saturation, live unpredictability.
+
+        - Microphone Intimacy & Spatial Feeling:
+            Describe whether the performance feels whispered, close-mic intimate, cinematic, distant, confessional, or stage-projected.
+
+        - Temporal Vocal Evolution:
+            Track how the singer’s emotional delivery evolves throughout the song:
+            restraint → vulnerability → eruption → exhaustion → transcendence.
+
+        - Vocal Production:
+            Vocal layering, harmony stacks, doubles, ad-lib placement, backing vocal behavior, stereo positioning, vocal FX usage.
+
+        [Lyrical Architecture & Narrative Dynamics]
+        - Structural Repetition & Patterns:
+            Analyze repetitions, refrain placement, structural motifs, and how repetition reinforces memorability.
+
+        - Pacing, Progression & Climax (渐进与高潮):
+            Analyze sentence length, syllable density, emotional escalation, and climax-building structure.
+
+        - Lyrical Twists & Reversals (翻转):
+            Identify narrative pivots, emotional flips, perspective shifts, or thematic reversals.
+
+        - Atmospheric Context & Wordplay:
+            Analyze imagery, metaphors, phonetic choices, emotional vocabulary, and world-building atmosphere.
+
+        [Lyric-Music Synergy (词曲协同)]
+        - Positive Musical Impact:
+            Detail how lyrical structure drives arrangement, transitions, drops, dynamic changes, instrumentation shifts, or emotional peaks.
+
+            Examples:
+            repeated words triggering rhythmic intensification,
+            emotional flips aligning with arrangement breakdowns,
+            silence before lyrical impact moments,
+            harmonic lift during emotional revelation.
+
+    2) Extract "Actionable Blueprint & DNA Rules" (For composing a NEW song)
+
+        Summarize the track’s non-obvious fingerprints into actionable creative rules so a songwriter, producer, or AI music system can reproduce a similar emotional experience in a completely NEW original composition.
+
+        Output this section in {language}:
+
+        - Signature Audio Vibe & Texture Choices
+        - Signature Chord Cadences & Rhythm Grooves
+        - Signature Arrangement, Build-up & Climax Techniques
+        - Signature Vocal Delivery & Emotional Expression Rules
+        - Signature Vocal Layering, Harmony & Ad-lib Rules
+        - Singer Persona & Emotional Archetype
+        - Lyrical Formatting Blueprint
+        - Narrative Pacing & Emotional Progression Template
+        - Lyric-to-Music Transition Triggers
+        - Humanization Rules:
+            Which imperfections, phrasing habits, breathing styles, and emotional details must remain to preserve realism, intimacy, and soul.
+"""
 
 
 MV_SIMPLE_REORGANIZE = """
@@ -1902,7 +2117,7 @@ CHANNEL_CONFIG = {
 
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
-            "analyze_prompt": MV_ANALYZE,
+            "analyze_prompt": MV_ANALYZE_2,
             "content_guide": MV_CONTENT_GUIDE,
             "init_multiple": MV_STORY_DEVELOPMENT,
             "init_single": MV_SIMPLE_REORGANIZE

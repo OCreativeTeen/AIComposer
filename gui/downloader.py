@@ -4183,6 +4183,21 @@ class MediaGUIManager:
         text = config.read_transcript_text_from_video_detail(video_detail)
         return text if text else None
 
+    def _analyze_content_source_text(
+        self, video_detail: dict, *, override: str | None = None
+    ) -> str:
+        """内容概括 / 生成 analyzed_content 的 LLM 用户输入：优先 override → 转录 → 已有 analyzed_content。"""
+        if override is not None:
+            ov = str(override).strip()
+            if ov:
+                return ov
+        t = (self.fetch_text_content(video_detail) or "").strip()
+        if t:
+            return t
+        return config.analyzed_content_text(
+            video_detail.get("analyzed_content"), self.language
+        ).strip()
+
 
     def _youtube_story_title_from_video_detail(self, video_detail) -> str:
         title = _youtube_row_display_title(video_detail or {})
@@ -4486,7 +4501,9 @@ class MediaGUIManager:
                 pass
             try:
                 rewritten = self._generate_analyzed_content_summary_text(
-                    video_detail, parent=dlg
+                    video_detail,
+                    parent=dlg,
+                    source_text=tx.get("1.0", tk.END),
                 )
             finally:
                 try:
@@ -4954,14 +4971,18 @@ class MediaGUIManager:
             video_detail.get("analyzed_content")
         ):
             return True
-        text_content = self.fetch_text_content(video_detail)
-        if not text_content or len(text_content) < 100:
+        text_content = self._analyze_content_source_text(video_detail)
+        url = (video_detail.get("url") or "").strip()
+        if not text_content and not url:
             return False
-        url = video_detail.get('url', '').strip()
+        if text_content and len(text_content) < 100 and not url:
+            return False
         prompt = self._format_analyze_prompt(video_detail)
+        lang_label = config.llm_language_label(self.language)
+        user_prompt = text_content if text_content else (f"YouTube URL: {url}" if url else " ")
         rewritten = self.llm_api_local.generate_text(
-            prompt.format(url=url, language=config.llm_language_label(self.language)),
-            text_content,
+            prompt.format(url=url, language=lang_label),
+            user_prompt,
         )
         rewritten = (rewritten or "").strip()
         if not rewritten:
@@ -4970,22 +4991,30 @@ class MediaGUIManager:
         return True
 
     def _generate_analyzed_content_summary_text(
-        self, video_detail: dict, *, parent=None
+        self,
+        video_detail: dict,
+        *,
+        parent=None,
+        source_text: str | None = None,
     ) -> str | None:
         """LLM 内容概括 → ``analyzed_content`` 纯文本（与摘要窗原「内容概括」相同逻辑）。"""
-        text_content = self.fetch_text_content(video_detail)
-        if not text_content:
+        text_content = self._analyze_content_source_text(
+            video_detail, override=source_text
+        )
+        url = (video_detail.get("url") or "").strip()
+        if not text_content and not url:
             messagebox.showwarning(
                 "内容概括",
-                "无转录原文，无法生成 analyzed_content。",
+                "无转录原文且无 YouTube 链接，也无法从编辑区取得内容。",
                 parent=parent,
             )
             return None
-        url = (video_detail.get("url") or "").strip()
         prompt = self._format_analyze_prompt(video_detail)
+        lang_label = config.llm_language_label(self.language)
+        user_prompt = text_content if text_content else f"YouTube URL: {url}"
         rewritten = self.llm_api.generate_text(
-            prompt.format(language=self.language, url=url),
-            text_content,
+            prompt.format(language=lang_label, url=url),
+            user_prompt,
         )
         rewritten = (rewritten or "").strip()
         if not rewritten:
