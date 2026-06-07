@@ -463,6 +463,120 @@ def _persist_channel_videos(mgr) -> bool:
         return False
 
 
+def _extract_image_analyze_fields(payload) -> dict:
+    """从 LLM 图片分析 JSON 解析 ``title`` / ``content``。"""
+    if not isinstance(payload, dict):
+        return {}
+    title = (payload.get("title") or "").strip()
+    content = (payload.get("content") or "").strip()
+    if not title and not content:
+        return {}
+    return {"title": title, "content": content}
+
+
+def _apply_image_analyze_to_video_detail(
+    video_detail: dict,
+    *,
+    title: str,
+    content: str,
+    channel_path: str = "",
+) -> None:
+    """确认后：``content`` → ``analyzed_content``；有 ``project_profile`` 时 ``title`` → ``video_title``。"""
+    if not isinstance(video_detail, dict):
+        return
+    body = (content or "").strip()
+    if body:
+        video_detail["analyzed_content"] = body
+    vt = (title or "").strip()
+    prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+    if vt and isinstance(prof, dict) and prof:
+        merged = copy.deepcopy(prof)
+        merged["video_title"] = vt
+        video_detail[project_manager.PROJECT_PROFILE_KEY] = (
+            project_manager.profile_for_list_storage(merged)
+        )
+    _normalize_channel_list_item_for_storage(video_detail, channel_path or "")
+
+
+def _ask_image_analyze_confirm_dialog(
+    parent,
+    *,
+    title: str = "",
+    content: str = "",
+) -> dict | None:
+    """展示可编辑的图片分析结果；取消返回 ``None``，确认返回 ``{\"title\", \"content\"}``。"""
+    result_holder: dict | None = None
+    dlg = tk.Toplevel(parent)
+    dlg.title("图片分析结果 — 确认写入")
+    dlg.geometry("760x580")
+    dlg.minsize(540, 440)
+    dlg.transient(parent)
+    dlg.grab_set()
+    dlg.update_idletasks()
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    dlg.geometry(f"760x580+{(sw - 760) // 2}+{(sh - 580) // 2}")
+
+    frm = ttk.Frame(dlg, padding=12)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    ttk.Label(
+        frm,
+        text=(
+            "以下为 LLM 对图片的文字分析。可编辑后确认写入；"
+            "「取消」仅保留已保存的封面 WebP，不改动 analyzed_content 与项目名。"
+        ),
+        wraplength=720,
+        justify=tk.LEFT,
+    ).pack(anchor=tk.W, pady=(0, 10))
+
+    title_box = ttk.LabelFrame(frm, text="标题 title", padding=8)
+    title_box.pack(fill=tk.X, pady=(0, 8))
+    ttk.Label(
+        title_box,
+        text="有 project_profile 时，确认后将更新「项目成片名」。",
+        wraplength=700,
+    ).pack(anchor=tk.W, pady=(0, 4))
+    title_var = tk.StringVar(value=title or "")
+    title_entry = ttk.Entry(title_box, textvariable=title_var, width=90)
+    title_entry.pack(fill=tk.X)
+    title_entry.focus_set()
+
+    content_box = ttk.LabelFrame(frm, text="分析内容 content → analyzed_content", padding=8)
+    content_box.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    content_tx = scrolledtext.ScrolledText(
+        content_box, wrap=tk.WORD, width=88, height=16, font=("Arial", 10)
+    )
+    content_tx.pack(fill=tk.BOTH, expand=True)
+    if content:
+        content_tx.insert("1.0", content)
+
+    btn_row = ttk.Frame(frm)
+    btn_row.pack(fill=tk.X)
+
+    def on_confirm():
+        nonlocal result_holder
+        t = (title_var.get() or "").strip()
+        c = (content_tx.get("1.0", tk.END) or "").strip()
+        if not t and not c:
+            messagebox.showwarning(
+                "提示", "标题与分析内容不能同时为空。", parent=dlg
+            )
+            return
+        result_holder = {"title": t, "content": c}
+        dlg.destroy()
+
+    def on_cancel():
+        dlg.destroy()
+
+    ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
+    ttk.Button(btn_row, text="确认写入", command=on_confirm).pack(side=tk.RIGHT)
+
+    dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+    dlg.wait_window()
+    return result_holder
+
+
 def _start_summary_cover_webp_save(
     image_path: str,
     summary_window: tk.Toplevel,
@@ -495,20 +609,17 @@ def _start_summary_cover_webp_save(
     def _worker():
         out_ok = ""
         err_msg = ""
-        analyze_ok = False
+        parsed_analysis: dict = {}
         wm_webp = ""
         webp_tmp = ""
         try:
-            analyzed = mgr.llm_api.analyze_image(
-                config_prompt.IMAGE_READ_SYSTEM_PROMPT,
+            payload = mgr.llm_api.analyze_image_json(
+                config_prompt.IMAGE_READ_SYSTEM_PROMPT.format(language=lang),
                 image_path,
             )
-            if analyzed and str(analyzed).strip():
-                vd["analyzed_content"] = str(analyzed).strip()
-                _persist_channel_videos(mgr)
-                analyze_ok = True
-            else:
-                err_msg = "图片 LLM 分析失败或未返回有效文本。"
+            parsed_analysis = _extract_image_analyze_fields(payload)
+            if not parsed_analysis:
+                err_msg = "图片 LLM 分析失败或未返回有效 title/content。"
 
             os.makedirs(gen_dir, exist_ok=True)
             ff = FfmpegProcessor(pid, lang)
@@ -525,7 +636,7 @@ def _start_summary_cover_webp_save(
             dest_abs = os.path.join(gen_dir, dest_name)
             safe_copy_overwrite(webp_tmp, dest_abs)
             out_ok = dest_abs
-            if analyze_ok:
+            if out_ok and parsed_analysis:
                 err_msg = ""
         except Exception as ex:
             err_msg = str(ex)
@@ -546,33 +657,82 @@ def _start_summary_cover_webp_save(
 
         def _done_ui():
             par = summary_window if summary_window.winfo_exists() else root
-            if analyze_ok:
-                _refresh_summary_ui_after_analyze(ctx, summary_window)
+            analyze_applied = False
+            had_analysis = bool(parsed_analysis)
+
+            if had_analysis:
+                choice = _ask_image_analyze_confirm_dialog(
+                    par,
+                    title=parsed_analysis.get("title", ""),
+                    content=parsed_analysis.get("content", ""),
+                )
+                if choice is not None:
+                    ch_path = getattr(mgr, "channel_path", "") or ""
+                    _apply_image_analyze_to_video_detail(
+                        vd,
+                        title=choice.get("title", ""),
+                        content=choice.get("content", ""),
+                        channel_path=ch_path,
+                    )
+                    if _persist_channel_videos(mgr):
+                        analyze_applied = True
+                        _refresh_summary_ui_after_analyze(ctx, summary_window)
+                        rfn_title = (
+                            ctx.get("refresh_title_fields")
+                            if isinstance(ctx, dict)
+                            else None
+                        )
+                        if callable(rfn_title):
+                            try:
+                                rfn_title()
+                            except Exception:
+                                _refresh_summary_window_title(summary_window, vd)
+                        else:
+                            _refresh_summary_window_title(summary_window, vd)
+
             rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
             if callable(rfn_feat):
                 try:
                     rfn_feat()
                 except Exception:
                     pass
-            if out_ok and analyze_ok:
+            if out_ok and analyze_applied:
                 messagebox.showinfo(
                     "封面与分析已保存",
-                    f"已写入 analyzed_content 并保存 WebP 封面：\n{out_ok}",
+                    f"已写入 analyzed_content"
+                    + (
+                        " 与项目成片名"
+                        if project_manager.list_json_row_has_project_profile(vd)
+                        else ""
+                    )
+                    + f"，并保存 WebP 封面：\n{out_ok}",
+                    parent=par,
+                )
+            elif out_ok and had_analysis:
+                messagebox.showinfo(
+                    "封面已保存",
+                    f"已加水印并保存为 WebP：\n{out_ok}\n\n"
+                    "（已取消写入图片分析，analyzed_content / 项目名未改动）",
                     parent=par,
                 )
             elif out_ok:
                 messagebox.showinfo(
                     "封面已保存",
-                    f"已加水印并保存为 WebP：\n{out_ok}\n\n（LLM 分析未成功，analyzed_content 未更新）",
+                    f"已加水印并保存为 WebP：\n{out_ok}\n\n"
+                    + (
+                        f"（{err_msg}）"
+                        if err_msg
+                        else "（LLM 分析未返回有效结果）"
+                    ),
                     parent=par,
                 )
-            elif analyze_ok:
+            elif analyze_applied:
                 messagebox.showinfo(
                     "分析已保存",
                     "已写入本条 analyzed_content（封面 WebP 保存失败）。",
                     parent=par,
                 )
-            elif err_msg:
+            elif err_msg and not out_ok:
                 messagebox.showerror("保存失败", err_msg, parent=par)
 
         root.after(0, _done_ui)
@@ -6413,6 +6573,18 @@ class MediaGUIManager:
                 summary_window._summary_drop_ctx[
                     "refresh_feature_media_row"
                 ] = refresh_feature_media_row
+
+                def refresh_title_fields():
+                    try:
+                        source_title_var.set(_youtube_row_source_title(video_detail))
+                        project_title_var.set(_youtube_row_project_title(video_detail))
+                    except (NameError, tk.TclError):
+                        pass
+                    _refresh_summary_window_title(summary_window, video_detail)
+
+                summary_window._summary_drop_ctx[
+                    "refresh_title_fields"
+                ] = refresh_title_fields
             
             # 主题信息编辑区域
             topic_frame = ttk.LabelFrame(main_frame, text="主题信息", padding=10)
