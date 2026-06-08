@@ -101,6 +101,47 @@ def _default_notebooklm_prompt_label(channel_key: str) -> str:
     return choices[0][0] if choices else ""
 
 
+def _pick_notebooklm_prompt_label(channel_key: str, *candidates: str) -> str:
+    """在频道 config 的 notebooklm_prompt_choices 中按 label 精确或子串匹配。"""
+    labels = [
+        (lbl or "").strip()
+        for lbl, _ in _notebooklm_prompt_choices(channel_key)
+        if (lbl or "").strip()
+    ]
+    for want in candidates:
+        want = (want or "").strip()
+        if not want:
+            continue
+        for lbl in labels:
+            if lbl == want:
+                return lbl
+        want_lower = want.lower()
+        for lbl in labels:
+            if want_lower in lbl.lower():
+                return lbl
+    return ""
+
+
+def _video_detail_has_story_content(video_detail: dict) -> bool:
+    if not isinstance(video_detail, dict):
+        return False
+    return bool(project_manager.story_field_flat_text(video_detail.get("story")))
+
+
+def _default_scene_editor_prompt_label(video_detail: dict, channel_key: str) -> str:
+    """场景窗「选LM提示」默认项：有 story → Story to Scenes，否则 Content to Scenes。"""
+    if _video_detail_has_story_content(video_detail):
+        picked = _pick_notebooklm_prompt_label(channel_key, "Story to Scenes")
+        if picked:
+            return picked
+    picked = _pick_notebooklm_prompt_label(
+        channel_key, "Content to Scenes", "Content to Scene"
+    )
+    if picked:
+        return picked
+    return _default_notebooklm_prompt_label(channel_key)
+
+
 def _resolve_notebooklm_prompt_template(
     channel_key: str,
     *,
@@ -1667,6 +1708,16 @@ def _youtube_row_project_title(video_detail: dict) -> str:
     return ""
 
 
+def _youtube_row_story_meta_title(video_detail: dict) -> str:
+    """Story JSON array 首条的 ``title``（无 project_profile 时摘要窗第二行展示）。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    entries = _parse_story_field(video_detail.get("story"))
+    if not entries:
+        return ""
+    return (entries[0].get("title") or "").strip()
+
+
 def _youtube_row_display_title(video_detail: dict) -> str:
     """业务逻辑用标题：若有 ``project_profile.video_title`` 则优先成片名；否则原视频标题。"""
     proj = _youtube_row_project_title(video_detail)
@@ -1676,13 +1727,18 @@ def _youtube_row_display_title(video_detail: dict) -> str:
 
 
 def _youtube_row_list_display_title(video_detail: dict) -> str:
-    """列表树展示用标题：``原视频标题 / 项目成片名``（有 project_profile 时两者均可见）。"""
+    """列表树展示用标题：有 project 时为 ``原视频标题 / 项目成片名``；无 project 且有 story 首条 title 时为 ``原标题 (story title)``。"""
     src = _youtube_row_source_title(video_detail)
     proj = _youtube_row_project_title(video_detail)
     if proj:
         if src:
             return f"{src} / {proj}"
         return proj
+    story_meta = _youtube_row_story_meta_title(video_detail)
+    if story_meta and story_meta != src:
+        if src:
+            return f"{src} ({story_meta})"
+        return story_meta
     return src
 
 
@@ -1775,7 +1831,7 @@ def _sync_project_video_title_on_list_row(
     cfg = selected_config if isinstance(selected_config, dict) else {}
     lang = (cfg.get("language") or row.get("language") or "tw").strip()
     sc = row.get("scene_content") or cfg.get("scene_content")
-    sc_title = (project_manager.title_from_scene_content(sc, lang) or "").strip()
+    sc_title = (project_manager.title_from_scene_content(sc) or "").strip()
     vt = (prof.get("video_title") or cfg.get("video_title") or "").strip()
     if sc_title and (not vt or vt in _GENERIC_PROJECT_VIDEO_TITLES):
         merged = copy.deepcopy(prof)
@@ -1870,31 +1926,13 @@ def _remove_pid_from_topic_category_lists(channel_path: str, pid: str) -> None:
             pass
 
 
-def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> bool:
-    """就地规范化列表条目；若 ``analyzed_content`` 自旧 JSON 迁移为字符串则返回 True。"""
+def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> None:
+    """就地规范化列表条目。"""
     if not items:
-        return False
-    migrated = False
+        return
     for it in items:
-        if isinstance(it, dict) and config.migrate_analyzed_content_field(it):
-            migrated = True
-        _normalize_channel_list_item_for_storage(it, channel_path)
-    return migrated
-
-
-def _persist_channel_list_if_analyzed_migrated(downloader, migrated: bool) -> None:
-    if not migrated:
-        return
-    path = (getattr(downloader, "channel_list_json", None) or "").strip()
-    videos = getattr(downloader, "channel_videos", None)
-    if not path or not isinstance(videos, list):
-        return
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(videos, f, ensure_ascii=False, indent=2)
-        print(f"✅ analyzed_content 已迁移为纯文本并保存: {path}")
-    except OSError as e:
-        print(f"⚠️ 保存频道列表失败（analyzed_content 迁移）: {e}")
+        if isinstance(it, dict):
+            _normalize_channel_list_item_for_storage(it, channel_path)
 
 
 def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> None:
@@ -2118,7 +2156,7 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
             lang = (selected_config.get("language") or clone.get("language") or "tw").strip()
             new_vt = (
                 project_manager.title_from_scene_content(
-                    selected_config.get("scene_content"), lang
+                    selected_config.get("scene_content")
                 )
                 or ""
             ).strip()
@@ -3758,8 +3796,7 @@ class MediaDownloader:
             if os.path.exists(self.channel_list_json):
                 with open(self.channel_list_json, 'r', encoding='utf-8') as f:
                     self.channel_videos = json.load(f)
-                    migrated_ac = _normalize_channel_videos_for_storage(self.channel_videos)
-                    _persist_channel_list_if_analyzed_migrated(self, migrated_ac)
+                    _normalize_channel_videos_for_storage(self.channel_videos)
                     self.latest_date = max(
                                             (
                                                 datetime.strptime(v["upload_date"], "%Y%m%d")
@@ -4365,14 +4402,10 @@ class MediaGUIManager:
                 except Exception:
                     video.pop('scene_content', None)
                     continue
-            if scene_content is not None:
-                normalized = config.normalize_scene_content_value(
-                    scene_content, self.language
-                )
-                if normalized:
-                    video['scene_content'] = normalized
-                else:
-                    video.pop('scene_content', None)
+            if isinstance(scene_content, list) and scene_content:
+                video['scene_content'] = scene_content
+            else:
+                video.pop('scene_content', None)
 
         cleaned = dedupe_channel_video_list(channel_videos)
 
@@ -4429,7 +4462,7 @@ class MediaGUIManager:
             return title
 
         sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
-        scenes = config.scene_content_as_list(sc, self.language)
+        scenes = sc if isinstance(sc, list) else []
         if scenes:
             first = scenes[0]
             if isinstance(first, dict):
@@ -4444,9 +4477,9 @@ class MediaGUIManager:
         """Story 智能添加 / 生成的 LLM 输入原文。"""
         if not isinstance(video_detail, dict):
             return ""
-        scenes = config.scene_content_as_list(
-            video_detail.get("scene_content"), self.language
-        )
+        scenes = video_detail.get("scene_content") or []
+        if not isinstance(scenes, list):
+            scenes = []
         for item in scenes:
             if not isinstance(item, dict):
                 continue
@@ -4471,21 +4504,38 @@ class MediaGUIManager:
 
 
     def _generate_story(
-        self, video_detail: dict
+        self,
+        video_detail: dict,
+        *,
+        instruction: str = "",
     ) -> list[dict]:
-        source = video_detail.get("analyzed_content")
-        if not source:
+        if not (video_detail.get("analyzed_content") or "").strip():
             return []
-        lang_label = config.llm_language_label(self.language)
 
         cfg = config_channel.get_channel_config(self._channel_config_key()) or {}
+        template = ((cfg.get("channel_prompt") or {}).get("story_prompt") or "").strip()
+        if not template:
+            return []
 
-        prompt = cfg.get("channel_prompt").get("story_prompt") or ""
-        prompt = prompt.format(language=lang_label)
-
-        parsed = self.llm_api_local.generate_json(
-            prompt, source, expect_list=True
+        cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
+        prompt = _build_notebooklm_prompt_for_row(
+            self,
+            video_detail,
+            template,
+            instruction=instruction,
+            topic=topic,
+            tags=_notebooklm_row_tags_text(video_detail),
+            topic_category=cat,
+            topic_subtype=sub,
         )
+        if not (prompt or "").strip():
+            return []
+
+        user_tail = ""
+        if "{content}" not in template:
+            user_tail = (video_detail.get("analyzed_content") or "").strip()
+
+        parsed = self.llm_api.generate_json(prompt, user_tail, expect_list=True)
         if isinstance(parsed, dict):
             one = _normalize_story_entry(parsed)
             return [one] if one else []
@@ -4540,8 +4590,8 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
-        raw = self.llm_api_local.generate_json(prompt, "", expect_list=True)
-        scenes = config.normalize_scene_content_value(raw, self.language)
+        raw = self.llm_api.generate_json(prompt, "", expect_list=True)
+        scenes = raw if isinstance(raw, list) else []
         return scenes if scenes else None
 
     def _run_scene_smart_generate_async(
@@ -4559,21 +4609,9 @@ class MediaGUIManager:
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         if not prompt_label:
-            prompt_label = _default_notebooklm_prompt_label(
-                self._channel_config_key()
+            prompt_label = _default_scene_editor_prompt_label(
+                video_detail, self._channel_config_key()
             )
-        if not prompt_label:
-            messagebox.showwarning(
-                "提示", "当前频道未配置场景提示词。", parent=parent
-            )
-            return False
-        if not messagebox.askyesno(
-            "智能生成场景",
-            f"使用「{prompt_label}」提示词生成新的 scene_content，\n"
-            "并替换当前编辑区中的场景内容？",
-            parent=parent,
-        ):
-            return False
         if on_busy:
             on_busy()
 
@@ -4623,6 +4661,95 @@ class MediaGUIManager:
                 messagebox.showinfo(
                     "已生成场景",
                     f"已用「{prompt_label}」生成 {len(scenes)} 个场景，并已保存到频道列表。",
+                    parent=parent,
+                )
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def _rewrite_text_speaking_concise(self, source: str) -> str:
+        """用 ``STORY_CONDENSE_PROMPT`` 精简改写 story 正文。"""
+        text = (source or "").strip()
+        if not text:
+            return ""
+        prompt = config_prompt.STORY_CONDENSE_PROMPT.format(
+            language=config.llm_language_label(self.language)
+        )
+        out = self.llm_api_local.generate_text(prompt, text)
+        return config.chinese_convert((out or "").strip(), self.language)
+
+    def _run_story_speaking_concise_async(
+        self,
+        parent,
+        video_detail: dict,
+        get_existing_text,
+        set_merged_text,
+        *,
+        on_busy=None,
+        on_idle=None,
+        persist_fn=None,
+    ) -> bool:
+        """Story 编辑区：用 STORY_CONDENSE prompt 改写首条 ``story`` 正文并写回。"""
+        raw = (get_existing_text() or "").strip()
+        if not raw:
+            messagebox.showwarning(
+                "提示", "编辑区无 story 内容。", parent=parent
+            )
+            return False
+        if on_busy:
+            on_busy()
+
+        def work():
+            err_msg = ""
+            merged_json = ""
+            try:
+                if raw.lstrip().startswith("["):
+                    entries = _parse_story_field(raw)
+                    if not entries:
+                        err_msg = "无法解析 story JSON array。"
+                    else:
+                        rewritten: list[dict] = []
+                        for i, entry in enumerate(entries):
+                            body = (entry.get("story") or "").strip()
+                            if i == 0 and body:
+                                body = self._rewrite_text_speaking_concise(body)
+                            rewritten.append(
+                                {
+                                    "title": (entry.get("title") or "").strip(),
+                                    "story": body,
+                                }
+                            )
+                        merged_json = _story_entries_to_json_text(rewritten)
+                else:
+                    merged_json = self._rewrite_text_speaking_concise(raw)
+            except Exception as ex:
+                err_msg = str(ex)
+
+            def apply():
+                if on_idle:
+                    on_idle()
+                if err_msg:
+                    messagebox.showerror("改写失败", err_msg, parent=parent)
+                    return
+                if not (merged_json or "").strip():
+                    messagebox.showwarning(
+                        "提示", "LLM 未返回有效 story 文本。", parent=parent
+                    )
+                    return
+                video_detail["story"] = merged_json
+                set_merged_text(merged_json)
+                persist = persist_fn or (
+                    lambda vd, parent=None: self._persist_video_detail_story(
+                        vd, parent=parent
+                    )
+                )
+                if not persist(video_detail, parent=parent):
+                    return
+                messagebox.showinfo(
+                    "已改写 Story",
+                    "已用 Story 精简 prompt 改写首条 story 正文，并已保存到频道列表。",
                     parent=parent,
                 )
 
@@ -4797,7 +4924,8 @@ class MediaGUIManager:
             header_text = (
                 "Story 为 JSON array（每项含 title、story），或直接编辑纯文本 legacy 格式。\n"
                 "「增加 Story」用 Message 提示词 + analyzed_content 生成新条目、merge 并自动保存；"
-                "「智能添加」为旧版摘要追加。手工编辑后点「保存」写回频道列表。"
+                "「口语精简」用 STORY_CONDENSE 改写首条 story 正文（300–500 字）并自动保存。"
+                "手工编辑后点「保存」写回频道列表。"
             )
         ttk.Label(frm, text=header_text, wraplength=760).pack(
             anchor=tk.W, pady=(0, 8)
@@ -4849,6 +4977,16 @@ class MediaGUIManager:
                 persist_fn=persist,
             )
 
+        def on_speaking_concise():
+            self._run_story_speaking_concise_async(
+                dlg,
+                video_detail,
+                lambda: (tx.get("1.0", tk.END) or ""),
+                _set_editor_text_and_clipboard,
+                on_busy=lambda: _busy(concise_btn),
+                on_idle=lambda: _idle(concise_btn),
+                persist_fn=persist,
+            )
 
         def on_confirm():
             raw = (tx.get("1.0", tk.END) or "").strip()
@@ -4875,6 +5013,8 @@ class MediaGUIManager:
 
         add_btn = ttk.Button(btn_row, text="增加 Story", command=on_add_story)
         add_btn.pack(side=tk.LEFT, padx=(0, 8))
+        concise_btn = ttk.Button(btn_row, text="口语精简", command=on_speaking_concise)
+        concise_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
         )
@@ -4991,6 +5131,76 @@ class MediaGUIManager:
         dlg.wait_window()
         return result_holder[0]
 
+    def _show_poem_editor(
+        self,
+        parent,
+        video_detail: dict,
+        *,
+        on_saved=None,
+        persist_fn=None,
+    ) -> str | None:
+        """编辑 ``video_detail['poem']``（纯文本）；确认后写回频道列表。"""
+        persist = persist_fn or (
+            lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
+        )
+        result_holder: list[str | None] = [None]
+        dlg = tk.Toplevel(parent)
+        dlg.title("诗歌 / Poem")
+        dlg.geometry("820x580")
+        dlg.minsize(560, 400)
+        dlg.transient(parent)
+        dlg.grab_set()
+        dlg.update_idletasks()
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"820x580+{(sw - 820) // 2}+{(sh - 580) // 2}")
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
+        ttk.Label(
+            frm,
+            text=(
+                f"{title}\n"
+                "诗歌 poem（可编辑；双击编辑区可用剪贴板内容替换全文；"
+                "保存后写回本条并保存频道列表）"
+            ),
+            wraplength=760,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
+        )
+        tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        initial = video_detail.get("poem")
+        if initial:
+            tx.insert("1.0", initial)
+            _copy_text_to_clipboard(dlg, initial)
+        _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+
+        btn_row = ttk.Frame(frm)
+        btn_row.pack(fill=tk.X)
+
+        def on_confirm():
+            new_text = (tx.get("1.0", tk.END) or "").strip()
+            if new_text:
+                video_detail["poem"] = new_text
+            else:
+                video_detail.pop("poem", None)
+            if not persist(video_detail, parent=dlg):
+                return
+            result_holder[0] = new_text
+            dlg.destroy()
+            if callable(on_saved):
+                on_saved()
+
+        ttk.Button(btn_row, text="保存", command=on_confirm).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
+
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result_holder[0]
+
     def _copy_notebooklm_scene_gen_instruction(
         self,
         *,
@@ -5062,16 +5272,30 @@ class MediaGUIManager:
             frm,
             text=(
                 f"{title}\n"
-                "导向说明填入 {instruction}；预览打开/编辑时复制到剪贴板。"
-                "「智能生成」用频道默认场景提示词生成 scene_content 并自动保存。"
+                "选 LM 提示；导向说明填入 {instruction}；切换/编辑时预览并复制到剪贴板。"
+                "「智能生成」用所选提示词生成 scene_content 并自动保存。"
                 "下方 JSON 区可手工编辑；保存时须为有效 JSON 数组。"
             ),
             wraplength=860,
         ).pack(anchor=tk.W, pady=(0, 8))
 
         channel_key = self._channel_config_key()
-        default_prompt_label = _default_notebooklm_prompt_label(channel_key)
-        has_scene_prompt = bool(default_prompt_label)
+        nb_prompt_choices = _notebooklm_prompt_choices(channel_key)
+        prompt_row = ttk.Frame(frm)
+        prompt_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(prompt_row, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
+        default_prompt_label = _default_scene_editor_prompt_label(
+            video_detail, channel_key
+        )
+        prompt_combo_var = tk.StringVar(value=default_prompt_label)
+        prompt_combo = ttk.Combobox(
+            prompt_row,
+            textvariable=prompt_combo_var,
+            values=[opt[0] for opt in nb_prompt_choices],
+            state="readonly" if nb_prompt_choices else "disabled",
+            width=18,
+        )
+        prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
 
         ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
             anchor=tk.W, pady=(0, 2)
@@ -5081,7 +5305,7 @@ class MediaGUIManager:
         )
         instruction_tx.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frm, text="提示词预览（打开/编辑导向说明时更新并复制到剪贴板）：").pack(
+        ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
             anchor=tk.W, pady=(0, 2)
         )
         prompt_tx = scrolledtext.ScrolledText(
@@ -5094,9 +5318,9 @@ class MediaGUIManager:
             frm, wrap=tk.WORD, width=100, height=20, font=("Consolas", 10)
         )
         tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        scenes = config.scene_content_as_list(
-            video_detail.get("scene_content"), self.language
-        )
+        scenes = video_detail.get("scene_content") or []
+        if not isinstance(scenes, list):
+            scenes = []
         scene_json = ""
         if scenes:
             scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
@@ -5104,20 +5328,23 @@ class MediaGUIManager:
         _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
 
         def refresh_scene_prompt(*_args):
-            if not default_prompt_label:
+            sel = (prompt_combo_var.get() or "").strip()
+            if not sel or not nb_prompt_choices:
                 prompt_tx.delete("1.0", tk.END)
                 return
             instr = (instruction_tx.get("1.0", tk.END) or "").strip()
             _, prompt = self._notebooklm_prompt_text_for_label(
-                video_detail, default_prompt_label, instruction=instr
+                video_detail, sel, instruction=instr
             )
             prompt_tx.delete("1.0", tk.END)
             if prompt:
                 prompt_tx.insert("1.0", prompt)
                 _copy_text_to_clipboard(dlg, prompt)
 
+        if nb_prompt_choices:
+            prompt_combo.bind("<<ComboboxSelected>>", refresh_scene_prompt)
         instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
-        if has_scene_prompt:
+        if nb_prompt_choices:
             refresh_scene_prompt()
 
         btn_row = ttk.Frame(frm)
@@ -5133,8 +5360,7 @@ class MediaGUIManager:
                 return None
             if not isinstance(parsed, list):
                 return None
-            normalized = config.normalize_scene_content_value(parsed, self.language)
-            return normalized if normalized else None
+            return parsed if parsed else None
 
         _lang_lbl = config.llm_language_label(self.language)
 
@@ -5157,7 +5383,7 @@ class MediaGUIManager:
             self._run_scene_smart_generate_async(
                 dlg,
                 video_detail,
-                default_prompt_label,
+                (prompt_combo_var.get() or "").strip(),
                 lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
                 get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
                 on_busy=lambda: _busy(smart_btn),
@@ -5230,18 +5456,15 @@ class MediaGUIManager:
                         parent=dlg,
                     )
                     return
-                normalized = config.normalize_scene_content_value(
-                    parsed, self.language
-                )
-                if not normalized:
+                if not parsed:
                     messagebox.showwarning(
                         "无效场景",
                         "解析后无有效场景条目，请检查 JSON 结构。",
                         parent=dlg,
                     )
                     return
-                video_detail["scene_content"] = normalized
-                result_holder[0] = normalized
+                video_detail["scene_content"] = parsed
+                result_holder[0] = parsed
             if not persist(video_detail, parent=dlg):
                 return
             dlg.destroy()
@@ -5250,7 +5473,7 @@ class MediaGUIManager:
 
         smart_btn = ttk.Button(btn_row, text="智能生成", command=on_smart_generate)
         smart_btn.pack(side=tk.LEFT, padx=(0, 8))
-        if not has_scene_prompt:
+        if not nb_prompt_choices:
             smart_btn.config(state=tk.DISABLED)
         ttk.Button(
             btn_row,
@@ -5306,6 +5529,13 @@ class MediaGUIManager:
                 on_saved=on_saved,
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
+                persist_fn=persist_fn,
+            )
+        if field == "poem":
+            return self._show_poem_editor(
+                parent,
+                video_detail,
+                on_saved=on_saved,
                 persist_fn=persist_fn,
             )
         messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
@@ -5549,14 +5779,11 @@ class MediaGUIManager:
 
 
     def show_analyzed_content_popup(self, video_detail: dict, *, parent=None) -> None:
-        """弹窗展示 ``analyzed_content``（Download YT 文字 / 摘要等）。"""
+        """弹窗只读展示 ``analyzed_content``。"""
         parent = parent or self.root
-        body = video_detail.get("analyzed_content")
-        if not body.strip():
-            ac_raw = video_detail.get("analyzed_content")
-            if ac_raw is not None:
-                body = json.dumps(ac_raw, ensure_ascii=False, indent=2)
-        if not body.strip():
+        ac = video_detail.get("analyzed_content")
+        body = (ac if isinstance(ac, str) else str(ac or "")).strip()
+        if not body:
             messagebox.showwarning(
                 "分析结果",
                 "未生成 analyzed_content 或内容为空。",
@@ -5565,12 +5792,18 @@ class MediaGUIManager:
             return
         title = _youtube_row_display_title(video_detail) or "YouTube 视频"
         top = tk.Toplevel(parent)
-        top.title("分析结果")
+        top.title("分析内容 / analyzed content")
         top.minsize(560, 400)
+        top.transient(parent)
+        top.grab_set()
 
         hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
         hdr.pack(fill=tk.X)
-        ttk.Label(hdr, text="转录与分析已完成", font=("Arial", 10)).pack(anchor=tk.W)
+        ttk.Label(
+            hdr,
+            text="analyzed_content（只读预览）",
+            font=("Arial", 10),
+        ).pack(anchor=tk.W)
         ttk.Label(hdr, text=title, wraplength=860, font=("Arial", 11, "bold")).pack(
             anchor=tk.W, pady=(4, 8)
         )
@@ -5632,10 +5865,9 @@ class MediaGUIManager:
                 if not isinstance(self.downloader.channel_videos, list):
                     self.downloader.channel_videos = []
                 else:
-                    migrated_ac = _normalize_channel_videos_for_storage(
+                    _normalize_channel_videos_for_storage(
                         self.downloader.channel_videos, self.channel_path or ""
                     )
-                    _persist_channel_list_if_analyzed_migrated(self.downloader, migrated_ac)
                     dates = [
                         datetime.strptime(v["upload_date"], "%Y%m%d")
                         for v in self.downloader.channel_videos
@@ -5706,6 +5938,11 @@ class MediaGUIManager:
         story_text = project_manager.story_field_flat_text(
             video_detail.get("story") if isinstance(video_detail, dict) else ""
         )
+        poem_text = (
+            (video_detail.get("poem") or "").strip()
+            if isinstance(video_detail, dict)
+            else ""
+        )
         flow = ask_publish_metadata_then_schedule(
             parent,
             language=self.language,
@@ -5716,6 +5953,7 @@ class MediaGUIManager:
             ),
             analyzed_content = video_detail.get("analyzed_content"),
             story_text=story_text,
+            poem_text=poem_text,
             review_script_text=review_script_text,
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
@@ -6100,22 +6338,16 @@ class MediaGUIManager:
                 return False
             if isinstance(sc, list):
                 return bool(sc)
-            if isinstance(sc, dict):
-                return bool(config.scene_content_as_list(sc))
             if isinstance(sc, str):
                 t = sc.strip()
                 if not t:
                     return False
                 try:
                     parsed = json.loads(t)
-                    if isinstance(parsed, list):
-                        return bool(parsed)
-                    if isinstance(parsed, dict):
-                        return bool(config.scene_content_as_list(parsed))
-                    return bool(parsed)
+                    return bool(parsed) if isinstance(parsed, list) else bool(parsed)
                 except json.JSONDecodeError:
                     return bool(t)
-            return True
+            return False
 
         def populate_tree():
             """填充或刷新树视图"""
@@ -6483,7 +6715,7 @@ class MediaGUIManager:
             if not isinstance(vd, dict):
                 return False
             return (
-                bool(vd.get("analyzed_content").strip())
+                bool(vd.get("analyzed_content"))
                 and _scene_content_nonempty(vd)
             )
 
@@ -6895,6 +7127,10 @@ class MediaGUIManager:
                 return
 
             choices = [("edit", "打开摘要编辑")]
+            if (vd.get("analyzed_content") or "").strip():
+                choices.append(
+                    ("review_analyzed", "查看 analyzed content（分析内容预览）")
+                )
             existing_pid = _video_detail_project_pid(vd)
             if existing_pid:
                 choices.append(("open_project", f"打开已有项目（{existing_pid}）"))
@@ -6912,6 +7148,8 @@ class MediaGUIManager:
 
             if action == "edit":
                 on_focus(event, low_priority=True)
+            elif action == "review_analyzed":
+                self.show_analyzed_content_popup(vd, parent=dialog)
             elif action == "open_project":
                 _run_project_start_for_video_detail(vd, dialog, forced_action="open")
             elif action == "new_project":
@@ -7008,6 +7246,9 @@ class MediaGUIManager:
             project_title_var = tk.StringVar(
                 value=_youtube_row_project_title(video_detail)
             )
+            story_meta_title = _youtube_row_story_meta_title(video_detail)
+            story_meta_var = tk.StringVar(value=story_meta_title)
+            show_second_title_row = True
             if has_project_profile:
                 ttk.Label(
                     title_frame,
@@ -7022,7 +7263,7 @@ class MediaGUIManager:
                 )
                 ttk.Label(
                     title_frame,
-                    text="项目成片名:",
+                    text="项目 meta (project_profile):",
                     font=("Arial", 10, "bold"),
                 ).grid(row=1, column=0, sticky="w", padx=(5, 4), pady=4)
                 project_title_entry = ttk.Entry(
@@ -7044,11 +7285,22 @@ class MediaGUIManager:
                 )
                 title_frame.columnconfigure(1, weight=1)
                 project_title_entry = None
+                ttk.Label(
+                    title_frame,
+                    text="Story meta:",
+                    font=("Arial", 10, "bold"),
+                ).grid(row=1, column=0, sticky="w", padx=(5, 4), pady=4)
+                ttk.Label(
+                    title_frame,
+                    textvariable=story_meta_var,
+                    anchor="w",
+                    wraplength=720,
+                ).grid(row=1, column=1, sticky="ew", padx=(0, 5), pady=4)
 
             feature_media_var = tk.StringVar(value="")
             media_btn_row = ttk.Frame(title_frame)
             media_btn_row.grid(
-                row=2 if has_project_profile else 1,
+                row=2 if show_second_title_row else 1,
                 column=0,
                 columnspan=2,
                 sticky="ew",
@@ -7128,7 +7380,14 @@ class MediaGUIManager:
                 def refresh_title_fields():
                     try:
                         source_title_var.set(_youtube_row_source_title(video_detail))
-                        project_title_var.set(_youtube_row_project_title(video_detail))
+                        if has_project_profile:
+                            project_title_var.set(
+                                _youtube_row_project_title(video_detail)
+                            )
+                        else:
+                            story_meta_var.set(
+                                _youtube_row_story_meta_title(video_detail)
+                            )
                     except (NameError, tk.TclError):
                         pass
                     _refresh_summary_window_title(summary_window, video_detail)
@@ -7238,6 +7497,22 @@ class MediaGUIManager:
                     try:
                         refresh_title_fields()
                     except (NameError, tk.TclError):
+                        pass
+
+            def do_poem_view():
+                text = self.open_content_field_editor(
+                    summary_window,
+                    video_detail,
+                    "poem",
+                    on_saved=_after_content_field_saved,
+                )
+                if text is not None:
+                    messagebox.showinfo(
+                        "已保存", "poem 已更新。", parent=summary_window
+                    )
+                    try:
+                        populate_tree()
+                    except Exception:
                         pass
 
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
@@ -7539,6 +7814,7 @@ class MediaGUIManager:
                 side=tk.LEFT, padx=(5, 5)
             )
             ttk.Button(right_btns, text="故事", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
+            ttk.Button(right_btns, text="诗歌", command=do_poem_view).pack(side=tk.LEFT, padx=(5, 5))
 
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
@@ -7588,9 +7864,7 @@ class MediaGUIManager:
                     pending_scene: list[dict | None] = [None]
 
                     def _apply_scene_dict(scene_raw) -> None:
-                        scene_list = config.normalize_scene_content_value(
-                            scene_raw, self.language
-                        )
+                        scene_list = scene_raw if isinstance(scene_raw, list) else []
                         if not scene_list:
                             return
                         video_detail["scene_content"] = scene_list
@@ -7600,9 +7874,8 @@ class MediaGUIManager:
                         dialog.after(0, populate_tree)
 
                     def _video_scene_list() -> list:
-                        return config.scene_content_as_list(
-                            video_detail.get("scene_content"), self.language
-                        )
+                        sc = video_detail.get("scene_content")
+                        return sc if isinstance(sc, list) else []
 
                     has_scene = bool(_video_scene_list())
 

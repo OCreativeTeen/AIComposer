@@ -759,8 +759,8 @@ class MagicWorkflow:
 
         self.title = config_channel.get_channel_config(self.channel)["channel_name"]
 
-        scene_content = project_manager.PROJECT_CONFIG.get('scene_content', "")
-        scene_list = config.scene_content_as_list(scene_content, self.language)
+        scene_content = project_manager.PROJECT_CONFIG.get('scene_content') or []
+        scene_list = scene_content if isinstance(scene_content, list) else []
         if scene_list:
             if isinstance(scene_list[0], dict):
                 self.title = project_manager.caption_from_scene_content_item(scene_list[0])

@@ -2770,6 +2770,15 @@ class WorkflowGUI:
             ),
             analyzed_content=pc.get("analyzed_content"),
             story_text=project_manager.story_text_from_config(pc),
+            poem_text=(
+                (pc.get("poem") or "").strip()
+                or (
+                    (project_manager.load_video_detail_row_for_config(pc) or {}).get(
+                        "poem"
+                    )
+                    or ""
+                ).strip()
+            ),
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             caption_scenes=scenes,

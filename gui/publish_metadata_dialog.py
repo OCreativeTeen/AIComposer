@@ -15,6 +15,7 @@ import config_prompt
 
 DESCRIPTION_STORY_SEPARATOR = "────────────────"
 
+SOURCE_STORY = "story"
 SOURCE_VOICEOVER = "voiceover"
 SOURCE_SCENE_FULL = "scene_full"
 SOURCE_ANALYZED = "analyzed"
@@ -78,15 +79,34 @@ def full_scene_content_text(scene_content_list: list) -> str:
     return json.dumps(slim, ensure_ascii=False, indent=2)
 
 
-def append_story_to_description(body: str, story: str) -> str:
+def append_poem_to_description(body: str, poem: str) -> str:
     body = (body or "").strip()
-    story = (story or "").strip()
-    if not story:
+    poem = (poem or "").strip()
+    if not poem:
         return body
     sep_block = f"\n\n{DESCRIPTION_STORY_SEPARATOR}\n\n"
     if body:
-        return body + sep_block + story
-    return story
+        return body + sep_block + poem
+    return poem
+
+
+def default_publish_description_source(
+    *,
+    story: str = "",
+    analyzed: str = "",
+    scenes: list | None = None,
+    review_script: str = "",
+) -> str:
+    """描述素材默认来源：审阅文稿 → story → analyzed → 场景全部。"""
+    if (review_script or "").strip():
+        return SOURCE_REVIEW_SCRIPT
+    if (story or "").strip():
+        return SOURCE_STORY
+    if (analyzed or "").strip():
+        return SOURCE_ANALYZED
+    if scenes:
+        return SOURCE_SCENE_FULL
+    return SOURCE_STORY
 
 
 def scene_content_list_for_publish(
@@ -97,11 +117,13 @@ def scene_content_list_for_publish(
     video_detail: dict | None = None,
 ) -> list:
     """从项目配置、工作流场景或频道列表行解析 ``scene_content``。"""
-    lang = language or "zh"
     if isinstance(video_detail, dict):
-        return config.scene_content_as_list(video_detail.get("scene_content"), lang)
+        sc = video_detail.get("scene_content")
+        return sc if isinstance(sc, list) else []
     pc = project_config or {}
-    sc_list = config.scene_content_as_list(pc.get("scene_content"), lang)
+    sc_list = pc.get("scene_content")
+    if not isinstance(sc_list, list):
+        sc_list = []
     scenes = workflow_scenes or []
     if not sc_list and scenes:
         sc_list = [
@@ -123,6 +145,7 @@ def ask_publish_metadata_then_schedule(
     scene_content_list: list,
     analyzed_content: str,
     story_text: str,
+    poem_text: str,
     generate_text_fn: Callable[[str, str], str],
     schedule_dialog_fn: Callable[..., tuple | None],
     caption_scenes: list | None = None,
@@ -148,6 +171,7 @@ def ask_publish_metadata_then_schedule(
         scene_content_list=scene_content_list,
         analyzed_content=analyzed_content,
         story_text=story_text,
+        poem_text=poem_text,
         review_script_text=review_script_text,
         generate_text_fn=generate_text_fn,
         dialog_title=metadata_dialog_title,
@@ -202,6 +226,7 @@ def ask_publish_title_and_description(
     scene_content_list: list | None = None,
     analyzed_content: str = "",
     story_text: str = "",
+    poem_text: str = "",
     review_script_text: str = "",
     generate_text_fn: Callable[[str, str], str],
     dialog_title: str = "上传视频 — 标题与描述",
@@ -211,7 +236,8 @@ def ask_publish_title_and_description(
     lang = language or "zh"
     scenes = scene_content_list or []
     analyzed = config.chinese_convert((analyzed_content or "").strip(), lang)
-    story = (story_text or "").strip()
+    story = config.chinese_convert((story_text or "").strip(), lang)
+    poem = config.chinese_convert((poem_text or "").strip(), lang)
     review_script = config.chinese_convert((review_script_text or "").strip(), lang)
 
     cap_labels = caption_labels or ["— 从场景字幕选择（可选）—"]
@@ -269,13 +295,9 @@ def ask_publish_title_and_description(
     desc_box = ttk.LabelFrame(frm, text="YouTube 描述", padding=8)
     desc_box.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-    source_var = tk.StringVar(value=SOURCE_VOICEOVER)
-    src_row = ttk.Frame(desc_box)
-    src_row.pack(fill=tk.X, pady=(0, 6))
-
-    ttk.Label(src_row, text="素材来源：").pack(side=tk.LEFT, padx=(0, 8))
-
     def _raw_source_text(source: str) -> str:
+        if source == SOURCE_STORY:
+            return story
         if source == SOURCE_VOICEOVER:
             return first_voiceover_from_scene_content(scenes, lang)
         if source == SOURCE_SCENE_FULL:
@@ -291,7 +313,11 @@ def ask_publish_title_and_description(
         text = _raw_source_text(src)
         if not text:
             if show_empty_warning:
-                if src == SOURCE_VOICEOVER:
+                if src == SOURCE_STORY:
+                    messagebox.showwarning(
+                        "提示", "story 内容为空。", parent=dlg
+                    )
+                elif src == SOURCE_VOICEOVER:
                     messagebox.showwarning(
                         "提示", "未找到首场景 voiceover。", parent=dlg
                     )
@@ -312,22 +338,26 @@ def ask_publish_title_and_description(
         desc_tx.insert("1.0", text)
         return True
 
-    rb_voice = ttk.Radiobutton(
+    default_source = default_publish_description_source(
+        story=story,
+        analyzed=analyzed,
+        scenes=scenes,
+        review_script=review_script,
+    )
+    source_var = tk.StringVar(value=default_source)
+    src_row = ttk.Frame(desc_box)
+    src_row.pack(fill=tk.X, pady=(0, 6))
+
+    ttk.Label(src_row, text="素材来源：").pack(side=tk.LEFT, padx=(0, 8))
+
+    rb_story = ttk.Radiobutton(
         src_row,
-        text="首场景 voiceover",
+        text="Story / 故事",
         variable=source_var,
-        value=SOURCE_VOICEOVER,
+        value=SOURCE_STORY,
         command=lambda: _load_source_raw(show_empty_warning=True),
     )
-    rb_voice.pack(side=tk.LEFT, padx=(0, 10))
-    rb_scene = ttk.Radiobutton(
-        src_row,
-        text="场景内容（全部）",
-        variable=source_var,
-        value=SOURCE_SCENE_FULL,
-        command=lambda: _load_source_raw(show_empty_warning=True),
-    )
-    rb_scene.pack(side=tk.LEFT, padx=(0, 10))
+    rb_story.pack(side=tk.LEFT, padx=(0, 10))
     rb_analyzed = ttk.Radiobutton(
         src_row,
         text="分析内容",
@@ -336,6 +366,22 @@ def ask_publish_title_and_description(
         command=lambda: _load_source_raw(show_empty_warning=True),
     )
     rb_analyzed.pack(side=tk.LEFT, padx=(0, 10))
+    rb_scene = ttk.Radiobutton(
+        src_row,
+        text="场景内容（全部）",
+        variable=source_var,
+        value=SOURCE_SCENE_FULL,
+        command=lambda: _load_source_raw(show_empty_warning=True),
+    )
+    rb_scene.pack(side=tk.LEFT, padx=(0, 10))
+    rb_voice = ttk.Radiobutton(
+        src_row,
+        text="首场景 voiceover",
+        variable=source_var,
+        value=SOURCE_VOICEOVER,
+        command=lambda: _load_source_raw(show_empty_warning=True),
+    )
+    rb_voice.pack(side=tk.LEFT, padx=(0, 10))
     rb_review = ttk.Radiobutton(
         src_row,
         text="审阅文稿 / 转写",
@@ -345,29 +391,31 @@ def ask_publish_title_and_description(
     )
     rb_review.pack(side=tk.LEFT)
 
+    if not story:
+        rb_story.state(["disabled"])
+    if not analyzed:
+        rb_analyzed.state(["disabled"])
     if not scenes:
         rb_voice.state(["disabled"])
         rb_scene.state(["disabled"])
-    if not analyzed:
-        rb_analyzed.state(["disabled"])
     if not review_script:
         rb_review.state(["disabled"])
 
-    append_story_var = tk.BooleanVar(value=False)
-    story_chk = ttk.Checkbutton(
+    append_poem_var = tk.BooleanVar(value=False)
+    poem_chk = ttk.Checkbutton(
         desc_box,
-        text="在描述下方附加 story（空两行 + 分隔线；需本条有 story 内容）",
-        variable=append_story_var,
+        text="在描述下方附加 poem / 诗歌（空两行 + 分隔线；需本条有 poem 内容）",
+        variable=append_poem_var,
     )
-    story_chk.pack(anchor=tk.W, pady=(0, 6))
-    if not story:
-        story_chk.state(["disabled"])
+    poem_chk.pack(anchor=tk.W, pady=(0, 6))
+    if not poem:
+        poem_chk.state(["disabled"])
 
     ttk.Label(
         desc_box,
-        text="上方选择素材来源后，编辑区显示原始内容（可改）。"
+        text="默认优先 story → 分析内容 → 场景全部；选定来源后编辑区显示原始素材（可改）。"
         "点「生成描述概述」由 LLM 根据编辑区内容生成简短 YouTube 描述；"
-        "双击编辑区可用剪贴板替换全文。勾选 story 时，确认发布前会自动追加 story。",
+        "双击编辑区可用剪贴板替换全文。勾选 poem 时，确认发布前会自动在描述下方追加诗歌。",
         wraplength=800,
     ).pack(anchor=tk.W, pady=(0, 6))
 
@@ -446,9 +494,9 @@ def ask_publish_title_and_description(
         if not body:
             messagebox.showwarning("提示", "描述不能为空。", parent=dlg)
             return
-        if append_story_var.get() and story:
-            body = append_story_to_description(
-                config.chinese_convert(body, lang), config.chinese_convert(story, lang)
+        if append_poem_var.get() and poem:
+            body = append_poem_to_description(
+                config.chinese_convert(body, lang), poem
             )
         else:
             body = config.chinese_convert(body, lang)
@@ -458,15 +506,7 @@ def ask_publish_title_and_description(
     ttk.Button(footer, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=(6, 0))
     ttk.Button(footer, text=confirm_label, command=on_confirm).pack(side=tk.RIGHT)
 
-    if review_script:
-        source_var.set(SOURCE_REVIEW_SCRIPT)
-        _load_source_raw()
-    elif scenes:
-        source_var.set(SOURCE_VOICEOVER)
-        _load_source_raw()
-    elif analyzed:
-        source_var.set(SOURCE_ANALYZED)
-        _load_source_raw()
+    _load_source_raw()
 
     dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
     dlg.wait_window()

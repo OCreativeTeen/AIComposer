@@ -302,12 +302,11 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
 
 
 
-def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
-    """从 ``scene_content``（list 或旧双语 dict）取首场景 ``caption``。"""
-    scenes = config.scene_content_as_list(scene_content, ui_language_key)
-    if not scenes:
+def title_from_scene_content(scene_content) -> str:
+    """从 ``scene_content`` list 取首场景 ``caption``。"""
+    if not isinstance(scene_content, list) or not scene_content:
         return ""
-    first = scenes[0]
+    first = scene_content[0]
     if isinstance(first, dict):
         return caption_from_scene_content_item(first)
     return ""
@@ -1000,31 +999,22 @@ class ProjectSelectionDialog:
         else:
             itags = None
 
-        # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get；字符串则解析为 dict（保留双语结构）
-        ac_src = ""
+        # 首次「选择项目」等入口不传 analyzed/scene：须避免对 None 调 .get
         ac_src = ""
         if isinstance(initial_analyzed_content, str):
             ac_src = initial_analyzed_content.strip()
-        elif initial_analyzed_content is not None:
-            ac_src = config.normalize_analyzed_content_value(
-                initial_analyzed_content, default_lang
-            )
         sc_src = []
         if initial_scene_content is not None:
             if isinstance(initial_scene_content, list):
                 sc_src = initial_scene_content
             elif isinstance(initial_scene_content, dict):
-                sc_src = config.normalize_scene_content_value(
-                    initial_scene_content, default_lang
-                )
+                sc_src = []
             elif isinstance(initial_scene_content, str) and initial_scene_content.strip():
                 try:
                     parsed_sc = json.loads(
                         safe_clipboard_json_copy(initial_scene_content.strip())
                     )
-                    sc_src = config.normalize_scene_content_value(
-                        parsed_sc, default_lang
-                    )
+                    sc_src = parsed_sc if isinstance(parsed_sc, list) else []
                 except json.JSONDecodeError:
                     sc_src = []
         self.story_result = {
@@ -1227,7 +1217,6 @@ class ProjectSelectionDialog:
         def refresh_title_entry_from_scene():
             nt = title_from_scene_content(
                 self.story_result.get("scene_content"),
-                self.story_result.get("language") or "",
             )
             if not nt:
                 return
@@ -1236,7 +1225,7 @@ class ProjectSelectionDialog:
             _apply_title_programmatic(nt)
 
         _dt = title_from_scene_content(
-            self.story_result.get("scene_content"), self.story_result.get("language") or ""
+            self.story_result.get("scene_content"),
         )
         _apply_title_programmatic(_dt or self.default_project_config["default_title"])
 
@@ -1473,8 +1462,6 @@ class ProjectSelectionDialog:
         )
         raw_preview.grid(row=0, column=0, sticky='ew')
         raw_preview.config(state=tk.DISABLED)
-        edit_raw_btn = ttk.Button(raw_label_frame, text="RAW内容", command=lambda: None)
-        edit_raw_btn.grid(row=1, column=0, sticky='w', pady=(8, 0))
 
         scene_story_frame = ttk.LabelFrame(
             content_panels_frame, text="Story / scene_content (JSON)", padding=10
@@ -1514,7 +1501,6 @@ class ProjectSelectionDialog:
         def update_buttons_state(*args):
             has_topic = bool(self.story_result['topic_category'] and self.story_result['topic_subtype'])
             st = 'normal' if has_topic else 'disabled'
-            edit_raw_btn.config(state=st)
             edit_scene_story_btn.config(state=st)
 
 
@@ -1550,79 +1536,6 @@ class ProjectSelectionDialog:
 
         topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
         topic_subtype_combo.bind('<<ComboboxSelected>>', on_topic_subtype_selected)
-
-
-        def open_project_content_editor(initial_text=None):
-            """编辑 analyzed_content；确认后写回 ``story_result['analyzed_content']``（纯文本）。"""
-            if initial_text is None:
-                initial_text = self.story_result.get('analyzed_content')
-            if isinstance(initial_text, str) and initial_text.strip():
-                _prefill = initial_text.strip()
-            raw_dialog = tk.Toplevel(new_project_dialog)
-            raw_dialog.title("项目内容 输入")
-            raw_dialog.geometry("700x400")
-            raw_dialog.transient(new_project_dialog)
-            raw_dialog.grab_set()
-            raw_dialog.update_idletasks()
-            x = (raw_dialog.winfo_screenwidth() - 700) // 2
-            y = (raw_dialog.winfo_screenheight() - 400) // 2
-            raw_dialog.geometry(f"700x400+{x}+{y}")
-            frame = ttk.Frame(raw_dialog, padding=20)
-            frame.pack(fill=tk.BOTH, expand=True)
-            ttk.Label(
-                frame,
-                text="请输入 Raw Case-Story（纯文本，当前项目语言）：",
-                font=('TkDefaultFont', 10, 'bold'),
-                wraplength=640,
-                justify=tk.LEFT,
-            ).pack(anchor='w', pady=(0, 5))
-            case_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=12)
-            case_text.pack(fill=tk.BOTH, expand=True)
-
-            if _prefill:
-                case_text.insert(tk.END, _prefill)
-
-            def paste_on_double_click(e):
-                try:
-                    s = safe_clipboard_json_copy(raw_dialog.clipboard_get())
-                    if s:
-                        case_text.delete(1.0, tk.END)
-                        case_text.insert(tk.END, s)
-                except tk.TclError:
-                    pass
-            case_text.bind('<Double-1>', paste_on_double_click)
-
-            raw_input_holder = [None]
-
-            def on_ok():
-                # 必须在 destroy 前读取文本；否则 wait_window 返回后控件已销毁会触发 TclError
-                try:
-                    raw_input_holder[0] = case_text.get('1.0', tk.END).strip()
-                except tk.TclError:
-                    raw_input_holder[0] = ""
-                raw_dialog.destroy()
-
-            btn_f = ttk.Frame(frame)
-            btn_f.pack(fill=tk.X, pady=(10, 0))
-            ttk.Button(btn_f, text="确认", command=on_ok).pack(side=tk.LEFT, padx=5)
-
-            raw_dialog.wait_window()
-
-            raw_input = (raw_input_holder[0] or "").strip()
-            if not raw_input:
-                return
-            normalized = raw_input
-            if not normalized.strip():
-                messagebox.showwarning(
-                    "内容无效",
-                    "无法保存：analyzed_content 须为非空文本。",
-                    parent=new_project_dialog,
-                )
-                return
-
-            self.story_result["analyzed_content"] = normalized
-            update_buttons_state()
-            update_previews()
 
 
         def open_scene_story_editor(initial_text=None):
@@ -1691,10 +1604,7 @@ class ProjectSelectionDialog:
                 parsed_sc = json.loads(safe_clipboard_json_copy(raw_txt))
             except json.JSONDecodeError:
                 return
-            parsed_sc = config.normalize_scene_content_value(
-                parsed_sc,
-                self.story_result.get("language") or "",
-            )
+            parsed_sc = parsed_sc if isinstance(parsed_sc, list) else []
             if not parsed_sc:
                 return
             self.story_result['scene_content'] = parsed_sc
@@ -1703,12 +1613,9 @@ class ProjectSelectionDialog:
             refresh_title_entry_from_scene()
 
 
-        edit_raw_btn.config(command=open_project_content_editor)
         edit_scene_story_btn.config(command=open_scene_story_editor)
 
         update_previews()
-        if self.story_result.get('analyzed_content'):
-            new_project_dialog.after(300, lambda: open_project_content_editor(initial_text=self.story_result.get('analyzed_content')))
 
         # 初始状态：按钮禁用（topic 未选时）
         update_buttons_state()
@@ -1735,7 +1642,7 @@ class ProjectSelectionDialog:
                 messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
                 return
 
-            _sc_title = title_from_scene_content(sc, self.story_result.get("language") or "")
+            _sc_title = title_from_scene_content(sc)
             if _sc_title:
                 title = _sc_title
             elif not (title or "").strip() or (title or "").strip() in ("新项目", "未命名"):

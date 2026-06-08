@@ -19,7 +19,7 @@ INPUT
 """
 
 
-MV_ANALYZE_OLD = """
+MV_ANALYZE = """
 Role:
     - You are an expert musicologist, elite lyricist, and veteran music producer. Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its comprehensive Musical & Lyrical DNA. 
     - Your analysis must decode not just the sound, but how the lyrical structure, narrative pacing, and emotional twists synergize with the music, providing a reusable blueprint for songwriting and production.
@@ -193,118 +193,6 @@ Steps:
 
 """
 
-MV_ANALYZE = """
-Role:
-    - You are an expert musicologist, elite lyricist, veteran music producer, and vocal-performance analyst.
-    - Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its complete Musical, Vocal, Emotional, and Lyrical DNA.
-    - Your analysis must decode not only the composition and production, but also the singer’s vocal identity, emotional delivery mechanics, performance psychology, and the subtle human imperfections that create emotional realism.
-    - The goal is to provide a reusable blueprint for composing and producing a NEW original song with a similarly powerful emotional impact, atmosphere, vocal personality, and narrative progression.
-
-Steps:
-
-    1) Deep Music, Vocal & Lyrical Architecture Analysis (Extract Reusable Insights)
-
-        Analyze the track thoroughly and output a structured breakdown of the following attributes:
-
-        [Musical Dimensions]
-        - Genre / Style Blend:
-            Primary + secondary influences (e.g., cinematic pop + alt rock, synthwave + orchestral).
-
-        - Mood Arc & Emotional Narrative:
-            How tension builds and resolves over time; what the listener experiences emotionally.
-
-        - Atmosphere & Sonic Palette:
-            Spatial design (reverb vs. dry), warmth/brightness, density, stereo width, intimacy vs. cinematic scale.
-
-        - Regional / Historical Vibe:
-            Cultural flavors or eras (e.g., 80s retro synths, East Asian pentatonic motifs, gospel elements).
-
-        - Tempo & Groove:
-            BPM estimate, swing/straight feel, rhythmic character, signature drum patterns, groove psychology.
-
-        - Key / Mode & Harmony Language:
-            Major/minor, modal color (Dorian, Phrygian, etc.), chord progression style, harmonic tension/release tools.
-
-        - Instrumentation & Arrangement:
-            Core instruments, signature sounds, layering strategies, transitions, build-up/drop/climax techniques.
-
-        - Melody Design:
-            Motifs, melodic contour, hook behavior, repetition vs. variation, emotional peak placement.
-
-        [Singer Identity & Vocal DNA]
-        - Core Vocal Identity:
-            What makes the singer instantly recognizable within seconds?
-
-        - Vocal Timbre & Texture:
-            Analyze breathiness, warmth, fragility, rasp, brightness/darkness, chest/head balance, intimacy, tonal texture across ranges.
-
-        - Vocal Delivery & Emotional Mechanics:
-            Explain how emotions are transmitted through phrasing, restraint/explosion, breath leakage, whisper transitions, vibrato, delayed timing, tension/release, vocal cracks, and dynamic control.
-
-        - Vocal Motion & Expression:
-            Analyze slides, pitch scoops, sustained vowels, conversational phrasing, rhythmic dragging/pushing, ad-libs, and improvisational/live-performance energy.
-
-        - Pronunciation & Personality:
-            Analyze diction, consonant softness/hardness, vowel stretching, slurring, accent flavor, and articulation personality.
-
-        - Range Usage & Emotional Psychology:
-            Explain how low/mid/high/falsetto/mixed registers are used emotionally throughout the song.
-
-        - Human Imperfections & Authenticity:
-            Identify subtle imperfections that create realism:
-            breath noise, instability, rasp, emotional strain, imperfect timing, saturation, live unpredictability.
-
-        - Microphone Intimacy & Spatial Feeling:
-            Describe whether the performance feels whispered, close-mic intimate, cinematic, distant, confessional, or stage-projected.
-
-        - Temporal Vocal Evolution:
-            Track how the singer’s emotional delivery evolves throughout the song:
-            restraint → vulnerability → eruption → exhaustion → transcendence.
-
-        - Vocal Production:
-            Vocal layering, harmony stacks, doubles, ad-lib placement, backing vocal behavior, stereo positioning, vocal FX usage.
-
-        [Lyrical Architecture & Narrative Dynamics]
-        - Structural Repetition & Patterns:
-            Analyze repetitions, refrain placement, structural motifs, and how repetition reinforces memorability.
-
-        - Pacing, Progression & Climax (渐进与高潮):
-            Analyze sentence length, syllable density, emotional escalation, and climax-building structure.
-
-        - Lyrical Twists & Reversals (翻转):
-            Identify narrative pivots, emotional flips, perspective shifts, or thematic reversals.
-
-        - Atmospheric Context & Wordplay:
-            Analyze imagery, metaphors, phonetic choices, emotional vocabulary, and world-building atmosphere.
-
-        [Lyric-Music Synergy (词曲协同)]
-        - Positive Musical Impact:
-            Detail how lyrical structure drives arrangement, transitions, drops, dynamic changes, instrumentation shifts, or emotional peaks.
-
-            Examples:
-            repeated words triggering rhythmic intensification,
-            emotional flips aligning with arrangement breakdowns,
-            silence before lyrical impact moments,
-            harmonic lift during emotional revelation.
-
-    2) Extract "Actionable Blueprint & DNA Rules" (For composing a NEW song)
-
-        Summarize the track’s non-obvious fingerprints into actionable creative rules so a songwriter, producer, or AI music system can reproduce a similar emotional experience in a completely NEW original composition.
-
-        Output this section in {language}:
-
-        - Signature Audio Vibe & Texture Choices
-        - Signature Chord Cadences & Rhythm Grooves
-        - Signature Arrangement, Build-up & Climax Techniques
-        - Signature Vocal Delivery & Emotional Expression Rules
-        - Signature Vocal Layering, Harmony & Ad-lib Rules
-        - Singer Persona & Emotional Archetype
-        - Lyrical Formatting Blueprint
-        - Narrative Pacing & Emotional Progression Template
-        - Lyric-to-Music Transition Triggers
-        - Humanization Rules:
-            Which imperfections, phrasing habits, breathing styles, and emotional details must remain to preserve realism, intimacy, and soul.
-"""
 
 
 MV_SIMPLE_REORGANIZE = """
@@ -1334,16 +1222,86 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 *** SCENE RULES:
     ** ONE CASE, ONE THREAD (mandatory)
         * Every scene advances ONE same case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
+        * (Required Narrative Structure Across All Scenes) The audience must not feel they are watching a lesson, they must feel they are watching a human being struggle; Psychological insight emerges naturally through the story.        
         * SCENE-TO-SCENE CHAIN
             * Scene 2+: voiceover echo one concrete detail from the previous scene before moving forward.
             * speaking: dialogue responds to the prior beat; no standalone speech essay.
             * Host analysis (if present): only about what the audience JUST saw — not a new topic.
 
     ** Typical THERAPEUTIC STORY SPINE (across all scenes)
-        A) Surface — concrete daily moment; struggle visible in behavior & environment
-        B) Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
-        C) Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
-        D) Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
+        * progress:
+            * Surface — concrete daily moment; struggle visible in behavior & environment
+            * Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
+            * Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
+            * Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
+        * scenes reference:
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 1 — THE INVISIBLE PROBLEM
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Make the audience emotionally identify with the protagonist before any explanation appears.
+            ** Requirements:
+                * Begin with a concrete life moment.
+                * Show a problem through behavior, not psychology. Do NOT explain the cause yet. The audience should only see symptoms.
+                * Create curiosity: "Why does this person keep doing this?" | Introduce the protagonist's protective strategy.
+                * Examples: people pleasing / perfectionism / emotional avoidance / rescuing others / overworking / proving self-worth / controlling relationships
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 2 — THE REPEATING PAIN
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Reveal the hidden cost of the survival strategy.
+            ** Requirements:
+                * Same pattern repeats in different situations: Stakes become higher / Relationships become strained / Internal suffering becomes visible
+                * Every new scene must answer: "What price is the protagonist paying?"
+                * Show: disappointment / loneliness / resentment / shame / exhaustion / emotional distance / disappointment
+                * The audience should begin to suspect: "This problem is deeper than today's event."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 3 — THE BREAKING POINT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Create an emotionally unforgettable collision. This is the emotional peak of the story.
+            ** Requirements:
+                * A triggering event forces the protagonist's strategy to fail.
+                * The mask can no longer work.
+                * Examples: relationship crisis / betrayal / public humiliation / panic attack / child mirrors parent's wound / important loss / sudden confrontation
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 4 — THE REVEAL
+            ━━━━━━━━━━━━━━━━━━━━
+
+            ** Goal: Expose the root wound.
+            ** Requirements:
+                * The audience finally understands: WHY the protagonist became this way.
+                * Examples: memory / conversation / mirror moment / therapy session / journal / unexpected realization
+                * This moment should create: "Now everything makes sense."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 5 — THE TURNING POINT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Create hope without becoming unrealistic.
+            ** Requirements:
+                * The protagonist experiments with a new response.
+                * Healing begins through action. Not perfection. Not instant healing.
+                * Only one small courageous choice.
+                * Examples: saying no / expressing a feeling / asking for help / setting a boundary / admitting vulnerability
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 6 — THE NEW ENDING
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Show transformation.
+            ** Requirements:
+                * Create a scene that mirrors Act 1.
+                * Present a similar situation. But now the protagonist responds differently. This proves growth through behavior.
+                * The audience can visibly feel: "Something has changed."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            FINAL REFLECTIVE BEAT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: End with a gentle human truth. 
+            ** Requirements:
+                * The ending should feel like: emotion first, insight second. Never preach. Never lecture. Never diagnose.
+                * The audience should leave with: emotion first, insight second.
+                * Examples: "Maybe she was never trying to be perfect. Maybe she was trying to be loved."
+
 
     ** SHOW, DON'T TELL
         * Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
@@ -1361,13 +1319,98 @@ COUNSELING_CONTENT_SCENES = """
     ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
-""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
-
-*** YOUR TASK — NotebookLM "Story"
+*** YOUR TASK
     ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
     ** Output: ONE continuous film/video as a JSON array of scenes.
     ** Same protagonist, same problem, same value thread from first frame to last.
     ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
+
+*** SCENE RULES:
+    ** ONE CASE, ONE THREAD (mandatory)
+        * Every scene advances ONE same case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
+        * SHOW, DON'T TELL: The audience must not feel they are watching a lesson, they must feel they are watching a human being struggle; 
+        * Psychological insight emerges naturally through the story — not DSM labels or theory names in visual/speaking.
+
+    ** Typical Sample - THERAPEUTIC STORY SPINE (across all scenes)
+        * progress:
+            * Surface — concrete daily moment; struggle visible in behavior & environment
+            * Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
+            * Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
+            * Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
+        * sample scenes as reference:
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 1 — THE INVISIBLE PROBLEM
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Make the audience emotionally identify with the protagonist before any explanation appears.
+            ** Requirements:
+                * Begin with a concrete life moment.
+                * Show a problem through behavior, not psychology. Do NOT explain the cause yet. The audience should only see symptoms.
+                * Create curiosity: "Why does this person keep doing this?" | Introduce the protagonist's protective strategy.
+                * Examples: people pleasing / perfectionism / emotional avoidance / rescuing others / overworking / proving self-worth / controlling relationships
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 2 — THE REPEATING PAIN
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Reveal the hidden cost of the survival strategy.
+            ** Requirements:
+                * Same pattern repeats in different situations: Stakes become higher / Relationships become strained / Internal suffering becomes visible
+                * Every new scene must answer: "What price is the protagonist paying?"
+                * Show: disappointment / loneliness / resentment / shame / exhaustion / emotional distance / disappointment
+                * The audience should begin to suspect: "This problem is deeper than today's event."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 3 — THE BREAKING POINT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Create an emotionally unforgettable collision. This is the emotional peak of the story.
+            ** Requirements:
+                * A triggering event forces the protagonist's strategy to fail.
+                * The mask can no longer work.
+                * Examples: relationship crisis / betrayal / public humiliation / panic attack / child mirrors parent's wound / important loss / sudden confrontation
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 4 — THE REVEAL
+            ━━━━━━━━━━━━━━━━━━━━
+
+            ** Goal: Expose the root wound.
+            ** Requirements:
+                * The audience finally understands: WHY the protagonist became this way.
+                * Examples: memory / conversation / mirror moment / therapy session / journal / unexpected realization
+                * This moment should create: "Now everything makes sense."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 5 — THE TURNING POINT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Create hope without becoming unrealistic.
+            ** Requirements:
+                * The protagonist experiments with a new response.
+                * Healing begins through action. Not perfection. Not instant healing.
+                * Only one small courageous choice.
+                * Examples: saying no / expressing a feeling / asking for help / setting a boundary / admitting vulnerability
+
+            ━━━━━━━━━━━━━━━━━━━━
+            ACT 6 — THE NEW ENDING
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: Show transformation.
+            ** Requirements:
+                * Create a scene that mirrors Act 1.
+                * Present a similar situation. But now the protagonist responds differently. This proves growth through behavior.
+                * The audience can visibly feel: "Something has changed."
+
+            ━━━━━━━━━━━━━━━━━━━━
+            FINAL REFLECTIVE BEAT
+            ━━━━━━━━━━━━━━━━━━━━
+            ** Goal: End with a gentle human truth. 
+            ** Requirements:
+                * The ending should feel like: emotion first, insight second. Never preach. Never lecture. Never diagnose.
+                * The audience should leave with: emotion first, insight second.
+                * Examples: "Maybe she was never trying to be perfect. Maybe she was trying to be loved."
+
+    ** VISUAL
+        * CLEAN STORY IMAGE (slideshow): frozen film-still for a painte.
+            * Slideshow image content : story via scene + character only 
+            * Only show very critical & short info (if absolutely necessary to express the content, less than 10 characters) as huge font in background)
+        * ``caption`` / ``voiceover`` / ``speaking`` = audio/metadata only — never in ``visual`` as words-to-paint.
+
 
 *** SCENE FIELDS (all text in {language})
     1) caption — beat title (metadata only; NOT text to paint on image); scene 1 = whole-story title
@@ -1410,40 +1453,223 @@ INPUT
 
 
 COUNSELING_STORY_SCENES = """
-*** ROLE: Senior Psychological Counselor & Reflective Storyteller
+*** ROLE: Elite psychological screenwriter, Cinematic Reflective Storyteller, visual narrative director. 
     ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
-""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
-
 *** YOUR TASK
-    ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
-    ** Output: ONE continuous film/video as a JSON array of scenes.
-    ** Same protagonist, same problem, same value thread from first frame to last.
+    ** Transform a psychological case story into a deeply immersive cinematic scene-by-scene narrative that feels like a premium TV drama or emotionally powerful film.
+    ** Output: ONE continuous film/video as a JSON array of scenes. Same protagonist, same problem, same value thread from first frame to last.
     ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
+    ** The audience must: emotionally recognize themselves in the protagonist; feel psychological tension through lived moments; experience emotional release, insight, and reflection; leave with a memorable emotional imprint, inner realization, and hope for change.
 
-*** SCENE FIELDS (all text in {language})
-    1) caption — beat title (metadata only; NOT text to paint on image); scene 1 = whole-story title
-    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — audio only, never for image text
-    3) visual — film-still shot list ONLY (see VISUAL rules): who/where/light/action/mood — zero slide copy, zero dialogue written into the shot
-    4) speaking — protagonist dialogue ~9s — audio only; do NOT put this line in visual
-    5) actor — gender/age/race | mood | actions (consistent cast)
+*** STORY SCENES CREATION PRINCIPLE
 
-INPUT (user prompt bottom):
-    Topic & Instruction · case/analyzed content · core-insight
+    The input story already contains:
+    - a psychological conflict
+    - emotional wounds
+    - real-life triggering events
+    - internal struggles
+    - relational dynamics
+    - a turning point
+    - partial or meaningful emotional resolution
 
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON array)
---------------------------------------------------
-[
-    {{
-        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-        "voiceover": "Host bridge + insight for this beat only. In {language}.",
-        "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
-        "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-]
+    YOUR TASK is to CINEMATIZE it.
+
+    Convert it into:
+    - emotionally connected scenes
+    - evolving environments
+    - visual storytelling
+    - escalating emotional tension
+    - psychologically realistic dialogue
+    - cinematic progression
+
+    The final result should feel like:
+    - every scene must naturally connect to the next.
+    - a streaming drama series
+    - an award-winning therapeutic short film
+    - emotionally immersive visual storytelling
+
+    The audience should feel:
+    - “I’ve lived this.”
+    - “I understand this pain.”
+    - “I learned something about myself.”
+
+
+*** THERAPEUTIC SCENES - STORY ARC (Across scenes, gradually evolve through):
+    1. SURFACE
+        - ordinary daily life
+        - emotional discomfort hidden in routine
+        - subtle behavioral signs
+        - relationship friction
+        - loneliness, avoidance, pressure, numbness, anxiety, over-control, pleasing, silence, etc.
+
+    2. PATTERN
+        - the same emotional wound repeats
+        - coping mechanisms become visible
+        - emotional tension escalates
+        - misunderstandings deepen
+        - protagonist unconsciously recreates pain
+
+    3. ROOT
+        - triggering event
+        - emotional rupture
+        - memory echo
+        - symbolic mirror moment
+        - realization of where the pattern began
+
+    4. TURNING POINT
+    - a quiet but meaningful emotional shift
+    - vulnerability replaces defense
+    - protagonist sees themselves differently
+    - emotional truth finally lands
+
+    5. WAY OUT
+    - not perfect healing
+    - not magical transformation
+    - only a believable emotional opening
+    - acceptance, honesty, reconnection, self-awareness, or release
+
+    Ending should leave:
+    - emotional resonance
+    - reflective silence
+    - hope grounded in reality
+
+
+*** EMOTIONAL STORYTELLING RULES
+    SHOW, DON’T TELL (Reveal the wound emotionally and visually. Avoid explicit psychology explanations).
+    NEVER explain psychology academically.
+
+    Avoid:
+    - DSM labels
+    - therapy jargon
+    - diagnostic explanations
+    - motivational speeches
+    - moral lectures
+
+    Instead show psychology through:
+    - body language
+    - eye movement
+    - silence
+    - unfinished actions
+    - repeated habits
+    - avoidance
+    - sensory triggers
+    - environmental symbolism
+    - emotional contrast
+    - interruptions
+    - physical distance between people
+    - changes in lighting/weather/space
+
+    The audience should FEEL the psychology before understanding it.
+
+
+*** VISUAL CINEMATIC STYLE
+    Every scene must feel like:
+    - a frozen film still
+    - emotionally cinematic
+    - visually layered
+    - realistic and immersive
+
+    The visuals should contain:
+    - environment
+    - lighting
+    - posture
+    - gestures
+    - emotional atmosphere
+    - symbolic objects
+    - spatial relationships
+    - cinematic framing
+
+
+*** VERY IMPORTANT — SLIDESHOW / IMAGE RULE
+    Each visual must generate a CLEAN cinematic image.
+
+    The image should tell the story through:
+    - characters
+    - composition
+    - emotion
+    - environment
+
+    NOT through text.
+
+    STRICT RULES:
+    - NO subtitles
+    - NO dialogue text on screen
+    - NO narration text in image
+    - NO paragraphs in image
+    - NO infographic style
+    - NO psychology labels
+    - NO UI overlays
+    - NO excessive written signs
+
+    If absolutely necessary:
+    - allow ONLY extremely short environmental text
+    - less than 10 characters
+    - naturally existing in the environment
+    - blurred or secondary
+
+    Examples:
+    - subway sign
+    - clock digits
+    - tiny phone notification
+    - store name
+
+
+*** SCENE PACING
+    Scenes must evolve naturally.
+
+    Use:
+    - emotional escalation
+    - environmental transition
+    - changing moods
+    - visual rhythm
+    - contrast between isolation and connection
+    - silence and confrontation
+    - routine and rupture
+
+    Some scenes can be:
+    - quiet
+    - observational
+    - emotionally restrained
+
+    Others can be:
+    - intense
+    - claustrophobic
+    - emotionally explosive
+
+    The progression must feel like a real dramatic film.
+
+
+*** CHARACTER CONSISTENCY
+    Maintain consistency across all scenes:
+    - age
+    - gender
+    - ethnicity
+    - clothing style
+    - emotional traits
+    - physical details
+    - environment continuity
+
+    Character evolution should appear subtly through:
+    - posture
+    - eye contact
+    - clothing tone
+    - room condition
+    - movement
+    - openness vs withdrawal
+
+
+*** OUTPUT FORMAT (STRICT JSON array)
+    [
+        {{
+            "caption": "Beat title; scene 1 = whole-story title. In {language}.",
+            "voiceover": "Host bridge + insight for this beat only. In {language}.",
+            "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
+            "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
+            "actor": "gender/age/race | mood | actions"
+        }}
+    ]
 
 
 --------------------------------------------------

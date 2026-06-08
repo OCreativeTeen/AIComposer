@@ -46,6 +46,20 @@ SCREEN_CORE_PROMPT = (
 )
 
 
+STORY_CONDENSE_PROMPT = (
+    "You are a narrative editor specializing in psychological storytelling.\n"
+    "Rewrite the user's ORIGINAL story below in {language} ONLY.\n\n"
+    "Requirements:\n"
+    "- Preserve the story's overall structure (setup → tension → turning point → resolution or open ending).\n"
+    "- Keep the core conflict and its psychological fix / insight clearly visible.\n"
+    "- Show emotional shifts and contrast (before vs after, surface vs inner, expectation vs reality).\n"
+    "- Use a natural spoken tone — conversational, vivid, not academic or clinical.\n"
+    "- Condense to 300–500 characters total (count characters in {language}). Do not exceed 500.\n"
+    "- Do not add new plot events; compress and sharpen what is already there.\n"
+    "- Output ONLY the rewritten story text. No title, quotes, labels, or explanations."
+)
+
+
 SPEAKING_CONCISE_PROMPT = (
     "You are a text condenser. From the user's ORIGINAL content below, rewrite it in a very casual, spoken style.\n"
     "Output language: {language} ONLY.\n"

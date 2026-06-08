@@ -1578,9 +1578,7 @@ class AVReviewDialog:
             user_prompt=refresh_conversation,
             expect_list=False,
         )
-        new_scenes = config.scene_list_from_llm_output(
-            raw_llm_scenes, self.workflow.language
-        )
+        new_scenes = raw_llm_scenes if isinstance(raw_llm_scenes, list) else []
         if not new_scenes:
             return
         for scene in new_scenes:
