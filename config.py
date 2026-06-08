@@ -128,11 +128,6 @@ def normalize_scene_content_value(data, ui_language_key: str = "") -> list:
     return scene_list_from_llm_output(data, ui_language_key)
 
 
-def normalize_analyzed_content_text(raw_input: str) -> str:
-    """RAW 编辑器：保存为去首尾空白的纯文本。"""
-    return (raw_input or "").strip()
-
-
 def normalize_analyzed_content_value(val, ui_language_key: str = "") -> str:
     """``analyzed_content`` 统一为纯文本；旧双语 dict / JSON 字符串一次性展平。"""
     if val is None:
@@ -194,21 +189,6 @@ def migrate_analyzed_content_field(item: dict) -> bool:
         return False
     item["analyzed_content"] = new_text
     return True
-
-
-def analyzed_content_text(val, ui_language_key: str = "") -> str:
-    """``analyzed_content`` 为纯文本字符串；非 str 时展平或序列化（展示/读取用）。"""
-    if val is None:
-        return ""
-    if isinstance(val, str):
-        s = val.strip()
-        if not s:
-            return ""
-        if s.startswith("{") or s.startswith("["):
-            flat = normalize_analyzed_content_value(s, ui_language_key)
-            return flat if flat else s
-        return s
-    return normalize_analyzed_content_value(val, ui_language_key)
 
 
 def merge_scene_content_list(existing, rewritten, ui_language_key: str = "") -> list:

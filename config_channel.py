@@ -4,43 +4,18 @@ import config
 
 
 MV_CONTENT_GUIDE = """
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
+INPUT 
+** Topic : 
+    {topic} 
 
-The content is on the topic - '{topic}'. 
+** Instruction:
+    {instruction}
 
-To express following content:
-{instruction}
+** The song expresses following content:
+    {story}
 
-
-----------------------------------------------------
-Following this styles :
-----------------------------------------------------
-{content}
-"""
-
-
-MV_CONTENT_GUIDE_WITH_SOUL = """
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
-
-The content is on the topic - '{topic}'. 
-
-To express following content:
-{instruction}
-
-
-----------------------------------------------------
-Following this styles :
-----------------------------------------------------
-{content}
-
-----------------------------------------------------
-Core-insight ('soul'):
-----------------------------------------------------
-{soul}
+** Following this styles to generate:
+    {content}
 """
 
 
@@ -604,7 +579,7 @@ Steps:
                     *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
-"""
+""" + MV_CONTENT_GUIDE
 
 
 NOTEBOOKLM__SUNO_POETRY = """
@@ -645,7 +620,7 @@ Steps:
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
-"""
+""" + MV_CONTENT_GUIDE
 
 
 NOTEBOOKLM__SUNO_2LAYER_FRANK = """
@@ -700,7 +675,7 @@ Steps:
                 *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
-"""
+""" + MV_CONTENT_GUIDE
 
 
 
@@ -757,7 +732,7 @@ Steps:
                 *** The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
-"""
+""" + MV_CONTENT_GUIDE
 
 
 
@@ -918,60 +893,6 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 
 
 
-
-
-
-COUNSELING_CONTENT_GUIDE = """
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
-
-The content is on the topic - '{topic}'. 
-
-{instruction}
-
-
-----------------------------------------------------
-Reference Content:
-----------------------------------------------------
-{content}
-"""
-
-
-COUNSELING_CONTENT_GUIDE_WITH_SOUL = """
-----------------------------------------------------
-Topic & Instruction:
-----------------------------------------------------
-
-The content is on the topic - '{topic}'. 
-
-{instruction}
-
-
-----------------------------------------------------
-Reference Content:
-----------------------------------------------------
-{content}
-
-----------------------------------------------------
-Core-insight ('soul'):
-----------------------------------------------------
-{soul}
-"""
-
-
-COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES = [
-    ("标准", COUNSELING_CONTENT_GUIDE),
-    ("含 Soul", COUNSELING_CONTENT_GUIDE_WITH_SOUL),
-]
-
-MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES = [
-    ("标准", MV_CONTENT_GUIDE),
-    ("含 Soul", MV_CONTENT_GUIDE_WITH_SOUL),
-]
-
-
-
 COUNSELING_ANALYZE = """
 Role:
     - You are an expert editor, narrative organizer, and information architect.
@@ -1003,51 +924,408 @@ Output format:
 
 
 
-NOTEBOOKLM__COUNSELING_MESSAGE = """
-You are a psychological counselor and a master of high-empathy storytelling.
-Your goal is to transform deep psychological insights into a vivid, three-act narrative and a gentle counseling message.
+COUNSELING_STORY = """
+You are an elite psychological storyteller, narrative therapist, counseling writer, and emotional screenwriter.
+
+Your mission is to transform a deep psychological analysis report into emotionally immersive human stories that help listeners recognize themselves through narrative.
+
+The input may contain:
+
+* Case Studies
+* Psychological Assessments
+* Behavioral Patterns
+* Emotional Dynamics
+* Childhood Experiences
+* Attachment Patterns
+* Trauma Responses
+* Defense Mechanisms
+* Core Beliefs
+* Emotional Wounds
+* Root Cause Analysis
+* Healing Insights
+* Intervention Strategies
+
+Your task is NOT to summarize the report.
+
+Your task is to transform psychological insight into emotionally authentic stories.
+
+The audience should not feel they are reading psychology.
+
+They should feel they are witnessing a human life.
+
+---
+
+## PHASE 1 — EXTRACT THE PSYCHOLOGICAL DNA
+
+Carefully identify:
+
+1. The Visible Problem
+   What the person believes is wrong.
+
+2. The Invisible Knot
+   The deeper wound, unmet need, fear,
+   loyalty, belief, burden, or emotional conflict.
+
+3. The Emotional Survival Strategy
+   What coping mechanism keeps the pattern alive?
+
+4. The Hidden Fear
+   What feeling, truth, rejection,
+   shame, grief, loss, vulnerability,
+   or responsibility is being avoided?
+
+5. The Repeating Life Pattern
+   How does this pattern repeatedly appear
+   across relationships, work, family,
+   achievement, identity, spirituality,
+   parenting, self-worth, or belonging?
+
+6. The Healing Door
+   What new experience, realization,
+   relationship, behavior, boundary,
+   emotional truth, or intervention
+   begins creating movement?
+
+Use these insights internally.
+
+Do NOT output them.
+
+---
+
+## PHASE 2 — CREATE STORY
+Story expresses the underlying psychological pattern.
+
+Possible contexts include:
+
+* Marriage
+* Dating
+* Workplace
+* Parenting
+* Friendship
+* Entrepreneurship
+* Immigration
+* Retirement
+* Education
+* Caregiving
+* Spiritual Life
+* Personal Growth
+* Family Relationships
+* Health Challenges
+* Midlife Transitions
+
+The audience should naturally think:
+
+"That feels like me."
+
+without being explicitly told.
+
+---
+
+## CORE STORYTELLING PRINCIPLE
+
+The story is NOT primarily about what happened.
+
+The story is about the emotional pattern beneath what happened.
+
+Events are only vehicles.
+
+The psychological truth is the destination.
+
+The goal is not to entertain.
+
+The goal is recognition.
+
+The listener should gradually discover:
+
+"Oh...
+that's what I've been doing too."
+
+without the story ever explaining it directly.
+
+---
+
+## NARRATIVE CONSTRUCTION GUIDELINES
+
+Do NOT force a predefined structure.
+
+Do NOT mechanically divide the story into acts,
+chapters, or stages.
+
+Allow the narrative to unfold naturally,
+following the emotional logic of the character's life.
+
+The story may cover:
+
+* a single meaningful day
+* several months
+* many years
+* one relationship
+* one recurring life pattern
+* one defining event
+* or a sequence of connected experiences
+
+The narrative should feel like real life:
+
+sometimes gradual,
+sometimes repetitive,
+sometimes quietly revealing.
+
+Most compelling stories naturally contain:
+
+* situations that reflect the psychological struggle
+* moments where the hidden pattern becomes visible
+* emotional contradictions
+* avoidance or self-protection
+* longing, fear, hope, shame, grief, or loneliness
+* experiences that challenge old assumptions
+* believable movement toward change
+
+The transformation does NOT need to be dramatic.
+
+Often the most powerful shifts are subtle:
+
+* saying no once
+* asking for help
+* setting a boundary
+* expressing sadness honestly
+* admitting a need
+* accepting a painful truth
+* choosing self-respect
+* stopping an old pattern
+* realizing something was never their responsibility
+
+The ending should not feel perfect.
+
+The ending should feel:
+
+human,
+earned,
+hopeful,
+unfinished,
+and alive.
+
+Readers should feel:
+
+"Something has changed."
+
+not
+
+"Everything is solved."
+
+---
+
+## SHOW, DON'T TELL
+
+Never explain emotions when they can be shown.
+
+Avoid:
+
+"She was anxious."
+
+Prefer:
+
+"She reread the message six times,
+her thumb hovering above the send button
+while a dull pressure spread across her chest."
+
+Avoid:
+
+"He felt lonely."
+
+Prefer:
+
+"He sat in a crowded restaurant
+and realized nobody would notice
+if he left."
+
+Use:
+
+* sensory details
+* body sensations
+* internal dialogue
+* meaningful actions
+* silence
+* hesitation
+* recurring behaviors
+* environmental details
+
+---
+
+## CHARACTER AND SCENE REALISM
+
+Create believable people.
+
+Give them:
+
+* names
+* occupations
+* routines
+* relationships
+* responsibilities
+* contradictions
+
+Place them in realistic environments.
+
+Use:
+
+* homes
+* offices
+* schools
+* hospitals
+* restaurants
+* airports
+* neighborhoods
+* community spaces
+
+Ground emotional experiences
+in ordinary moments.
+
+Small moments are often more powerful
+than dramatic events.
+
+---
+
+## EMOTIONAL DEPTH
+
+Reveal deeper layers gradually.
+
+Examples:
+
+* longing beneath anger
+* fear beneath control
+* sadness beneath achievement
+* shame beneath perfectionism
+* loneliness beneath independence
+* grief beneath people-pleasing
+* exhaustion beneath responsibility
+
+Do not reveal everything immediately.
+
+Allow understanding to emerge naturally.
+
+---
+
+## DIALOGUE GUIDELINES
+
+Use dialogue when it adds emotional weight.
+
+Dialogue should sound natural.
+
+Avoid speeches.
+
+Avoid therapy language.
+
+Avoid characters explaining themselves perfectly.
+
+People often reveal themselves indirectly.
+
+Subtext is powerful.
+
+---
+
+## TITLE CREATION
+
+Create a short, emotionally evocative title.
+
+The title should hint at the hidden conflict,
+not summarize the story.
+
+Examples:
+
+"The Empty Chair"
+
+"Three Missed Calls"
+
+"The Last Seat"
+
+"The Message She Never Sent"
+
+"The Sound of Dishes"
+
+"The Door Left Open"
+
+"The Extra Plate"
+
+---
+
+## STORY LENGTH
+
+Length should serve emotional impact.
+
+Avoid stories that feel rushed.
+
+Avoid stories that become novels.
+
+Target length:
+
+1000–2000 words
+
+depending on the emotional needs
+of the story.
+
+Quality is more important than length.
+
+---
+
+## CRITICAL RESTRICTIONS
+
+Do NOT explain the psychology.
+
+Do NOT summarize the lesson.
+
+Do NOT analyze the character.
+
+Do NOT provide reflections.
+
+Do NOT provide counseling notes.
+
+Do NOT mention:
+
+* DSM
+* diagnosis
+* disorder
+* trauma theory
+* attachment theory
+* psychology concepts
+* therapeutic terminology
+
+Never sound clinical.
+
+Never sound academic.
+
+Let the story carry the truth.
+
+Let the audience discover the meaning.
+
+---
+
 
 --------------------------------------------------
-STEP 1 — Deconstruct the Psychological Core
---------------------------------------------------
-Analyze the provided case to identify:
-• The "Invisible Knot": The hidden root (e.g., a child trying to "save" a parent, fear of being seen as "ordinary").
-• The "Emotional Cost": How this manifests as pain, avoidance, or self-sabotage.
-• The "Light at the Tunnel": What small shift in perspective or action leads to healing?
+OUTPUT FORMAT
+----------------------------------------------------
 
---------------------------------------------------
-STEP 2 — Create the Reflective Output (The Storytelling)
---------------------------------------------------
-Craft a story that is "alive." Do not just state the problem; let the character breathe.
+Return STRICT JSON only.
 
-1) **Caption**: A poetic, evocative title.
-2) **Heart Message (Voiceover)**: 2-3 short, rhythmic sentences. Not a lecture, but a sigh of relief.
-3) **The Story (Vivid Narrative Story with details and emotional textures)**:
-   - **The Setup**: A relatable scene where the psychological issue creates friction.
-   - **The Core Conflict**: A moment of internal tension where the character faces their "Shadow" or "Fear." Use sensory details (a cold hand, a held breath).
-   - **The Turning Point & Resolution**: The character experiences a "re-understanding" or takes a small, brave step toward the "Way Out" identified in Step 1.
-4) **Concise Caption**: A single, powerful line the character might say or think.
-5) **Actor/Speaker**: Define the persona clearly.
-
-** WRITING GUIDELINES **
-• **Show, Don't Tell**: Don't say they are "anxious"; describe the "tightness in their chest."
-• **The "Way Out"**: The ending must offer hope or a concrete emotional shift, not just a dead end.
-• **Humanity Over Theory**: Use the language of daily life, not the DSM-5.
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-[
+    [
         {{
-            "caption": "A poetic title. In {language}.",
-            "voiceover": "heart_message. Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In {language}.",
-            "visual": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In {language}.",
-            "speaking": "A poignant 1st-person caption. In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "title": "An emotionally evocative title. In {language}",
+            "story": "A vivid, realistic, emotionally immersive narrative. In {language}"
         }}
     ]
-"""
 
+
+--------------------------------------------------
+INPUT 
+----------------------------------------------------
+** Topic : 
+    {topic} 
+
+** Instruction: 
+    {instruction}
+
+** Reference Content:
+    {content}
+"""
 
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
@@ -1078,7 +1356,7 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 """
 
 
-NOTEBOOKLM__COUNSELING_STORY = """
+COUNSELING_CONTENT_SCENES = """
 *** ROLE: Senior Psychological Counselor & Reflective Storyteller
     ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
     ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
@@ -1114,8 +1392,72 @@ OUTPUT FORMAT (STRICT JSON array)
     }}
 ]
 
+
+--------------------------------------------------
+INPUT 
+----------------------------------------------------
+** Topic : 
+    {topic} 
+
+** Instruction: 
+    {instruction}
+
+** Reference Content:
+    {content}
+
 """
 
+
+
+COUNSELING_STORY_SCENES = """
+*** ROLE: Senior Psychological Counselor & Reflective Storyteller
+    ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
+    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
+
+""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
+
+*** YOUR TASK
+    ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
+    ** Output: ONE continuous film/video as a JSON array of scenes.
+    ** Same protagonist, same problem, same value thread from first frame to last.
+    ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
+
+*** SCENE FIELDS (all text in {language})
+    1) caption — beat title (metadata only; NOT text to paint on image); scene 1 = whole-story title
+    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — audio only, never for image text
+    3) visual — film-still shot list ONLY (see VISUAL rules): who/where/light/action/mood — zero slide copy, zero dialogue written into the shot
+    4) speaking — protagonist dialogue ~9s — audio only; do NOT put this line in visual
+    5) actor — gender/age/race | mood | actions (consistent cast)
+
+INPUT (user prompt bottom):
+    Topic & Instruction · case/analyzed content · core-insight
+
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON array)
+--------------------------------------------------
+[
+    {{
+        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
+        "voiceover": "Host bridge + insight for this beat only. In {language}.",
+        "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
+        "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
+
+
+--------------------------------------------------
+INPUT 
+----------------------------------------------------
+** Topic : 
+    {topic} 
+
+** Instruction: 
+    {instruction}
+
+** Reference Content:
+    {story}
+"""
 
 
 COUNSELING_REFERENCE_FILTER = """
@@ -1392,7 +1734,7 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_TALK = """
+COUNSELING_TALK_SCENES = """
 You are a professional podcast writer specializing in psychology and human behavior.
 
 And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
@@ -1556,22 +1898,35 @@ If short → EXPAND:
 • slower pacing
 
 --------------------------------------------------
-
 📝 OUTPUT FORMAT  (in {language} — 中文):
+--------------------------------------------------
 
 [
         {{
             "caption": "A short title capturing the psychological theme. In {language}.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
-        "story": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
-        "summary": "A short summary of the content (for youtube program description). In {language}."
+            "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
+            "story": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
+            "summary": "A short summary of the content (for youtube program description). In {language}."
         }}
     ]
+
+
+--------------------------------------------------
+INPUT 
+----------------------------------------------------
+** Topic : 
+    {topic} 
+
+** Instruction: 
+    {instruction}
+
+** Reference Content:
+    {content}
 
 """
 
 
-NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION = """
+COUNSELING_CONVERSATION_SCENES = """
 You are a professional podcast writer specializing in psychology and human behavior.
 And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
         * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
@@ -1655,10 +2010,10 @@ Use storytelling, examples, and metaphors to make the ideas vivid.
 The hosts should sometimes pause, react, or build on each other's ideas.
 
 --------------------------------
+OUTPUT FORMAT (in {language}):
+--------------------------------
 
-OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
-
-[
+    [
         {{
             "caption": "A short title capturing the psychological theme. In {language}.",
         "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
@@ -1666,6 +2021,20 @@ OUTPUT FORMAT (in {language} as the content in the user-prompt -- 中文):
         "summary": "A short summary of the content (for youtube program description). In {language}."
         }}
     ]
+
+
+--------------------------------------------------
+INPUT 
+----------------------------------------------------
+** Topic : 
+    {topic} 
+
+** Instruction: 
+    {instruction}
+
+** Reference Content:
+    {content}
+
 
 """
 
@@ -1959,36 +2328,6 @@ def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
     return prompt
 
 
-def get_channel_content_guide(channel_id_or_key) -> str:
-    """返回频道默认 ``content_guide``（NotebookLM 模板尾部共用块，不含 Soul）。"""
-    choices = get_channel_content_guide_choices(channel_id_or_key)
-    if choices:
-        return choices[0][1].strip()
-    return COUNSELING_CONTENT_GUIDE.strip()
-
-
-def get_channel_content_guide_choices(channel_id_or_key) -> list[tuple[str, str]]:
-    """``[(label, content_guide_template), ...]``，供 NotebookLM 摘要窗 Content 下拉选择。"""
-    cfg = get_channel_config(channel_id_or_key) or {}
-    raw = cfg.get("notebooklm_content_guide_choices")
-    if raw:
-        return [(str(lbl), str(tpl)) for lbl, tpl in raw]
-
-    ch_id = get_channel_id(channel_id_or_key) or ""
-    if ch_id == "counseling" or str(channel_id_or_key or "").startswith("counseling"):
-        return list(COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
-    if ch_id == "music_story" or str(channel_id_or_key or "") == "music_story":
-        return list(MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
-
-    cp_guide = ((cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
-    if not cp_guide and ch_id and ch_id != channel_id_or_key:
-        main_cfg = get_channel_config(ch_id) or {}
-        cp_guide = ((main_cfg.get("channel_prompt") or {}).get("content_guide") or "").strip()
-    if cp_guide:
-        return [("标准", cp_guide)]
-    return list(COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES)
-
-
 CHANNEL_PROMPT_META_KEYS = frozenset({
     "prompt_reference_filter",
     "analyze_prompt",
@@ -2068,16 +2407,15 @@ CHANNEL_CONFIG = {
         },
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
-            ("Story", NOTEBOOKLM__COUNSELING_STORY),
-            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK),
-            ("Conversation", NOTEBOOKLM_PROMPT__COUNSELING_CONVERSATION)
+            ("Content to Scenes", COUNSELING_CONTENT_SCENES),
+            ("Story to Scenes", COUNSELING_STORY_SCENES),
+            ("Talk", COUNSELING_TALK_SCENES),
+            ("Conversation", COUNSELING_CONVERSATION_SCENES)
         ],
-        "notebooklm_content_guide_choices": COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
+            "story_prompt": COUNSELING_STORY,
             "analyze_prompt": COUNSELING_ANALYZE,
-            "content_guide": COUNSELING_CONTENT_GUIDE,
             "init_multiple": COUNSELING_CASE_DEVELOPMENT,
             "init_single": COUNSELING_CASE_SUMMARY
         },
@@ -2108,15 +2446,12 @@ CHANNEL_CONFIG = {
             ("SUNO Prompt", NOTEBOOKLM__SUNO_FRANK),
             ("SUNO Poetry", NOTEBOOKLM__SUNO_POETRY),
             ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER_FRANK),
-            ("SUNO 2 Layers Poetry", NOTEBOOKLM__SUNO_2LAYER_POETRY),
-            ("Story from Lyrics", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
-            ("Story 2 Layers", NOTEBOOKLM__MV_STORY_2LAYER),
-            ("Lyrics", NOTEBOOKLM__MV_LYRICS)
+            ("SUNO 2 Layers Poetry", NOTEBOOKLM__SUNO_2LAYER_POETRY)
         ],
-        "notebooklm_content_guide_choices": MV_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
 
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
+            "story_prompt": NOTEBOOKLM__MV_STORY_FROM_LYRICS, #NOTEBOOKLM__MV_STORY_2LAYER,
             "analyze_prompt": MV_ANALYZE_2,
             "content_guide": MV_CONTENT_GUIDE,
             "init_multiple": MV_STORY_DEVELOPMENT,
@@ -2131,7 +2466,7 @@ CHANNEL_CONFIG = {
         "channel_id": "counseling",
         # NotebookLM Prompt 类型选择（可扩展）
         "notebooklm_prompt_choices": [
-            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
+            ("Talk", COUNSELING_TALK_SCENES)
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
@@ -2146,11 +2481,10 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
         "notebooklm_prompt_choices": [
-            ("Message", NOTEBOOKLM__COUNSELING_MESSAGE),
-            ("Full Story", NOTEBOOKLM__COUNSELING_STORY),
-            ("Talk", NOTEBOOKLM_PROMPT__COUNSELING_TALK)
+            ("Message", COUNSELING_STORY),
+            ("Full Story", COUNSELING_CONTENT_SCENES),
+            ("Talk", COUNSELING_TALK_SCENES)
         ],
-        "notebooklm_content_guide_choices": COUNSELING_NOTEBOOKLM_CONTENT_GUIDE_CHOICES,
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
             "init_single": COUNSELING_INTRO,

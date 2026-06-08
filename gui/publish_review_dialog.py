@@ -148,9 +148,7 @@ class PublishReviewDialog:
             summary = summary + "\n" + scene_content.get("speaking", "")
             summary = summary + "\n" + scene_content.get("story", "")
         else:
-            summary = config.analyzed_content_text(
-                self.video_detail.get("analyzed_content")
-            )
+            summary = self.video_detail.get("analyzed_content")
             if not summary:
                 summary = config.read_transcript_text_from_video_detail(self.video_detail)
 

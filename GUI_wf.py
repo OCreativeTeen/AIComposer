@@ -2768,7 +2768,7 @@ class WorkflowGUI:
                 project_config=pc,
                 workflow_scenes=scenes,
             ),
-            analyzed_content=config.analyzed_content_text(pc.get("analyzed_content"), lang),
+            analyzed_content=pc.get("analyzed_content"),
             story_text=project_manager.story_text_from_config(pc),
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,

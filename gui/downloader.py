@@ -69,20 +69,176 @@ import tkinter.simpledialog as simpledialog
 from tkinter import filedialog
 
 
-def _format_nb_prompt_template(template: str, *, content_guide: str = "", **kwargs) -> str:
-    """对主模板与频道 ``content_guide`` 中的 ``{name}`` 占位符填入 kwargs。"""
-    guide = (content_guide or config_channel.COUNSELING_CONTENT_GUIDE or "").strip()
+def _format_nb_prompt_template(template: str, **kwargs) -> str:
+    """对模板中 ``{name}`` 占位符填入 kwargs（``content`` / ``story`` / ``instruction`` 等）。"""
     names = set()
-    for src in (template, guide):
-        for _, field_name, _, _ in string.Formatter().parse(src):
-            if not field_name:
-                continue
-            names.add(field_name.split("!")[0].split(":")[0].strip())
+    for _, field_name, _, _ in string.Formatter().parse(template):
+        if not field_name:
+            continue
+        names.add(field_name.split("!")[0].split(":")[0].strip())
     safe = {k: kwargs.get(k, "") for k in names}
-    body = template.format(**safe)
-    if guide:
-        body += "\n\n" + guide.format(**safe)
-    return body
+    return template.format(**safe)
+
+
+def _notebooklm_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
+    """从频道 config 读取 ``notebooklm_prompt_choices``。"""
+    cfg = config_channel.get_channel_config(channel_key) or {}
+    return [
+        (lbl, tpl)
+        for lbl, tpl in (cfg.get("notebooklm_prompt_choices") or [])
+        if (tpl or "").strip()
+    ]
+
+
+def _default_notebooklm_prompt_label(channel_key: str) -> str:
+    """场景智能生成等内部使用的默认提示 label。"""
+    for lbl, _ in _notebooklm_prompt_choices(channel_key):
+        if (lbl or "").strip() in ("Story", "Scenes"):
+            return lbl
+        if "Scene" in (lbl or ""):
+            return lbl
+    choices = _notebooklm_prompt_choices(channel_key)
+    return choices[0][0] if choices else ""
+
+
+def _resolve_notebooklm_prompt_template(
+    channel_key: str,
+    *,
+    label: str | None = None,
+    index: int = 0,
+) -> tuple[str, str, int]:
+    """按 label 或 index 取 (label, template, index)；无匹配时回退首项。"""
+    choices = _notebooklm_prompt_choices(channel_key)
+    if not choices:
+        return ("", "", 0)
+    if label:
+        want = label.strip()
+        for i, (lbl, tpl) in enumerate(choices):
+            if (lbl or "").strip() == want:
+                return (lbl, tpl, i)
+    idx = max(0, min(index, len(choices) - 1))
+    lbl, tpl = choices[idx]
+    return (lbl, tpl, idx)
+
+
+def _notebooklm_row_topic_fields(video_detail: dict) -> tuple[str, str, str]:
+    """从列表行 / ``project_profile`` 取主题分类、子类型与 ``topic`` 字符串。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    cat = (vd.get("topic_category") or "").strip()
+    sub = (vd.get("topic_subtype") or "").strip()
+    prof = vd.get(project_manager.PROJECT_PROFILE_KEY)
+    if isinstance(prof, dict):
+        if not cat:
+            cat = (prof.get("topic_category") or "").strip()
+        if not sub:
+            sub = (prof.get("topic_subtype") or "").strip()
+    topic = f"{cat}-{sub}" if cat or sub else ""
+    return cat, sub, topic
+
+
+def _notebooklm_row_tags_text(video_detail: dict) -> str:
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    tags_raw = vd.get("tags", "")
+    if isinstance(tags_raw, list):
+        return ", ".join(str(x) for x in tags_raw if str(x).strip())
+    return ", ".join(parse_tags_list(str(tags_raw or "")))
+
+
+def _notebooklm_story_text(video_detail: dict) -> str:
+    """``{story}`` 占位符：story JSON array 首条，无则空字符串。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    return project_manager.story_first_entry_text(vd.get("story")).strip()
+
+
+def _notebooklm_prompt_context_from_video_detail(
+    mgr,
+    video_detail: dict,
+    *,
+    instruction: str = "",
+) -> dict:
+    """场景智能生成等共用的 NotebookLM 占位符数据源。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    cat, sub, topic = _notebooklm_row_topic_fields(vd)
+    reference_parts = []
+    channel_videos = getattr(getattr(mgr, "downloader", None), "channel_videos", []) or []
+    for i, seg in enumerate((vd.get("status") or "").split("|")):
+        yid = (seg or "").strip()
+        if not yid or yid in ("success", "failed"):
+            continue
+        ref_v = _find_video_by_youtube_id(channel_videos, yid)
+        if not ref_v:
+            continue
+        ref_title = _youtube_row_display_title(ref_v)
+        summary = (ref_v.get("summary") or "").strip()
+        reference_parts.append(
+            f"Reference {i + 1}: Title: {ref_title}\nReference {i + 1}: Summary: {summary}"
+        )
+    reference = (
+        "\n\n\n----------------------------------------------------------\n".join(reference_parts)
+        if reference_parts
+        else ""
+    )
+    content = vd.get("analyzed_content")
+    story = _notebooklm_story_text(vd)
+    return {
+        "topic": topic,
+        "tags": _notebooklm_row_tags_text(vd),
+        "reference": reference,
+        "story_title": _youtube_row_display_title(vd),
+        "content": content,
+        "story": story,
+        "link": (vd.get("url") or "").strip(),
+        "instruction": (instruction or "").strip(),
+        "language": config.llm_language_label(getattr(mgr, "language", "")),
+        "category": cat,
+        "subtype": sub,
+    }
+
+
+def _build_notebooklm_prompt_for_row(
+    mgr,
+    video_detail: dict,
+    template: str,
+    *,
+    instruction: str = "",
+    sections: int = 1,
+    topic: str = "",
+    tags: str = "",
+    topic_category: str = "",
+    topic_subtype: str = "",
+) -> str:
+    """按频道模板 + 列表行数据拼 NotebookLM / LLM 提示词（单段 format，含 ``content`` / ``story``）。"""
+    ctx = _notebooklm_prompt_context_from_video_detail(
+        mgr, video_detail, instruction=instruction
+    )
+    if topic:
+        ctx["topic"] = topic
+    if tags:
+        ctx["tags"] = tags
+    cat = (topic_category or ctx.get("category") or "").strip()
+    sub = (topic_subtype or ctx.get("subtype") or "").strip()
+    soul = ""
+    if "{soul}" in template:
+        soul, _, _, _ = project_manager.build_soul(
+            getattr(mgr, "channel", None) or mgr._channel_config_key(),
+            cat,
+            sub,
+        )
+    return _format_nb_prompt_template(
+        template,
+        topic=ctx.get("topic", ""),
+        tags=ctx.get("tags", ""),
+        language=ctx.get("language", ""),
+        reference=ctx.get("reference", ""),
+        soul=soul,
+        story_title=ctx.get("story_title", ""),
+        content=ctx.get("content", ""),
+        story=ctx.get("story", ""),
+        link=ctx.get("link", ""),
+        instruction=ctx.get("instruction", ""),
+        sections=sections,
+    )
+
 
 
 def _normalize_youtube_watch_url(url: str) -> str:
@@ -417,7 +573,7 @@ def _refresh_summary_window_title(
     summary_window: tk.Toplevel,
     video_detail: dict,
 ) -> None:
-    """刷新摘要窗标题栏（含 scene_content 更新后的 video_title）。"""
+    """刷新摘要窗标题栏。"""
     try:
         if not summary_window.winfo_exists():
             return
@@ -451,6 +607,91 @@ def _refresh_summary_ui_after_analyze(ctx: dict, summary_window: tk.Toplevel) ->
             refresh_tree()
         except Exception as e:
             print(f"刷新频道列表失败: {e}")
+
+
+def _normalize_story_entry(item: dict) -> dict | None:
+    """单条 story：``title`` + ``story``（兼容 ``content``）。"""
+    if not isinstance(item, dict):
+        return None
+    title = (item.get("title") or "").strip()
+    body = (item.get("story") or item.get("content") or "").strip()
+    if not title and not body:
+        return None
+    return {"title": title, "story": body}
+
+
+def _parse_story_field(raw) -> list[dict]:
+    """解析 ``video_detail['story']``：JSON array 或 legacy 纯文本。"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        out: list[dict] = []
+        for it in raw:
+            n = _normalize_story_entry(it) if isinstance(it, dict) else None
+            if n:
+                out.append(n)
+        return out
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError:
+                return [{"title": "", "story": s}]
+            return _parse_story_field(parsed)
+        return [{"title": "", "story": s}]
+    return []
+
+
+def _story_entries_to_json_text(entries: list[dict]) -> str:
+    clean = [_normalize_story_entry(e) for e in (entries or [])]
+    clean = [e for e in clean if e]
+    return json.dumps(clean, ensure_ascii=False, indent=2)
+
+
+def _merge_story_entries(existing: list[dict], new_entries: list[dict]) -> list[dict]:
+    """新条目 prepend 到已有 story array。"""
+    old = [_normalize_story_entry(e) for e in (existing or [])]
+    old = [e for e in old if e]
+    new = [_normalize_story_entry(e) for e in (new_entries or [])]
+    new = [e for e in new if e]
+    return new + old
+
+
+def _story_field_editor_text(raw) -> str:
+    """Story 编辑区展示：array → 格式化 JSON；legacy 纯文本原样。"""
+    if isinstance(raw, str) and raw.strip().startswith("["):
+        entries = _parse_story_field(raw)
+        if entries:
+            return _story_entries_to_json_text(entries)
+    if isinstance(raw, list):
+        entries = _parse_story_field(raw)
+        if entries:
+            return _story_entries_to_json_text(entries)
+    if isinstance(raw, str):
+        return raw.strip()
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _apply_story_title_to_project_profile(video_detail: dict, title: str) -> None:
+    """有 ``project_profile`` 时，用新 story 的 ``title`` 更新 ``video_title``。"""
+    if not isinstance(video_detail, dict):
+        return
+    vt = (title or "").strip()
+    if not vt:
+        return
+    prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+    if not isinstance(prof, dict) or not prof:
+        return
+    merged = copy.deepcopy(prof)
+    merged["video_title"] = vt
+    video_detail[project_manager.PROJECT_PROFILE_KEY] = (
+        project_manager.profile_for_list_storage(merged)
+    )
 
 
 def _persist_channel_videos(mgr) -> bool:
@@ -1443,21 +1684,6 @@ def _youtube_row_list_display_title(video_detail: dict) -> str:
             return f"{src} / {proj}"
         return proj
     return src
-
-
-def _sync_youtube_row_title_after_scene_edit(video_detail: dict, scene_parsed, ui_language_key: str) -> None:
-    """粘贴或保存 scene_content 后，若有 ``project_profile``，用首场景标题仅更新 ``project_profile.video_title``，不改动外层原视频 ``title``。"""
-    if not isinstance(video_detail, dict) or scene_parsed is None:
-        return
-    hint = project_manager.title_from_scene_content(scene_parsed, ui_language_key or "tw")
-    if not hint:
-        return
-    prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
-    if not isinstance(prof, dict) or not prof:
-        return
-    merged = copy.deepcopy(prof)
-    merged["video_title"] = hint
-    video_detail[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(merged)
 
 
 def _apply_video_detail_titles_from_ui(
@@ -4194,9 +4420,7 @@ class MediaGUIManager:
         t = (self.fetch_text_content(video_detail) or "").strip()
         if t:
             return t
-        return config.analyzed_content_text(
-            video_detail.get("analyzed_content"), self.language
-        ).strip()
+        return video_detail.get("analyzed_content")
 
 
     def _youtube_story_title_from_video_detail(self, video_detail) -> str:
@@ -4230,9 +4454,7 @@ class MediaGUIManager:
                 text = (item.get(key) or "").strip()
                 if text:
                     return text
-        ac = config.analyzed_content_text(
-            video_detail.get("analyzed_content"), self.language
-        )
+        ac = video_detail.get("analyzed_content")
         if ac.strip():
             return ac.strip()
         return (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
@@ -4247,31 +4469,122 @@ class MediaGUIManager:
         result = self.llm_api_local.generate_text(prompt, source)
         return config.chinese_convert(result or "", self.language).strip()
 
-    def _run_youtube_story_smart_add_async(
+
+    def _generate_story(
+        self, video_detail: dict
+    ) -> list[dict]:
+        source = video_detail.get("analyzed_content")
+        if not source:
+            return []
+        lang_label = config.llm_language_label(self.language)
+
+        cfg = config_channel.get_channel_config(self._channel_config_key()) or {}
+
+        prompt = cfg.get("channel_prompt").get("story_prompt") or ""
+        prompt = prompt.format(language=lang_label)
+
+        parsed = self.llm_api_local.generate_json(
+            prompt, source, expect_list=True
+        )
+        if isinstance(parsed, dict):
+            one = _normalize_story_entry(parsed)
+            return [one] if one else []
+        if isinstance(parsed, list):
+            out: list[dict] = []
+            for it in parsed:
+                n = _normalize_story_entry(it) if isinstance(it, dict) else None
+                if n:
+                    out.append(n)
+            return out
+        return []
+
+
+    def _notebooklm_prompt_text_for_label(
+        self,
+        video_detail: dict,
+        prompt_label: str,
+        *,
+        instruction: str = "",
+    ) -> tuple[str, str]:
+        """按频道 config 的提示 label 生成完整 prompt 文本。"""
+        channel_key = self._channel_config_key()
+        lbl, template, idx = _resolve_notebooklm_prompt_template(
+            channel_key, label=prompt_label
+        )
+        if not template:
+            return "", ""
+        cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
+        prompt = _build_notebooklm_prompt_for_row(
+            self,
+            video_detail,
+            template,
+            instruction=instruction,
+            sections=idx + 1,
+            topic=topic,
+            tags=_notebooklm_row_tags_text(video_detail),
+            topic_category=cat,
+            topic_subtype=sub,
+        )
+        return lbl, prompt
+
+    def _generate_scene_content_from_notebooklm_prompt(
+        self,
+        video_detail: dict,
+        prompt_label: str,
+        *,
+        instruction: str = "",
+    ) -> list | None:
+        """用所选 NotebookLM 提示生成 scene_content array（整段 prompt 已含 user input 占位符）。"""
+        _, prompt = self._notebooklm_prompt_text_for_label(
+            video_detail, prompt_label, instruction=instruction
+        )
+        if not (prompt or "").strip():
+            return None
+        raw = self.llm_api_local.generate_json(prompt, "", expect_list=True)
+        scenes = config.normalize_scene_content_value(raw, self.language)
+        return scenes if scenes else None
+
+    def _run_scene_smart_generate_async(
         self,
         parent,
         video_detail: dict,
-        get_existing_text,
-        set_merged_text,
+        prompt_label: str,
+        set_scene_json,
         *,
+        get_instruction=None,
         on_busy=None,
         on_idle=None,
+        persist_fn=None,
+        on_saved=None,
     ) -> bool:
-        if not self._youtube_story_llm_source_text(video_detail):
-            messagebox.showwarning(
-                "提示",
-                "无 scene_content / analyzed_content / 转录原文，无法生成 story。",
-                parent=parent,
+        """智能生成 scene_content：替换现有内容并自动保存。"""
+        if not prompt_label:
+            prompt_label = _default_notebooklm_prompt_label(
+                self._channel_config_key()
             )
+        if not prompt_label:
+            messagebox.showwarning(
+                "提示", "当前频道未配置场景提示词。", parent=parent
+            )
+            return False
+        if not messagebox.askyesno(
+            "智能生成场景",
+            f"使用「{prompt_label}」提示词生成新的 scene_content，\n"
+            "并替换当前编辑区中的场景内容？",
+            parent=parent,
+        ):
             return False
         if on_busy:
             on_busy()
 
         def work():
             err_msg = ""
-            result = ""
+            scenes: list | None = None
+            instr = (get_instruction() or "").strip() if callable(get_instruction) else ""
             try:
-                result = self._generate_youtube_story_summary_text(video_detail)
+                scenes = self._generate_scene_content_from_notebooklm_prompt(
+                    video_detail, prompt_label, instruction=instr
+                )
             except Exception as ex:
                 err_msg = str(ex)
 
@@ -4281,34 +4594,163 @@ class MediaGUIManager:
                 if err_msg:
                     messagebox.showerror("生成失败", err_msg, parent=parent)
                     return
-                if not result:
-                    messagebox.showwarning("提示", "LLM 未返回内容。", parent=parent)
+                if not scenes:
+                    messagebox.showwarning(
+                        "提示",
+                        "LLM 未返回有效 scene_content（须为 JSON array）。",
+                        parent=parent,
+                    )
                     return
-                merged = self._merge_generated_story_text(
-                    get_existing_text(), result
+                scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
+                video_detail["scene_content"] = scenes
+                set_scene_json(scene_json)
+                persist = persist_fn or (
+                    lambda vd, parent=None: self._persist_video_detail_story(
+                        vd, parent=parent
+                    )
                 )
-                set_merged_text(merged)
+                if not persist(video_detail, parent=parent):
+                    return
+                try:
+                    _copy_text_to_clipboard(parent, scene_json)
+                except Exception:
+                    pass
+                if callable(on_saved):
+                    try:
+                        on_saved()
+                    except Exception:
+                        pass
+                messagebox.showinfo(
+                    "已生成场景",
+                    f"已用「{prompt_label}」生成 {len(scenes)} 个场景，并已保存到频道列表。",
+                    parent=parent,
+                )
 
             self.root.after(0, apply)
 
         threading.Thread(target=work, daemon=True).start()
         return True
 
-    @staticmethod
-    def _merge_generated_story_text(existing: str, generated: str) -> str:
-        """智能添加：新内容在前，与已有 story 之间空一行。"""
-        new_part = (generated or "").strip()
-        if not new_part:
-            return (existing or "").strip()
-        prev = (existing or "").strip()
-        if prev:
-            return f"{new_part}\n\n{prev}"
-        return new_part
+    def _run_story_add_async(
+        self,
+        parent,
+        video_detail: dict,
+        get_existing_text,
+        set_merged_text,
+        *,
+        on_busy=None,
+        on_idle=None,
+        on_title_updated=None,
+        persist_fn=None,
+    ) -> bool:
+        """增加 Story：``analyzed_content`` → Message 提示词 → merge JSON array。"""
+        if not video_detail.get("analyzed_content"):
+            messagebox.showwarning(
+                "提示",
+                "需要 analyzed_content 作为原始材料。\n请先在「分析」中填写或生成内容。",
+                parent=parent,
+            )
+            return False
+        if on_busy:
+            on_busy()
+
+        def work():
+            err_msg = ""
+            new_entries: list[dict] = []
+            try:
+                new_entries = self._generate_story(
+                    video_detail
+                )
+            except Exception as ex:
+                err_msg = str(ex)
+
+            def apply():
+                if on_idle:
+                    on_idle()
+                if err_msg:
+                    messagebox.showerror("生成失败", err_msg, parent=parent)
+                    return
+                if not new_entries:
+                    messagebox.showwarning(
+                        "提示",
+                        "LLM 未返回有效 story（需 JSON array，含 title / story）。",
+                        parent=parent,
+                    )
+                    return
+                existing = _parse_story_field(get_existing_text())
+                merged = _merge_story_entries(existing, new_entries)
+                merged_json = _story_entries_to_json_text(merged)
+                video_detail["story"] = merged_json
+                new_title = (new_entries[0].get("title") or "").strip()
+                if new_title:
+                    _apply_story_title_to_project_profile(video_detail, new_title)
+                    ch_path = self.channel_path or ""
+                    _normalize_channel_list_item_for_storage(
+                        video_detail, ch_path
+                    )
+                set_merged_text(merged_json)
+                if callable(on_title_updated):
+                    try:
+                        on_title_updated()
+                    except Exception:
+                        pass
+                persist = persist_fn or (
+                    lambda vd, parent=None: self._persist_video_detail_story(
+                        vd, parent=parent
+                    )
+                )
+                if not persist(video_detail, parent=parent):
+                    return
+                messagebox.showinfo(
+                    "已增加 Story",
+                    f"已合并 {len(new_entries)} 条新 story，并已保存到频道列表。"
+                    + (
+                        f"\n项目成片名已更新为：{new_title}"
+                        if new_title
+                        and project_manager.list_json_row_has_project_profile(
+                            video_detail
+                        )
+                        else "\n（未绑定 project_profile，未改项目名）"
+                    ),
+                    parent=parent,
+                )
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
 
 
     def _persist_video_detail_story(self, video_detail: dict, *, parent=None) -> bool:
+        """将 ``video_detail`` 同步进 ``channel_videos`` 并写入 ``channel_list_json``。"""
+        if not isinstance(video_detail, dict):
+            return False
+        list_path = (getattr(self.downloader, "channel_list_json", None) or "").strip()
+        if not list_path:
+            messagebox.showerror(
+                "保存失败",
+                "未打开频道列表 JSON，无法保存。",
+                parent=parent,
+            )
+            return False
+        row_key = (video_detail.get("id") or video_detail.get("url") or "").strip()
+        if row_key:
+            for row in self.downloader.channel_videos:
+                if not isinstance(row, dict):
+                    continue
+                rk = (row.get("id") or row.get("url") or "").strip()
+                if rk and rk == row_key:
+                    if row is not video_detail:
+                        row.clear()
+                        row.update(video_detail)
+                    break
+        ch_path = self.channel_path or ""
+        _normalize_channel_list_item_for_storage(video_detail, ch_path)
+        _normalize_channel_videos_for_storage(
+            self.downloader.channel_videos, ch_path
+        )
         try:
-            with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+            with open(list_path, "w", encoding="utf-8") as f:
                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             return True
         except OSError as e:
@@ -4318,6 +4760,7 @@ class MediaGUIManager:
                 parent=parent,
             )
             return False
+
 
     def _show_video_story_editor(
         self,
@@ -4330,8 +4773,9 @@ class MediaGUIManager:
         allow_empty: bool = False,
         auto_generate_if_empty: bool = False,
         persist_fn=None,
+        on_title_updated=None,
     ) -> str | None:
-        """编辑 ``video_detail['story']``；确认后写回频道列表。取消返回 ``None``。"""
+        """编辑 ``video_detail['story']``（JSON array 或纯文本）；确认后写回频道列表。"""
         persist = persist_fn or (
             lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
         )
@@ -4351,8 +4795,9 @@ class MediaGUIManager:
         frm.pack(fill=tk.BOTH, expand=True)
         if not header_text:
             header_text = (
-                "YouTube 发布用 story 摘要（可编辑；双击编辑区可用剪贴板内容替换全文；"
-                "保存后写回本条并保存频道列表）"
+                "Story 为 JSON array（每项含 title、story），或直接编辑纯文本 legacy 格式。\n"
+                "「增加 Story」用 Message 提示词 + analyzed_content 生成新条目、merge 并自动保存；"
+                "「智能添加」为旧版摘要追加。手工编辑后点「保存」写回频道列表。"
             )
         ttk.Label(frm, text=header_text, wraplength=760).pack(
             anchor=tk.W, pady=(0, 8)
@@ -4362,66 +4807,78 @@ class MediaGUIManager:
             frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
         )
         tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        initial = video_detail.get("story") or ""
-        if isinstance(initial, str):
-            tx.insert("1.0", initial.strip())
-        elif initial is not None:
-            tx.insert("1.0", str(initial))
+        initial = _story_field_editor_text(video_detail.get("story"))
+        if initial:
+            tx.insert("1.0", initial)
+            _copy_text_to_clipboard(dlg, initial)
         _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+
+        def _set_editor_text_and_clipboard(text: str) -> None:
+            tx.delete("1.0", tk.END)
+            if text:
+                tx.insert("1.0", text)
+            _copy_text_to_clipboard(dlg, text)
 
         btn_row = ttk.Frame(frm)
         btn_row.pack(fill=tk.X)
 
-        def on_smart_add():
-            def _busy():
-                gen_btn.config(state=tk.DISABLED)
-                try:
-                    dlg.config(cursor="watch")
-                    dlg.update_idletasks()
-                except tk.TclError:
-                    pass
+        def _busy(btn):
+            try:
+                btn.config(state=tk.DISABLED)
+                dlg.config(cursor="watch")
+                dlg.update_idletasks()
+            except tk.TclError:
+                pass
 
-            def _idle():
-                try:
-                    gen_btn.config(state=tk.NORMAL)
-                    dlg.config(cursor="")
-                except tk.TclError:
-                    pass
+        def _idle(btn):
+            try:
+                btn.config(state=tk.NORMAL)
+                dlg.config(cursor="")
+            except tk.TclError:
+                pass
 
-            self._run_youtube_story_smart_add_async(
+        def on_add_story():
+            self._run_story_add_async(
                 dlg,
                 video_detail,
                 lambda: (tx.get("1.0", tk.END) or ""),
-                lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
-                on_busy=_busy,
-                on_idle=_idle,
+                _set_editor_text_and_clipboard,
+                on_busy=lambda: _busy(add_btn),
+                on_idle=lambda: _idle(add_btn),
+                on_title_updated=on_title_updated,
+                persist_fn=persist,
             )
 
+
         def on_confirm():
-            new_text = (tx.get("1.0", tk.END) or "").strip()
-            if not new_text and not allow_empty:
+            raw = (tx.get("1.0", tk.END) or "").strip()
+            if not raw and not allow_empty:
                 messagebox.showwarning(
                     "提示", "story 不能为空。", parent=dlg
                 )
                 return
-            if new_text:
-                video_detail["story"] = new_text
+            if raw:
+                if raw.lstrip().startswith("["):
+                    entries = _parse_story_field(raw)
+                    if entries:
+                        video_detail["story"] = _story_entries_to_json_text(entries)
+                    else:
+                        video_detail["story"] = raw
+                else:
+                    video_detail["story"] = raw
             else:
                 video_detail.pop("story", None)
             if not persist(video_detail, parent=dlg):
                 return
-            result_holder[0] = new_text
+            result_holder[0] = raw
             dlg.destroy()
 
-        gen_btn = ttk.Button(btn_row, text="智能添加", command=on_smart_add)
-        gen_btn.pack(side=tk.LEFT, padx=(0, 8))
+        add_btn = ttk.Button(btn_row, text="增加 Story", command=on_add_story)
+        add_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
         )
         ttk.Button(btn_row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
-
-        if auto_generate_if_empty and not (video_detail.get("story") or "").strip():
-            dlg.after(250, on_smart_add)
 
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         dlg.wait_window()
@@ -4470,7 +4927,7 @@ class MediaGUIManager:
             frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
         )
         tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        initial = self._analyzed_content_display_text(video_detail)
+        initial = video_detail.get("analyzed_content")
         if initial:
             tx.insert("1.0", initial)
             _copy_text_to_clipboard(dlg, initial)
@@ -4480,7 +4937,7 @@ class MediaGUIManager:
         btn_row.pack(fill=tk.X)
 
         def on_confirm():
-            new_text = config.normalize_analyzed_content_text(tx.get("1.0", tk.END))
+            new_text = tx.get("1.0", tk.END)
             if new_text:
                 video_detail["analyzed_content"] = new_text
             else:
@@ -4589,14 +5046,14 @@ class MediaGUIManager:
         result_holder: list[list | None] = [None]
         dlg = tk.Toplevel(parent)
         dlg.title("场景内容 / Scene")
-        dlg.geometry("900x640")
-        dlg.minsize(640, 480)
+        dlg.geometry("920x820")
+        dlg.minsize(640, 560)
         dlg.transient(parent)
         dlg.grab_set()
         dlg.update_idletasks()
         sw = dlg.winfo_screenwidth()
         sh = dlg.winfo_screenheight()
-        dlg.geometry(f"900x640+{(sw - 900) // 2}+{(sh - 640) // 2}")
+        dlg.geometry(f"920x820+{(sw - 920) // 2}+{(sh - 820) // 2}")
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill=tk.BOTH, expand=True)
@@ -4605,14 +5062,36 @@ class MediaGUIManager:
             frm,
             text=(
                 f"{title}\n"
-                "场景内容 scene_content（JSON 数组；可编辑；双击编辑区可用剪贴板内容替换全文；"
-                "保存时须为有效 JSON 数组；保存后写回本条并保存频道列表）"
+                "导向说明填入 {instruction}；预览打开/编辑时复制到剪贴板。"
+                "「智能生成」用频道默认场景提示词生成 scene_content 并自动保存。"
+                "下方 JSON 区可手工编辑；保存时须为有效 JSON 数组。"
             ),
-            wraplength=820,
+            wraplength=860,
         ).pack(anchor=tk.W, pady=(0, 8))
 
+        channel_key = self._channel_config_key()
+        default_prompt_label = _default_notebooklm_prompt_label(channel_key)
+        has_scene_prompt = bool(default_prompt_label)
+
+        ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
+            anchor=tk.W, pady=(0, 2)
+        )
+        instruction_tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+        )
+        instruction_tx.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frm, text="提示词预览（打开/编辑导向说明时更新并复制到剪贴板）：").pack(
+            anchor=tk.W, pady=(0, 2)
+        )
+        prompt_tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=100, height=8, font=("Arial", 9)
+        )
+        prompt_tx.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
         tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=100, height=28, font=("Consolas", 10)
+            frm, wrap=tk.WORD, width=100, height=20, font=("Consolas", 10)
         )
         tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
         scenes = config.scene_content_as_list(
@@ -4622,8 +5101,24 @@ class MediaGUIManager:
         if scenes:
             scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
             tx.insert("1.0", scene_json)
-            _copy_text_to_clipboard(dlg, scene_json)
         _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+
+        def refresh_scene_prompt(*_args):
+            if not default_prompt_label:
+                prompt_tx.delete("1.0", tk.END)
+                return
+            instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+            _, prompt = self._notebooklm_prompt_text_for_label(
+                video_detail, default_prompt_label, instruction=instr
+            )
+            prompt_tx.delete("1.0", tk.END)
+            if prompt:
+                prompt_tx.insert("1.0", prompt)
+                _copy_text_to_clipboard(dlg, prompt)
+
+        instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
+        if has_scene_prompt:
+            refresh_scene_prompt()
 
         btn_row = ttk.Frame(frm)
         btn_row.pack(fill=tk.X)
@@ -4642,6 +5137,34 @@ class MediaGUIManager:
             return normalized if normalized else None
 
         _lang_lbl = config.llm_language_label(self.language)
+
+        def _busy(btn):
+            try:
+                btn.config(state=tk.DISABLED)
+                dlg.config(cursor="watch")
+                dlg.update_idletasks()
+            except tk.TclError:
+                pass
+
+        def _idle(btn):
+            try:
+                btn.config(state=tk.NORMAL)
+                dlg.config(cursor="")
+            except tk.TclError:
+                pass
+
+        def on_smart_generate():
+            self._run_scene_smart_generate_async(
+                dlg,
+                video_detail,
+                default_prompt_label,
+                lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
+                get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
+                on_busy=lambda: _busy(smart_btn),
+                on_idle=lambda: _idle(smart_btn),
+                persist_fn=persist,
+                on_saved=on_saved,
+            )
 
         def on_copy_slideshow_instruction():
             scenes = _scene_list_from_editor()
@@ -4718,9 +5241,6 @@ class MediaGUIManager:
                     )
                     return
                 video_detail["scene_content"] = normalized
-                _sync_youtube_row_title_after_scene_edit(
-                    video_detail, normalized, self.language
-                )
                 result_holder[0] = normalized
             if not persist(video_detail, parent=dlg):
                 return
@@ -4728,6 +5248,10 @@ class MediaGUIManager:
             if callable(on_saved):
                 on_saved()
 
+        smart_btn = ttk.Button(btn_row, text="智能生成", command=on_smart_generate)
+        smart_btn.pack(side=tk.LEFT, padx=(0, 8))
+        if not has_scene_prompt:
+            smart_btn.config(state=tk.DISABLED)
         ttk.Button(
             btn_row,
             text=f"Slideshow 指令 ({_lang_lbl})",
@@ -4754,6 +5278,7 @@ class MediaGUIManager:
         persist_fn=None,
         on_saved=None,
         on_content_summarized=None,
+        on_story_title_updated=None,
         main_character: str = "",
         channel_path: str = "",
     ):
@@ -4764,6 +5289,7 @@ class MediaGUIManager:
                 video_detail,
                 allow_empty=True,
                 persist_fn=persist_fn,
+                on_title_updated=on_story_title_updated,
             )
         if field == "analyzed_content":
             return self._show_analyzed_content_editor(
@@ -4943,9 +5469,6 @@ class MediaGUIManager:
         )
         return video_detail
 
-    def _channel_content_guide(self) -> str:
-        return config_channel.get_channel_content_guide(self._channel_config_key())
-
     def _format_analyze_prompt(self, video_detail=None) -> str:
         raw = config_channel.get_channel_analyze_prompt(
             self._channel_config_key(),
@@ -4967,9 +5490,7 @@ class MediaGUIManager:
         """用 LLM 从转录/字幕文本生成 ``analyzed_content``（纯文本，当前频道语言）。"""
         if not isinstance(video_detail, dict):
             return False
-        if not force_rewrite and config.analyzed_content_text(
-            video_detail.get("analyzed_content")
-        ):
+        if not force_rewrite and video_detail.get("analyzed_content"):
             return True
         text_content = self._analyze_content_source_text(video_detail)
         url = (video_detail.get("url") or "").strip()
@@ -5026,13 +5547,11 @@ class MediaGUIManager:
             return None
         return rewritten
 
-    def _analyzed_content_display_text(self, video_detail: dict) -> str:
-        return config.analyzed_content_text(video_detail.get("analyzed_content"))
 
     def show_analyzed_content_popup(self, video_detail: dict, *, parent=None) -> None:
         """弹窗展示 ``analyzed_content``（Download YT 文字 / 摘要等）。"""
         parent = parent or self.root
-        body = self._analyzed_content_display_text(video_detail)
+        body = video_detail.get("analyzed_content")
         if not body.strip():
             ac_raw = video_detail.get("analyzed_content")
             if ac_raw is not None:
@@ -5131,7 +5650,7 @@ class MediaGUIManager:
 
 
     def prepare_category_for_content(self, video_detail, topic_choices):
-        valid_content = config.analyzed_content_text(video_detail.get("analyzed_content"))
+        valid_content = video_detail.get("analyzed_content")
         if not valid_content:
             valid_content = config.read_transcript_text_from_video_detail(video_detail)
 
@@ -5184,7 +5703,9 @@ class MediaGUIManager:
             messagebox.showwarning("提示", f"未找到 mp4 文件：\n{mp4_path}", parent=parent)
             return
 
-        story_text = (video_detail.get("story") or "").strip() if isinstance(video_detail, dict) else ""
+        story_text = project_manager.story_field_flat_text(
+            video_detail.get("story") if isinstance(video_detail, dict) else ""
+        )
         flow = ask_publish_metadata_then_schedule(
             parent,
             language=self.language,
@@ -5193,10 +5714,7 @@ class MediaGUIManager:
                 language=self.language,
                 video_detail=video_detail if isinstance(video_detail, dict) else None,
             ),
-            analyzed_content=config.analyzed_content_text(
-                video_detail.get("analyzed_content") if isinstance(video_detail, dict) else None,
-                self.language,
-            ),
+            analyzed_content = video_detail.get("analyzed_content"),
             story_text=story_text,
             review_script_text=review_script_text,
             generate_text_fn=self.llm_api_local.generate_text,
@@ -5496,9 +6014,7 @@ class MediaGUIManager:
                 ).lower()
 
                 transcript = config.read_transcript_text_from_video_detail(video_detail) or ""
-                analyzed = config.analyzed_content_text(
-                    video_detail.get("analyzed_content")
-                )
+                analyzed = video_detail.get("analyzed_content")
                 content = (transcript + "\n" + analyzed).strip().lower()
                 content = content.strip().lower()
                 if search_text in title or search_text in content:
@@ -5727,7 +6243,7 @@ class MediaGUIManager:
                 if len(user_status) > 80:
                     user_status = user_status[:77] + "..."
                 analyzed_mark = ""
-                if config.analyzed_content_text(video.get("analyzed_content")):
+                if video.get("analyzed_content"):
                     analyzed_mark += "✓"
                 if not _scene_content_nonempty(video):
                     analyzed_mark += "⚠"
@@ -5967,7 +6483,7 @@ class MediaGUIManager:
             if not isinstance(vd, dict):
                 return False
             return (
-                bool(config.analyzed_content_text(vd.get("analyzed_content")).strip())
+                bool(vd.get("analyzed_content").strip())
                 and _scene_content_nonempty(vd)
             )
 
@@ -6235,7 +6751,7 @@ class MediaGUIManager:
                 topic_tags_kw=None,
                 superseded_pid: str = "",
             ):
-                if not config.analyzed_content_text(analyzed_content).strip() or not _scene_content_nonempty(
+                if not analyzed_content.strip() or not _scene_content_nonempty(
                     {"scene_content": scene_content}
                 ):
                     messagebox.showwarning(
@@ -6455,12 +6971,13 @@ class MediaGUIManager:
             # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
             if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():
                 summary_window = summary_window_ref["w"]
+                summary_window.geometry("960x520")
                 for child in summary_window.winfo_children():
                     child.destroy()
             else:
                 summary_window = tk.Toplevel(dialog)
                 summary_window_ref["w"] = summary_window
-                summary_window.geometry("1500x1000")
+                summary_window.geometry("960x520")
                 summary_window.resizable(True, True)
                 summary_window.transient(dialog)
             if not getattr(summary_window, "_summary_drop_ctx", None):
@@ -6498,22 +7015,21 @@ class MediaGUIManager:
                     font=("Arial", 10, "bold"),
                 ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
                 source_title_entry = ttk.Entry(
-                    title_frame, textvariable=source_title_var, width=36
+                    title_frame, textvariable=source_title_var
                 )
                 source_title_entry.grid(
-                    row=0, column=1, sticky="ew", padx=(0, 12), pady=4
+                    row=0, column=1, sticky="ew", padx=(0, 5), pady=4
                 )
                 ttk.Label(
                     title_frame,
                     text="项目成片名:",
                     font=("Arial", 10, "bold"),
-                ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=4)
+                ).grid(row=1, column=0, sticky="w", padx=(5, 4), pady=4)
                 project_title_entry = ttk.Entry(
-                    title_frame, textvariable=project_title_var, width=36
+                    title_frame, textvariable=project_title_var
                 )
-                project_title_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=4)
+                project_title_entry.grid(row=1, column=1, sticky="ew", padx=(0, 5), pady=4)
                 title_frame.columnconfigure(1, weight=1)
-                title_frame.columnconfigure(3, weight=1)
             else:
                 ttk.Label(
                     title_frame,
@@ -6521,17 +7037,23 @@ class MediaGUIManager:
                     font=("Arial", 10, "bold"),
                 ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
                 source_title_entry = ttk.Entry(
-                    title_frame, textvariable=source_title_var, width=80
+                    title_frame, textvariable=source_title_var
                 )
                 source_title_entry.grid(
-                    row=0, column=1, sticky="ew", padx=5, pady=4, columnspan=3
+                    row=0, column=1, sticky="ew", padx=5, pady=4
                 )
                 title_frame.columnconfigure(1, weight=1)
                 project_title_entry = None
 
             feature_media_var = tk.StringVar(value="")
             media_btn_row = ttk.Frame(title_frame)
-            media_btn_row.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(6, 2))
+            media_btn_row.grid(
+                row=2 if has_project_profile else 1,
+                column=0,
+                columnspan=2,
+                sticky="ew",
+                pady=(6, 2),
+            )
             ttk.Label(
                 media_btn_row,
                 textvariable=feature_media_var,
@@ -6619,7 +7141,7 @@ class MediaGUIManager:
             topic_frame = ttk.LabelFrame(main_frame, text="主题信息", padding=10)
             topic_frame.pack(fill=tk.X, pady=(0, 10))
             
-            # 主题信息单行：分类 | 子类型 | 标签 | 关联视频 ID
+            # 主题信息两行：分类+子类型 | 标签+关联 ID
             ttk.Label(topic_frame, text="主题分类:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky='w', padx=(5, 2), pady=5)
             category_var = tk.StringVar(value=topic_category)
             category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=16)
@@ -6628,13 +7150,13 @@ class MediaGUIManager:
             ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=0, column=2, sticky='w', padx=(0, 2), pady=5)
             subtype_var = tk.StringVar(value=topic_subtype)
             subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=16)
-            subtype_combo.grid(row=0, column=3, padx=(0, 8), pady=5, sticky='ew')
+            subtype_combo.grid(row=0, column=3, padx=(0, 5), pady=5, sticky='ew')
 
-            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=0, column=4, sticky='w', padx=(0, 2), pady=5)
+            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='w', padx=(5, 2), pady=5)
             tags_var = tk.StringVar(value=topic_tags)
             tags_row = ttk.Frame(topic_frame)
-            tags_row.grid(row=0, column=5, padx=(0, 8), pady=5, sticky='ew')
-            tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=14)
+            tags_row.grid(row=1, column=1, padx=(0, 8), pady=5, sticky='ew')
+            tags_entry = ttk.Entry(tags_row, textvariable=tags_var)
             tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
             def _on_tag_pick(feature: str, option: str):
@@ -6652,10 +7174,10 @@ class MediaGUIManager:
             tags_add_btn = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu)
             tags_add_btn.pack(side=tk.LEFT, padx=(6, 0))
 
-            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=0, column=6, sticky='w', padx=(0, 2), pady=5)
+            ttk.Label(topic_frame, text="关联视频ID:", font=("Arial", 10, "bold")).grid(row=1, column=2, sticky='w', padx=(0, 2), pady=5)
             status_var = tk.StringVar(value=topic_status)
-            status_entry = ttk.Entry(topic_frame, textvariable=status_var, width=16)
-            status_entry.grid(row=0, column=7, padx=(0, 5), pady=5, sticky='ew')
+            status_entry = ttk.Entry(topic_frame, textvariable=status_var)
+            status_entry.grid(row=1, column=3, padx=(0, 5), pady=5, sticky='ew')
             
             def update_subtypes(*args):
                 """根据选择的分类更新子类型选项"""
@@ -6687,17 +7209,23 @@ class MediaGUIManager:
                 tags_list = video_detail.get("tags", [])
                 tags_var.set(", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list or ""))
                 update_subtypes()
-                refresh_notebooklm_prompt()
                 try:
                     populate_tree()
                 except Exception:
                     pass
 
             def do_story_view():
+                def _after_story_title():
+                    try:
+                        refresh_title_fields()
+                    except (NameError, tk.TclError):
+                        pass
+
                 text = self.open_content_field_editor(
                     summary_window,
                     video_detail,
                     "story",
+                    on_story_title_updated=_after_story_title,
                 )
                 if text is not None:
                     messagebox.showinfo(
@@ -6706,6 +7234,10 @@ class MediaGUIManager:
                     try:
                         populate_tree()
                     except Exception:
+                        pass
+                    try:
+                        refresh_title_fields()
+                    except (NameError, tk.TclError):
                         pass
 
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
@@ -6797,9 +7329,7 @@ class MediaGUIManager:
 
                 editor = ReferenceEditorDialog(
                     summary_window,
-                    current_story = config.analyzed_content_text(
-                        video_detail.get("analyzed_content")
-                    ),
+                    current_story = video_detail.get("analyzed_content"),
                     reference_filter=reference_filter_prompt,
                 )
 
@@ -6863,7 +7393,7 @@ class MediaGUIManager:
 
             # 操作按钮区（整行宽；发布状态单独一行，避免挤掉右侧按钮）
             button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=1, column=0, columnspan=8, sticky="ew", padx=5, pady=(8, 5))
+            button_frame.grid(row=2, column=0, columnspan=4, sticky="ew", padx=5, pady=(8, 5))
 
             publish_info_var = tk.StringVar(value="发布: …")
             pub_row = ttk.Frame(button_frame)
@@ -6967,10 +7497,6 @@ class MediaGUIManager:
                     populate_tree()
                 except Exception:
                     pass
-                try:
-                    refresh_notebooklm_prompt()
-                except Exception:
-                    pass
 
             def do_review_analyzed():
                 def _after_content_summary():
@@ -7021,65 +7547,16 @@ class MediaGUIManager:
             )
 
             
-            # 四个输入列（分类/子类型/标签/关联ID）均分剩余宽度
-            for _c in (1, 3, 5, 7):
+            # 输入列（分类/子类型/标签/关联ID）均分剩余宽度
+            for _c in (1, 3):
                 topic_frame.columnconfigure(_c, weight=1, uniform='topic_inputs')
             
             # 初始化子类型选项
             if topic_category:
                 update_subtypes()
             
-            # NotebookLM Prompt 类型：从当前 channel 的 config 读取（选定 channel 后使用该 channel 下的 notebooklm_prompt_choices）
-            _channel_key = os.path.basename(self.channel_path)
-            NOTEBOOKLM_PROMPT_CHOICES = config_channel.get_channel_config(_channel_key).get("notebooklm_prompt_choices", [])
-            NOTEBOOKLM_CONTENT_GUIDE_CHOICES = config_channel.get_channel_content_guide_choices(_channel_key)
             prompt_choice_frame = ttk.Frame(main_frame)
             prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
-            ttk.Label(prompt_choice_frame, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
-            prompt_combo_var = tk.StringVar(value=NOTEBOOKLM_PROMPT_CHOICES[0][0])
-            prompt_combo = ttk.Combobox(
-                prompt_choice_frame,
-                textvariable=prompt_combo_var,
-                values=[opt[0] for opt in NOTEBOOKLM_PROMPT_CHOICES],
-                state="readonly",
-                width=16
-            )
-            prompt_combo.pack(side=tk.LEFT)
-            prompt_initial_btn = ttk.Button(
-                prompt_choice_frame,
-                text="导向说明",
-                width=8,
-                command=lambda: open_initial_content_dialog(lambda: refresh_notebooklm_prompt()),
-            )
-            prompt_initial_btn.pack(side=tk.LEFT, padx=(6, 0))
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
-
-            ttk.Label(prompt_choice_frame, text="选Content").pack(side=tk.LEFT, padx=(0, 5))
-            content_guide_combo_var = tk.StringVar(
-                value=NOTEBOOKLM_CONTENT_GUIDE_CHOICES[0][0]
-            )
-            content_guide_combo = ttk.Combobox(
-                prompt_choice_frame,
-                textvariable=content_guide_combo_var,
-                values=[opt[0] for opt in NOTEBOOKLM_CONTENT_GUIDE_CHOICES],
-                state="readonly",
-                width=12,
-            )
-            content_guide_combo.pack(side=tk.LEFT)
-
-            def _selected_content_guide_template() -> str:
-                sel = content_guide_combo_var.get()
-                return next(
-                    (
-                        tpl
-                        for lbl, tpl in NOTEBOOKLM_CONTENT_GUIDE_CHOICES
-                        if lbl == sel
-                    ),
-                    NOTEBOOKLM_CONTENT_GUIDE_CHOICES[0][1],
-                )
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
             ttk.Label(prompt_choice_frame, text="主角").pack(side=tk.LEFT, padx=(0, 5))
             char_labels = list(config.CHARACTER_PERSON_OPTIONS)
@@ -7118,16 +7595,6 @@ class MediaGUIManager:
                             return
                         video_detail["scene_content"] = scene_list
                         pending_scene[0] = None
-                        _sync_youtube_row_title_after_scene_edit(
-                            video_detail, scene_list, self.language
-                        )
-                        try:
-                            project_title_var.set(
-                                _youtube_row_project_title(video_detail)
-                            )
-                        except (NameError, tk.TclError):
-                            pass
-                        _refresh_summary_window_title(summary_window, video_detail)
                         with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
                             json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                         dialog.after(0, populate_tree)
@@ -7215,197 +7682,10 @@ class MediaGUIManager:
                     )
 
 
-            label = ttk.Label(main_frame, text="视频摘要：", font=("Arial", 10, "bold"))
-            label.pack(anchor=tk.W, pady=(0, 5))
-            # 创建可滚动的文本区域
-            text_widget = scrolledtext.ScrolledText(
-                main_frame,
-                wrap=tk.WORD,
-                width=70,
-                height=25,
-                font=("Arial", 10),
-                padx=10,
-                pady=10
-            )
-            text_widget.pack(fill=tk.BOTH, expand=True)
-
-            # 用户导向说明（非视频正文）：通过模板占位符 {instruction} 嵌入（与 SUNO 等模板一致）
-            initial_content_holder = [""]
-
-
-            def refresh_notebooklm_prompt(*args):
-                """根据 combo 选择生成 prompt 并更新 text_widget + 剪贴板；{instruction} 来自导向说明。"""
-                sel = prompt_combo_var.get()
-                # choices 为 [(label, template), ...]，须按 label 匹配；不能用 list.index(sel)，否则会因元素是元组而抛 ValueError
-                index = next((i for i, (lbl, _) in enumerate(NOTEBOOKLM_PROMPT_CHOICES) if lbl == sel), 0)
-                template = next((t for lbl, t in NOTEBOOKLM_PROMPT_CHOICES if lbl == sel), NOTEBOOKLM_PROMPT_CHOICES[0][1])
-                topic = category_var.get().strip() + "-" + subtype_var.get().strip()
-
-                # status 中为关联视频的 YouTube id（| 分隔）；在 channel_videos 列表中按 id 查找，拼标题与摘要
-                reference_parts = []
-                for i, seg in enumerate( (video_detail.get("status") or "").split("|")):
-                    yid = (seg or "").strip()
-                    if not yid or yid in ("success", "failed"):
-                        continue
-                    ref_v = _find_video_by_youtube_id(self.downloader.channel_videos, yid)
-                    if not ref_v:
-                        continue
-                    title = _youtube_row_display_title(ref_v)
-                    summary = (ref_v.get("summary") or "").strip()
-                    reference_parts.append(
-                        f"Reference {i+1}: Title: {title}\nReference {i+1}: Summary: {summary}"
-                    )
-                reference = "\n\n\n----------------------------------------------------------\n".join(reference_parts) if reference_parts else ""
-                story_title = _youtube_row_display_title(video_detail)
-
-                content = config.analyzed_content_text(video_detail.get("analyzed_content"))
-                if not content:
-                    content = video_detail.get('scene_content')
-                    if isinstance(content, dict):
-                        content = json.dumps(content, ensure_ascii=False, indent=2)
-
-                if not content:
-                    content = config.read_transcript_text_from_video_detail(video_detail)
-
-                link = video_detail.get('url', '').strip()
-                content_guide_tpl = _selected_content_guide_template()
-                needs_soul = "{soul}" in (template + content_guide_tpl)
-                soul = ""
-                if needs_soul:
-                    soul, choices, categories, features = project_manager.build_soul(
-                        self.channel,
-                        category_var.get().strip(),
-                        subtype_var.get().strip(),
-                    )
-                instruction = (initial_content_holder[0] or "").strip()
-                prompt = _format_nb_prompt_template(
-                    template=template,
-                    content_guide=content_guide_tpl,
-                    topic=topic,
-                    tags=tags_var.get().strip(),
-                    language=config.llm_language_label(self.language),
-                    reference=reference,
-                    soul=soul,
-                    story_title=story_title,
-                    content=content,
-                    link=link,
-                    instruction=instruction,
-                    sections= (index + 1),
-                )
-
-                text_widget.config(state=tk.NORMAL)
-                text_widget.delete(1.0, tk.END)
-                text_widget.insert(tk.END, prompt)
-                text_widget.config(state=tk.DISABLED)
-                if prompt and prompt.strip():
-                    try:
-                        summary_window.clipboard_clear()
-                        summary_window.clipboard_append(prompt.strip())
-                        summary_window.update()
-                    except Exception:
-                        pass
-                
-
-            def open_initial_content_dialog(on_done=None, *, refresh_on_cancel=False):
-                """弹出窗口编辑导向说明；确定后执行 on_done（默认刷新 LM prompt）。
-                refresh_on_cancel: 为 True 时（如摘要窗首次打开），用户点「取消」仍会执行 on_done，以便仍能生成提示词（导向说明留空）。"""
-                dlg = tk.Toplevel(summary_window)
-                dlg.title("Initial content（导向说明）")
-                dlg.geometry("700x360")
-                dlg.transient(summary_window)
-                dlg.grab_set()
-                dlg.update_idletasks()
-                px = (dlg.winfo_screenwidth() - 700) // 2
-                py = (dlg.winfo_screenheight() - 360) // 2
-                dlg.geometry(f"700x360+{px}+{py}")
-                ttk.Label(
-                    dlg,
-                    text=(
-                        "补充你希望 NotebookLM 侧重的方向、故事意图、受众等（可选）。\n"
-                        "将填入 NotebookLM 提示模板中的「导向说明」占位符；留空则该段为空。\n"
-                        "Ctrl+Shift+C 或下方按钮可打开「程序剪贴板」（全频道共享），选中条目后 Enter 将内容填入本框（无弹窗）。"
-                    ),
-                    wraplength=660,
-                    justify="left",
-                ).pack(anchor="w", padx=12, pady=(12, 6))
-                body = scrolledtext.ScrolledText(dlg, wrap=tk.WORD, width=78, height=12, font=("Arial", 10))
-                body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
-                body.insert("1.0", initial_content_holder[0])
-
-                def _apply_picked_channel_clipboard(text: str):
-                    if not isinstance(text, str):
-                        return
-                    body.delete("1.0", tk.END)
-                    body.insert("1.0", text.rstrip())
-                    try:
-                        body.mark_set(tk.INSERT, tk.END)
-                        body.see(tk.INSERT)
-                        body.focus_set()
-                        dlg.lift()
-                    except Exception:
-                        pass
-
-                def _open_channel_clipboard_for_dialog():
-                    open_or_refresh_program_clipboard_manager(
-                        dlg,
-                        dlg,
-                        select_last=False,
-                        on_pick=_apply_picked_channel_clipboard,
-                    )
-
-                def _on_ctrl_shift_c_shortcut(event=None):
-                    _open_channel_clipboard_for_dialog()
-                    return "break"
-
-                dlg.bind("<Control-Shift-C>", _on_ctrl_shift_c_shortcut)
-                dlg.bind("<Control-Shift-c>", _on_ctrl_shift_c_shortcut)
-                body.bind("<Control-Shift-C>", _on_ctrl_shift_c_shortcut)
-                body.bind("<Control-Shift-c>", _on_ctrl_shift_c_shortcut)
-
-                def _ok():
-                    initial_content_holder[0] = body.get("1.0", tk.END).strip()
-                    dlg.destroy()
-                    fn = on_done or refresh_notebooklm_prompt
-                    fn()
-
-                def _cancel():
-                    dlg.destroy()
-                    if refresh_on_cancel:
-                        fn = on_done or refresh_notebooklm_prompt
-                        fn()
-
-                bf = ttk.Frame(dlg)
-                bf.pack(pady=(0, 12))
-                ttk.Button(bf, text="程序剪贴板", command=_open_channel_clipboard_for_dialog).pack(side=tk.LEFT, padx=6)
-                ttk.Button(bf, text="确定", command=_ok).pack(side=tk.LEFT, padx=6)
-                ttk.Button(bf, text="取消", command=_cancel).pack(side=tk.LEFT, padx=6)
-
-            def on_content_guide_change(e):
-                refresh_notebooklm_prompt()
-
-            def on_prompt_combo_selected(e):
-                open_initial_content_dialog(lambda: refresh_notebooklm_prompt())
-
             def on_category_change(e):
                 update_subtypes()
-                refresh_notebooklm_prompt()
-            def on_subtype_change(e):
-                refresh_notebooklm_prompt()
-            prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
-            content_guide_combo.bind("<<ComboboxSelected>>", on_content_guide_change)
+
             category_combo.bind('<<ComboboxSelected>>', on_category_change)
-            subtype_combo.bind('<<ComboboxSelected>>', on_subtype_change)
-
-            summary_window._summary_drop_ctx["refresh_summary_display"] = refresh_notebooklm_prompt
-
-            # 首次打开与「选LM提示」切换一样：先弹导向说明窗口，再生成提示词
-            open_initial_content_dialog(
-                lambda: refresh_notebooklm_prompt(),
-                refresh_on_cancel=True,
-            )
-
-            LM_INSTRUCTION_STR = "Use the source named 'Pasted Text / 粘贴的文字' as your instruction and execute it as a prompt."
-            last_copied = [None]  # 轮替：None -> lm_instruction -> text_content -> lm_instruction -> ...
 
             summary_window._summary_drop_ctx["nav_low_priority"] = low_priority
             if not getattr(summary_window, "_summary_nav_root_bound", False):
@@ -7872,11 +8152,9 @@ class MediaGUIManager:
                 if not url_key or url_key in seen_urls:
                     continue
                 seen_urls.add(url_key)
-                if config.analyzed_content_text(video_detail.get("analyzed_content")):
+                if video_detail.get("analyzed_content"):
                     summary_list.append({
-                        'analyzed_content': config.analyzed_content_text(
-                            video_detail.get("analyzed_content")
-                        ),
+                        'analyzed_content': video_detail.get("analyzed_content"),
                         'title': _youtube_row_display_title(video_detail),
                         'url': video_detail.get('url', ''),
                         'id': video_detail.get('id', ''),
@@ -7900,12 +8178,8 @@ class MediaGUIManager:
 
             summary_list = []
             for video_detail in _unique_video_details_from_tree_selection():
-                if not rewrite and config.analyzed_content_text(
-                    video_detail.get("analyzed_content")
-                ):
-                    summary_list.append(
-                        config.analyzed_content_text(video_detail.get("analyzed_content"))
-                    )
+                if not rewrite and video_detail.get("analyzed_content"):
+                    summary_list.append( video_detail.get("analyzed_content") )
                     continue
 
                 if not self.generate_analyzed_content_for_video(
@@ -7913,9 +8187,7 @@ class MediaGUIManager:
                 ):
                     continue
 
-                summary_list.append(
-                    config.analyzed_content_text(video_detail.get("analyzed_content"))
-                )
+                summary_list.append( video_detail.get("analyzed_content") )
 
                 self.prepare_category_for_content(video_detail, self.topic_choices)
 

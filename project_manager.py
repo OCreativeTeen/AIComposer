@@ -37,17 +37,83 @@ def _story_value_nonempty(sv) -> bool:
     return True
 
 
+def _normalize_story_entry(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    title = (item.get("title") or "").strip()
+    body = (item.get("story") or item.get("content") or "").strip()
+    if not title and not body:
+        return None
+    return {"title": title, "story": body}
+
+
+def _parse_story_field(raw) -> list[dict]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        out: list[dict] = []
+        for it in raw:
+            n = _normalize_story_entry(it) if isinstance(it, dict) else None
+            if n:
+                out.append(n)
+        return out
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError:
+                return [{"title": "", "story": s}]
+            return _parse_story_field(parsed)
+        return [{"title": "", "story": s}]
+    return []
+
+
+def story_first_entry_text(raw) -> str:
+    """Story JSON array 的第一条（prepend 后即为当前项目 title 对应 story）。"""
+    entries = _parse_story_field(raw)
+    if not entries:
+        s = (raw or "").strip() if isinstance(raw, str) else ""
+        return s if s and not s.startswith("[") else ""
+    e = entries[0]
+    t = (e.get("title") or "").strip()
+    b = (e.get("story") or "").strip()
+    if t and b:
+        return f"{t}\n\n{b}"
+    return b or t
+
+
+def story_field_flat_text(raw) -> str:
+    """Story JSON array 或 legacy 纯文本 → 发布 / remix 用可读文本。"""
+    entries = _parse_story_field(raw)
+    if not entries:
+        return (raw or "").strip() if isinstance(raw, str) else ""
+    parts: list[str] = []
+    for e in entries:
+        t = (e.get("title") or "").strip()
+        b = (e.get("story") or "").strip()
+        if t and b:
+            parts.append(f"{t}\n\n{b}")
+        elif b:
+            parts.append(b)
+        elif t:
+            parts.append(t)
+    return "\n\n---\n\n".join(parts)
+
+
 def story_text_from_config(cfg: dict) -> str:
     """从 ``PROJECT_CONFIG`` 或绑定的频道列表行外层 ``story`` 读取 remix / YouTube 用文本。"""
     if not isinstance(cfg, dict):
         return ""
-    st = (cfg.get("story") or "").strip()
+    st = story_field_flat_text(cfg.get("story"))
     if st:
         return st
 
     row = load_video_detail_row_for_config(cfg)
     if isinstance(row, dict):
-        st = (row.get("story") or row.get("summary") or "").strip()
+        st = story_field_flat_text(row.get("story") or row.get("summary"))
         if st:
             return st
     return ""
@@ -163,7 +229,7 @@ def _raw_content_preview_body(story_result) -> str:
         return ""
     ac = story_result.get("analyzed_content")
     if _story_value_nonempty(ac):
-        return config.analyzed_content_text(ac).strip()
+        return ac.strip()
     for key in ("content", "story"):
         val = story_result.get(key)
         if _story_value_nonempty(val):
@@ -249,7 +315,7 @@ def title_from_scene_content(scene_content, ui_language_key: str = "") -> str:
 
 def _raw_content_valid_for_create(ac) -> bool:
     """``analyzed_content`` 为非空纯文本。"""
-    return bool(config.analyzed_content_text(ac).strip())
+    return bool(ac.strip())
 
 
 def build_soul(channel, topic_category, topic_subtype):
@@ -1492,8 +1558,6 @@ class ProjectSelectionDialog:
                 initial_text = self.story_result.get('analyzed_content')
             if isinstance(initial_text, str) and initial_text.strip():
                 _prefill = initial_text.strip()
-            else:
-                _prefill = config.analyzed_content_text(initial_text) or None
             raw_dialog = tk.Toplevel(new_project_dialog)
             raw_dialog.title("项目内容 输入")
             raw_dialog.geometry("700x400")
@@ -1547,8 +1611,8 @@ class ProjectSelectionDialog:
             raw_input = (raw_input_holder[0] or "").strip()
             if not raw_input:
                 return
-            normalized = config.normalize_analyzed_content_text(raw_input)
-            if not _raw_content_valid_for_create(normalized):
+            normalized = raw_input
+            if not normalized.strip():
                 messagebox.showwarning(
                     "内容无效",
                     "无法保存：analyzed_content 须为非空文本。",
