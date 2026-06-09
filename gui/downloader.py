@@ -793,6 +793,18 @@ def _story_entries_to_json_text(entries: list[dict]) -> str:
     return json.dumps(clean, ensure_ascii=False, indent=2)
 
 
+def _story_first_entry_json_text(raw) -> str:
+    """Story JSON 数组首条 → 格式化 JSON 对象文本（剪贴板 / Slideshow 输入）。"""
+    entries = _parse_story_field(raw)
+    if entries:
+        return json.dumps(entries[0], ensure_ascii=False, indent=2)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if s and not s.startswith("["):
+            return s
+    return ""
+
+
 def _merge_story_entries(existing: list[dict], new_entries: list[dict]) -> list[dict]:
     """新条目 prepend 到已有 story array。"""
     old = [_normalize_story_entry(e) for e in (existing or [])]
@@ -5081,7 +5093,7 @@ class MediaGUIManager:
             header_text = (
                 f"{title}\n"
                 "选 Story 提示（story_prompt_choices）；导向说明填入 {instruction}；"
-                "预览用 analyzed_content 作 {content}，切换/编辑时复制到剪贴板。"
+                "预览用 analyzed_content 作 {content}；打开或生成 Story 后复制 JSON 首条到剪贴板。"
                 "「增加 Story」用所选提示 + analyzed_content 生成并 merge 到列表（各条字段可不同）。"
                 "Slideshow / Video 指令仅含生成指令 + JSON 首条 story（不含上方 Story 生成提示）。"
             )
@@ -5113,7 +5125,7 @@ class MediaGUIManager:
         )
         instruction_tx.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明或 story 时更新并复制到剪贴板）：").pack(
+        ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新，不写入剪贴板）：").pack(
             anchor=tk.W, pady=(0, 2)
         )
         prompt_tx = scrolledtext.ScrolledText(
@@ -5131,8 +5143,15 @@ class MediaGUIManager:
         initial = _story_field_editor_text(video_detail.get("story"))
         if initial:
             tx.insert("1.0", initial)
-            _copy_text_to_clipboard(dlg, initial)
         _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+
+        def _copy_first_story_to_clipboard():
+            clip = _story_first_entry_json_text((tx.get("1.0", tk.END) or ""))
+            if clip:
+                _copy_text_to_clipboard(dlg, clip)
+
+        if initial:
+            _copy_first_story_to_clipboard()
 
         def _first_story_override_text() -> str:
             entries = _parse_story_field((tx.get("1.0", tk.END) or ""))
@@ -5158,12 +5177,10 @@ class MediaGUIManager:
             prompt_tx.delete("1.0", tk.END)
             if prompt:
                 prompt_tx.insert("1.0", prompt)
-                _copy_text_to_clipboard(dlg, prompt)
 
         if story_prompt_choices:
             prompt_combo.bind("<<ComboboxSelected>>", refresh_story_prompt)
         instruction_tx.bind("<FocusOut>", refresh_story_prompt)
-        tx.bind("<FocusOut>", refresh_story_prompt)
         if story_prompt_choices:
             refresh_story_prompt()
 
@@ -5171,7 +5188,7 @@ class MediaGUIManager:
             tx.delete("1.0", tk.END)
             if text:
                 tx.insert("1.0", text)
-            _copy_text_to_clipboard(dlg, text)
+            _copy_first_story_to_clipboard()
             refresh_story_prompt()
 
         btn_row = ttk.Frame(frm)

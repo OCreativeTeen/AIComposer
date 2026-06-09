@@ -151,7 +151,7 @@ class AudioTranscriberX:
         # 对齐 / Diarize 模型按需懒加载
         self._align_cache: Dict[str, Tuple[Any, Any]] = {}
         self._diarize_pipeline = None
-        self.llm_api = llm_api.LLMApi(llm_api.LM_STUDIO)
+        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
 
     # ------------------------------------------------------------------
     # 公共入口
