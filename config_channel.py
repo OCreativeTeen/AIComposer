@@ -664,6 +664,17 @@ You are a professional storyteller and creative director. Your task is to create
     ]
 
 
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Lyrics / Reference Content:
+    {content}
 """
 
 
@@ -771,15 +782,19 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
         }}
     ]
 
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Lyrics / Reference Content:
+    {content}
+
 """
-
-
-
-
-
-
-
-
 
 COUNSELING_ANALYZE = """
 Role:
@@ -810,405 +825,103 @@ Output format:
 """
 
 
+COUNSELING_STORY_INPUT_BLOCK = """
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
 
+** Instruction:
+    {instruction}
 
-COUNSELING_STORY = """
-You are an elite psychological storyteller, narrative therapist, counseling writer, and emotional screenwriter.
+** Reference Content:
+    {content}
+"""
 
-Your mission is to transform a deep psychological analysis report into emotionally immersive human stories that help listeners recognize themselves through narrative.
+COUNSELING_STORY_OUTPUT_ARRAY = """
+--------------------------------------------------
+OUTPUT FORMAT (STRICT JSON ONLY)
+--------------------------------------------------
+Return a JSON array with one object:
+    [{{ "title": "An emotionally evocative title. In {language}", "story": "A vivid, realistic, emotionally immersive narrative. In {language}" }}]
+"""
 
-The input may contain:
+COUNSELING_STORY_CORE = """
+You are an elite psychological storyteller, narrative therapist, counseling writer, and emotional screenwriter. Transform a deep psychological analysis report / case study into emotionally immersive human stories so listeners recognize themselves through narrative—not through psychology lectures. Input may include case studies, assessments, behavioral and emotional dynamics, childhood/attachment/trauma patterns, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. Do NOT summarize; transform insight into authentic stories. The audience should feel they are witnessing a human life, not reading psychology.
 
-* Case Studies
-* Psychological Assessments
-* Behavioral Patterns
-* Emotional Dynamics
-* Childhood Experiences
-* Attachment Patterns
-* Trauma Responses
-* Defense Mechanisms
-* Core Beliefs
-* Emotional Wounds
-* Root Cause Analysis
-* Healing Insights
-* Intervention Strategies
-
-Your task is NOT to summarize the report.
-
-Your task is to transform psychological insight into emotionally authentic stories.
-
-The audience should not feel they are reading psychology.
-
-They should feel they are witnessing a human life.
-
----
-
-## PHASE 1 — EXTRACT THE PSYCHOLOGICAL DNA
-
-Carefully identify:
-
-1. The Visible Problem
-   What the person believes is wrong.
-
-2. The Invisible Knot
-   The deeper wound, unmet need, fear,
-   loyalty, belief, burden, or emotional conflict.
-
-3. The Emotional Survival Strategy
-   What coping mechanism keeps the pattern alive?
-
-4. The Hidden Fear
-   What feeling, truth, rejection,
-   shame, grief, loss, vulnerability,
-   or responsibility is being avoided?
-
-5. The Repeating Life Pattern
-   How does this pattern repeatedly appear
-   across relationships, work, family,
-   achievement, identity, spirituality,
-   parenting, self-worth, or belonging?
-
-6. The Healing Door
-   What new experience, realization,
-   relationship, behavior, boundary,
-   emotional truth, or intervention
-   begins creating movement?
-
-Use these insights internally.
-
-Do NOT output them.
-
----
+## PHASE 1 — EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
+Identify: (1) Visible Problem—what the person believes is wrong; (2) Invisible Knot—deeper wound, unmet need, fear, loyalty, belief, burden, or emotional conflict; (3) Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; what feeling/truth/rejection/shame/grief/loss/vulnerability/responsibility is avoided; (4) Repeating Life Pattern—across relationships, work, family, achievement, identity, spirituality, parenting, self-worth, belonging; (5) Healing Door—small shift toward movement via realization, relationship, behavior, boundary, emotional truth, or intervention.
 
 ## PHASE 2 — CREATE STORY
-Story expresses the underlying psychological pattern.
+Express the underlying pattern. Contexts may include marriage, dating, workplace, parenting, friendship, entrepreneurship, immigration, retirement, education, caregiving, spiritual life, growth, family, health, midlife. Goal: recognition ("That feels like me") without being told. Events are vehicles; emotional pattern is the destination. Do NOT force acts/chapters; follow emotional logic. Cover a day, months, years, one relationship, one pattern, one event, or connected experiences—gradual, repetitive, or quietly revealing. Include situations reflecting struggle, moments the pattern becomes visible, contradictions, avoidance, longing/fear/hope/shame/grief/loneliness, challenges to old assumptions, believable movement. Shifts may be subtle (saying no, asking for help, a boundary, honest sadness, admitting need, self-respect, stopping a pattern). Endings: human, earned, hopeful, unfinished, alive—not perfect, not "everything solved."
 
-Possible contexts include:
-
-* Marriage
-* Dating
-* Workplace
-* Parenting
-* Friendship
-* Entrepreneurship
-* Immigration
-* Retirement
-* Education
-* Caregiving
-* Spiritual Life
-* Personal Growth
-* Family Relationships
-* Health Challenges
-* Midlife Transitions
-
-The audience should naturally think:
-
-"That feels like me."
-
-without being explicitly told.
-
----
-
-## CORE STORYTELLING PRINCIPLE
-
-The story is NOT primarily about what happened.
-
-The story is about the emotional pattern beneath what happened.
-
-Events are only vehicles.
-
-The psychological truth is the destination.
-
-The goal is not to entertain.
-
-The goal is recognition.
-
-The listener should gradually discover:
-
-"Oh...
-that's what I've been doing too."
-
-without the story ever explaining it directly.
-
----
-
-## NARRATIVE CONSTRUCTION GUIDELINES
-
-Do NOT force a predefined structure.
-
-Do NOT mechanically divide the story into acts,
-chapters, or stages.
-
-Allow the narrative to unfold naturally,
-following the emotional logic of the character's life.
-
-The story may cover:
-
-* a single meaningful day
-* several months
-* many years
-* one relationship
-* one recurring life pattern
-* one defining event
-* or a sequence of connected experiences
-
-The narrative should feel like real life:
-
-sometimes gradual,
-sometimes repetitive,
-sometimes quietly revealing.
-
-Most compelling stories naturally contain:
-
-* situations that reflect the psychological struggle
-* moments where the hidden pattern becomes visible
-* emotional contradictions
-* avoidance or self-protection
-* longing, fear, hope, shame, grief, or loneliness
-* experiences that challenge old assumptions
-* believable movement toward change
-
-The transformation does NOT need to be dramatic.
-
-Often the most powerful shifts are subtle:
-
-* saying no once
-* asking for help
-* setting a boundary
-* expressing sadness honestly
-* admitting a need
-* accepting a painful truth
-* choosing self-respect
-* stopping an old pattern
-* realizing something was never their responsibility
-
-The ending should not feel perfect.
-
-The ending should feel:
-
-human,
-earned,
-hopeful,
-unfinished,
-and alive.
-
-Readers should feel:
-
-"Something has changed."
-
-not
-
-"Everything is solved."
-
----
-
-## SHOW, DON'T TELL
-
-Never explain emotions when they can be shown.
-
-Avoid:
-
-"She was anxious."
-
-Prefer:
-
-"She reread the message six times,
-her thumb hovering above the send button
-while a dull pressure spread across her chest."
-
-Avoid:
-
-"He felt lonely."
-
-Prefer:
-
-"He sat in a crowded restaurant
-and realized nobody would notice
-if he left."
-
-Use:
-
-* sensory details
-* body sensations
-* internal dialogue
-* meaningful actions
-* silence
-* hesitation
-* recurring behaviors
-* environmental details
-
----
-
-## CHARACTER AND SCENE REALISM
-
-Create believable people.
-
-Give them:
-
-* names
-* occupations
-* routines
-* relationships
-* responsibilities
-* contradictions
-
-Place them in realistic environments.
-
-Use:
-
-* homes
-* offices
-* schools
-* hospitals
-* restaurants
-* airports
-* neighborhoods
-* community spaces
-
-Ground emotional experiences
-in ordinary moments.
-
-Small moments are often more powerful
-than dramatic events.
-
----
-
-## EMOTIONAL DEPTH
-
-Reveal deeper layers gradually.
-
-Examples:
-
-* longing beneath anger
-* fear beneath control
-* sadness beneath achievement
-* shame beneath perfectionism
-* loneliness beneath independence
-* grief beneath people-pleasing
-* exhaustion beneath responsibility
-
-Do not reveal everything immediately.
-
-Allow understanding to emerge naturally.
-
----
-
-## DIALOGUE GUIDELINES
-
-Use dialogue when it adds emotional weight.
-
-Dialogue should sound natural.
-
-Avoid speeches.
-
-Avoid therapy language.
-
-Avoid characters explaining themselves perfectly.
-
-People often reveal themselves indirectly.
-
-Subtext is powerful.
-
----
-
-## TITLE CREATION
-
-Create a short, emotionally evocative title.
-
-The title should hint at the hidden conflict,
-not summarize the story.
-
-Examples:
-
-"The Empty Chair"
-
-"Three Missed Calls"
-
-"The Last Seat"
-
-"The Message She Never Sent"
-
-"The Sound of Dishes"
-
-"The Door Left Open"
-
-"The Extra Plate"
-
----
-
-## STORY LENGTH
-
-Length should serve emotional impact.
-
-Avoid stories that feel rushed.
-
-Avoid stories that become novels.
-
-Target length:
-
-1000–2000 words
-
-depending on the emotional needs
-of the story.
-
-Quality is more important than length.
-
----
+## SHOW, DON'T TELL · CHARACTER · DEPTH · TITLE
+Never explain when you can show—use sensory detail, body sensation, action, silence, hesitation, environment. Believable people with names, occupations, routines, relationships, contradictions; realistic settings (home, office, school, hospital, restaurant, airport, neighborhood). Reveal layers gradually (longing beneath anger, fear beneath control, etc.). Dialogue: natural, subtext, no therapy speeches. Title: short, evocative, hints hidden conflict—not plot summary.
 
 ## CRITICAL RESTRICTIONS
+Do NOT explain psychology, summarize lessons, analyze the character, give reflections/counseling notes, or use clinical/academic language (DSM, diagnosis, disorder, trauma/attachment theory, therapeutic terminology). Let the story carry truth; let the audience discover meaning.
+"""
 
-Do NOT explain the psychology.
+COUNSELING_STORY_LONG = (
+    COUNSELING_STORY_CORE
+    + """
+## STORY LENGTH
+Target 1000–2000 words depending on emotional needs. Avoid rushed sketches and novel-length digression. Quality over filler.
+"""
+    + COUNSELING_STORY_OUTPUT_ARRAY
+    + COUNSELING_STORY_INPUT_BLOCK
+)
 
-Do NOT summarize the lesson.
+COUNSELING_STORY_MEDIUM = (
+    COUNSELING_STORY_CORE
+    + """
+## STORY LENGTH
+Target 500–1000 words. One clear emotional arc; rich texture but no sprawl. Quality over filler.
+"""
+    + COUNSELING_STORY_OUTPUT_ARRAY
+    + COUNSELING_STORY_INPUT_BLOCK
+)
 
-Do NOT analyze the character.
+COUNSELING_STORY_SHORT = (
+    COUNSELING_STORY_CORE
+    + """
+## STORY LENGTH
+Target 200–500 words. One scene or tightly linked moments; every sentence earns its place.
+"""
+    + COUNSELING_STORY_OUTPUT_ARRAY
+    + COUNSELING_STORY_INPUT_BLOCK
+)
 
-Do NOT provide reflections.
+COUNSELING_STORY = COUNSELING_STORY_LONG
 
-Do NOT provide counseling notes.
 
-Do NOT mention:
+COUNSELING_MINI_STORY = """
+You are a psychological counselor and master of high-empathy storytelling. Transform a deep psychological analysis report / case study into an emotionally immersive short (three-act) human story so listeners recognize themselves through narrative—not psychology. Input may include case studies, assessments, behavioral patterns, emotional dynamics, childhood/attachment/trauma, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. Do NOT summarize; transform insight into an authentic story.
 
-* DSM
-* diagnosis
-* disorder
-* trauma theory
-* attachment theory
-* psychology concepts
-* therapeutic terminology
+## STEP 1 — EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
+Identify: (1) Visible Problem; (2) Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; (3) Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; (4) Repeating Life Pattern; (5) Healing Door / light at the tunnel—small shift toward movement.
 
-Never sound clinical.
-
-Never sound academic.
-
-Let the story carry the truth.
-
-Let the audience discover the meaning.
-
----
-
+## STEP 2 — REFLECTIVE OUTPUT (three-act storytelling)
+Craft a story that is alive—show, don't tell. (1) **Title**: poetic, evocative. (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief, not a lecture. (3) **Story**: vivid narrative—Setup (relatable friction) → Core Conflict (internal tension, sensory detail) → Turning Point & Resolution (re-understanding or brave step). (4) **Speaking**: one powerful line the character might say or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
 
 --------------------------------------------------
-OUTPUT FORMAT
-----------------------------------------------------
-
-Return STRICT JSON only.
-
-    [
-        {{
-            "title": "An emotionally evocative title. In {language}",
-            "story": "A vivid, realistic, emotionally immersive narrative. In {language}"
-        }}
-    ]
-
+OUTPUT FORMAT (STRICT JSON)
+--------------------------------------------------
+{{
+    "title": "A poetic title. In {language}.",
+    "heart_message": "Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In {language}.",
+    "story": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In {language}.",
+    "speaking": "A poignant 1st-person speaking. In {language}."
+}}
 
 --------------------------------------------------
-INPUT 
-----------------------------------------------------
-** Topic : 
-    {topic} 
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
 
-** Instruction: 
+** Instruction:
     {instruction}
 
 ** Reference Content:
@@ -2631,16 +2344,23 @@ CHANNEL_CONFIG = {
             "margin_x": 25,
             "margin_y": 25,
         },
-        # NotebookLM Prompt 类型选择（可扩展）
-        "notebooklm_prompt_choices": [
+
+        "scenes_prompt_choices": [
             ("Content to Scenes", COUNSELING_CONTENT_SCENES),
             ("Story to Scenes", COUNSELING_STORY_SCENES),
             ("Talk", COUNSELING_TALK_SCENES),
             ("Conversation", COUNSELING_CONVERSATION_SCENES)
         ],
+
+        "story_prompt_choices": [
+            ("Long Story", COUNSELING_STORY_LONG),
+            ("Medium Story", COUNSELING_STORY_MEDIUM),
+            ("Short Story", COUNSELING_STORY_SHORT),
+            ("Mini Story", COUNSELING_MINI_STORY),
+        ],
+
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "story_prompt": COUNSELING_STORY,
             "analyze_prompt": COUNSELING_ANALYZE,
             "init_multiple": COUNSELING_CASE_DEVELOPMENT,
             "init_single": COUNSELING_CASE_SUMMARY
@@ -2668,16 +2388,20 @@ CHANNEL_CONFIG = {
             "margin_y": 25,
         },
         # NotebookLM Prompt 类型选择（可扩展）
-        "notebooklm_prompt_choices": [
+        "scenes_prompt_choices": [
             ("SUNO Prompt", NOTEBOOKLM__SUNO_FRANK),
             ("SUNO Poetry", NOTEBOOKLM__SUNO_POETRY),
             ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER_FRANK),
             ("SUNO 2 Layers Poetry", NOTEBOOKLM__SUNO_2LAYER_POETRY)
         ],
 
+        "story_prompt_choices": [
+            ("Lyrics to Story", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
+            ("2 Layers Story", NOTEBOOKLM__MV_STORY_2LAYER),
+        ],
+
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
-            "story_prompt": NOTEBOOKLM__MV_STORY_FROM_LYRICS, #NOTEBOOKLM__MV_STORY_2LAYER,
             "analyze_prompt": MV_ANALYZE_2,
             "content_guide": MV_CONTENT_GUIDE,
             "init_multiple": MV_STORY_DEVELOPMENT,
@@ -2691,7 +2415,7 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
         # NotebookLM Prompt 类型选择（可扩展）
-        "notebooklm_prompt_choices": [
+        "scenes_prompt_choices": [
             ("Talk", COUNSELING_TALK_SCENES)
         ],
         "channel_prompt": {
@@ -2706,10 +2430,16 @@ CHANNEL_CONFIG = {
         "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
-        "notebooklm_prompt_choices": [
+        "scenes_prompt_choices": [
             ("Message", COUNSELING_STORY),
             ("Full Story", COUNSELING_CONTENT_SCENES),
             ("Talk", COUNSELING_TALK_SCENES)
+        ],
+        "story_prompt_choices": [
+            ("Long Story", COUNSELING_STORY_LONG),
+            ("Medium Story", COUNSELING_STORY_MEDIUM),
+            ("Short Story", COUNSELING_STORY_SHORT),
+            ("Mini Story", COUNSELING_MINI_STORY),
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
@@ -2725,6 +2455,10 @@ CHANNEL_CONFIG = {
         "topic": "Musical myths and legends",
         "channel_name": "圣经百老汇",
         "channel_id": "broadway",
+        "story_prompt_choices": [
+            ("Lyrics to Story", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
+            ("2 Layers Story", NOTEBOOKLM__MV_STORY_2LAYER),
+        ],
         "channel_prompt": {
             "prompt_reference_filter": MV_REFERENCE_FILTER,
         },

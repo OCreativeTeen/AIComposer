@@ -40,11 +40,25 @@ def _story_value_nonempty(sv) -> bool:
 def _normalize_story_entry(item) -> dict | None:
     if not isinstance(item, dict):
         return None
-    title = (item.get("title") or "").strip()
-    body = (item.get("story") or item.get("content") or "").strip()
-    if not title and not body:
+    out: dict = {}
+    for k, v in item.items():
+        if isinstance(v, str):
+            sv = v.strip()
+            if sv:
+                out[k] = sv
+        elif v is not None:
+            out[k] = v
+    if not out:
         return None
-    return {"title": title, "story": body}
+    title = (out.get("title") or out.get("caption") or "").strip()
+    body = (out.get("story") or out.get("content") or "").strip()
+    heart = (out.get("heart_message") or "").strip()
+    speaking = (out.get("speaking") or "").strip()
+    voiceover = (out.get("voiceover") or "").strip()
+    actor = (out.get("actor") or "").strip()
+    if not title and not body and not heart and not speaking and not voiceover and not actor:
+        return None
+    return out
 
 
 def _parse_story_field(raw) -> list[dict]:
@@ -78,7 +92,7 @@ def story_first_entry_text(raw) -> str:
         s = (raw or "").strip() if isinstance(raw, str) else ""
         return s if s and not s.startswith("[") else ""
     e = entries[0]
-    t = (e.get("title") or "").strip()
+    t = (e.get("title") or e.get("caption") or "").strip()
     b = (e.get("story") or "").strip()
     if t and b:
         return f"{t}\n\n{b}"
@@ -92,7 +106,7 @@ def story_field_flat_text(raw) -> str:
         return (raw or "").strip() if isinstance(raw, str) else ""
     parts: list[str] = []
     for e in entries:
-        t = (e.get("title") or "").strip()
+        t = (e.get("title") or e.get("caption") or "").strip()
         b = (e.get("story") or "").strip()
         if t and b:
             parts.append(f"{t}\n\n{b}")

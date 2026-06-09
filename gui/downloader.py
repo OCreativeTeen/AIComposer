@@ -80,32 +80,33 @@ def _format_nb_prompt_template(template: str, **kwargs) -> str:
     return template.format(**safe)
 
 
-def _notebooklm_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
-    """从频道 config 读取 ``notebooklm_prompt_choices``。"""
+def _scenes_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
+    """从频道 config 读取 ``scenes_prompt_choices``。"""
     cfg = config_channel.get_channel_config(channel_key) or {}
     return [
         (lbl, tpl)
-        for lbl, tpl in (cfg.get("notebooklm_prompt_choices") or [])
+        for lbl, tpl in (cfg.get("scenes_prompt_choices") or [])
         if (tpl or "").strip()
     ]
 
 
-def _default_notebooklm_prompt_label(channel_key: str) -> str:
-    """场景智能生成等内部使用的默认提示 label。"""
-    for lbl, _ in _notebooklm_prompt_choices(channel_key):
-        if (lbl or "").strip() in ("Story", "Scenes"):
-            return lbl
-        if "Scene" in (lbl or ""):
-            return lbl
-    choices = _notebooklm_prompt_choices(channel_key)
-    return choices[0][0] if choices else ""
+def _story_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
+    """从频道 config 读取 ``story_prompt_choices``。"""
+    cfg = config_channel.get_channel_config(channel_key) or {}
+    return [
+        (lbl, tpl)
+        for lbl, tpl in (cfg.get("story_prompt_choices") or [])
+        if (tpl or "").strip()
+    ]
 
 
-def _pick_notebooklm_prompt_label(channel_key: str, *candidates: str) -> str:
-    """在频道 config 的 notebooklm_prompt_choices 中按 label 精确或子串匹配。"""
+def _pick_prompt_label_from_choices(
+    choices: list[tuple[str, str]], *candidates: str
+) -> str:
+    """在 ``[(label, template), ...]`` 中按 label 精确或子串匹配。"""
     labels = [
         (lbl or "").strip()
-        for lbl, _ in _notebooklm_prompt_choices(channel_key)
+        for lbl, _ in choices
         if (lbl or "").strip()
     ]
     for want in candidates:
@@ -120,6 +121,31 @@ def _pick_notebooklm_prompt_label(channel_key: str, *candidates: str) -> str:
             if want_lower in lbl.lower():
                 return lbl
     return ""
+
+
+def _default_notebooklm_prompt_label(channel_key: str) -> str:
+    """场景智能生成等内部使用的默认提示 label。"""
+    for lbl, _ in _scenes_prompt_choices(channel_key):
+        if (lbl or "").strip() in ("Story", "Scenes"):
+            return lbl
+        if "Scene" in (lbl or ""):
+            return lbl
+    choices = _scenes_prompt_choices(channel_key)
+    return choices[0][0] if choices else ""
+
+
+def _pick_notebooklm_prompt_label(channel_key: str, *candidates: str) -> str:
+    """在频道 config 的 scenes_prompt_choices 中按 label 精确或子串匹配。"""
+    return _pick_prompt_label_from_choices(
+        _scenes_prompt_choices(channel_key), *candidates
+    )
+
+
+def _pick_story_prompt_label(channel_key: str, *candidates: str) -> str:
+    """在频道 config 的 story_prompt_choices 中按 label 精确或子串匹配。"""
+    return _pick_prompt_label_from_choices(
+        _story_prompt_choices(channel_key), *candidates
+    )
 
 
 def _video_detail_has_story_content(video_detail: dict) -> bool:
@@ -142,6 +168,61 @@ def _default_scene_editor_prompt_label(video_detail: dict, channel_key: str) -> 
     return _default_notebooklm_prompt_label(channel_key)
 
 
+def _default_story_editor_prompt_label(channel_key: str) -> str:
+    """Story 窗「选提示」默认项：按频道类型匹配首项。"""
+    cfg = config_channel.get_channel_config(channel_key) or {}
+    channel_id = (cfg.get("channel_id") or channel_key or "").strip()
+    if channel_id in ("music_story", "broadway"):
+        for want in ("Lyrics to Story", "2 Layers Story"):
+            picked = _pick_story_prompt_label(channel_key, want)
+            if picked:
+                return picked
+    for want in ("Long Story", "Medium Story", "Short Story", "Mini Story"):
+        picked = _pick_story_prompt_label(channel_key, want)
+        if picked:
+            return picked
+    choices = _story_prompt_choices(channel_key)
+    return choices[0][0] if choices else ""
+
+
+def _story_entry_heading(entry: dict) -> str:
+    """Story 条目标题：``title`` 或 MV 的 ``caption``。"""
+    if not isinstance(entry, dict):
+        return ""
+    return (entry.get("title") or entry.get("caption") or "").strip()
+
+
+def _resolve_story_prompt_template(
+    channel_key: str,
+    *,
+    label: str | None = None,
+    index: int = 0,
+) -> tuple[str, str, int]:
+    """按 label 或 index 取 story prompt (label, template, index)。"""
+    choices = _story_prompt_choices(channel_key)
+    if not choices:
+        return ("", "", 0)
+    if label:
+        want = label.strip()
+        for i, (lbl, tpl) in enumerate(choices):
+            if (lbl or "").strip() == want:
+                return (lbl, tpl, i)
+    idx = max(0, min(index, len(choices) - 1))
+    lbl, tpl = choices[idx]
+    return (lbl, tpl, idx)
+
+
+def _story_entry_display_text(entry: dict) -> str:
+    """单条 story JSON 条目 → 可读文本（title/caption + story）。"""
+    if not isinstance(entry, dict):
+        return ""
+    title = _story_entry_heading(entry)
+    body = (entry.get("story") or entry.get("content") or "").strip()
+    if title and body:
+        return f"{title}\n\n{body}"
+    return body or title
+
+
 def _resolve_notebooklm_prompt_template(
     channel_key: str,
     *,
@@ -149,7 +230,7 @@ def _resolve_notebooklm_prompt_template(
     index: int = 0,
 ) -> tuple[str, str, int]:
     """按 label 或 index 取 (label, template, index)；无匹配时回退首项。"""
-    choices = _notebooklm_prompt_choices(channel_key)
+    choices = _scenes_prompt_choices(channel_key)
     if not choices:
         return ("", "", 0)
     if label:
@@ -247,11 +328,17 @@ def _build_notebooklm_prompt_for_row(
     tags: str = "",
     topic_category: str = "",
     topic_subtype: str = "",
+    story_override: str | None = None,
+    content_override: str | None = None,
 ) -> str:
     """按频道模板 + 列表行数据拼 NotebookLM / LLM 提示词（单段 format，含 ``content`` / ``story``）。"""
     ctx = _notebooklm_prompt_context_from_video_detail(
         mgr, video_detail, instruction=instruction
     )
+    if story_override is not None:
+        ctx["story"] = (story_override or "").strip()
+    if content_override is not None:
+        ctx["content"] = (content_override or "").strip()
     if topic:
         ctx["topic"] = topic
     if tags:
@@ -651,14 +738,28 @@ def _refresh_summary_ui_after_analyze(ctx: dict, summary_window: tk.Toplevel) ->
 
 
 def _normalize_story_entry(item: dict) -> dict | None:
-    """单条 story：``title`` + ``story``（兼容 ``content``）。"""
+    """单条 story：保留 LLM 返回的全部字段（title/story/heart_message/speaking 等）。"""
     if not isinstance(item, dict):
         return None
-    title = (item.get("title") or "").strip()
-    body = (item.get("story") or item.get("content") or "").strip()
-    if not title and not body:
+    out: dict = {}
+    for k, v in item.items():
+        if isinstance(v, str):
+            sv = v.strip()
+            if sv:
+                out[k] = sv
+        elif v is not None:
+            out[k] = v
+    if not out:
         return None
-    return {"title": title, "story": body}
+    title = _story_entry_heading(out)
+    body = (out.get("story") or out.get("content") or "").strip()
+    heart = (out.get("heart_message") or "").strip()
+    speaking = (out.get("speaking") or "").strip()
+    voiceover = (out.get("voiceover") or "").strip()
+    actor = (out.get("actor") or "").strip()
+    if not title and not body and not heart and not speaking and not voiceover and not actor:
+        return None
+    return out
 
 
 def _parse_story_field(raw) -> list[dict]:
@@ -1715,7 +1816,7 @@ def _youtube_row_story_meta_title(video_detail: dict) -> str:
     entries = _parse_story_field(video_detail.get("story"))
     if not entries:
         return ""
-    return (entries[0].get("title") or "").strip()
+    return (entries[0].get("title") or entries[0].get("caption") or "").strip()
 
 
 def _youtube_row_display_title(video_detail: dict) -> str:
@@ -4507,13 +4608,16 @@ class MediaGUIManager:
         self,
         video_detail: dict,
         *,
+        prompt_label: str = "",
         instruction: str = "",
     ) -> list[dict]:
         if not (video_detail.get("analyzed_content") or "").strip():
             return []
 
-        cfg = config_channel.get_channel_config(self._channel_config_key()) or {}
-        template = ((cfg.get("channel_prompt") or {}).get("story_prompt") or "").strip()
+        channel_key = self._channel_config_key()
+        lbl, template, idx = _resolve_story_prompt_template(
+            channel_key, label=(prompt_label or "").strip() or None
+        )
         if not template:
             return []
 
@@ -4523,6 +4627,7 @@ class MediaGUIManager:
             video_detail,
             template,
             instruction=instruction,
+            sections=idx + 1,
             topic=topic,
             tags=_notebooklm_row_tags_text(video_detail),
             topic_category=cat,
@@ -4531,11 +4636,7 @@ class MediaGUIManager:
         if not (prompt or "").strip():
             return []
 
-        user_tail = ""
-        if "{content}" not in template:
-            user_tail = (video_detail.get("analyzed_content") or "").strip()
-
-        parsed = self.llm_api.generate_json(prompt, user_tail, expect_list=True)
+        parsed = self.llm_api.generate_json(prompt, "", expect_list=True)
         if isinstance(parsed, dict):
             one = _normalize_story_entry(parsed)
             return [one] if one else []
@@ -4549,12 +4650,47 @@ class MediaGUIManager:
         return []
 
 
+    def _story_prompt_text_for_label(
+        self,
+        video_detail: dict,
+        prompt_label: str,
+        *,
+        instruction: str = "",
+        story_override: str | None = None,
+        content_override: str | None = None,
+    ) -> tuple[str, str]:
+        """按频道 ``story_prompt_choices`` 的 label 生成完整 prompt 文本。"""
+        channel_key = self._channel_config_key()
+        lbl, template, idx = _resolve_story_prompt_template(
+            channel_key, label=prompt_label
+        )
+        if not template:
+            return "", ""
+        cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
+        prompt = _build_notebooklm_prompt_for_row(
+            self,
+            video_detail,
+            template,
+            instruction=instruction,
+            sections=idx + 1,
+            topic=topic,
+            tags=_notebooklm_row_tags_text(video_detail),
+            topic_category=cat,
+            topic_subtype=sub,
+            story_override=story_override,
+            content_override=content_override,
+        )
+        return lbl, prompt
+
+
     def _notebooklm_prompt_text_for_label(
         self,
         video_detail: dict,
         prompt_label: str,
         *,
         instruction: str = "",
+        story_override: str | None = None,
+        content_override: str | None = None,
     ) -> tuple[str, str]:
         """按频道 config 的提示 label 生成完整 prompt 文本。"""
         channel_key = self._channel_config_key()
@@ -4574,6 +4710,8 @@ class MediaGUIManager:
             tags=_notebooklm_row_tags_text(video_detail),
             topic_category=cat,
             topic_subtype=sub,
+            story_override=story_override,
+            content_override=content_override,
         )
         return lbl, prompt
 
@@ -4715,12 +4853,10 @@ class MediaGUIManager:
                             body = (entry.get("story") or "").strip()
                             if i == 0 and body:
                                 body = self._rewrite_text_speaking_concise(body)
-                            rewritten.append(
-                                {
-                                    "title": (entry.get("title") or "").strip(),
-                                    "story": body,
-                                }
-                            )
+                            updated = dict(entry)
+                            if body:
+                                updated["story"] = body
+                            rewritten.append(updated)
                         merged_json = _story_entries_to_json_text(rewritten)
                 else:
                     merged_json = self._rewrite_text_speaking_concise(raw)
@@ -4765,16 +4901,29 @@ class MediaGUIManager:
         get_existing_text,
         set_merged_text,
         *,
+        prompt_label: str = "",
+        get_instruction=None,
         on_busy=None,
         on_idle=None,
         on_title_updated=None,
         persist_fn=None,
     ) -> bool:
-        """增加 Story：``analyzed_content`` → Message 提示词 → merge JSON array。"""
+        """增加 Story：analyzed_content + 所选 story 提示词 → merge JSON array。"""
         if not video_detail.get("analyzed_content"):
             messagebox.showwarning(
                 "提示",
                 "需要 analyzed_content 作为原始材料。\n请先在「分析」中填写或生成内容。",
+                parent=parent,
+            )
+            return False
+        channel_key = self._channel_config_key()
+        sel = (prompt_label or "").strip()
+        if not sel:
+            sel = _default_story_editor_prompt_label(channel_key)
+        if not sel and not _story_prompt_choices(channel_key):
+            messagebox.showwarning(
+                "提示",
+                "当前频道未配置 story_prompt_choices，无法生成 Story。",
                 parent=parent,
             )
             return False
@@ -4784,9 +4933,14 @@ class MediaGUIManager:
         def work():
             err_msg = ""
             new_entries: list[dict] = []
+            instr = ""
+            if callable(get_instruction):
+                instr = (get_instruction() or "").strip()
             try:
                 new_entries = self._generate_story(
-                    video_detail
+                    video_detail,
+                    prompt_label=sel,
+                    instruction=instr,
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -4800,7 +4954,7 @@ class MediaGUIManager:
                 if not new_entries:
                     messagebox.showwarning(
                         "提示",
-                        "LLM 未返回有效 story（需 JSON array，含 title / story）。",
+                        "LLM 未返回有效 story JSON（需含 title/story 或 mini 字段等）。",
                         parent=parent,
                     )
                     return
@@ -4808,7 +4962,7 @@ class MediaGUIManager:
                 merged = _merge_story_entries(existing, new_entries)
                 merged_json = _story_entries_to_json_text(merged)
                 video_detail["story"] = merged_json
-                new_title = (new_entries[0].get("title") or "").strip()
+                new_title = _story_entry_heading(new_entries[0])
                 if new_title:
                     _apply_story_title_to_project_profile(video_detail, new_title)
                     ch_path = self.channel_path or ""
@@ -4901,6 +5055,8 @@ class MediaGUIManager:
         auto_generate_if_empty: bool = False,
         persist_fn=None,
         on_title_updated=None,
+        main_character: str = "",
+        channel_path: str = "",
     ) -> str | None:
         """编辑 ``video_detail['story']``（JSON array 或纯文本）；确认后写回频道列表。"""
         persist = persist_fn or (
@@ -4909,30 +5065,67 @@ class MediaGUIManager:
         result_holder: list[str | None] = [None]
         dlg = tk.Toplevel(parent)
         dlg.title(dialog_title)
-        dlg.geometry("820x580")
-        dlg.minsize(560, 400)
+        dlg.geometry("920x820")
+        dlg.minsize(640, 560)
         dlg.transient(parent)
         dlg.grab_set()
         dlg.update_idletasks()
         sw = dlg.winfo_screenwidth()
         sh = dlg.winfo_screenheight()
-        dlg.geometry(f"820x580+{(sw - 820) // 2}+{(sh - 580) // 2}")
+        dlg.geometry(f"920x820+{(sw - 920) // 2}+{(sh - 820) // 2}")
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill=tk.BOTH, expand=True)
+        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
         if not header_text:
             header_text = (
-                "Story 为 JSON array（每项含 title、story），或直接编辑纯文本 legacy 格式。\n"
-                "「增加 Story」用 Message 提示词 + analyzed_content 生成新条目、merge 并自动保存；"
-                "「口语精简」用 STORY_CONDENSE 改写首条 story 正文（300–500 字）并自动保存。"
-                "手工编辑后点「保存」写回频道列表。"
+                f"{title}\n"
+                "选 Story 提示（story_prompt_choices）；导向说明填入 {instruction}；"
+                "预览用 analyzed_content 作 {content}，切换/编辑时复制到剪贴板。"
+                "「增加 Story」用所选提示 + analyzed_content 生成并 merge 到列表（各条字段可不同）。"
+                "Slideshow / Video 指令仅含生成指令 + JSON 首条 story（不含上方 Story 生成提示）。"
             )
-        ttk.Label(frm, text=header_text, wraplength=760).pack(
+        ttk.Label(frm, text=header_text, wraplength=860).pack(
             anchor=tk.W, pady=(0, 8)
         )
 
+        channel_key = self._channel_config_key()
+        story_prompt_choices = _story_prompt_choices(channel_key)
+        prompt_row = ttk.Frame(frm)
+        prompt_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(prompt_row, text="选Story提示").pack(side=tk.LEFT, padx=(0, 5))
+        default_prompt_label = _default_story_editor_prompt_label(channel_key)
+        prompt_combo_var = tk.StringVar(value=default_prompt_label)
+        prompt_combo = ttk.Combobox(
+            prompt_row,
+            textvariable=prompt_combo_var,
+            values=[opt[0] for opt in story_prompt_choices],
+            state="readonly" if story_prompt_choices else "disabled",
+            width=18,
+        )
+        prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
+            anchor=tk.W, pady=(0, 2)
+        )
+        instruction_tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+        )
+        instruction_tx.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明或 story 时更新并复制到剪贴板）：").pack(
+            anchor=tk.W, pady=(0, 2)
+        )
+        prompt_tx = scrolledtext.ScrolledText(
+            frm, wrap=tk.WORD, width=100, height=8, font=("Arial", 9)
+        )
+        prompt_tx.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frm, text="story（JSON 数组首条用于 Slideshow / Video 指令）：").pack(
+            anchor=tk.W, pady=(0, 2)
+        )
         tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=90, height=24, font=("Arial", 10)
+            frm, wrap=tk.WORD, width=100, height=16, font=("Consolas", 10)
         )
         tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
         initial = _story_field_editor_text(video_detail.get("story"))
@@ -4941,11 +5134,45 @@ class MediaGUIManager:
             _copy_text_to_clipboard(dlg, initial)
         _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
 
+        def _first_story_override_text() -> str:
+            entries = _parse_story_field((tx.get("1.0", tk.END) or ""))
+            if entries:
+                return _story_entry_display_text(entries[0])
+            return _notebooklm_story_text(video_detail)
+
+        def refresh_story_prompt(*_args):
+            sel = (prompt_combo_var.get() or "").strip()
+            if not sel or not story_prompt_choices:
+                prompt_tx.delete("1.0", tk.END)
+                return
+            instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+            content_text = (video_detail.get("analyzed_content") or "").strip()
+            story_text = _first_story_override_text()
+            _, prompt = self._story_prompt_text_for_label(
+                video_detail,
+                sel,
+                instruction=instr,
+                story_override=story_text,
+                content_override=content_text or story_text,
+            )
+            prompt_tx.delete("1.0", tk.END)
+            if prompt:
+                prompt_tx.insert("1.0", prompt)
+                _copy_text_to_clipboard(dlg, prompt)
+
+        if story_prompt_choices:
+            prompt_combo.bind("<<ComboboxSelected>>", refresh_story_prompt)
+        instruction_tx.bind("<FocusOut>", refresh_story_prompt)
+        tx.bind("<FocusOut>", refresh_story_prompt)
+        if story_prompt_choices:
+            refresh_story_prompt()
+
         def _set_editor_text_and_clipboard(text: str) -> None:
             tx.delete("1.0", tk.END)
             if text:
                 tx.insert("1.0", text)
             _copy_text_to_clipboard(dlg, text)
+            refresh_story_prompt()
 
         btn_row = ttk.Frame(frm)
         btn_row.pack(fill=tk.X)
@@ -4971,6 +5198,8 @@ class MediaGUIManager:
                 video_detail,
                 lambda: (tx.get("1.0", tk.END) or ""),
                 _set_editor_text_and_clipboard,
+                prompt_label=(prompt_combo_var.get() or "").strip(),
+                get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
                 on_busy=lambda: _busy(add_btn),
                 on_idle=lambda: _idle(add_btn),
                 on_title_updated=on_title_updated,
@@ -4986,6 +5215,28 @@ class MediaGUIManager:
                 on_busy=lambda: _busy(concise_btn),
                 on_idle=lambda: _idle(concise_btn),
                 persist_fn=persist,
+            )
+
+        _lang_lbl = config.llm_language_label(self.language)
+
+        def on_copy_slideshow_instruction():
+            self._copy_notebooklm_story_gen_instruction(
+                parent=dlg,
+                video_detail=video_detail,
+                story_raw=(tx.get("1.0", tk.END) or ""),
+                nb_mode="slideshow",
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
+            )
+
+        def on_copy_video_instruction():
+            self._copy_notebooklm_story_gen_instruction(
+                parent=dlg,
+                video_detail=video_detail,
+                story_raw=(tx.get("1.0", tk.END) or ""),
+                nb_mode="video",
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
             )
 
         def on_confirm():
@@ -5013,8 +5264,20 @@ class MediaGUIManager:
 
         add_btn = ttk.Button(btn_row, text="增加 Story", command=on_add_story)
         add_btn.pack(side=tk.LEFT, padx=(0, 8))
+        if not story_prompt_choices:
+            add_btn.config(state=tk.DISABLED)
         concise_btn = ttk.Button(btn_row, text="口语精简", command=on_speaking_concise)
         concise_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            btn_row,
+            text=f"Slideshow 指令 ({_lang_lbl})",
+            command=on_copy_slideshow_instruction,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            btn_row,
+            text=f"Video 指令 ({_lang_lbl})",
+            command=on_copy_video_instruction,
+        ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
         )
@@ -5201,6 +5464,45 @@ class MediaGUIManager:
         dlg.wait_window()
         return result_holder[0]
 
+    def _copy_notebooklm_story_gen_instruction(
+        self,
+        *,
+        parent,
+        video_detail: dict,
+        story_raw: str,
+        nb_mode: str,
+        main_character: str = "",
+        channel_path: str = "",
+    ) -> bool:
+        """Story JSON 首条 → NotebookLM slideshow / video 指令（不含 Story 生成提示）。"""
+        entries = _parse_story_field(story_raw)
+        if not entries:
+            messagebox.showwarning(
+                "无 Story",
+                "请先在编辑区填写有效的 story（JSON 数组首条或纯文本）。",
+                parent=parent,
+            )
+            return False
+        first = entries[0]
+        clip_body = config_prompt.build_notebooklm_gen_instruction_clipbody(
+            mode=nb_mode,
+            video_detail=video_detail,
+            scene_content=[first],
+            visual_style=project_manager.LAST_VISUAL_STYLE,
+            main_character=(main_character or "").strip(),
+            host_narrator=(project_manager.LAST_NARRATOR or "").strip(),
+            host_display=project_manager.LAST_HOST_DISPLAY,
+        )
+        clip_tag = (
+            "gen_slideshow_instruction"
+            if nb_mode == "slideshow"
+            else "gen_video_instruction"
+        )
+        _copy_text_to_clipboard(parent, clip_body)
+        if clip_body and (channel_path or "").strip():
+            channel_clipboard_append_item(channel_path, clip_body, clip_tag)
+        return bool(clip_body)
+
     def _copy_notebooklm_scene_gen_instruction(
         self,
         *,
@@ -5280,7 +5582,7 @@ class MediaGUIManager:
         ).pack(anchor=tk.W, pady=(0, 8))
 
         channel_key = self._channel_config_key()
-        nb_prompt_choices = _notebooklm_prompt_choices(channel_key)
+        nb_prompt_choices = _scenes_prompt_choices(channel_key)
         prompt_row = ttk.Frame(frm)
         prompt_row.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(prompt_row, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
@@ -5513,6 +5815,8 @@ class MediaGUIManager:
                 allow_empty=True,
                 persist_fn=persist_fn,
                 on_title_updated=on_story_title_updated,
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
             )
         if field == "analyzed_content":
             return self._show_analyzed_content_editor(
@@ -7485,6 +7789,8 @@ class MediaGUIManager:
                     video_detail,
                     "story",
                     on_story_title_updated=_after_story_title,
+                    main_character=(character_var.get() or "").strip(),
+                    channel_path=self.channel_path or "",
                 )
                 if text is not None:
                     messagebox.showinfo(
