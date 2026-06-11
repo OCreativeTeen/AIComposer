@@ -85,6 +85,15 @@ def _parse_story_field(raw) -> list[dict]:
     return []
 
 
+def story_first_entry_heading(raw) -> str:
+    """Story JSON array 首条的 ``title`` 或 MV ``caption``（发布标题等）。"""
+    entries = _parse_story_field(raw)
+    if not entries:
+        return ""
+    e = entries[0]
+    return (e.get("title") or e.get("caption") or "").strip()
+
+
 def story_first_entry_text(raw) -> str:
     """Story JSON array 的第一条（prepend 后即为当前项目 title 对应 story）。"""
     entries = _parse_story_field(raw)

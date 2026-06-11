@@ -4570,18 +4570,24 @@ class MediaGUIManager:
 
 
     def _youtube_story_title_from_video_detail(self, video_detail) -> str:
-        title = _youtube_row_display_title(video_detail or {})
-        if title:
-            return title
-
-        sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+        if not isinstance(video_detail, dict):
+            return ""
+        story_title = project_manager.story_first_entry_heading(
+            video_detail.get("story")
+        )
+        if story_title:
+            return story_title
+        source = _youtube_row_source_title(video_detail)
+        if source:
+            return source
+        sc = video_detail.get("scene_content")
         scenes = sc if isinstance(sc, list) else []
         if scenes:
             first = scenes[0]
             if isinstance(first, dict):
-                title = project_manager.caption_from_scene_content_item(first)
-                if title:
-                    return title
+                cap = project_manager.caption_from_scene_content_item(first)
+                if cap:
+                    return cap
         return ""
 
 
@@ -6276,6 +6282,7 @@ class MediaGUIManager:
             story_text=story_text,
             poem_text=poem_text,
             review_script_text=review_script_text,
+            video_detail=video_detail if isinstance(video_detail, dict) else None,
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             mp4_path_hint=mp4_path,

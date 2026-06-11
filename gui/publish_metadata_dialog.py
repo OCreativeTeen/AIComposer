@@ -12,6 +12,7 @@ from typing import Callable
 
 import config
 import config_prompt
+import project_manager
 
 DESCRIPTION_STORY_SEPARATOR = "────────────────"
 
@@ -20,6 +21,26 @@ SOURCE_VOICEOVER = "voiceover"
 SOURCE_SCENE_FULL = "scene_full"
 SOURCE_ANALYZED = "analyzed"
 SOURCE_REVIEW_SCRIPT = "review_script"
+
+
+def resolve_publish_default_title(
+    *,
+    language: str,
+    default_title: str = "",
+    video_detail: dict | None = None,
+) -> str:
+    """YouTube 默认标题：story 首条 title/caption → 列表行 title → ``default_title``。"""
+    lang = language or "zh"
+    t = ""
+    if isinstance(video_detail, dict):
+        t = project_manager.story_first_entry_heading(video_detail.get("story"))
+        if not t:
+            t = (
+                video_detail.get("title") or video_detail.get("video_title") or ""
+            ).strip()
+    if not t:
+        t = (default_title or "").strip()
+    return config.chinese_convert(t, lang) if t else ""
 
 
 def build_caption_choices_from_scenes(
@@ -151,6 +172,7 @@ def ask_publish_metadata_then_schedule(
     caption_scenes: list | None = None,
     mp4_path_hint: str | None = None,
     review_script_text: str = "",
+    video_detail: dict | None = None,
     metadata_dialog_title: str = "上传视频 — 标题与描述",
     metadata_confirm_label: str = "确定",
     schedule_dialog_title: str = "上传至 YouTube",
@@ -173,6 +195,7 @@ def ask_publish_metadata_then_schedule(
         story_text=story_text,
         poem_text=poem_text,
         review_script_text=review_script_text,
+        video_detail=video_detail,
         generate_text_fn=generate_text_fn,
         dialog_title=metadata_dialog_title,
         confirm_label=metadata_confirm_label,
@@ -228,6 +251,7 @@ def ask_publish_title_and_description(
     story_text: str = "",
     poem_text: str = "",
     review_script_text: str = "",
+    video_detail: dict | None = None,
     generate_text_fn: Callable[[str, str], str],
     dialog_title: str = "上传视频 — 标题与描述",
     confirm_label: str = "确定",
@@ -239,6 +263,12 @@ def ask_publish_title_and_description(
     story = config.chinese_convert((story_text or "").strip(), lang)
     poem = config.chinese_convert((poem_text or "").strip(), lang)
     review_script = config.chinese_convert((review_script_text or "").strip(), lang)
+
+    resolved_title = resolve_publish_default_title(
+        language=lang,
+        default_title=default_title,
+        video_detail=video_detail,
+    )
 
     cap_labels = caption_labels or ["— 从场景字幕选择（可选）—"]
     cap_payloads = caption_payloads if caption_payloads is not None else [None]
@@ -262,15 +292,15 @@ def ask_publish_title_and_description(
     title_box.pack(fill=tk.X, pady=(0, 10))
     ttk.Label(
         title_box,
-        text="可直接编辑；可从场景字幕下拉填入。",
+        text="可直接编辑；默认取 story 首条标题，否则用原视频标题；也可从场景字幕下拉填入。",
         wraplength=800,
     ).pack(anchor=tk.W, pady=(0, 6))
 
-    title_var = tk.StringVar(value=default_title or "")
+    title_var = tk.StringVar(value=resolved_title or "")
     title_entry = ttk.Entry(title_box, textvariable=title_var, width=90)
     title_entry.pack(fill=tk.X, pady=(0, 6))
-    if default_title:
-        title_entry.select_range(0, len(default_title))
+    if resolved_title:
+        title_entry.select_range(0, len(resolved_title))
         title_entry.icursor(tk.END)
     else:
         title_entry.icursor(0)

@@ -137,20 +137,16 @@ class PublishReviewDialog:
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
         self.text_w.pack(fill=tk.BOTH, expand=True, pady=4)
 
-        scenes = self.video_detail.get("scene_content") or []
-        if not isinstance(scenes, list):
-            scenes = []
-        scene_content = scenes[0] if scenes and isinstance(scenes[0], dict) else {}
-        if scene_content:
-            summary = scene_content.get("message", "")
-            if not summary:
-                summary = scene_content.get("voiceover", "")
-            summary = summary + "\n" + scene_content.get("speaking", "")
-            summary = summary + "\n" + scene_content.get("story", "")
+        stories = json.loads(self.video_detail.get("story") or "[]")
+        if stories and isinstance(stories, list):
+            story = stories[0]
+            summary = story.get("speaking", "")
+            if summary:
+                summary = summary + "\n\n" + story.get("heart_message", "")
+            else:
+                summary = story.get("story", "")
         else:
             summary = self.video_detail.get("analyzed_content")
-            if not summary:
-                summary = config.read_transcript_text_from_video_detail(self.video_detail)
 
         self.text_w.insert(tk.END, summary + "\n\n")
 
