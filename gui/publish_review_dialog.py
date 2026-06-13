@@ -36,6 +36,19 @@ from utility.voicebox_speech_service import VoiceboxService
 _DEFAULT_SCENE_MIN = 9
 
 
+def _dialog_parent(preferred, fallback=None):
+    """messagebox 父窗口：preferred 已关闭时回退 fallback。"""
+    for w in (preferred, fallback):
+        if w is None:
+            continue
+        try:
+            if w.winfo_exists():
+                return w
+        except tk.TclError:
+            continue
+    return fallback
+
+
 def _run_on_tk_main_and_wait(root, fn, timeout=120):
     """在 Tk 主线程执行 fn()，worker 线程阻塞等待（用于释放预览后再写文件）。"""
     ev = threading.Event()
@@ -73,6 +86,7 @@ class PublishReviewDialog:
         self.media_gui = media_gui
         self.workflow_gui = workflow_gui
         self.on_refresh_after_publish = on_refresh_after_publish
+        self._publishing = False
 
         self._transcriber = AudioTranscriber(media_gui.pid, "medium", "cuda")
         self._voicebox = VoiceboxService(media_gui.pid)
@@ -383,14 +397,21 @@ class PublishReviewDialog:
                 root.after(
                     0,
                     lambda err=str(e): messagebox.showerror(
-                        "错误", f"无法复制视频到临时目录以提取音频：\n{err}", parent=dlg
+                        "错误",
+                        f"无法复制视频到临时目录以提取音频：\n{err}",
+                        parent=_dialog_parent(dlg, root),
                     ),
                 )
                 return
             audio = fa.extract_audio_from_video(work_mp4)
             safe_remove(work_mp4)
             if not audio:
-                root.after(0, lambda: messagebox.showwarning("提示", "视频无音频或无法提取", parent=dlg))
+                root.after(
+                    0,
+                    lambda: messagebox.showwarning(
+                        "提示", "视频无音频或无法提取", parent=_dialog_parent(dlg, root)
+                    ),
+                )
                 return
             try:
                 remove_transcribe_cache_for_audio_path(audio)
@@ -401,10 +422,21 @@ class PublishReviewDialog:
                     if (json_item.get("caption") or "").strip()
                 ).strip()
                 if not text:
-                    root.after(0, lambda: messagebox.showwarning("提示", "转写无结果", parent=dlg))
+                    root.after(
+                        0,
+                        lambda: messagebox.showwarning(
+                            "提示", "转写无结果", parent=_dialog_parent(dlg, root)
+                        ),
+                    )
                     return
             except Exception as e:
-                root.after(0, lambda: messagebox.showerror("转写失败", str(e), parent=dlg))
+                err = str(e)
+                root.after(
+                    0,
+                    lambda: messagebox.showerror(
+                        "转写失败", err, parent=_dialog_parent(dlg, root)
+                    ),
+                )
                 return
 
             def apply_text():
@@ -412,7 +444,12 @@ class PublishReviewDialog:
                 tw.insert(tk.END, "\n"+text)
 
             root.after(0, apply_text)
-            root.after(0, lambda: messagebox.showinfo("转写", "已完成", parent=dlg))
+            root.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "转写", "已完成", parent=_dialog_parent(dlg, root)
+                ),
+            )
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -449,17 +486,34 @@ class PublishReviewDialog:
             try:
                 shutil.copy2(orig_mp4, work_mp4)
             except OSError as e:
-                root.after(0, lambda: messagebox.showerror("错误", f"无法复制视频到临时目录处理：\n{e}", parent=dlg))
+                root.after(
+                    0,
+                    lambda err=str(e): messagebox.showerror(
+                        "错误",
+                        f"无法复制视频到临时目录处理：\n{err}",
+                        parent=_dialog_parent(dlg, root),
+                    ),
+                )
                 return
             try:
                 tts_wav = vb.synthesize_speaker_text_to_wav(speaker, txt, lk)
                 if not tts_wav:
-                    root.after(0, lambda: messagebox.showerror("错误", "TTS 生成失败", parent=dlg))
+                    root.after(
+                        0,
+                        lambda: messagebox.showerror(
+                            "错误", "TTS 生成失败", parent=_dialog_parent(dlg, root)
+                        ),
+                    )
                     return
                 fp = FfmpegProcessor(pid, lk)
                 newv = fp.add_audio_to_video(work_mp4, tts_wav)
                 if not newv or not os.path.isfile(newv):
-                    root.after(0, lambda: messagebox.showerror("错误", "合成视频失败", parent=dlg))
+                    root.after(
+                        0,
+                        lambda: messagebox.showerror(
+                            "错误", "合成视频失败", parent=_dialog_parent(dlg, root)
+                        ),
+                    )
                     return
 
                 def _stop_and_copy_back():
@@ -469,7 +523,12 @@ class PublishReviewDialog:
                 try:
                     out = _run_on_tk_main_and_wait(root, _stop_and_copy_back, timeout=120)
                 except Exception as e:
-                    root.after(0, lambda err=str(e): messagebox.showerror("错误", f"写回失败：{err}", parent=dlg))
+                    root.after(
+                        0,
+                        lambda err=str(e): messagebox.showerror(
+                            "错误", f"写回失败：{err}", parent=_dialog_parent(dlg, root)
+                        ),
+                    )
                     return
                 if not out:
                     root.after(
@@ -478,7 +537,7 @@ class PublishReviewDialog:
                             "错误",
                             "无法写回原路径（可能被占用或权限不足），成品仍在临时目录：\n"
                             + newv,
-                            parent=dlg,
+                            parent=_dialog_parent(dlg, root),
                         ),
                     )
                     return
@@ -487,9 +546,21 @@ class PublishReviewDialog:
                     safe_remove(newv)
                 safe_remove(work_mp4)
             except Exception as e:
-                root.after(0, lambda: messagebox.showerror("重合成失败", str(e), parent=dlg))
+                root.after(
+                    0,
+                    lambda err=str(e): messagebox.showerror(
+                        "重合成失败", err, parent=_dialog_parent(dlg, root)
+                    ),
+                )
                 return
-            root.after(0, lambda: messagebox.showinfo("完成", "已用新音频替换该视频音轨。", parent=dlg))
+            root.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "完成",
+                    "已用新音频替换该视频音轨。",
+                    parent=_dialog_parent(dlg, root),
+                ),
+            )
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -512,6 +583,14 @@ class PublishReviewDialog:
         )
 
     def _on_close(self):
+        if getattr(self, "_publishing", False):
+            par = _dialog_parent(self.dlg, getattr(self.media_gui, "root", None))
+            if not messagebox.askyesno(
+                "上传进行中",
+                "正在上传 YouTube，关闭本窗口后成功/失败提示将改在主窗口显示。\n\n确定关闭？",
+                parent=par,
+            ):
+                return
         self._stop_play()
         if self._temp_audio_path and os.path.isfile(self._temp_audio_path):
             try:

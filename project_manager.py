@@ -174,7 +174,7 @@ def find_list_row_index_by_pid(list_path: str, wanted_pid: str) -> int:
 
 
 def load_video_detail_row_for_config(cfg: dict) -> dict | None:
-    """在目标主题分表（``channel`` + ``topic_category``）中按 ``pid`` == 行 ``id`` 定位 video detail。"""
+    """在目标主题分表（``channel`` + ``topic_category``）中按 ``list_json_row_workflow_pid`` 定位 video detail。"""
     if not isinstance(cfg, dict):
         return None
     lp = project_topic_list_json_path(cfg)
@@ -539,16 +539,41 @@ def sync_channel_list_item_from_full_config(item: dict, full_cfg_clean: dict) ->
         if k in fc:
             item[k] = copy.deepcopy(fc[k])
     file_pid = str((full_cfg_clean or {}).get("pid") or "").strip()
-    if file_pid:
+    if file_pid and not list_json_row_id(item):
         item["id"] = file_pid
     sync_list_item_id_and_profile_pid(item)
 
 
 def list_json_row_id(item: dict) -> str:
-    """列表行主键：外层 ``id``（YouTube 视频 id 或项目 pid）。"""
+    """列表行外层 ``id``：源 YouTube 视频 id，或独立项目行 id（工作流 pid 见 ``project_profile.pid``）。"""
     if not isinstance(item, dict):
         return ""
     return str(item.get("id") or "").strip()
+
+
+def youtube_watch_id_from_url(url: str) -> str:
+    """从 YouTube watch / youtu.be 链接解析 11 位视频 id。"""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def list_row_outer_id_in_watch_url(item: dict) -> bool:
+    """外层 ``id`` 是否为 ``url`` 中的 YouTube 视频 id（``?v=`` / ``youtu.be/``）。"""
+    if not isinstance(item, dict):
+        return False
+    vid = list_json_row_id(item)
+    if not vid:
+        return False
+    yid = youtube_watch_id_from_url((item.get("url") or "").strip())
+    return bool(yid) and vid == yid
 
 
 def list_json_row_has_project_profile(item: dict) -> bool:
@@ -559,7 +584,7 @@ def list_json_row_has_project_profile(item: dict) -> bool:
 
 
 def sync_list_item_id_and_profile_pid(item: dict) -> None:
-    """迁移旧 ``gen_video_stem`` / ``localproj:`` url；有项目绑定时保证 ``id`` 与 ``project_profile.pid`` 一致。"""
+    """规范化 ``gen_video_stem`` / ``localproj:`` url；有项目时 ``project_profile.pid`` 为工作流 pid，源 YouTube 行外层 ``id`` 可不同于 pid。"""
     if not isinstance(item, dict):
         return
     legacy_stem = (item.pop("gen_video_stem", None) or "").strip()
@@ -581,26 +606,29 @@ def sync_list_item_id_and_profile_pid(item: dict) -> None:
             item["id"] = legacy_stem
             outer = legacy_stem
         if pid and outer and pid != outer:
-            item["id"] = pid
-            prof["pid"] = pid
+            if not list_row_outer_id_in_watch_url(item):
+                item["id"] = pid
         elif pid and not outer:
             item["id"] = pid
         elif outer and not pid:
-            prof["pid"] = outer
+            if list_row_outer_id_in_watch_url(item):
+                pass
+            else:
+                prof["pid"] = outer
     elif legacy_stem and not list_json_row_id(item):
         item["id"] = legacy_stem
 
 
 def list_json_row_workflow_pid(item: dict) -> str:
-    """工作流 pid：有 ``project_profile`` 时与外层 ``id`` 一致（读 ``id``，兼容仅 profile 内 pid 的旧行）。"""
+    """工作流 pid：有 ``project_profile`` 时读 ``project_profile.pid``（外层 ``id`` 可为源 YouTube id）。"""
     if not isinstance(item, dict):
         return ""
     pr = item.get(PROJECT_PROFILE_KEY)
     if isinstance(pr, dict) and pr:
-        iid = list_json_row_id(item)
-        if iid:
-            return iid
-        return str(pr.get("pid") or "").strip()
+        pid = str(pr.get("pid") or "").strip()
+        if pid:
+            return pid
+        return list_json_row_id(item)
     return ""
 
 

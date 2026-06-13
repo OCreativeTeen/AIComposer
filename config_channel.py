@@ -825,96 +825,56 @@ Output format:
 """
 
 
-COUNSELING_STORY_INPUT_BLOCK = """
---------------------------------------------------
-INPUT
---------------------------------------------------
-** Topic:
-    {topic}
-
-** Instruction:
-    {instruction}
-
-** Reference Content:
-    {content}
-"""
-
-COUNSELING_STORY_OUTPUT_ARRAY = """
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON ONLY)
---------------------------------------------------
-Return a JSON array with one object:
-    [{{ "title": "An emotionally evocative title. In {language}", "story": "A vivid, realistic, emotionally immersive narrative. In {language}" }}]
-"""
-
 COUNSELING_STORY_CORE = """
-You are an elite psychological storyteller, narrative therapist, counseling writer, and emotional screenwriter. Transform a deep psychological analysis report / case study into emotionally immersive human stories so listeners recognize themselves through narrative—not through psychology lectures. Input may include case studies, assessments, behavioral and emotional dynamics, childhood/attachment/trauma patterns, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. Do NOT summarize; transform insight into authentic stories. The audience should feel they are witnessing a human life, not reading psychology.
-
-## PHASE 1 — EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
-Identify: (1) Visible Problem—what the person believes is wrong; (2) Invisible Knot—deeper wound, unmet need, fear, loyalty, belief, burden, or emotional conflict; (3) Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; what feeling/truth/rejection/shame/grief/loss/vulnerability/responsibility is avoided; (4) Repeating Life Pattern—across relationships, work, family, achievement, identity, spirituality, parenting, self-worth, belonging; (5) Healing Door—small shift toward movement via realization, relationship, behavior, boundary, emotional truth, or intervention.
-
-## PHASE 2 — CREATE STORY
-Express the underlying pattern. Contexts may include marriage, dating, workplace, parenting, friendship, entrepreneurship, immigration, retirement, education, caregiving, spiritual life, growth, family, health, midlife. Goal: recognition ("That feels like me") without being told. Events are vehicles; emotional pattern is the destination. Do NOT force acts/chapters; follow emotional logic. Cover a day, months, years, one relationship, one pattern, one event, or connected experiences—gradual, repetitive, or quietly revealing. Include situations reflecting struggle, moments the pattern becomes visible, contradictions, avoidance, longing/fear/hope/shame/grief/loneliness, challenges to old assumptions, believable movement. Shifts may be subtle (saying no, asking for help, a boundary, honest sadness, admitting need, self-respect, stopping a pattern). Endings: human, earned, hopeful, unfinished, alive—not perfect, not "everything solved."
-
-## SHOW, DON'T TELL · CHARACTER · DEPTH · TITLE
-Never explain when you can show—use sensory detail, body sensation, action, silence, hesitation, environment. Believable people with names, occupations, routines, relationships, contradictions; realistic settings (home, office, school, hospital, restaurant, airport, neighborhood). Reveal layers gradually (longing beneath anger, fear beneath control, etc.). Dialogue: natural, subtext, no therapy speeches. Title: short, evocative, hints hidden conflict—not plot summary.
-
-## CRITICAL RESTRICTIONS
-Do NOT explain psychology, summarize lessons, analyze the character, give reflections/counseling notes, or use clinical/academic language (DSM, diagnosis, disorder, trauma/attachment theory, therapeutic terminology). Let the story carry truth; let the audience discover meaning.
-"""
-
-COUNSELING_STORY_LONG = (
-    COUNSELING_STORY_CORE
-    + """
-## STORY LENGTH
-Target 1000–2000 words depending on emotional needs. Avoid rushed sketches and novel-length digression. Quality over filler.
-"""
-    + COUNSELING_STORY_OUTPUT_ARRAY
-    + COUNSELING_STORY_INPUT_BLOCK
-)
-
-COUNSELING_STORY_MEDIUM = (
-    COUNSELING_STORY_CORE
-    + """
-## STORY LENGTH
-Target 500–1000 words. One clear emotional arc; rich texture but no sprawl. Quality over filler.
-"""
-    + COUNSELING_STORY_OUTPUT_ARRAY
-    + COUNSELING_STORY_INPUT_BLOCK
-)
-
-COUNSELING_STORY_SHORT = (
-    COUNSELING_STORY_CORE
-    + """
-## STORY LENGTH
-Target 200–500 words. One scene or tightly linked moments; every sentence earns its place.
-"""
-    + COUNSELING_STORY_OUTPUT_ARRAY
-    + COUNSELING_STORY_INPUT_BLOCK
-)
-
-COUNSELING_STORY = COUNSELING_STORY_LONG
+You are a psychological counselor and master of high-empathy storytelling. 
+    ** Your task is to transform a deep psychological analysis report / case study into an emotionally immersive human story so listeners recognize themselves through narrative—not psychology. Input may include case studies, assessments, behavioral patterns, emotional dynamics, childhood/attachment/trauma, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. 
+    ** Do NOT summarize; transform insight into an authentic story.
 
 
-COUNSELING_MINI_STORY = """
-You are a psychological counselor and master of high-empathy storytelling. Transform a deep psychological analysis report / case study into an emotionally immersive short (three-act) human story so listeners recognize themselves through narrative—not psychology. Input may include case studies, assessments, behavioral patterns, emotional dynamics, childhood/attachment/trauma, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. Do NOT summarize; transform insight into an authentic story.
+## STEP 1 — IDENTIFY / EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
 
-## STEP 1 — EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
-Identify: (1) Visible Problem; (2) Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; (3) Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; (4) Repeating Life Pattern; (5) Healing Door / light at the tunnel—small shift toward movement.
+    ** Visible Problem; 
+    ** Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; 
+    ** Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; 
+    ** Repeating Life Pattern; 
+    ** Healing Door / light at the tunnel—small shift toward movement.
 
-## STEP 2 — REFLECTIVE OUTPUT (three-act storytelling)
-Craft a story that is alive—show, don't tell. (1) **Title**: poetic, evocative. 
-(2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief, not a lecture. (3) **Story**: vivid narrative—Setup (relatable friction) → Core Conflict (internal tension, sensory detail) → Turning Point & Resolution (re-understanding or brave step). (4) **Speaking**: one powerful line the character might say or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
+## STEP 2 — CREATE STORY
 
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-{{
-    "title": "A poetic title. In {language}.",
-    "heart_message": "Warm, calm, reflective tone. Express the psychological insight as gentle life guidance. In {language}.",
-    "story": "A vivid 3-act story (Setup -> Conflict -> Way Out). Focus on emotional textures. In {language}.",
-    "speaking": "A poignant 1st-person speaking. In {language}."
-}}
+    **Objective:
+        * Translate the provided [PSYCHOLOGICAL DNA] into a grounded, visceral narrative. The goal is to evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
+        * Length: ###LENGTH###
+    
+    **1. Narrative Arc & Scope**
+        Focus on a single relationship, pattern, or defining event. Do not force rigid chapters; follow the emotional logic.
+        *   **Setup:** Introduce relatable friction within a realistic routine and setting (e.g., kitchen, commute, office). Give the characters believable names, occupations, and contradictions.
+        *   **Core Conflict:** Make the internal tension visible. Reveal the layers beneath the surface (e.g., longing beneath anger, fear beneath control). 
+        *   **The Shift:** A believable, subtle turning point. It doesn't have to be a grand gesture—it can be a hesitation, a boundary set, honest sadness, or simply stopping an old pattern.
+        *   **Ending:** Human, earned, and unfinished. Make it hopeful but not "everything solved."
+
+    **2. Execution & Style**
+        *   **Show, Don't Tell:** Events are just vehicles; the emotional pattern is the destination. Rely on sensory details, body sensations, physical actions, and environmental cues. 
+        *   **Subtextual Dialogue:** Keep conversations natural. Characters should talk around their issues, relying on subtext and silence rather than direct confrontation.
+        *   **Title:** Provide a short, evocative title that hints at the hidden emotional core, not the plot.
+
+    **3. Strict Constraints (DO NOT DO THESE)**
+        *   NO clinical or academic language (e.g., DSM terms, trauma, attachment theory, disorder, diagnosis).
+        *   NO therapy speeches, counseling notes, or characters analyzing each other's psychology.
+        *   NO summarizing the "lesson," "moral," or the psychological insight at the end. Let the story carry the truth on its own.
+
+## STEP3 - REFLECTIVE OUTPUT (as Json object)
+    * (1) **Title**: poetic, evocative. 
+    * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance.
+    * (3) **Story**: the story from STEP2.
+    * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
+
+    like this:
+        {{
+            "title": "A poetic title. In {language}.",
+            "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
+            "story": "the story from STEP2. ###LENGTH###. In {language}.",
+            "speaking": "A poignant 1st-person speaking. In {language}."
+        }}
 
 --------------------------------------------------
 INPUT
@@ -928,6 +888,15 @@ INPUT
 ** Reference Content:
     {content}
 """
+
+
+COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###", "1000–1500 words")
+
+COUNSELING_STORY_MEDIUM = COUNSELING_STORY_CORE.replace("###LENGTH###", "600–1000 words")
+
+COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–600 words")
+
+COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300 words")
 
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
@@ -2357,7 +2326,7 @@ CHANNEL_CONFIG = {
             ("Long Story", COUNSELING_STORY_LONG),
             ("Medium Story", COUNSELING_STORY_MEDIUM),
             ("Short Story", COUNSELING_STORY_SHORT),
-            ("Mini Story", COUNSELING_MINI_STORY),
+            ("Mini Story", COUNSELING_STORY_MINI),
         ],
 
         "channel_prompt": {
@@ -2432,7 +2401,7 @@ CHANNEL_CONFIG = {
         "channel_name": "心理故事馆",
         "channel_id": "counseling",
         "scenes_prompt_choices": [
-            ("Message", COUNSELING_STORY),
+            ("Message", COUNSELING_STORY_MINI),
             ("Full Story", COUNSELING_CONTENT_SCENES),
             ("Talk", COUNSELING_TALK_SCENES)
         ],
@@ -2440,7 +2409,7 @@ CHANNEL_CONFIG = {
             ("Long Story", COUNSELING_STORY_LONG),
             ("Medium Story", COUNSELING_STORY_MEDIUM),
             ("Short Story", COUNSELING_STORY_SHORT),
-            ("Mini Story", COUNSELING_MINI_STORY),
+            ("Mini Story", COUNSELING_STORY_MINI),
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,

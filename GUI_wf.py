@@ -542,7 +542,7 @@ class WorkflowGUI:
             )
 
     def _load_current_video_detail_row(self) -> dict | None:
-        """当前项目绑定的 video detail：目标主题分表 list/<topic_category>.json，按 pid == id 匹配。"""
+        """当前项目绑定的 video detail：目标主题分表 list/<topic_category>.json，按 project_profile.pid 匹配。"""
         return project_manager.load_video_detail_row_for_config(
             project_manager.PROJECT_CONFIG or {}
         )

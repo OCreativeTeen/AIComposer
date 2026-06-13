@@ -177,7 +177,7 @@ def _default_story_editor_prompt_label(channel_key: str) -> str:
             picked = _pick_story_prompt_label(channel_key, want)
             if picked:
                 return picked
-    for want in ("Long Story", "Medium Story", "Short Story", "Mini Story"):
+    for want in ("Mini Story", "Short Story", "Long Story", "Medium Story"):
         picked = _pick_story_prompt_label(channel_key, want)
         if picked:
             return picked
@@ -791,6 +791,82 @@ def _story_entries_to_json_text(entries: list[dict]) -> str:
     clean = [_normalize_story_entry(e) for e in (entries or [])]
     clean = [e for e in clean if e]
     return json.dumps(clean, ensure_ascii=False, indent=2)
+
+
+def _coerce_story_editor_text(raw: str) -> tuple[list[dict], str]:
+    """Story 编辑区文本 → (条目列表, 落盘 JSON 字符串)。单条 ``{...}`` 自动包成 array。"""
+    s = (raw or "").strip()
+    if not s:
+        return [], ""
+    lead = s.lstrip()
+    if lead.startswith("{"):
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            entries = _parse_story_field(s)
+            return entries, (_story_entries_to_json_text(entries) if entries else s)
+        if isinstance(parsed, dict):
+            entries = _parse_story_field([parsed])
+            return entries, (
+                _story_entries_to_json_text(entries)
+                if entries
+                else json.dumps([parsed], ensure_ascii=False, indent=2)
+            )
+        if isinstance(parsed, list):
+            entries = _parse_story_field(parsed)
+            return entries, (_story_entries_to_json_text(entries) if entries else s)
+    entries = _parse_story_field(s)
+    if entries and lead.startswith("["):
+        return entries, _story_entries_to_json_text(entries)
+    return entries, s
+
+
+def _channel_key_for_stories_json(channel_key: str = "", channel_path: str = "") -> str:
+    ck = (channel_key or "").strip()
+    if ck:
+        return ck
+    cp = (channel_path or "").strip()
+    if not cp:
+        return ""
+    slug = config._channel_id_from_program_path(cp)
+    return slug or os.path.basename(cp.rstrip("/\\"))
+
+
+def _prepend_story_entries_to_channel_stories_json(
+    entries: list[dict],
+    *,
+    channel_key: str = "",
+    channel_path: str = "",
+) -> str:
+    """将 story 条目插入 ``program/<channel>/stories.json`` 最前；返回写入路径。"""
+    normalized_new = [_normalize_story_entry(e) for e in (entries or [])]
+    normalized_new = [e for e in normalized_new if e]
+    if not normalized_new:
+        return ""
+    ch = _channel_key_for_stories_json(channel_key, channel_path)
+    if not ch:
+        raise ValueError("无法解析频道目录（缺少 channel_key / channel_path）")
+    folder = config.get_channel_path(ch)
+    path = os.path.join(folder, "stories.json")
+    existing: list[dict] = []
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            raise OSError(f"读取已有 stories.json 失败：{e}") from e
+        if isinstance(data, list):
+            existing = data
+        elif isinstance(data, dict):
+            existing = [data]
+        else:
+            existing = []
+    normalized_old = [_normalize_story_entry(e) for e in existing]
+    normalized_old = [e for e in normalized_old if e]
+    merged = normalized_new + normalized_old
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(merged, f, ensure_ascii=False, indent=2)
+    return path
 
 
 def _story_first_entry_json_text(raw) -> str:
@@ -1839,20 +1915,41 @@ def _youtube_row_display_title(video_detail: dict) -> str:
     return _youtube_row_source_title(video_detail)
 
 
-def _youtube_row_list_display_title(video_detail: dict) -> str:
-    """列表树展示用标题：有 project 时为 ``原视频标题 / 项目成片名``；无 project 且有 story 首条 title 时为 ``原标题 (story title)``。"""
-    src = _youtube_row_source_title(video_detail)
+def _youtube_row_list_suffix_title(video_detail: dict) -> str:
+    """列表行标题后缀：``project_profile.video_title`` > story 首条 title > scene 首场景 caption。"""
+    if not isinstance(video_detail, dict):
+        return ""
     proj = _youtube_row_project_title(video_detail)
-    if proj:
-        if src:
-            return f"{src} / {proj}"
+    if proj and proj not in _GENERIC_PROJECT_VIDEO_TITLES:
         return proj
     story_meta = _youtube_row_story_meta_title(video_detail)
-    if story_meta and story_meta != src:
-        if src:
-            return f"{src} ({story_meta})"
+    if story_meta:
         return story_meta
-    return src
+    sc = video_detail.get("scene_content")
+    return (project_manager.title_from_scene_content(sc) or "").strip()
+
+
+_CHANNEL_LIST_TREE_TITLE_MAX_SRC_CHARS = 40
+
+
+def _youtube_row_list_display_title(
+    video_detail: dict, *, max_src_chars: int | None = None
+) -> str:
+    """列表树展示用标题：``原视频标题 (成片名或 story title)``。
+
+    ``max_src_chars``：有后缀时截断原标题，保证括号内项目/story 名可见。
+    """
+    src = _youtube_row_source_title(video_detail)
+    suffix = _youtube_row_list_suffix_title(video_detail)
+
+    def _trunc_src(s: str) -> str:
+        if not max_src_chars or len(s) <= max_src_chars:
+            return s
+        return s[:max_src_chars].rstrip() + "…"
+
+    if suffix and suffix != src:
+        return f"{_trunc_src(src)} ({suffix})" if src else suffix
+    return _trunc_src(src)
 
 
 def _apply_video_detail_titles_from_ui(
@@ -1926,6 +2023,7 @@ def _normalize_channel_list_item_for_storage(item: dict, channel_path: str = "")
     prof = item.get(project_manager.PROJECT_PROFILE_KEY)
     if isinstance(prof, dict):
         item[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(copy.deepcopy(prof))
+    _sync_project_video_title_on_list_row(item)
     project_manager.sync_list_item_id_and_profile_pid(item)
 
 
@@ -1935,23 +2033,27 @@ _GENERIC_PROJECT_VIDEO_TITLES = frozenset({"", "新项目", "未命名", "defaul
 def _sync_project_video_title_on_list_row(
     row: dict, selected_config: dict | None = None
 ) -> None:
-    """``project_profile.video_title`` 优先用 scene_content 首场景 caption，避免显示「新项目」。"""
+    """``project_profile.video_title`` 优先 scene 首场景 caption，其次 story 首条 title，避免「新项目」占位。"""
     if not isinstance(row, dict):
         return
     prof = row.get(project_manager.PROJECT_PROFILE_KEY)
     if not isinstance(prof, dict) or not prof:
         return
     cfg = selected_config if isinstance(selected_config, dict) else {}
-    lang = (cfg.get("language") or row.get("language") or "tw").strip()
     sc = row.get("scene_content") or cfg.get("scene_content")
     sc_title = (project_manager.title_from_scene_content(sc) or "").strip()
+    story_title = _youtube_row_story_meta_title(row)
     vt = (prof.get("video_title") or cfg.get("video_title") or "").strip()
-    if sc_title and (not vt or vt in _GENERIC_PROJECT_VIDEO_TITLES):
-        merged = copy.deepcopy(prof)
-        merged["video_title"] = sc_title
-        row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
-            merged
-        )
+    if vt and vt not in _GENERIC_PROJECT_VIDEO_TITLES:
+        return
+    pick = sc_title or story_title
+    if not pick:
+        return
+    merged = copy.deepcopy(prof)
+    merged["video_title"] = pick
+    row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
+        merged
+    )
 
 
 def _drop_cloned_duplicates_of_row(videos: list, keeper: dict) -> list:
@@ -1977,10 +2079,7 @@ def _drop_cloned_duplicates_of_row(videos: list, keeper: dict) -> list:
 def _apply_project_config_to_list_row(
     row: dict, selected_config: dict, *, channel_path: str = ""
 ) -> None:
-    """将新建/更新后的项目配置写入频道热门列表中的源视频行（不克隆新行）。"""
-    _pid = (selected_config.get("pid") or "").strip()
-    if _pid:
-        row["id"] = _pid
+    """将新建/更新后的项目配置写入频道热门列表中的源视频行（不克隆新行；保留外层 YouTube ``id``）。"""
     row.pop("cloned_from_id", None)
     row.pop("cloned_from_url", None)
     row.pop("youtube_source_id", None)
@@ -2079,7 +2178,7 @@ def _channel_list_row_tree_key(video: dict) -> str:
 
 
 def _channel_list_row_dedupe_key(video: dict) -> str:
-    """列表去重键：优先外层 ``id``（YouTube id 或项目 pid）；无 id 再按 ``url``；最后按展示标题。"""
+    """列表去重键：优先外层 ``id``（YouTube id 或独立行 id）；无 id 再按 ``url``；最后按展示标题。"""
     if not isinstance(video, dict):
         return ""
     iid = project_manager.list_json_row_id(video)
@@ -2200,7 +2299,7 @@ def _upsert_topic_category_program_list_row(channel_path: str, topic_category: s
 
 
 def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> dict:
-    """基于当前列表项生成新条目：独立 url；外层 ``title`` 保留来源于视频（与新建项目成片名分开）；成片名仅存 ``project_profile.video_title``；RAW 等与新建项目对齐；不落盘。"""
+    """基于当前列表项生成新条目：``id`` = 项目 pid，不继承源 ``url`` / ``upload_date``（发布后只写 ``url``）；源链接记入 ``cloned_from_*``。"""
     if not isinstance(base, dict):
         raise ValueError("base 无效")
     if not isinstance(selected_config, dict):
@@ -2233,6 +2332,10 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
         else:
             clone.pop("tags", None)
     for k in (
+        "url",
+        "upload_date",
+        "view_count",
+        "duration",
         "video_path",
         "audio_path",
         "transcribed_file",
@@ -2341,7 +2444,7 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。
 
-    有 ``project_profile`` 的行：外层 ``id`` 为项目 pid，YouTube id 仅从 ``url`` 等链接字段解析。
+    有 ``project_profile`` 的行：外层 ``id`` 可仍为源 YouTube id；亦从 ``url`` / ``cloned_from_url`` 解析。
     无项目行：``id`` 或 ``url`` 均可。
     """
     if not isinstance(v, dict):
@@ -2361,6 +2464,9 @@ def _video_youtube_id(v):
             if m:
                 return m.group(1)
     if has_proj:
+        vid = (v.get("id") or "").strip()
+        if vid and project_manager.list_row_outer_id_in_watch_url(v):
+            return vid
         return ""
     vid = (v.get("id") or "").strip()
     if vid and len(vid) == 11:
@@ -2368,9 +2474,34 @@ def _video_youtube_id(v):
     return ""
 
 
+def _video_id_present_in_url(v: dict) -> bool:
+    """外层 ``id`` 是否为 ``url`` 中的 YouTube 视频 id（源下载行 / 热门总表同行绑定项目）。
+
+    新建项目克隆行：``id`` 为 pid，``url`` 空或仅为发布后链接（pid 不在 url 中）→ False。
+    """
+    if not isinstance(v, dict):
+        return False
+    vid = (v.get("id") or "").strip()
+    if not vid:
+        return False
+    url = (v.get("url") or "").strip()
+    if not url:
+        return False
+    if re.search(rf"[?&]v={re.escape(vid)}(?:&|$)", url):
+        return True
+    if re.search(rf"youtu\.be/{re.escape(vid)}(?:[?&#/]|$)", url):
+        return True
+    return False
+
+
+def _should_update_upload_date(video: dict) -> bool:
+    """新建项目克隆行 / 自上传行可更新 ``upload_date``；源 YouTube 下载行保留原上传日。"""
+    return not _video_id_present_in_url(video)
+
+
 def _gen_video_id_stem_candidates_for_row(video: dict) -> list[str]:
     """匹配 / 命名 gen_video 里 ``<stem>.mp4`` 的候选 stem（有序、去重）。
-    主键为条目外层 ``id``（YouTube id 或项目 pid），并兼容旧字段与 profile 内 id。"""
+    含外层 ``id``、YouTube id、``project_profile.pid`` 及旧字段。"""
     if not isinstance(video, dict):
         return []
     ordered: list[str] = []
@@ -2602,6 +2733,28 @@ def _is_windows_file_in_use(err: OSError) -> bool:
     # 非 Windows：EBUSY 等
     en = getattr(err, "errno", None)
     return en in (11, 16, 26)  # EAGAIN, EBUSY, ETXTBSY 等视平台而定
+
+
+def _tk_dialog_parent(preferred, fallback=None):
+    """messagebox 父窗口：preferred 已关闭时回退 fallback，避免 parent 销毁后弹窗报错。"""
+    for w in (preferred, fallback):
+        if w is None:
+            continue
+        try:
+            if w.winfo_exists():
+                return w
+        except tk.TclError:
+            continue
+    return fallback
+
+
+def _set_publish_review_publishing(parent, publishing: bool) -> None:
+    try:
+        pr = getattr(parent, "_publish_review", None)
+        if pr is not None:
+            pr._publishing = bool(publishing)
+    except Exception:
+        pass
 
 
 def _run_on_main_tk_and_wait(root, fn, timeout=60) -> None:
@@ -3362,8 +3515,9 @@ class MediaDownloader:
                         if upload_date:
                             if len(upload_date) == 10:
                                 upload_date = upload_date.replace("-", "")
-                            video_detail["upload_date"] = upload_date[:8]
-                            print(f"✅ 已更新 upload_date: {upload_date[:8]}")
+                            if _should_update_upload_date(video_detail):
+                                video_detail["upload_date"] = upload_date[:8]
+                                print(f"✅ 已更新 upload_date: {upload_date[:8]}")
                 print(f"✅ 已下载字幕：语言 {target_lang}")
                 src_path = f"{download_prefix}.{target_lang}.srt"
                 if os.path.exists(src_path):
@@ -3487,8 +3641,9 @@ class MediaDownloader:
                 if upload_date:
                     if len(upload_date) == 10:
                         upload_date = upload_date.replace("-", "")
-                    video_detail["upload_date"] = upload_date
-                    print(f"✅ 已更新 upload_date: {upload_date}")
+                    if _should_update_upload_date(video_detail):
+                        video_detail["upload_date"] = upload_date
+                        print(f"✅ 已更新 upload_date: {upload_date}")
 
             for ext in audio_extensions:
                 expected_path = os.path.abspath(f"{video_prefix}.{ext}")
@@ -5033,16 +5188,21 @@ class MediaGUIManager:
             )
             return False
         row_key = (video_detail.get("id") or video_detail.get("url") or "").strip()
-        if row_key:
-            for row in self.downloader.channel_videos:
-                if not isinstance(row, dict):
-                    continue
-                rk = (row.get("id") or row.get("url") or "").strip()
-                if rk and rk == row_key:
-                    if row is not video_detail:
-                        row.clear()
-                        row.update(video_detail)
-                    break
+        wf_pid = _video_detail_project_pid(video_detail)
+        for row in self.downloader.channel_videos:
+            if not isinstance(row, dict):
+                continue
+            rk = (row.get("id") or row.get("url") or "").strip()
+            if row_key and rk and rk == row_key:
+                if row is not video_detail:
+                    row.clear()
+                    row.update(video_detail)
+                break
+            if wf_pid and _video_detail_project_pid(row) == wf_pid:
+                if row is not video_detail:
+                    row.clear()
+                    row.update(video_detail)
+                break
         ch_path = self.channel_path or ""
         _normalize_channel_list_item_for_storage(video_detail, ch_path)
         _normalize_channel_videos_for_storage(
@@ -5269,20 +5429,32 @@ class MediaGUIManager:
                     "提示", "story 不能为空。", parent=dlg
                 )
                 return
+            entries: list[dict] = []
             if raw:
-                if raw.lstrip().startswith("["):
-                    entries = _parse_story_field(raw)
-                    if entries:
-                        video_detail["story"] = _story_entries_to_json_text(entries)
-                    else:
-                        video_detail["story"] = raw
+                entries, story_json = _coerce_story_editor_text(raw)
+                if story_json:
+                    video_detail["story"] = story_json
                 else:
                     video_detail["story"] = raw
             else:
                 video_detail.pop("story", None)
+            if entries:
+                try:
+                    stories_path = _prepend_story_entries_to_channel_stories_json(
+                        entries,
+                        channel_key=channel_key,
+                        channel_path=channel_path or self.channel_path or "",
+                    )
+                    print(f"✅ 已写入 stories.json（插入最前）: {stories_path}")
+                except Exception as e:
+                    messagebox.showwarning(
+                        "stories.json",
+                        f"已保存到本条 video_detail，但写入频道 stories.json 失败：\n{e}",
+                        parent=dlg,
+                    )
             if not persist(video_detail, parent=dlg):
                 return
-            result_holder[0] = raw
+            result_holder[0] = video_detail.get("story") or raw
             dlg.destroy()
 
         add_btn = ttk.Button(btn_row, text="增加 Story", command=on_add_story)
@@ -5989,12 +6161,15 @@ class MediaGUIManager:
 
 
     def get_video_detail(self, row_key):
-        """按树 tag（``id`` 或 ``url``）查找列表行。"""
+        """按树 tag（``id`` 或 ``url``）或 ``project_profile.pid`` 查找列表行。"""
         key = (row_key or "").strip()
         if not key:
             return None
         for video in self.downloader.channel_videos:
             if (video.get("url") or "").strip() == key or (video.get("id") or "").strip() == key:
+                return video
+        for video in self.downloader.channel_videos:
+            if _video_detail_project_pid(video) == key:
                 return video
         return None
 
@@ -6299,9 +6474,16 @@ class MediaGUIManager:
             title.strip().replace(" ", "_").replace("\n", "_"), self.language
         )
 
+        root_win = self.root
+
         def worker():
             watch = ""
             try:
+                _run_on_main_tk_and_wait(
+                    root_win,
+                    lambda: _set_publish_review_publishing(parent, True),
+                    timeout=10,
+                )
                 vid, published_iso = self.downloader.upload_video(
                     mp4_path,
                     None,
@@ -6321,28 +6503,29 @@ class MediaGUIManager:
                 else:
                     pub_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                 video_detail["publish"] = pub_str
-                if (published_iso or "").strip():
-                    try:
-                        _dt = datetime.fromisoformat(
-                            published_iso.replace("Z", "+00:00")
+                if _should_update_upload_date(video_detail):
+                    if (published_iso or "").strip():
+                        try:
+                            _dt = datetime.fromisoformat(
+                                published_iso.replace("Z", "+00:00")
+                            )
+                            video_detail["upload_date"] = _dt.astimezone().strftime(
+                                "%Y%m%d"
+                            )
+                        except Exception:
+                            video_detail["upload_date"] = datetime.now().strftime(
+                                "%Y%m%d"
+                            )
+                    elif publish_at is not None:
+                        local_tz = datetime.now().astimezone().tzinfo
+                        pa = (
+                            publish_at
+                            if publish_at.tzinfo
+                            else publish_at.replace(tzinfo=local_tz)
                         )
-                        video_detail["upload_date"] = _dt.astimezone().strftime(
-                            "%Y%m%d"
-                        )
-                    except Exception:
-                        video_detail["upload_date"] = datetime.now().strftime(
-                            "%Y%m%d"
-                        )
-                elif publish_at is not None:
-                    local_tz = datetime.now().astimezone().tzinfo
-                    pa = (
-                        publish_at
-                        if publish_at.tzinfo
-                        else publish_at.replace(tzinfo=local_tz)
-                    )
-                    video_detail["upload_date"] = pa.astimezone().strftime("%Y%m%d")
-                else:
-                    video_detail["upload_date"] = datetime.now().strftime("%Y%m%d")
+                        video_detail["upload_date"] = pa.astimezone().strftime("%Y%m%d")
+                    else:
+                        video_detail["upload_date"] = datetime.now().strftime("%Y%m%d")
                 vid_s = str(vid).strip() if vid is not None else ""
                 if vid_s:
                     watch = f"https://www.youtube.com/watch?v={vid_s}"
@@ -6376,6 +6559,7 @@ class MediaGUIManager:
                 archive_msg = _move_published_input_media_files(mp4_path, video_detail)
 
                 def ok_ui():
+                    _set_publish_review_publishing(parent, False)
                     try:
                         refresh_tree()
                     except Exception:
@@ -6387,11 +6571,19 @@ class MediaGUIManager:
                         msg = f"{msg}\n\n{archive_msg}"
                     if tg_lines:
                         msg = f"{msg}\n\n--- Telegram ---\n" + "\n".join(tg_lines)
-                    messagebox.showinfo("成功", msg, parent=parent)
+                    par = _tk_dialog_parent(parent, root_win)
+                    messagebox.showinfo("成功", msg, parent=par)
 
-                self.root.after(0, ok_ui)
+                root_win.after(0, ok_ui)
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("上传失败", str(e), parent=parent))
+                err = str(e)
+
+                def err_ui():
+                    _set_publish_review_publishing(parent, False)
+                    par = _tk_dialog_parent(parent, root_win)
+                    messagebox.showerror("上传失败", err, parent=par)
+
+                root_win.after(0, err_ui)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -6813,10 +7005,13 @@ class MediaGUIManager:
                 mp4_for_publish = _resolve_review_publish_mp4_path(
                     video, input_publish_map
                 )
-                row_title = _youtube_row_list_display_title(video)
+                row_title = _youtube_row_list_display_title(
+                    video, max_src_chars=_CHANNEL_LIST_TREE_TITLE_MAX_SRC_CHARS
+                )
+                row_title_full = _youtube_row_list_display_title(video)
                 tree.insert("", tk.END, text=str(idx), 
                            values=(
-                               row_title[:60],
+                               row_title,
                                view_str,
                                duration_str,
                                upload_date_str,
@@ -6828,7 +7023,7 @@ class MediaGUIManager:
                                user_status
                            ),
                            tags=(   _channel_list_row_tree_key(video), 
-                                    row_title, 
+                                    row_title_full, 
                                     video_file or '', 
                                     audio_file or '', 
                                     str(view_count), 
@@ -8389,6 +8584,8 @@ class MediaGUIManager:
                                     "description",
                                 ),
                             ):
+                                if fld == "upload_date" and not _should_update_upload_date(v):
+                                    continue
                                 if fld in fetched:
                                     v[fld] = fetched[fld]
                             v.pop("video_title", None)
@@ -8692,7 +8889,10 @@ class MediaGUIManager:
                                 print(f"  ✅ 转录成功")
                                 self.update_text_content(video_detail, downloaded_file)
                                 # 显式将 upload_date 同步到 channel_videos，确保 Tree 刷新时能看到
-                                if video_detail.get('upload_date'):
+                                if (
+                                    video_detail.get("upload_date")
+                                    and _should_update_upload_date(video_detail)
+                                ):
                                     for v in self.downloader.channel_videos:
                                         if v.get('url') == video_detail.get('url'):
                                             v['upload_date'] = video_detail['upload_date']
