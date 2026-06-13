@@ -3473,13 +3473,71 @@ class MediaDownloader:
             return info
 
 
-    def download_captions(self, video_detail, target_lang):
+    def _find_caption_srt(self, download_prefix, target_lang):
+        """查找 yt-dlp 下载的字幕文件（语言码可能与请求不完全一致）。"""
+        expected = f"{download_prefix}.{target_lang}.srt"
+        if os.path.exists(expected):
+            return expected
+        media_dir = os.path.dirname(download_prefix)
+        base = os.path.basename(download_prefix)
+        if not os.path.isdir(media_dir):
+            return None
+        for filename in os.listdir(media_dir):
+            if filename.startswith(base) and filename.endswith(".srt"):
+                return os.path.join(media_dir, filename)
+        return None
+
+    def _transcribe_audio_to_json(self, video_detail, target_lang, audio_path):
+        """用 Whisper 转录音频并写入 JSON，成功返回路径。"""
+        if not audio_path or not os.path.exists(audio_path):
+            return None
+        download_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
+        src_path = f"{download_prefix}.{target_lang}.json"
+        if os.path.exists(src_path):
+            return src_path
+        cfg = project_manager.PROJECT_CONFIG or {}
+        scene_min_length = cfg.get("scene_min_length", 9)
+        script_json = self.transcriber.transcribe_with_whisper(
+            audio_path,
+            target_lang,
+            scene_min_length,
+            int(scene_min_length * 1.5),
+        )
+        if script_json:
+            write_json(src_path, script_json)
+            return src_path
+        return None
+
+    def _ensure_audio_path(self, video_detail):
+        """返回已有或可解析的音频路径；不存在则返回空字符串。"""
+        audio_path = (video_detail.get("audio_path") or "").strip()
+        if audio_path and os.path.exists(audio_path):
+            return audio_path
+        download_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
+        for ext in ("mp3", "m4a", "webm", "opus", "wav"):
+            candidate = f"{download_prefix}.{ext}"
+            if os.path.exists(candidate):
+                video_detail["audio_path"] = candidate
+                return candidate
+        video_path = f"{download_prefix}.mp4"
+        if os.path.exists(video_path):
+            audio_path = self.ffmpeg_audio_processor.extract_audio_from_video(video_path, "mp3")
+            mp3_path = f"{download_prefix}.mp3"
+            safe_copy_overwrite(audio_path, mp3_path)
+            video_detail["audio_path"] = mp3_path
+            return mp3_path
+        return ""
+
+    def download_captions(self, video_detail, target_lang, *, allow_audio_fallback=None):
         if not target_lang:
             return None
 
         video_url = video_detail.get('url', '')
         if not video_url:
             return None
+
+        if allow_audio_fallback is None:
+            allow_audio_fallback = config.TRANSCRIBE_FALLBACK_TO_AUDIO
 
         download_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
         
@@ -3518,9 +3576,9 @@ class MediaDownloader:
                             if _should_update_upload_date(video_detail):
                                 video_detail["upload_date"] = upload_date[:8]
                                 print(f"✅ 已更新 upload_date: {upload_date[:8]}")
-                print(f"✅ 已下载字幕：语言 {target_lang}")
-                src_path = f"{download_prefix}.{target_lang}.srt"
-                if os.path.exists(src_path):
+                src_path = self._find_caption_srt(download_prefix, target_lang)
+                if src_path:
+                    print(f"✅ 已下载字幕：语言 {target_lang}")
                     return src_path
             except yt_dlp.utils.DownloadError as e:
                 err = str(e)
@@ -3533,24 +3591,37 @@ class MediaDownloader:
             except Exception:
                 break
 
-        print(f"❌ 下载字幕失败，尝试转录...")
+        if not allow_audio_fallback:
+            return None
+
+        print(f"❌ 下载字幕失败，尝试音频转录...")
         src_path = f"{download_prefix}.{target_lang}.json"
         if os.path.exists(src_path):
             return src_path
 
-        audio_path = video_detail.get('audio_path', '')
+        audio_path = self._ensure_audio_path(video_detail)
         if not audio_path:
             print(f"❌ 音频文件不存在")
             return None
 
-        cfg = project_manager.PROJECT_CONFIG or {}
-        scene_min_length = cfg.get("scene_min_length", 9)
-        script_json = self.transcriber.transcribe_with_whisper(audio_path, target_lang, scene_min_length, int(scene_min_length*1.5))
-        if script_json:
-            write_json(src_path, script_json)  
-            return src_path
-        else:
+        return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
+
+    def transcribe_video_detail(self, video_detail, target_lang=None):
+        """优先下载字幕；失败时按 config 决定是否下载音频并 Whisper 转录。"""
+        target_lang = target_lang or self.language or "zh"
+        transcribed_file = self.try_download_caption_with_priority(video_detail)
+        if transcribed_file:
+            return transcribed_file
+        if not config.TRANSCRIBE_FALLBACK_TO_AUDIO:
             return None
+        audio_path = self._ensure_audio_path(video_detail)
+        if not audio_path:
+            print("📥 字幕不可用，正在下载音频…")
+            audio_path = self.download_audio_only(video_detail)
+        if not audio_path:
+            print("❌ 音频下载失败，无法转录")
+            return None
+        return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
 
 
     def try_download_caption_with_priority(self, video_detail):
@@ -3572,7 +3643,7 @@ class MediaDownloader:
                 seen.add(lang)
                 CAPTION_LANG_PRIORITY.append(lang)
         for lang in CAPTION_LANG_PRIORITY:
-            path = self.download_captions(video_detail, lang)
+            path = self.download_captions(video_detail, lang, allow_audio_fallback=False)
             if path:
                 return path
         return None
@@ -4481,8 +4552,8 @@ class MediaDownloader:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([video_url])
-            src_path = f"{download_prefix}.{target_lang}.srt"
-            if os.path.exists(src_path):
+            src_path = self._find_caption_srt(download_prefix, target_lang)
+            if src_path:
                 print(f"✅ 已下载字幕：语言 {target_lang}")
                 return src_path
         except Exception as e:
@@ -8884,7 +8955,9 @@ class MediaGUIManager:
                     for idx, video_detail in enumerate(videos_to_transcribe, 1):
                         time.sleep(0.05)  # 让出 GIL，避免长时间占用导致主线程 UI 无法响应
                         try:
-                            downloaded_file = self.downloader.try_download_caption_with_priority(video_detail)
+                            downloaded_file = self.downloader.transcribe_video_detail(
+                                video_detail, self.language
+                            )
                             if downloaded_file:
                                 print(f"  ✅ 转录成功")
                                 self.update_text_content(video_detail, downloaded_file)
@@ -8904,7 +8977,10 @@ class MediaGUIManager:
                                 except Exception:
                                     pass
                             else:
-                                print(f"  ❌ 转录失败：无法下载字幕")
+                                if config.TRANSCRIBE_FALLBACK_TO_AUDIO:
+                                    print(f"  ❌ 转录失败：无法下载字幕或音频转录失败")
+                                else:
+                                    print(f"  ❌ 转录失败：无法下载字幕（音频转录 fallback 已关闭）")
                                 failed_count += 1
                         except Exception as e:
                             print(f"  ❌ 转录失败: {str(e)}")
@@ -9132,8 +9208,8 @@ class MediaGUIManager:
         if transcribed_file:
             print(f"✅ 已从字幕获取文本")
 
-        # 2. 若无 caption，下载音频并用 Whisper 转录（默认中文 zh）
-        if not transcribed_file:
+        # 2. 若无 caption，按 config 决定是否下载音频并用 Whisper 转录
+        if not transcribed_file and config.TRANSCRIBE_FALLBACK_TO_AUDIO:
             file_path = self.downloader.download_audio_only(video_data)
             if file_path and os.path.exists(file_path):
                 file_size = os.path.getsize(file_path) / (1024 * 1024)
@@ -9143,7 +9219,9 @@ class MediaGUIManager:
             else:
                 self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
                 return
-            transcribed_file = self.downloader.download_captions(video_data, self.language)
+            transcribed_file = self.downloader.download_captions(
+                video_data, self.language, allow_audio_fallback=True
+            )
         if not transcribed_file:
             print(f"❌ YouTube视频转录失败")
             self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
