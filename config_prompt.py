@@ -27,11 +27,13 @@ IMAGE_READ_SYSTEM_PROMPT = """
     - **Direct & Concise**: Do NOT tell a long story or act out a monologue. Get straight to the point. The analysis must be short, punchy, and clear within a few sentences. 
     - **Professional Tone**: Avoid generic "chicken soup for the soul." Sound like a sharp, highly perceptive therapist whose words immediately hit home ("This talks right to my soul").
 
-# Output Format
-    Strictly as a JSON object like:
+# Output
+    strictly as a JSON object, like:
         {{
-            "title": "[A sharp, impactful title capturing the psychological theme of the image] in {language}",
-            "content": "[The concise analysis: 1. Core Problem & Root Cause -> 2. Practical Solution/Way Out -> 3. A profound, reflective question for the audience. Keep it brief, fluid, and powerful, without bullet points.] in {language}"
+            "title": "A poetic title. In {language}.",
+            "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
+            "story": "[The concise analysis: 1. Core Problem & Root Cause -> 2. Practical Solution/Way Out -> 3. A profound, reflective question for the audience. Keep it brief, fluid, and powerful, without bullet points.] in {language}"
+            "speaking": "Powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift. In {language}."
         }}
 """
 

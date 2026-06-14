@@ -7,6 +7,7 @@ Create string video clip for "Mind Spring Melody" program -- (a song for the 心
 
 这个是一个歌曲的样本 从YouTube连接作为样本 有一些基本数据分析; 有歌词歌词放在story里头.  下面我们还有一些新的歌曲要添加到这个表里头; 你帮我添加进去. 也是要做同样的数据分析, 和找到歌词加到story里头 
 
+please make a male/female DUET song
 
 歌词　再细腻些　，长些，标注旋律／乐器指引　等等
 

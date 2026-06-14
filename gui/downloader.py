@@ -934,17 +934,6 @@ def _persist_channel_videos(mgr) -> bool:
         return False
 
 
-def _extract_image_analyze_fields(payload) -> dict:
-    """从 LLM 图片分析 JSON 解析 ``title`` / ``content``。"""
-    if not isinstance(payload, dict):
-        return {}
-    title = (payload.get("title") or "").strip()
-    content = (payload.get("content") or "").strip()
-    if not title and not content:
-        return {}
-    return {"title": title, "content": content}
-
-
 def _apply_image_analyze_to_video_detail(
     video_detail: dict,
     *,
@@ -1088,9 +1077,8 @@ def _start_summary_cover_webp_save(
                 config_prompt.IMAGE_READ_SYSTEM_PROMPT.format(language=lang),
                 image_path,
             )
-            parsed_analysis = _extract_image_analyze_fields(payload)
-            if not parsed_analysis:
-                err_msg = "图片 LLM 分析失败或未返回有效 title/content。"
+            if payload and isinstance(payload, dict):
+                parsed_analysis = payload
 
             os.makedirs(gen_dir, exist_ok=True)
             ff = FfmpegProcessor(pid, lang)
@@ -1135,9 +1123,11 @@ def _start_summary_cover_webp_save(
                 choice = _ask_image_analyze_confirm_dialog(
                     par,
                     title=parsed_analysis.get("title", ""),
-                    content=parsed_analysis.get("content", ""),
+                    content=parsed_analysis.get("story", ""),
                 )
                 if choice is not None:
+                    vd["story"] = parsed_analysis
+                    
                     ch_path = getattr(mgr, "channel_path", "") or ""
                     _apply_image_analyze_to_video_detail(
                         vd,
@@ -1145,6 +1135,7 @@ def _start_summary_cover_webp_save(
                         content=choice.get("content", ""),
                         channel_path=ch_path,
                     )
+                    
                     if _persist_channel_videos(mgr):
                         analyze_applied = True
                         _refresh_summary_ui_after_analyze(ctx, summary_window)
@@ -7721,7 +7712,7 @@ class MediaGUIManager:
                 return
 
             choices = [("edit", "打开摘要编辑")]
-            if (vd.get("analyzed_content") or "").strip():
+            if (vd.get("analyzed_content","")):
                 choices.append(
                     ("review_analyzed", "查看 analyzed content（分析内容预览）")
                 )

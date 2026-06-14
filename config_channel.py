@@ -63,6 +63,197 @@ Steps:
 MV_ANALYZE_2 = """
 Role:
     - You are an expert musicologist, elite lyricist, veteran music producer, and vocal-performance analyst.
+    - Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its Musical, Vocal, Emotional, and Lyrical DNA.
+    - Your goal is NOT to write a review or explain your reasoning process.
+    - Your goal is to identify the key patterns that make the song emotionally effective, recognizable, and reusable as inspiration for creating a NEW original song.
+
+Output Rules:
+
+    - Return ONLY final conclusions and actionable findings.
+    - Do NOT reveal chain-of-thought, reasoning steps, intermediate analysis, or internal deliberation.
+    - Do NOT explain how conclusions were reached.
+    - Focus on high-signal observations and reusable patterns.
+    - Avoid redundancy, repetition, and excessive elaboration.
+    - Use concise bullet points instead of long paragraphs whenever possible.
+    - Limit each subsection to the most important insights.
+    - Prefer precise labels, estimates, and conclusions.
+    - If uncertain, provide the most likely assessment without lengthy caveats.
+    - Think like a producer creating a reusable DNA profile, not a critic writing a detailed review.
+    - Extract only the dominant characteristics that materially contribute to the song's emotional impact and recognizability.
+    - Keep the report information-dense, practical, and concise.
+    - Maximum output length: 1200 words.
+    - If multiple observations are similar, merge them into a single insight.
+    - Favor compression over completeness.
+
+Task:
+
+    Analyze the track and output only the most important reusable characteristics.
+
+Output ONLY the following sections:
+
+# Song DNA Summary
+Provide 5–10 concise bullets summarizing the song's defining characteristics.
+
+# Musical DNA
+
+## Genre & Style Blend
+- Primary and secondary genre influences.
+
+## Mood Arc & Emotional Narrative
+- Emotional progression from beginning to end.
+
+## Atmosphere & Sonic Palette
+- Overall sonic character, spatial feel, density, warmth/brightness.
+
+## Regional / Historical Vibe
+- Cultural, stylistic, or era-related influences.
+
+## Tempo & Groove
+- Estimated BPM.
+- Groove feel and rhythmic psychology.
+
+## Harmony Language
+- Key/mode tendencies.
+- Chord progression style.
+- Tension and release mechanisms.
+
+## Instrumentation & Arrangement
+- Core instruments.
+- Signature sounds.
+- Build-up, transition, climax, and release strategies.
+
+## Melody Design
+- Hook behavior.
+- Melodic contour.
+- Emotional peak placement.
+
+# Vocal DNA
+
+## Core Vocal Identity
+- What makes the singer instantly recognizable.
+
+## Timbre & Texture
+- Tone, color, breathiness, rasp, warmth, brightness.
+
+## Emotional Delivery
+- Main emotional transmission techniques.
+
+## Vocal Motion & Expression
+- Slides, scoops, phrasing, rhythmic flexibility, ad-libs.
+
+## Pronunciation & Personality
+- Diction and articulation traits.
+
+## Range Usage
+- Emotional function of low, mid, high, mixed, falsetto registers.
+
+## Human Imperfections
+- Realistic imperfections contributing to authenticity.
+
+## Microphone Intimacy
+- Perceived vocal distance and listener experience.
+
+## Vocal Evolution
+- How emotional delivery develops throughout the song.
+
+## Vocal Production
+- Harmonies, doubles, layers, ad-libs, vocal effects.
+
+# Lyrical DNA
+
+## Narrative Theme
+- Core emotional or narrative theme.
+
+## Structural Patterns
+- Repetition, refrains, memorable structural devices.
+
+## Emotional Progression
+- How lyrical intensity develops.
+
+## Narrative Pivots
+- Emotional reversals, perspective shifts, turning points.
+
+## Language & Imagery
+- Imagery, metaphors, vocabulary style, atmosphere-building techniques.
+
+# Lyric-Music Synergy
+
+## Key Interaction Patterns
+- How lyrics trigger arrangement changes, dynamic shifts, transitions, drops, breakdowns, or emotional peaks.
+
+# Recording & Spatial DNA
+
+## Recording Environment
+- Likely recording context and performance setting.
+
+## Spatial Characteristics
+- Reverb, depth, reflections, ambience, stereo image.
+
+## Studio vs Live Feel
+- Controlled studio feel vs live-performance energy.
+
+## Capture Characteristics
+- Microphone proximity, room influence, production texture.
+
+## Emotional Effect of Space
+- How the environment shapes emotional perception.
+
+# Actionable Blueprint
+
+Summarize the track's creative DNA as reusable production rules.
+
+## Signature Audio Texture Rules
+- 5–10 concise rules.
+
+## Signature Harmony & Groove Rules
+- 5–10 concise rules.
+
+## Signature Arrangement Rules
+- 5–10 concise rules.
+
+## Signature Vocal Rules
+- 5–10 concise rules.
+
+## Signature Vocal Layering Rules
+- 3–8 concise rules.
+
+## Singer Persona & Emotional Archetype
+- Concise persona description.
+
+## Lyric Blueprint
+- Structural and stylistic lyric rules.
+
+## Emotional Progression Template
+- Emotional journey template.
+
+## Lyric-to-Music Transition Triggers
+- Common trigger patterns.
+
+## Humanization Rules
+- Essential imperfections, phrasing habits, breathing styles, and emotional details required to preserve realism.
+
+# Similarity Scorecard
+
+Rate from 1–10:
+
+- Emotional Intensity
+- Intimacy
+- Vulnerability
+- Cinematic Scale
+- Vocal Expressiveness
+- Production Density
+- Melodic Memorability
+- Lyrical Complexity
+- Dynamic Contrast
+- Replay Value
+
+Output the entire report in {language}.
+"""
+
+
+MV_ANALYZE_3 = """
+Role:
+    - You are an expert musicologist, elite lyricist, veteran music producer, and vocal-performance analyst.
     - Your task is to analyze a song/music video from the specified YouTube link ({url}) and extract its complete Musical, Vocal, Emotional, and Lyrical DNA.
     - Your analysis must decode not only the composition and production, but also the singer’s vocal identity, emotional delivery mechanics, performance psychology, and the subtle human imperfections that create emotional realism.
     - The goal is to provide a reusable blueprint for composing and producing a NEW original song with a similarly powerful emotional impact, atmosphere, vocal personality, and narrative progression.
@@ -446,10 +637,11 @@ Steps:
 
     (2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
             ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
-                * Give a English version SUNO instruction Prompt (around 500 characters)
-                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
+                * Give a English version SUNO instruction Prompt (around 900 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters ~ more details for song styles and vocal styles)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+                * {instruction}
 
             ** Song structure: 
                 * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
@@ -460,11 +652,12 @@ Steps:
                 * Do NOT rely heavily on : excessively loud vocals / aggressive screaming / huge instrumental drops or impact
                 * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
 
-                ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
-                    *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
-                    *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
-                    *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
-                    *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
+            ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
+                *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
+                *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
+                *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
+                *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
+                *** Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 210 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -485,10 +678,11 @@ Steps:
 
     2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
             ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
-                * Give a English version SUNO instruction Prompt (around 500 characters)
-                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
+                * Give a English version SUNO instruction Prompt (around 900 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters ~ more details for song styles and vocal styles)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+                * {instruction}
 
             ** Song structure: 
                 * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
@@ -500,11 +694,12 @@ Steps:
                 * Instead, express emotional progression through: melodic transformation / changes in vocal tone and singing style / subtle rhythmic evolution / harmonic or tonal shifts
 
             ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
-                *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
-                *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
-                *** Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
-                *** Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
-                *** The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
+                * Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
+                * Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
+                * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
+                * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
+                * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 210 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
@@ -538,10 +733,11 @@ Steps:
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
             ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
-                * Give a English version SUNO instruction Prompt (around 500 characters)
-                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
+                * Give a English version SUNO instruction Prompt (around 900 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters ~ more details for song styles and vocal styles)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+                * {instruction}
 
             ** Song structure: 
                 * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
@@ -557,10 +753,11 @@ Steps:
                 * Back section (B-world): stable + sunny + supportive melodic bed
 
             ** Then, generate the ({language}) lyrics of the song, which fully express the emotional and narrative content in the initial instruction.
-                *** Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
-                *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
-                *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
-                *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
+                * Frank, Conversational Tone: The lyrics must maintain a frank speaking style, like a natural, raw storytelling experience. Avoid stiff, overly formal, or academic "written" prose. It must sound like real human speech.
+                * Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
+                * Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
+                * The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 210 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -594,10 +791,11 @@ Steps:
 
     3) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
             ** Give very detailed instructions (inspired by the musical DNA/fingerprints from step (1)) to generate a similar {language} song 
-                * Give a English version SUNO instruction Prompt (around 500 characters)
-                * Give a Chinese version SUNO instruction Prompt (around 900 characters)
+                * Give a English version SUNO instruction Prompt (around 900 characters)
+                * Give a Chinese version SUNO instruction Prompt (around 900 characters ~ more details for song styles and vocal styles)
 
             ** the instruction should include at least : genre/mood, BPM range, key/mode behavior (A→B shift), main instruments, vocal style, structure cue, production vibe, melodic architecture, etc
+                * {instruction}
 
             ** Song structure: 
                 * Try unique structure; exotic, innovative, unexpected melodies / harmonies / chords / rhythms / etc.
@@ -613,11 +811,12 @@ Steps:
                 * Back section (B-world): stable + sunny + supportive melodic bed
 
             ** Then, generate the ({language}) lyrics of the song, which fully express the content in the initial instruction.
-                *** Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
-                *** Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
-                *** Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
-                *** Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
-                *** The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
+                * Indirect & Artistic Expression: Lean heavily toward metaphorical and symbolic writing. Avoid being too explicit in emotional expression; create emotionally evocative imagery rather than direct statements (show, don't tell).
+                * Cinematic & Dreamy Tone: Maintain a highly poetic, atmospheric, and visually rich lyrical tone.
+                * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
+                * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
+                * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 210 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
