@@ -1107,7 +1107,8 @@ class AVReviewDialog:
             self.source_audio_path, 
             self.workflow.language,
             scene_min_length,
-            int(scene_min_length*1.5)
+            int(scene_min_length*1.5),
+            diarize=True,
         )
 
         if not audio_json or len(audio_json) == 0:

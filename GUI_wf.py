@@ -1474,7 +1474,7 @@ class WorkflowGUI:
                 try:
                     WorkflowGUI._remove_transcribe_cache_for_audio_path(path)
                     segs = self.workflow.transcriber.transcribe_with_whisper(
-                        path, lang, scene_min, int(scene_min * 1.5)
+                        path, lang, scene_min, int(scene_min * 1.5), diarize=True
                     )
                     if not segs:
                         failed.append((sid, "转写无结果"))

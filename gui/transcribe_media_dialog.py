@@ -320,7 +320,7 @@ class TranscribeMediaDialog:
                     return
             try:
                 remove_transcribe_cache_for_audio_path(audio)
-                segs = tr.transcribe_with_whisper(audio, lang, smin, smax)
+                segs = tr.transcribe_with_whisper(audio, lang, smin, smax, diarize=False)
                 text = ". ".join(
                     (json_item.get("caption") or "").strip()
                     for json_item in segs

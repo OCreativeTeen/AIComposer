@@ -461,6 +461,8 @@ YOUTUBE_AUDIO_FORMAT_FALLBACKS = (
     "best",
 )
 
+_YT_DOWNLOAD_PREFS_JSON = "_yt_download_prefs.json"
+
 
 def _copy_text_to_clipboard(widget, text: str) -> None:
     """打开内容审阅窗时同步写入系统剪贴板。"""
@@ -3170,6 +3172,10 @@ class MediaDownloader:
         self.js_runtime = self._detect_js_runtime()
         self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
         self._cookies_session_disabled = False
+        # 批量转录时由首个视频探测：None | {"mode":"caption","lang":...} | {"mode":"audio"}
+        self._batch_transcribe_strategy = None
+        # 按频道记住成功的 yt-dlp 音频下载策略（player_client / format / cookies）
+        self._yt_download_pref = None
 
 
     def _find_cookies_file(self):
@@ -3384,6 +3390,93 @@ class MediaDownloader:
         print("   请重新导出 www.youtube.com_cookies.txt 到「下载」文件夹后重启程序。")
 
 
+    def _yt_download_pref_key(self) -> str:
+        """用于记住下载策略的频道键（YouTube 列表名或 list JSON 基名）。"""
+        name = (self.channel_name or "").strip()
+        if name:
+            return name
+        path = (self.channel_list_json or "").strip()
+        if path:
+            base = os.path.basename(path)
+            if base.lower().endswith(".json"):
+                base = base[:-5]
+            if base:
+                return base
+        return ""
+
+
+    def _yt_download_prefs_file(self) -> str:
+        return os.path.join(self.channel_list_dir, _YT_DOWNLOAD_PREFS_JSON)
+
+
+    def _default_youtube_player_clients(self) -> list[str]:
+        if self.js_runtime[0]:
+            return ["mweb", "web", "android", "tv_embedded"]
+        return ["android", "mweb", "web"]
+
+
+    def _load_yt_download_pref(self) -> dict | None:
+        key = self._yt_download_pref_key()
+        if not key:
+            return None
+        cached = getattr(self, "_yt_download_pref", None)
+        if isinstance(cached, dict) and cached.get("_key") == key:
+            return cached.get("data")
+        pref = None
+        path = self._yt_download_prefs_file()
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    ent = data.get(key)
+                    if isinstance(ent, dict) and ent.get("format"):
+                        pref = ent
+            except Exception:
+                pass
+        self._yt_download_pref = {"_key": key, "data": pref}
+        return pref
+
+
+    def _save_yt_download_pref(self, pref: dict) -> None:
+        key = self._yt_download_pref_key()
+        if not key or not isinstance(pref, dict) or not pref.get("format"):
+            return
+        path = self._yt_download_prefs_file()
+        data: dict = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                pass
+        data[key] = {
+            "use_cookies": bool(pref.get("use_cookies", True)),
+            "format": str(pref["format"]),
+            "player_client": str(pref.get("player_client") or ""),
+        }
+        write_json(path, data)
+        self._yt_download_pref = {"_key": key, "data": data[key]}
+        print(
+            f"📌 已记住频道下载策略: cookies={data[key]['use_cookies']}, "
+            f"client={data[key]['player_client']}, format={data[key]['format']}"
+        )
+
+
+    def _yt_merge_player_client_args(self, extra_opts: dict, player_client: str | None) -> dict:
+        if not player_client:
+            return extra_opts
+        kw = dict(extra_opts)
+        ea = dict(kw.get("extractor_args") or {})
+        yt = dict(ea.get("youtube") or {})
+        yt["player_client"] = [player_client]
+        ea["youtube"] = yt
+        kw["extractor_args"] = ea
+        return kw
+
+
     def _yt_is_format_or_cookie_error(self, err: Exception | str) -> bool:
         msg = str(err or "").lower()
         return (
@@ -3422,32 +3515,75 @@ class MediaDownloader:
         format_candidates: tuple[str, ...] = YOUTUBE_AUDIO_FORMAT_FALLBACKS,
         **extra_opts,
     ):
-        """先带 cookies，失败则本会话禁用 cookies 并重试多种 format。"""
+        """先复用频道已记住的策略；失效则逐个 client/format 探测并写入记忆。"""
         last_err = ""
-        cookie_phases = (True, False) if self.cookie_file else (False,)
-        for use_ck in cookie_phases:
-            if use_ck and getattr(self, "_cookies_session_disabled", False):
-                continue
-            for fmt in format_candidates:
+
+        saved = self._load_yt_download_pref()
+        if saved:
+            fmt = saved.get("format")
+            client = (saved.get("player_client") or "").strip() or None
+            use_ck = bool(saved.get("use_cookies", True))
+            if fmt:
                 try:
+                    kw = self._yt_merge_player_client_args(extra_opts, client)
+                    print(
+                        f"📌 复用频道下载策略: cookies={use_ck}, "
+                        f"client={client or 'default'}, format={fmt}"
+                    )
                     return self._yt_extract_download(
                         video_url,
                         use_cookies=use_ck,
                         download=True,
                         format_string=fmt,
-                        **extra_opts,
+                        **kw,
                     )
                 except yt_dlp.utils.DownloadError as e:
                     last_err = str(e)
                     if "cookies are no longer valid" in last_err.lower() and use_ck:
                         self._disable_cookies_for_session("YouTube 报告 cookies 无效")
-                        break
                     if not self._yt_is_format_or_cookie_error(e):
                         raise
-                    print(f"⚠️ 下载失败 (cookies={use_ck}, format={fmt})，尝试下一方案…")
-                    continue
+                    print("⚠️ 已保存的下载策略失效，重新探测…")
                 except Exception:
                     raise
+
+        cookie_phases = (True, False) if self.cookie_file else (False,)
+        for use_ck in cookie_phases:
+            if use_ck and getattr(self, "_cookies_session_disabled", False):
+                continue
+            for client in self._default_youtube_player_clients():
+                for fmt in format_candidates:
+                    try:
+                        kw = self._yt_merge_player_client_args(extra_opts, client)
+                        result = self._yt_extract_download(
+                            video_url,
+                            use_cookies=use_ck,
+                            download=True,
+                            format_string=fmt,
+                            **kw,
+                        )
+                        self._save_yt_download_pref(
+                            {
+                                "use_cookies": use_ck,
+                                "format": fmt,
+                                "player_client": client,
+                            }
+                        )
+                        return result
+                    except yt_dlp.utils.DownloadError as e:
+                        last_err = str(e)
+                        if "cookies are no longer valid" in last_err.lower() and use_ck:
+                            self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+                            break
+                        if not self._yt_is_format_or_cookie_error(e):
+                            raise
+                        print(
+                            f"⚠️ 下载失败 (cookies={use_ck}, client={client}, "
+                            f"format={fmt})，尝试下一方案…"
+                        )
+                        continue
+                    except Exception:
+                        raise
         cookies_bad = "cookies are no longer valid" in last_err.lower()
         raise Exception(
             _youtube_format_error_message(last_err, cookies_invalid=cookies_bad)
@@ -3493,6 +3629,7 @@ class MediaDownloader:
             target_lang,
             scene_min_length,
             int(scene_min_length * 1.5),
+            diarize=False,
         )
         if script_json:
             write_json(src_path, script_json)
@@ -3597,29 +3734,11 @@ class MediaDownloader:
 
         return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
 
-    def transcribe_video_detail(self, video_detail, target_lang=None):
-        """优先下载字幕；失败时按 config 决定是否下载音频并 Whisper 转录。"""
-        target_lang = target_lang or self.language or "zh"
-        transcribed_file = self.try_download_caption_with_priority(video_detail)
-        if transcribed_file:
-            return transcribed_file
-        if not config.TRANSCRIBE_FALLBACK_TO_AUDIO:
-            return None
-        audio_path = self._ensure_audio_path(video_detail)
-        if not audio_path:
-            print("📥 字幕不可用，正在下载音频…")
-            audio_path = self.download_audio_only(video_detail)
-        if not audio_path:
-            print("❌ 音频下载失败，无法转录")
-            return None
-        return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
+    def reset_batch_transcribe_strategy(self):
+        """重置批量转录策略（新批次开始时调用，首个视频会重新探测）。"""
+        self._batch_transcribe_strategy = None
 
-
-    def try_download_caption_with_priority(self, video_detail):
-        """按用户选择的语言优先尝试下载字幕，成功返回路径，失败返回 None"""
-        if not self.cookie_file:
-            return None
-        # 优先使用用户选择的语言，再加少量同族 fallback，减少重复请求
+    def _get_caption_lang_priority(self):
         user_lang = self.language or "en"
         if user_lang.startswith("zh"):
             fallbacks = ["zh", "zh-Hans", "zh-Hant"]
@@ -3628,12 +3747,79 @@ class MediaDownloader:
         else:
             fallbacks = []
         seen = set()
-        CAPTION_LANG_PRIORITY = []
+        priority = []
         for lang in [user_lang] + fallbacks:
             if lang not in seen:
                 seen.add(lang)
-                CAPTION_LANG_PRIORITY.append(lang)
-        for lang in CAPTION_LANG_PRIORITY:
+                priority.append(lang)
+        return priority
+
+    def _transcribe_via_audio(self, video_detail, target_lang, *, direct_audio=False):
+        """下载音频（若本地无）并用 Whisper 转录。"""
+        audio_path = self._ensure_audio_path(video_detail)
+        if not audio_path:
+            if direct_audio:
+                print("📥 正在下载音频…")
+            else:
+                print("📥 字幕不可用，正在下载音频…")
+            audio_path = self.download_audio_only(video_detail)
+        if not audio_path:
+            print("❌ 音频下载失败，无法转录")
+            return None
+        return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
+
+    def transcribe_video_detail(self, video_detail, target_lang=None, *, batch_mode=False):
+        """优先下载字幕；失败时按 config 决定是否下载音频并 Whisper 转录。
+
+        batch_mode=True 时，首个视频探测字幕语言/音频 fallback，后续视频复用同一策略。
+        """
+        target_lang = target_lang or self.language or "zh"
+        strategy = self._batch_transcribe_strategy if batch_mode else None
+
+        if strategy and strategy.get("mode") == "caption":
+            return self.download_captions(
+                video_detail, strategy["lang"], allow_audio_fallback=False
+            )
+
+        if strategy and strategy.get("mode") == "audio":
+            if not config.TRANSCRIBE_FALLBACK_TO_AUDIO:
+                return None
+            return self._transcribe_via_audio(video_detail, target_lang, direct_audio=True)
+
+        # 首个视频或非批量：按语言优先级探测字幕
+        for lang in self._get_caption_lang_priority():
+            transcribed_file = self.download_captions(
+                video_detail, lang, allow_audio_fallback=False
+            )
+            if transcribed_file:
+                if batch_mode:
+                    self._batch_transcribe_strategy = {"mode": "caption", "lang": lang}
+                    print(f"📌 批量策略：后续使用字幕 ({lang})")
+                return transcribed_file
+
+        if batch_mode:
+            self._batch_transcribe_strategy = {"mode": "audio"}
+            print("📌 批量策略：字幕不可用，后续直接下载音频转录")
+
+        if not config.TRANSCRIBE_FALLBACK_TO_AUDIO:
+            return None
+        return self._transcribe_via_audio(video_detail, target_lang)
+
+    def transcribe_audio_detail(self, video_detail, target_lang=None):
+        """仅用本地/已下载音频 Whisper 转录，不尝试下载字幕。"""
+        target_lang = target_lang or self.language or "zh"
+        audio_path = self._ensure_audio_path(video_detail)
+        if not audio_path:
+            print("❌ 音频文件不存在，无法转录")
+            return None
+        return self._transcribe_audio_to_json(video_detail, target_lang, audio_path)
+
+
+    def try_download_caption_with_priority(self, video_detail):
+        """按用户选择的语言优先尝试下载字幕，成功返回路径，失败返回 None"""
+        if not self.cookie_file:
+            return None
+        for lang in self._get_caption_lang_priority():
             path = self.download_captions(video_detail, lang, allow_audio_fallback=False)
             if path:
                 return path
@@ -8895,103 +9081,159 @@ class MediaGUIManager:
             thread.start()
 
 
-        def transcribe_selected():
+        _TRANSCRIPT_FILE_SUFFIXES = [
+            ".srt",
+            ".zh.srt",
+            ".en.srt",
+            ".json",
+            ".zh.json",
+            ".en.json",
+            ".txt",
+        ]
+
+        def _video_already_has_transcript(video_detail):
+            if (video_detail.get("transcribed_file") or "").strip():
+                self.update_text_content(video_detail)
+                return True
+            if self.match_media_file(
+                video_detail, "transcribed_file", _TRANSCRIPT_FILE_SUFFIXES
+            ):
+                self.update_text_content(video_detail)
+                return True
+            return False
+
+        def _save_channel_list_json():
+            try:
+                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
+                    json.dump(
+                        self.downloader.channel_videos,
+                        f,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+            except Exception:
+                pass
+
+        def _sync_transcribe_upload_date(video_detail):
+            if (
+                video_detail.get("upload_date")
+                and _should_update_upload_date(video_detail)
+            ):
+                for v in self.downloader.channel_videos:
+                    if v.get("url") == video_detail.get("url"):
+                        v["upload_date"] = video_detail["upload_date"]
+                        break
+
+        def _apply_transcribe_success(video_detail, transcribed_file):
+            self.update_text_content(video_detail, transcribed_file)
+            _sync_transcribe_upload_date(video_detail)
+            _save_channel_list_json()
+
+        def _collect_videos_needing_transcript(*, require_audio=False):
             if not tree.selection():
                 messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
-                return
-            # 检查选中的视频：已下载且没有SRT文件的视频（按 URL 去重）
-            videos_to_transcribe = []
-            videos_already_transcribed = []
-            
+                return None
+            videos = []
             for video_detail in _unique_video_details_from_tree_selection():
-                if (video_detail.get("transcribed_file") or "").strip():
-                    self.update_text_content(video_detail)
-                    videos_already_transcribed.append(video_detail)
-                else:
-                    transcribed_file = self.match_media_file(
-                        video_detail,
-                        "transcribed_file",
-                        [
-                            ".srt",
-                            ".zh.srt",
-                            ".en.srt",
-                            ".json",
-                            ".zh.json",
-                            ".en.json",
-                            ".txt",
-                        ],
-                    )
-                    if transcribed_file:
-                        self.update_text_content(video_detail)
-                        videos_already_transcribed.append(video_detail)
-                    else:
-                        videos_to_transcribe.append(video_detail)
+                if _video_already_has_transcript(video_detail):
+                    continue
+                if require_audio and not self.downloader._ensure_audio_path(video_detail):
+                    continue
+                videos.append(video_detail)
+            return videos
 
-            # 如果没有可转录的视频，显示提示
+        def _run_transcribe_batch(
+            videos_to_transcribe,
+            *,
+            task_name,
+            confirm_title,
+            confirm_verb,
+            empty_warning,
+            transcribe_fn,
+            fail_message,
+            pre_task=None,
+        ):
+            if videos_to_transcribe is None:
+                return
             if not videos_to_transcribe:
-                messagebox.showwarning("提示", "没有可转录的视频", parent=dialog)
+                messagebox.showwarning("提示", empty_warning, parent=dialog)
                 return
-            
-            message = f"将转录 {len(videos_to_transcribe)} 个视频\n\n是否继续？"
-            if not messagebox.askyesno("确认转录", message, parent=dialog):
+            message = f"将{confirm_verb} {len(videos_to_transcribe)} 个视频\n\n是否继续？"
+            if not messagebox.askyesno(confirm_title, message, parent=dialog):
                 return
+            if pre_task:
+                pre_task()
 
-            # 在后台线程中转录，避免阻塞主 UI 导致窗口变红/冻结
-            self.downloader._check_and_update_cookies(wait_forever=False)
-
-            def transcribe_task():
+            def task():
                 success_count = 0
                 failed_count = 0
                 try:
-                    for idx, video_detail in enumerate(videos_to_transcribe, 1):
-                        time.sleep(0.05)  # 让出 GIL，避免长时间占用导致主线程 UI 无法响应
+                    for video_detail in videos_to_transcribe:
+                        time.sleep(0.05)
                         try:
-                            downloaded_file = self.downloader.transcribe_video_detail(
-                                video_detail, self.language
-                            )
-                            if downloaded_file:
-                                print(f"  ✅ 转录成功")
-                                self.update_text_content(video_detail, downloaded_file)
-                                # 显式将 upload_date 同步到 channel_videos，确保 Tree 刷新时能看到
-                                if (
-                                    video_detail.get("upload_date")
-                                    and _should_update_upload_date(video_detail)
-                                ):
-                                    for v in self.downloader.channel_videos:
-                                        if v.get('url') == video_detail.get('url'):
-                                            v['upload_date'] = video_detail['upload_date']
-                                            break
+                            transcribed_file = transcribe_fn(video_detail)
+                            if transcribed_file:
+                                print(f"  ✅ {task_name}成功")
+                                _apply_transcribe_success(video_detail, transcribed_file)
                                 success_count += 1
-                                try:
-                                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                                except Exception:
-                                    pass
                             else:
-                                if config.TRANSCRIBE_FALLBACK_TO_AUDIO:
-                                    print(f"  ❌ 转录失败：无法下载字幕或音频转录失败")
-                                else:
-                                    print(f"  ❌ 转录失败：无法下载字幕（音频转录 fallback 已关闭）")
+                                print(f"  ❌ {fail_message}")
                                 failed_count += 1
                         except Exception as e:
-                            print(f"  ❌ 转录失败: {str(e)}")
+                            print(f"  ❌ {task_name}失败: {str(e)}")
                             failed_count += 1
-
-                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    _save_channel_list_json()
                     print(f"\n{'='*50}")
-                    print(f"转录任务完成！成功: {success_count} 个，失败: {failed_count} 个")
+                    print(f"{task_name}完成！成功: {success_count} 个，失败: {failed_count} 个")
                 finally:
-                    # 确保无论成功或异常，都在主线程刷新列表，避免 UI 冻结
                     def _refresh():
                         populate_tree()
                         try:
-                            messagebox.showinfo("转录完成", f"成功: {success_count} 个，失败: {failed_count} 个", parent=dialog)
+                            messagebox.showinfo(
+                                f"{task_name}完成",
+                                f"成功: {success_count} 个，失败: {failed_count} 个",
+                                parent=dialog,
+                            )
                         except Exception:
                             pass
+
                     dialog.after(0, _refresh)
 
-            threading.Thread(target=transcribe_task, daemon=True).start()
+            threading.Thread(target=task, daemon=True).start()
+
+        def audio_transcribe_selected():
+            _run_transcribe_batch(
+                _collect_videos_needing_transcript(require_audio=True),
+                task_name="音频转录",
+                confirm_title="确认音频转录",
+                confirm_verb="用本地音频转录",
+                empty_warning="没有可音频转录的视频（需已下载音频且尚未转录）",
+                transcribe_fn=lambda vd: self.downloader.transcribe_audio_detail(
+                    vd, self.language
+                ),
+                fail_message="音频转录失败",
+            )
+
+        def transcribe_selected():
+            _run_transcribe_batch(
+                _collect_videos_needing_transcript(require_audio=False),
+                task_name="转录",
+                confirm_title="确认转录",
+                confirm_verb="转录",
+                empty_warning="没有可转录的视频",
+                transcribe_fn=lambda vd: self.downloader.transcribe_video_detail(
+                    vd, self.language, batch_mode=True
+                ),
+                fail_message=(
+                    "转录失败：无法下载字幕或音频转录失败"
+                    if config.TRANSCRIBE_FALLBACK_TO_AUDIO
+                    else "转录失败：无法下载字幕（音频转录 fallback 已关闭）"
+                ),
+                pre_task=lambda: (
+                    self.downloader.reset_batch_transcribe_strategy(),
+                    self.downloader._check_and_update_cookies(wait_forever=False),
+                ),
+            )
 
 
         def tag_selected():
@@ -9085,6 +9327,7 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="摘要选择", command=lambda: summarize_selected(False)).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="分类选择", command=tag_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="转录选择", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(bottom_frame, text="音频转录", command=audio_transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="下载选择", command=download_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="信息更新", command=fetch_info_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="列表更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)

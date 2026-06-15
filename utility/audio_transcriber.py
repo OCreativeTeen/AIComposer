@@ -50,10 +50,18 @@ class AudioTranscriber:
             )
         return self._whisperx_engine
 
-    def transcribe_with_whisper(self, audio_path, language, min_duration, max_duration) -> List[Dict[str, Any]]:
+    def transcribe_with_whisper(
+        self,
+        audio_path,
+        language,
+        min_duration,
+        max_duration,
+        *,
+        diarize: bool,
+    ) -> List[Dict[str, Any]]:
         """
         优先使用本地 WhisperX（``utility/audio_transcriber_x.AudioTranscriberX.transcribe``：
-        对齐、可选 diarization（默认 2 人）、NLP 重切后再合并）。
+        对齐、可选 diarization、NLP 重切后再合并）。
         失败时回退到原有 HTTP API。
         """
         print(f"🔍 开始转录：{audio_path}")
@@ -83,7 +91,7 @@ class AudioTranscriber:
             segments, _out_path = wx.transcribe(
                 audio_path,
                 lang,
-                diarize=True,
+                diarize=diarize,
                 min_speakers=2,
                 max_speakers=2,
                 min_duration=float(min_duration),

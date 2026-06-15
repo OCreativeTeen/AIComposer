@@ -647,7 +647,7 @@ def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
 # 转录行为
 # =============================================================================
 # 字幕下载失败时，是否 fallback 到下载音频并用 Whisper 转录（默认关闭）
-TRANSCRIBE_FALLBACK_TO_AUDIO = False
+TRANSCRIBE_FALLBACK_TO_AUDIO = True
 
 
 # =============================================================================
