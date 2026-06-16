@@ -81,7 +81,7 @@ class AVReviewDialog:
         # Get video dimensions from workflow's ffmpeg_processor
         video_width = self.workflow.ffmpeg_processor.width
         video_height = self.workflow.ffmpeg_processor.height
-        self.transcriber = AudioTranscriber(self.workflow.pid, model_size="medium", device="cuda")
+        self.transcriber = AudioTranscriber(self.workflow.pid, model_size="small", device="cuda")
         self.llm_api = LLMApi()
         #self.speech_service = MinimaxSpeechService(self.workflow.pid)
         self.speech_service = VoiceboxService(self.workflow.pid)
@@ -1104,11 +1104,13 @@ class AVReviewDialog:
         # 使用音频转录器转录
         scene_min_length = project_manager.PROJECT_CONFIG.get('scene_min_length',9)
         audio_json = self.transcriber.transcribe_with_whisper(
-            self.source_audio_path, 
+            self.source_audio_path,
             self.workflow.language,
+            False,
+            True,
+            False,
             scene_min_length,
-            int(scene_min_length*1.5),
-            diarize=True,
+            int(scene_min_length * 1.5),
         )
 
         if not audio_json or len(audio_json) == 0:

@@ -100,6 +100,59 @@ def _story_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
     ]
 
 
+def _instruction_snippet_choices(channel_key: str) -> list[tuple[str, str]]:
+    """从频道 config 读取导向说明可插入片段（无则使用全局默认）。"""
+    return config_channel.get_instruction_snippet_choices(channel_key)
+
+
+def _append_instruction_snippet(text_widget, snippet: str) -> None:
+    snippet = (snippet or "").strip()
+    if not snippet:
+        return
+    current = (text_widget.get("1.0", tk.END) or "").rstrip()
+    new_text = f"{current}\n\n{snippet}" if current else snippet
+    text_widget.delete("1.0", tk.END)
+    text_widget.insert("1.0", new_text)
+
+
+def _build_instruction_snippet_combo(
+    parent,
+    channel_key: str,
+    instruction_tx,
+    *,
+    on_changed=None,
+) -> None:
+    """在导向说明框旁添加「插入片段」下拉，选中后追加到文本末尾（空一行）。"""
+    choices = _instruction_snippet_choices(channel_key)
+    if not choices:
+        return
+    placeholder = "— 选择片段插入 —"
+    row = ttk.Frame(parent)
+    row.pack(fill=tk.X, pady=(0, 4))
+    ttk.Label(row, text="插入片段").pack(side=tk.LEFT, padx=(0, 5))
+    combo_var = tk.StringVar(value=placeholder)
+    combo = ttk.Combobox(
+        row,
+        textvariable=combo_var,
+        values=[placeholder] + [lbl for lbl, _ in choices],
+        state="readonly",
+        width=36,
+    )
+    combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    label_to_text = {lbl: text for lbl, text in choices}
+
+    def on_select(_event=None):
+        sel = (combo_var.get() or "").strip()
+        if not sel or sel == placeholder or sel not in label_to_text:
+            return
+        _append_instruction_snippet(instruction_tx, label_to_text[sel])
+        combo_var.set(placeholder)
+        if on_changed:
+            on_changed()
+
+    combo.bind("<<ComboboxSelected>>", on_select)
+
+
 def _pick_prompt_label_from_choices(
     choices: list[tuple[str, str]], *candidates: str
 ) -> str:
@@ -3170,7 +3223,7 @@ class MediaDownloader:
         
         # 检测 JavaScript 运行时
         self.js_runtime = self._detect_js_runtime()
-        self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
+        self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
         self._cookies_session_disabled = False
         # 批量转录时由首个视频探测：None | {"mode":"caption","lang":...} | {"mode":"audio"}
         self._batch_transcribe_strategy = None
@@ -3627,9 +3680,11 @@ class MediaDownloader:
         script_json = self.transcriber.transcribe_with_whisper(
             audio_path,
             target_lang,
+            False,
+            False,
+            False,
             scene_min_length,
             int(scene_min_length * 1.5),
-            diarize=False,
         )
         if script_json:
             write_json(src_path, script_json)
@@ -3739,20 +3794,10 @@ class MediaDownloader:
         self._batch_transcribe_strategy = None
 
     def _get_caption_lang_priority(self):
-        user_lang = self.language or "en"
-        if user_lang.startswith("zh"):
-            fallbacks = ["zh", "zh-Hans", "zh-Hant"]
-        elif user_lang.startswith("en"):
-            fallbacks = ["en", "en-US", "en-GB"]
-        else:
-            fallbacks = []
-        seen = set()
-        priority = []
-        for lang in [user_lang] + fallbacks:
-            if lang not in seen:
-                seen.add(lang)
-                priority.append(lang)
-        return priority
+        """按当前频道语言只尝试一种字幕（en 频道试 en，其余一律试 zh）。"""
+        if (self.language or "zh").lower().startswith("en"):
+            return ["en"]
+        return ["zh"]
 
     def _transcribe_via_audio(self, video_detail, target_lang, *, direct_audio=False):
         """下载音频（若本地无）并用 Whisper 转录。"""
@@ -5534,10 +5579,12 @@ class MediaGUIManager:
         ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
             anchor=tk.W, pady=(0, 2)
         )
+        instruction_frm = ttk.Frame(frm)
+        instruction_frm.pack(fill=tk.X, pady=(0, 8))
         instruction_tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+            instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
         )
-        instruction_tx.pack(fill=tk.X, pady=(0, 8))
+        instruction_tx.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新，不写入剪贴板）：").pack(
             anchor=tk.W, pady=(0, 2)
@@ -5591,6 +5638,10 @@ class MediaGUIManager:
             prompt_tx.delete("1.0", tk.END)
             if prompt:
                 prompt_tx.insert("1.0", prompt)
+
+        _build_instruction_snippet_combo(
+            instruction_frm, channel_key, instruction_tx, on_changed=refresh_story_prompt
+        )
 
         if story_prompt_choices:
             prompt_combo.bind("<<ComboboxSelected>>", refresh_story_prompt)
@@ -6045,10 +6096,12 @@ class MediaGUIManager:
         ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
             anchor=tk.W, pady=(0, 2)
         )
+        instruction_frm = ttk.Frame(frm)
+        instruction_frm.pack(fill=tk.X, pady=(0, 8))
         instruction_tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+            instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
         )
-        instruction_tx.pack(fill=tk.X, pady=(0, 8))
+        instruction_tx.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
             anchor=tk.W, pady=(0, 2)
@@ -6085,6 +6138,10 @@ class MediaGUIManager:
             if prompt:
                 prompt_tx.insert("1.0", prompt)
                 _copy_text_to_clipboard(dlg, prompt)
+
+        _build_instruction_snippet_combo(
+            instruction_frm, channel_key, instruction_tx, on_changed=refresh_scene_prompt
+        )
 
         if nb_prompt_choices:
             prompt_combo.bind("<<ComboboxSelected>>", refresh_scene_prompt)

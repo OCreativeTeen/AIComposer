@@ -53,7 +53,7 @@ class MagicWorkflow:
         self.sd_processor = SDProcessor(self)
         self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid), language)
         self.llm_api = LLMApi()
-        self.transcriber = AudioTranscriber(self.pid, model_size="medium", device="cuda")
+        self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
 
         config.create_project_path(pid)
 

@@ -42,7 +42,7 @@ class AudioTranscriber:
             from utility.audio_transcriber_x import AudioTranscriberX
 
             dev = str(self.device or "cuda").lower()
-            ct = "float16" if dev.startswith("cuda") else "int8"
+            ct = "int8"
             self._whisperx_engine = AudioTranscriberX(
                 model_size=self.model_size,
                 device=self.device,
@@ -54,10 +54,11 @@ class AudioTranscriber:
         self,
         audio_path,
         language,
+        diarize: bool,
+        llm_punctuate: bool,
+        nlp_resplit: bool,
         min_duration,
         max_duration,
-        *,
-        diarize: bool,
     ) -> List[Dict[str, Any]]:
         """
         优先使用本地 WhisperX（``utility/audio_transcriber_x.AudioTranscriberX.transcribe``：
@@ -91,12 +92,13 @@ class AudioTranscriber:
             segments, _out_path = wx.transcribe(
                 audio_path,
                 lang,
-                diarize=diarize,
+                diarize,
+                llm_punctuate,
+                nlp_resplit,
                 min_speakers=2,
                 max_speakers=2,
                 min_duration=float(min_duration),
                 max_duration=float(max_duration),
-                nlp_resplit=True,
             )
             if segments:
                 print(f"✅ WhisperX 转录完成，共 {len(segments)} 个片段")

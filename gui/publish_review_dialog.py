@@ -88,7 +88,7 @@ class PublishReviewDialog:
         self.on_refresh_after_publish = on_refresh_after_publish
         self._publishing = False
 
-        self._transcriber = AudioTranscriber(media_gui.pid, "medium", "cuda")
+        self._transcriber = AudioTranscriber(media_gui.pid, "small", "cuda")
         self._voicebox = VoiceboxService(media_gui.pid)
 
         self.dlg = tk.Toplevel(parent)
@@ -415,7 +415,9 @@ class PublishReviewDialog:
                 return
             try:
                 remove_transcribe_cache_for_audio_path(audio)
-                segs = tr.transcribe_with_whisper(audio, lang, smin, smax, diarize=False)
+                segs = tr.transcribe_with_whisper(
+                    audio, lang, False, False, False, smin, smax
+                )
                 text = ". ".join(
                     (json_item.get("caption") or "").strip()
                     for json_item in segs

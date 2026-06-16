@@ -632,7 +632,7 @@ Steps:
             signature chord cadence types
             signature rhythm patterns
             signature synth/texture choices
-            signature vocal production (double, harmony stack, adlibs)
+            signature vocal production (double, harmony stack, adlibs)0
             signature transitions (risers, drum fills, key lift, half-time, etc.)
 
     (2) Produce detailed SUNO prompts on topic - {topic}, and with styles - {tags}
@@ -657,7 +657,7 @@ Steps:
                 *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
                 *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
                 *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
-                *** Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 200 seconds.
+                *** Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -699,7 +699,7 @@ Steps:
                 * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
                 * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
                 * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 200 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
@@ -757,7 +757,7 @@ Steps:
                 * Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
                 * Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
                 * The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 200 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -816,7 +816,7 @@ Steps:
                 * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
                 * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
                 * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 200 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -2488,6 +2488,55 @@ def get_channel_template_prompt_choices(
     return [
         (k, {"mode": k, "prompt": modes[k]})
         for k in ordered_keys
+    ]
+
+
+INSTRUCTION_SNIPPET_CHOICES = [
+    (
+        "Emotional duet",
+        "Create an emotional male/female duet with natural vocal chemistry, featuring alternating lines, call-and-response exchanges, expressive harmonies, and conversational interactions that feel like a genuine dialogue.",
+    ),
+    (
+        "Spoken → sung arc",
+        "Spoken intro → gradual transition into singing → emotional half-spoken, half-sung storytelling → fade back into speech near the ending → finish with one short fully sung line. Intimate, vulnerable, tearful, and deeply expressive.",
+    ),
+    (
+        "Unplugged → band climax",
+        "Live unplugged acoustic setup, starting with raw and hesitant solo vocals accompanied by a single guitar. Gradual tempo increase and vocal volume swell. Voice cracks slightly with raw emotion during the bridge. Explosive, high-energy emotional climax with a full band dropping in, followed by a sudden dead silence. Ends with an exhausted, breathy sigh.",
+    ),
+    (
+        "Theatrical rapid duet",
+        "Fast-paced theatrical duet featuring rapid-fire overlapping vocals and interruptions. Tempo speeds up as tension builds, voices competing in discordant harmonies. Sudden tempo drop into a slow, heartbreaking unison harmony where both voices finally align. High dramatic tension, conversational pacing, resolving into a gentle, melancholic outro.",
+    ),
+    (
+        "A cappella → choir swell",
+        "Cinematic and ethereal vocal opening, starting with a fragile, isolated a cappella melody. Slowly layering intricate vocal harmonies, adding one voice at a time. Transitions into a massive, echoing choir-like crescendo with sweeping orchestrations. Ends abruptly, leaving only a single, distant falsetto echo fading into the void.",
+    ),
+    (
+        "Intimate R&B falsetto",
+        "Extremely close-mic, intimate vocal delivery with audible breathing and subtle rhythmic whispers driving the beat. Transitions into a smooth, buttery R&B falsetto. Minimal instruments, relying purely on vocal percussion and deep, layered humming. Warm, seductive, and hypnotic.",
+    ),
+    (
+        "Lo-fi ↔ studio crossfade",
+        "Muffled, lo-fi vintage radio vocal intro, sounding like a distant memory. Suddenly crossfades into crystal-clear, modern studio-quality singing. The track alternates between the distant, echoing past (lo-fi vocals) and the painful present (crisp, dry vocals). Bittersweet, nostalgic, with a crying instrument matching the vocal melody.",
+    ),
+    (
+        "Erratic → soaring collapse",
+        "Unstable and erratic vocal performance, shifting unexpectedly between sweet melodic singing and manic, frantic half-spoken words. Dissonant background harmonies sliding slightly off-pitch. High psychological tension, chaotic structure, transitioning into a desperate, soaring high note before collapsing into a soft, trembling whisper.",
+    ),
+]
+
+
+def get_instruction_snippet_choices(channel_id_or_key) -> list[tuple[str, str]]:
+    """导向说明可插入片段；频道可设 ``instruction_snippet_choices`` 覆盖默认列表。"""
+    cfg = get_channel_config(channel_id_or_key) or {}
+    raw = cfg.get("instruction_snippet_choices")
+    if raw is None:
+        raw = INSTRUCTION_SNIPPET_CHOICES
+    return [
+        (lbl, text)
+        for lbl, text in (raw or [])
+        if (text or "").strip()
     ]
 
 

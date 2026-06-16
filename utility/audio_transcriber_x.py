@@ -115,9 +115,9 @@ class AudioTranscriberX:
 
     def __init__(
         self,
-        model_size: str = "medium",
+        model_size: str = "small",
         device: str = "cuda",
-        compute_type: str = "float16",
+        compute_type: str = "int8",
         *,
         hf_token: Optional[str] = None,
         batch_size: int = 16,
@@ -153,6 +153,28 @@ class AudioTranscriberX:
         self._diarize_pipeline = None
         self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
 
+    def _release_gpu_memory(self) -> None:
+        """释放单次转写占用的 GPU 显存（含对齐模型缓存），便于连续批量转写。"""
+        import gc
+
+        for lang in list(self._align_cache):
+            model_a, metadata = self._align_cache.pop(lang)
+            del model_a, metadata
+
+        for _ in range(2):
+            gc.collect()
+
+        if not str(self.device).lower().startswith("cuda"):
+            return
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # 公共入口
     # ------------------------------------------------------------------
@@ -160,14 +182,14 @@ class AudioTranscriberX:
         self,
         audio_path: str,
         language: str,
+        diarize: bool,
+        llm_punctuate: bool,
+        nlp_resplit: bool,
         *,
-        diarize: bool = True,
         min_speakers: Optional[int] = 2,
         max_speakers: Optional[int] = 2,
         min_duration: float = _DEFAULT_MIN_SENTENCE_DURATION,
         max_duration: float = _DEFAULT_MAX_SENTENCE_DURATION,
-        nlp_resplit: bool = True,
-        llm_punctuate: bool = True,
     ) -> Tuple[List[Dict[str, Any]], str]:
         """转写 → 对齐 → 可选 diarize → NLP 重切 → 合并/规整 → 可选 LLM 补标点 → 落盘 JSON。
 
@@ -233,6 +255,8 @@ class AudioTranscriberX:
             return srt_segments, transcribe_file
         except Exception as e:  # noqa: BLE001 - 顶层兜底，保持与 simple 版同样的接口
             print(f"[ERROR] 转录失败: {type(e).__name__}: {e}")
+        finally:
+            self._release_gpu_memory()
         return [], ""
 
     # ------------------------------------------------------------------
@@ -557,8 +581,8 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--device", default="cuda", help="设备：cuda / cpu (默认 cuda)")
     p.add_argument(
         "--compute-type",
-        default="float16",
-        help="cuda 推荐 float16；cpu 推荐 int8",
+        default="int8",
+        help="cuda 推荐 int8；cpu 推荐 int8",
     )
     p.add_argument("--diarize", action="store_true", help="启用 pyannote diarization（需 HF token）")
     p.add_argument(
@@ -609,13 +633,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     segments, out = transcriber.transcribe(
         args.audio_path,
         args.language,
-        diarize=args.diarize,
+        args.diarize,
+        not args.no_llm_punctuate,
+        not args.no_nlp_resplit,
         min_speakers=args.min_speakers,
         max_speakers=args.max_speakers,
         min_duration=args.min_duration,
         max_duration=args.max_duration,
-        nlp_resplit=not args.no_nlp_resplit,
-        llm_punctuate=not args.no_llm_punctuate,
     )
     if not out:
         print("❌ 失败")
