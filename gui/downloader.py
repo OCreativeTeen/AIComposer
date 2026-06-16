@@ -1388,6 +1388,35 @@ def _treeview_item_tags_safe(tree, item):
     return ()
 
 
+def _configure_channel_list_treeview(tree: ttk.Treeview) -> None:
+    """频道视频列表：固定列不拉伸（默认 stretch=True 会在宽窗口撑出列间空白）。"""
+    for col, width, anchor in (
+        ("#0", 48, "center"),
+        ("views", 72, "e"),
+        ("duration", 56, "center"),
+        ("upload_date", 88, "center"),
+        ("status", 72, "center"),
+        ("analyzed", 92, "center"),
+        ("topic_category", 130, "w"),
+        ("topic_subtype", 110, "w"),
+        ("tags", 140, "w"),
+        ("mark", 88, "w"),
+    ):
+        tree.column(col, width=width, minwidth=width, stretch=False, anchor=anchor)
+    tree.column("title", width=420, minwidth=200, stretch=True, anchor="w")
+
+
+def _configure_video_pick_treeview(tree: ttk.Treeview) -> None:
+    """新视频选择弹窗：仅标题列拉伸。"""
+    for col, width, anchor in (
+        ("views", 72, "e"),
+        ("duration", 56, "center"),
+        ("upload_date", 88, "center"),
+    ):
+        tree.column(col, width=width, minwidth=width, stretch=False, anchor=anchor)
+    tree.column("title", width=450, minwidth=200, stretch=True, anchor="w")
+
+
 def _channel_list_dir_for_media_downloader(youtube_dir: str) -> str:
     """若 ``youtube_dir`` 为 ``<频道>/Download``，列表目录为 ``<频道>/list``；否则（如项目路径）为 ``<youtube_dir>/list``。"""
     norm = os.path.normpath(youtube_dir)
@@ -7143,18 +7172,8 @@ class MediaGUIManager:
         tree.heading("topic_subtype", text="主题子类型")
         tree.heading("tags", text="标签")
         tree.heading("mark", text="关联ID")
-        
-        tree.column("#0", width=10, anchor="center")
-        tree.column("title", width=500, anchor="w")
-        tree.column("views", width=20, anchor="e")
-        tree.column("duration", width=20, anchor="center")
-        tree.column("upload_date", width=30, anchor="center")
-        tree.column("status", width=70, anchor="center")
-        tree.column("analyzed", width=70, anchor="center")
-        tree.column("topic_category", width=100, anchor="w")
-        tree.column("topic_subtype", width=100, anchor="w")
-        tree.column("tags", width=120, anchor="w")
-        tree.column("mark", width=120, anchor="w")
+
+        _configure_channel_list_treeview(tree)
         
 
         def _scene_content_nonempty(v):
@@ -8931,10 +8950,7 @@ class MediaGUIManager:
                 new_tree.heading("views", text="观看次数")
                 new_tree.heading("duration", text="时长")
                 new_tree.heading("upload_date", text="上传日期")
-                new_tree.column("title", width=450)
-                new_tree.column("views", width=100)
-                new_tree.column("duration", width=80)
-                new_tree.column("upload_date", width=100)
+                _configure_video_pick_treeview(new_tree)
 
                 def fmt_duration(sec):
                     if not sec:
