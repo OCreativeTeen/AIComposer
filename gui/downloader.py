@@ -1391,19 +1391,19 @@ def _treeview_item_tags_safe(tree, item):
 def _configure_channel_list_treeview(tree: ttk.Treeview) -> None:
     """频道视频列表：固定列不拉伸（默认 stretch=True 会在宽窗口撑出列间空白）。"""
     for col, width, anchor in (
-        ("#0", 48, "center"),
-        ("views", 72, "e"),
-        ("duration", 56, "center"),
-        ("upload_date", 88, "center"),
-        ("status", 72, "center"),
-        ("analyzed", 92, "center"),
-        ("topic_category", 130, "w"),
-        ("topic_subtype", 110, "w"),
-        ("tags", 140, "w"),
-        ("mark", 88, "w"),
+        ("#0", 46, "center"),
+        ("views", 66, "e"),
+        ("duration", 50, "center"),
+        ("upload_date", 86, "center"),
+        ("status", 150, "center"),
+        ("analyzed", 100, "center"),
+        ("topic_category", 200, "w"),
+        ("topic_subtype", 200, "w"),
+        ("tags", 200, "w"),
+        ("mark", 250, "w"),
     ):
         tree.column(col, width=width, minwidth=width, stretch=False, anchor=anchor)
-    tree.column("title", width=420, minwidth=200, stretch=True, anchor="w")
+    tree.column("title", width=350, minwidth=200, stretch=True, anchor="w")
 
 
 def _configure_video_pick_treeview(tree: ttk.Treeview) -> None:
