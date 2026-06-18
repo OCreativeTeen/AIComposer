@@ -232,22 +232,8 @@ Summarize the track's creative DNA as reusable production rules.
 ## Humanization Rules
 - Essential imperfections, phrasing habits, breathing styles, and emotional details required to preserve realism.
 
-# Similarity Scorecard
 
-Rate from 1–10:
-
-- Emotional Intensity
-- Intimacy
-- Vulnerability
-- Cinematic Scale
-- Vocal Expressiveness
-- Production Density
-- Melodic Memorability
-- Lyrical Complexity
-- Dynamic Contrast
-- Replay Value
-
-Output the entire report in {language}.
+Output the entire report in {language},  try to make the output more concise and focused (less than 1500 characters).
 """
 
 
@@ -657,7 +643,7 @@ Steps:
                 *** Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
                 *** Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
                 *** The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
-                *** Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 170-190 seconds.
+                *** Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -699,7 +685,7 @@ Steps:
                 * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
                 * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
                 * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 170-190 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
  
@@ -757,7 +743,7 @@ Steps:
                 * Dynamic Rhyme Evolution (Avoid Monotony): Do NOT use the same rhyme sound throughout the entire song. Change the rhyme sound dynamically between different sections (Verse, Chorus, Bridge) or after a few lines to match the shifts in musical rhythm, tempo, and emotional atmosphere. Introduce contrasting rhymes when the song's vibe shifts.
                 * Natural & Purposeful Phrasing: The primary goal of rhyming is to make line endings and section transitions feel smooth, satisfying, and organic—never abrupt. Do not overdo it ("too much" forced rhyming). If a line flows better without a strict rhyme, prioritize the natural flow of storytelling.
                 * The Rhyming Paradox: The rhymes should feel tight and rhythmic when they hit, YET sound completely effortless and unforced within the natural, casual flow of the story.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 170-190 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
@@ -816,7 +802,7 @@ Steps:
                 * Dynamic & Structural Rhyming: Do NOT use a single rhyme sound throughout. The rhyme scheme must evolve organically, shifting with the song's musical DNA—changing to match rhythmic shifts, melodic variations, and shifts in atmospheric tension. Introduce sharply contrasting rhymes to highlight structural transitions (e.g., moving from Verse to Chorus).
                 * Elegant & Natural Conclusions: The primary goal of the rhyme scheme is to ensure that line endings—especially the final words of a section—land smoothly and beautifully, never abruptly. Do not over-rhyme or force it ("too much"). Prioritize the natural, gorgeous flow of the poetry over mechanical rhyming. 
                 * The Poetic Rhyming Synergy: When rhymes are used, they must carry symbolic weight and artistic beauty. They should feel like an inevitable piece of classic poetry—flawlessly matching the emotional vibe without feeling cheap or overly obvious. The rhymes should serve the dreamy illusion, not distract from it.
-                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 170-190 seconds.
+                * Lyrics length: consider the speed of the song, the lyrics (include repeat parts), should make the song around 180-200 seconds.
 
             ** then, give the title of the song, which is a concise and evocative title that captures the essence of the song
 """ + MV_CONTENT_GUIDE
