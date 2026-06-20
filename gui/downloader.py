@@ -231,7 +231,7 @@ def _default_story_editor_prompt_label(channel_key: str) -> str:
             picked = _pick_story_prompt_label(channel_key, want)
             if picked:
                 return picked
-    for want in ("Mini Story", "Short Story", "Long Story", "Medium Story"):
+    for want in ("Short Story", "Mini Story", "Long Story", "2 Step Story", "3 Step Story", "4 Step Story"):
         picked = _pick_story_prompt_label(channel_key, want)
         if picked:
             return picked
@@ -5767,6 +5767,7 @@ class MediaGUIManager:
             )
 
         _lang_lbl = config.llm_language_label(self.language)
+        _story_nb_copy_cycle: dict[str, int] = {"slideshow": -1, "video": -1}
 
         def on_copy_slideshow_instruction():
             self._copy_notebooklm_story_gen_instruction(
@@ -5776,6 +5777,7 @@ class MediaGUIManager:
                 nb_mode="slideshow",
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
+                cycle_holder=_story_nb_copy_cycle,
             )
 
         def on_copy_video_instruction():
@@ -5786,6 +5788,7 @@ class MediaGUIManager:
                 nb_mode="video",
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
+                cycle_holder=_story_nb_copy_cycle,
             )
 
         def on_confirm():
@@ -5831,12 +5834,12 @@ class MediaGUIManager:
         concise_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"Slideshow 指令 ({_lang_lbl})",
+            text=f"Story to Slideshow - ({_lang_lbl})",
             command=on_copy_slideshow_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"Video 指令 ({_lang_lbl})",
+            text=f"Story to Video - ({_lang_lbl})",
             command=on_copy_video_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
@@ -6034,8 +6037,13 @@ class MediaGUIManager:
         nb_mode: str,
         main_character: str = "",
         channel_path: str = "",
+        cycle_holder: dict | None = None,
     ) -> bool:
-        """Story JSON 首条 → NotebookLM slideshow / video 指令（不含 Story 生成提示）。"""
+        """Story JSON → NotebookLM slideshow / video 指令（不含 Story 生成提示）。
+
+        ``cycle_holder`` 非空时按按钮循环拷贝：全部 array → 第 1 条 → … → 第 N 条 → 再回到全部。
+        Slideshow / Video 各自独立计数。
+        """
         entries = _parse_story_field(story_raw)
         if not entries:
             messagebox.showwarning(
@@ -6044,11 +6052,29 @@ class MediaGUIManager:
                 parent=parent,
             )
             return False
-        first = entries[0]
+
+        mode_title = "Slideshow" if nb_mode == "slideshow" else "Video"
+        status_msg = ""
+        if cycle_holder is not None:
+            idx = cycle_holder.get(nb_mode, -1)
+            if idx < 0:
+                scene_content = entries
+                status_msg = f"已拷贝全部 {len(entries)} 条 story"
+                cycle_holder[nb_mode] = 0
+            else:
+                scene_content = [entries[idx]]
+                status_msg = (
+                    f"已拷贝第 {idx + 1} 条 story（共 {len(entries)} 条）"
+                )
+                next_idx = idx + 1
+                cycle_holder[nb_mode] = -1 if next_idx >= len(entries) else next_idx
+        else:
+            scene_content = [entries[0]]
+
         clip_body = config_prompt.build_notebooklm_gen_instruction_clipbody(
             mode=nb_mode,
             video_detail=video_detail,
-            scene_content=[first],
+            scene_content=scene_content,
             visual_style=project_manager.LAST_VISUAL_STYLE,
             main_character=(main_character or "").strip(),
             host_narrator=(project_manager.LAST_NARRATOR or "").strip(),
@@ -6062,6 +6088,8 @@ class MediaGUIManager:
         _copy_text_to_clipboard(parent, clip_body)
         if clip_body and (channel_path or "").strip():
             channel_clipboard_append_item(channel_path, clip_body, clip_tag)
+        if status_msg:
+            show_auto_close_popup(parent, f"Story to {mode_title}", status_msg)
         return bool(clip_body)
 
     def _copy_notebooklm_scene_gen_instruction(

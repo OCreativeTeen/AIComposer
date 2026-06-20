@@ -388,7 +388,7 @@ def build_notebooklm_gen_instruction_clipbody(
         main_character = ""
 
     if not host_narrator or host_narrator==HARRATOR_DISPLAY_OPTIONS[-1]:
-        voice = main_character + " ~ Story-character performs and narrates"
+        voice = main_character + " ~ Story-character (protagonist) performs, reflection, speak & interaction (only the most key point,  not read words in image)"
         video = (
                 "** No Host (Narrator). Use the Story character as talking-avatar to speak about the content of scene."
             )        

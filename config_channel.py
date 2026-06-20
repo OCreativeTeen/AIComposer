@@ -1028,7 +1028,7 @@ You are a psychological counselor and master of high-empathy storytelling.
 
     **Objective:
         * Translate the provided [PSYCHOLOGICAL DNA] into a grounded, visceral narrative. The goal is to evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
-        * Length: ###LENGTH###
+        * Length: the whole story has ###STEP### scenes ;  each scene' content is about ###LENGTH### characters.
     
     **1. Narrative Arc & Scope**
         Focus on a single relationship, pattern, or defining event. Do not force rigid chapters; follow the emotional logic.
@@ -1047,20 +1047,21 @@ You are a psychological counselor and master of high-empathy storytelling.
         *   NO therapy speeches, counseling notes, or characters analyzing each other's psychology.
         *   NO summarizing the "lesson," "moral," or the psychological insight at the end. Let the story carry the truth on its own.
 
-## STEP3 - REFLECTIVE OUTPUT (as Json object)
+## STEP3 - REFLECTIVE OUTPUT (as Json structure)
     * (1) **Title**: poetic, evocative. 
     * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance.
     * (3) **Story**: the story from STEP2.
     * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
 
-    like this:
+    like this (the story has ###STEP### scene (###STEP### json objects) :
+    [
         {{
             "title": "A poetic title. In {language}.",
             "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
-            "story": "the story from STEP2. ###LENGTH###. In {language}.",
+            "story": "the story scene from STEP2. about ###LENGTH### characters. In {language}.",
             "speaking": "A poignant 1st-person speaking. In {language}."
         }}
-
+    ]
 --------------------------------------------------
 INPUT
 --------------------------------------------------
@@ -1074,14 +1075,13 @@ INPUT
     {content}
 """
 
+COUNSELING_STORY_2STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "2")
+COUNSELING_STORY_3STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "3")
+COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "4")
 
-COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###", "1000–1500 words")
-
-COUNSELING_STORY_MEDIUM = COUNSELING_STORY_CORE.replace("###LENGTH###", "600–1000 words")
-
-COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–600 words")
-
-COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300 words")
+COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###", "1000–1500").replace("###STEP###", "1")
+COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
+COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###", "250–500").replace("###STEP###", "1")
 
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
@@ -2557,10 +2557,12 @@ CHANNEL_CONFIG = {
         ],
 
         "story_prompt_choices": [
-            ("Long Story", COUNSELING_STORY_LONG),
-            ("Medium Story", COUNSELING_STORY_MEDIUM),
             ("Short Story", COUNSELING_STORY_SHORT),
             ("Mini Story", COUNSELING_STORY_MINI),
+            ("Long Story", COUNSELING_STORY_LONG),
+            ("2 Step Story", COUNSELING_STORY_2STEP),
+            ("3 Step Story", COUNSELING_STORY_3STEP),
+            ("4 Step Story", COUNSELING_STORY_4STEP)
         ],
 
         "channel_prompt": {
@@ -2640,10 +2642,12 @@ CHANNEL_CONFIG = {
             ("Talk", COUNSELING_TALK_SCENES)
         ],
         "story_prompt_choices": [
-            ("Long Story", COUNSELING_STORY_LONG),
-            ("Medium Story", COUNSELING_STORY_MEDIUM),
             ("Short Story", COUNSELING_STORY_SHORT),
             ("Mini Story", COUNSELING_STORY_MINI),
+            ("Long Story", COUNSELING_STORY_LONG),
+            ("2 Step Story", COUNSELING_STORY_2STEP),
+            ("3 Step Story", COUNSELING_STORY_3STEP),
+            ("4 Step Story", COUNSELING_STORY_4STEP)
         ],
         "channel_prompt": {
             "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
