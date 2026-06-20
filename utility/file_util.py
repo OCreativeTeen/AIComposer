@@ -496,3 +496,63 @@ def parse_json(content_string: str, expect_list: bool = False) -> Union[Dict, Li
     preview = content_string[:500] if len(content_string) > 500 else content_string
     print(f"JSON解析失败，字符串预览：\n{preview}")
     raise Exception(f"无法从响应中提取有效的JSON。原始长度: {len(content_string)} 字符")
+
+
+AUTO_CLOSE_POPUP_MS = 3000
+
+
+def show_auto_close_popup(
+    parent,
+    title: str,
+    message: str,
+    *,
+    kind: str = "info",
+    duration_ms: int = AUTO_CLOSE_POPUP_MS,
+) -> None:
+    """短时提示框：不阻塞主界面，若干毫秒后自动关闭。"""
+    import tkinter as tk
+    import tkinter.ttk as ttk
+
+    try:
+        if parent is None or not parent.winfo_exists():
+            return
+    except tk.TclError:
+        return
+
+    win = tk.Toplevel(parent)
+    win.title(title)
+    win.transient(parent)
+    win.resizable(False, False)
+
+    pad = ttk.Frame(win, padding=(20, 16, 20, 14))
+    pad.pack(fill=tk.BOTH, expand=True)
+
+    title_fg = "#c62828" if kind == "error" else None
+    heading = ttk.Label(
+        pad,
+        text=title,
+        font=("", 10, "bold"),
+        **({"foreground": title_fg} if title_fg else {}),
+    )
+    heading.pack(anchor=tk.W, pady=(0, 8))
+
+    ttk.Label(pad, text=message, justify=tk.LEFT, wraplength=480).pack(anchor=tk.W)
+
+    win.update_idletasks()
+    px = parent.winfo_rootx()
+    py = parent.winfo_rooty()
+    pw = parent.winfo_width()
+    ph = parent.winfo_height()
+    ww = win.winfo_width()
+    wh = win.winfo_height()
+    win.geometry(f"+{px + max(0, (pw - ww) // 2)}+{py + max(0, (ph - wh) // 2)}")
+    win.lift()
+
+    def _close():
+        try:
+            if win.winfo_exists():
+                win.destroy()
+        except tk.TclError:
+            pass
+
+    win.after(duration_ms, _close)

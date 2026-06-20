@@ -32,6 +32,7 @@ from utility.file_util import (
     parse_json,
     make_safe_file_name,
     safe_clipboard_json_copy,
+    show_auto_close_popup,
 )
 from gui.choice_dialog import askchoice
 from gui.publish_metadata_dialog import (
@@ -603,6 +604,19 @@ def _dnd_paths_splitlist(master_widget, raw) -> list:
         return []
 
 
+def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
+    """拖放路径列表（保持 Explorer 给出的先后顺序）。"""
+    out: list[str] = []
+    for raw_path in _dnd_paths_splitlist(master_widget, raw):
+        p = (raw_path or "").strip()
+        if p.startswith("{") and p.endswith("}"):
+            p = p[1:-1]
+        p = os.path.normpath(p)
+        if os.path.isfile(p):
+            out.append(p)
+    return out
+
+
 def _tkinter_dnd_root_capable(widget) -> bool:
     """文件拖放需要应用根为 ``TkinterDnD.Tk``（纯 ``tk.Tk`` 会显示禁止拖放）。"""
     if not _TK_DND_AVAILABLE or _TKINTER_DND_TK is None or widget is None:
@@ -616,7 +630,7 @@ def _tkinter_dnd_root_capable(widget) -> bool:
 def _register_summary_gen_media_drop_targets(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """注册摘要窗拖放：``.mp4`` 加水印成片；图片转 webp 封面（同 ``gen_video/<id>.webp``）。"""
+    """注册摘要窗拖放：``.mp4``（可多段按拖放顺序拼接）加水印成片；图片转 webp 封面。"""
     if not (_TK_DND_AVAILABLE and summary_window):
         return
     if not callable(getattr(summary_window, "drop_target_register", None)):
@@ -693,32 +707,25 @@ def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
     if mgr is None or not isinstance(vd, dict):
         return
     master = getattr(event, "widget", None) or summary_window
-    paths = _dnd_paths_splitlist(master, getattr(event, "data", None))
-    mp4_in = None
+    paths = _dnd_normalize_file_paths(master, getattr(event, "data", None))
+    mp4_paths: list[str] = []
     image_in = None
-    for raw in paths:
-        p = (raw or "").strip()
-        if p.startswith("{") and p.endswith("}"):
-            p = p[1:-1]
-        p = os.path.normpath(p)
-        if not os.path.isfile(p):
-            continue
+    for p in paths:
         low = p.lower()
         if low.endswith(".mp4"):
-            mp4_in = p
-            break
-        if _is_summary_image_file_path(p) and image_in is None:
+            mp4_paths.append(p)
+        elif _is_summary_image_file_path(p) and image_in is None:
             image_in = p
-    if mp4_in:
-        _on_summary_mp4_watermark_drop(event, summary_window, mp4_path=mp4_in)
+    if mp4_paths:
+        _on_summary_mp4_watermark_drop(event, summary_window, mp4_paths=mp4_paths)
     elif image_in:
         _start_summary_cover_webp_save(image_in, summary_window, ctx)
     else:
         try:
-            messagebox.showinfo(
+            show_auto_close_popup(
+                summary_window,
                 "拖放",
-                "请拖入单个 .mp4（加水印成片）或图片（PNG/JPEG/WebP 等，加水印后存为 gen_video/<id>.webp）。",
-                parent=summary_window,
+                "请拖入 .mp4（可多段，按拖放顺序拼接后加水印成片）或图片（PNG/JPEG/WebP 等，加水印后存为 gen_video/<id>.webp）。",
             )
         except Exception:
             pass
@@ -1214,7 +1221,8 @@ def _start_summary_cover_webp_save(
                 except Exception:
                     pass
             if out_ok and analyze_applied:
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    par,
                     "封面与分析已保存",
                     f"已写入 analyzed_content"
                     + (
@@ -1223,17 +1231,17 @@ def _start_summary_cover_webp_save(
                         else ""
                     )
                     + f"，并保存 WebP 封面：\n{out_ok}",
-                    parent=par,
                 )
             elif out_ok and had_analysis:
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    par,
                     "封面已保存",
                     f"已加水印并保存为 WebP：\n{out_ok}\n\n"
                     "（已取消写入图片分析，analyzed_content / 项目名未改动）",
-                    parent=par,
                 )
             elif out_ok:
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    par,
                     "封面已保存",
                     f"已加水印并保存为 WebP：\n{out_ok}\n\n"
                     + (
@@ -1241,16 +1249,15 @@ def _start_summary_cover_webp_save(
                         if err_msg
                         else "（LLM 分析未返回有效结果）"
                     ),
-                    parent=par,
                 )
             elif analyze_applied:
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    par,
                     "分析已保存",
                     "已写入本条 analyzed_content（封面 WebP 保存失败）。",
-                    parent=par,
                 )
             elif err_msg and not out_ok:
-                messagebox.showerror("保存失败", err_msg, parent=par)
+                show_auto_close_popup(par, "保存失败", err_msg, kind="error")
 
         root.after(0, _done_ui)
 
@@ -1258,7 +1265,11 @@ def _start_summary_cover_webp_save(
 
 
 def _on_summary_mp4_watermark_drop(
-    event, summary_window: tk.Toplevel, *, mp4_path: str | None = None
+    event,
+    summary_window: tk.Toplevel,
+    *,
+    mp4_path: str | None = None,
+    mp4_paths: list[str] | None = None,
 ):
     ctx = getattr(summary_window, "_summary_drop_ctx", None)
     if not isinstance(ctx, dict):
@@ -1267,21 +1278,26 @@ def _on_summary_mp4_watermark_drop(
     vd = ctx.get("vd")
     if mgr is None or not isinstance(vd, dict):
         return
-    mp4_in = (mp4_path or "").strip()
-    if not mp4_in:
+
+    paths: list[str] = []
+    if mp4_paths:
+        paths = [
+            p for p in mp4_paths
+            if (p or "").strip() and os.path.isfile(p) and p.lower().endswith(".mp4")
+        ]
+    elif (mp4_path or "").strip():
+        p = os.path.normpath(mp4_path.strip())
+        if os.path.isfile(p) and p.lower().endswith(".mp4"):
+            paths = [p]
+    if not paths:
         master = getattr(event, "widget", None) or summary_window
-        paths = _dnd_paths_splitlist(master, getattr(event, "data", None))
-        for raw in paths:
-            p = (raw or "").strip()
-            if p.startswith("{") and p.endswith("}"):
-                p = p[1:-1]
-            p = os.path.normpath(p)
-            if os.path.isfile(p) and p.lower().endswith(".mp4"):
-                mp4_in = p
-                break
-    if not mp4_in:
+        paths = [
+            p for p in _dnd_normalize_file_paths(master, getattr(event, "data", None))
+            if p.lower().endswith(".mp4")
+        ]
+    if not paths:
         try:
-            messagebox.showinfo("拖放", "请拖入单个 .mp4 文件。", parent=summary_window)
+            show_auto_close_popup(summary_window, "拖放", "请拖入 .mp4 文件。")
         except Exception:
             pass
         return
@@ -1299,16 +1315,26 @@ def _on_summary_mp4_watermark_drop(
     dest_name = _gen_video_watermark_dest_filename(vd)
     pid = getattr(mgr, "pid", "") or "yt_wm"
     lang = getattr(mgr, "language", "") or "zh"
+    n_clips = len(paths)
 
     def _worker():
         out_ok = ""
         err_msg = ""
         tmp = ""
+        concat_tmp = ""
         try:
             os.makedirs(gen_dir, exist_ok=True)
-            tmp = config.get_temp_file(pid, "mp4")
             ff = FfmpegProcessor(pid, lang)
-            ok = ff.watermark_clip_with_preprocess(mp4_in, tmp, wm_path, wm_opts or {})
+            if n_clips == 1:
+                source = paths[0]
+            else:
+                source = ff.concat_videos(paths, True)
+                concat_tmp = source or ""
+                if not source:
+                    err_msg = f"拼接 {n_clips} 个视频失败。"
+                    return
+            tmp = config.get_temp_file(pid, "mp4")
+            ok = ff.watermark_clip_with_preprocess(source, tmp, wm_path, wm_opts or {})
             if not ok:
                 err_msg = "FFmpeg 叠加水印失败。"
                 if tmp:
@@ -1324,6 +1350,12 @@ def _on_summary_mp4_watermark_drop(
             if tmp:
                 try:
                     safe_remove(tmp)
+                except Exception:
+                    pass
+        finally:
+            if concat_tmp:
+                try:
+                    safe_remove(concat_tmp)
                 except Exception:
                     pass
 
@@ -1369,9 +1401,13 @@ def _on_summary_mp4_watermark_drop(
                         rfn_feat()
                     except Exception:
                         pass
-                messagebox.showinfo("已保存", f"已加水印：\n{out_ok}", parent=par)
+                if n_clips > 1:
+                    msg = f"已按拖放顺序拼接 {n_clips} 段并加水印：\n{out_ok}"
+                else:
+                    msg = f"已加水印：\n{out_ok}"
+                show_auto_close_popup(par, "已保存", msg)
             elif err_msg:
-                messagebox.showerror("加水印失败", err_msg, parent=par)
+                show_auto_close_popup(par, "加水印失败", err_msg, kind="error")
 
         root.after(0, _done_ui)
 
@@ -1702,10 +1738,10 @@ def ask_cross_channel_clipboard_pick(
         entries.append((key, parsed, content))
 
     if not choices:
-        messagebox.showinfo(
+        show_auto_close_popup(
+            parent,
             "全频道剪贴板",
             f"无可用条目。\n文件: {_program_clipboard_file()}",
-            parent=parent,
         )
         return None
 
@@ -2488,14 +2524,14 @@ def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
-        messagebox.showerror("无法启动魔法工作流", f"找不到工作流脚本：\n{script}", parent=parent)
+        show_auto_close_popup(parent, "无法启动魔法工作流", f"找不到工作流脚本：\n{script}", kind="error")
         return False
     cmd = [sys.executable, script, "--open-pid", pid]
     try:
         subprocess.Popen(cmd, cwd=repo_root)
         return True
     except Exception as e:
-        messagebox.showerror("无法启动魔法工作流", str(e), parent=parent)
+        show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
 
 
@@ -2507,14 +2543,14 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
-        messagebox.showerror("无法启动魔法工作流", f"找不到工作流脚本：\n{script}", parent=parent)
+        show_auto_close_popup(parent, "无法启动魔法工作流", f"找不到工作流脚本：\n{script}", kind="error")
         return False
     cmd = [sys.executable, script, "--open-from-list-json", os.path.normpath(list_json_path), str(int(index))]
     try:
         subprocess.Popen(cmd, cwd=repo_root)
         return True
     except Exception as e:
-        messagebox.showerror("无法启动魔法工作流", str(e), parent=parent)
+        show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。
@@ -2699,7 +2735,7 @@ def _copy_image_file_to_clipboard(parent, image_path: str) -> bool:
         )
         return False
     except Exception as exc:
-        messagebox.showerror("复制失败", str(exc), parent=parent)
+        show_auto_close_popup(parent, "复制失败", str(exc), kind="error")
         return False
 
 
@@ -3126,14 +3162,14 @@ def ask_publish_schedule_dialog(parent, mp4_path_hint=None, dialog_title="上传
             try:
                 y, mo, da = map(int, dstr.split("-"))
             except ValueError:
-                messagebox.showerror("日期错误", "无法解析日历日期（需 yyyy-mm-dd）。", parent=dlg)
+                show_auto_close_popup(dlg, "日期错误", "无法解析日历日期（需 yyyy-mm-dd）。", kind="error")
                 return
         else:
             y, mo, da = y_var.get(), m_var.get(), d_var.get()
         try:
             dt = datetime(y, mo, da, h_var.get(), min_var.get(), 0, tzinfo=local_tz)
         except ValueError as e:
-            messagebox.showerror("日期错误", str(e), parent=dlg)
+            show_auto_close_popup(dlg, "日期错误", str(e), kind="error")
             return
         min_future = datetime.now(local_tz) + timedelta(minutes=2)
         if dt <= min_future:
@@ -4875,10 +4911,10 @@ class MediaGUIManager:
         try:
             channel_name, channel_url = self.downloader.fetch_channel_info_from_url(url)
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("错误", f"解析链接失败: {e}", parent=self.root))
+            self.root.after(0, lambda e=e: show_auto_close_popup(self.root, "错误", f"解析链接失败: {e}", kind="error"))
             return None
         if not channel_name:
-            self.root.after(0, lambda: messagebox.showerror("错误", "无法解析频道名称", parent=self.root))
+            self.root.after(0, lambda: show_auto_close_popup(self.root, "错误", "无法解析频道名称", kind="error"))
             return None
         new_name = simpledialog.askstring("创建新频道", "频道名称（可修改）:", initialvalue=channel_name, parent=self.root)
         if not new_name or not new_name.strip():
@@ -5263,7 +5299,7 @@ class MediaGUIManager:
                 if on_idle:
                     on_idle()
                 if err_msg:
-                    messagebox.showerror("生成失败", err_msg, parent=parent)
+                    show_auto_close_popup(parent, "生成失败", err_msg, kind="error")
                     return
                 if not scenes:
                     messagebox.showwarning(
@@ -5291,10 +5327,10 @@ class MediaGUIManager:
                         on_saved()
                     except Exception:
                         pass
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    parent,
                     "已生成场景",
                     f"已用「{prompt_label}」生成 {len(scenes)} 个场景，并已保存到频道列表。",
-                    parent=parent,
                 )
 
             self.root.after(0, apply)
@@ -5362,7 +5398,7 @@ class MediaGUIManager:
                 if on_idle:
                     on_idle()
                 if err_msg:
-                    messagebox.showerror("改写失败", err_msg, parent=parent)
+                    show_auto_close_popup(parent, "改写失败", err_msg, kind="error")
                     return
                 if not (merged_json or "").strip():
                     messagebox.showwarning(
@@ -5378,10 +5414,10 @@ class MediaGUIManager:
                 )
                 if not persist(video_detail, parent=parent):
                     return
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    parent,
                     "已改写 Story",
                     "已用 Story 精简 prompt 改写首条 story 正文，并已保存到频道列表。",
-                    parent=parent,
                 )
 
             self.root.after(0, apply)
@@ -5444,7 +5480,7 @@ class MediaGUIManager:
                 if on_idle:
                     on_idle()
                 if err_msg:
-                    messagebox.showerror("生成失败", err_msg, parent=parent)
+                    show_auto_close_popup(parent, "生成失败", err_msg, kind="error")
                     return
                 if not new_entries:
                     messagebox.showwarning(
@@ -5477,7 +5513,8 @@ class MediaGUIManager:
                 )
                 if not persist(video_detail, parent=parent):
                     return
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    parent,
                     "已增加 Story",
                     f"已合并 {len(new_entries)} 条新 story，并已保存到频道列表。"
                     + (
@@ -5488,7 +5525,6 @@ class MediaGUIManager:
                         )
                         else "\n（未绑定 project_profile，未改项目名）"
                     ),
-                    parent=parent,
                 )
 
             self.root.after(0, apply)
@@ -5503,10 +5539,11 @@ class MediaGUIManager:
             return False
         list_path = (getattr(self.downloader, "channel_list_json", None) or "").strip()
         if not list_path:
-            messagebox.showerror(
+            show_auto_close_popup(
+                parent,
                 "保存失败",
                 "未打开频道列表 JSON，无法保存。",
-                parent=parent,
+                kind="error",
             )
             return False
         row_key = (video_detail.get("id") or video_detail.get("url") or "").strip()
@@ -5535,10 +5572,11 @@ class MediaGUIManager:
                 json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
             return True
         except OSError as e:
-            messagebox.showerror(
+            show_auto_close_popup(
+                parent,
                 "保存失败",
                 f"写入频道列表失败：{e}",
-                parent=parent,
+                kind="error",
             )
             return False
 
@@ -6274,17 +6312,19 @@ class MediaGUIManager:
                 try:
                     parsed = json.loads(safe_clipboard_json_copy(raw))
                 except (json.JSONDecodeError, TypeError) as e:
-                    messagebox.showerror(
+                    show_auto_close_popup(
+                        dlg,
                         "JSON 无效",
                         f"无法解析 scene_content：\n{e}",
-                        parent=dlg,
+                        kind="error",
                     )
                     return
                 if not isinstance(parsed, list):
-                    messagebox.showerror(
+                    show_auto_close_popup(
+                        dlg,
                         "JSON 无效",
                         "scene_content 必须是 JSON 数组（以 [ 开头的 list）。",
-                        parent=dlg,
+                        kind="error",
                     )
                     return
                 if not parsed:
@@ -6765,7 +6805,7 @@ class MediaGUIManager:
         ch_key = os.path.basename(self.channel_path)
         cfg = config_channel.get_channel_config(ch_key)
         if not cfg:
-            messagebox.showerror("错误", "未找到频道配置", parent=parent)
+            show_auto_close_popup(parent, "错误", "未找到频道配置", kind="error")
             return
         if not mp4_path or not os.path.isfile(mp4_path):
             messagebox.showwarning("提示", f"未找到 mp4 文件：\n{mp4_path}", parent=parent)
@@ -6906,7 +6946,7 @@ class MediaGUIManager:
                     if tg_lines:
                         msg = f"{msg}\n\n--- Telegram ---\n" + "\n".join(tg_lines)
                     par = _tk_dialog_parent(parent, root_win)
-                    messagebox.showinfo("成功", msg, parent=par)
+                    show_auto_close_popup(par, "成功", msg)
 
                 root_win.after(0, ok_ui)
             except Exception as e:
@@ -6915,7 +6955,7 @@ class MediaGUIManager:
                 def err_ui():
                     _set_publish_review_publishing(parent, False)
                     par = _tk_dialog_parent(parent, root_win)
-                    messagebox.showerror("上传失败", err, parent=par)
+                    show_auto_close_popup(par, "上传失败", err, kind="error")
 
                 root_win.after(0, err_ui)
 
@@ -7457,13 +7497,18 @@ class MediaGUIManager:
             
             # 显示结果
             if failed_count > 0:
-                messagebox.showwarning("删除完成", 
-                                          f"已删除 {deleted_count} 个视频\n\n{failed_count} 个文件删除失败",
-                                          parent=dialog)
+                show_auto_close_popup(
+                    dialog,
+                    "删除完成",
+                    f"已删除 {deleted_count} 个视频\n\n{failed_count} 个文件删除失败",
+                    kind="error",
+                )
             else:
-                messagebox.showinfo("删除完成", 
-                                       f"已成功删除 {deleted_count} 个视频及其相关文件",
-                                       parent=dialog)
+                show_auto_close_popup(
+                    dialog,
+                    "删除完成",
+                    f"已成功删除 {deleted_count} 个视频及其相关文件",
+                )
         
         # 绑定Delete键
         def on_key_press(event):
@@ -7584,7 +7629,7 @@ class MediaGUIManager:
             except OSError:
                 pass
             populate_tree()
-            messagebox.showinfo("重摘", "已重新生成 analyzed content。", parent=dialog)
+            show_auto_close_popup(dialog, "重摘", "已重新生成 analyzed content。")
 
         def _run_project_start_for_video_detail(
             vd,
@@ -7731,14 +7776,15 @@ class MediaGUIManager:
                             target_path, cfg_pid
                         )
                     except Exception as exc:
-                        messagebox.showerror("写入主题分表失败", str(exc), parent=parent)
+                        show_auto_close_popup(parent, "写入主题分表失败", str(exc), kind="error")
                         return
 
                 if target_ix < 0:
-                    messagebox.showerror(
+                    show_auto_close_popup(
+                        parent,
                         "无法打开",
                         f"主题分表中找不到 pid「{cfg_pid}」。",
-                        parent=parent,
+                        kind="error",
                     )
                     return
 
@@ -7802,10 +7848,11 @@ class MediaGUIManager:
                             ch_path, tc, copy.deepcopy(vd)
                         )
                     except Exception as exc:
-                        messagebox.showerror(
+                        show_auto_close_popup(
+                            parent,
                             "项目已创建",
                             f"PID：{_pid}\n\n写入主题分表失败：\n{exc}",
-                            parent=parent,
+                            kind="error",
                         )
                         return
 
@@ -8186,7 +8233,7 @@ class MediaGUIManager:
                 else:
                     gen_hint = _gen_video_storage_dir() or "(未配置 publish/gen_video)"
                     feature_media_var.set(
-                        f"尚未拖入成片/封面（拖入 MP4 或图片到本窗，保存至 {gen_hint}）"
+                        f"尚未拖入成片/封面（拖入 MP4（可多段按顺序拼接）或图片到本窗，保存至 {gen_hint}）"
                     )
                 try:
                     copy_cover_clipboard_btn.config(
@@ -8210,10 +8257,10 @@ class MediaGUIManager:
                     )
                     return
                 if _copy_image_file_to_clipboard(summary_window, webp_p):
-                    messagebox.showinfo(
+                    show_auto_close_popup(
+                        summary_window,
                         "已复制",
                         f"封面已复制到剪贴板：\n{os.path.basename(webp_p)}",
-                        parent=summary_window,
                     )
 
             open_feature_folder_btn.config(command=on_open_feature_media_folder)
@@ -8336,9 +8383,7 @@ class MediaGUIManager:
                     channel_path=self.channel_path or "",
                 )
                 if text is not None:
-                    messagebox.showinfo(
-                        "已保存", "story 已更新。", parent=summary_window
-                    )
+                    show_auto_close_popup(summary_window, "已保存", "story 已更新。")
                     try:
                         populate_tree()
                     except Exception:
@@ -8356,9 +8401,7 @@ class MediaGUIManager:
                     on_saved=_after_content_field_saved,
                 )
                 if text is not None:
-                    messagebox.showinfo(
-                        "已保存", "poem 已更新。", parent=summary_window
-                    )
+                    show_auto_close_popup(summary_window, "已保存", "poem 已更新。")
                     try:
                         populate_tree()
                     except Exception:
@@ -8424,7 +8467,7 @@ class MediaGUIManager:
                 except Exception:
                     pass
 
-                messagebox.showinfo("成功", f"视频名称与主题信息已保存", parent=summary_window)
+                show_auto_close_popup(summary_window, "成功", "视频名称与主题信息已保存")
 
             def _on_title_entry_return(_event=None):
                 save_story_info()
@@ -8797,10 +8840,11 @@ class MediaGUIManager:
                     _show_scene_clipboard_menu()
 
                 except Exception as ex:
-                    messagebox.showerror(
+                    show_auto_close_popup(
+                        summary_window,
                         "场景/剪贴板",
                         f"操作失败: {ex}",
-                        parent=summary_window,
+                        kind="error",
                     )
 
 
@@ -8866,7 +8910,7 @@ class MediaGUIManager:
                         except Exception:
                             continue
             if not channel_id:
-                messagebox.showerror("错误", "无法获取频道ID，请使用「获取热门视频列表」重新导入频道", parent=dialog)
+                show_auto_close_popup(dialog, "错误", "无法获取频道ID，请使用「获取热门视频列表」重新导入频道", kind="error")
                 return
             channel_url = f"https://www.youtube.com/channel/{channel_id}/videos"
 
@@ -8876,7 +8920,7 @@ class MediaGUIManager:
 
             def _show_new_videos_popup(result):
                 if result is None:
-                    messagebox.showerror("错误", "抓取视频列表失败", parent=dialog)
+                    show_auto_close_popup(dialog, "错误", "抓取视频列表失败", kind="error")
                     return
                 new_videos, all_fetched = result
                 updated_count = 0
@@ -8928,7 +8972,7 @@ class MediaGUIManager:
                     msg = "没有发现新视频"
                     if updated_count:
                         msg += f"，已更新 {updated_count} 个现有视频的观看次数等信息"
-                    messagebox.showinfo("提示", msg + "。", parent=dialog)
+                    show_auto_close_popup(dialog, "提示", msg + "。")
                     return
 
                 popup = tk.Toplevel(dialog)
@@ -8991,7 +9035,7 @@ class MediaGUIManager:
                         json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
                     popup.destroy()
                     populate_tree()
-                    messagebox.showinfo("成功", f"已添加 {len(to_add)} 个视频到列表", parent=dialog)
+                    show_auto_close_popup(dialog, "成功", f"已添加 {len(to_add)} 个视频到列表")
 
                 btn_frame = ttk.Frame(popup)
                 btn_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -9000,7 +9044,7 @@ class MediaGUIManager:
                 ttk.Button(btn_frame, text="添加选中", command=add_selected).pack(side=tk.RIGHT, padx=5)
                 ttk.Button(btn_frame, text="关闭", command=popup.destroy).pack(side=tk.RIGHT, padx=5)
 
-            messagebox.showinfo("提示", "正在抓取频道视频列表，请稍候...", parent=dialog)
+            show_auto_close_popup(dialog, "提示", "正在抓取频道视频列表，请稍候...")
             thread = threading.Thread(target=fetch_task)
             thread.daemon = True
             thread.start()
@@ -9016,7 +9060,7 @@ class MediaGUIManager:
                 if video_detail and not (video_detail.get('upload_date') or '').strip():
                     videos.append(video_detail)
             if not videos:
-                messagebox.showinfo("提示", "所选视频均已包含 upload_date，无需更新", parent=dialog)
+                show_auto_close_popup(dialog, "提示", "所选视频均已包含 upload_date，无需更新")
                 return
             if not messagebox.askyesno("确认", f"将为 {len(videos)} 个视频重新拉取 upload_date 等信息，是否继续？", parent=dialog):
                 return
@@ -9059,7 +9103,17 @@ class MediaGUIManager:
                         failed_count[0] += 1
                 with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
                     json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                dialog.after(0, lambda: [populate_tree(), messagebox.showinfo("完成", f"成功: {success_count[0]} 个，失败: {failed_count[0]} 个", parent=dialog)])
+                dialog.after(
+                    0,
+                    lambda: [
+                        populate_tree(),
+                        show_auto_close_popup(
+                            dialog,
+                            "完成",
+                            f"成功: {success_count[0]} 个，失败: {failed_count[0]} 个",
+                        ),
+                    ],
+                )
 
             threading.Thread(target=fetch_task, daemon=True).start()
 
@@ -9262,10 +9316,10 @@ class MediaGUIManager:
                     def _refresh():
                         populate_tree()
                         try:
-                            messagebox.showinfo(
+                            show_auto_close_popup(
+                                dialog,
                                 f"{task_name}完成",
                                 f"成功: {success_count} 个，失败: {failed_count} 个",
-                                parent=dialog,
                             )
                         except Exception:
                             pass
@@ -9457,7 +9511,7 @@ class MediaGUIManager:
         def on_confirm():
             url = url_var.get().strip()
             if not url:
-                messagebox.showerror("错误", "请输入YouTube链接", parent=dialog)
+                show_auto_close_popup(dialog, "错误", "请输入YouTube链接", kind="error")
                 return
             result_var.set("confirm")
             dialog.destroy()
@@ -9492,11 +9546,11 @@ class MediaGUIManager:
             print(f"❌ {err}")
             self.root.after(
                 0,
-                lambda m=err: messagebox.showerror("YouTube 下载失败", m, parent=self.root),
+                lambda m=err: show_auto_close_popup(self.root, "YouTube 下载失败", m, kind="error"),
             )
             return
         if not video_data:
-            self.root.after(0, lambda: messagebox.showerror("错误", "获取视频详情失败"))
+            self.root.after(0, lambda: show_auto_close_popup(self.root, "错误", "获取视频详情失败", kind="error"))
             return
 
         if not transcribe:
@@ -9524,14 +9578,14 @@ class MediaGUIManager:
                 video_data["file_size_mb"] = file_size
                 video_data["audio_download_status"] = "success"
             else:
-                self.root.after(0, lambda: messagebox.showerror("错误", "视频下载失败"))
+                self.root.after(0, lambda: show_auto_close_popup(self.root, "错误", "视频下载失败", kind="error"))
                 return
             transcribed_file = self.downloader.download_captions(
                 video_data, self.language, allow_audio_fallback=True
             )
         if not transcribed_file:
             print(f"❌ YouTube视频转录失败")
-            self.root.after(0, lambda: messagebox.showerror("错误", "YouTube视频转录失败：未生成字幕文件"))
+            self.root.after(0, lambda: show_auto_close_popup(self.root, "错误", "YouTube视频转录失败：未生成字幕文件", kind="error"))
             return
 
         video_data['transcribed_file'] = transcribed_file
@@ -9567,10 +9621,10 @@ class MediaGUIManager:
                         parent=self.root,
                     )
             else:
-                messagebox.showinfo(
+                show_auto_close_popup(
+                    self.root,
                     "转录完成",
                     "YouTube 视频转录完成！",
-                    parent=self.root,
                 )
 
         try:
