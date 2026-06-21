@@ -231,7 +231,7 @@ def _default_story_editor_prompt_label(channel_key: str) -> str:
             picked = _pick_story_prompt_label(channel_key, want)
             if picked:
                 return picked
-    for want in ("Short Story", "Mini Story", "Long Story", "2 Step Story", "3 Step Story", "4 Step Story"):
+    for want in ("2 Step Story", "Short Story", "Mini Story", "3 Step Story", "Long Story", "4 Step Story"):
         picked = _pick_story_prompt_label(channel_key, want)
         if picked:
             return picked
@@ -519,16 +519,27 @@ _YT_DOWNLOAD_PREFS_JSON = "_yt_download_prefs.json"
 
 
 def _copy_text_to_clipboard(widget, text: str) -> None:
-    """打开内容审阅窗时同步写入系统剪贴板。"""
+    """写入系统剪贴板（审阅窗打开、指令拷贝等）。"""
     s = (text or "").strip()
     if not s:
         return
-    try:
-        widget.clipboard_clear()
-        widget.clipboard_append(s)
-        widget.update()
-    except tk.TclError:
-        pass
+    hosts: list = []
+    if widget is not None:
+        hosts.append(widget)
+        try:
+            top = widget.winfo_toplevel()
+            if top is not widget:
+                hosts.append(top)
+        except tk.TclError:
+            pass
+    for w in hosts:
+        try:
+            w.clipboard_clear()
+            w.clipboard_append(s)
+            w.update()
+            return
+        except tk.TclError:
+            continue
 
 
 def _bind_text_editor_replace_from_clipboard_on_double_click(tx, clipboard_host) -> None:
@@ -5791,6 +5802,15 @@ class MediaGUIManager:
                 cycle_holder=_story_nb_copy_cycle,
             )
 
+        def on_copy_direct_video_instruction():
+            self._copy_direct_video_instruction(
+                parent=dlg,
+                video_detail=video_detail,
+                story_raw=(tx.get("1.0", tk.END) or ""),
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
+            )
+
         def on_confirm():
             raw = (tx.get("1.0", tk.END) or "").strip()
             if not raw and not allow_empty:
@@ -5841,6 +5861,11 @@ class MediaGUIManager:
             btn_row,
             text=f"Story to Video - ({_lang_lbl})",
             command=on_copy_video_instruction,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            btn_row,
+            text="Direct Video",
+            command=on_copy_direct_video_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
@@ -6090,6 +6115,52 @@ class MediaGUIManager:
             channel_clipboard_append_item(channel_path, clip_body, clip_tag)
         if status_msg:
             show_auto_close_popup(parent, f"Story to {mode_title}", status_msg)
+        return bool(clip_body)
+
+    def _copy_direct_video_instruction(
+        self,
+        *,
+        parent,
+        video_detail: dict,
+        story_raw: str,
+        main_character: str = "",
+        channel_path: str = "",
+    ) -> bool:
+        """选择 Direct Video 指令模板并复制到剪贴板（单图 → 视频）。"""
+        choices = config_prompt.DIRECT_VIDEO_PROMPT_CHOICES
+        if not choices:
+            show_auto_close_popup(
+                parent, "Direct Video", "未配置 direct video 提示词。", kind="error"
+            )
+            return False
+
+        pick_labels = [lbl for lbl, _ in choices]
+        picked = askchoice("Direct Video", pick_labels, parent=parent)
+        if not picked:
+            return False
+        picked_label = picked[1] if isinstance(picked, (tuple, list)) else picked
+
+        template = ""
+        for lbl, tpl in choices:
+            if lbl == picked_label:
+                template = tpl
+                break
+        if not (template or "").strip():
+            return False
+
+        entries = _parse_story_field(story_raw)
+        clip_body = config_prompt.build_direct_video_clipbody(
+            instruction=template,
+            story_entries=entries,
+            main_character=(main_character or "").strip(),
+            visual_style=project_manager.LAST_VISUAL_STYLE,
+        )
+        _copy_text_to_clipboard(parent, clip_body)
+        if clip_body and (channel_path or "").strip():
+            channel_clipboard_append_item(
+                channel_path, clip_body, "direct_video_instruction"
+            )
+        show_auto_close_popup(parent, "Direct Video", f"已拷贝到剪贴板：{picked_label}")
         return bool(clip_body)
 
     def _copy_notebooklm_scene_gen_instruction(

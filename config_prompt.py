@@ -355,6 +355,104 @@ NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 """
 
 
+# Direct Video：从单张场景图生成视频的指令选项（Story 编辑区「Direct Video」按钮）。
+DIRECT_VIDEO_PROTAGONIST_REFLECTION = """
+Generate video from the single input scene image.
+** Protagonist (story character) performs reflection & brief interaction — lip-sync allowed.
+** Speak ONLY the most key psychological point; do NOT read aloud any text printed in the image.
+** Keep the starting frame stable; subtle body language and facial expression; no hard scene cuts.
+** Target ~8–10 seconds of speech when speaking reference is provided; otherwise ambient motion only.
+"""
+
+DIRECT_VIDEO_STATIC_NARRATION = """
+Generate video from the single input scene image.
+** No talking-avatar added if the image has none. Narrator voiceover only (off-screen).
+** Image text stays static — never animate or read words-in-image aloud.
+** Gentle camera drift or soft light shift; hold composition and visual style.
+"""
+
+DIRECT_VIDEO_ATMOSPHERIC_MOTION = """
+Generate video from the single input scene image.
+** No characters speaking unless the image already shows a talking-avatar.
+** Cinematic ambient motion: slow push-in, soft parallax, subtle environmental movement.
+** Do NOT add subtitles, captions, or read any text in the image.
+"""
+
+DIRECT_VIDEO_EMOTIONAL_MICRO = """
+Generate video from the single input scene image.
+** Focus on protagonist micro-expressions, breathing, and small gestures; minimal camera movement.
+** If speaking reference is provided, protagonist lip-syncs ONE concise emotional line — not reading image text.
+** Maintain character identity and lighting from the source image.
+"""
+
+DIRECT_VIDEO_HOST_COMMENTARY = """
+Generate video from the single input scene image.
+** If image contains Host/Narrator talking-avatar → Host briefly comments on the scene (lip-sync).
+** If only story character is shown → character reflects in first person (key point only).
+** Never read words printed in the image; keep background stable across the clip.
+"""
+
+DIRECT_VIDEO_KEN_BURNS_TEXT_HOLD = """
+Generate video from the single input scene image.
+** Treat on-image text as a fixed graphic — no OCR reading, no lip-sync to visible words.
+** Slow Ken Burns style motion (pan/zoom) on the illustration; optional soft ambience, no dialogue.
+** Preserve illustration style; no added UI, subtitles, or speech bubbles.
+"""
+
+DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
+    (
+        "protagonist reflection & interaction (only the most key point, not read words in image)",
+        DIRECT_VIDEO_PROTAGONIST_REFLECTION,
+    ),
+    (
+        "narrator voiceover only (no avatar added, image text static)",
+        DIRECT_VIDEO_STATIC_NARRATION,
+    ),
+    (
+        "atmospheric motion only (no speech, cinematic drift)",
+        DIRECT_VIDEO_ATMOSPHERIC_MOTION,
+    ),
+    (
+        "emotional micro-expression + one concise line",
+        DIRECT_VIDEO_EMOTIONAL_MICRO,
+    ),
+    (
+        "host or protagonist commentary (lip-sync, no reading image text)",
+        DIRECT_VIDEO_HOST_COMMENTARY,
+    ),
+    (
+        "Ken Burns on illustration (text in image stays static, no speech)",
+        DIRECT_VIDEO_KEN_BURNS_TEXT_HOLD,
+    ),
+]
+
+
+def build_direct_video_clipbody(
+    *,
+    instruction: str,
+    story_entries: list | None = None,
+    main_character: str = "",
+    visual_style: str = "",
+) -> str:
+    """组装 Direct Video 剪贴板正文（单图 → 视频 AI 指令）。"""
+    parts: dict[str, object] = {}
+    parts["Instruction_for_direct_video_generation"] = (instruction or "").strip()
+    if (visual_style or "").strip():
+        parts["Visual_Style"] = visual_style.strip()
+    if (main_character or "").strip():
+        parts["Story_Character"] = main_character.strip()
+    speaking_lines: list[str] = []
+    for i, entry in enumerate(story_entries or []):
+        if not isinstance(entry, dict):
+            continue
+        sp = (entry.get("speaking") or "").strip()
+        if sp:
+            speaking_lines.append(f"[{i + 1}] {sp}")
+    if speaking_lines:
+        parts["Speaking_reference"] = "\n".join(speaking_lines)
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
 def build_notebooklm_gen_instruction_clipbody(
     *,
     mode: str,
