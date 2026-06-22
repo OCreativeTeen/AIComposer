@@ -5922,7 +5922,7 @@ class MediaGUIManager:
             )
 
         def on_copy_direct_video_instruction():
-            self._copy_direct_video_instruction(
+            self._copy_image_prompt_instruction(
                 parent=dlg,
                 video_detail=video_detail,
                 story_raw=(tx.get("1.0", tk.END) or ""),
@@ -5985,7 +5985,7 @@ class MediaGUIManager:
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text="Direct Video",
+            text="Image Prompt",
             command=on_copy_direct_video_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
@@ -6238,7 +6238,7 @@ class MediaGUIManager:
             show_auto_close_popup(parent, f"Story to {mode_title}", status_msg)
         return bool(clip_body)
 
-    def _copy_direct_video_instruction(
+    def _copy_image_prompt_instruction(
         self,
         *,
         parent,
@@ -6251,12 +6251,12 @@ class MediaGUIManager:
         choices = config_prompt.DIRECT_VIDEO_PROMPT_CHOICES
         if not choices:
             show_auto_close_popup(
-                parent, "Direct Video", "未配置 direct video 提示词。", kind="error"
+                parent, "Image Prompt", "未配置 image prompt 提示词。", kind="error"
             )
             return False
 
         pick_labels = [lbl for lbl, _ in choices]
-        picked = askchoice("Direct Video", pick_labels, parent=parent)
+        picked = askchoice("Image Prompt", pick_labels, parent=parent)
         if not picked:
             return False
         picked_label = picked[1] if isinstance(picked, (tuple, list)) else picked
@@ -6281,7 +6281,7 @@ class MediaGUIManager:
             channel_clipboard_append_item(
                 channel_path, clip_body, "direct_video_instruction"
             )
-        show_auto_close_popup(parent, "Direct Video", f"已拷贝到剪贴板：{picked_label}")
+        show_auto_close_popup(parent, "Image Prompt", f"已拷贝到剪贴板：{picked_label}")
         return bool(clip_body)
 
     def _run_story_scene_split_from_cover_async(

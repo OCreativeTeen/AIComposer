@@ -370,7 +370,6 @@ Generate video from the single input scene image.
 ** Protagonist (story character) performs reflection & brief interaction — lip-sync allowed.
 ** Speak ONLY the most key psychological point; do NOT read aloud any text printed in the image.
 ** Keep the starting frame stable; subtle body language and facial expression; no hard scene cuts.
-** Target ~8–10 seconds of speech when speaking reference is provided; otherwise ambient motion only.
 """
 
 DIRECT_VIDEO_STATIC_NARRATION = """
@@ -394,13 +393,6 @@ Generate video from the single input scene image.
 ** Maintain character identity and lighting from the source image.
 """
 
-DIRECT_VIDEO_HOST_COMMENTARY = """
-Generate video from the single input scene image.
-** If image contains Host/Narrator talking-avatar → Host briefly comments on the scene (lip-sync).
-** If only story character is shown → character reflects in first person (key point only).
-** Never read words printed in the image; keep background stable across the clip.
-"""
-
 DIRECT_VIDEO_KEN_BURNS_TEXT_HOLD = """
 Generate video from the single input scene image.
 ** Treat on-image text as a fixed graphic — no OCR reading, no lip-sync to visible words.
@@ -408,31 +400,55 @@ Generate video from the single input scene image.
 ** Preserve illustration style; no added UI, subtitles, or speech bubbles.
 """
 
+DIRECT_STEP_IMAGE_CORE = """
+Generate detailed-single-step-image from the single input scene image.
+** According to the steps/section in the image, give me the step ###STEP### image (with title, no step show in the image)
+"""
+
+DIRECT_STEP_1_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "1")
+DIRECT_STEP_2_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "2")
+DIRECT_STEP_3_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "3")
+DIRECT_STEP_4_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "4")
+
+
 DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
     (
-        "protagonist reflection & interaction (only the most key point, not read words in image)",
+        "Image to Video (protagonist reflection & interaction",
         DIRECT_VIDEO_PROTAGONIST_REFLECTION,
     ),
     (
-        "narrator voiceover only (no avatar added, image text static)",
+        "Image to Video (narrator voiceover only",
         DIRECT_VIDEO_STATIC_NARRATION,
     ),
     (
-        "atmospheric motion only (no speech, cinematic drift)",
+        "Image to Video (atmospheric motion only (no speech, cinematic drift)",
         DIRECT_VIDEO_ATMOSPHERIC_MOTION,
     ),
     (
-        "emotional micro-expression + one concise line",
+        "Image to Video (emotional micro-expression + one concise line)",
         DIRECT_VIDEO_EMOTIONAL_MICRO,
     ),
     (
-        "host or protagonist commentary (lip-sync, no reading image text)",
-        DIRECT_VIDEO_HOST_COMMENTARY,
-    ),
-    (
-        "Ken Burns on illustration (text in image stays static, no speech)",
+        "Image to Video (text in image stays static, no speech)",
         DIRECT_VIDEO_KEN_BURNS_TEXT_HOLD,
     ),
+    (
+        "Image to Detail-Single-Step-Image 1",
+        DIRECT_STEP_1_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 2",
+        DIRECT_STEP_2_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 3",
+        DIRECT_STEP_3_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 4",
+        DIRECT_STEP_4_IMAGE,
+    )
+
 ]
 
 
@@ -457,8 +473,8 @@ def build_direct_video_clipbody(
         sp = (entry.get("speaking") or "").strip()
         if sp:
             speaking_lines.append(f"[{i + 1}] {sp}")
-    if speaking_lines:
-        parts["Speaking_reference"] = "\n".join(speaking_lines)
+    #if speaking_lines:
+    #    parts["Speaking_reference"] = "\n".join(speaking_lines)
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 

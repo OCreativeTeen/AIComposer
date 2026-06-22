@@ -1012,58 +1012,49 @@ Output format:
 
 COUNSELING_STORY_CORE = """
 You are a psychological counselor and master of high-empathy storytelling. 
-    ** Your task is to transform a deep psychological analysis report / case study into an emotionally immersive human story so listeners recognize themselves through narrative—not psychology. Input may include case studies, assessments, behavioral patterns, emotional dynamics, childhood/attachment/trauma, defense mechanisms, core beliefs, wounds, root-cause analysis, healing insights, and intervention strategies. 
-    ** Do NOT summarize; transform insight into an authentic story.
+    ** Your task is to transform a deep psychological analysis report / case-study (input) into an emotionally immersive / authentic human story so listeners recognize themselves through narrative—not psychology. 
 
 
 ## STEP 1 — IDENTIFY / EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
 
-    ** Visible Problem; 
-    ** Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; 
-    ** Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; 
-    ** Repeating Life Pattern; 
-    ** Healing Door / light at the tunnel—small shift toward movement.
+    ** If the input content include more than one case-study / case-story / analysis,  only focus on the 1st one, ignore others)
+    ** Then identify / Extract following psychological DNA : 
+	    * Visible Problem; 
+        * Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; 
+        * Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; 
+        * Repeating Life Pattern; 
+        * Healing Door / light at the tunnel — small shift toward movement.
+
 
 ## STEP 2 — CREATE STORY
 
-    **Objective:
-        * Translate the provided [PSYCHOLOGICAL DNA] into a grounded, visceral narrative story (if the content include more than one story, just focus on the 1st story, ignore others).
-        * The goal is to evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
-        * Length: the whole story (if the content include more than one story, just focus on the 1st story, ignore others) has ###STEP### scenes ;  each scene' content is about ###LENGTH### characters.
-    
-    **1. Narrative Arc & Scope**
-        Focus on a single relationship, pattern, or defining event. Do not force rigid chapters; follow the emotional logic.
-        *   **Setup:** Introduce relatable friction within a realistic routine and setting (e.g., kitchen, commute, office). Give the characters believable names, occupations, and contradictions.
-        *   **Core Conflict:** Make the internal tension visible. Reveal the layers beneath the surface (e.g., longing beneath anger, fear beneath control). 
-        *   **The Shift:** A believable, subtle turning point. It doesn't have to be a grand gesture—it can be a hesitation, a boundary set, honest sadness, or simply stopping an old pattern.
-        *   **Ending:** Human, earned, and unfinished. Make it hopeful but not "everything solved."
+    ** Objective:
+        * Translate the PSYCHOLOGICAL DNA [from STEP 1] into ONE grounded, visceral narrative story, which evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
+        * Length: the whole (ONE) story has ###STEP### scenes;  each scene' content is about ###LENGTH### char
+		* If more than one Scenes, they should conneced tighly following the emotional development of ONE story (a single relationship). And a typical Narrative Arc can be: Setup - Core Conflict - Shift (subtle turning point) - Ending (hopeful but not "everything solved")
 
-    **2. Execution & Style**
-        *   **Show, Don't Tell:** Events are just vehicles; the emotional pattern is the destination. Rely on sensory details, body sensations, physical actions, and environmental cues. 
-        *   **Subtextual Dialogue:** Keep conversations natural. Characters should talk around their issues, relying on subtext and silence rather than direct confrontation.
-        *   **Title:** Provide a short, evocative title that hints at the hidden emotional core, not the plot.
-        *   if the story has more than one scene, all scenes should be connected to each other, and the story should be a complete story.
+    ** Execution & Style**
+        * Show, Don't Tell: Events are just vehicles; the emotional pattern is the destination. 
+			* NO clinical or academic language. NO therapy speeches, counseling notes.
+			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
+        * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
 
-    **3. Strict Constraints (DO NOT DO THESE)**
-        *   NO clinical or academic language (e.g., DSM terms, trauma, attachment theory, disorder, diagnosis).
-        *   NO therapy speeches, counseling notes, or characters analyzing each other's psychology.
-        *   NO summarizing the "lesson," "moral," or the psychological insight at the end. Let the story carry the truth on its own.
-
-## STEP3 - REFLECTIVE OUTPUT (as Json structure)
-    * (1) **Title**: poetic, evocative. 
-    * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance.
-    * (3) **Story**: the story scene (if the story has more than one scene, all scenes should be connected to each other, and the story should be a complete story).
-    * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
+## STEP 3 - (Json structure)
+    * (1) **Title**: poetic, evocative title of the story & scene. 
+    * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
+    * (3) **Story**: the story scene (all scenes (if more than 1) should be connected to express ONE story).
+    * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language.
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
         {{
-            "title": "A poetic title. In {language}.",
-            "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
-            "story": "the story scene. about ###LENGTH### characters. In {language}.",
-            "speaking": "A poignant 1st-person speaking. In {language}."
+            "title": "Title in {language}.",
+            "heart_message": "2–3 short rhythmic {language} sentences — to express the psychological insight as gentle life guidance.",
+            "story": "the story scene. about ###LENGTH### {language} char",
+            "speaking": "A poignant 1st-person speaking in {language}."
         }}
     ]
+
 --------------------------------------------------
 INPUT
 --------------------------------------------------
@@ -1077,13 +1068,13 @@ INPUT
     {content}
 """
 
-COUNSELING_STORY_2STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "2")
-COUNSELING_STORY_3STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "3")
-COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "4")
+COUNSELING_STORY_2STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
+COUNSELING_STORY_3STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
+COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
 
-COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###", "1000–1500").replace("###STEP###", "1")
-COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
-COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###", "250–500").replace("###STEP###", "1")
+COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###",  "500–1000").replace("###STEP###", "1")
+COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###",  "150–300").replace("###STEP###", "1")
 
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
