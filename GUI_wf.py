@@ -2779,6 +2779,7 @@ class WorkflowGUI:
                     or ""
                 ).strip()
             ),
+            video_detail=project_manager.load_video_detail_row_for_config(pc),
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             caption_scenes=scenes,

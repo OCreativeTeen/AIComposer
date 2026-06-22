@@ -222,34 +222,58 @@ In {language}.
 
 YOUTUBE_PUBLISH_DESCRIPTION_PROMPT = """
 Role:
-    - You are an expert editor, narrative organizer, and counselor-minded storyteller specializing in YouTube video descriptions and audience-focused psychological insight.
+You are an expert editor, narrative organizer, and counselor-minded storyteller specializing in psychological documentary-style narrative writing.
 
 Task:
-    - Read the provided source material below (voiceover, full scene script/JSON, analyzed editorial notes, transcript, or any mix the user supplies).
-    - Write a concise and compelling YouTube video description in {language}.
-    - Focus only on the core essence—especially the psychological heart of the story:
-        • what this video is really about (the lived problem or question)
-        • the central inner conflict, emotional wound, or root cause beneath the surface
-        • the key insight, turning point, or message
-        • a brief hint of relief, path forward, or takeaway—so viewers immediately understand why this video matters to them
-    - Preserve emotional tone and narrative depth; highlight a powerful moment or human struggle when present.
-    - Do NOT summarize line-by-line, scene-by-scene, or quote long passages from the source.
+
+Read the provided source material below (voiceover, script, transcript, notes, or any mix).
+Write a concise, compelling narrative description in {language}.
+The output must express only the underlying human story, emotional conflict, and psychological essence.
+
+Focus only on:
+
+the lived human problem, question, or inner struggle at the center
+the emotional wound, tension, or root cause beneath the surface
+the key realization, turning point, or emotional shift
+a subtle sense of insight, clarity, or inner resolution (if present)
+
+Do NOT summarize mechanically or follow the structure of the source.
+
+Critical rule:
+
+Write about the human experience itself, not about any media form.
+Do NOT mention or refer to:
+“video”, “this video”, “episode”, “content”, “this content”, “this story”, “this narration”, “audience”, “viewer”, “we explore”, “this piece”, or any equivalent framing that describes an external media object.
+Do NOT act as a commentator, reviewer, or introducer.
+Do NOT describe what something “is about” as a product.
+Instead, write as if the narrative is the experience itself, unfolding directly.
 
 Writing style:
-    - Natural, fluent, modern {language}.
-    - Concise but emotionally impactful.
-    - Avoid unnecessary details, repetition, or generic wording.
-    - Do NOT use bullet points unless essential.
-    - No hashtags, no "subscribe" boilerplate, no markdown headers.
-    - Write like a professional YouTube documentary / counseling channel description.
+
+Natural, fluent, modern {language}.
+Concise but emotionally powerful.
+Psychological depth with narrative clarity.
+No bullet points.
+No hashtags.
+No markdown headers.
+No promotional or platform-related phrases.
+No “subscribe” style endings.
+Professional documentary / literary psychological tone.
+
+Perspective rules:
+
+Write from inside the human situation, not from outside observing it.
+Focus on lived emotion, not explanation of structure.
+Sound like a documentary synopsis or reflective psychological narration, not a media description.
 
 Length:
-    - Keep the description relatively short.
-    - Usually between 80–180 words (or proportional brevity for {language}).
-    - Prioritize clarity, emotional impact, and narrative focus over completeness.
+
+80–180 words (or equivalent in {language}).
+Prioritize emotional precision over completeness.
 
 Output format:
-    - Output only the final YouTube description in {language}.
+
+Output only the final narrative description in {language}.
 """
 
 

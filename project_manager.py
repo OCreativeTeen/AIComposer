@@ -126,6 +126,23 @@ def story_field_flat_text(raw) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def publish_story_source_text(raw) -> str:
+    """发布描述素材：全部 story 条目的 ``heart_message`` + ``speaking`` 字段（非仅首条）。"""
+    entries = _parse_story_field(raw)
+    if not entries:
+        return ""
+    parts: list[str] = []
+    for e in entries:
+        lines: list[str] = []
+        for key in ("heart_message", "speaking"):
+            v = (e.get(key) or "").strip()
+            if v:
+                lines.append(v)
+        if lines:
+            parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
 def story_text_from_config(cfg: dict) -> str:
     """从 ``PROJECT_CONFIG`` 或绑定的频道列表行外层 ``story`` 读取 remix / YouTube 用文本。"""
     if not isinstance(cfg, dict):

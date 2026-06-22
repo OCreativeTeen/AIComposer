@@ -5921,15 +5921,6 @@ class MediaGUIManager:
                 cycle_holder=_story_nb_copy_cycle,
             )
 
-        def on_copy_direct_video_instruction():
-            self._copy_image_prompt_instruction(
-                parent=dlg,
-                video_detail=video_detail,
-                story_raw=(tx.get("1.0", tk.END) or ""),
-                main_character=main_character,
-                channel_path=channel_path or self.channel_path or "",
-            )
-
         def on_confirm():
             raw = (tx.get("1.0", tk.END) or "").strip()
             if not raw and not allow_empty:
@@ -5982,11 +5973,6 @@ class MediaGUIManager:
             btn_row,
             text=f"Story to Video - ({_lang_lbl})",
             command=on_copy_video_instruction,
-        ).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(
-            btn_row,
-            text="Image Prompt",
-            command=on_copy_direct_video_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
@@ -8726,6 +8712,20 @@ class MediaGUIManager:
                     except Exception:
                         pass
 
+            def do_image_prompt():
+                raw_story = video_detail.get("story")
+                if isinstance(raw_story, list):
+                    story_raw = json.dumps(raw_story, ensure_ascii=False, indent=2)
+                else:
+                    story_raw = (raw_story if isinstance(raw_story, str) else str(raw_story or ""))
+                self._copy_image_prompt_instruction(
+                    parent=summary_window,
+                    video_detail=video_detail,
+                    story_raw=story_raw,
+                    main_character=(character_var.get() or "").strip(),
+                    channel_path=self.channel_path or "",
+                )
+
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
             def _on_category_var_write(*args):
                 update_subtypes()
@@ -8924,7 +8924,7 @@ class MediaGUIManager:
 
                 self._open_publish_review_dialog(summary_window, mp4, video_detail, after_publish)
 
-            pub_btn = ttk.Button(right_btns, text="审阅并发布", command=on_review_publish)
+            pub_btn = ttk.Button(right_btns, text="审阅发布", command=on_review_publish)
             pub_btn.pack(side=tk.LEFT, padx=(0, 6))
 
             def refresh_publish_row():
@@ -8972,11 +8972,7 @@ class MediaGUIManager:
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
-            ttk.Button(right_btns, text="保存信息", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
-
-
-            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
-            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
+            ttk.Button(right_btns, text="保存", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
 
             def _after_content_field_saved():
                 try:
@@ -9009,13 +9005,13 @@ class MediaGUIManager:
             def do_review_script():
                 self._show_transcript_script_viewer(summary_window, video_detail)
 
-            ttk.Button(right_btns, text="找类似案例", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
+            ttk.Button(right_btns, text="找类似", command=on_find_similar_cases).pack(side=tk.LEFT, padx=(5, 5))
 
 
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
-            image_en_btn = ttk.Button(right_btns, text="场景内容", command=lambda: copy_style_character())
+            image_en_btn = ttk.Button(right_btns, text="内容", command=lambda: copy_style_character())
             image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Button(right_btns, text="分析", command=do_review_analyzed).pack(
@@ -9026,6 +9022,9 @@ class MediaGUIManager:
             )
             ttk.Button(right_btns, text="故事", command=do_story_view).pack(side=tk.LEFT, padx=(5, 5))
             ttk.Button(right_btns, text="诗歌", command=do_poem_view).pack(side=tk.LEFT, padx=(5, 5))
+            ttk.Button(right_btns, text="IMAGE", command=do_image_prompt).pack(
+                side=tk.LEFT, padx=(5, 5)
+            )
 
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))

@@ -62,7 +62,7 @@ def build_caption_choices_from_scenes(
 
 
 def first_voiceover_from_scene_content(scene_content_list: list, language: str) -> str:
-    """取首场景 ``voiceover`` 原文。"""
+    """取首场景 ``voiceover`` 原文（兼容旧调用）。"""
     if not scene_content_list:
         return ""
     first = scene_content_list[0]
@@ -71,6 +71,24 @@ def first_voiceover_from_scene_content(scene_content_list: list, language: str) 
     else:
         vo = ""
     return config.chinese_convert(vo, language).strip()
+
+
+def all_scene_speaking_voiceover_text(
+    scene_content_list: list, language: str
+) -> str:
+    """全部场景的 ``speaking`` + ``voiceover``，逐场景列出。"""
+    parts: list[str] = []
+    for sc in scene_content_list or []:
+        if not isinstance(sc, dict):
+            continue
+        lines: list[str] = []
+        for key in ("speaking", "voiceover"):
+            v = config.chinese_convert((sc.get(key) or "").strip(), language)
+            if v:
+                lines.append(v)
+        if lines:
+            parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def full_scene_content_text(scene_content_list: list) -> str:
@@ -113,16 +131,19 @@ def append_poem_to_description(body: str, poem: str) -> str:
 
 def default_publish_description_source(
     *,
-    story: str = "",
+    story_raw=None,
     analyzed: str = "",
     scenes: list | None = None,
     review_script: str = "",
+    language: str = "",
 ) -> str:
-    """描述素材默认来源：审阅文稿 → story → analyzed → 场景全部。"""
+    """描述素材默认来源：审阅文稿 → 全部 story → 场景 speaking/voiceover → 分析内容 → 场景 JSON。"""
     if (review_script or "").strip():
         return SOURCE_REVIEW_SCRIPT
-    if (story or "").strip():
+    if project_manager.publish_story_source_text(story_raw):
         return SOURCE_STORY
+    if all_scene_speaking_voiceover_text(scenes or [], language or "zh"):
+        return SOURCE_VOICEOVER
     if (analyzed or "").strip():
         return SOURCE_ANALYZED
     if scenes:
@@ -260,9 +281,18 @@ def ask_publish_title_and_description(
     lang = language or "zh"
     scenes = scene_content_list or []
     analyzed = config.chinese_convert((analyzed_content or "").strip(), lang)
-    story = config.chinese_convert((story_text or "").strip(), lang)
     poem = config.chinese_convert((poem_text or "").strip(), lang)
     review_script = config.chinese_convert((review_script_text or "").strip(), lang)
+
+    story_raw = None
+    if isinstance(video_detail, dict):
+        story_raw = video_detail.get("story")
+    if story_raw is None and (story_text or "").strip():
+        story_raw = story_text
+    story_source = config.chinese_convert(
+        project_manager.publish_story_source_text(story_raw), lang
+    )
+    scene_sv = all_scene_speaking_voiceover_text(scenes, lang)
 
     resolved_title = resolve_publish_default_title(
         language=lang,
@@ -327,9 +357,9 @@ def ask_publish_title_and_description(
 
     def _raw_source_text(source: str) -> str:
         if source == SOURCE_STORY:
-            return story
+            return story_source
         if source == SOURCE_VOICEOVER:
-            return first_voiceover_from_scene_content(scenes, lang)
+            return scene_sv
         if source == SOURCE_SCENE_FULL:
             return full_scene_content_text(scenes)
         if source == SOURCE_ANALYZED:
@@ -349,7 +379,7 @@ def ask_publish_title_and_description(
                     )
                 elif src == SOURCE_VOICEOVER:
                     messagebox.showwarning(
-                        "提示", "未找到首场景 voiceover。", parent=dlg
+                        "提示", "未找到场景 speaking / voiceover。", parent=dlg
                     )
                 elif src == SOURCE_SCENE_FULL:
                     messagebox.showwarning(
@@ -369,10 +399,11 @@ def ask_publish_title_and_description(
         return True
 
     default_source = default_publish_description_source(
-        story=story,
+        story_raw=story_raw,
         analyzed=analyzed,
         scenes=scenes,
         review_script=review_script,
+        language=lang,
     )
     source_var = tk.StringVar(value=default_source)
     src_row = ttk.Frame(desc_box)
@@ -406,7 +437,7 @@ def ask_publish_title_and_description(
     rb_scene.pack(side=tk.LEFT, padx=(0, 10))
     rb_voice = ttk.Radiobutton(
         src_row,
-        text="首场景 voiceover",
+        text="场景 speaking & voiceover（全部）",
         variable=source_var,
         value=SOURCE_VOICEOVER,
         command=lambda: _load_source_raw(show_empty_warning=True),
@@ -421,13 +452,15 @@ def ask_publish_title_and_description(
     )
     rb_review.pack(side=tk.LEFT)
 
-    if not story:
+    if not story_source:
         rb_story.state(["disabled"])
     if not analyzed:
         rb_analyzed.state(["disabled"])
     if not scenes:
         rb_voice.state(["disabled"])
         rb_scene.state(["disabled"])
+    elif not scene_sv:
+        rb_voice.state(["disabled"])
     if not review_script:
         rb_review.state(["disabled"])
 
@@ -443,7 +476,8 @@ def ask_publish_title_and_description(
 
     ttk.Label(
         desc_box,
-        text="默认优先 story → 分析内容 → 场景全部；选定来源后编辑区显示原始素材（可改）。"
+        text="默认优先：全部 story（heart_message+speaking）→ 场景 speaking/voiceover → 分析内容；"
+        "选定来源后编辑区显示原始素材（可改）。"
         "点「生成描述概述」由 LLM 根据编辑区内容生成简短 YouTube 描述；"
         "双击编辑区可用剪贴板替换全文。勾选 poem 时，确认发布前会自动在描述下方追加诗歌。",
         wraplength=800,

@@ -5,7 +5,6 @@
 旁白音色：本对话框可重新选择「重合成」说话人；未改时顺序为
 主界面「旁白」scene_narrator → 欢迎屏 LAST_NARRATOR → 项目 narrator → 默认人物。
 """
-import json
 import os
 import shutil
 import threading
@@ -151,16 +150,12 @@ class PublishReviewDialog:
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
         self.text_w.pack(fill=tk.BOTH, expand=True, pady=4)
 
-        stories = json.loads(self.video_detail.get("story") or "[]")
-        if stories and isinstance(stories, list):
-            story = stories[0]
-            summary = story.get("speaking", "")
-            if summary:
-                summary = summary + "\n\n" + story.get("heart_message", "")
-            else:
-                summary = story.get("story", "")
-        else:
-            summary = self.video_detail.get("analyzed_content")
+        story_raw = self.video_detail.get("story")
+        summary = project_manager.publish_story_source_text(story_raw)
+        if not summary:
+            summary = project_manager.story_first_entry_text(story_raw) or ""
+        if not summary:
+            summary = (self.video_detail.get("analyzed_content") or "") or ""
 
         self.text_w.insert(tk.END, summary + "\n\n")
 
