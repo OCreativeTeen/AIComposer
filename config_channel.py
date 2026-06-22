@@ -1027,8 +1027,9 @@ You are a psychological counselor and master of high-empathy storytelling.
 ## STEP 2 — CREATE STORY
 
     **Objective:
-        * Translate the provided [PSYCHOLOGICAL DNA] into a grounded, visceral narrative. The goal is to evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
-        * Length: the whole story has ###STEP### scenes ;  each scene' content is about ###LENGTH### characters.
+        * Translate the provided [PSYCHOLOGICAL DNA] into a grounded, visceral narrative story (if the content include more than one story, just focus on the 1st story, ignore others).
+        * The goal is to evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
+        * Length: the whole story (if the content include more than one story, just focus on the 1st story, ignore others) has ###STEP### scenes ;  each scene' content is about ###LENGTH### characters.
     
     **1. Narrative Arc & Scope**
         Focus on a single relationship, pattern, or defining event. Do not force rigid chapters; follow the emotional logic.
@@ -1041,6 +1042,7 @@ You are a psychological counselor and master of high-empathy storytelling.
         *   **Show, Don't Tell:** Events are just vehicles; the emotional pattern is the destination. Rely on sensory details, body sensations, physical actions, and environmental cues. 
         *   **Subtextual Dialogue:** Keep conversations natural. Characters should talk around their issues, relying on subtext and silence rather than direct confrontation.
         *   **Title:** Provide a short, evocative title that hints at the hidden emotional core, not the plot.
+        *   if the story has more than one scene, all scenes should be connected to each other, and the story should be a complete story.
 
     **3. Strict Constraints (DO NOT DO THESE)**
         *   NO clinical or academic language (e.g., DSM terms, trauma, attachment theory, disorder, diagnosis).
@@ -1050,15 +1052,15 @@ You are a psychological counselor and master of high-empathy storytelling.
 ## STEP3 - REFLECTIVE OUTPUT (as Json structure)
     * (1) **Title**: poetic, evocative. 
     * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Warm, calm, reflective tone. Express the psychological insight as gentle life guidance.
-    * (3) **Story**: the story from STEP2.
+    * (3) **Story**: the story scene (if the story has more than one scene, all scenes should be connected to each other, and the story should be a complete story).
     * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift.
 
-    like this (the story has ###STEP### scene (###STEP### json objects) :
+    like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
         {{
             "title": "A poetic title. In {language}.",
             "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
-            "story": "the story scene from STEP2. about ###LENGTH### characters. In {language}.",
+            "story": "the story scene. about ###LENGTH### characters. In {language}.",
             "speaking": "A poignant 1st-person speaking. In {language}."
         }}
     ]

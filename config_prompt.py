@@ -355,6 +355,15 @@ NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 """
 
 
+STORY_SCENE_SPLIT_FROM_IMAGE_SYSTEM_PROMPT = """
+You split ONE story content (in one JSON object) into multiple scenes, according to the attached image (refer to sections of the on-image text as the scene boundaries).
+
+User message: the source story JSON to split (e.g. title, heart_message, story, speaking).
+
+Output ONLY a JSON array. Each scene object (all text in {language}):
+"""
+
+
 # Direct Video：从单张场景图生成视频的指令选项（Story 编辑区「Direct Video」按钮）。
 DIRECT_VIDEO_PROTAGONIST_REFLECTION = """
 Generate video from the single input scene image.

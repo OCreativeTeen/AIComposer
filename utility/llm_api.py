@@ -221,14 +221,19 @@ class LLMApi:
         return f"data:image/jpeg;base64,{img_base64}"
 
 
-    def _create_vision_messages(self, system_prompt: str, image_path: str) -> List[Dict]:
+    def _create_vision_messages(
+        self, system_prompt: str, image_path: str, user_prompt: str = ""
+    ) -> List[Dict]:
         data_url = self._image_path_to_data_url(image_path)
-        user_content = [
+        user_content: list[dict] = [
             {
                 "type": "image_url",
                 "image_url": {"url": data_url},
             }
         ]
+        ut = (user_prompt or "").strip()
+        if ut:
+            user_content.append({"type": "text", "text": ut})
         return [
             self.create_message("system", system_prompt),
             self.create_message("user", user_content),
@@ -299,18 +304,25 @@ class LLMApi:
         return self.ollama_client.chat.completions.create(**request_params)
 
 
-    def analyze_image(self, analyze_prompt, image_path) -> Optional[str]:
+    def analyze_image(
+        self, analyze_prompt, image_path, user_prompt: str = ""
+    ) -> Optional[str]:
         """根据 prompt 分析图片；Manual 模式弹窗展示 system prompt 与图片供复制。"""
         if not image_path or not os.path.exists(image_path):
             print(f"⚠️ 图片不存在: {image_path}")
             return None
 
         system_prompt = analyze_prompt or ""
-        messages = self._create_vision_messages(system_prompt, image_path)
+        user_text = (user_prompt or "").strip()
+        messages = self._create_vision_messages(system_prompt, image_path, user_text)
 
         try:
             if self.model == MANUAL or self.model is None:
-                model, manual_response = self._show_model_dialog(system_prompt, image_path=image_path)
+                model, manual_response = self._show_model_dialog(
+                    system_prompt,
+                    user_prompt=user_text or None,
+                    image_path=image_path,
+                )
                 if model == MANUAL:
                     return manual_response
             else:
@@ -331,9 +343,10 @@ class LLMApi:
         image_path,
         output_path=None,
         expect_list=False,
+        user_prompt: str = "",
     ) -> Union[Dict, List]:
         """分析图片并解析为 JSON（与 generate_json 相同的清洗/解析流程）。"""
-        content = self.analyze_image(analyze_prompt, image_path)
+        content = self.analyze_image(analyze_prompt, image_path, user_prompt=user_prompt)
         if not content or not str(content).strip():
             return [] if expect_list else {}
 
@@ -563,12 +576,13 @@ class LLMApi:
                 font=("TkDefaultFont", 9, "bold"),
             ).grid(row=0, column=0, sticky="w", pady=(0, 4))
             image_holder = ttk.Frame(right_col)
-            image_holder.grid(row=1, column=0, sticky="nsew")
+            image_row = 1
+            image_holder.grid(row=image_row, column=0, sticky="nsew")
             photo_ref = []
             try:
                 pil_img = Image.open(image_path)
-                # 右栏竖向展示，按对话框高度缩放
-                pil_img.thumbnail((420, 880), Image.Resampling.LANCZOS)
+                thumb_h = 520 if (user_prompt or "").strip() else 880
+                pil_img.thumbnail((420, thumb_h), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(pil_img)
                 photo_ref.append(photo)
                 dialog._llm_dialog_photo_ref = photo_ref
@@ -580,6 +594,27 @@ class LLMApi:
                 )
             except Exception as e:
                 ttk.Label(image_holder, text=f"无法加载图片: {e}").pack(anchor=tk.W)
+            if (user_prompt or "").strip():
+                ttk.Label(
+                    right_col,
+                    text="User Prompt（Story JSON，双击复制）",
+                    font=("TkDefaultFont", 9, "bold"),
+                ).grid(row=2, column=0, sticky="w", pady=(8, 4))
+                user_text = scrolledtext.ScrolledText(right_col, wrap=tk.WORD, height=10)
+                user_text.grid(row=3, column=0, sticky="nsew")
+                user_text.insert("1.0", user_prompt)
+                right_col.rowconfigure(image_row, weight=2)
+                right_col.rowconfigure(3, weight=1)
+
+                def on_user_double_click(_event):
+                    content = user_text.get("1.0", tk.END).strip()
+                    dialog.clipboard_clear()
+                    dialog.clipboard_append(content)
+                    dialog.update()
+
+                user_text.bind("<Double-Button-1>", on_user_double_click)
+            else:
+                right_col.rowconfigure(image_row, weight=1)
         else:
             ttk.Label(right_col, text="User Prompt:", font=("TkDefaultFont", 9, "bold")).grid(
                 row=0, column=0, sticky="w", pady=(0, 4)
@@ -610,7 +645,11 @@ class LLMApi:
 
         def get_request_copy_content() -> str:
             content = system_text.get('1.0', tk.END).strip()
-            if not is_image_mode and user_text is not None:
+            if is_image_mode and user_text is not None:
+                ut = user_text.get("1.0", tk.END).strip()
+                if ut:
+                    content += "\n\n----- user-prompt ----\n\n" + ut
+            elif not is_image_mode and user_text is not None:
                 content += " \n\n ----- user-promt ----\n\n" + user_text.get('1.0', tk.END).strip()
             return content
 

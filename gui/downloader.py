@@ -615,6 +615,89 @@ def _dnd_paths_splitlist(master_widget, raw) -> list:
         return []
 
 
+def _natural_sort_key(text: str) -> list:
+    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", text)]
+
+
+def _mp4_timestamp_from_filename(path: str) -> float | None:
+    """从常见文件名中提取时间戳（如 20250619_143022）。"""
+    base = os.path.basename(path)
+    m = re.search(r"(\d{8})[_-]?(\d{6})", base)
+    if m:
+        try:
+            return time.mktime(
+                time.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
+            )
+        except ValueError:
+            pass
+    m = re.search(r"(\d{4})(\d{2})(\d{2})", base)
+    if m:
+        try:
+            return time.mktime(
+                time.strptime("".join(m.groups()), "%Y%m%d")
+            )
+        except ValueError:
+            pass
+    return None
+
+
+def _mp4_chronological_sort_key(path: str) -> tuple:
+    """拼接排序键：优先文件名内时间 → 修改时间 → 创建时间 → 自然文件名。"""
+    name_key = _natural_sort_key(os.path.basename(path))
+    fn_ts = _mp4_timestamp_from_filename(path)
+    if fn_ts is not None:
+        return (0, fn_ts, name_key)
+    try:
+        st = os.stat(path)
+        # Windows: st_ctime 为创建时间；取 mtime/ctime 较早者作「成片先后」近似
+        t = min(st.st_mtime, st.st_ctime)
+        return (1, t, name_key)
+    except OSError:
+        return (2, 0.0, name_key)
+
+
+def _order_mp4_paths_for_concat(paths: list[str]) -> list[str]:
+    """多段 mp4 拼接顺序：按时间从旧到新（文件名时间 / 文件时间，相同时按文件名）。"""
+    if len(paths) <= 1:
+        return list(paths)
+    ordered = sorted(paths, key=_mp4_chronological_sort_key)
+    print("📎 MP4 拼接顺序（旧 → 新）：")
+    for i, p in enumerate(ordered, 1):
+        ts = _mp4_timestamp_from_filename(p)
+        try:
+            st = os.stat(p)
+            tinfo = (
+                f"fn_ts={ts:.0f}" if ts is not None else f"mtime={st.st_mtime:.0f}"
+            )
+        except OSError:
+            tinfo = "?"
+        print(f"  {i}. {os.path.basename(p)}  ({tinfo})")
+    return ordered
+
+
+def _read_clipboard_file_paths() -> list[str]:
+    """从系统剪贴板读取文件路径（Windows 资源管理器复制文件）。"""
+    try:
+        import win32clipboard  # type: ignore
+
+        win32clipboard.OpenClipboard()
+        try:
+            if not win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_HDROP):
+                return []
+            raw = win32clipboard.GetClipboardData(win32clipboard.CF_HDROP)
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception:
+        return []
+    if isinstance(raw, (list, tuple)):
+        paths = [os.path.normpath(str(p)) for p in raw if p]
+    elif isinstance(raw, str) and raw.strip():
+        paths = [os.path.normpath(raw.strip())]
+    else:
+        paths = []
+    return [p for p in paths if os.path.isfile(p)]
+
+
 def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
     """拖放路径列表（保持 Explorer 给出的先后顺序）。"""
     out: list[str] = []
@@ -641,7 +724,7 @@ def _tkinter_dnd_root_capable(widget) -> bool:
 def _register_summary_gen_media_drop_targets(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """注册摘要窗拖放：``.mp4``（可多段按拖放顺序拼接）加水印成片；图片转 webp 封面。"""
+    """注册摘要窗拖放：``.mp4``（多段按时间从旧到新拼接）加水印成片；图片转 webp 封面。"""
     if not (_TK_DND_AVAILABLE and summary_window):
         return
     if not callable(getattr(summary_window, "drop_target_register", None)):
@@ -682,31 +765,54 @@ def _register_summary_gen_media_drop_targets(
 def _register_summary_gen_media_paste_bindings(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """Ctrl+Shift+V：剪贴板为图片时写入 ``gen_video/<id>.webp``（专用快捷键，与文本框 Ctrl+V 不冲突）。"""
+    """Ctrl+V：仅粘贴媒体（mp4 / 图片），摘要窗内不做文字粘贴。"""
 
-    def _on_paste_image(event=None):
-        if _on_summary_paste_image_from_clipboard(summary_window):
-            return "break"
+    def _on_paste_media(_event=None):
+        _on_summary_paste_media_from_clipboard(summary_window)
+        return "break"
 
-    paste_seqs = (
-        "<Control-Shift-v>",
-        "<Control-Shift-V>",
-        "<Control-Shift-KeyPress-v>",
-        "<Control-Shift-KeyPress-V>",
-    )
+    paste_seqs = ("<Control-v>", "<Control-V>")
 
     def _bind_paste_subtree(widget):
         for seq in paste_seqs:
-            widget.bind(seq, _on_paste_image, add="+")
+            widget.bind(seq, _on_paste_media, add="+")
         for ch in widget.winfo_children():
             _bind_paste_subtree(ch)
 
     if not getattr(summary_window, "_summary_paste_root_bound", False):
         for seq in paste_seqs:
-            summary_window.bind(seq, _on_paste_image)
+            summary_window.bind(seq, _on_paste_media)
         summary_window._summary_paste_root_bound = True
     if content_root is not None:
         _bind_paste_subtree(content_root)
+
+
+def _on_summary_paste_media_from_clipboard(summary_window: tk.Toplevel) -> None:
+    """粘贴：资源管理器复制的文件，或剪贴板位图 → 与拖放相同。"""
+    ctx = getattr(summary_window, "_summary_drop_ctx", None)
+    if not isinstance(ctx, dict):
+        return
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return
+
+    file_paths = _read_clipboard_file_paths()
+    mp4_paths = [p for p in file_paths if p.lower().endswith(".mp4")]
+    image_path = next(
+        (p for p in file_paths if _is_summary_image_file_path(p)),
+        None,
+    )
+
+    if mp4_paths:
+        _on_summary_mp4_watermark_drop(
+            None, summary_window, mp4_paths=mp4_paths
+        )
+        return
+    if image_path:
+        _start_summary_cover_webp_save(image_path, summary_window, ctx)
+        return
+    _on_summary_paste_image_from_clipboard(summary_window)
 
 
 def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
@@ -736,7 +842,7 @@ def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
             show_auto_close_popup(
                 summary_window,
                 "拖放",
-                "请拖入 .mp4（可多段，按拖放顺序拼接后加水印成片）或图片（PNG/JPEG/WebP 等，加水印后存为 gen_video/<id>.webp）。",
+                "请拖入 .mp4（可多段，将按时间从旧到新拼接后加水印成片）或图片。",
             )
         except Exception:
             pass
@@ -785,7 +891,7 @@ def _refresh_summary_window_title(
     suf = ctx.get("summary_dnd_title_suffix", "")
     title_part = _youtube_row_display_title(video_detail) or "—"
     summary_window.title(
-        f"{idx} - {title_part} - 摘要 · 拖入 MP4/图片 · Ctrl+Shift+V 贴图{suf}"
+        f"{idx} - {title_part} - 摘要 · 拖入/ Ctrl+V 粘贴 MP4/图片{suf}"
     )
 
 
@@ -1313,6 +1419,9 @@ def _on_summary_mp4_watermark_drop(
             pass
         return
 
+    if len(paths) > 1:
+        paths = _order_mp4_paths_for_concat(paths)
+
     wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
@@ -1413,7 +1522,7 @@ def _on_summary_mp4_watermark_drop(
                     except Exception:
                         pass
                 if n_clips > 1:
-                    msg = f"已按拖放顺序拼接 {n_clips} 段并加水印：\n{out_ok}"
+                    msg = f"已按时间从旧到新拼接 {n_clips} 段并加水印：\n{out_ok}"
                 else:
                     msg = f"已加水印：\n{out_ok}"
                 show_auto_close_popup(par, "已保存", msg)
@@ -5777,6 +5886,16 @@ class MediaGUIManager:
                 persist_fn=persist,
             )
 
+        def on_scene_split():
+            self._run_story_scene_split_from_cover_async(
+                dlg,
+                video_detail,
+                (tx.get("1.0", tk.END) or ""),
+                on_busy=lambda: _busy(scene_split_btn),
+                on_idle=lambda: _idle(scene_split_btn),
+                persist_fn=persist,
+            )
+
         _lang_lbl = config.llm_language_label(self.language)
         _story_nb_copy_cycle: dict[str, int] = {"slideshow": -1, "video": -1}
 
@@ -5852,6 +5971,8 @@ class MediaGUIManager:
             add_btn.config(state=tk.DISABLED)
         concise_btn = ttk.Button(btn_row, text="口语精简", command=on_speaking_concise)
         concise_btn.pack(side=tk.LEFT, padx=(0, 8))
+        scene_split_btn = ttk.Button(btn_row, text="场景分离", command=on_scene_split)
+        scene_split_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
             text=f"Story to Slideshow - ({_lang_lbl})",
@@ -6162,6 +6283,105 @@ class MediaGUIManager:
             )
         show_auto_close_popup(parent, "Direct Video", f"已拷贝到剪贴板：{picked_label}")
         return bool(clip_body)
+
+    def _run_story_scene_split_from_cover_async(
+        self,
+        parent,
+        video_detail: dict,
+        story_raw: str,
+        *,
+        on_busy=None,
+        on_idle=None,
+        persist_fn=None,
+        on_saved=None,
+    ) -> bool:
+        """用封面图 + story 首条 JSON，LLM 拆分为多条 scene_content。"""
+        entries = _parse_story_field(story_raw)
+        if not entries:
+            messagebox.showwarning(
+                "场景分离",
+                "请先在 story 编辑区填写至少一条有效 JSON。",
+                parent=parent,
+            )
+            return False
+
+        webp_path = _find_gen_video_webp_for_row(video_detail)
+        if not webp_path:
+            show_auto_close_popup(
+                parent,
+                "场景分离",
+                "未找到 gen_video/<id>.webp 封面。\n请先拖入/粘贴图片并保存封面。",
+                kind="error",
+            )
+            return False
+
+        first_entry = entries[0]
+        lang = config.llm_language_label(self.language)
+        system_prompt = config_prompt.STORY_SCENE_SPLIT_FROM_IMAGE_SYSTEM_PROMPT.format(
+            language=lang
+        )
+        user_prompt = json.dumps(first_entry, ensure_ascii=False, indent=2)
+
+        if on_busy:
+            on_busy()
+
+        def work():
+            err_msg = ""
+            scenes: list | None = None
+            try:
+                raw = self.llm_api.analyze_image_json(
+                    system_prompt,
+                    webp_path,
+                    expect_list=True,
+                    user_prompt=user_prompt,
+                )
+                scenes = raw if isinstance(raw, list) and raw else None
+            except Exception as ex:
+                err_msg = str(ex)
+
+            def apply():
+                if on_idle:
+                    on_idle()
+                if err_msg:
+                    show_auto_close_popup(
+                        parent, "场景分离失败", err_msg, kind="error"
+                    )
+                    return
+                if not scenes:
+                    messagebox.showwarning(
+                        "场景分离",
+                        "LLM 未返回有效 scene_content（须为 JSON array）。",
+                        parent=parent,
+                    )
+                    return
+                video_detail["scene_content"] = scenes
+                persist = persist_fn or (
+                    lambda vd, parent=None: self._persist_video_detail_story(
+                        vd, parent=parent
+                    )
+                )
+                if not persist(video_detail, parent=parent):
+                    return
+                scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
+                try:
+                    _copy_text_to_clipboard(parent, scene_json)
+                except Exception:
+                    pass
+                if callable(on_saved):
+                    try:
+                        on_saved()
+                    except Exception:
+                        pass
+                show_auto_close_popup(
+                    parent,
+                    "场景分离",
+                    f"已根据封面与 story 首条生成 {len(scenes)} 个场景，并写入 scene_content。",
+                )
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
 
     def _copy_notebooklm_scene_gen_instruction(
         self,
@@ -7273,7 +7493,7 @@ class MediaGUIManager:
             text=(
                 "「分析/场景/成片」列：✓=已摘要  ⚠=场景未齐  「片」=gen_video 下已有本条成片 "
                 "（成片 ``<id>.mp4``；封面 ``<id>.webp``，``id`` 为 YouTube 视频 id 或项目 pid）；"
-                "摘要窗可拖放 mp4 / 图片，或 Ctrl+Shift+V 粘贴图片（均加水印；封面 webp 不影响发布预览）；"
+                "摘要窗可拖放或 Ctrl+V 粘贴 mp4 / 图片（多段 mp4 按时间从旧到新拼接；均加水印）；"
                 "拖放 mp4 后自动刷新，也可点顶部「刷新」。"
             ),
             font=("Arial", 9),
@@ -8351,7 +8571,7 @@ class MediaGUIManager:
                 if not webp_p:
                     messagebox.showwarning(
                         "提示",
-                        "尚无封面 WebP。\n请拖入图片或 Ctrl+Shift+V 粘贴图片到本窗口。",
+                        "尚无封面 WebP。\n请拖入图片或 Ctrl+V 粘贴图片到本窗口。",
                         parent=summary_window,
                     )
                     return
