@@ -40,6 +40,10 @@ from gui.publish_metadata_dialog import (
     scene_content_list_for_publish,
 )
 from gui.reference_editor_dialog import ReferenceEditorDialog
+from gui.summary_mp4_review_dialog import (
+    ask_summary_mp4_review_segments,
+    run_trim_concat_watermark_worker,
+)
 from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
 from utility.tags_text import merge_tag_pick, parse_tags_list
 import project_manager
@@ -724,7 +728,7 @@ def _tkinter_dnd_root_capable(widget) -> bool:
 def _register_summary_gen_media_drop_targets(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
-    """注册摘要窗拖放：``.mp4``（多段按时间从旧到新拼接）加水印成片；图片转 webp 封面。"""
+    """注册摘要窗拖放：``.mp4``（审阅裁剪/排序后拼接）加水印成片；图片转 webp 封面。"""
     if not (_TK_DND_AVAILABLE and summary_window):
         return
     if not callable(getattr(summary_window, "drop_target_register", None)):
@@ -842,7 +846,7 @@ def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
             show_auto_close_popup(
                 summary_window,
                 "拖放",
-                "请拖入 .mp4（可多段，将按时间从旧到新拼接后加水印成片）或图片。",
+                "请拖入 .mp4（将打开审阅窗裁剪/排序后加水印成片）或图片。",
             )
         except Exception:
             pass
@@ -1419,9 +1423,6 @@ def _on_summary_mp4_watermark_drop(
             pass
         return
 
-    if len(paths) > 1:
-        paths = _order_mp4_paths_for_concat(paths)
-
     wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
@@ -1431,61 +1432,23 @@ def _on_summary_mp4_watermark_drop(
         )
         return
 
-    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "")
-    dest_name = _gen_video_watermark_dest_filename(vd)
     pid = getattr(mgr, "pid", "") or "yt_wm"
     lang = getattr(mgr, "language", "") or "zh"
-    n_clips = len(paths)
+    segments = ask_summary_mp4_review_segments(
+        summary_window, paths, pid=pid, lang=lang
+    )
+    if not segments:
+        return
 
-    def _worker():
-        out_ok = ""
-        err_msg = ""
-        tmp = ""
-        concat_tmp = ""
-        try:
-            os.makedirs(gen_dir, exist_ok=True)
-            ff = FfmpegProcessor(pid, lang)
-            if n_clips == 1:
-                source = paths[0]
-            else:
-                source = ff.concat_videos(paths, True)
-                concat_tmp = source or ""
-                if not source:
-                    err_msg = f"拼接 {n_clips} 个视频失败。"
-                    return
-            tmp = config.get_temp_file(pid, "mp4")
-            ok = ff.watermark_clip_with_preprocess(source, tmp, wm_path, wm_opts or {})
-            if not ok:
-                err_msg = "FFmpeg 叠加水印失败。"
-                if tmp:
-                    safe_remove(tmp)
-                return
-            dest_abs = os.path.join(gen_dir, dest_name)
-            safe_copy_overwrite(tmp, dest_abs)
-            safe_remove(tmp)
-            tmp = ""
-            out_ok = dest_abs
-        except Exception as ex:
-            err_msg = str(ex)
-            if tmp:
-                try:
-                    safe_remove(tmp)
-                except Exception:
-                    pass
-        finally:
-            if concat_tmp:
-                try:
-                    safe_remove(concat_tmp)
-                except Exception:
-                    pass
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "")
+    dest_name = _gen_video_watermark_dest_filename(vd)
 
+    def _on_worker_done(out_ok: str, err_msg: str, n_saved: int):
         root = getattr(mgr, "root", None) or summary_window.winfo_toplevel()
 
         def _done_ui():
             par = summary_window if summary_window.winfo_exists() else root
             if out_ok:
-                stem_saved = os.path.splitext(os.path.basename(out_ok))[0]
-                # 成片文件名 stem 与条目 ``id``（YouTube id 或项目 pid）一致，不再写 gen_video_stem
                 dl = getattr(mgr, "downloader", None)
                 ch_json = getattr(dl, "channel_list_json", "") if dl else ""
                 if ch_json and dl is not None:
@@ -1521,17 +1484,26 @@ def _on_summary_mp4_watermark_drop(
                         rfn_feat()
                     except Exception:
                         pass
-                if n_clips > 1:
-                    msg = f"已按时间从旧到新拼接 {n_clips} 段并加水印：\n{out_ok}"
+                if n_saved > 1:
+                    msg = f"已裁剪并拼接 {n_saved} 段、加水印保存：\n{out_ok}"
                 else:
-                    msg = f"已加水印：\n{out_ok}"
+                    msg = f"已裁剪并加水印保存：\n{out_ok}"
                 show_auto_close_popup(par, "已保存", msg)
             elif err_msg:
                 show_auto_close_popup(par, "加水印失败", err_msg, kind="error")
 
         root.after(0, _done_ui)
 
-    threading.Thread(target=_worker, daemon=True).start()
+    run_trim_concat_watermark_worker(
+        segments=segments,
+        pid=pid,
+        lang=lang,
+        wm_path=wm_path,
+        wm_opts=wm_opts or {},
+        gen_dir=gen_dir,
+        dest_name=dest_name,
+        on_done=_on_worker_done,
+    )
 
 
 def _treeview_item_tags_safe(tree, item):
@@ -7479,7 +7451,7 @@ class MediaGUIManager:
             text=(
                 "「分析/场景/成片」列：✓=已摘要  ⚠=场景未齐  「片」=gen_video 下已有本条成片 "
                 "（成片 ``<id>.mp4``；封面 ``<id>.webp``，``id`` 为 YouTube 视频 id 或项目 pid）；"
-                "摘要窗可拖放或 Ctrl+V 粘贴 mp4 / 图片（多段 mp4 按时间从旧到新拼接；均加水印）；"
+                "摘要窗可拖放或 Ctrl+V 粘贴 mp4 / 图片（mp4 将打开审阅窗裁剪排序后拼接加水印）；"
                 "拖放 mp4 后自动刷新，也可点顶部「刷新」。"
             ),
             font=("Arial", 9),
@@ -8408,13 +8380,13 @@ class MediaGUIManager:
             # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
             if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():
                 summary_window = summary_window_ref["w"]
-                summary_window.geometry("960x520")
+                summary_window.geometry("1060x520")
                 for child in summary_window.winfo_children():
                     child.destroy()
             else:
                 summary_window = tk.Toplevel(dialog)
                 summary_window_ref["w"] = summary_window
-                summary_window.geometry("960x520")
+                summary_window.geometry("1060x520")
                 summary_window.resizable(True, True)
                 summary_window.transient(dialog)
             if not getattr(summary_window, "_summary_drop_ctx", None):
@@ -8538,7 +8510,7 @@ class MediaGUIManager:
                 else:
                     gen_hint = _gen_video_storage_dir() or "(未配置 publish/gen_video)"
                     feature_media_var.set(
-                        f"尚未拖入成片/封面（拖入 MP4（可多段按顺序拼接）或图片到本窗，保存至 {gen_hint}）"
+                        f"尚未拖入成片/封面（拖入 MP4（审阅裁剪/排序后拼接）或图片到本窗，保存至 {gen_hint}）"
                     )
                 try:
                     copy_cover_clipboard_btn.config(
@@ -9011,7 +8983,7 @@ class MediaGUIManager:
             ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
             ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
 
-            image_en_btn = ttk.Button(right_btns, text="内容", command=lambda: copy_style_character())
+            image_en_btn = ttk.Button(right_btns, text="风格", command=lambda: copy_style_character())
             image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Button(right_btns, text="分析", command=do_review_analyzed).pack(

@@ -1993,17 +1993,18 @@ class FfmpegProcessor:
                 for video_path in video_paths:
                     f.write(self._concat_demuxer_path_line(video_path))
             
-            # build ffmpeg concat command with re-encoding for consistency
+            # concat demuxer 必须全量重编码；此处固定 libx264（不用 NVENC），避免 Windows 上 0xC0000005 崩溃
             concat_cmd = [
                 ffmpeg_path, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_file_path,
-                "-c:v", "libx264",  # Re-encode video to ensure consistency
+                "-c:v", "libx264",
                 "-preset", "medium",
                 "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-r", str(STANDARD_FPS),
             ]
-            concat_cmd.extend(self._get_video_output_args(keyframe_interval=False))
 
             if not keep_audio:
                 concat_cmd.append("-an")  # drop audio completely

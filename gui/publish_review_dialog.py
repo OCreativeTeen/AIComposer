@@ -8,6 +8,7 @@
 import os
 import shutil
 import threading
+import time
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
@@ -101,6 +102,13 @@ class PublishReviewDialog:
         self.video_after_id = None
         self._temp_audio_path = None
         self.current_photo = None
+        self._current_t = 0.0
+        self._duration = 0.0
+        self._fps = 30.0
+        self._frame_count = 0
+        self._pygame_ok = False
+        self._play_wall_start = 0.0
+        self._has_audio = False
 
         top = ttk.Frame(self.dlg, padding=8)
         top.pack(fill=tk.BOTH, expand=True)
@@ -112,16 +120,19 @@ class PublishReviewDialog:
 
         self.preview_canvas = tk.Canvas(top, bg="black", height=320, highlightthickness=1, highlightbackground="#444")
         self.preview_canvas.pack(fill=tk.BOTH, expand=True, pady=4)
+        self.preview_canvas.bind("<Double-Button-1>", self._on_preview_double_click)
 
         self.time_lbl = ttk.Label(top, text="")
-        self.time_lbl.pack(anchor="w")
+        self.time_lbl.pack(anchor=tk.W)
+        ttk.Label(
+            top,
+            text="双击视频播放（音画同步）；再双击停止并回到开头。",
+            font=("Arial", 9),
+            foreground="#555",
+        ).pack(anchor=tk.W, pady=(0, 4))
 
         toolbar = ttk.Frame(top)
         toolbar.pack(fill=tk.X, pady=(4, 6))
-        self.play_btn = ttk.Button(toolbar, text="▶ 播放", command=self._toggle_play)
-        self.play_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(toolbar, text="停止", command=self._stop_play).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Frame(toolbar, width=14).pack(side=tk.LEFT)  # 与后方操作钮分隔
         self.btn_trans = ttk.Button(toolbar, text="Transcript（转写）", command=self._on_transcribe)
         self.btn_trans.pack(side=tk.LEFT, padx=(0, 8))
         self.btn_regen = ttk.Button(toolbar, text="重合成音频", command=self._on_regenerate)
@@ -165,7 +176,206 @@ class PublishReviewDialog:
 
         self.dlg.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.dlg.after(200, self._try_auto_play)
+        self.dlg.after(200, self._init_video_preview)
+
+    def _fmt_time(self, sec: float) -> str:
+        sec = max(0.0, float(sec))
+        m = int(sec // 60)
+        s = sec - m * 60
+        return f"{m:d}:{s:05.2f}"
+
+    def _probe_video_meta(self) -> None:
+        ff = FfmpegProcessor(self.media_gui.pid, self.media_gui.language or "zh")
+        self._duration = float(ff.get_duration(self.mp4_path) or 0.0)
+        self._fps = 30.0
+        self._frame_count = 0
+        if cv2 is not None:
+            cap = cv2.VideoCapture(self.mp4_path)
+            if cap.isOpened():
+                self._fps = float(cap.get(cv2.CAP_PROP_FPS) or 30)
+                if self._fps < 1 or self._fps > 240:
+                    self._fps = 30.0
+                self._frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                cap.release()
+        if self._frame_count <= 0 and self._duration > 0:
+            self._frame_count = max(1, int(round(self._duration * self._fps)))
+        if self._duration <= 0 and self._frame_count > 0:
+            self._duration = self._frame_count / self._fps
+        self._duration = max(0.01, self._duration)
+        self._has_audio = ff.has_audio_stream(self.mp4_path)
+
+    def _init_pygame(self) -> None:
+        if not pygame or self._pygame_ok:
+            return
+        try:
+            pygame.mixer.init(frequency=44100, buffer=512)
+            self._pygame_ok = True
+        except Exception:
+            self._pygame_ok = False
+
+    def _load_audio_bg(self) -> None:
+        if not self._has_audio:
+            return
+        try:
+            ap = self._ffmpeg_audio().extract_audio_from_video(self.mp4_path, "wav") or ""
+        except Exception:
+            ap = ""
+        self._temp_audio_path = ap
+
+    def _paint_frame(self, frame) -> None:
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(frame_rgb)
+        cw = max(self.preview_canvas.winfo_width(), 400)
+        ch = max(self.preview_canvas.winfo_height(), 240)
+        pil_image.thumbnail((cw - 8, ch - 8), Image.Resampling.LANCZOS)
+        self.current_photo = ImageTk.PhotoImage(pil_image)
+        self.preview_canvas.delete("all")
+        self.preview_canvas.create_image(
+            cw // 2, ch // 2, anchor=tk.CENTER, image=self.current_photo
+        )
+
+    def _update_time_label(self) -> None:
+        self.time_lbl.config(
+            text=f"{self._fmt_time(self._current_t)} / {self._fmt_time(self._duration)}"
+        )
+
+    def _show_frame_at(self, t: float) -> None:
+        if cv2 is None:
+            return
+        t = max(0.0, min(t, self._duration))
+        self._current_t = t
+        cap = cv2.VideoCapture(self.mp4_path)
+        if not cap.isOpened():
+            return
+        frame_idx = int(round(t * self._fps))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            self._paint_frame(frame)
+        self._update_time_label()
+
+    def _open_cap(self) -> bool:
+        if cv2 is None:
+            return False
+        if self.video_cap:
+            try:
+                self.video_cap.release()
+            except Exception:
+                pass
+        self.video_cap = cv2.VideoCapture(self.mp4_path)
+        return bool(self.video_cap and self.video_cap.isOpened())
+
+    def _init_video_preview(self):
+        if not os.path.isfile(self.mp4_path):
+            self.preview_canvas.create_text(
+                320, 160, text="文件不存在", fill="white", font=("Arial", 14)
+            )
+            return
+        if cv2 is None:
+            self.preview_canvas.create_text(
+                320, 160, text="未安装 OpenCV，无法内嵌预览", fill="white", font=("Arial", 12)
+            )
+            return
+        self._stop_play(reset_to_start=False)
+        self._probe_video_meta()
+        self._init_pygame()
+        threading.Thread(target=self._load_audio_bg, daemon=True).start()
+        self._show_frame_at(0.0)
+
+    def _on_preview_double_click(self, _event) -> None:
+        if self.video_playing:
+            self._stop_play(reset_to_start=True)
+        else:
+            self._start_play()
+
+    def _start_play(self) -> None:
+        if cv2 is None or not os.path.isfile(self.mp4_path):
+            return
+        self._stop_play(reset_to_start=False, release_cap=True)
+        if not self._open_cap():
+            return
+        self._current_t = 0.0
+        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ret, frame = self.video_cap.read()
+        if ret:
+            self._paint_frame(frame)
+        self._update_time_label()
+
+        if self._has_audio and self._temp_audio_path and os.path.isfile(self._temp_audio_path):
+            self._init_pygame()
+            if self._pygame_ok and pygame:
+                try:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.load(self._temp_audio_path)
+                except Exception:
+                    pass
+
+        self._play_wall_start = time.perf_counter()
+        if self._has_audio and self._pygame_ok and pygame and self._temp_audio_path:
+            try:
+                pygame.mixer.music.play()
+            except Exception:
+                pass
+
+        self.video_playing = True
+        self._play_tick()
+
+    def _play_tick(self) -> None:
+        if not self.video_playing or not self.dlg.winfo_exists():
+            return
+        elapsed = time.perf_counter() - self._play_wall_start
+        target_t = elapsed
+        if target_t >= self._duration - (0.5 / self._fps):
+            self._current_t = self._duration
+            self._update_time_label()
+            self._stop_play(reset_to_start=True)
+            return
+
+        self._current_t = min(target_t, self._duration)
+        self._update_time_label()
+
+        if self._has_audio and self._pygame_ok and pygame and self._temp_audio_path:
+            try:
+                if not pygame.mixer.music.get_busy():
+                    self._stop_play(reset_to_start=True)
+                    return
+            except Exception:
+                pass
+
+        if self.video_cap and self.video_cap.isOpened():
+            cur_frame = int(self.video_cap.get(cv2.CAP_PROP_POS_FRAMES))
+            target_frame = int(round(target_t * self._fps))
+            if target_frame > cur_frame:
+                if target_frame - cur_frame > 2:
+                    self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                ret, frame = self.video_cap.read()
+                if ret:
+                    self._paint_frame(frame)
+
+        self.video_after_id = self.dlg.after(15, self._play_tick)
+
+    def _stop_play(self, *, reset_to_start: bool = False, release_cap: bool = True):
+        self.video_playing = False
+        if self.video_after_id and self.dlg.winfo_exists():
+            try:
+                self.dlg.after_cancel(self.video_after_id)
+            except tk.TclError:
+                pass
+            self.video_after_id = None
+        if self._pygame_ok and pygame:
+            try:
+                pygame.mixer.music.stop()
+            except Exception:
+                pass
+        if release_cap and self.video_cap:
+            try:
+                self.video_cap.release()
+            except Exception:
+                pass
+            self.video_cap = None
+        if reset_to_start:
+            self._show_frame_at(0.0)
 
     def _sync_window_title(self):
         if (self.video_detail.get("publish") or "").strip():
@@ -235,133 +445,6 @@ class PublishReviewDialog:
             if raw:
                 return raw
         return self._default_narrator()
-
-    def _try_auto_play(self):
-        if not os.path.isfile(self.mp4_path):
-            self.preview_canvas.create_text(
-                320, 160, text="文件不存在", fill="white", font=("Arial", 14)
-            )
-            return
-        if cv2 is None:
-            self.preview_canvas.create_text(
-                320, 160, text="未安装 OpenCV，无法内嵌预览", fill="white", font=("Arial", 12)
-            )
-            return
-        self._stop_play()
-        self.video_cap = cv2.VideoCapture(self.mp4_path)
-        if not self.video_cap.isOpened():
-            self.preview_canvas.create_text(
-                320, 160, text="无法打开视频", fill="white", font=("Arial", 12)
-            )
-            return
-        self._fps = float(self.video_cap.get(cv2.CAP_PROP_FPS) or 30)
-        if self._fps < 1 or self._fps > 120:
-            self._fps = 30
-        fa = self._ffmpeg_audio()
-        self._temp_audio_path = fa.extract_audio_from_video(self.mp4_path, "wav")
-        if pygame:
-            try:
-                pygame.mixer.init(frequency=44100)
-            except pygame.error:
-                pass
-        self._start_play()
-
-    def _toggle_play(self):
-        if self.video_cap is None or not self.video_cap.isOpened():
-            self._try_auto_play()
-            return
-        if self.video_playing:
-            self.video_playing = False
-            self.play_btn.config(text="▶ 播放")
-            if self.video_after_id and self.dlg.winfo_exists():
-                try:
-                    self.dlg.after_cancel(self.video_after_id)
-                except tk.TclError:
-                    pass
-                self.video_after_id = None
-            if pygame:
-                try:
-                    pygame.mixer.music.pause()
-                except Exception:
-                    pass
-        else:
-            if pygame and self._temp_audio_path and os.path.isfile(self._temp_audio_path):
-                try:
-                    pygame.mixer.music.unpause()
-                except Exception:
-                    try:
-                        pygame.mixer.music.load(self._temp_audio_path)
-                        pygame.mixer.music.play()
-                    except Exception:
-                        pass
-            self.video_playing = True
-            self.play_btn.config(text="⏸ 暂停")
-            self._play_next_frame()
-
-    def _start_play(self):
-        self.video_playing = True
-        self.play_btn.config(text="⏸ 暂停")
-        if self.video_cap:
-            self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        if pygame and self._temp_audio_path and os.path.isfile(self._temp_audio_path):
-            try:
-                pygame.mixer.music.load(self._temp_audio_path)
-                pygame.mixer.music.play()
-            except Exception:
-                pass
-        self._play_next_frame()
-
-    def _play_next_frame(self):
-        if not self.video_playing or not self.dlg.winfo_exists():
-            return
-        if not self.video_cap or not self.video_cap.isOpened():
-            return
-
-        ret, frame = self.video_cap.read()
-        if not ret:
-            self._stop_play()
-            return
-
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(frame_rgb)
-        cw = max(self.preview_canvas.winfo_width(), 400)
-        ch = max(self.preview_canvas.winfo_height(), 240)
-        pil_image.thumbnail((cw - 8, ch - 8), Image.Resampling.LANCZOS)
-        self.current_photo = ImageTk.PhotoImage(pil_image)
-        self.preview_canvas.delete("all")
-        self.preview_canvas.create_image(cw // 2, ch // 2, anchor=tk.CENTER, image=self.current_photo)
-
-        try:
-            pos = self.video_cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-            fc = self.video_cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            total_t = fc / self._fps if self._fps else 0
-            self.time_lbl.config(text=f"{pos:.1f}s / {total_t:.1f}s")
-        except Exception:
-            pass
-
-        delay = max(1, int(1000 / self._fps))
-        self.video_after_id = self.dlg.after(delay, self._play_next_frame)
-
-    def _stop_play(self):
-        self.video_playing = False
-        self.play_btn.config(text="▶ 播放")
-        if self.video_after_id and self.dlg.winfo_exists():
-            try:
-                self.dlg.after_cancel(self.video_after_id)
-            except tk.TclError:
-                pass
-            self.video_after_id = None
-        if pygame:
-            try:
-                pygame.mixer.music.stop()
-            except Exception:
-                pass
-        if self.video_cap:
-            try:
-                self.video_cap.release()
-            except Exception:
-                pass
-            self.video_cap = None
 
     def _on_transcribe(self):
         root = self.media_gui.root
