@@ -97,9 +97,14 @@ class SummaryMp4ReviewDialog:
         for p in paths:
             dur, fps, fc = _probe_video_meta(p, self.ff)
             self.clips.append(_ClipState(p, dur, fps, fc))
+        print(f"📎 审阅窗载入 {len(self.clips)} 个 MP4（输入 {len(mp4_paths)} 项）")
+        for i, c in enumerate(self.clips, 1):
+            print(f"  {i}. {os.path.basename(c.path)}")
 
         self._sel = 0
         self._drag_from: int | None = None
+        self._drag_press_y: int | None = None
+        self._drag_moved = False
         self._video_cap = None
         self._playing = False
         self._after_id = None
@@ -163,6 +168,7 @@ class SummaryMp4ReviewDialog:
 
         self.listbox.bind("<<ListboxSelect>>", self._on_list_select)
         self.listbox.bind("<ButtonPress-1>", self._on_list_press, add="+")
+        self.listbox.bind("<B1-Motion>", self._on_list_motion, add="+")
         self.listbox.bind("<ButtonRelease-1>", self._on_list_release, add="+")
 
         btn_col = ttk.Frame(left)
@@ -306,13 +312,25 @@ class SummaryMp4ReviewDialog:
 
     def _on_list_press(self, event) -> None:
         self._drag_from = self.listbox.nearest(event.y)
+        self._drag_press_y = event.y
+        self._drag_moved = False
+
+    def _on_list_motion(self, event) -> None:
+        if self._drag_press_y is not None and abs(event.y - self._drag_press_y) > 6:
+            self._drag_moved = True
 
     def _on_list_release(self, event) -> None:
         if self._drag_from is None:
             return
+        if not self._drag_moved:
+            self._drag_from = None
+            self._drag_press_y = None
+            return
         to_idx = self.listbox.nearest(event.y)
         fr = self._drag_from
         self._drag_from = None
+        self._drag_press_y = None
+        self._drag_moved = False
         if to_idx < 0 or fr < 0 or to_idx == fr:
             return
         if not (0 <= fr < len(self.clips) and 0 <= to_idx < len(self.clips)):

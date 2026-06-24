@@ -1049,9 +1049,9 @@ You are a psychological counselor and master of high-empathy storytelling.
     [
         {{
             "title": "Title in {language}.",
-            "heart_message": "2–3 short rhythmic {language} sentences — to express the psychological insight as gentle life guidance.",
+            "heart_message": "2–3 short rhythmic {language} sentences — to express the psychological insight (As poignant 1st-person speaking, not explaination, not story-telling).",
             "story": "the story scene. about ###LENGTH### {language} char",
-            "speaking": "A poignant 1st-person speaking in {language}."
+            "speaking": "A poignant 1st-person speaking (express the story as 1st person, not explaination, not story-telling) in {language}."
         }}
     ]
 

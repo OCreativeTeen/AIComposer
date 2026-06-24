@@ -334,14 +334,14 @@ Story Json-Content:
 
 NOTEBOOKLM_SLIDESHOW_MANDATE = """
 You generate PICTURE illustrations, NOT text slides.
-Each scene's ``paint_this_picture`` tells you WHAT TO PAINT — composition, people, light, mood.
+Each scene's ``express_concisely__not_rephrase`` tells you WHAT TO speak or behavior.
 ** 1 image = 1 frozen moment
 ** Consistent Visual_Style : {Visual_Style}
 ** Consistent Story-Character look (VERY VERY IMPORTANT!!!!) : {character}.
 """
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = """
-** Use ONLY each scene's ``paint_this_picture`` (+ Visual_Style). That all fields values (visual, story, caption, voiceover, speaking, etc.) = painting directions, NOT text to render.
+** Use ONLY each scene's ``express_concisely__not_rephrase`` (+ Visual_Style). That all fields values (visual, story, caption, voiceover, speaking, etc.) = painting directions, NOT text to render.
 ** Output = one clean illustration per scene: scene + character + light + action tell the story.
 ** NEVER add following onto the image : subtitles, caption, story-summary paragraphs, small annotations, spreadsheet labels, no speech bubbles,etc.. onto the image.
 ** If VERY CRITICAL highlighted info (very short) is ABSOLUTELY necessary to express current scene content, then show it as huge font in background (better with transparent-like font).
@@ -350,7 +350,7 @@ NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = """
 NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
     "Use 'Pasted Text / 粘贴的文字' to generate the Slide-Show. "
     "每张图必须是纯插画：用画面和人物讲故事。"
-    "paint_this_picture 是构图说明，不是要你写在图上的字幕或故事小字。"
+    "express_concisely__not_rephrase 是构图说明，不是要你写在图上的字幕或故事小字。"
     "禁止在图上添加说明段落、对话字幕、表格文字、手机消息文字。"
 )
 
@@ -361,10 +361,10 @@ def scene_payload_for_slideshow_images(scenes: list) -> list[dict]:
     for scene in scenes:
         new_scene = scene.copy()
         if new_scene.get("visual"):
-            new_scene["paint_this_picture"] = new_scene["visual"]
+            new_scene["express_concisely__not_rephrase"] = new_scene["visual"]
             del new_scene["visual"]
         elif new_scene.get("story"):
-            new_scene["paint_this_picture"] = new_scene["story"]
+            new_scene["express_concisely__not_rephrase"] = new_scene["story"]
             del new_scene["story"]
         new_scenes.append(new_scene)
     return new_scenes
@@ -535,7 +535,7 @@ def build_notebooklm_gen_instruction_clipbody(
         main_character = ""
 
     if not host_narrator or host_narrator==HARRATOR_DISPLAY_OPTIONS[-1]:
-        voice = main_character + " ~ Story-character (protagonist) performs, reflection, speak & interaction (only the most key point,  not read words in image)"
+        voice = main_character + " ~ Story-character (protagonist) performs, reflection, speak & interaction (only the most key point,  not read words in image -- 1st person experience  -- not explaination)"
         video = (
                 "** No Host (Narrator). Use the Story character as talking-avatar to speak about the content of scene."
             )        

@@ -610,6 +610,52 @@ def _gen_video_publish_mp4_if_ready(video: dict) -> str:
     return _find_gen_video_mp4_for_row(video)
 
 
+def _win_long_path(path: str) -> str:
+    """Windows 长路径前缀，避免超长路径 isfile 失败。"""
+    p = os.path.normpath(path)
+    if os.name != "nt" or p.startswith("\\\\?\\"):
+        return p
+    if p.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + p[2:]
+    if len(p) >= 240:
+        return "\\\\?\\" + p
+    return p
+
+
+def _is_existing_file(path: str) -> bool:
+    p = (path or "").strip()
+    if not p:
+        return False
+    lp = _win_long_path(p)
+    return os.path.isfile(lp) or os.path.isfile(p)
+
+
+def _collect_unique_file_paths(paths: list[str], *, label: str = "") -> list[str]:
+    """去重（保留顺序）、规范化；跳过不存在或重复项并打印日志。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    raw_n = len(paths)
+    for raw in paths:
+        p = (raw or "").strip()
+        if p.startswith("{") and p.endswith("}"):
+            p = p[1:-1].strip()
+        if not p:
+            continue
+        p = os.path.normpath(p)
+        if not _is_existing_file(p):
+            print(f"⚠️ 跳过无效文件: {p}")
+            continue
+        key = os.path.normcase(os.path.abspath(p))
+        if key in seen:
+            print(f"⚠️ 跳过重复: {os.path.basename(p)}")
+            continue
+        seen.add(key)
+        out.append(p)
+    if label and raw_n != len(out):
+        print(f"📎 {label}: 收到 {raw_n} 项 → 有效 {len(out)} 项")
+    return out
+
+
 def _dnd_paths_splitlist(master_widget, raw) -> list:
     if raw is None or str(raw).strip() == "":
         return []
@@ -693,13 +739,23 @@ def _read_clipboard_file_paths() -> list[str]:
             win32clipboard.CloseClipboard()
     except Exception:
         return []
+
+    paths: list[str] = []
     if isinstance(raw, (list, tuple)):
-        paths = [os.path.normpath(str(p)) for p in raw if p]
+        paths = [str(p) for p in raw if p]
     elif isinstance(raw, str) and raw.strip():
-        paths = [os.path.normpath(raw.strip())]
-    else:
-        paths = []
-    return [p for p in paths if os.path.isfile(p)]
+        if "\0" in raw:
+            paths = [p for p in raw.split("\0") if (p or "").strip()]
+        else:
+            paths = [raw.strip()]
+    elif isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-16-le", errors="ignore")
+            paths = [p for p in text.split("\0") if (p or "").strip()]
+        except Exception:
+            paths = []
+
+    return _collect_unique_file_paths(paths, label="剪贴板")
 
 
 def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
@@ -709,10 +765,9 @@ def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
         p = (raw_path or "").strip()
         if p.startswith("{") and p.endswith("}"):
             p = p[1:-1]
-        p = os.path.normpath(p)
-        if os.path.isfile(p):
-            out.append(p)
-    return out
+        if p:
+            out.append(os.path.normpath(p))
+    return _collect_unique_file_paths(out, label="拖放")
 
 
 def _tkinter_dnd_root_capable(widget) -> bool:
@@ -725,6 +780,36 @@ def _tkinter_dnd_root_capable(widget) -> bool:
     return isinstance(w, _TKINTER_DND_TK)
 
 
+def _flush_accumulated_summary_drop(summary_window: tk.Toplevel) -> None:
+    """合并短时间内多次拖放事件的路径后统一处理。"""
+    summary_window._accumulated_drop_after_id = None
+    buf = getattr(summary_window, "_accumulated_drop_paths", None)
+    setattr(summary_window, "_accumulated_drop_paths", [])
+    if not isinstance(buf, list) or not buf:
+        return
+    paths = _collect_unique_file_paths(buf, label="拖放合并")
+    mp4_paths = [p for p in paths if p.lower().endswith(".mp4")]
+    image_in = next(
+        (p for p in paths if _is_summary_image_file_path(p)),
+        None,
+    )
+    if mp4_paths:
+        _on_summary_mp4_watermark_drop(None, summary_window, mp4_paths=mp4_paths)
+    elif image_in:
+        ctx = getattr(summary_window, "_summary_drop_ctx", None)
+        if isinstance(ctx, dict):
+            _start_summary_cover_webp_save(image_in, summary_window, ctx)
+    else:
+        try:
+            show_auto_close_popup(
+                summary_window,
+                "拖放",
+                "请拖入 .mp4（将打开审阅窗裁剪/排序后加水印成片）或图片。",
+            )
+        except Exception:
+            pass
+
+
 def _register_summary_gen_media_drop_targets(
     summary_window: tk.Toplevel, content_root: tk.Misc | None
 ):
@@ -734,15 +819,25 @@ def _register_summary_gen_media_drop_targets(
     if not callable(getattr(summary_window, "drop_target_register", None)):
         return
 
-    deb_attr = "_gen_media_drop_last_wall"
-
     def _drop(ev, sw=summary_window):
-        now = time.time()
-        last = float(getattr(sw, deb_attr, 0.0) or 0.0)
-        if last and (now - last) < 0.28:
+        master = getattr(ev, "widget", None) or sw
+        paths = _dnd_normalize_file_paths(master, getattr(ev, "data", None))
+        if not paths:
             return
-        setattr(sw, deb_attr, now)
-        _on_summary_gen_media_drop(ev, sw)
+        buf = getattr(sw, "_accumulated_drop_paths", None)
+        if not isinstance(buf, list):
+            buf = []
+        buf.extend(paths)
+        setattr(sw, "_accumulated_drop_paths", buf)
+        aid = getattr(sw, "_accumulated_drop_after_id", None)
+        if aid:
+            try:
+                sw.after_cancel(aid)
+            except tk.TclError:
+                pass
+        sw._accumulated_drop_after_id = sw.after(
+            180, lambda s=sw: _flush_accumulated_summary_drop(s)
+        )
 
     def _bind_one(w: tk.Misc):
         try:
@@ -1402,10 +1497,13 @@ def _on_summary_mp4_watermark_drop(
 
     paths: list[str] = []
     if mp4_paths:
-        paths = [
-            p for p in mp4_paths
-            if (p or "").strip() and os.path.isfile(p) and p.lower().endswith(".mp4")
-        ]
+        paths = _collect_unique_file_paths(
+            [
+                p for p in mp4_paths
+                if (p or "").strip() and p.lower().endswith(".mp4")
+            ],
+            label="审阅 MP4",
+        )
     elif (mp4_path or "").strip():
         p = os.path.normpath(mp4_path.strip())
         if os.path.isfile(p) and p.lower().endswith(".mp4"):
