@@ -490,31 +490,40 @@ class FfmpegProcessor:
             return None
 
 
-    def trim_video(self, video_path, start_time=0, end_time=None, volume=1.0):
+    def trim_video(self, video_path, start_time=0, end_time=None, volume=1.0, speed=1.0):
         """
-        Resize a video with optional cropping from start_x, start_y.
+        裁剪视频片段；``speed`` 为播放倍率（0.7–1.2：>1 加速，<1 减速），音画同步变速。
         """
         try:
+            speed = float(speed or 1.0)
+            if speed <= 0:
+                speed = 1.0
             duration = self.get_duration(video_path) or 0.0
             if end_time is None or end_time > duration:
                 end_time = duration
             need_time_cut = (start_time > 0 or end_time < duration)
+            need_speed = abs(speed - 1.0) > 0.001
 
-            # Early exit if no changes needed
-            if not need_time_cut and volume == 1.0:
+            if not need_time_cut and not need_speed and volume == 1.0:
                 output_path = config.get_temp_file(self.pid, "mp4")
                 shutil.copy2(video_path, output_path)
                 print(f"📋 No changes needed, copying file: {os.path.basename(video_path)}")
                 return output_path
-            
-            # Build and execute FFmpeg command
+
             output_path = config.get_temp_file(self.pid, "mp4")
-            cmd = self._build_trim_command( video_path, output_path, start_time, end_time, volume )
-            
+            if need_speed:
+                cmd = self._build_trim_speed_command(
+                    video_path, output_path, start_time, end_time, volume, speed
+                )
+            else:
+                cmd = self._build_trim_command(
+                    video_path, output_path, start_time, end_time, volume
+                )
+
             print(f"🔧 Executing FFmpeg command for trim_video: {' '.join(cmd)}")
             self.run_ffmpeg_command(cmd)
             return output_path
-            
+
         except subprocess.CalledProcessError as e:
             print(f"❌ FFmpeg processing failed with exit code {e.returncode}: {e.stderr}")
             return None
@@ -570,6 +579,39 @@ class FfmpegProcessor:
             "-to", str(end_time),
             output_path
             ])
+        return cmd
+
+    def _build_trim_speed_command(
+        self, video_path, output_path, start_time, end_time, volume, speed
+    ):
+        """裁剪选中区间并按 ``speed`` 倍率同步变速（setpts + atempo）。"""
+        speed = max(0.5, min(2.0, float(speed)))
+        cmd = [
+            ffmpeg_path, "-y",
+            "-ss", str(start_time),
+            "-to", str(end_time),
+            "-i", video_path,
+        ]
+        has_audio = self.has_audio_stream(video_path) and volume > 0.0
+        vf = f"setpts=PTS-STARTPTS,setpts=PTS/{speed:.6f}"
+        if has_audio:
+            af_parts = ["asetpts=PTS-STARTPTS", f"atempo={speed:.6f}"]
+            if volume != 1.0:
+                af_parts.append(f"volume={volume}")
+            af = ",".join(af_parts)
+            cmd.extend([
+                "-filter_complex", f"[0:v]{vf}[v];[0:a]{af}[a]",
+                "-map", "[v]", "-map", "[a]",
+            ])
+        else:
+            cmd.extend(["-vf", vf])
+        cmd.extend(self._get_video_output_args(keyframe_interval=False))
+        if has_audio:
+            cmd.extend(self._get_audio_encode_args())
+        elif volume <= 0.0:
+            cmd.append("-an")
+        cmd.extend(self._get_output_optimization_args())
+        cmd.append(output_path)
         return cmd
 
 

@@ -376,6 +376,7 @@ NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 ** If the image has no actor/narrator avatar, DO NOT add talking-avatars in video (voice / ambience only).
 ** Narrator commenting on prior scene: keep prior scene as stable background; hold starting frame — do not jump backgrounds because of narration.
 ** Audio: speaking / voiceover from Scene_Content; target ~10s; voice matches actor/narrator gender-age-race; sound-effects OK; no background music unless scene has no speech.
+** Persona : story / voiceover may talking about he/she, but in 1st person speaking, should say as 'I' or 'we' (not 'he' or 'she')
 """
 
 
@@ -437,6 +438,22 @@ DIRECT_STEP_4_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "4")
 
 DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
     (
+        "Image to Detail-Single-Step-Image 1",
+        DIRECT_STEP_1_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 2",
+        DIRECT_STEP_2_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 3",
+        DIRECT_STEP_3_IMAGE,
+    ),
+    (
+        "Image to Detail-Single-Step-Image 4",
+        DIRECT_STEP_4_IMAGE,
+    ),
+    (
         "Image to Video (protagonist reflection & interaction",
         DIRECT_VIDEO_PROTAGONIST_REFLECTION,
     ),
@@ -455,24 +472,7 @@ DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
     (
         "Image to Video (text in image stays static, no speech)",
         DIRECT_VIDEO_KEN_BURNS_TEXT_HOLD,
-    ),
-    (
-        "Image to Detail-Single-Step-Image 1",
-        DIRECT_STEP_1_IMAGE,
-    ),
-    (
-        "Image to Detail-Single-Step-Image 2",
-        DIRECT_STEP_2_IMAGE,
-    ),
-    (
-        "Image to Detail-Single-Step-Image 3",
-        DIRECT_STEP_3_IMAGE,
-    ),
-    (
-        "Image to Detail-Single-Step-Image 4",
-        DIRECT_STEP_4_IMAGE,
     )
-
 ]
 
 
@@ -559,7 +559,7 @@ def build_notebooklm_gen_instruction_clipbody(
             NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION.strip()
         )
         parts["Story_Category"] = category
-        parts["Story_Scenes_Content"] = json_content
+        parts["Story_Scene_Content"] = json_content
     else:    # "video":
         parts["Instruction_for_video_generation"] = video
         parts["Voice"] = voice  
@@ -567,7 +567,7 @@ def build_notebooklm_gen_instruction_clipbody(
             NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
         )
         parts["Story_Category"] = category
-        parts["Story_Scenes_Content"] = json_content
+        parts["Story_Scene_Content"] = json_content
 
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 

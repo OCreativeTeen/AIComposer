@@ -21,12 +21,12 @@ from PIL import Image, ImageTk
 
 import config
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
-from utility.ffmpeg_processor import FfmpegProcessor
+from utility.ffmpeg_processor import FfmpegProcessor, ffmpeg_path
 from utility.file_util import safe_copy_overwrite, safe_remove
 
 
 class _ClipState:
-    __slots__ = ("path", "duration", "fps", "frame_count", "start", "end")
+    __slots__ = ("path", "duration", "fps", "frame_count", "start", "end", "speed")
 
     def __init__(self, path: str, duration: float, fps: float, frame_count: int):
         self.path = os.path.normpath(path)
@@ -36,6 +36,12 @@ class _ClipState:
         self.duration = max(0.01, float(duration), dur_frames)
         self.start = 0.0
         self.end = self.duration
+        self.speed = 1.0
+
+
+SPEED_MIN = 0.7
+SPEED_MAX = 1.2
+SPEED_STEP = 0.1
 
 
 def _fmt_time(sec: float) -> str:
@@ -118,6 +124,7 @@ class SummaryMp4ReviewDialog:
         self._play_wall_start = 0.0
         self._play_media_start = 0.0
         self._play_media_stop = 0.0
+        self._play_speed = 1.0
         self._tl_drag: str | None = None
         self._has_audio = False
 
@@ -149,8 +156,8 @@ class SummaryMp4ReviewDialog:
         ttk.Label(
             root,
             text="片段自上而下为拼接顺序；拖动左侧列表项可调整顺序。"
-            "单击预览区播放/暂停；双击预览区播放当前选中区间（音画同步）。"
-            "拖动时间轴两端把手设定起止（按视频帧对齐）。",
+            "单击预览区播放/暂停；双击预览区按选中区间播放（含速度）。"
+            "拖动时间轴两端把手设定起止；◀/▶ 调整区间速度（0.7–1.2）。",
             wraplength=1000,
         ).pack(anchor=tk.W, pady=(0, 8))
 
@@ -218,6 +225,19 @@ class SummaryMp4ReviewDialog:
             side=tk.LEFT
         )
 
+        speed_row = ttk.Frame(trim_box)
+        speed_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(speed_row, text="区间速度", width=8).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(speed_row, text="◀", width=3, command=self._speed_down).pack(side=tk.LEFT)
+        self.speed_lbl = ttk.Label(speed_row, text="1.0×", width=8, anchor=tk.CENTER)
+        self.speed_lbl.pack(side=tk.LEFT, padx=4)
+        ttk.Button(speed_row, text="▶", width=3, command=self._speed_up).pack(side=tk.LEFT)
+        ttk.Label(
+            speed_row,
+            text="（0.7–1.2，步进 0.1；仅作用于选中区间，导出时音画同步变速）",
+            foreground="#555",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
         self.sel_dur_lbl = ttk.Label(trim_box, text="选中时长: —", foreground="#0a5a9e")
         self.sel_dur_lbl.pack(anchor=tk.W, pady=(0, 4))
 
@@ -239,7 +259,8 @@ class SummaryMp4ReviewDialog:
 
     def _clip_label(self, idx: int, c: _ClipState) -> str:
         name = os.path.basename(c.path)
-        return f"{idx + 1}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}]"
+        spd = f" @{c.speed:.1f}×" if abs(c.speed - 1.0) > 0.001 else ""
+        return f"{idx + 1}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}{spd}]"
 
     def _refresh_listbox(self) -> None:
         sel = self._sel
@@ -274,8 +295,23 @@ class SummaryMp4ReviewDialog:
         self.start_spin.insert(0, f"{c.start:.3f}")
         self.end_spin.delete(0, tk.END)
         self.end_spin.insert(0, f"{c.end:.3f}")
+        self.speed_lbl.config(text=f"{c.speed:.1f}×")
         self._update_trim_labels()
         self._draw_timeline()
+
+    def _speed_up(self) -> None:
+        c = self.clips[self._sel]
+        c.speed = round(min(SPEED_MAX, c.speed + SPEED_STEP), 1)
+        self._play_audio_key = None
+        self._apply_clip_to_ui(c)
+        self._refresh_listbox()
+
+    def _speed_down(self) -> None:
+        c = self.clips[self._sel]
+        c.speed = round(max(SPEED_MIN, c.speed - SPEED_STEP), 1)
+        self._play_audio_key = None
+        self._apply_clip_to_ui(c)
+        self._refresh_listbox()
 
     def _select_clip(self, idx: int) -> None:
         if not (0 <= idx < len(self.clips)):
@@ -381,6 +417,11 @@ class SummaryMp4ReviewDialog:
 
     def _update_trim_labels(self) -> None:
         c = self.clips[self._sel]
+        seg = max(0.0, c.end - c.start)
+        out_dur = seg / max(0.01, c.speed)
+        spd_note = ""
+        if abs(c.speed - 1.0) > 0.001:
+            spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:.1f}）"
         self.time_lbl.config(
             text=(
                 f"{os.path.basename(c.path)}  ·  "
@@ -390,9 +431,9 @@ class SummaryMp4ReviewDialog:
         )
         self.sel_dur_lbl.config(
             text=(
-                f"选中时长: {_fmt_time(max(0, c.end - c.start))} / "
-                f"全长 {_fmt_time(c.duration)}  "
+                f"选中时长: {_fmt_time(seg)} / 全长 {_fmt_time(c.duration)}  "
                 f"[帧 {int(round(c.start * c.fps))} – {int(round(c.end * c.fps))}]"
+                f"{spd_note}"
             )
         )
 
@@ -480,8 +521,24 @@ class SummaryMp4ReviewDialog:
         except Exception:
             self._pygame_ok = False
 
-    def _prepare_play_audio(self, start_t: float, stop_t: float) -> str:
-        key = (self.clips[self._sel].path, round(start_t, 4), round(stop_t, 4))
+    def _atempo_wav(self, wav_path: str, speed: float) -> str:
+        if abs(speed - 1.0) < 0.001 or not wav_path or not os.path.isfile(wav_path):
+            return wav_path
+        out = config.get_temp_file(self.pid, "wav")
+        try:
+            self.ff.run_ffmpeg_command([
+                ffmpeg_path, "-y", "-i", wav_path,
+                "-af", f"atempo={speed:.6f}",
+                out,
+            ])
+            return out if os.path.isfile(out) else wav_path
+        except Exception:
+            return wav_path
+
+    def _prepare_play_audio(self, start_t: float, stop_t: float, speed: float) -> str:
+        c = self.clips[self._sel]
+        spd = round(float(speed or 1.0), 1)
+        key = (c.path, round(start_t, 4), round(stop_t, 4), spd)
         if key == self._play_audio_key and self._play_audio_path:
             return self._play_audio_path
         self._play_audio_path = ""
@@ -493,6 +550,8 @@ class SummaryMp4ReviewDialog:
             ap = self.ff_audio.audio_cut_fade(self._full_audio, start_t, length) or ""
         except Exception:
             ap = ""
+        if ap and abs(spd - 1.0) > 0.001:
+            ap = self._atempo_wav(ap, spd)
         self._play_audio_path = ap
         self._play_audio_key = key
         return ap
@@ -550,8 +609,14 @@ class SummaryMp4ReviewDialog:
             return
         self._save_trim_to_clip()
         c = self.clips[self._sel]
-        start_t = c.start if range_only else self._current_t
-        stop_t = c.end if range_only else c.duration
+        if range_only:
+            start_t = c.start
+            stop_t = c.end
+            self._play_speed = max(0.01, float(c.speed))
+        else:
+            start_t = self._current_t
+            stop_t = c.duration
+            self._play_speed = 1.0
         start_t = self._snap_time(c, start_t)
         stop_t = self._snap_time(c, stop_t)
         if start_t >= stop_t - (1.0 / c.fps):
@@ -573,7 +638,7 @@ class SummaryMp4ReviewDialog:
             self._update_trim_labels()
             self._draw_timeline()
 
-        ap = self._prepare_play_audio(start_t, stop_t)
+        ap = self._prepare_play_audio(start_t, stop_t, self._play_speed)
         self._init_pygame()
 
         if ap and self._pygame_ok and pygame:
@@ -597,11 +662,13 @@ class SummaryMp4ReviewDialog:
         if not self._playing or not self.dlg.winfo_exists():
             return
         c = self.clips[self._sel]
+        speed = max(0.01, self._play_speed)
         elapsed = time.perf_counter() - self._play_wall_start
-        target_t = self._play_media_start + elapsed
+        seg_wall = (self._play_media_stop - self._play_media_start) / speed
+        target_t = self._play_media_start + elapsed * speed
         stop_t = self._play_media_stop
 
-        if target_t >= stop_t - (0.5 / c.fps):
+        if elapsed >= seg_wall - (0.5 / c.fps):
             self._current_t = stop_t
             self._update_trim_labels()
             self._draw_timeline()
@@ -689,7 +756,13 @@ class SummaryMp4ReviewDialog:
                 )
                 return
         self.confirmed = [
-            {"path": c.path, "start": c.start, "end": c.end} for c in self.clips
+            {
+                "path": c.path,
+                "start": c.start,
+                "end": c.end,
+                "speed": round(float(c.speed), 1),
+            }
+            for c in self.clips
         ]
         self._stop_play()
         self.dlg.destroy()
@@ -740,7 +813,8 @@ def run_trim_concat_watermark_worker(
                 p = seg["path"]
                 st = float(seg["start"])
                 en = float(seg["end"])
-                tp = ff.trim_video(p, st, en, volume=1.0)
+                spd = float(seg.get("speed") or 1.0)
+                tp = ff.trim_video(p, st, en, volume=1.0, speed=spd)
                 if not tp:
                     err_msg = f"裁剪失败：{os.path.basename(p)}"
                     return
