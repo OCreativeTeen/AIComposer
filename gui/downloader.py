@@ -1212,6 +1212,133 @@ def _persist_channel_videos(mgr) -> bool:
         return False
 
 
+def _apply_titles_to_story_first_entry(video_detail: dict, title: str) -> bool:
+    """若已有 story，将首条 ``title`` 与 ``caption`` 同步为给定标题。"""
+    vt = (title or "").strip()
+    if not vt or not isinstance(video_detail, dict):
+        return False
+    raw = video_detail.get("story")
+    if isinstance(raw, dict):
+        updated = copy.deepcopy(raw)
+        updated["title"] = vt
+        updated["caption"] = vt
+        video_detail["story"] = updated
+        return True
+    entries = _parse_story_field(raw)
+    if not entries:
+        return False
+    first = copy.deepcopy(entries[0])
+    first["title"] = vt
+    first["caption"] = vt
+    entries[0] = first
+    video_detail["story"] = _story_entries_to_json_text(entries)
+    return True
+
+
+def _cover_save_default_video_title(video_detail: dict) -> str:
+    """封面前对话框默认成片名：project_profile.video_title > story 首条 title。"""
+    proj = _youtube_row_project_title(video_detail)
+    if proj:
+        return proj
+    return _youtube_row_story_meta_title(video_detail)
+
+
+def _apply_video_title_before_cover_save(
+    video_detail: dict,
+    *,
+    video_title: str,
+    channel_path: str = "",
+) -> None:
+    """保存封面前：更新 ``project_profile.video_title`` 与 story 首条；不改外层 ``title``（YouTube 原标题）。"""
+    if not isinstance(video_detail, dict):
+        return
+    vt = (video_title or "").strip()
+    if not vt:
+        return
+    _apply_story_title_to_project_profile(video_detail, vt)
+    _apply_titles_to_story_first_entry(video_detail, vt)
+    _normalize_channel_list_item_for_storage(video_detail, channel_path or "")
+
+
+def _ask_video_title_before_cover_save_dialog(
+    parent,
+    video_detail: dict,
+) -> dict | None:
+    """保存封面前让用户确认/修改成片名；取消则放弃本次粘贴/拖放。"""
+    if not isinstance(video_detail, dict):
+        return None
+    has_project_profile = project_manager.list_json_row_has_project_profile(
+        video_detail
+    )
+    source_title = _youtube_row_source_title(video_detail)
+    result_holder: dict | None = None
+    dlg = tk.Toplevel(parent)
+    dlg.title("保存封面前 — 确认视频标题")
+    dlg.geometry("720x200")
+    dlg.minsize(480, 160)
+    dlg.transient(parent)
+    dlg.grab_set()
+    dlg.update_idletasks()
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    dlg.geometry(f"720x200+{(sw - 720) // 2}+{(sh - 200) // 2}")
+
+    frm = ttk.Frame(dlg, padding=12)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    hint = (
+        "请确认或修改成片名后再保存封面。"
+        "不会修改原视频标题（YouTube 下载名）。"
+        "若本条已有 story，首条的 title 与 caption 将同步为下方成片名。"
+    )
+    if has_project_profile:
+        hint += " 同时更新 project_profile.video_title。"
+    ttk.Label(frm, text=hint, wraplength=680, justify=tk.LEFT).pack(
+        anchor=tk.W, pady=(0, 10)
+    )
+
+    if source_title:
+        src_row = ttk.Frame(frm)
+        src_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(src_row, text="原视频标题（只读）:", width=18).pack(side=tk.LEFT)
+        ttk.Label(
+            src_row,
+            text=source_title,
+            wraplength=560,
+            foreground="#555",
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    title_box = ttk.LabelFrame(frm, text="成片名", padding=8)
+    title_box.pack(fill=tk.X, pady=(0, 10))
+    title_var = tk.StringVar(value=_cover_save_default_video_title(video_detail))
+    title_entry = ttk.Entry(title_box, textvariable=title_var, width=90)
+    title_entry.pack(fill=tk.X)
+    title_entry.focus_set()
+    title_entry.selection_range(0, tk.END)
+
+    btn_row = ttk.Frame(frm)
+    btn_row.pack(fill=tk.X)
+
+    def on_confirm():
+        nonlocal result_holder
+        vt = (title_var.get() or "").strip()
+        if not vt:
+            messagebox.showwarning("提示", "成片名不能为空。", parent=dlg)
+            return
+        result_holder = {"video_title": vt}
+        dlg.destroy()
+
+    def on_cancel():
+        dlg.destroy()
+
+    ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
+    ttk.Button(btn_row, text="确认并继续", command=on_confirm).pack(side=tk.RIGHT)
+
+    dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+    dlg.wait_window()
+    return result_holder
+
+
 def _apply_image_analyze_to_video_detail(
     video_detail: dict,
     *,
@@ -1330,6 +1457,40 @@ def _start_summary_cover_webp_save(
     if not image_path or not os.path.isfile(image_path):
         return
 
+    par = summary_window if summary_window.winfo_exists() else (
+        getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+    )
+    title_choice = _ask_video_title_before_cover_save_dialog(par, vd)
+    if title_choice is None:
+        if cleanup_source and image_path and os.path.isfile(image_path):
+            try:
+                safe_remove(image_path)
+            except Exception:
+                pass
+        return
+
+    ch_path = getattr(mgr, "channel_path", "") or ""
+    _apply_video_title_before_cover_save(
+        vd,
+        video_title=title_choice.get("video_title", ""),
+        channel_path=ch_path,
+    )
+    if _persist_channel_videos(mgr):
+        rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
+        if callable(rfn_title):
+            try:
+                rfn_title()
+            except Exception:
+                _refresh_summary_window_title(summary_window, vd)
+        else:
+            _refresh_summary_window_title(summary_window, vd)
+        refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
+        if callable(refresh_tree):
+            try:
+                refresh_tree()
+            except Exception:
+                pass
+
     wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
@@ -1398,19 +1559,32 @@ def _start_summary_cover_webp_save(
             had_analysis = bool(parsed_analysis)
 
             if had_analysis:
+                llm_title_default = (
+                    parsed_analysis.get("title", "")
+                    or _youtube_row_project_title(vd)
+                    or _youtube_row_source_title(vd)
+                )
                 choice = _ask_image_analyze_confirm_dialog(
                     par,
-                    title=parsed_analysis.get("title", ""),
+                    title=llm_title_default,
                     content=parsed_analysis.get("story", ""),
                 )
                 if choice is not None:
-                    vd["story"] = parsed_analysis
-                    
+                    story_payload = copy.deepcopy(parsed_analysis)
+                    t = (choice.get("title") or "").strip()
+                    body = (choice.get("content") or "").strip()
+                    if t:
+                        story_payload["title"] = t
+                        story_payload["caption"] = t
+                    if body:
+                        story_payload["story"] = body
+                    vd["story"] = story_payload
+
                     ch_path = getattr(mgr, "channel_path", "") or ""
                     _apply_image_analyze_to_video_detail(
                         vd,
-                        title=choice.get("title", ""),
-                        content=choice.get("content", ""),
+                        title=t,
+                        content=body,
                         channel_path=ch_path,
                     )
                     
@@ -6036,12 +6210,12 @@ class MediaGUIManager:
         scene_split_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"Story to Slideshow - ({_lang_lbl})",
+            text=f"2 Slide - ({_lang_lbl})",
             command=on_copy_slideshow_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"Story to Video - ({_lang_lbl})",
+            text=f"2 Video - ({_lang_lbl})",
             command=on_copy_video_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(

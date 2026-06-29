@@ -2795,6 +2795,22 @@ class FfmpegProcessor:
             print(f"❌ Error in _extend_and_standardize_video: {str(e)}")
             return False
 
+    def extend_clip_end_with_last_frame(
+        self,
+        video_path: str,
+        extension_sec: float,
+        output_path: str | None = None,
+    ) -> str | None:
+        """在片段末尾克隆最后一帧延长 ``extension_sec`` 秒（音轨以静音补齐），用于拼接前定格。"""
+        ext = float(extension_sec or 0)
+        if ext <= 0:
+            out = output_path or config.get_temp_file(self.pid, "mp4")
+            shutil.copy2(video_path, out)
+            return out
+        out = output_path or config.get_temp_file(self.pid, "mp4")
+        ok = self._extend_and_standardize_video(video_path, ext, out)
+        return out if ok else None
+
 
     def extend_video_to_duration(self, input_video_path, target_duration, output_video_path):
         """

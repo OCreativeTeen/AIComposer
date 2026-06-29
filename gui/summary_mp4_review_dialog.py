@@ -1,4 +1,4 @@
-"""摘要窗拖入 MP4：审阅、裁剪片段、调整顺序，确认后拼接并加水印保存。"""
+"""摘要窗拖入 MP4：审阅、裁剪片段、调整顺序，确认后末帧延长、拼接并加水印保存。"""
 from __future__ import annotations
 
 import os
@@ -42,6 +42,7 @@ class _ClipState:
 SPEED_MIN = 0.7
 SPEED_MAX = 1.2
 SPEED_STEP = 0.1
+CLIP_END_FREEZE_SEC = 0.66
 
 
 def _fmt_time(sec: float) -> str:
@@ -251,9 +252,11 @@ class SummaryMp4ReviewDialog:
         foot = ttk.Frame(root)
         foot.pack(fill=tk.X, pady=(10, 0))
         ttk.Button(foot, text="取消", command=self._on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(foot, text="确认并保存（裁剪→拼接→水印）", command=self._on_confirm).pack(
-            side=tk.RIGHT
-        )
+        ttk.Button(
+            foot,
+            text="确认并保存（裁剪→末帧延长→拼接→水印）",
+            command=self._on_confirm,
+        ).pack(side=tk.RIGHT)
 
         self._refresh_listbox()
 
@@ -797,18 +800,18 @@ def run_trim_concat_watermark_worker(
     dest_name: str,
     on_done,
 ) -> None:
-    """后台：逐段 trim → concat → watermark → 写入 gen_video。"""
+    """后台：逐段 trim → 末帧延长 → concat → watermark → 写入 gen_video。"""
 
     def _worker():
         out_ok = ""
         err_msg = ""
-        trim_tmps: list[str] = []
+        stage_tmps: list[str] = []
         concat_tmp = ""
         wm_tmp = ""
         try:
             os.makedirs(gen_dir, exist_ok=True)
             ff = FfmpegProcessor(pid, lang)
-            trimmed: list[str] = []
+            processed: list[str] = []
             for seg in segments:
                 p = seg["path"]
                 st = float(seg["start"])
@@ -818,15 +821,21 @@ def run_trim_concat_watermark_worker(
                 if not tp:
                     err_msg = f"裁剪失败：{os.path.basename(p)}"
                     return
-                trim_tmps.append(tp)
-                trimmed.append(tp)
-            if len(trimmed) == 1:
-                source = trimmed[0]
+                stage_tmps.append(tp)
+                frozen = ff.extend_clip_end_with_last_frame(tp, CLIP_END_FREEZE_SEC)
+                if not frozen:
+                    err_msg = f"末帧延长 {CLIP_END_FREEZE_SEC:.2f}s 失败：{os.path.basename(p)}"
+                    return
+                if frozen != tp:
+                    stage_tmps.append(frozen)
+                processed.append(frozen)
+            if len(processed) == 1:
+                source = processed[0]
             else:
-                source = ff.concat_videos(trimmed, True)
+                source = ff.concat_videos(processed, True)
                 concat_tmp = source or ""
                 if not source:
-                    err_msg = f"拼接 {len(trimmed)} 段失败。"
+                    err_msg = f"拼接 {len(processed)} 段失败。"
                     return
             wm_tmp = config.get_temp_file(pid, "mp4")
             ok = ff.apply_watermark_to_video(
@@ -843,13 +852,13 @@ def run_trim_concat_watermark_worker(
         except Exception as ex:
             err_msg = str(ex)
         finally:
-            for t in trim_tmps:
-                if t and t != out_ok:
+            for t in stage_tmps:
+                if t and t != out_ok and t != concat_tmp:
                     try:
                         safe_remove(t)
                     except Exception:
                         pass
-            if concat_tmp and concat_tmp not in trim_tmps:
+            if concat_tmp and concat_tmp not in stage_tmps and concat_tmp != out_ok:
                 try:
                     safe_remove(concat_tmp)
                 except Exception:
