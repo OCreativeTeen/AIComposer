@@ -186,23 +186,24 @@ class PublishReviewDialog:
 
     def _probe_video_meta(self) -> None:
         ff = FfmpegProcessor(self.media_gui.pid, self.media_gui.language or "zh")
-        self._duration = float(ff.get_duration(self.mp4_path) or 0.0)
+        path = os.path.abspath(self.mp4_path)
+        self._duration = float(ff.get_playback_duration(path, fresh=True) or 0.0)
         self._fps = 30.0
         self._frame_count = 0
         if cv2 is not None:
-            cap = cv2.VideoCapture(self.mp4_path)
+            cap = cv2.VideoCapture(path)
             if cap.isOpened():
                 self._fps = float(cap.get(cv2.CAP_PROP_FPS) or 30)
                 if self._fps < 1 or self._fps > 240:
                     self._fps = 30.0
                 self._frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
                 cap.release()
-        if self._frame_count <= 0 and self._duration > 0:
+        if self._frame_count > 0 and self._fps > 0:
+            self._duration = max(self._duration, self._frame_count / self._fps)
+        elif self._frame_count <= 0 and self._duration > 0:
             self._frame_count = max(1, int(round(self._duration * self._fps)))
-        if self._duration <= 0 and self._frame_count > 0:
-            self._duration = self._frame_count / self._fps
         self._duration = max(0.01, self._duration)
-        self._has_audio = ff.has_audio_stream(self.mp4_path)
+        self._has_audio = ff.has_audio_stream(path)
 
     def _init_pygame(self) -> None:
         if not pygame or self._pygame_ok:
@@ -633,14 +634,15 @@ class PublishReviewDialog:
                     ),
                 )
                 return
-            root.after(
-                0,
-                lambda: messagebox.showinfo(
+            def _on_regen_done():
+                messagebox.showinfo(
                     "完成",
                     "已用新音频替换该视频音轨。",
                     parent=_dialog_parent(dlg, root),
-                ),
-            )
+                )
+                self._init_video_preview()
+
+            root.after(0, _on_regen_done)
 
         threading.Thread(target=work, daemon=True).start()
 

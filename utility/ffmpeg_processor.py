@@ -2425,6 +2425,40 @@ class FfmpegProcessor:
         """Remove a specific file from the duration cache (use when file is modified)"""
         if filename in cls._duration_cache:
             del cls._duration_cache[filename]
+        abs_name = os.path.abspath(filename) if filename else ""
+        if abs_name and abs_name in cls._duration_cache:
+            del cls._duration_cache[abs_name]
+
+    def _ffprobe_stream_duration(self, filename: str, stream: str) -> float:
+        if not filename:
+            return 0.0
+        try:
+            result = self.run_ffmpeg_command([
+                ffprobe_path,
+                "-v", "error",
+                "-select_streams", stream,
+                "-show_entries", "stream=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                filename,
+            ])
+            if result.returncode == 0 and result.stdout.strip():
+                duration = float(result.stdout.strip())
+                if duration > 0:
+                    return duration
+        except Exception as e:
+            print(f"FFmpeg stream duration error ({stream}): {e}")
+        return 0.0
+
+    def get_playback_duration(self, filename, *, fresh: bool = False) -> float:
+        """UI 播放用时长：format / 视频流 / 音频流 取最大；``fresh=True`` 时先清缓存再探测。"""
+        if not filename:
+            return 0.0
+        if fresh:
+            self.invalidate_duration_cache(filename)
+        fmt = float(self.get_duration(filename) or 0.0)
+        vid = self._ffprobe_stream_duration(filename, "v:0")
+        aud = self._ffprobe_stream_duration(filename, "a:0")
+        return max(fmt, vid, aud, 0.0)
 
     def get_resolution(self, filename):
         """Get the resolution (width, height) of an image or video file"""

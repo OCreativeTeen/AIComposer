@@ -54,11 +54,12 @@ def _fmt_time(sec: float) -> str:
 
 def _probe_video_meta(path: str, ff: FfmpegProcessor) -> tuple[float, float, int]:
     """返回 (duration_sec, fps, frame_count)。"""
-    dur = float(ff.get_duration(path) or 0.0)
+    abs_path = os.path.abspath(path)
+    dur = float(ff.get_playback_duration(abs_path, fresh=True) or 0.0)
     fps = 30.0
     fc = 0
     if cv2 is not None:
-        cap = cv2.VideoCapture(path)
+        cap = cv2.VideoCapture(abs_path)
         if cap.isOpened():
             fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
             if fps < 1 or fps > 240:
@@ -67,7 +68,9 @@ def _probe_video_meta(path: str, ff: FfmpegProcessor) -> tuple[float, float, int
             cap.release()
     if fc <= 0 and dur > 0:
         fc = max(1, int(round(dur * fps)))
-    if dur <= 0 and fc > 0:
+    if dur > 0 and fc > 0 and fps > 0:
+        dur = max(dur, fc / fps)
+    elif dur <= 0 and fc > 0:
         dur = fc / fps
     return max(0.01, dur), fps, max(1, fc)
 
@@ -846,6 +849,7 @@ def run_trim_concat_watermark_worker(
                 return
             dest_abs = os.path.join(gen_dir, dest_name)
             safe_copy_overwrite(wm_tmp, dest_abs)
+            FfmpegProcessor.invalidate_duration_cache(dest_abs)
             safe_remove(wm_tmp)
             wm_tmp = ""
             out_ok = dest_abs
