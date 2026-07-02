@@ -376,7 +376,6 @@ NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 ** If the image has no actor/narrator avatar, DO NOT add talking-avatars in video (voice / ambience only).
 ** Narrator commenting on prior scene: keep prior scene as stable background; hold starting frame — do not jump backgrounds because of narration.
 ** Audio: speaking / voiceover from Scene_Content; target ~10s; voice matches actor/narrator gender-age-race; sound-effects OK; no background music unless scene has no speech.
-** Persona : story / voiceover may talking about he/she, but in 1st person speaking, should say as 'I' or 'we' (not 'he' or 'she')
 """
 
 
@@ -535,7 +534,7 @@ def build_notebooklm_gen_instruction_clipbody(
         main_character = ""
 
     if not host_narrator or host_narrator==HARRATOR_DISPLAY_OPTIONS[-1]:
-        voice = main_character + " ~ Story-character (protagonist) performs, reflection, speak & interaction (only the most key point,  not read words in image -- 1st person experience  -- not explaination)"
+        voice = main_character + " (protagonist) performs, reflection, speak & interaction ~ 1st person speaking [say as 'I/we', and 'You' (not 'He/She')] ~ saying only the most key point,  not read words in image"
         video = (
                 "** No Host (Narrator). Use the Story character as talking-avatar to speak about the content of scene."
             )        

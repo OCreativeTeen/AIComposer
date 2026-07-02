@@ -2816,6 +2816,7 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
         "transcribed_file",
         "captions",
         "publish",
+        "create_date",
         "content",
         "summary",
         "playlist_id",
@@ -2970,8 +2971,45 @@ def _video_id_present_in_url(v: dict) -> bool:
 
 
 def _should_update_upload_date(video: dict) -> bool:
-    """新建项目克隆行 / 自上传行可更新 ``upload_date``；源 YouTube 下载行保留原上传日。"""
-    return not _video_id_present_in_url(video)
+    """是否允许用 YouTube API / yt-dlp 的 ``upload_date`` 写入本条（下载、频道刷新）。
+
+    克隆项目行（``cloned_from_*``）跳过；源下载行及发布后 ``url`` 已变的行均允许更新。
+    本工具发布到 YouTube 不写 ``upload_date``，改写 ``create_date``（见 ``_apply_publish_create_date``）。
+    """
+    if not isinstance(video, dict):
+        return False
+    if (video.get("cloned_from_url") or video.get("cloned_from_id") or "").strip():
+        return False
+    return True
+
+
+def _apply_publish_create_date(
+    video_detail: dict,
+    *,
+    publish_at,
+    published_iso: str = "",
+) -> None:
+    """记录本工具上传到 YouTube 的日期（``create_date``，YYYYMMDD）；不改 ``upload_date``。"""
+    if not isinstance(video_detail, dict):
+        return
+    iso = (published_iso or "").strip()
+    if iso:
+        try:
+            _dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            video_detail["create_date"] = _dt.astimezone().strftime("%Y%m%d")
+            return
+        except Exception:
+            pass
+    if publish_at is not None:
+        local_tz = datetime.now().astimezone().tzinfo
+        pa = (
+            publish_at
+            if getattr(publish_at, "tzinfo", None)
+            else publish_at.replace(tzinfo=local_tz)
+        )
+        video_detail["create_date"] = pa.astimezone().strftime("%Y%m%d")
+    else:
+        video_detail["create_date"] = datetime.now().strftime("%Y%m%d")
 
 
 def _gen_video_id_stem_candidates_for_row(video: dict) -> list[str]:
@@ -7426,29 +7464,11 @@ class MediaGUIManager:
                 else:
                     pub_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                 video_detail["publish"] = pub_str
-                if _should_update_upload_date(video_detail):
-                    if (published_iso or "").strip():
-                        try:
-                            _dt = datetime.fromisoformat(
-                                published_iso.replace("Z", "+00:00")
-                            )
-                            video_detail["upload_date"] = _dt.astimezone().strftime(
-                                "%Y%m%d"
-                            )
-                        except Exception:
-                            video_detail["upload_date"] = datetime.now().strftime(
-                                "%Y%m%d"
-                            )
-                    elif publish_at is not None:
-                        local_tz = datetime.now().astimezone().tzinfo
-                        pa = (
-                            publish_at
-                            if publish_at.tzinfo
-                            else publish_at.replace(tzinfo=local_tz)
-                        )
-                        video_detail["upload_date"] = pa.astimezone().strftime("%Y%m%d")
-                    else:
-                        video_detail["upload_date"] = datetime.now().strftime("%Y%m%d")
+                _apply_publish_create_date(
+                    video_detail,
+                    publish_at=publish_at,
+                    published_iso=published_iso or "",
+                )
                 vid_s = str(vid).strip() if vid is not None else ""
                 if vid_s:
                     watch = f"https://www.youtube.com/watch?v={vid_s}"

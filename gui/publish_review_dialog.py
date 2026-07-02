@@ -390,14 +390,17 @@ class PublishReviewDialog:
         pb = (self.video_detail.get("publish") or "").strip()
         u = (self.video_detail.get("url") or "").strip()
         ud = (self.video_detail.get("upload_date") or "").strip()
-        if pb or u or ud:
+        cd = (self.video_detail.get("create_date") or "").strip()
+        if pb or u or ud or cd:
             bits = []
             if pb:
                 bits.append(f"发布/定时记录（publish）：{pb}")
             if u:
                 bits.append(f"成片链接（url）：{u}")
+            if cd:
+                bits.append(f"create_date（本工具上传日）：{cd}")
             if ud:
-                bits.append(f"upload_date：{ud}（本条最新一次成功上传写入）")
+                bits.append(f"upload_date（源视频上传日）：{ud}")
             bits.append("可按「发布到 YouTube」再次上传。")
             try:
                 self._publish_banner.config(text="  ".join(bits))
