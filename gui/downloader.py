@@ -235,7 +235,7 @@ def _default_story_editor_prompt_label(channel_key: str) -> str:
             picked = _pick_story_prompt_label(channel_key, want)
             if picked:
                 return picked
-    for want in ("2 Step Story", "Short Story", "Mini Story", "3 Step Story", "Long Story", "4 Step Story"):
+    for want in ("3 Step Story", "2 Step Story", "4 Step Story", "Mini Story", "Short Story", "Long Story"):
         picked = _pick_story_prompt_label(channel_key, want)
         if picked:
             return picked
@@ -6181,12 +6181,12 @@ class MediaGUIManager:
         _lang_lbl = config.llm_language_label(self.language)
         _story_nb_copy_cycle: dict[str, int] = {"slideshow": -1, "video": -1}
 
-        def on_copy_slideshow_instruction():
+        def on_copy_image_instruction():
             self._copy_notebooklm_story_gen_instruction(
                 parent=dlg,
                 video_detail=video_detail,
                 story_raw=(tx.get("1.0", tk.END) or ""),
-                nb_mode="slideshow",
+                nb_mode="image",
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
                 cycle_holder=_story_nb_copy_cycle,
@@ -6198,6 +6198,17 @@ class MediaGUIManager:
                 video_detail=video_detail,
                 story_raw=(tx.get("1.0", tk.END) or ""),
                 nb_mode="video",
+                main_character=main_character,
+                channel_path=channel_path or self.channel_path or "",
+                cycle_holder=_story_nb_copy_cycle,
+            )
+
+        def on_copy_speak_instruction():
+            self._copy_notebooklm_story_gen_instruction(
+                parent=dlg,
+                video_detail=video_detail,
+                story_raw=(tx.get("1.0", tk.END) or ""),
+                nb_mode="speak",
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
                 cycle_holder=_story_nb_copy_cycle,
@@ -6248,13 +6259,18 @@ class MediaGUIManager:
         scene_split_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"2 Slide - ({_lang_lbl})",
-            command=on_copy_slideshow_instruction,
+            text=f"To Image - ({_lang_lbl})",
+            command=on_copy_image_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(
             btn_row,
-            text=f"2 Video - ({_lang_lbl})",
+            text=f"To Video - ({_lang_lbl})",
             command=on_copy_video_instruction,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            btn_row,
+            text=f"To Speak - ({_lang_lbl})",
+            command=on_copy_speak_instruction,
         ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=confirm_label, command=on_confirm).pack(
             side=tk.LEFT, padx=(0, 8)
@@ -6467,7 +6483,6 @@ class MediaGUIManager:
             )
             return False
 
-        mode_title = "Slideshow" if nb_mode == "slideshow" else "Video"
         status_msg = ""
         if cycle_holder is not None:
             idx = cycle_holder.get(nb_mode, -1)
@@ -6494,17 +6509,14 @@ class MediaGUIManager:
             host_narrator=(project_manager.LAST_NARRATOR or "").strip(),
             host_display=project_manager.LAST_HOST_DISPLAY,
         )
-        clip_tag = (
-            "gen_slideshow_instruction"
-            if nb_mode == "slideshow"
-            else "gen_video_instruction"
-        )
+
         _copy_text_to_clipboard(parent, clip_body)
         if clip_body and (channel_path or "").strip():
-            channel_clipboard_append_item(channel_path, clip_body, clip_tag)
+            channel_clipboard_append_item(channel_path, clip_body, nb_mode)
         if status_msg:
-            show_auto_close_popup(parent, f"Story to {mode_title}", status_msg)
+            show_auto_close_popup(parent, f"Story to {nb_mode}", status_msg)
         return bool(clip_body)
+
 
     def _copy_image_prompt_instruction(
         self,

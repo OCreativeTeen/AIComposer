@@ -356,16 +356,23 @@ NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
 
 
 
-def scene_payload_for_slideshow_images(scenes: list) -> list[dict]:
+def scene_payload_for_slideshow_images(scenes: list, mode) -> list[dict]:
     new_scenes = []
     for scene in scenes:
         new_scene = scene.copy()
+
         if new_scene.get("visual"):
-            new_scene["act_and_talk_____not_rephrase"] = new_scene["visual"]
-            del new_scene["visual"]
+            new_scene["act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"] = new_scene.pop("visual")
         elif new_scene.get("story"):
-            new_scene["act_and_talk_____not_rephrase"] = new_scene["story"]
-            del new_scene["story"]
+            new_scene["act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"] = new_scene.pop("story")
+
+        if mode == "video":
+            del new_scene["speaking"]
+            del new_scene["heart_message"]
+        elif mode == "speak":
+            new_scene.pop("act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase", None)
+        # else: image
+
         new_scenes.append(new_scene)
     return new_scenes
 
@@ -511,7 +518,7 @@ def build_notebooklm_gen_instruction_clipbody(
     host_narrator: str = "",
     host_display: str = "",
 ) -> str:
-    """组装 NotebookLM 视觉/视频指令剪贴板正文。``mode`` 为 ``slideshow`` 或 ``video``。"""
+    """组装 NotebookLM 视觉/视频指令剪贴板正文。``mode`` 为 ``image`` ``video`` ``speak``。"""
     vd = video_detail if isinstance(video_detail, dict) else {}
 
     parts: dict[str, object] = {}
@@ -547,19 +554,27 @@ def build_notebooklm_gen_instruction_clipbody(
 
     scenes = scene_content if isinstance(scene_content, list) else []
     json_content = json.dumps(
-            scene_payload_for_slideshow_images(scenes),
+            scene_payload_for_slideshow_images(scenes, mode),
             ensure_ascii=False,
             indent=2,
         )
 
-    if mode == "slideshow":
+    if mode == "image":
         parts["READ_FIRST__SLIDESHOW_MANDATE"] = NOTEBOOKLM_SLIDESHOW_MANDATE.format(Visual_Style=visual_style, character=main_character)
         parts["Instruction_for_slideshow_image_generation"] = (
             NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION.strip()
         )
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
-    else:    # "video":
+    elif mode == "video":
+        parts["Instruction_for_video_generation"] = video
+        parts["Voice"] = voice  
+        parts["Instruction_for_video_and_audio_generation"] = (
+            NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
+        )
+        parts["Story_Category"] = category
+        parts["Story_Scene_Content"] = json_content
+    else:    # "speak":
         parts["Instruction_for_video_generation"] = video
         parts["Voice"] = voice  
         parts["Instruction_for_video_and_audio_generation"] = (
