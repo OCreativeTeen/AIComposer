@@ -235,7 +235,7 @@ def _default_story_editor_prompt_label(channel_key: str) -> str:
             picked = _pick_story_prompt_label(channel_key, want)
             if picked:
                 return picked
-    for want in ("3 Step Story", "2 Step Story", "4 Step Story", "Mini Story", "Short Story", "Long Story"):
+    for want in ("4 Step Story", "2 Step Story", "3 Step Story", "Mini Story", "Short Story", "Long Story"):
         picked = _pick_story_prompt_label(channel_key, want)
         if picked:
             return picked
@@ -586,6 +586,53 @@ def _gen_video_cover_webp_dest_filename(video_detail: dict | None) -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S") + ".webp"
 
 
+GEN_VIDEO_CLIP_SEGMENTS_KEY = "gen_video_clip_segments"
+
+
+def _normalize_gen_video_clip_segment(seg) -> dict | None:
+    if not isinstance(seg, dict):
+        return None
+    p = (seg.get("path") or "").strip()
+    if not p:
+        return None
+    p = os.path.normpath(p)
+    try:
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", 0.0))
+        speed = round(float(seg.get("speed") or 1.0), 1)
+    except (TypeError, ValueError):
+        return None
+    return {"path": p, "start": start, "end": end, "speed": speed}
+
+
+def _get_gen_video_clip_segments(video_detail: dict) -> list[dict]:
+    if not isinstance(video_detail, dict):
+        return []
+    raw = video_detail.get(GEN_VIDEO_CLIP_SEGMENTS_KEY)
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for seg in raw:
+        n = _normalize_gen_video_clip_segment(seg)
+        if n:
+            out.append(n)
+    return out
+
+
+def _set_gen_video_clip_segments(video_detail: dict, segments: list[dict]) -> None:
+    if not isinstance(video_detail, dict):
+        return
+    normalized: list[dict] = []
+    for seg in segments or []:
+        n = _normalize_gen_video_clip_segment(seg)
+        if n:
+            normalized.append(n)
+    if normalized:
+        video_detail[GEN_VIDEO_CLIP_SEGMENTS_KEY] = normalized
+    else:
+        video_detail.pop(GEN_VIDEO_CLIP_SEGMENTS_KEY, None)
+
+
 _SUMMARY_IMAGE_SUFFIXES = (
     ".png",
     ".jpg",
@@ -630,8 +677,10 @@ def _is_existing_file(path: str) -> bool:
     return os.path.isfile(lp) or os.path.isfile(p)
 
 
-def _collect_unique_file_paths(paths: list[str], *, label: str = "") -> list[str]:
-    """去重（保留顺序）、规范化；跳过不存在或重复项并打印日志。"""
+def _collect_unique_file_paths(
+    paths: list[str], *, label: str = "", allow_duplicates: bool = False
+) -> list[str]:
+    """规范化路径列表；默认去重（保留顺序），``allow_duplicates=True`` 时保留重复项。"""
     out: list[str] = []
     seen: set[str] = set()
     raw_n = len(paths)
@@ -645,11 +694,12 @@ def _collect_unique_file_paths(paths: list[str], *, label: str = "") -> list[str
         if not _is_existing_file(p):
             print(f"⚠️ 跳过无效文件: {p}")
             continue
-        key = os.path.normcase(os.path.abspath(p))
-        if key in seen:
-            print(f"⚠️ 跳过重复: {os.path.basename(p)}")
-            continue
-        seen.add(key)
+        if not allow_duplicates:
+            key = os.path.normcase(os.path.abspath(p))
+            if key in seen:
+                print(f"⚠️ 跳过重复: {os.path.basename(p)}")
+                continue
+            seen.add(key)
         out.append(p)
     if label and raw_n != len(out):
         print(f"📎 {label}: 收到 {raw_n} 项 → 有效 {len(out)} 项")
@@ -758,7 +808,9 @@ def _read_clipboard_file_paths() -> list[str]:
     return _collect_unique_file_paths(paths, label="剪贴板")
 
 
-def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
+def _dnd_normalize_file_paths(
+    master_widget, raw, *, allow_duplicates: bool = False
+) -> list[str]:
     """拖放路径列表（保持 Explorer 给出的先后顺序）。"""
     out: list[str] = []
     for raw_path in _dnd_paths_splitlist(master_widget, raw):
@@ -767,7 +819,9 @@ def _dnd_normalize_file_paths(master_widget, raw) -> list[str]:
             p = p[1:-1]
         if p:
             out.append(os.path.normpath(p))
-    return _collect_unique_file_paths(out, label="拖放")
+    return _collect_unique_file_paths(
+        out, label="拖放", allow_duplicates=allow_duplicates
+    )
 
 
 def _tkinter_dnd_root_capable(widget) -> bool:
@@ -787,7 +841,7 @@ def _flush_accumulated_summary_drop(summary_window: tk.Toplevel) -> None:
     setattr(summary_window, "_accumulated_drop_paths", [])
     if not isinstance(buf, list) or not buf:
         return
-    paths = _collect_unique_file_paths(buf, label="拖放合并")
+    paths = _collect_unique_file_paths(buf, label="拖放合并", allow_duplicates=True)
     mp4_paths = [p for p in paths if p.lower().endswith(".mp4")]
     image_in = next(
         (p for p in paths if _is_summary_image_file_path(p)),
@@ -923,7 +977,9 @@ def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
     if mgr is None or not isinstance(vd, dict):
         return
     master = getattr(event, "widget", None) or summary_window
-    paths = _dnd_normalize_file_paths(master, getattr(event, "data", None))
+    paths = _dnd_normalize_file_paths(
+        master, getattr(event, "data", None), allow_duplicates=True
+    )
     mp4_paths: list[str] = []
     image_in = None
     for p in paths:
@@ -1654,47 +1710,16 @@ def _start_summary_cover_webp_save(
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def _on_summary_mp4_watermark_drop(
-    event,
+def _run_summary_gen_video_clip_review(
     summary_window: tk.Toplevel,
     *,
-    mp4_path: str | None = None,
+    mgr,
+    vd: dict,
+    ctx: dict,
     mp4_paths: list[str] | None = None,
-):
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-
-    paths: list[str] = []
-    if mp4_paths:
-        paths = _collect_unique_file_paths(
-            [
-                p for p in mp4_paths
-                if (p or "").strip() and p.lower().endswith(".mp4")
-            ],
-            label="审阅 MP4",
-        )
-    elif (mp4_path or "").strip():
-        p = os.path.normpath(mp4_path.strip())
-        if os.path.isfile(p) and p.lower().endswith(".mp4"):
-            paths = [p]
-    if not paths:
-        master = getattr(event, "widget", None) or summary_window
-        paths = [
-            p for p in _dnd_normalize_file_paths(master, getattr(event, "data", None))
-            if p.lower().endswith(".mp4")
-        ]
-    if not paths:
-        try:
-            show_auto_close_popup(summary_window, "拖放", "请拖入 .mp4 文件。")
-        except Exception:
-            pass
-        return
-
+    initial_segments: list[dict] | None = None,
+) -> None:
+    """打开审阅窗 → 保存片段配置到频道列表行 → 拼接加水印写入 gen_video。"""
     wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
     if not wm_path:
         messagebox.showwarning(
@@ -1706,11 +1731,29 @@ def _on_summary_mp4_watermark_drop(
 
     pid = getattr(mgr, "pid", "") or "yt_wm"
     lang = getattr(mgr, "language", "") or "zh"
-    segments = ask_summary_mp4_review_segments(
-        summary_window, paths, pid=pid, lang=lang
-    )
+    try:
+        if initial_segments:
+            segments = ask_summary_mp4_review_segments(
+                summary_window,
+                initial_segments=initial_segments,
+                pid=pid,
+                lang=lang,
+            )
+        else:
+            segments = ask_summary_mp4_review_segments(
+                summary_window,
+                mp4_paths=mp4_paths or [],
+                pid=pid,
+                lang=lang,
+            )
+    except ValueError as ex:
+        messagebox.showwarning("审阅", str(ex), parent=summary_window)
+        return
     if not segments:
         return
+
+    _set_gen_video_clip_segments(vd, segments)
+    _persist_channel_videos(mgr)
 
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "")
     dest_name = _gen_video_watermark_dest_filename(vd)
@@ -1721,36 +1764,19 @@ def _on_summary_mp4_watermark_drop(
         def _done_ui():
             par = summary_window if summary_window.winfo_exists() else root
             if out_ok:
-                dl = getattr(mgr, "downloader", None)
-                ch_json = getattr(dl, "channel_list_json", "") if dl else ""
-                if ch_json and dl is not None:
-                    try:
-                        with open(ch_json, "w", encoding="utf-8") as wf:
-                            json.dump(
-                                getattr(dl, "channel_videos", []),
-                                wf,
-                                ensure_ascii=False,
-                                indent=2,
-                            )
-                    except OSError:
-                        pass
-                rfn = (
-                    ctx.get("refresh_channel_tree")
-                    if isinstance(ctx, dict)
-                    else None
-                )
+                rfn = ctx.get("refresh_channel_tree")
                 if callable(rfn):
                     try:
                         rfn()
                     except Exception:
                         pass
-                rfn_pub = ctx.get("refresh_publish_row") if isinstance(ctx, dict) else None
+                rfn_pub = ctx.get("refresh_publish_row")
                 if callable(rfn_pub):
                     try:
                         rfn_pub()
                     except Exception:
                         pass
-                rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+                rfn_feat = ctx.get("refresh_feature_media_row")
                 if callable(rfn_feat):
                     try:
                         rfn_feat()
@@ -1775,6 +1801,98 @@ def _on_summary_mp4_watermark_drop(
         gen_dir=gen_dir,
         dest_name=dest_name,
         on_done=_on_worker_done,
+    )
+
+
+def _on_summary_reopen_gen_video_clip_review(summary_window: tk.Toplevel) -> None:
+    """从已保存的片段配置重新打开审阅窗并生成成片。"""
+    ctx = getattr(summary_window, "_summary_drop_ctx", None)
+    if not isinstance(ctx, dict):
+        return
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return
+    segments = _get_gen_video_clip_segments(vd)
+    if not segments:
+        messagebox.showinfo(
+            "编辑成片片段",
+            "尚无已保存的片段配置。\n请先拖入 MP4 并完成审阅，或从资源管理器一次拖入多个相同文件。",
+            parent=summary_window,
+        )
+        return
+    missing = [
+        s["path"] for s in segments
+        if not os.path.isfile(s.get("path", ""))
+    ]
+    if missing:
+        preview = "\n".join(os.path.basename(p) for p in missing[:6])
+        extra = f"\n…等共 {len(missing)} 个" if len(missing) > 6 else ""
+        if not messagebox.askyesno(
+            "源文件缺失",
+            f"有 {len(missing)} 个片段源文件已不存在，审阅窗将跳过它们：\n{preview}{extra}\n\n是否继续？",
+            parent=summary_window,
+        ):
+            return
+    _run_summary_gen_video_clip_review(
+        summary_window,
+        mgr=mgr,
+        vd=vd,
+        ctx=ctx,
+        initial_segments=segments,
+    )
+
+
+def _on_summary_mp4_watermark_drop(
+    event,
+    summary_window: tk.Toplevel,
+    *,
+    mp4_path: str | None = None,
+    mp4_paths: list[str] | None = None,
+):
+    ctx = getattr(summary_window, "_summary_drop_ctx", None)
+    if not isinstance(ctx, dict):
+        return
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return
+
+    paths: list[str] = []
+    if mp4_paths:
+        paths = _collect_unique_file_paths(
+            [
+                p for p in mp4_paths
+                if (p or "").strip() and p.lower().endswith(".mp4")
+            ],
+            label="审阅 MP4",
+            allow_duplicates=True,
+        )
+    elif (mp4_path or "").strip():
+        p = os.path.normpath(mp4_path.strip())
+        if os.path.isfile(p) and p.lower().endswith(".mp4"):
+            paths = [p]
+    if not paths:
+        master = getattr(event, "widget", None) or summary_window
+        paths = [
+            p for p in _dnd_normalize_file_paths(
+                master, getattr(event, "data", None), allow_duplicates=True
+            )
+            if p.lower().endswith(".mp4")
+        ]
+    if not paths:
+        try:
+            show_auto_close_popup(summary_window, "拖放", "请拖入 .mp4 文件。")
+        except Exception:
+            pass
+        return
+
+    _run_summary_gen_video_clip_review(
+        summary_window,
+        mgr=mgr,
+        vd=vd,
+        ctx=ctx,
+        mp4_paths=paths,
     )
 
 
@@ -8792,6 +8910,12 @@ class MediaGUIManager:
                 width=16,
             )
             open_feature_folder_btn.pack(side=tk.LEFT, padx=(0, 6))
+            edit_clip_segments_btn = ttk.Button(
+                media_btn_row,
+                text="编辑成片片段",
+                width=14,
+            )
+            edit_clip_segments_btn.pack(side=tk.LEFT, padx=(0, 6))
             copy_cover_clipboard_btn = ttk.Button(
                 media_btn_row,
                 text="复制封面到剪贴板",
@@ -8804,11 +8928,14 @@ class MediaGUIManager:
                     return
                 mp4_p = _find_gen_video_mp4_for_row(video_detail)
                 webp_p = _find_gen_video_webp_for_row(video_detail)
+                seg_n = len(_get_gen_video_clip_segments(video_detail))
                 parts = []
                 if mp4_p:
                     parts.append(f"成片: {os.path.basename(mp4_p)}")
                 if webp_p:
                     parts.append(f"封面: {os.path.basename(webp_p)}")
+                if seg_n:
+                    parts.append(f"片段配置: {seg_n} 段")
                 if parts:
                     feature_media_var.set("  |  ".join(parts))
                 else:
@@ -8819,6 +8946,12 @@ class MediaGUIManager:
                 try:
                     copy_cover_clipboard_btn.config(
                         state=tk.NORMAL if webp_p else tk.DISABLED
+                    )
+                except tk.TclError:
+                    pass
+                try:
+                    edit_clip_segments_btn.config(
+                        state=tk.NORMAL if seg_n else tk.DISABLED
                     )
                 except tk.TclError:
                     pass
@@ -8845,6 +8978,9 @@ class MediaGUIManager:
                     )
 
             open_feature_folder_btn.config(command=on_open_feature_media_folder)
+            edit_clip_segments_btn.config(
+                command=lambda: _on_summary_reopen_gen_video_clip_review(summary_window)
+            )
             copy_cover_clipboard_btn.config(command=on_copy_cover_to_clipboard)
             refresh_feature_media_row()
             if isinstance(summary_window._summary_drop_ctx, dict):
