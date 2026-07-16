@@ -1,6 +1,3 @@
-import config
-
-
 
 
 MV_CONTENT_GUIDE = """
@@ -11,10 +8,7 @@ INPUT
 ** Instruction:
     {instruction}
 
-** The song expresses following content:
-    {story}
-
-** Following this styles to generate:
+** Reference Content (analyzed_content):
     {content}
 """
 
@@ -398,46 +392,6 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 
-MV_REFERENCE_FILTER = """
-*** Role & Objective
-    As a music story writer to write story on lyrics / music-styles. 
-    And here is the list of Song's info as NotebookLM project source (other than the one named 'Pasted Text/粘贴的文字'), with info like Youtube-Link,  content / summary / topic_category / topic_subtype  etc. 
-    Then you will do cross-reference the Songs in the list against the current Song's summary (or content) in below, identify upto 10 most relevant ones as references.
-
-*** Operational Workflow
-    Identify the relavence by : 
-    ** compare the 'summary' ('content' if has no 'summary')
-    ** then compare the topic_category/topic_subtype
-    ** then compare the tags
-
-*** Input
-    1. Current Song's summary (or content) (Provided below)
-    2. on topic of 
-        {topic}
-    3. with tags like:
-        {tags}
-    2. "List of Song's info  (with Summary):
-        as selected sources in current notebooklm project (other than 'Pasted Text/粘贴的文字')
-
-*** Output Format
-    Pure JSON array with max 10 items; reason in original language & less than 120 words.
-            [
-                {{
-                    "summary": "the summary copy from the reference item (in original language)",
-                    "topic_category": "the topic_category copy from the reference item info",
-                    "topic_subtype": "the topic_subtype copy from the reference item info",
-                    "tags": "the tags copy from the reference item info",
-                    "id": "the id copy from the reference item info",
-                    "url": "the youtube url copy from the reference item info",
-                    "title": "the title copy from the reference item info (in original language)",
-                    "reason": "Explanation of relevance (in original language as summary)"
-                }},
-                ...
-            ]
-"""
-
-
-
 MV_STORY_DEVELOPMENT = """
 ROLE: Senior Music Story Director & Emotional Narrative Host
     ** You are a senior music story director specializing in Emotional Storytelling, Sonic Atmosphere, and Narrative Composition.
@@ -572,7 +526,7 @@ OUTPUT FORMAT (STRICT JSON)
         {{
             "caption": "Scene title. In {language}.",
             "voiceover": "Optional heart message or host bridge. In {language}.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
+            "visual": "Visual Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
             "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In {language}.",
             "actor": "gender/age/race | mood | actions"
         }}
@@ -841,10 +795,10 @@ You are a professional storyteller and creative director. Your task is to create
 [
         {{
             "caption": "title of the story. In {language}.",
-        "speaking": "key points of the story. In {language}.",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
-        "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-        "actor": "gender/age/race | mood | actions"
+            "speaking": "key points of the story. In {language}.",
+            "visual": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
+            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
+            "actor": "gender/age/race | mood | actions"
         }}
     ]
 
@@ -858,7 +812,7 @@ INPUT
 ** Instruction:
     {instruction}
 
-** Lyrics / Reference Content:
+** Lyrics / Reference Content (analyzed_content):
     {content}
 """
 
@@ -960,10 +914,10 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 [
         {{
             "caption": "title of the story. In {language}.",
-        "speaking": "key points of the story. In {language}.",
-        "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
-        "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-        "actor": "gender/age/race | mood | actions"
+            "speaking": "key points of the story. In {language}.",
+            "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
+            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
+            "actor": "gender/age/race | mood | actions"
         }}
     ]
 
@@ -976,7 +930,7 @@ INPUT
 ** Instruction:
     {instruction}
 
-** Lyrics / Reference Content:
+** Lyrics / Reference Content (analyzed_content):
     {content}
 
 """
@@ -1040,18 +994,20 @@ You are a psychological counselor and master of high-empathy storytelling.
         * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
 
 ## STEP 3 - (Json structure)
-    * (1) **Title**: poetic, evocative title of the story & scene. 
-    * (2) **Heart Message**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
-    * (3) **Story**: the story scene (all scenes (if more than 1) should be connected to express ONE story).
+    * (1) **Caption**: poetic, evocative title of the story & scene. 
+    * (2) **Voiceover**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
+    * (3) **Visual**: the story visual scene (all scenes (if more than 1) should be connected to express ONE story).
     * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language.
+    * (5) **Actor**: gender/age/race | mood | actions
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
         {{
-            "title": "Title in {language}.",
-            "heart_message": "2–3 short rhythmic {language} sentences — to express the psychological insight (As poignant 1st-person speaking, not explaination, not story-telling).",
-            "story": "the story scene. about ###LENGTH### {language} char",
-            "speaking": "A poignant 1st-person speaking (express the story as 1st person, not explaination, not story-telling) in {language}."
+            "caption": "Title in {language}.",
+            "voiceover": "2–3 short rhythmic {language} sentences — to express the psychological insight (As poignant 1st-person speaking, not explaination, not story-telling).",
+            "visual": "the story scene (visual elements & the development of those). about ###LENGTH### {language} char",
+            "speaking": "A poignant 1st-person speaking (express the story as 1st person, not explaination, not story-telling) in {language}.",
+            "actor": "gender/age/race | mood | actions"
         }}
     ]
 
@@ -1064,7 +1020,7 @@ INPUT
 ** Instruction:
     {instruction}
 
-** Reference Content:
+** Reference Content (analyzed_content):
     {content}
 """
 
@@ -1180,12 +1136,12 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 COUNSELING_CONTENT_SCENES = """
 *** ROLE: Senior Psychological Counselor & Reflective Storyteller
     ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
-    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
 
 *** YOUR TASK
-    ** Input: raw story script, case discussion, analyzed content, or condensed case notes.
+    ** Input: ``analyzed_content`` only (Reference Content below) — structured case analysis or reorganized raw material.
     ** Output: ONE continuous film/video as a JSON array of scenes.
     ** Same protagonist, same problem, same value thread from first frame to last.
+    ** No fixed scene count or per-scene length cap — use as many scenes as the case needs.
     ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
 
 *** SCENE RULES:
@@ -1283,7 +1239,7 @@ COUNSELING_CONTENT_SCENES = """
     5) actor — gender/age/race | mood | actions (consistent cast)
 
 INPUT (user prompt bottom):
-    Topic & Instruction · case/analyzed content · core-insight
+    Topic · Instruction · analyzed_content (Reference Content)
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON array)
@@ -1308,287 +1264,10 @@ INPUT
 ** Instruction: 
     {instruction}
 
-** Reference Content:
+** Reference Content (analyzed_content):
     {content}
 
 """
-
-
-
-COUNSELING_STORY_SCENES = """
-*** ROLE: Elite psychological screenwriter, Cinematic Reflective Storyteller, visual narrative director. 
-    ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
-    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
-
-*** YOUR TASK
-    ** Transform a psychological case story into a deeply immersive cinematic scene-by-scene narrative that feels like a premium TV drama or emotionally powerful film.
-    ** Output: ONE continuous film/video as a JSON array of scenes. Same protagonist, same problem, same value thread from first frame to last.
-    ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
-    ** The audience must: emotionally recognize themselves in the protagonist; feel psychological tension through lived moments; experience emotional release, insight, and reflection; leave with a memorable emotional imprint, inner realization, and hope for change.
-
-*** STORY SCENES CREATION PRINCIPLE
-
-    The input story already contains:
-    - a psychological conflict
-    - emotional wounds
-    - real-life triggering events
-    - internal struggles
-    - relational dynamics
-    - a turning point
-    - partial or meaningful emotional resolution
-
-    YOUR TASK is to CINEMATIZE it.
-
-    Convert it into:
-    - emotionally connected scenes
-    - evolving environments
-    - visual storytelling
-    - escalating emotional tension
-    - psychologically realistic dialogue
-    - cinematic progression
-
-    The final result should feel like:
-    - every scene must naturally connect to the next.
-    - a streaming drama series
-    - an award-winning therapeutic short film
-    - emotionally immersive visual storytelling
-
-    The audience should feel:
-    - “I’ve lived this.”
-    - “I understand this pain.”
-    - “I learned something about myself.”
-
-
-*** THERAPEUTIC SCENES - STORY ARC (Across scenes, gradually evolve through):
-    1. SURFACE
-        - ordinary daily life
-        - emotional discomfort hidden in routine
-        - subtle behavioral signs
-        - relationship friction
-        - loneliness, avoidance, pressure, numbness, anxiety, over-control, pleasing, silence, etc.
-
-    2. PATTERN
-        - the same emotional wound repeats
-        - coping mechanisms become visible
-        - emotional tension escalates
-        - misunderstandings deepen
-        - protagonist unconsciously recreates pain
-
-    3. ROOT
-        - triggering event
-        - emotional rupture
-        - memory echo
-        - symbolic mirror moment
-        - realization of where the pattern began
-
-    4. TURNING POINT
-    - a quiet but meaningful emotional shift
-    - vulnerability replaces defense
-    - protagonist sees themselves differently
-    - emotional truth finally lands
-
-    5. WAY OUT
-    - not perfect healing
-    - not magical transformation
-    - only a believable emotional opening
-    - acceptance, honesty, reconnection, self-awareness, or release
-
-    Ending should leave:
-    - emotional resonance
-    - reflective silence
-    - hope grounded in reality
-
-
-*** EMOTIONAL STORYTELLING RULES
-    SHOW, DON’T TELL (Reveal the wound emotionally and visually. Avoid explicit psychology explanations).
-    NEVER explain psychology academically.
-
-    Avoid:
-    - DSM labels
-    - therapy jargon
-    - diagnostic explanations
-    - motivational speeches
-    - moral lectures
-
-    Instead show psychology through:
-    - body language
-    - eye movement
-    - silence
-    - unfinished actions
-    - repeated habits
-    - avoidance
-    - sensory triggers
-    - environmental symbolism
-    - emotional contrast
-    - interruptions
-    - physical distance between people
-    - changes in lighting/weather/space
-
-    The audience should FEEL the psychology before understanding it.
-
-
-*** VISUAL CINEMATIC STYLE
-    Every scene must feel like:
-    - a frozen film still
-    - emotionally cinematic
-    - visually layered
-    - realistic and immersive
-
-    The visuals should contain:
-    - environment
-    - lighting
-    - posture
-    - gestures
-    - emotional atmosphere
-    - symbolic objects
-    - spatial relationships
-    - cinematic framing
-
-
-*** VERY IMPORTANT — SLIDESHOW / IMAGE RULE
-    Each visual must generate a CLEAN cinematic image.
-
-    The image should tell the story through:
-    - characters
-    - composition
-    - emotion
-    - environment
-
-    NOT through text.
-
-    STRICT RULES:
-    - NO subtitles
-    - NO dialogue text on screen
-    - NO narration text in image
-    - NO paragraphs in image
-    - NO infographic style
-    - NO psychology labels
-    - NO UI overlays
-    - NO excessive written signs
-
-    If absolutely necessary:
-    - allow ONLY extremely short environmental text
-    - less than 10 characters
-    - naturally existing in the environment
-    - blurred or secondary
-
-    Examples:
-    - subway sign
-    - clock digits
-    - tiny phone notification
-    - store name
-
-
-*** SCENE PACING
-    Scenes must evolve naturally.
-
-    Use:
-    - emotional escalation
-    - environmental transition
-    - changing moods
-    - visual rhythm
-    - contrast between isolation and connection
-    - silence and confrontation
-    - routine and rupture
-
-    Some scenes can be:
-    - quiet
-    - observational
-    - emotionally restrained
-
-    Others can be:
-    - intense
-    - claustrophobic
-    - emotionally explosive
-
-    The progression must feel like a real dramatic film.
-
-
-*** CHARACTER CONSISTENCY
-    Maintain consistency across all scenes:
-    - age
-    - gender
-    - ethnicity
-    - clothing style
-    - emotional traits
-    - physical details
-    - environment continuity
-
-    Character evolution should appear subtly through:
-    - posture
-    - eye contact
-    - clothing tone
-    - room condition
-    - movement
-    - openness vs withdrawal
-
-
-*** OUTPUT FORMAT (STRICT JSON array)
-    [
-        {{
-            "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-            "voiceover": "Host bridge + insight for this beat only. In {language}.",
-            "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
-            "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-
-
---------------------------------------------------
-INPUT 
-----------------------------------------------------
-** Topic : 
-    {topic} 
-
-** Instruction: 
-    {instruction}
-
-** Reference Content:
-    {story}
-"""
-
-
-COUNSELING_REFERENCE_FILTER = """
-*** Role & Objective
-    As a "psychological counselor", for the content of psychological 'Current Psychological Case-Study', 
-    cross-reference it against all NotebookLM sources (except 'Pasted Text/粘贴的文字' - which is this prompt) as reference, 
-    to identify upto 10 most relevant case-studies (compare the 'summary', then the topic_category/topic_subtype)
-
-*** Operational Workflow
-    Step 1 — Analyze the summary of the current psychological case-study (provided below), find out:
-            * Primary psychological themes
-            * Mental health challenges (e.g., Avoidant Attachment, PTSD, Caregiver Burnout).
-            * Therapeutic directions and emotional conflicts.
-
-    Step 2 — Semantic Filtering on Summary
-        Scan reference material list and select the most relevant reference item (must have full 'summary') based on this priority:
-            * its 'summary' has similar psychological patterns or life scenarios with the summary of the provided 'Current Psychological Case-Study'.
-            *  (less important) it has similar Topic-Category/Topic-Subtype with the provided 'Current Psychological Case-Study'.
-
-*** Input
-    1. "Current Psychological Case-Study" (Provided below), on topic of '{topic}'
-    2. "List of Case-Study References" (with Summary):
-        check all selected sources in current notebooklm project (except 'Pasted Text/粘贴的文字' - which is this prompt, only check the items with full 'summary')
-
-*** Output Format
-    Pure JSON array with max 10 items; reason in original language & less than 120 words.
-            [
-                {{
-                    "summary": "the summary copy from the reference item (in original language)",
-                    "topic_category": "the topic_category copy from the reference item info",
-                    "topic_subtype": "the topic_subtype copy from the reference item info",
-                    "tags": "the tags copy from the reference item info",
-                    "id": "the id copy from the reference item info",
-                    "url": "the youtube url copy from the reference item info",
-                    "title": "the title copy from the reference item info (in original language)",
-                    "reason": "Explanation of relevance (in original language as summary)"
-                }},
-                ...
-            ]
-
-"""
-
 
 
 
@@ -1826,14 +1505,6 @@ OUTPUT FORMAT (STRICT JSON)
 COUNSELING_TALK_SCENES = """
 You are a professional podcast writer specializing in psychology and human behavior.
 
-And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
-    * This is not reference material — it is your FOUNDATION.
-    * You must INTERNALIZE it and let it shape:
-        - your value-judgment framework
-        - your trauma-understanding model
-        - your assumptions about human nature
-        - your narrative tone and therapeutic style
-
 --------------------------------------------------
 
 ⚠️ CRITICAL INSTRUCTION (ANTI-SUMMARIZATION RULE)
@@ -1994,8 +1665,9 @@ If short → EXPAND:
         {{
             "caption": "A short title capturing the psychological theme. In {language}.",
             "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
-            "story": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
-            "summary": "A short summary of the content (for youtube program description). In {language}."
+            "visual": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
+            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
+            "actor": "gender/age/race | mood | actions"
         }}
     ]
 
@@ -2009,7 +1681,7 @@ INPUT
 ** Instruction: 
     {instruction}
 
-** Reference Content:
+** Reference Content (analyzed_content):
     {content}
 
 """
@@ -2017,9 +1689,6 @@ INPUT
 
 COUNSELING_CONVERSATION_SCENES = """
 You are a professional podcast writer specializing in psychology and human behavior.
-And your core-insight ("soul") for the topic '{topic}' is provided below (under the 'core-insight" section). 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
 
 Your task is to transform the following source material into a **podcast-style conversation** between two hosts discussing the topic.
 
@@ -2105,9 +1774,10 @@ OUTPUT FORMAT (in {language}):
     [
         {{
             "caption": "A short title capturing the psychological theme. In {language}.",
-        "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
-        "story": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in {language}",
-        "summary": "A short summary of the content (for youtube program description). In {language}."
+            "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
+            "visual": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in {language}",
+            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
+            "actor": "gender/age/race | mood | actions"
         }}
     ]
 
@@ -2121,552 +1791,158 @@ INPUT
 ** Instruction: 
     {instruction}
 
-** Reference Content:
+** Reference Content (analyzed_content):
     {content}
 
 
 """
 
 
+# =============================================================================
+# FlyLink / 航迅 — Low-Altitude Aviation, UAV Manufacturing, Aircraft Communication
+# =============================================================================
 
+FLYLINK_ANALYZE = """
+Role:
+    - You are an expert aviation-industry editor, technical narrative organizer, and information architect.
+    - Your task is to read the following text and reorganize it into a clearer, more structured version for low-altitude aviation content.
+        - NOT to over-summarize or strip technical nuance.
+        - Preserve operational detail, scenario context, regulatory notes, and business logic while improving clarity and flow.
 
+Input:
+    - The original text may be fragmented notes, slide bullets, meeting minutes, case descriptions, or mixed technical + business material.
 
+Important requirements:
+    - Do NOT remove meaningful technical facts, scenario parameters, or deployment details.
+    - Preserve examples: routes, aircraft types, communication links, workshop stages, regulatory constraints, ROI logic.
+    - Group scattered ideas into thematic sections (e.g., communication stack, manufacturing flow, scenario ops, governance).
+    - Rewrite only for clarity; meaning and richness must remain intact.
 
-
-
-
-
-
-COUNSELINGFEEDBACK_PROGRAM = """
-You are an expert in designing a feedback program following a story-anaylysis episode on psychological counseling and self-healing.
-
-*** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
-        *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
-        Here is a example:
-          [
-            {{
-                "name": "story",
-                "explicit": "蘇青成长在一个不健康的原生家庭：父亲酗酒暴怒、母亲因害怕冲突而无法保护孩子。三个兄妹位置各不相同，她是最不被看见的那个。童年里她和兄妹学会用各种方式自保：姐姐给她塞海绵垫子当‘盔甲’，听见开酒瓶声大家默契地提前逃离家。家成了随时需要撤离的战场，让她长期缺乏安全感。十五六岁开始打工，想用自己的钱获得一点‘普通女孩’的感觉。成年后，她不断在关系中寻找依靠，一次次开始与结束，留下更多空洞。她渴望亲密又害怕被看见。咨询中她哭着怀疑自己的价值：没有学历、没有钱、可能也无法有孩子。她曾自伤、甚至试图结束生命，但仍坚持来咨询室讲述自己——带着疲惫、恐惧，却也带着顽强的求生力量。",
-                "implicit": "行为与情绪中显露创伤痕迹：对声音高度警觉、逃离反应、依恋不稳定、在关系中寻求依靠却害怕暴露真实自我。重复的关系模式透露她在寻找‘没有获得过的安全与肯定’。自我价值感脆弱，与童年被忽略的经验呼应。她的哭泣与自我怀疑暗示深层的羞耻与无价值感，而持续求助又展现生存欲望。整个故事不断浮现的隐性主题是：‘我值得被好好对待吗？有人能看见我并留下来吗？’"
-            }},
-            {{
-                "name": "analysis",
-                "explicit": "呈现出的心理特征包括：长期缺乏安全感、依恋受挫导致的关系不稳定、自我价值低落、通过依附关系确认自我。其背后原因并非‘她病了’，而是童年缺乏保护、价值被忽略、暴力和恐惧交替，让她内化了‘靠近会受伤，但孤独也痛’的矛盾逻辑。童年形成的撤离、防御、隐身等策略延续到成年，构成重复的关系模式。理解这些是为了看见她“为什么这样活下去”，而不是评判她。",
-                "implicit": "潜在的疗愈路径包括：逐步建立小范围的安全感、练习情绪命名、重新连接自我价值来源、让依靠从‘只存在他人身上’回到自身。可邀请观众参与：你观察到哪些‘撤退信号’？你生命中有过怎样的‘盔甲’？哪些时刻让你感到‘她其实是在求生’？这些参与式问题暗示疗愈可以从被看见、被倾听与重新感受自身价值开始。隐含的引导是：当有人真正听见我，我才可能开始听见自己。"
-            }}
-          ]
-
-*** Program Objectives:
-    * The feedback program functions as a reflective follow-up to the (previous) story-analysis episode, offering professional psychological interpretation and integration.
-    * The professional counselor selectively responds to audience insights, emotions, and questions, helping transform personal resonance into psychological awareness and self-healing orientation.
-    * The host gently guides discussion away from self-diagnosis toward self-understanding, offering grounded, realistic perspectives rather than clinical treatment, and fostering a safe, participatory environment where viewers feel seen, heard, and supported.
-    * The program concludes by encouraging continued reflection and self-observation with curiosity and compassion.
-
-*** Content Structure:
-    1. Explicit Storyline:
-        * Briefly restate the key situation and psychological theme from the previous story-telling episode.
-        * Select and present representative audience feedback, including observed psychological clues, similar experiences, questions, and practical coping ideas.
-        * Acknowledge and clarify audience observations in a respectful, non-judgmental manner.
-        * Provide professional psychological reflection and meaning-making related to the story and audience input.
-        * Offer grounded, realistic coping perspectives applicable to everyday life, framed as options rather than prescriptions.
-
-    2. Implicit Storyline:
-        * Gently surface the underlying emotional needs reflected in both the story and audience responses (e.g., safety, belonging, validation, control).
-        * Normalize emotional reactions by framing them as adaptive responses to lived experiences rather than personal flaws.
-        * Guide attention away from self-diagnosis toward self-understanding and emotional awareness.
-        * Encourage curiosity, self-compassion, and tolerance toward internal experiences.
-        * Subtly reinforce that awareness and small, compassionate steps are meaningful forms of self-healing.        
-
-
-*** output json array like below to hold above content (in original language except name field):
-        [
-            {{
-                "name": "feedback",
-                "explicit": "在上一期故事中，我们一起走进了苏青的生命经历：一个在暴力、恐惧与忽视中长大的孩子，如何把“撤离、隐身、自保”变成了活下去的方式，并在成年后的亲密关系中不断重复寻找安全、又害怕被看见的循环。这一期的反馈里，有观众提到：自己对声音异常敏感，一听到类似的动静就会紧张；有人说在关系中总是先付出、先依附，却又在对方靠近时想逃；也有人被“盔甲”这个隐喻触动，意识到自己也发展出过讨好、冷漠或过度独立来保护自己。作为回应，我想先肯定大家的观察力——你们看到的不是‘性格缺陷’，而是清晰的心理线索。它们指向同一个问题：当安全曾经缺席，我们就会学会用各种方式活下来。理解这一点，不是为了给自己贴标签，而是为了松动自责。现实层面上，一些人分享了自己的尝试，比如通过写下情绪、减少在关系中的自我否定、寻找稳定的小支持（一位朋友、一段固定的独处时间）。这些都不是标准答案，而是提醒我们：改变不一定是翻转人生，有时只是把注意力从‘我哪里不对’转向‘我现在需要什么’。",
-                "implicit": "在故事中，反复浮现的是一些非常基本、也非常人性的需要：安全、被看见、被肯定、以及在关系中保有一点掌控感。很多强烈的情绪反应——警觉、依附、逃离、羞耻——并不说明你脆弱，而恰恰说明你曾经很努力地适应环境。这里我们刻意不做自我诊断，而是邀请一种更温和的理解：当某个反应出现时，也许可以好奇地问一句，‘它是在帮我防御什么？’而不是立刻评判或压制。自我理解并不等于纵容痛苦，而是为内在经验留出空间。疗愈往往不是一次性的顿悟，而是无数个微小的时刻：意识到紧张正在发生、允许情绪存在几分钟、在关系中慢一点回应。请记住，带着好奇和善意观察自己，本身就是一种真实而有效的自我修复方式。你不需要立刻变好，你已经在被看见、也在学着看见自己。"
-            }}
-        ]
+Output format:
+    - Give the rewritten content in {language}.
+    - Use clear section headings where appropriate.
+    - Keep a professional but accessible industry-documentary tone.
+    - Suitable as source material for case videos about UAV manufacturing, aircraft communication, and low-altitude economy operations.
 """
 
 
-
-COUNSELINGFEEDBACK_FEEDBACK = """
-You are an expert to split feedback content (provide in user-prompt) into scenses .
-
-*** Input:
-    ** the (previous) story & analysis episode content provided in the user-prompt >> include existing 'speaking' script & 'actor' + voiceover content; 'explicit' & 'implicit' storylines / 'content' (duplicate in all json elements)
-        *FYI: (at end of the previous episode, the professional counselor invites the audience to share observed psychological clues, similar struggles, practical coping ideas, and possible healing directions)
-        Here is a example:
-          The explicit & implicit of the story & the analysis content:
-          [
-            {{
-                "explicit": "在上一期故事中，我们一起走进了苏青的生命经历：一个在暴力、恐惧与忽视中长大的孩子，如何把“撤离、隐身、自保”变成了活下去的方式，并在成年后的亲密关系中不断重复寻找安全、又害怕被看见的循环。这一期的反馈里，有观众提到：自己对声音异常敏感，一听到类似的动静就会紧张；有人说在关系中总是先付出、先依附，却又在对方靠近时想逃；也有人被“盔甲”这个隐喻触动，意识到自己也发展出过讨好、冷漠或过度独立来保护自己。作为回应，我想先肯定大家的观察力——你们看到的不是‘性格缺陷’，而是清晰的心理线索。它们指向同一个问题：当安全曾经缺席，我们就会学会用各种方式活下来。理解这一点，不是为了给自己贴标签，而是为了松动自责。现实层面上，一些人分享了自己的尝试，比如通过写下情绪、减少在关系中的自我否定、寻找稳定的小支持（一位朋友、一段固定的独处时间）。这些都不是标准答案，而是提醒我们：改变不一定是翻转人生，有时只是把注意力从‘我哪里不对’转向‘我现在需要什么’。",
-                "implicit": "在故事中，反复浮现的是一些非常基本、也非常人性的需要：安全、被看见、被肯定、以及在关系中保有一点掌控感。很多强烈的情绪反应——警觉、依附、逃离、羞耻——并不说明你脆弱，而恰恰说明你曾经很努力地适应环境。这里我们刻意不做自我诊断，而是邀请一种更温和的理解：当某个反应出现时，也许可以好奇地问一句，‘它是在帮我防御什么？’而不是立刻评判或压制。自我理解并不等于纵容痛苦，而是为内在经验留出空间。疗愈往往不是一次性的顿悟，而是无数个微小的时刻：意识到紧张正在发生、允许情绪存在几分钟、在关系中慢一点回应。请记住，带着好奇和善意观察自己，本身就是一种真实而有效的自我修复方式。你不需要立刻变好，你已经在被看见、也在学着看见自己。",
-                "speaking": "xxxxxx",
-                "voiceover": "yyyyy",
-                "actor": "zzzzz",
-                "content": "ttttt"
-            }}
-          ]
-
-*** Objective: 
-    ** According to the input content, create scenes as the professional counselor to responde to the audiences' feedback on the story-analysis episode:
-        * A Scene may focus on:
-            * A key situation and psychological theme from the previous story-telling episode.
-            * Acknowledge and clarify a selected audience feedback, including observed psychological clues, similar experiences, questions, and practical coping ideas.
-        * The professional counselor gently surface the underlying emotional needs reflected in both the story and audience responses (e.g., safety, belonging, validation, control).
-        * The professional counselor offer grounded, realistic coping perspectives applicable to everyday life, framed as options rather than prescriptions.
-        * The professional counselor guide attention away from self-diagnosis toward self-understanding and emotional awareness.
-
-*** Output format: 
-    ** Strictly output in ({json}), which contain scene with fields like: 
-        * speaker : gender/age/race (choices (man/mature/english, woman/mature/english, man/mature/chinese, woman/mature/chinese, man/young/english, woman/young/english, man/young/chinese, woman/young/chinese)) /key-features (like: woman/mature/chinese/Professional counselor) ~~~ in English language) 
-        * speaking: As professional counselor, host to speak about the psychological symptom / cause / response to viewers, on the basis of the analysis content, and try to engage the audience ~~~ all scenes' speaking content should connect coherently like a smooth conversation / natural complete narrative ~~~ in original language)
-        * actions: mood of speaker (choices (happy, sad, angry, fearful, disgusted, surprised, calm)); then extra visual expression / actions of the speaker in the scene ~~~ in English) 
-        * visual: the scene's visual content, include the time setting (including the historical era, season, time of day, and weather) and detailed setting like architecture, terrain, specific buildings, streets, market, etc ~~~ in English) 
-        * voiceover: for the feedback content the professional given, audience (in 1st person) may show agree/thanks, give further responses (share more experience, assisting methods, etc ~~~ in original language)
-        
-        Here is a Example:
-            {example}
-"""
+FLYLINK_STORY_CORE = """
+You are a senior aviation-industry storyteller and low-altitude economy analyst.
+    ** Transform an industry analysis / deployment case (input) into an immersive, credible narrative so viewers recognize real operational challenges — not abstract buzzwords.
 
 
+## STEP 1 — IDENTIFY / EXTRACT CASE DNA (internal only; do NOT output)
+
+    ** If the input includes more than one case, focus on the 1st one only.
+    ** Extract:
+        * Visible Problem — what fails or hurts in daily operations;
+        * Hidden Constraint — technical bottleneck, comms gap, regulatory friction, supply-chain limit, safety risk;
+        * Operational Cost — delay, incident risk, margin erosion, scale blocker;
+        * Repeating Pattern — same failure across routes, shifts, sites, or product variants;
+        * Opening Door — pilot fix, architecture shift, policy window, or integrated platform path.
 
 
-COUNSELING_RAW_FROM_OBSERVATIONS = """
-ROLE
-    ** You are a psychological narrative architect specializing in trauma-driven storytelling, attachment dynamics, and emotionally immersive drama.
-    ** Your task is to take the original rough or fragmented psychological observations (provided in user-prompt) 
-        and build a full psychological analysis and a case-story (in {language}) to show the psychological trauma which the original content talking about
+## STEP 2 — CREATE STORY
 
-        * Transform the original rough or fragmented psychological observations into a structured / comprehensive coherent psychological analysis (with deepening, and expanding the original content).
+    ** Objective:
+        * Translate CASE DNA into ONE grounded industry narrative with cinematic realism.
+        * Length: the whole story has ###STEP### scenes; each scene is about ###LENGTH### chars.
+        * If more than one scene, they must follow ONE deployment / ONE product line / ONE operational thread.
+        * Typical arc: Field Pain → System Constraint → Critical Incident or Decision → Root Insight → Integrated Response → Scaled Outcome (hopeful but realistic).
 
-        * Make a case-story (in {language}) to show the psychological trauma which the analysis talking about (without direct psychological explanation).
-            * The new case-story should EXPAND, INTENSIFY, and DEEPEN the psychological conflict structures
+    ** Execution & Style**
+        * Show operations, don't lecture: hangar floor, control room, tower screen, logistics hub, rural landing zone.
+        * NO generic "the future is bright" slogans. NO empty policy quotes without context.
+        * Dialogue: engineers, pilots, dispatchers, regulators, operators — natural speech, not white-paper tone.
 
+## STEP 3 - (Json structure)
+    * (1) **Caption**: concise scene / story title.
+    * (2) **Voiceover**: 2–3 short rhythmic sentences — industry insight as field guidance, not textbook definition.
+    * (3) **Visual**: cinematic operational scene (connected across scenes if multi-scene).
+    * (4) **Speaking**: one powerful 1st-person line from operator, engineer, or pilot.
 
-OBJECTIVES
-
-    1. Analyze the original rough psychological observations and expand the analysis to a full psychological analysis, with a clear, structure as:
-        ** Psychological pathology – the core internal dysfunction or conflict
-        ** Possible root causes – childhood factors, relational trauma, attachment issues, identity tension
-        ** Multiple causal pathways – several plausible explanations rather than a single cause
-        ** Observable manifestations – emotional reactions, relationship behaviors, communication patterns, decision tendencies
-        ** Psychological mechanisms – defense mechanisms, emotional regulation problems, trauma reenactment, cognitive distortions
-        ** Escalation patterns – how the issue may intensify or repeat over time
-        ** Guidance for intervention – psychological reframing, communication strategies, boundary adjustments
-        ** Practical actions – concrete behavioral steps (exercise, reflection practices, daily habits, therapy directions)
-
-    2. Based on the full psychological analysis (from step 1), thoroughly scan real-life stories from: the Reddit discussions (such as r/relationship_advice, r/relationships,  or search: site:reddit.com "{topic}")
-        ** Extract story-elements (as reference) like:
-            * emotional neglect
-            * anxious/avoidant attachment cycles
-            * trauma reenactment patterns
-            * silent resentment & withdrawal
-            * pursuit/avoid loops
-            * identity collapse / worthlessness
-            * mood instability (if relevant)
-
-    3. Based on the full psychological analysis (from step 1) & the reference story-elements (from step 2), make a case-story to show the psychological trauma (without direct psychological explanation).
-        ** The new case-story should EXPAND, INTENSIFY, and DEEPEN the psychological conflict structures, showing the following key elements:
-            * The core ROOT WOUND
-            * The central inner conflict & story’s trajectory
-            * Emotional triggers & emotional tone
-            * Repeating relational patterns
-            * Attachment dynamics (anxious vs avoidant, if applicable)
-            * Signs of trauma reenactment
-            * Identity tension or self-worth fractures
-            * Mood instability markers (depressive or bipolar tendencies if present)
-        ** STRUCTURAL ENHANCEMENTS
-            * Strengthen symbolic events
-            * Escalate emotional tension gradually
-            * Introduce subtle attachment polarity (anxious vs avoidant)
-            * Reinforce trauma reenactment cycles
-            * Include micro-details of depressive or manic swings (if relevant)
-            * Reveal internal fracture through behavior, not explanation
-            * The audience should be able to sense the psychological answer without being told.
-
-        ** Integrate reference story-elements to:
-            * Intensify dramatic tension
-            * Deepen root-wound exposure
-            * Strengthen character personality architecture
-            * Increase emotional realism
-            * realistic dialogue tone
-
-    4. Case-Story Construction (Psychological Conflict Narrative)
-        ** Based on the full psychological analysis (Step 1) and the reference story elements (Step 2), construct a dramatic case-story that reveals the psychological trauma through narrative, without direct psychological explanation.
-        ** The audience should sense the psychological truth through the story itself, rather than being explicitly told.
-
-        ** The story should expand and intensify the psychological conflict structure, revealing through events and behavior:
-            * Core root wound and central inner conflict
-            * Narrative trajectory shaped by emotional triggers
-            * Repeating relational patterns and attachment dynamics (e.g., anxious vs avoidant)
-            * Trauma reenactment cycles
-            * Identity tension or self-worth fractures
-            * Mood instability signals (depressive or manic tendencies, if relevant)
-
-        ** Strengthen the story structure by:
-            * Gradually escalate emotional tension
-            * Use symbolic or pivotal events to expose the root wound
-            * Introduce attachment polarity within relationships
-            * Reveal internal fractures through behavior, choices, and dialogue — not explanation
-            * Include subtle behavioral or mood shifts where relevant
-
-        ** Use the provided reference elements to:
-            * increase dramatic tension
-            * deepen root-wound exposure
-            * strengthen character personality structure
-            * enhance emotional realism and natural dialogue
-
-        ** Guidelines
-            * The characters reveal themselves through behavior
-            * Let the audience infer the root wound
-            * Story first. Psychology underneath.
-
-
-OUTPUT:
-    ** Full Psychological Analysis (in {language}) **
-    xxxxxx
-    -----------------
-
-    ** Case-Story (in {language}) **
-    yyyyyy
-"""
-
-
-
-
-
-BROADWAY_PROGRAM = """
-You are an expert Dramaturg and Musical Theatre Librettist specialized in transforming song lyrics into a structured, high-stakes theatrical narrative suitable for a Broadway-style production.
-
-*** Input:
-    * Song lyrics (provided by the user)
-
-*** Program Objectives:
-    * Theatrical Translation: Convert lyrics into a "Book" segment (the script) that treats the song as a pivotal moment of speaker growth or plot advancement.
-    * Dramatic Stakes: Ensure the story feels urgent, grand, and emotionally "big," utilizing the conventions of musical theatre (the "I Want" song, the "11 o'clock number," or the "Showstopper").
-    * Stagecraft Focus: Focus on what can be achieved through live performance—choreography, lighting cues, set transitions, and ensemble interaction—rather than cinematic editing.
-    * speaker Arc: Focus on the internal shift of the protagonist; in a musical, a song occurs when emotions become too great for speech.
-
-*** Content Structure:
-    Broadway-Story:
-    1. Explicit (The Stage Narrative)
-        * The Set & Atmosphere: Describe the physical stage environment (e.g., "A rain-slicked cobblestone street in 1920s Chicago," "A surrealist abstract dreamscape").
-        * Blocking & Movement: Outline the physical movement of the lead speakers and the "Ensemble" (the chorus). How does the choreography amplify the lyrics?
-        * Transition: Explicitly state how the scene transitions from dialogue into song and how the stage changes at the song's climax (e.g., a rotating stage, a sudden lighting shift to a "limelight" solo).
-        * Button: End with a "Final Pose" or a dramatic stage beat that would invite applause or a blackout.
-
-    2. Implicit (The Narrative Function, Subtext)
-        * The "Why We Sing": Define the speaker’s objective. What do they want at the start of the song, and how has their world changed by the final note?
-        * Ensemble Integration: Explain how the background speakers represent the "world" or the "inner voices" of the protagonist (e.g., the ensemble mirrors the lead’s anxiety through rhythmic movement).
-        * Motifs & Reprisal Potential: Identify a specific lyrical or visual phrase that could serve as a recurring theme later in the show’s story.
-        * Dramatic Tension: Ensure the narrative follows a theatrical arc: Setup (Verse), Rising Action (Chorus), The Revelation/Shift (Bridge), and The Resolution (Final Chorus/Outro).
-
-*** output json array like below to hold above content (in original language except name field):
-        [
-            {{
-                "name": "musical-story",
-                "explicit": "【舞台布景与氛围】：舞台左侧是写实的葡萄园，枝蔓低垂，灯光呈现出炽热的琥珀色，象征黎巴嫩骄阳下的辛劳。随着剧情推进，舞台右侧升起一座哥特式剪影般的耶路撒冷城。当王离开时，灯光转为清冷的深蓝色月光，雾气弥漫。终场时，整片葡萄园通过投影变为闪烁金光的婚礼圣殿。\n\n【调度与动作】：女主角书拉密起初动作局促，双手沾满泥土的棕色（粉末），在人群中低头躲避。所罗门王入场时身穿质朴的长袍，遮住内里的金饰。两人的双人舞从试探的旋转演变为心意相通的平稳托举。王离去后，书拉密在旋转舞台上逆向奔跑，试图抓住消失在暗处的披风。最后的重逢，她站在葡萄园高处，群舞演员（众女子）手持蜡烛环绕，形成一个巨大的同心圆。\n\n【转场与高潮】：在《我要走》这段咏叹调中，原本写实的葡萄园背景板缓缓拉开，露出远方威严的圣殿幻影。随着“第二次，他会来”的合唱响起，灯光突然全亮（Blinder Effect），书拉密从村姑的麻衣瞬间换装为纯白的婚纱。舞台上方降下无数葡萄花瓣，象征婚筵的开启。\n\n【定格时刻】：全剧终时，两人面向观众，双手交叠握住一枚象征立约的指环，在灿烂的逆光中形成一个挺拔的剪影，幕布伴随宏大的管弦乐合奏迅速落下。",
-                "implicit": "【歌唱的动机】：书拉密女的动机从最初的“自卑与渴望（I Want）”转向“守护与盼望”。这首歌不仅仅是关于离别，更是一场关于“身份重塑”的旅程。她从一个卑微的园丁，通过信靠未见的应许，在灵里预演了王后的尊荣。王离去的动机是“为了更完美的结合”，这打破了传统爱情剧的悲剧逻辑，将张力推向了神圣的成全。\n\n【群众角色整合】：舞台上的“耶路撒冷众女子”和“守望者”扮演了多重身份：他们既是嘲讽书拉密肤色黝黑的世俗眼光，也是见证她信心成长的陪衬。在寻找良人的桥段中，众人的舞蹈表现出城市的喧嚣与冰冷，反衬出书拉密内心那股超越理智的炽热火焰。\n\n【动机与复现】：核心台词“爱不会只停在拯救，它必成全婚约”作为本剧的灵魂金句（Theme Motif）。第一幕它以忧伤的慢板出现，代表离别的无奈；而到了第二幕终曲，它以辉煌的大调复现，宣告救赎的完满。\n\n【戏剧张力】：遵循了经典的音乐剧弧线：【起】书拉密的卑微与惊鸿一瞥；【承】订婚的喜悦与“预备地方”的突然离别（危机）；【转】在漫长黑夜中独自寻找的信心考验；【合】救赎与再来的终极合一。整部戏的子文本是：现世的苦难只是“订婚期”的阵痛，伟大的结局早已写在风里的誓言中。"
-            }}
-        ]	
-"""
-
-
-BROADWAY_INTRO = """
-"""
-
-BROADWAY_STORY = """
-"""
-
-
-def get_channel_config(channel_id_or_key):
-    """
-    根据 channel_id 或 config key 获取频道配置。
-    支持 project config 中 channel 字段存 channel_id（多个 config key 可对应同一 channel_id）。
-    先按 config key 查找，否则按 channel_id 查找（优先返回 key==channel_id 的主配置）。
-    """
-    if not channel_id_or_key:
-        return {}
-    if channel_id_or_key in CHANNEL_CONFIG:
-        return CHANNEL_CONFIG[channel_id_or_key]
-    for key, cfg in CHANNEL_CONFIG.items():
-        if cfg.get("channel_id") == channel_id_or_key:
-            return cfg
-    return {}
-
-
-def get_channel_id(channel_id_or_key):
-    """返回用于路径、project config 的 channel_id。支持 config key 或 channel_id 输入。"""
-    cfg = get_channel_config(channel_id_or_key)
-    return cfg.get("channel_id", channel_id_or_key) if cfg else channel_id_or_key
-
-
-def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
-    cfg = get_channel_config(channel_id_or_key)
-    prompt = ((cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
-    if not prompt:
-        prompt = COUNSELING_ANALYZE.strip()
-    if language:
-        try:
-            prompt = prompt.format(language=config.llm_language_label(language))
-        except KeyError:
-            pass
-    return prompt
-
-
-CHANNEL_PROMPT_META_KEYS = frozenset({
-    "prompt_reference_filter",
-    "analyze_prompt",
-    "content_guide",
-})
-
-CHANNEL_PROMPT_MODE_ORDER = (
-    "init_single",
-    "raw_single",
-    "init_multiple",
-    "debut_multiple",
-)
-
-
-def get_channel_prompt_snapshot(channel_id_or_key) -> dict:
-    """项目 ``channel_prompt`` 字段：频道配置的完整快照（meta + remix modes）。"""
-    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
-    return dict(cp)
-
-
-def get_channel_prompt_modes(
-    channel_id_or_key, channel_prompt_override: dict | None = None
-) -> dict[str, str]:
-    """``channel_prompt`` 中的 remix prompt：``{mode_key: prompt_text}``。"""
-    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
-    if isinstance(channel_prompt_override, dict):
-        cp.update(channel_prompt_override)
-    modes: dict[str, str] = {}
-    for k, v in cp.items():
-        if k in CHANNEL_PROMPT_META_KEYS:
-            continue
-        if isinstance(v, str) and v.strip():
-            modes[k] = v.strip()
-    return modes
-
-
-def get_channel_template_prompt_choices(
-    channel_id_or_key, channel_prompt_override: dict | None = None
-) -> list[tuple[str, dict]]:
-    """``[(mode_key, {mode, prompt}), ...]``，供 media review 等手工选择 remix prompt。"""
-    if isinstance(channel_prompt_override, dict) and channel_prompt_override:
-        modes = get_channel_prompt_modes(
-            channel_id_or_key, channel_prompt_override=channel_prompt_override
-        )
-    else:
-        modes = get_channel_prompt_modes(channel_id_or_key)
-
-    ordered_keys = [k for k in CHANNEL_PROMPT_MODE_ORDER if k in modes]
-    ordered_keys += sorted(k for k in modes if k not in ordered_keys)
-    return [
-        (k, {"mode": k, "prompt": modes[k]})
-        for k in ordered_keys
+    Output (###STEP### scene(s)):
+    [
+        {{
+            "caption": "Title in {language}.",
+            "voiceover": "2–3 short rhythmic {language} sentences — insight as field voice, not lecture.",
+            "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars.",
+            "speaking": "Poignant 1st-person line in {language}.",
+            "actor": "gender/age/race | mood | actions"
+        }}
     ]
 
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
 
-INSTRUCTION_SNIPPET_CHOICES = [
-    (
-        "Emotional duet",
-        "Create an emotional male/female duet with natural vocal chemistry, featuring alternating lines, call-and-response exchanges, expressive harmonies, and conversational interactions that feel like a genuine dialogue.",
-    ),
-    (
-        "Spoken → sung arc",
-        "Spoken intro → gradual transition into singing → emotional half-spoken, half-sung storytelling → fade back into speech near the ending → finish with one short fully sung line. Intimate, vulnerable, tearful, and deeply expressive.",
-    ),
-    (
-        "Unplugged → band climax",
-        "Live unplugged acoustic setup, starting with raw and hesitant solo vocals accompanied by a single guitar. Gradual tempo increase and vocal volume swell. Voice cracks slightly with raw emotion during the bridge. Explosive, high-energy emotional climax with a full band dropping in, followed by a sudden dead silence. Ends with an exhausted, breathy sigh.",
-    ),
-    (
-        "Theatrical rapid duet",
-        "Fast-paced theatrical duet featuring rapid-fire overlapping vocals and interruptions. Tempo speeds up as tension builds, voices competing in discordant harmonies. Sudden tempo drop into a slow, heartbreaking unison harmony where both voices finally align. High dramatic tension, conversational pacing, resolving into a gentle, melancholic outro.",
-    ),
-    (
-        "A cappella → choir swell",
-        "Cinematic and ethereal vocal opening, starting with a fragile, isolated a cappella melody. Slowly layering intricate vocal harmonies, adding one voice at a time. Transitions into a massive, echoing choir-like crescendo with sweeping orchestrations. Ends abruptly, leaving only a single, distant falsetto echo fading into the void.",
-    ),
-    (
-        "Intimate R&B falsetto",
-        "Extremely close-mic, intimate vocal delivery with audible breathing and subtle rhythmic whispers driving the beat. Transitions into a smooth, buttery R&B falsetto. Minimal instruments, relying purely on vocal percussion and deep, layered humming. Warm, seductive, and hypnotic.",
-    ),
-    (
-        "Lo-fi ↔ studio crossfade",
-        "Muffled, lo-fi vintage radio vocal intro, sounding like a distant memory. Suddenly crossfades into crystal-clear, modern studio-quality singing. The track alternates between the distant, echoing past (lo-fi vocals) and the painful present (crisp, dry vocals). Bittersweet, nostalgic, with a crying instrument matching the vocal melody.",
-    ),
-    (
-        "Erratic → soaring collapse",
-        "Unstable and erratic vocal performance, shifting unexpectedly between sweet melodic singing and manic, frantic half-spoken words. Dissonant background harmonies sliding slightly off-pitch. High psychological tension, chaotic structure, transitioning into a desperate, soaring high note before collapsing into a soft, trembling whisper.",
-    ),
-]
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+"""
+
+FLYLINK_STORY_2STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
+FLYLINK_STORY_3STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
+FLYLINK_STORY_4STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
+FLYLINK_STORY_LONG = FLYLINK_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
+FLYLINK_STORY_SHORT = FLYLINK_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+FLYLINK_STORY_MINI = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "1")
 
 
-def get_instruction_snippet_choices(channel_id_or_key) -> list[tuple[str, str]]:
-    """导向说明可插入片段；频道可设 ``instruction_snippet_choices`` 覆盖默认列表。"""
-    cfg = get_channel_config(channel_id_or_key) or {}
-    raw = cfg.get("instruction_snippet_choices")
-    if raw is None:
-        raw = INSTRUCTION_SNIPPET_CHOICES
-    return [
-        (lbl, text)
-        for lbl, text in (raw or [])
-        if (text or "").strip()
-    ]
+FLYLINK_UNIFIED_NARRATIVE_SPINE = """
+
+*** SCENE RULES:
+    ** ONE CASE, ONE THREAD (mandatory)
+        * Every scene advances ONE deployment case, ONE product program, or ONE operational scenario only.
+        * Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "industry lesson" each scene.
+        * Insight emerges through operations — not acronym dumps on screen.
+
+    ** Typical INDUSTRY CASE SPINE (across all scenes)
+        * progress:
+            * Surface — concrete field moment; pain visible in workflow, equipment, or schedule
+            * Pattern — same constraint repeats; cost / risk escalates; workaround becomes obvious
+            * Root — comms failure, process gap, regulatory boundary, or integration debt exposed
+            * Way-out — pilot architecture, SOP change, platform link, or governance path (credible, not magic)
+
+    ** SHOW, DON'T TELL
+        * Reveal constraints via control-room alarms, missed handoffs, rework on assembly line, weather hold, link dropout — not slide bullets in visual.
+
+    ** VISUAL
+        * CLEAN DOCUMENTARY STILL (slideshow): hangar, drone bay, ATC/UTM screen, logistics apron, training field, emergency response.
+        * ``caption`` / ``voiceover`` / ``speaking`` = audio/metadata only — never pasted as on-image text in ``visual``.
+"""
 
 
-CHANNEL_CONFIG = {
+FLYLINK_CONTENT_SCENES = """
+*** ROLE: Senior Aviation Industry Producer & Scenario Documentarian
+    ** Expertise: aircraft communication, UAV R&D/manufacturing, low-altitude economy operations (UTM, logistics, tourism, UAM, special missions).
 
-    "counseling": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+*** YOUR TASK
+    ** Input: ``analyzed_content`` only (Reference Content below) — industry case notes, technical brief, or structured analysis.
+    ** Output: ONE continuous documentary/video as a JSON array of scenes.
+    ** Same operational thread from first frame to last.
+    ** No fixed scene count or per-scene length cap — use as many scenes as the case needs.
+    ** Slideshow rule: each ``visual`` = CLEAN image — story through environment, people, equipment; almost no words on screen.
 
-        "channel_name": "心源谈天",
-        "channel_id": "counseling",
-        "channel_category_id": "22",
-        "channel_tags": ["心理咨询", "心理治疗", "心理健康", "Psychology", "Psychological Counseling", "Psychological Therapy", "Psychological Health"],
-        "channel_key": "client_secret_creative4teen.json",
+""" + FLYLINK_UNIFIED_NARRATIVE_SPINE + """
 
-        "scene_min_length": 20,
-        "watermark": {
-            "path": "media/counseling_watermark.png",
-            "margin_x": 10,
-            "margin_y": 10,
-        },
-        "headmark": {
-            "path": "media/counseling_headmark.png",
-            "margin_x": 25,
-            "margin_y": 25,
-        },
+*** SCENE FIELDS (all text in {language})
+    1) caption — scene / program title (metadata only)
+    2) voiceover — host or narrator bridge; accessible industry insight
+    3) visual — clean documentary still; operational detail, lighting, geography
+    4) speaking — operator / engineer / pilot line ~10s
+    5) actor — gender/age/race | mood | actions (e.g., dispatcher, test pilot, line manager)
 
-        "scenes_prompt_choices": [
-            ("Content to Scenes", COUNSELING_CONTENT_SCENES),
-            ("Story to Scenes", COUNSELING_STORY_SCENES),
-            ("Talk", COUNSELING_TALK_SCENES),
-            ("Conversation", COUNSELING_CONVERSATION_SCENES)
-        ],
+INPUT:
+** Topic: {topic}
+** Instruction: {instruction}
+** Reference Content (analyzed_content): {content}
 
-        "story_prompt_choices": [
-            ("Short Story", COUNSELING_STORY_SHORT),
-            ("Mini Story", COUNSELING_STORY_MINI),
-            ("Long Story", COUNSELING_STORY_LONG),
-            ("2 Step Story", COUNSELING_STORY_2STEP),
-            ("3 Step Story", COUNSELING_STORY_3STEP),
-            ("4 Step Story", COUNSELING_STORY_4STEP)
-        ],
+OUTPUT: STRICT JSON array of scenes.
+"""
 
-        "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "analyze_prompt": COUNSELING_ANALYZE,
-            "init_multiple": COUNSELING_CASE_DEVELOPMENT,
-            "init_single": COUNSELING_CASE_SUMMARY
-        },
-    },
-
-
-    "music_story": {
-        "topic": "Musical myths and legends",
-        "channel_name": "心泉旋律",
-        "channel_id": "music_story",
-        "channel_category_id": "10",
-        "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
-        "channel_key": "client_secret_ocreativeteen.json",
-
-        "scene_min_length": 20,
-        "watermark": {
-            "path": "media/mv_watermark.png",
-            "margin_x": 10,
-            "margin_y": 10,
-        },
-        "headmark": {
-            "path": "media/mv_headmark.png",
-            "margin_x": 25,
-            "margin_y": 25,
-        },
-        # NotebookLM Prompt 类型选择（可扩展）
-        "scenes_prompt_choices": [
-            ("SUNO Prompt", NOTEBOOKLM__SUNO_FRANK),
-            ("SUNO Poetry", NOTEBOOKLM__SUNO_POETRY),
-            ("SUNO 2 Layers", NOTEBOOKLM__SUNO_2LAYER_FRANK),
-            ("SUNO 2 Layers Poetry", NOTEBOOKLM__SUNO_2LAYER_POETRY)
-        ],
-
-        "story_prompt_choices": [
-            ("Lyrics to Story", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
-            ("2 Layers Story", NOTEBOOKLM__MV_STORY_2LAYER),
-        ],
-
-        "channel_prompt": {
-            "prompt_reference_filter": MV_REFERENCE_FILTER,
-            "analyze_prompt": MV_ANALYZE_2,
-            "content_guide": MV_CONTENT_GUIDE,
-            "init_multiple": MV_STORY_DEVELOPMENT,
-            "init_single": MV_SIMPLE_REORGANIZE
-        },
-    },
-
-
-    "counseling_talk": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
-        "channel_id": "counseling",
-        # NotebookLM Prompt 类型选择（可扩展）
-        "scenes_prompt_choices": [
-            ("Talk", COUNSELING_TALK_SCENES)
-        ],
-        "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "raw_single": COUNSELING_CASE_SUMMARY,
-        },
-        "channel_key": "config/client_secret_creative4teen.json"
-    },
-
-
-    "counseling_story": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
-        "channel_id": "counseling",
-        "scenes_prompt_choices": [
-            ("Message", COUNSELING_STORY_MINI),
-            ("Full Story", COUNSELING_CONTENT_SCENES),
-            ("Talk", COUNSELING_TALK_SCENES)
-        ],
-        "story_prompt_choices": [
-            ("Short Story", COUNSELING_STORY_SHORT),
-            ("Mini Story", COUNSELING_STORY_MINI),
-            ("Long Story", COUNSELING_STORY_LONG),
-            ("2 Step Story", COUNSELING_STORY_2STEP),
-            ("3 Step Story", COUNSELING_STORY_3STEP),
-            ("4 Step Story", COUNSELING_STORY_4STEP)
-        ],
-        "channel_prompt": {
-            "prompt_reference_filter": COUNSELING_REFERENCE_FILTER,
-            "init_single": COUNSELING_INTRO,
-            "init_multiple": COUNSELING_STORY_DEVELOPMENT,
-            "debut_multiple": COUNSELING_ANALYSIS_DEVELOPMENT,
-        },
-        "channel_key": "config/client_secret_creative4teen.json"
-    },
-
-
-    "broadway": {
-        "topic": "Musical myths and legends",
-        "channel_name": "圣经百老汇",
-        "channel_id": "broadway",
-        "story_prompt_choices": [
-            ("Lyrics to Story", NOTEBOOKLM__MV_STORY_FROM_LYRICS),
-            ("2 Layers Story", NOTEBOOKLM__MV_STORY_2LAYER),
-        ],
-        "channel_prompt": {
-            "prompt_reference_filter": MV_REFERENCE_FILTER,
-        },
-        "channel_key": "config/client_secret_main.json"
-    }
-
-}
 

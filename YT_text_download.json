@@ -8,6 +8,10 @@
     "music_story": {
       "label": "心泉旋律",
       "list_json_basename": "music_story.json"
+    },
+    "flylink": {
+      "label": "航迅 FlyLink",
+      "list_json_basename": "flylink.json"
     }
   }
 }

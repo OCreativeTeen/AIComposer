@@ -20,7 +20,6 @@ import pygame
 import uuid
 from magic_workflow import MagicWorkflow
 import config
-import config_channel
 import config_prompt
 from PIL import Image, ImageTk
 from project_manager import ProjectConfigManager, create_project_dialog, refresh_scene_media, save_project_config, project_config_from_list_item
@@ -99,15 +98,10 @@ IMAGE_ACTION_CHOICES = {
 
 VIDEO_ACTION_CHOICES = {
     "讲话人物": [
-        "Actor (###) speaking as 1st person : $$$",
-        "Actor (###) not talking, but acting: $$$",
-        "Actor (###) not talking, but wondering: $$$",
-        "Actor (###) speaking about the words content of the image",
-
-        "Narrator (###) speaking, others listening : $$$",
-        "Narrator (left - ###) speaking, other listening : $$$",
-        "Narrator (right - ###) speaking, others acting only : $$$"
-        "Narrator (###) speaking about the words content of the image",
+        " (###) speaking as 1st person : $$$",
+        " (###) not talking, but acting/wondering: $$$",
+        " (###) speaking about the Word-in-image ~ naturally talk through the key points (not reading text in image), while speaking about a point/element, animate it to attract audience's attention.",
+        " no speaking. Show the content (Word-in-image) only, animate each element in sequence (with sound effect),  to attract viewer's attention.",
     ], 
     "节目包装" : [
         "Starting: Narrator主持'心源谈天'节目 (Narrator speak, others react only)",
@@ -147,6 +141,29 @@ def _download_folder_list_matching_suffixes(folder_path: str, suffixes: tuple) -
         if os.path.isfile(fp) and any(fn.lower().endswith(s) for s in suffixes):
             out.append(fn)
     return sorted(out)
+
+
+def _user_downloads_folder() -> str:
+    """当前用户 Windows Downloads（浏览器/工具默认下载位置）。"""
+    return os.path.join(os.path.expanduser("~"), "Downloads")
+
+
+def _external_media_pick_folders() -> list[str]:
+    """场景选 clip 时优先浏览的外部目录：Downloads，其次 L:（旧环境映射盘）。"""
+    folders: list[str] = []
+    seen: set[str] = set()
+    for p in (_user_downloads_folder(), "L:"):
+        if not p:
+            continue
+        try:
+            norm = os.path.normcase(os.path.abspath(p))
+        except OSError:
+            continue
+        if norm in seen or not os.path.isdir(p):
+            continue
+        seen.add(norm)
+        folders.append(p)
+    return folders
 
 
 class WorkflowGUI:
@@ -409,16 +426,12 @@ class WorkflowGUI:
         self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
         ttk.Button(
-            row1_frame, text="故事",
-            command=lambda: self._open_workflow_content_field_editor("story"),
+            row1_frame, text="分镜",
+            command=lambda: self._open_workflow_content_field_editor("scene_content"),
         ).pack(side=tk.LEFT, padx=(8, 2))
         ttk.Button(
             row1_frame, text="分析",
             command=lambda: self._open_workflow_content_field_editor("analyzed_content"),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            row1_frame, text="场景",
-            command=lambda: self._open_workflow_content_field_editor("scene_content"),
         ).pack(side=tk.LEFT, padx=2)
 
         ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
@@ -552,7 +565,7 @@ class WorkflowGUI:
         pc = project_manager.PROJECT_CONFIG or {}
         row = self._load_current_video_detail_row()
         vd = copy.deepcopy(row) if row else {}
-        for field in ("story", "analyzed_content", "scene_content", "url", "title", "id"):
+        for field in ("analyzed_content", "scene_content", "url", "title", "id"):
             val = pc.get(field)
             if val in (None, "", [], {}):
                 continue
@@ -569,7 +582,7 @@ class WorkflowGUI:
         if not pc:
             messagebox.showerror("保存失败", "未加载项目配置。", parent=parent)
             return False
-        for field in ("story", "analyzed_content", "scene_content"):
+        for field in ("analyzed_content", "scene_content"):
             val = video_detail.get(field) if isinstance(video_detail, dict) else None
             if val not in (None, "", [], {}):
                 pc[field] = copy.deepcopy(val)
@@ -593,7 +606,7 @@ class WorkflowGUI:
         ch = (getattr(self.workflow, "channel", None) or "").strip()
         ch_path = ""
         if ch:
-            ch_path = config.get_channel_path(config_channel.get_channel_id(ch))
+            ch_path = config.get_channel_path(config.get_channel_id(ch))
         main_char = ""
         if hasattr(self, "scene_narrator"):
             main_char = (self.scene_narrator.get() or "").strip()
@@ -607,8 +620,8 @@ class WorkflowGUI:
             main_character=main_char,
             channel_path=ch_path or getattr(mgr, "channel_path", ""),
         )
-        if result is not None and field == "story":
-            messagebox.showinfo("已保存", "story 已更新。", parent=self.root)
+        if result is not None and field == "scene_content":
+            messagebox.showinfo("已保存", "scene_content 已更新。", parent=self.root)
 
     def _open_suno_gui(self):
         """打开SUNO音乐提示词管理窗口"""
@@ -724,28 +737,48 @@ class WorkflowGUI:
         self.on_secondary_track_tab_changed()
 
 
-    def _build_volume_adjusted_mp4_wav_pair(self, src_mp4: str, volume: float):
-        """预览对话框确定：按试听增益产出临时 mp4 + wav（供 video_simple_replacement）。"""
+    def _build_volume_adjusted_mp4_wav_pair(
+        self,
+        src_mp4: str,
+        volume: float,
+        *,
+        start: float = 0.0,
+        end: float | None = None,
+        speed: float = 1.0,
+    ):
+        """预览对话框确定：按区间裁剪、变速与试听增益产出临时 mp4 + wav。"""
         wf = self.workflow
         if not wf:
             raise RuntimeError("工作流未就绪")
         ap = wf.ffmpeg_audio_processor
         fp = wf.ffmpeg_processor
-        raw = ap.extract_audio_from_video(src_mp4)
+        dur = float(fp.get_duration(src_mp4) or 0.0)
+        st = max(0.0, float(start or 0.0))
+        en = float(end if end is not None else dur)
+        if en <= 0 or en > dur:
+            en = dur
+        spd = round(float(speed or 1.0), 1)
+        vol = float(volume or 1.0)
+
+        mp4_out = fp.trim_video(src_mp4, st, en, volume=1.0, speed=spd)
+        if not mp4_out or not os.path.isfile(mp4_out):
+            raise RuntimeError("裁剪/变速失败")
+
+        raw = ap.extract_audio_from_video(mp4_out)
         if raw:
             raw_len = ap.get_duration(raw)
             if raw_len is None:
-                raw_len = fp.get_duration(src_mp4) or 0.0
-            wav_out = ap.audio_cut_fade(raw, 0, raw_len, 0, 0, volume=volume)
+                raw_len = fp.get_duration(mp4_out) or 0.0
+            wav_out = ap.audio_cut_fade(raw, 0, raw_len, 0, 0, volume=vol)
         else:
-            dur = fp.get_duration(src_mp4) or 0.0
-            wav_out = ap.make_silence(dur) if dur > 0 else None
+            seg_len = fp.get_duration(mp4_out) or 0.0
+            wav_out = ap.make_silence(seg_len) if seg_len > 0 else None
         if not wav_out:
             raise RuntimeError("无法生成增益后的临时 wav")
-        mp4_out = fp.add_audio_to_video(src_mp4, wav_out)
-        if not mp4_out or not os.path.isfile(mp4_out):
+        muxed = fp.add_audio_to_video(mp4_out, wav_out)
+        if not muxed or not os.path.isfile(muxed):
             raise RuntimeError("无法生成增益后的临时 mp4")
-        return mp4_out, wav_out
+        return muxed, wav_out
 
     def _video_simple_replacement_async(
         self,
@@ -881,36 +914,39 @@ class WorkflowGUI:
         try:
             channel = project_manager.PROJECT_CONFIG.get('channel')
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            source_folder = f"{config.get_channel_path(channel)}/{track}/scene"
-            if not os.path.exists(source_folder):
-                source_folder = f"{config.get_channel_path(channel)}/{track}"
+            source_folder = config.channel_track_media_dir(channel, track)
+            if not os.path.isdir(source_folder):
+                messagebox.showwarning("警告", f"未找到频道素材目录：\n{source_folder}")
+                return
 
             # 1. 文件名含场景名（同档内优先匹配位置前缀）
             # 2. 不含场景名但文件名以 starting / ending / running 开头（依当前是否首/末场景）
             # 3. 其余符合 ratio 的 mp4
+            # 1. 文件名以 starting / ending / running 开头（依当前是否首/末场景）优先
+            # 2. 横屏项目：169_* 或无宽高前缀（视为 169）；竖屏：仅 916_*
+            landscape = int(project_manager.PROJECT_CONFIG.get("video_width", 1920)) > int(
+                project_manager.PROJECT_CONFIG.get("video_height", 1080)
+            )
             if track == "clip" or track == "narration" or track == "zero":
-                #video_width = int(project_manager.PROJECT_CONFIG.get('video_width'))
-                #video_height = int(project_manager.PROJECT_CONFIG.get('video_height'))
-                #if video_width > video_height:
-                #    ratio = "169_"
-                #else:
-                #    ratio = "916_"
                 candidates = [
                     f for f in os.listdir(source_folder)
-                    #if ratio in f and f.lower().endswith(".mp4")
-                    if os.path.isfile(os.path.join(source_folder, f))
+                    if f.lower().endswith(".mp4")
+                    and os.path.isfile(os.path.join(source_folder, f))
+                    and config.channel_media_matches_project_layout(f, landscape=landscape)
                 ]
                 if not candidates:
-                    messagebox.showwarning("警告", "未找到.mp4 文件")
+                    messagebox.showwarning("警告", "未找到 .mp4 文件")
                     return
             else:
+                _img_ext = (".png", ".jpg", ".jpeg", ".webp")
                 candidates = [
                     f for f in os.listdir(source_folder)
-                    if f.lower().endswith(".png")
+                    if f.lower().endswith(_img_ext)
                     and os.path.isfile(os.path.join(source_folder, f))
+                    and config.channel_media_matches_project_layout(f, landscape=landscape)
                 ]
                 if not candidates:
-                    messagebox.showwarning("警告", "未找到 .png 文件")
+                    messagebox.showwarning("警告", "未找到图片文件（png / jpg / webp）")
                     return
 
             n_scenes = len(self.workflow.scenes)
@@ -969,11 +1005,9 @@ class WorkflowGUI:
 
 
     def _pick_media_from_download_to_project_folder(self, suffixes_tuple, *, track_rename_key: str):
-        """从 L: 或项目 download 选一文件→整理到 download 路径。suffixes_tuple: '.mp4' 或 ('.mp3', '.mp4') 等。
+        """从用户 Downloads（或 L:）或项目 download 选一文件→整理到项目 download。
 
-        Returns:
-            ``{"final_path", "temp_adj_mp4", "temp_adj_wav"}`` ，取消或未选时 ``None`` 。
-            仅后缀为 ``.mp4`` 时需要 ``temp_adj_*`` （音量试听产物）；音频文件二者为 ``None`` 。
+        顺序：① ``~/Downloads``（及可选 ``L:``）中新下载的源文件；② 项目 ``download/`` 内已整理好的成片。
         """
         suffixes = _normalize_download_suffixes(suffixes_tuple)
         single_mp4_only = suffixes == (".mp4",)
@@ -984,8 +1018,8 @@ class WorkflowGUI:
                 "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
             }
 
-        title_drive = "从下载盘选择视频" if single_mp4_only else "从下载盘选择媒体（MP3/MP4）"
-        title_proj = "从项目下载目录选择视频" if single_mp4_only else "从项目下载目录选择媒体（MP3/MP4）"
+        title_drive = "从 Downloads 选择视频" if single_mp4_only else "从 Downloads 选择媒体（MP3/MP4）"
+        title_proj = "从项目 download 选择视频" if single_mp4_only else "从项目 download 选择媒体（MP3/MP4）"
 
         media_path = None
         temp_adj_mp4 = None
@@ -994,11 +1028,14 @@ class WorkflowGUI:
         scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
         sid = scene0["id"] if scene0 else 0
 
-        for folder in ["L:"]:
+        for folder in _external_media_pick_folders():
             matching = _download_folder_list_matching_suffixes(folder, suffixes)
             if not matching:
                 continue
-            r = askchoice_media_preview(title_drive, matching, folder, self.root, **pv_kw)
+            pick_title = title_drive
+            if folder != _user_downloads_folder():
+                pick_title = "从下载盘选择视频" if single_mp4_only else "从下载盘选择媒体（MP3/MP4）"
+            r = askchoice_media_preview(pick_title, matching, folder, self.root, **pv_kw)
             if not r:
                 return None
             if single_mp4_only:
@@ -1094,7 +1131,9 @@ class WorkflowGUI:
                 ftypes = [("所选格式", star_patterns)] + [(s.upper().lstrip("."), f"*{s}") for s in suffixes]
                 media_path = filedialog.askopenfilename(
                     title="从磁盘选择文件",
-                    initialdir=download_path,
+                    initialdir=_user_downloads_folder()
+                    if os.path.isdir(_user_downloads_folder())
+                    else download_path,
                     filetypes=ftypes,
                 )
                 if not media_path:
@@ -2398,6 +2437,12 @@ class WorkflowGUI:
         self.extension_combobox.pack(side=tk.LEFT, padx=2)
         self.extension_combobox.bind('<<ComboboxSelected>>', lambda e: self._on_extension_change())
 
+        ttk.Button(
+            duration_promo_frame,
+            text="Import",
+            width=8,
+            command=self.import_scene_data,
+        ).pack(side=tk.RIGHT, padx=4)
 
         # 类型、情绪、动作选择（在同一行）
         type_mood_action_frame = ttk.Frame(self.video_edit_frame)
@@ -2756,7 +2801,7 @@ class WorkflowGUI:
         if hasattr(self, "video_title"):
             gui_title = (self.video_title.get() or "").strip()
         wf_title = (getattr(self.workflow, "title", None) or "").strip()
-        ch_name = config_channel.get_channel_config(self.workflow.channel)["channel_name"]
+        ch_name = config.get_channel_config(self.workflow.channel)["channel_name"]
         default_title = ch_name + "：" + (gui_title or wf_title)
 
         flow = ask_publish_metadata_then_schedule(
@@ -2769,7 +2814,6 @@ class WorkflowGUI:
                 workflow_scenes=scenes,
             ),
             analyzed_content=pc.get("analyzed_content"),
-            story_text=project_manager.story_text_from_config(pc),
             poem_text=(
                 (pc.get("poem") or "").strip()
                 or (
@@ -4225,6 +4269,7 @@ class WorkflowGUI:
         return post_nested_clipboard_menu(
             self.root,
             VIDEO_ACTION_CHOICES,
+            speaker_field,
             scene[speaker_field],
             content,
             event,
@@ -4359,7 +4404,7 @@ class WorkflowGUI:
 
 
     def add_headmark(self):
-        """为当前场景或本故事全部场景的主轨 clip 左上角叠加角标 PNG（headmark 配置，默认 media\\headmark.png）。"""
+        """为当前场景或本故事全部场景的主轨 clip 左上角叠加角标 PNG（headmark 配置，默认 program/<channel_id>/headmark.png）。"""
         if not getattr(self, "workflow", None) or not self.workflow.scenes:
             messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
             return
@@ -4372,7 +4417,7 @@ class WorkflowGUI:
             messagebox.showerror(
                 "顶标",
                 "未找到左上角角标图片。\n"
-                "请在项目 JSON 中配置 headmark.path，或将 PNG 放在程序目录下的 media\\headmark.png。",
+                "请在项目 JSON 中配置 headmark.path，或将 PNG 放在 program/<频道>/ 下（如 headmark.png）。",
                 parent=self.root,
             )
             return
@@ -4401,7 +4446,7 @@ class WorkflowGUI:
 
 
     def add_watermark(self):
-        """为当前场景或本故事全部场景的主轨 clip 加水印（PNG 路径见项目 watermark 配置或程序目录 media/watermark.png）。"""
+        """为当前场景或本故事全部场景的主轨 clip 加水印（PNG 见频道 program/<channel_id>/ 或项目 watermark 配置）。"""
         if not getattr(self, "workflow", None) or not self.workflow.scenes:
             messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
             return
@@ -4414,7 +4459,7 @@ class WorkflowGUI:
             messagebox.showerror(
                 "水印",
                 "未找到水印图片。\n"
-                "请在项目 JSON 中配置 watermark.path，或将 PNG 放在程序目录下的 media\\watermark.png。",
+                "请在项目 JSON 中配置 watermark.path，或将 PNG 放在 program/<频道>/ 下（如 watermark.png）。",
                 parent=self.root,
             )
             return
@@ -6553,6 +6598,169 @@ class WorkflowGUI:
 
         refresh_preview()
 
+
+    _SCENE_IMPORT_ALWAYS_KEYS = frozenset({
+        "speaking", "caption", "voiceover", "visual", "actor", "narrator", "host_display", "visual_style", 
+        "title_font", "clip_animation", "narration_animation", "extension", "cinematography",
+    })
+    _SCENE_IMPORT_SKIP_KEYS = frozenset({"start", "end", "duration"})
+
+    def _scene_import_extractable_fields(self, scene: dict) -> dict:
+        """从场景 dict 提取可导入/导出的文案字段（作 JSON 编辑初始模板）。"""
+        if not isinstance(scene, dict):
+            return {}
+        keys = (
+            "speaking", "caption", "voiceover", "visual", "actor", "narrator", "host_display", "visual_style", 
+            "title_font", "clip_animation", "narration_animation", "extension", "cinematography",
+        )
+        out = {}
+        for k in keys:
+            v = scene.get(k)
+            if v is None:
+                continue
+            if isinstance(v, str) and not v.strip():
+                continue
+            out[k] = v
+        return out
+
+    def _apply_scene_import_item(self, scene: dict, raw_item: dict) -> int:
+        """将单个 import 元素合并到场景：同名字段覆盖；``speaker`` 映射为 ``actor``。"""
+        if not isinstance(scene, dict) or not isinstance(raw_item, dict):
+            return 0
+        item = copy.deepcopy(raw_item)
+        project_manager.normalize_scene_content_item_for_workflow(item)
+
+        applied = 0
+        if "speaker" in item:
+            sp = item.pop("speaker")
+            if sp is not None and (sp != "" or "actor" in scene):
+                scene["actor"] = sp
+                applied += 1
+
+        for key, val in item.items():
+            if key in self._SCENE_IMPORT_SKIP_KEYS:
+                continue
+            if key in scene or key in self._SCENE_IMPORT_ALWAYS_KEYS:
+                scene[key] = val
+                applied += 1
+        return applied
+
+    def import_scene_data(self):
+        """从 JSON array 批量导入场景文案：array[0] 对应当前场景，依次向后覆盖同名字段。"""
+        scenes = self.workflow.scenes
+        if not scenes:
+            messagebox.showwarning("Import", "没有可导入的场景。", parent=self.root)
+            return
+
+        self.update_current_scene()
+        start_idx = self.current_scene_index
+
+        preview_items = []
+        for i in range(start_idx, min(start_idx + 8, len(scenes))):
+            extracted = self._scene_import_extractable_fields(scenes[i])
+            preview_items.append(extracted if extracted else {})
+
+        if preview_items:
+            initial_text = json.dumps(preview_items, ensure_ascii=False, indent=2)
+        else:
+            initial_text = '[\n  {\n    "speaking": "",\n    "caption": "",\n    "voiceover": ""\n  }\n]'
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Import 场景数据")
+        dlg.geometry("820x620")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.update_idletasks()
+        x = (dlg.winfo_screenwidth() - 820) // 2
+        y = (dlg.winfo_screenheight() - 620) // 2
+        dlg.geometry(f"820x620+{x}+{y}")
+
+        frame = ttk.Frame(dlg, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame,
+            text=(
+                f"请输入场景 JSON array（从当前场景 #{start_idx + 1} 起依次应用；"
+                "同名字段覆盖：speaking / caption / voiceover / visual / actor 等）"
+            ),
+            font=("TkDefaultFont", 10, "bold"),
+            wraplength=760,
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        text_w = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=94, height=28, font=("Consolas", 10))
+        text_w.pack(fill=tk.BOTH, expand=True)
+        text_w.insert(tk.END, initial_text)
+
+        def paste_from_clipboard(_event=None):
+            try:
+                s = safe_clipboard_json_copy(dlg.clipboard_get())
+                if s:
+                    text_w.delete("1.0", tk.END)
+                    text_w.insert(tk.END, s)
+            except tk.TclError:
+                pass
+
+        text_w.bind("<Double-1>", paste_from_clipboard)
+
+        holder = {"text": None, "confirmed": False}
+
+        def on_ok():
+            holder["text"] = text_w.get("1.0", tk.END).strip()
+            holder["confirmed"] = True
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="导入", command=on_ok).pack(side=tk.RIGHT)
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        dlg.wait_window()
+
+        if not holder["confirmed"]:
+            return
+
+        raw_txt = (holder["text"] or "").strip()
+        if not raw_txt:
+            return
+
+        parsed = config.parse_json_from_text(raw_txt)
+        if not isinstance(parsed, list):
+            messagebox.showerror(
+                "Import",
+                "JSON 必须是 array（例如 [{\"speaking\": \"...\"}, ...]）。",
+                parent=self.root,
+            )
+            return
+        if not parsed:
+            messagebox.showwarning("Import", "JSON array 为空，未导入任何场景。", parent=self.root)
+            return
+
+        updated_scenes = 0
+        updated_fields = 0
+        overflow = max(0, len(parsed) - (len(scenes) - start_idx))
+
+        for offset, item in enumerate(parsed):
+            scene_idx = start_idx + offset
+            if scene_idx >= len(scenes):
+                break
+            n = self._apply_scene_import_item(scenes[scene_idx], item)
+            if n > 0:
+                updated_scenes += 1
+                updated_fields += n
+
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+
+        msg = (
+            f"已从场景 #{start_idx + 1} 起导入 {min(len(parsed), len(scenes) - start_idx)} 项，"
+            f"更新 {updated_scenes} 个场景、共 {updated_fields} 个字段。"
+        )
+        if overflow:
+            msg += f"\n\n注意：JSON 有 {overflow} 项超出可用场景，已忽略。"
+        messagebox.showinfo("Import", msg, parent=self.root)
 
     def describe_scene_content(self):
         self.root.update_idletasks()

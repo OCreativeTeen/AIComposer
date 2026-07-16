@@ -16,7 +16,6 @@ from pathlib import Path
 import config
 import tkinter.messagebox as messagebox
 import config_prompt
-import config_channel
 from io import BytesIO
 from utility.file_util import get_file_path, safe_remove, build_scene_media_prefix, write_json, ending_punctuation, safe_copy_overwrite
 from utility.llm_api import LLMApi
@@ -60,7 +59,7 @@ class MagicWorkflow:
         # Create project paths
         self.publish_path = config.PUBLISH_PATH + "/"
         self.project_path = config.get_project_path(pid)
-        self.channel_path = config.get_channel_path(config_channel.get_channel_id(channel))
+        self.channel_path = config.get_channel_path(config.get_channel_id(channel))
         self.effect_path = config.get_effect_path()
 
         self.font_size = 14
@@ -749,7 +748,7 @@ class MagicWorkflow:
                 if not story_scene.get("visual_style"):
                     story_scene["visual_style"] = _visual_style_default
                 if not story_scene.get("caption"):
-                    story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
+                    story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
             self.save_scenes_to_json()
             return
 
@@ -757,7 +756,7 @@ class MagicWorkflow:
 
         channel = project_manager.PROJECT_CONFIG.get('channel', 'default')
 
-        self.title = config_channel.get_channel_config(self.channel)["channel_name"]
+        self.title = config.get_channel_config(self.channel)["channel_name"]
 
         scene_content = project_manager.PROJECT_CONFIG.get('scene_content') or []
         scene_list = scene_content if isinstance(scene_content, list) else []
@@ -771,7 +770,7 @@ class MagicWorkflow:
         #else:
         #    stories_template = project_manager.PROJECT_CONFIG.get('channel_template', [])
         #     for story_index, element in enumerate(stories_template):
-        #          element["caption"] = config_channel.get_channel_config(channel)["channel_name"]
+        #          element["caption"] = config.get_channel_config(channel)["channel_name"]
         #          self.add_story_scene(story_index, element, True, is_append=False)
         for story_scene in self.scenes:
             if not story_scene.get("host_display"):
@@ -779,11 +778,151 @@ class MagicWorkflow:
             if not story_scene.get("visual_style"):
                 story_scene["visual_style"] = _visual_style_default
             if not story_scene.get("caption"):
-                story_scene["caption"] = config_channel.get_channel_config(self.channel)["channel_name"]
+                story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
+
+        # 从 PROJECT_CONFIG 封面媒体填充 clip_image，并按首图宽高比设定横/竖屏尺寸
+        self._apply_cover_media_to_scenes(scene_list)
 
         self.save_scenes_to_json()
 
 
+    def _project_size_from_image_dims(self, width: int, height: int) -> tuple[int, int]:
+        """宽>=高（约 16:9）→ 1920x1080；否则 → 1080x1920。"""
+        try:
+            w, h = int(width), int(height)
+        except (TypeError, ValueError):
+            return 1920, 1080
+        if w <= 0 or h <= 0:
+            return 1920, 1080
+        if w >= h:
+            return 1920, 1080
+        return 1080, 1920
+
+    def _image_dims(self, image_path: str) -> tuple[int, int]:
+        from PIL import Image
+
+        with Image.open(image_path) as im:
+            return int(im.width), int(im.height)
+
+    def _pdf_pages_to_images(self, pdf_path: str) -> list[str]:
+        """用 PyMuPDF 将 PDF 每页渲成 PNG，返回按页序的绝对路径列表。"""
+        import fitz  # PyMuPDF
+        import tempfile
+
+        pdf_path = (pdf_path or "").strip()
+        if not pdf_path or not os.path.isfile(pdf_path):
+            return []
+        media_dir = config.get_media_path(self.pid)
+        os.makedirs(media_dir, exist_ok=True)
+        out_dir = tempfile.mkdtemp(prefix="slide_pdf_", dir=media_dir)
+        paths: list[str] = []
+        try:
+            doc = fitz.open(pdf_path)
+        except Exception as e:
+            print(f"❌ 打开 PDF 失败: {pdf_path} — {e}")
+            return []
+        try:
+            zoom = fitz.Matrix(2, 2)
+            for i in range(len(doc)):
+                page = doc.load_page(i)
+                pix = page.get_pixmap(matrix=zoom, alpha=False)
+                out_path = os.path.join(out_dir, f"page_{i:03d}.png")
+                pix.save(out_path)
+                paths.append(os.path.abspath(out_path))
+        finally:
+            doc.close()
+        return paths
+
+    def _apply_project_video_size(self, width: int, height: int) -> None:
+        """更新 PROJECT_CONFIG 与 ffmpeg 输出尺寸；尺寸变化时重绑模板底稿。"""
+        nw, nh = int(width), int(height)
+        pc = project_manager.PROJECT_CONFIG
+        cur_w = int((pc or {}).get("video_width") or self.ffmpeg_processor.width or 1920)
+        cur_h = int((pc or {}).get("video_height") or self.ffmpeg_processor.height or 1080)
+        if pc is not None:
+            pc["video_width"] = nw
+            pc["video_height"] = nh
+            try:
+                save_project_config()
+            except Exception as e:
+                print(f"⚠️ 保存 video_width/height 失败: {e}")
+        if (cur_w, cur_h) != (nw, nh):
+            print(f"📐 项目尺寸按封面媒体设为 {nw}x{nh}")
+            try:
+                self.reapply_all_scenes_template_medias(nw, nh)
+            except Exception as e:
+                print(f"⚠️ 按新尺寸重绑模板失败（仍继续设置 clip_image）: {e}")
+                self.ffmpeg_processor = FfmpegProcessor(self.pid, self.language, nw, nh)
+        else:
+            self.ffmpeg_processor.width = nw
+            self.ffmpeg_processor.height = nh
+
+
+    def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
+        """scene_content 多场景 → PDF 页对 clip_image；单场景 → 封面图作 clip_image。"""
+        pc = project_manager.PROJECT_CONFIG
+        if not isinstance(pc, dict):
+            return
+        if not (pc.get("cover_image") or pc.get("slide") or pc.get("cover_video")):
+            project_manager.hydrate_config_cover_media(pc)
+
+        n_scenes = len(self.scenes)
+        if n_scenes <= 0:
+            return
+
+        # 多场景：用幻灯片 PDF 逐页对应 clip_image
+        if isinstance(scene_list, list) and len(scene_list) > 1:
+            slide_pdf = (pc.get("slide") or "").strip()
+            if not slide_pdf or not os.path.isfile(slide_pdf):
+                print("⚠️ 多场景但 PROJECT_CONFIG 无可用 slide PDF，跳过封面导入")
+                return
+            page_images = self._pdf_pages_to_images(slide_pdf)
+            if not page_images:
+                print(f"⚠️ PDF 未能渲出页面图: {slide_pdf}")
+                return
+            try:
+                iw, ih = self._image_dims(page_images[0])
+            except Exception as e:
+                print(f"⚠️ 读取 PDF 首页尺寸失败: {e}")
+                return
+            nw, nh = self._project_size_from_image_dims(iw, ih)
+            self._apply_project_video_size(nw, nh)
+            for i, scene in enumerate(self.scenes):
+                if i >= len(page_images):
+                    break
+                try:
+                    refresh_scene_media(scene, "clip_image", ".png", page_images[i], make_replacement_copy=True)
+                except Exception as e:
+                    print(f"⚠️ 场景 {i} 设置 clip_image 失败: {e}")
+            print(f"✅ 已从 slide PDF 为 {min(n_scenes, len(page_images))} 个场景设置 clip_image")
+            return
+
+        # 单场景：封面图 → clip_image；封面成片 → clip
+        if n_scenes == 1:
+            scene = self.scenes[0]
+            cover = (pc.get("cover_image") or "").strip()
+            cover_video = (pc.get("cover_video") or "").strip()
+            if cover and os.path.isfile(cover):
+                try:
+                    iw, ih = self._image_dims(cover)
+                    nw, nh = self._project_size_from_image_dims(iw, ih)
+                    self._apply_project_video_size(nw, nh)
+                    ext = os.path.splitext(cover)[1].lower() or ".webp"
+                    if ext not in (".webp", ".png", ".jpg", ".jpeg"):
+                        ext = ".webp"
+                    refresh_scene_media(scene, "clip_image", ext, cover, make_replacement_copy=True)
+                    print(f"✅ 已将封面图设为单场景 clip_image，尺寸 {nw}x{nh}")
+                except Exception as e:
+                    print(f"⚠️ 设置封面 clip_image 失败: {e}")
+            elif not cover_video or not os.path.isfile(cover_video):
+                print("⚠️ 单场景但 PROJECT_CONFIG 无可用 cover_image / cover_video，跳过封面导入")
+                return
+            if cover_video and os.path.isfile(cover_video):
+                try:
+                    refresh_scene_media(scene, "clip", ".mp4", cover_video, make_replacement_copy=True)
+                    print(f"✅ 已将封面成片设为单场景 clip: {cover_video}")
+                except Exception as e:
+                    print(f"⚠️ 设置封面 clip 失败: {e}")
 
     def remix_conversation(self, current_scene, mode, _content, selected_prompt):
         refresh_conversation = "content:\n" + _content + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
@@ -1119,9 +1258,9 @@ class MagicWorkflow:
             description=summary,
             language=self.language,
             script_path=None,
-            secret_key=config_channel.get_channel_config(self.channel)["channel_key"],
+            secret_key=config.get_channel_config(self.channel)["channel_key"],
             channel_id=self.channel,
-            categoryId=config_channel.get_channel_config(self.channel)["channel_category_id"],
+            categoryId=config.get_channel_config(self.channel)["channel_category_id"],
             tags=[],
             privacy="unlisted",
             publish_at=publish_at,
@@ -1467,12 +1606,12 @@ class MagicWorkflow:
         )
         if not self.background_video or not self.background_image:
             raise FileNotFoundError(
-                f"未找到与 {vw}×{vh} 匹配的频道模板（clip / clip_image 下的 169_ 或 916_），channel={self.channel}"
+                f"未找到与 {vw}×{vh} 匹配的频道模板（clip/ 下的 169_ 或 916_ 静帧与 MP4），channel={self.channel}"
             )
 
         zero_audio_extracted = self.ffmpeg_audio_processor.extract_audio_from_video(background_music)
         if background_music and zero_audio_extracted is None:
-            print("⚠️ 模板配乐未提取音轨成功，zero_audio / clip_audio 仍按既有流程写入路径")
+            print("⚠️ clip 模板 MP4 未提取音轨成功，zero_audio / clip_audio 仍按既有流程写入路径")
 
         for story in self.scenes:
             oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)

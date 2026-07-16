@@ -21,6 +21,7 @@ from utility.file_util import safe_clipboard_json_copy
 import config_channel
 
 
+
 LANGUAGES = {
     "zh": "chinese",
     "tw": "chinese",
@@ -67,6 +68,9 @@ VISUAL_STYLE_OPTIONS = [
     "pixar-art cartoon",
     "realistic",
     "cartoon",
+    "中国画(水墨/花鸟/山水)",
+    "pixar-art cartoon + 中国画(水墨/花鸟/山水)",
+    "realistic + 中国画(水墨/花鸟/山水)",
 ]
 
 _CHARACTER_PERSON_OPTIONS_FALLBACK = [
@@ -136,94 +140,12 @@ def reload_character_person_options():
 CHARACTER_PERSON_OPTIONS = load_character_person_options()
 
 
-
-#
-IMAGE_STYLES = [
-    "ultra-realistic, cinematic lighting, dramatic shading",
-
-    "watercolor painting",
-    "watercolor painting with postcard border",
-    "watercolor painting with golden ornate photo frame",
-    "watercolor painting with Rococo picture frame",
-    "watercolor painting with vintage photo frame",
-
-    "ukiyo-e style",
-    "ukiyo-e with vintage photo frame",
-    "ukiyo-e with postcard border",
-    "ukiyo-e with golden ornate photo frame",
-    "ukiyo-e with Rococo picture frame"
-]
-
-IMAGE_STYLES_2 = [
-    #"ultra-realistic, cinematic lighting, dramatic shading",
-    { "style": "vintage postcard look", "frame": "vintage photo frame" },
-    { "style": "vintage postcard look", "frame": "postcard border" },
-    { "style": "vintage postcard look", "frame": "golden ornate photo frame" },
-    { "style": "vintage postcard look", "frame": "baroque frame" },
-    { "style": "vintage postcard look", "frame": "Rococo picture frame" },
-    { "style": "graphite drawing", "frame": "vintage photo frame" },
-    { "style": "graphite drawing", "frame": "postcard border" },
-    { "style": "graphite drawing", "frame": "golden ornate photo frame" },
-    { "style": "graphite drawing", "frame": "baroque frame" },
-    { "style": "graphite drawing", "frame": "Rococo picture frame" },
-    { "style": "watercolor painting", "frame": "gallery frame" },
-    { "style": "watercolor painting", "frame": "postcard border" },
-    { "style": "watercolor painting", "frame": "golden ornate photo frame" },
-    { "style": "watercolor painting", "frame": "baroque frame" },
-    { "style": "watercolor painting", "frame": "Rococo picture frame" },
-    { "style": "rococo painting (baroque art)", "frame": "baroque frame" },
-    { "style": "rococo painting (baroque art)", "frame": "postcard border" },
-    { "style": "rococo painting (baroque art)", "frame": "golden ornate photo frame" },
-    { "style": "rococo painting (baroque art)", "frame": "Rococo picture frame" },
-    { "style": "ukiyo-e style", "frame": "ukiyo-e frame" },
-    { "style": "ukiyo-e style", "frame": "postcard border" },
-    { "style": "ukiyo-e style", "frame": "golden ornate photo frame" },
-    { "style": "ukiyo-e style", "frame": "baroque frame" },
-    { "style": "ukiyo-e style", "frame": "Rococo picture frame" },
-    { "style": "crayon art (pastel drawing)", "frame": "postcard border" },
-    { "style": "crayon art (pastel drawing)", "frame": "golden ornate photo frame" },
-    { "style": "crayon art (pastel drawing)", "frame": "baroque frame" },
-    { "style": "crayon art (pastel drawing)", "frame": "Rococo picture frame" }
-]
-
-# 图像提示词预设选项
-IMAGE_PROMPT_OPTIONS = [
-    "",
-    "Ancient Middle-Eastern (story, clothing/head-coverings, tent)",
-    "Chinese person (black hair) with traditional chinese dressing, Song-dynasty traditional chinese culture/architecture",
-    "Modern Chinese person in business suit, contemporary urban cityscape background",
-    "Japanese person in traditional kimono, traditional Japanese temple and garden",
-    "Modern Japanese person in casual street fashion, Tokyo neon lights background",
-    "Korean person in traditional hanbok, ancient Korean palace architecture",
-    "Modern Korean person in K-pop style fashion, Seoul city skyline",
-    "European person in medieval clothing, Gothic cathedral and castle",
-    "Modern European person in elegant fashion, Paris street café scene",
-    "American person in western cowboy attire, wild west desert landscape",
-    "Modern American person in casual wear, New York skyscrapers background",
-    "Indian person in traditional sari/kurta, Taj Mahal and traditional architecture",
-    "Modern Indian person in contemporary dress, Mumbai modern cityscape",
-    "Middle Eastern person in traditional robes, ancient desert city architecture",
-    "Modern Middle Eastern person in business attire, Dubai futuristic skyline",
-    "African person in traditional tribal clothing, savanna and acacia trees",
-    "Modern African person in stylish fashion, Lagos or Cape Town cityscape",
-    "Russian person in traditional folk costume, Red Square and onion domes",
-    "Modern Russian person in winter fashion, Moscow snowy streets",
-    "Brazilian person in carnival costume, Rio de Janeiro beach and mountains",
-    "Modern Brazilian person in beach wear, São Paulo urban landscape",
-    "cozy warm tones, calm atmosphere, subtle textures, psychological wellness, emotional warmth, a heartwarming lifestyle"    
-]
-
-
-# 负面提示词预设选项
-NEGATIVE_PROMPT_OPTIONS = [
-    "words explaination in the image, low quality, distorted, overly cartoonish, text, watermark, deformed, ugly, duplicate faces",
-    "modern clothing/t-shirt, glasses/watches, guns/rifles/pistols/tactical-outfit, cars, phones, neon-lights",
-    "drawing, painting, sketch, illustration",
-    "nsfw, nude, sexual, adult content, violence, gore, blood",
-    "extra limbs, extra fingers, extra arms, extra legs, missing limbs"
-    "crowd, too many people"
-]
-
+def narrator_person_options():
+    """旁白下拉选项（不含空项；欢迎屏须始终选定一项）。"""
+    opts = [x for x in CHARACTER_PERSON_OPTIONS if (x or "").strip()]
+    if opts:
+        return opts
+    return [x for x in _CHARACTER_PERSON_OPTIONS_FALLBACK if (x or "").strip()]
 
 
 def _is_transcript_segment_list(data) -> bool:
@@ -507,7 +429,7 @@ def parse_json_from_text(text):
 
 
 def load_topics(channel: str) -> tuple[list, list, dict]:
-    channel_path = get_channel_path(config_channel.get_channel_id(channel)) if channel else None
+    channel_path = get_channel_path(get_channel_id(channel)) if channel else None
 
     topics_file = os.path.join(channel_path, 'topics.json')
     tags_file = os.path.join(channel_path, 'tags.json')
@@ -832,6 +754,77 @@ def get_channel_path(channel: str) -> str:
     return path
 
 
+def normalize_channel_overlay_rel_path(rel_path: str) -> str:
+    """角标/水印相对路径：位于 ``program/<channel_id>/`` 下。"""
+    rel = (rel_path or "").strip().replace("\\", "/")
+    if rel.lower().startswith("media/"):
+        rel = rel[6:]
+    return rel.lstrip("/")
+
+
+def get_channel_overlay_path(channel: str, rel_path: str) -> str:
+    """频道 watermark/headmark PNG 绝对路径：``program/<channel_id>/<file>``。"""
+    rel = normalize_channel_overlay_rel_path(rel_path)
+    return os.path.join(get_channel_path(channel), rel) if rel else get_channel_path(channel)
+
+
+def channel_soul_dir_abs(channel_path: str) -> str:
+    """频道 soul 手册目录：``program/<channel_id>/soul``。"""
+    return os.path.join(channel_path, "soul")
+
+
+def ensure_channel_soul_dir(channel_path: str) -> str:
+    d = channel_soul_dir_abs(channel_path)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def normalize_channel_soul_rel_path(rel_path: str) -> str:
+    """soul 文件相对路径：位于 ``program/<channel_id>/soul/`` 下。"""
+    rel = (rel_path or "").strip().replace("\\", "/")
+    if rel.lower().startswith("soul/"):
+        rel = rel[5:]
+    return rel.lstrip("/")
+
+
+def resolve_channel_soul_file_path(channel_path: str, soul_spec: str) -> str | None:
+    """将 topics.json 中的 soul 规格解析为 ``program/<channel_id>/soul/<file>.md`` 绝对路径。"""
+    soul = (soul_spec or "").strip()
+    if not soul or not channel_path:
+        return None
+    if os.path.isabs(soul):
+        return soul if os.path.isfile(soul) else None
+    if not (soul.endswith(".md") or ("." in soul and "\n" not in soul and len(soul) < 200)):
+        return None
+    rel = normalize_channel_soul_rel_path(soul)
+    if not rel:
+        return None
+    file_path = os.path.join(channel_soul_dir_abs(channel_path), os.path.basename(rel))
+    return file_path if os.path.isfile(file_path) else None
+
+
+def get_channel_soul_path(channel: str, rel_path: str) -> str:
+    """频道 soul 手册绝对路径：``program/<channel_id>/soul/<file>``。"""
+    rel = normalize_channel_soul_rel_path(rel_path)
+    ch_path = get_channel_path(channel)
+    return os.path.join(ch_path, "soul", rel) if rel else channel_soul_dir_abs(ch_path)
+
+
+def channel_track_media_dir(channel: str, track: str) -> str:
+    """频道素材库目录（手动选片 / 预览用）。
+
+    ``zero``、``clip_image`` / ``clip_image_last`` 与 ``clip`` 共用 ``program/<channel_id>/clip``。
+    其余轨道为 ``program/<channel_id>/<track>``（优先 ``<track>/scene``）。
+    """
+    track = (track or "").strip()
+    if track in ("zero", "clip_image", "clip_image_last"):
+        folder_track = "clip"
+    else:
+        folder_track = track
+    ch_path = get_channel_path(channel)
+    return os.path.join(ch_path, folder_track)
+
+
 def channel_list_json_dir_abs(channel_path: str) -> str:
     """频道下所有热门/主题 list JSON 根目录：``program/<channel_id>/list``（与 ``Download`` 等媒体子目录并列）。"""
     return os.path.join(channel_path, "list")
@@ -868,9 +861,9 @@ def topic_category_list_file_basename(topic_category) -> str:
 def topic_category_list_json_abspath(channel_field: str, topic_category: str) -> str:
     """``program/<channel>/list/<basename>``，与 ``gui.downloader`` 主题列表一致。"""
     ch_key = (channel_field or "").strip()
-    ch_id = config_channel.get_channel_id(ch_key) if ch_key else None
+    ch_id = get_channel_id(ch_key) if ch_key else None
     if not ch_id:
-        keys = list(config_channel.CHANNEL_CONFIG.keys())
+        keys = list(CHANNEL_CONFIG.keys())
         ch_id = ch_key or (keys[0] if keys else "default")
     base = get_channel_path(ch_id)
     d = ensure_channel_list_json_dir(base)
@@ -954,22 +947,100 @@ def get_fallback_background_image(channel, width, height):
     return img
 
 
+_CHANNEL_STILL_EXTENSIONS = ("png", "webp", "jpg", "jpeg")
+
+
+def _channel_clip_media_dirs(channel: str) -> list[str]:
+    """频道 clip 素材搜索顺序：``clip/scene``（若有）→ ``clip/`` 根目录。"""
+    ch = get_channel_path(channel)
+    root = os.path.join(ch, "clip")
+    scene = os.path.join(root, "scene")
+    dirs: list[str] = []
+    if os.path.isdir(scene):
+        dirs.append(scene)
+    if os.path.isdir(root) and root not in dirs:
+        dirs.append(root)
+    return dirs or [root]
+
+
+def channel_media_matches_project_layout(filename: str, *, landscape: bool) -> bool:
+    """文件名宽高标记与项目横竖屏是否匹配。
+
+    - ``169_*`` → 横屏 (1920×1080)
+    - ``916_*`` → 竖屏 (1080×1920)
+    - 无上述前缀（``starting_`` / ``ending_`` / ``running_`` / 其它）→ 视为 169 横屏
+    """
+    lower = (filename or "").lower()
+    if lower.startswith("916_"):
+        return not landscape
+    if lower.startswith("169_"):
+        return landscape
+    return landscape
+
+
+def find_matched_file_in_channel_dirs(dirs, prefix, post, kernel=None, used_files=None):
+    for folder in dirs:
+        hit = find_matched_file(folder, prefix, post, kernel, used_files)
+        if hit:
+            return hit
+    return None
+
+
+def find_matched_channel_still(folder, prefix, kernel=None):
+    """在单个目录按前缀匹配静帧（png / webp / jpg）。"""
+    for ext in _CHANNEL_STILL_EXTENSIONS:
+        hit = find_matched_file(folder, prefix, ext, kernel)
+        if hit:
+            return hit
+    return None
+
+
+def find_matched_channel_still_in_dirs(dirs, prefix, kernel=None):
+    for folder in dirs:
+        hit = find_matched_channel_still(folder, prefix, kernel)
+        if hit:
+            return hit
+    return None
+
+
+def find_landscape_unmarked_channel_media(dirs, *, video: bool = False):
+    """横屏 169 回退：不含 ``916_`` 前缀的静帧或 MP4（含 ``starting_`` / ``ending_`` / ``running_`` 等）。"""
+    exts = ("mp4",) if video else _CHANNEL_STILL_EXTENSIONS
+    candidates: list[str] = []
+    for folder in dirs:
+        if not os.path.isdir(folder):
+            continue
+        for ext in exts:
+            for path in glob.glob(os.path.join(folder, f"*.{ext}")):
+                if not os.path.isfile(path):
+                    continue
+                if os.path.basename(path).lower().startswith("916_"):
+                    continue
+                candidates.append(path)
+    if not candidates:
+        return None
+    return random.choice(candidates)
+
+
 def make_backgroud_medias(pid, channel, ffmpeg_processor, ffmpeg_audio_processor):
     prefix, kernel = fetch_resource_prefix("", [])
-    image_dir = get_channel_path(channel) + "/clip_image"
-    music_dir = get_channel_path(channel) + "/zero"
-    video_dir = get_channel_path(channel) + "/clip"
+    media_dirs = _channel_clip_media_dirs(channel)
+    landscape = ffmpeg_processor.width > ffmpeg_processor.height
 
-    # 1. 获取 background_image（按横竖屏选 169_ 或 916_）
-    if ffmpeg_processor.width > ffmpeg_processor.height:
-        background_image = find_matched_file(image_dir, prefix + "/169_", "png", kernel)
-        background_video= find_matched_file(video_dir, prefix + "/169_", "mp4", kernel)
-        background_music= find_matched_file(music_dir, prefix + "/169_", "mp4", kernel)
+    if landscape:
+        ratio_prefix = prefix + "/169_"
+        background_image = find_matched_channel_still_in_dirs(media_dirs, ratio_prefix, kernel)
+        if not background_image:
+            background_image = find_landscape_unmarked_channel_media(media_dirs, video=False)
+        background_video = find_matched_file_in_channel_dirs(media_dirs, ratio_prefix, "mp4", kernel)
+        if not background_video:
+            background_video = find_landscape_unmarked_channel_media(media_dirs, video=True)
     else:
-        background_image = find_matched_file(image_dir, prefix + "/916_", "png", kernel)
-        background_video= find_matched_file(video_dir, prefix + "/916_", "mp4", kernel)
-        background_music= find_matched_file(music_dir, prefix + "/916_", "mp4", kernel)
+        ratio_prefix = prefix + "/916_"
+        background_image = find_matched_channel_still_in_dirs(media_dirs, ratio_prefix, kernel)
+        background_video = find_matched_file_in_channel_dirs(media_dirs, ratio_prefix, "mp4", kernel)
 
+    background_music = background_video
     return background_image, background_video, background_music
     
     
@@ -1103,11 +1174,318 @@ TELEGRAM_PUBLISH = {
 }
 
 # =============================================================================
-# 图像生成配置
+# 频道配置（CHANNEL_CONFIG）与查询辅助函数
 # =============================================================================
-# 图像生成默认风格配置
+
+
+def get_channel_config(channel_id_or_key):
+    """
+    根据 channel_id 或 config key 获取频道配置。
+    支持 project config 中 channel 字段存 channel_id（多个 config key 可对应同一 channel_id）。
+    先按 config key 查找，否则按 channel_id 查找（优先返回 key==channel_id 的主配置）。
+    """
+    if not channel_id_or_key:
+        return {}
+    if channel_id_or_key in CHANNEL_CONFIG:
+        return CHANNEL_CONFIG[channel_id_or_key]
+    for key, cfg in CHANNEL_CONFIG.items():
+        if cfg.get("channel_id") == channel_id_or_key:
+            return cfg
+    return {}
+
+
+def get_channel_id(channel_id_or_key):
+    """返回用于路径、project config 的 channel_id。支持 config key 或 channel_id 输入。"""
+    cfg = get_channel_config(channel_id_or_key)
+    return cfg.get("channel_id", channel_id_or_key) if cfg else channel_id_or_key
+
+
+def get_channel_analyze_prompt(channel_id_or_key, *, language: str = "") -> str:
+    cfg = get_channel_config(channel_id_or_key)
+    prompt = ((cfg.get("channel_prompt") or {}).get("analyze_prompt") or "").strip()
+    if not prompt:
+        prompt = config_channel.COUNSELING_ANALYZE.strip()
+    if language:
+        try:
+            prompt = prompt.format(language=llm_language_label(language))
+        except KeyError:
+            pass
+    return prompt
+
+
+CHANNEL_PROMPT_META_KEYS = frozenset({
+    "analyze_prompt",
+    "content_guide",
+})
+
+CHANNEL_PROMPT_MODE_ORDER = (
+    "init_single",
+    "raw_single",
+    "init_multiple",
+    "debut_multiple",
+)
+
+
+def get_channel_prompt_snapshot(channel_id_or_key) -> dict:
+    """项目 ``channel_prompt`` 字段：频道配置的完整快照（meta + remix modes）。"""
+    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
+    return dict(cp)
+
+
+def get_channel_prompt_modes(
+    channel_id_or_key, channel_prompt_override: dict | None = None
+) -> dict[str, str]:
+    """``channel_prompt`` 中的 remix prompt：``{mode_key: prompt_text}``。"""
+    cp = dict((get_channel_config(channel_id_or_key) or {}).get("channel_prompt") or {})
+    if isinstance(channel_prompt_override, dict):
+        cp.update(channel_prompt_override)
+    modes: dict[str, str] = {}
+    for k, v in cp.items():
+        if k in CHANNEL_PROMPT_META_KEYS:
+            continue
+        if isinstance(v, str) and v.strip():
+            modes[k] = v.strip()
+    return modes
+
+
+def get_channel_template_prompt_choices(
+    channel_id_or_key, channel_prompt_override: dict | None = None
+) -> list[tuple[str, dict]]:
+    """``[(mode_key, {mode, prompt}), ...]``，供 media review 等手工选择 remix prompt。"""
+    if isinstance(channel_prompt_override, dict) and channel_prompt_override:
+        modes = get_channel_prompt_modes(
+            channel_id_or_key, channel_prompt_override=channel_prompt_override
+        )
+    else:
+        modes = get_channel_prompt_modes(channel_id_or_key)
+
+    ordered_keys = [k for k in CHANNEL_PROMPT_MODE_ORDER if k in modes]
+    ordered_keys += sorted(k for k in modes if k not in ordered_keys)
+    return [
+        (k, {"mode": k, "prompt": modes[k]})
+        for k in ordered_keys
+    ]
+
+
+INSTRUCTION_SNIPPET_CHOICES = [
+    (
+        "Emotional duet",
+        "Create an emotional male/female duet with natural vocal chemistry, featuring alternating lines, call-and-response exchanges, expressive harmonies, and conversational interactions that feel like a genuine dialogue.",
+    ),
+    (
+        "Spoken → sung arc",
+        "Spoken intro → gradual transition into singing → emotional half-spoken, half-sung storytelling → fade back into speech near the ending → finish with one short fully sung line. Intimate, vulnerable, tearful, and deeply expressive.",
+    ),
+    (
+        "Unplugged → band climax",
+        "Live unplugged acoustic setup, starting with raw and hesitant solo vocals accompanied by a single guitar. Gradual tempo increase and vocal volume swell. Voice cracks slightly with raw emotion during the bridge. Explosive, high-energy emotional climax with a full band dropping in, followed by a sudden dead silence. Ends with an exhausted, breathy sigh.",
+    ),
+    (
+        "Theatrical rapid duet",
+        "Fast-paced theatrical duet featuring rapid-fire overlapping vocals and interruptions. Tempo speeds up as tension builds, voices competing in discordant harmonies. Sudden tempo drop into a slow, heartbreaking unison harmony where both voices finally align. High dramatic tension, conversational pacing, resolving into a gentle, melancholic outro.",
+    ),
+    (
+        "A cappella → choir swell",
+        "Cinematic and ethereal vocal opening, starting with a fragile, isolated a cappella melody. Slowly layering intricate vocal harmonies, adding one voice at a time. Transitions into a massive, echoing choir-like crescendo with sweeping orchestrations. Ends abruptly, leaving only a single, distant falsetto echo fading into the void.",
+    ),
+    (
+        "Intimate R&B falsetto",
+        "Extremely close-mic, intimate vocal delivery with audible breathing and subtle rhythmic whispers driving the beat. Transitions into a smooth, buttery R&B falsetto. Minimal instruments, relying purely on vocal percussion and deep, layered humming. Warm, seductive, and hypnotic.",
+    ),
+    (
+        "Lo-fi ↔ studio crossfade",
+        "Muffled, lo-fi vintage radio vocal intro, sounding like a distant memory. Suddenly crossfades into crystal-clear, modern studio-quality singing. The track alternates between the distant, echoing past (lo-fi vocals) and the painful present (crisp, dry vocals). Bittersweet, nostalgic, with a crying instrument matching the vocal melody.",
+    ),
+    (
+        "Erratic → soaring collapse",
+        "Unstable and erratic vocal performance, shifting unexpectedly between sweet melodic singing and manic, frantic half-spoken words. Dissonant background harmonies sliding slightly off-pitch. High psychological tension, chaotic structure, transitioning into a desperate, soaring high note before collapsing into a soft, trembling whisper.",
+    ),
+]
+
+
+def get_instruction_snippet_choices(channel_id_or_key) -> list[tuple[str, str]]:
+    """导向说明可插入片段；频道可设 ``instruction_snippet_choices`` 覆盖默认列表。"""
+    cfg = get_channel_config(channel_id_or_key) or {}
+    raw = cfg.get("instruction_snippet_choices")
+    if raw is None:
+        raw = INSTRUCTION_SNIPPET_CHOICES
+    return [
+        (lbl, text)
+        for lbl, text in (raw or [])
+        if (text or "").strip()
+    ]
 
 
 
+CHANNEL_CONFIG = {
 
+    "counseling": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+
+        "channel_name": "心源谈天",
+        "channel_id": "counseling",
+        "channel_category_id": "22",
+        "channel_tags": ["心理咨询", "心理治疗", "心理健康", "Psychology", "Psychological Counseling", "Psychological Therapy", "Psychological Health"],
+        "channel_key": "client_secret_creative4teen.json",
+
+        "scene_min_length": 20,
+        "watermark": {
+            "path": "counseling_watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
+        "headmark": {
+            "path": "counseling_headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
+        },
+
+        "scenes_prompt_choices": [
+            ("Short Story", config_channel.COUNSELING_STORY_SHORT),
+            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
+            ("Long Story", config_channel.COUNSELING_STORY_LONG),
+            ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
+            ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
+            ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
+            ("Content to Scenes", config_channel.COUNSELING_CONTENT_SCENES),
+            ("Talk", config_channel.COUNSELING_TALK_SCENES),
+            ("Conversation", config_channel.COUNSELING_CONVERSATION_SCENES),
+        ],
+
+        "channel_prompt": {
+            "analyze_prompt": config_channel.COUNSELING_ANALYZE,
+            "init_multiple": config_channel.COUNSELING_CASE_DEVELOPMENT,
+            "init_single": config_channel.COUNSELING_CASE_SUMMARY
+        },
+    },
+
+
+    "industry_aviation": {
+        "topic": "Low-Altitude Aviation Economy, UAV Manufacturing, Aircraft Communication, and Industry Scenario Analysis",
+
+        "channel_name": "航迅 FlyLink",
+        "channel_id": "flylink",
+        "channel_category_id": "28",
+        "channel_tags": [
+            "低空经济", "无人机", "航空通信", "UAV", "eVTOL", "UTM",
+            "Low Altitude Economy", "Drone", "Aviation Communication", "Urban Air Mobility"
+        ],
+        "channel_key": "client_secret_creative4teen.json",
+
+        "scene_min_length": 20,
+        "watermark": {
+            "path": "flylink_watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
+        "headmark": {
+            "path": "headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
+        },
+
+        "scenes_prompt_choices": [
+            ("Short Story", config_channel.FLYLINK_STORY_SHORT),
+            ("Mini Story", config_channel.FLYLINK_STORY_MINI),
+            ("Long Story", config_channel.FLYLINK_STORY_LONG),
+            ("2 Step Story", config_channel.FLYLINK_STORY_2STEP),
+            ("3 Step Story", config_channel.FLYLINK_STORY_3STEP),
+            ("4 Step Story", config_channel.FLYLINK_STORY_4STEP),
+            ("Content to Scenes", config_channel.FLYLINK_CONTENT_SCENES)
+        ],
+
+        "channel_prompt": {
+            "analyze_prompt": config_channel.FLYLINK_ANALYZE
+        },
+    },
+
+
+    "music_story": {
+        "topic": "Musical myths and legends",
+        "channel_name": "心泉旋律",
+        "channel_id": "music_story",
+        "channel_category_id": "10",
+        "channel_tags": ["音乐故事", "Music Story", "Music", "Story", "Musical", "Musical Story", "Musical Myth", "Musical Legend"],
+        "channel_key": "client_secret_ocreativeteen.json",
+
+        "scene_min_length": 20,
+        "watermark": {
+            "path": "mv_watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
+        "headmark": {
+            "path": "mv_headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
+        },
+        "scenes_prompt_choices": [
+            ("Lyrics to Story", config_channel.NOTEBOOKLM__MV_STORY_FROM_LYRICS),
+            ("2 Layers Story", config_channel.NOTEBOOKLM__MV_STORY_2LAYER),
+            ("SUNO Prompt", config_channel.NOTEBOOKLM__SUNO_FRANK),
+            ("SUNO Poetry", config_channel.NOTEBOOKLM__SUNO_POETRY),
+            ("SUNO 2 Layers", config_channel.NOTEBOOKLM__SUNO_2LAYER_FRANK),
+            ("SUNO 2 Layers Poetry", config_channel.NOTEBOOKLM__SUNO_2LAYER_POETRY),
+        ],
+
+        "channel_prompt": {
+            "analyze_prompt": config_channel.MV_ANALYZE_2,
+            "content_guide": config_channel.MV_CONTENT_GUIDE,
+            "init_multiple": config_channel.MV_STORY_DEVELOPMENT,
+            "init_single": config_channel.MV_SIMPLE_REORGANIZE
+        },
+    },
+
+
+    "counseling_talk": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_id": "counseling",
+        # NotebookLM Prompt 类型选择（可扩展）
+        "scenes_prompt_choices": [
+            ("Talk", config_channel.COUNSELING_TALK_SCENES)
+        ],
+        "channel_prompt": {
+            "raw_single": config_channel.COUNSELING_CASE_SUMMARY,
+        },
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
+
+
+    "counseling_story": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_id": "counseling",
+        "scenes_prompt_choices": [
+            ("Short Story", config_channel.COUNSELING_STORY_SHORT),
+            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
+            ("Long Story", config_channel.COUNSELING_STORY_LONG),
+            ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
+            ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
+            ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
+            ("Message", config_channel.COUNSELING_STORY_MINI),
+            ("Full Story", config_channel.COUNSELING_CONTENT_SCENES),
+            ("Talk", config_channel.COUNSELING_TALK_SCENES),
+        ],
+        "channel_prompt": {
+            "init_single": config_channel.COUNSELING_INTRO,
+            "init_multiple": config_channel.COUNSELING_STORY_DEVELOPMENT,
+            "debut_multiple": config_channel.COUNSELING_ANALYSIS_DEVELOPMENT,
+        },
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
+
+
+    "broadway": {
+        "topic": "Musical myths and legends",
+        "channel_name": "圣经百老汇",
+        "channel_id": "broadway",
+        "scenes_prompt_choices": [
+            ("Lyrics to Story", config_channel.NOTEBOOKLM__MV_STORY_FROM_LYRICS),
+            ("2 Layers Story", config_channel.NOTEBOOKLM__MV_STORY_2LAYER),
+        ],
+        "channel_key": "config/client_secret_main.json"
+    }
+
+}
 

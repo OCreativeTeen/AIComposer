@@ -18,7 +18,6 @@ import base64
 from datetime import datetime
 import config
 import config_prompt
-import config_channel
 import utility.llm_api as llm_api
 from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
@@ -37,7 +36,8 @@ def _story_value_nonempty(sv) -> bool:
     return True
 
 
-def _normalize_story_entry(item) -> dict | None:
+def _normalize_scene_dict_entry(item) -> dict | None:
+    """单条 scene JSON：保留 LLM 返回的全部字段。"""
     if not isinstance(item, dict):
         return None
     out: dict = {}
@@ -50,91 +50,27 @@ def _normalize_story_entry(item) -> dict | None:
             out[k] = v
     if not out:
         return None
-    title = (out.get("title") or out.get("caption") or "").strip()
-    body = (out.get("story") or out.get("content") or "").strip()
-    heart = (out.get("heart_message") or "").strip()
+    project_manager.normalize_scene_content_item_for_workflow(out)
+    heading = caption_from_scene_content_item(out)
+    body = (out.get("visual") or out.get("content") or "").strip()
     speaking = (out.get("speaking") or "").strip()
     voiceover = (out.get("voiceover") or "").strip()
     actor = (out.get("actor") or "").strip()
-    if not title and not body and not heart and not speaking and not voiceover and not actor:
+    if not heading and not body and not speaking and not voiceover and not actor:
         return None
     return out
 
 
-def _parse_story_field(raw) -> list[dict]:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        out: list[dict] = []
-        for it in raw:
-            n = _normalize_story_entry(it) if isinstance(it, dict) else None
-            if n:
-                out.append(n)
-        return out
-    if isinstance(raw, str):
-        s = raw.strip()
-        if not s:
-            return []
-        if s.startswith("["):
-            try:
-                parsed = json.loads(s)
-            except json.JSONDecodeError:
-                return [{"title": "", "story": s}]
-            return _parse_story_field(parsed)
-        return [{"title": "", "story": s}]
-    return []
-
-
-def story_first_entry_heading(raw) -> str:
-    """Story JSON array 首条的 ``title`` 或 MV ``caption``（发布标题等）。"""
-    entries = _parse_story_field(raw)
-    if not entries:
-        return ""
-    e = entries[0]
-    return (e.get("title") or e.get("caption") or "").strip()
-
-
-def story_first_entry_text(raw) -> str:
-    """Story JSON array 的第一条（prepend 后即为当前项目 title 对应 story）。"""
-    entries = _parse_story_field(raw)
-    if not entries:
-        s = (raw or "").strip() if isinstance(raw, str) else ""
-        return s if s and not s.startswith("[") else ""
-    e = entries[0]
-    t = (e.get("title") or e.get("caption") or "").strip()
-    b = (e.get("story") or "").strip()
-    if t and b:
-        return f"{t}\n\n{b}"
-    return b or t
-
-
-def story_field_flat_text(raw) -> str:
-    """Story JSON array 或 legacy 纯文本 → 发布 / remix 用可读文本。"""
-    entries = _parse_story_field(raw)
-    if not entries:
-        return (raw or "").strip() if isinstance(raw, str) else ""
-    parts: list[str] = []
-    for e in entries:
-        t = (e.get("title") or e.get("caption") or "").strip()
-        b = (e.get("story") or "").strip()
-        if t and b:
-            parts.append(f"{t}\n\n{b}")
-        elif b:
-            parts.append(b)
-        elif t:
-            parts.append(t)
-    return "\n\n---\n\n".join(parts)
-
-
-def publish_story_source_text(raw) -> str:
-    """发布描述素材：全部 story 条目的 ``heart_message`` + ``speaking`` 字段（非仅首条）。"""
-    entries = _parse_story_field(raw)
-    if not entries:
+def publish_scene_source_text(scene_content) -> str:
+    """发布描述素材：全部 scene 条目的 ``voiceover`` + ``speaking``。"""
+    if not isinstance(scene_content, list):
         return ""
     parts: list[str] = []
-    for e in entries:
+    for e in scene_content:
+        if not isinstance(e, dict):
+            continue
         lines: list[str] = []
-        for key in ("heart_message", "speaking"):
+        for key in ("voiceover", "speaking"):
             v = (e.get(key) or "").strip()
             if v:
                 lines.append(v)
@@ -143,19 +79,46 @@ def publish_story_source_text(raw) -> str:
     return "\n\n".join(parts)
 
 
-def story_text_from_config(cfg: dict) -> str:
-    """从 ``PROJECT_CONFIG`` 或绑定的频道列表行外层 ``story`` 读取 remix / YouTube 用文本。"""
+def video_detail_narrative_heading(video_detail: dict) -> str:
+    """首条叙事标题：``scene_content`` 首场景 ``caption``。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    sc = video_detail.get("scene_content")
+    if isinstance(sc, list) and sc and isinstance(sc[0], dict):
+        return caption_from_scene_content_item(sc[0])
+    return ""
+
+
+def publish_description_source_text(video_detail: dict) -> str:
+    """发布描述默认素材：``scene_content``。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    sc = video_detail.get("scene_content")
+    if isinstance(sc, list) and sc:
+        return publish_scene_source_text(sc)
+    return ""
+
+
+def narrative_text_from_config(cfg: dict) -> str:
+    """从 ``PROJECT_CONFIG`` 或绑定的频道列表行读取 remix / YouTube 用文本。"""
     if not isinstance(cfg, dict):
         return ""
-    st = story_field_flat_text(cfg.get("story"))
-    if st:
-        return st
+    sc = cfg.get("scene_content")
+    if isinstance(sc, list) and sc:
+        text = publish_scene_source_text(sc)
+        if text:
+            return text
 
     row = load_video_detail_row_for_config(cfg)
     if isinstance(row, dict):
-        st = story_field_flat_text(row.get("story") or row.get("summary"))
-        if st:
-            return st
+        sc_row = row.get("scene_content")
+        if isinstance(sc_row, list) and sc_row:
+            text = publish_scene_source_text(sc_row)
+            if text:
+                return text
+        summary = (row.get("summary") or "").strip()
+        if summary:
+            return summary
     return ""
 
 
@@ -258,8 +221,6 @@ def _raw_story_preview_text(story_result) -> str:
             return _jsonish_preview_fragment(story_result.get("analyzed_content"))
         if _story_value_nonempty(story_result.get("scene_content")):
             return _jsonish_preview_fragment(story_result.get("scene_content"))
-        if _story_value_nonempty(story_result.get("story")):
-            return _jsonish_preview_fragment(story_result.get("story"))
     return ""
 
 
@@ -270,7 +231,7 @@ def _raw_content_preview_body(story_result) -> str:
     ac = story_result.get("analyzed_content")
     if _story_value_nonempty(ac):
         return ac.strip()
-    for key in ("content", "story"):
+    for key in ("content",):
         val = story_result.get(key)
         if _story_value_nonempty(val):
             if isinstance(val, str):
@@ -306,13 +267,12 @@ def _set_readonly_preview_text(tx, body: str, *, empty_placeholder: str) -> None
 
 
 def caption_from_scene_content_item(item: dict) -> str:
-    """场景 dict 上的标题/字幕行：优先 ``caption``，兼容旧 ``title``。"""
+    """场景 dict 标题行：``caption``。"""
     if not isinstance(item, dict):
         return ""
-    for kk in ("caption", "title", "Title"):
-        t = item.get(kk)
-        if t is not None and str(t).strip():
-            return str(t).strip()
+    cap = item.get("caption")
+    if cap is not None and str(cap).strip():
+        return str(cap).strip()
     return ""
 
 
@@ -321,7 +281,10 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
         return
     cap = item.get("caption")
     if cap is None or not str(cap).strip():
-        cap = item.pop("title", "") or item.pop("Title", "")
+        cap = (
+            item.pop("title", None)
+            or item.pop("Title", None)
+        )
     else:
         item.pop("title", None)
         item.pop("Title", None)
@@ -334,11 +297,16 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
     if story:
         item["visual"] = story
 
-    message = item.pop("message", None)
-    if not message:
-        message = item.get("voiceover", None)
-    if message:
-        item["voiceover"] = message
+    legacy_vo = (
+        item.pop("message", None)
+        or item.pop("heart_message", None)
+        or item.pop("summary", None)
+    )
+    vo = (item.get("voiceover") or "").strip()
+    if not vo and legacy_vo:
+        vo = str(legacy_vo).strip()
+    if vo:
+        item["voiceover"] = vo
 
 
 
@@ -358,7 +326,7 @@ def _raw_content_valid_for_create(ac) -> bool:
 
 
 def build_soul(channel, topic_category, topic_subtype):
-    channel_path = config.get_channel_path(config_channel.get_channel_id(channel)) if channel else None
+    channel_path = config.get_channel_path(config.get_channel_id(channel)) if channel else None
     topic_choices, topic_categories, tag_features_map = config.load_topics(channel)
 
     topic_category = (topic_category or '').strip()
@@ -397,7 +365,11 @@ def build_soul(channel, topic_category, topic_subtype):
 PROJECT_CONFIG = None
 
 # 欢迎屏选择的旁白 narrator，供 YT → RAW 启动新项目 等路径复用（与 config_prompt.NARRATOR 一致）
-LAST_NARRATOR = config.CHARACTER_PERSON_OPTIONS[0]
+LAST_NARRATOR = (
+    config.narrator_person_options()[0]
+    if config.narrator_person_options()
+    else ""
+)
 
 # 欢迎屏选择的画面风格（英文，与 config.VISUAL_STYLE_OPTIONS 一致）
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
@@ -429,7 +401,6 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
 
 # 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）
 LIST_ITEM_TOP_PROJECT_KEYS = (
-    "story",
     "analyzed_content",
     "scene_content",
     "topic_category",
@@ -442,7 +413,7 @@ _LIST_REF_PREFIX = "chanlist:"
 
 def iter_channel_list_json_files():
     """扫描各频道 program/*/list/*.json。"""
-    for cid in list(config_channel.CHANNEL_CONFIG.keys()):
+    for cid in list(config.CHANNEL_CONFIG.keys()):
         list_dir = config.channel_list_json_dir_abs(config.get_channel_path(cid))
         if not os.path.isdir(list_dir):
             continue
@@ -649,6 +620,56 @@ def list_json_row_workflow_pid(item: dict) -> str:
     return ""
 
 
+def resolve_video_detail_cover_media(video_detail: dict) -> dict:
+    """从 video detail / 列表行解析封面图、幻灯片 PDF、成片 MP4 绝对路径。
+
+    返回仅含存在文件的键：``cover_image`` / ``slide`` / ``cover_video``。
+    """
+    out: dict = {}
+    if not isinstance(video_detail, dict):
+        return out
+    try:
+        from gui import downloader as _dl
+
+        cover = (_dl._find_gen_video_webp_for_row(video_detail) or "").strip()
+        slide = (_dl._find_gen_video_slide_for_row(video_detail) or "").strip()
+        video = (_dl._find_gen_video_mp4_for_row(video_detail) or "").strip()
+    except Exception as e:
+        print(f"⚠️ resolve_video_detail_cover_media: {e}")
+        cover = slide = video = ""
+        stored_slide = (video_detail.get("slide") or "").strip()
+        if stored_slide and os.path.isfile(stored_slide):
+            slide = os.path.abspath(stored_slide)
+    if cover and os.path.isfile(cover):
+        out["cover_image"] = os.path.abspath(cover)
+    if slide and os.path.isfile(slide):
+        out["slide"] = os.path.abspath(slide)
+    if video and os.path.isfile(video):
+        out["cover_video"] = os.path.abspath(video)
+    return out
+
+
+def hydrate_config_cover_media(cfg: dict, video_detail: dict | None = None) -> None:
+    """把 video detail 的封面图 / PDF / 成片路径写入 ``PROJECT_CONFIG``（运行时字段，不进 profile 白名单）。"""
+    if not isinstance(cfg, dict):
+        return
+    row = video_detail if isinstance(video_detail, dict) else None
+    if row is None:
+        row = load_video_detail_row_for_config(cfg)
+    if row is None:
+        row = cfg
+    media = resolve_video_detail_cover_media(row)
+    for k, v in media.items():
+        if v:
+            cfg[k] = v
+    # 列表行已写 slide 但 gen_video 查找未命中时仍保留已有合法路径
+    if not cfg.get("slide"):
+        stored = (row.get("slide") if isinstance(row, dict) else None) or cfg.get("slide")
+        stored = (stored or "").strip()
+        if stored and os.path.isfile(stored):
+            cfg["slide"] = os.path.abspath(stored)
+
+
 def project_config_from_list_item(item: dict, list_path: str = "", index: int = -1) -> dict:
     """从视频列表的一行构造与原先 ``*.config`` 等价的 PROJECT_CONFIG 字典。"""
     if not isinstance(item, dict):
@@ -686,6 +707,7 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
     cfg.pop("_channel_list_json", None)
     cfg.pop("_channel_list_index", None)
     hydrate_config_soul_runtime(cfg)
+    hydrate_config_cover_media(cfg, item)
     return cfg
 
 
@@ -837,18 +859,16 @@ def refresh_scene_media(scene, media_type, media_postfix, replacement=None, make
 
 
 def _load_soul_content(channel_path, soul_spec):
-    """将 soul 规格（文件路径或内联文本）转为实际内容。"""
+    """将 soul 规格（``soul/<file>.md`` 或内联文本）转为实际内容。"""
     if not soul_spec or not isinstance(soul_spec, str):
         return ''
-    soul = soul_spec.strip()
-    if channel_path and soul and (soul.endswith('.md') or ('.' in soul and '\n' not in soul and len(soul) < 200)):
-        file_path = os.path.join(channel_path, soul)
-        if os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    return f.read().strip()
-            except Exception:
-                pass
+    file_path = config.resolve_channel_soul_file_path(channel_path, soul_spec)
+    if file_path:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+        except Exception:
+            pass
     return ""
 
 
@@ -921,6 +941,7 @@ class ProjectConfigManager:
         merged = load_project_config_by_pid(pid)
         if merged is not None:
             PROJECT_CONFIG = merged
+            hydrate_config_cover_media(PROJECT_CONFIG)
             print(f"🔍 load_config: 已从频道 list/ 加载，PID: {PROJECT_CONFIG.get('pid') if PROJECT_CONFIG else 'None'}")
         else:
             print(f"🔍 load_config: 未在任何 list/*.json 中找到 pid={pid}")
@@ -934,6 +955,7 @@ class ProjectConfigManager:
         if PROJECT_CONFIG is not None:
             PROJECT_CONFIG.pop('debut_content', None)
             hydrate_config_soul_runtime(PROJECT_CONFIG)
+            hydrate_config_cover_media(PROJECT_CONFIG)
 
     def load_project_config(self, config_file):
         """加载项目配置：仅支持 ``chanlist:`` 列表引用（某 ``list/*.json`` 的行）。"""
@@ -1033,7 +1055,7 @@ class ProjectSelectionDialog:
         self.topics_data = []
         self.tag_features_map = {}
 
-        available_channels = list(config_channel.CHANNEL_CONFIG.keys())
+        available_channels = list(config.CHANNEL_CONFIG.keys())
         default_channel = initial_channel or (available_channels[0] if available_channels else 'default')
         default_lang = initial_language or 'tw'
 
@@ -1351,7 +1373,7 @@ class ProjectSelectionDialog:
 
         def sync_channel_prompt(*args):
             """频道变更时同步完整 ``channel_prompt`` 快照到项目配置。"""
-            self.story_result["channel_prompt"] = config_channel.get_channel_prompt_snapshot(
+            self.story_result["channel_prompt"] = config.get_channel_prompt_snapshot(
                 self.story_result["channel"]
             )
             self.story_result.pop("prompts", None)
@@ -1532,7 +1554,7 @@ class ProjectSelectionDialog:
         raw_preview.config(state=tk.DISABLED)
 
         scene_story_frame = ttk.LabelFrame(
-            content_panels_frame, text="Story / scene_content (JSON)", padding=10
+            content_panels_frame, text="scene_content (JSON)", padding=10
         )
         scene_story_frame.grid(row=1, column=0, sticky='ew', padx=(5, 5), pady=(0, 0))
         scene_story_frame.columnconfigure(0, weight=1)
@@ -1547,7 +1569,7 @@ class ProjectSelectionDialog:
         scene_preview.grid(row=0, column=0, sticky='ew')
         scene_preview.config(state=tk.DISABLED)
         edit_scene_story_btn = ttk.Button(
-            scene_story_frame, text="编辑 Story", command=lambda: None
+            scene_story_frame, text="编辑分镜", command=lambda: None
         )
         edit_scene_story_btn.grid(row=1, column=0, sticky='w', pady=(8, 0))
 
@@ -1706,9 +1728,12 @@ class ProjectSelectionDialog:
             
             ac = self.story_result.get('analyzed_content')
             sc = self.story_result.get('scene_content')
-            if not ac or not sc:
-                messagebox.showerror("错误", "请先生成故事(Story)内容，才能创建项目")
+            if not sc:
+                messagebox.showerror("错误", "请填写 scene_content（场景 JSON array），才能创建项目")
                 return
+            if not ac:
+                ac = ""
+                self.story_result['analyzed_content'] = ac
 
             _sc_title = title_from_scene_content(sc)
             if _sc_title:
@@ -1749,10 +1774,10 @@ class ProjectSelectionDialog:
 
             self.story_result['action'] = 'new'
             # 保存 channel_id（多个 config key 可对应同一 channel_id）
-            ch_id = config_channel.get_channel_id(self.story_result['channel'])
+            ch_id = config.get_channel_id(self.story_result['channel'])
             self.story_result['channel'] = ch_id
-            _ch_cfg = config_channel.get_channel_config(ch_id)
-            self.story_result['channel_prompt'] = config_channel.get_channel_prompt_snapshot(ch_id)
+            _ch_cfg = config.get_channel_config(ch_id)
+            self.story_result['channel_prompt'] = config.get_channel_prompt_snapshot(ch_id)
             self.story_result.pop('prompts', None)
             self.story_result.pop('channel_template', None)
             self.story_result['scene_min_length'] = _ch_cfg.get('scene_min_length', 9)
@@ -1944,11 +1969,14 @@ def show_initial_choice_dialog(parent):
         state="readonly",
         width=_combo_w,
     )
-    narrator_var = tk.StringVar(value=LAST_NARRATOR)
+    _narr_opts = config.narrator_person_options()
+    _narr_cur = (LAST_NARRATOR or "").strip()
+    _narr_default = _narr_cur if _narr_cur in _narr_opts else (_narr_opts[0] if _narr_opts else "")
+    narrator_var = tk.StringVar(value=_narr_default)
     narrator_combo = ttk.Combobox(
         opts_grid,
         textvariable=narrator_var,
-        values=config.CHARACTER_PERSON_OPTIONS,
+        values=_narr_opts,
         state="readonly",
         width=_combo_w,
     )
@@ -2036,6 +2064,9 @@ def show_initial_choice_dialog(parent):
         if not ch:
             messagebox.showwarning("提示", "请先选择频道", parent=dialog)
             return
+        if not (narrator_var.get() or "").strip():
+            messagebox.showwarning("提示", "请选择旁白（Narrator）", parent=dialog)
+            return
         _sync_welcome_choices()
         result["channel"] = ch
         result["choice"] = "yt"
@@ -2093,7 +2124,7 @@ def show_initial_choice_dialog(parent):
         result['choice'],
         result['channel'] or _yt_ch["default_channel"],
         result['language'] or default_lang_key,
-        result.get('narrator') or LAST_NARRATOR,
+        result.get('narrator') or LAST_NARRATOR or (config.narrator_person_options()[0] if config.narrator_person_options() else ""),
         result.get('visual_style') or LAST_VISUAL_STYLE,
         result.get('host_display') or config_prompt.HARRATOR_DISPLAY_OPTIONS[-1],
     )
@@ -2103,7 +2134,7 @@ def create_project_dialog(parent, youtube_gui=None):
     """``GUI_wf.py``：直接进入「选择项目」列表（无欢迎屏新建入口）。"""
     global PROJECT_CONFIG
     config_manager = ProjectConfigManager()
-    available_channels = list(config_channel.CHANNEL_CONFIG.keys())
+    available_channels = list(config.CHANNEL_CONFIG.keys())
     default_channel = available_channels[0] if available_channels else "default"
 
     dialog = ProjectSelectionDialog(
@@ -2126,9 +2157,14 @@ def create_project_dialog(parent, youtube_gui=None):
 
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style, host_display,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags):
-    """用现有 RAW 材料直接启动创建新项目。``analyzed_content`` 为纯文本字符串。"""
+    """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。"""
     global PROJECT_CONFIG
-    if analyzed_content is None and scene_content is None:
+    sc_ok = False
+    if isinstance(scene_content, list) and scene_content:
+        sc_ok = True
+    elif isinstance(scene_content, str) and scene_content.strip():
+        sc_ok = True
+    if not sc_ok:
         return 'cancel', None
 
     config_manager = ProjectConfigManager()

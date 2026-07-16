@@ -12,31 +12,6 @@ IMAGE_TO_VIDEO_SYSTEM_PROMPT = """
 
 """
 
-IMAGE_READ_SYSTEM_PROMPT = """
-# Role
-    You are an expert psychological consultant and a sharp, insightful image analyst. 
-    Your goal is to analyze an image containing text, extract its psychological essence, and deliver a concise, impactful breakdown that strikes a chord with the audience.
-
-# Objectives
-    1. **Extract Text & Context**: Carefully read and extract all written text and visual cues within the image.
-    2. **Identify the Core Issue**: Skip the fluff and storytelling. Instantly diagnose the deep-rooted psychological issue, root cause, or conflict presented (e.g., childhood trauma, people-pleasing behavior, existential anxiety, control dynamics).
-    3. **Provide a Way Out**: Offer sharp, practical, and professional solutions or psychological breakthroughs.
-    4. **Trigger Reflection**: End with a powerful, reflective question directed at the audience to leave a lasting, profound impression.
-
-# Constraints & Style
-    - **Direct & Concise**: Do NOT tell a long story or act out a monologue. Get straight to the point. The analysis must be short, punchy, and clear within a few sentences. 
-    - **Professional Tone**: Avoid generic "chicken soup for the soul." Sound like a sharp, highly perceptive therapist whose words immediately hit home ("This talks right to my soul").
-
-# Output
-    strictly as a JSON object, like:
-        {{
-            "title": "A poetic title. In {language}.",
-            "heart_message": "2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance. In {language}.",
-            "story": "[The concise analysis: 1. Core Problem & Root Cause -> 2. Practical Solution/Way Out -> 3. A profound, reflective question for the audience. Keep it brief, fluid, and powerful, without bullet points.] in {language}"
-            "speaking": "Powerful line that the poignant 1st-person speaking or think. Use daily life language, not DSM-5; ending offers hope or concrete emotional shift. In {language}."
-        }}
-"""
-
 SCREEN_CORE_PROMPT = (
     "You are an expert at capturing the absolute essence of a narrative. Your task is to extract the single most critical 'punchline' or 'finishing touch' (画龙点睛) from the provided content (speech, story, or scene description).\n"
     "This output will be displayed as HUGE text on a screen, so it must instantly convey the core point or theme of the scene at a glance.\n"
@@ -45,20 +20,6 @@ SCREEN_CORE_PROMPT = (
     "2. Length: If {language} is Chinese, MUST NOT exceed 10 characters. If English, MUST NOT exceed 4-5 words.\n"
     "3. Style: Powerful, impactful, and ultra-concise. Eliminate all filler words, explanations, or conversational fluff.\n"
     "Output ONLY the final short phrase or sentence. Do not include any introductory text, quotes, or explanations."
-)
-
-
-STORY_CONDENSE_PROMPT = (
-    "You are a narrative editor specializing in psychological storytelling.\n"
-    "Rewrite the user's ORIGINAL story below in {language} ONLY.\n\n"
-    "Requirements:\n"
-    "- Preserve the story's overall structure (setup → tension → turning point → resolution or open ending).\n"
-    "- Keep the core conflict and its psychological fix / insight clearly visible.\n"
-    "- Show emotional shifts and contrast (before vs after, surface vs inner, expectation vs reality).\n"
-    "- Use a natural spoken tone — conversational, vivid, not academic or clinical.\n"
-    "- Condense to 300–500 characters total (count characters in {language}). Do not exceed 500.\n"
-    "- Do not add new plot events; compress and sharpen what is already there.\n"
-    "- Output ONLY the rewritten story text. No title, quotes, labels, or explanations."
 )
 
 
@@ -334,18 +295,32 @@ Story Json-Content:
 
 NOTEBOOKLM_SLIDESHOW_MANDATE = """
 You generate PICTURE illustrations, NOT text slides.
-Each scene's ``act_and_talk_____not_rephrase`` tells you WHAT TO speak or behavior.
-** 1 image = 1 frozen moment
+Each scene's ``act_and_talk_____not_rephrase`` tells you WHAT to paint — setting, character emotion, action, and light.
 ** Consistent Visual_Style : {Visual_Style}
 ** Consistent Story-Character look (VERY VERY IMPORTANT!!!!) : {character}.
 """
 
-NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = """
-** Use ONLY each scene's ``act_and_talk_____not_rephrase`` (+ Visual_Style). That all fields values (visual, story, caption, voiceover, speaking, etc.) = painting directions, NOT text to render.
-** Output = one clean illustration per scene: scene + character + light + action tell the story.
-** NEVER add following onto the image : subtitles, caption, story-summary paragraphs, small annotations, spreadsheet labels, no speech bubbles,etc.. onto the image.
-** If VERY CRITICAL highlighted info (very short) is ABSOLUTELY necessary to express current scene content, then show it as huge font in background (better with transparent-like font).
+NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS = """
+** When ``actor`` / ``speaking`` are present: the protagonist MUST appear with facial expression, posture, gesture, and action that MATCH the emotional state in ``speaking`` and ``actor``.
+** Use ``speaking`` only to infer mood and body language — NEVER render speaking lines as subtitles, captions, or speech bubbles (unless variant explicitly allows Word-in-image video).
 """
+
+NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
+** Slideshow mode: exactly 1 image = 1 scene (one frozen moment per scene entry).
+** Use ``act_and_talk_____not_rephrase`` (+ Visual_Style) as painting direction. All JSON field values = staging cues, NOT text to render on the image.
+** Output = one clean illustration per scene: environment + protagonist emotion + action + lighting tell the story visually.
+** NEVER add onto the image: subtitles, caption paragraphs, small annotations, spreadsheet labels, or busy speech bubbles.
+** If VERY CRITICAL highlighted info (very short) is ABSOLUTELY necessary, show as huge sparse background text only (transparent-like font).
+"""
+
+NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
+** Single-image mode: exactly ONE image for the entire Scene_Content block (all scenes combined into one master composition).
+** Summarize the full story arc in one cinematic still: setting, protagonist, emotional through-line, and key motifs from every scene.
+** Show emotional progression through expression, pose, symbolic props, and composition — NOT through written paragraphs on the image.
+** Keep the same Visual_Style and consistent character look across the composite.
+"""
+
+NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
 NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
     "Use 'Pasted Text / 粘贴的文字' to generate the Slide-Show. "
@@ -354,45 +329,209 @@ NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
     "禁止在图上添加说明段落、对话字幕、表格文字、手机消息文字。"
 )
 
+# NotebookLM 导出：四大类 × 子类型（UI 菜单与 build 函数共用）
+NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
+    "image": [
+        ("single", "单图 · 一张概括全部场景"),
+        ("slideshow", "幻灯片 · 每场景独立一图"),
+    ],
+    "video": [
+        ("motion", "纯画面 · 动作/表情/场景演进（无口播）"),
+        ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
+    ],
+    "speaking": [
+        ("script", "念 speaking 字段"),
+        ("visual_keypoints", "讲解画面要点 · 非念图内文字"),
+    ],
+    "voiceover": [
+        ("narration", "旁白讲述 · 第三人叙述"),
+        ("supplement", "补充/总结 · 衔接与点评"),
+    ],
+}
+
+_NB_EXPORT_DEFAULT_VARIANT = {
+    "image": "slideshow",
+    "video": "motion",
+    "speaking": "script",
+    "voiceover": "narration",
+}
 
 
-def scene_payload_for_slideshow_images(scenes: list, mode) -> list[dict]:
+def normalize_nb_export_mode(mode: str, variant: str = "") -> tuple[str, str]:
+    """解析 ``image/slideshow``、``image_slideshow`` 或 legacy ``image`` → (base, variant)。"""
+    raw = (mode or "").strip()
+    if raw == "speak":
+        raw = "voiceover"
+    if "/" in raw:
+        base, var = raw.split("/", 1)
+        base, var = base.strip(), var.strip()
+    elif "_" in raw:
+        base, var = raw.split("_", 1)
+        base, var = base.strip(), var.strip()
+    else:
+        base, var = raw, (variant or "").strip()
+    if base not in NOTEBOOKLM_EXPORT_VARIANTS:
+        raise ValueError(f"Unknown NotebookLM export mode: {mode!r}")
+    if not var:
+        var = _NB_EXPORT_DEFAULT_VARIANT[base]
+    valid = {v for v, _ in NOTEBOOKLM_EXPORT_VARIANTS[base]}
+    if var not in valid:
+        raise ValueError(f"Unknown variant {var!r} for mode {base!r}")
+    return base, var
+
+
+def nb_export_mode_label(mode: str, variant: str = "") -> str:
+    """人类可读标签，供弹窗标题使用。"""
+    base, var = normalize_nb_export_mode(mode, variant)
+    labels = {v: lbl for v, lbl in NOTEBOOKLM_EXPORT_VARIANTS[base]}
+    base_names = {
+        "image": "Image",
+        "video": "Video",
+        "speaking": "Speaking",
+        "voiceover": "Voiceover",
+    }
+    return f"{base_names.get(base, base)} · {labels.get(var, var)}"
+
+
+def _image_painting_direction(scene: dict) -> str:
+    parts: list[str] = []
+    vis = (scene.get("visual") or scene.get("story") or "").strip()
+    actor = (scene.get("actor") or "").strip()
+    speaking = (scene.get("speaking") or "").strip()
+    caption = (scene.get("caption") or "").strip()
+    if caption:
+        parts.append(f"Scene title: {caption}")
+    if vis:
+        parts.append(f"Scene visual: {vis}")
+    if actor:
+        parts.append(f"Character (actor): {actor}")
+    if speaking:
+        parts.append(
+            "Emotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): "
+            + speaking
+        )
+    return "\n".join(parts)
+
+
+def scene_payload_for_notebooklm_export(
+    scenes: list, mode: str, variant: str = ""
+) -> list[dict]:
+    """按 NotebookLM 导出模式裁剪 scene JSON。"""
+    import project_manager
+
+    base, var = normalize_nb_export_mode(mode, variant)
+
     new_scenes = []
     for scene in scenes:
         new_scene = scene.copy()
+        project_manager.normalize_scene_content_item_for_workflow(new_scene)
 
-        if new_scene.get("visual"):
-            new_scene["act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"] = new_scene.pop("visual")
-        elif new_scene.get("story"):
-            new_scene["act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"] = new_scene.pop("story")
-
-        if mode == "video":
-            del new_scene["speaking"]
-            del new_scene["heart_message"]
-        elif mode == "speak":
-            new_scene.pop("act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase", None)
-        # else: image
+        if base == "image":
+            painting = _image_painting_direction(new_scene)
+            slim = {}
+            if painting:
+                slim[
+                    "act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"
+                ] = painting
+            actor = (new_scene.get("actor") or "").strip()
+            if actor:
+                slim["actor"] = actor
+            caption = (new_scene.get("caption") or "").strip()
+            if caption:
+                slim["caption"] = caption
+            new_scenes.append(slim)
+            continue
+        if base == "video":
+            if new_scene.get("visual"):
+                new_scene.pop("story", None)
+        elif base == "voiceover":
+            slim = {}
+            for k in ("caption", "voiceover", "visual", "actor", "speaking"):
+                val = new_scene.get(k)
+                if isinstance(val, str):
+                    if not val.strip():
+                        continue
+                elif not val:
+                    continue
+                slim[k] = val
+            new_scenes.append(slim)
+            continue
+        elif base == "speaking":
+            slim = {}
+            for k in ("caption", "speaking", "visual", "actor", "voiceover"):
+                val = new_scene.get(k)
+                if isinstance(val, str):
+                    if not val.strip():
+                        continue
+                elif not val:
+                    continue
+                slim[k] = val
+            new_scenes.append(slim)
+            continue
 
         new_scenes.append(new_scene)
     return new_scenes
 
 
+def scene_payload_for_slideshow_images(scenes: list, mode, variant: str = "") -> list[dict]:
+    """兼容旧名；委托 ``scene_payload_for_notebooklm_export``。"""
+    return scene_payload_for_notebooklm_export(scenes, mode, variant)
+
+
+NOTEBOOKLM_VIDEO_MOTION_SILENT = """
+** NO speaking, lip-sync, or voice-over in this video.
+** Prerequisite: slideshow or scene image(s) already generated for the same Scene_Content.
+** Tell the story ONLY through: scene evolution, environmental changes, character actions, facial expressions, and camera movement across the narrative arc.
+** Elements and characters evolve as the story progresses — match emotional beats from ``speaking``, ``voiceover``, and ``actor`` via VISUAL change only.
+** Use sound effects and light background music to support mood — no dialogue.
+"""
+
+NOTEBOOKLM_VIDEO_WORD_IN_IMAGE = """
+** NO speaking, lip-sync, or voice-over in this video.
+** Prerequisite: scene image(s) already generated.
+** Show content (Word-in-image) only — animate each key element in sequence (with sound effect) to attract viewer's attention.
+** Extract ONLY the most critical keywords/phrases from ``visual``, ``speaking``, and ``voiceover`` — display as changing background text OR small thought-bubble-style callouts.
+** Keep on-screen text sparse: short titles or keyword clusters; never long paragraphs; do not make the frame busy.
+"""
+
+NOTEBOOKLM_VIDEO_MOTION_INSTRUCTION = NOTEBOOKLM_VIDEO_MOTION_SILENT
+
 NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
-** Prerequisite: start from slideshow scene images already generated for the same Scene_Content.
-** Lip-sync / talking-avatar: follow Instruction_for_video_generation (Host vs main character rules).
-** If the image has no actor/narrator avatar, DO NOT add talking-avatars in video (voice / ambience only).
-** Narrator commenting on prior scene: keep prior scene as stable background; hold starting frame — do not jump backgrounds because of narration.
-** Audio: speaking / voiceover from Scene_Content; target ~10s; voice matches actor/narrator gender-age-race; sound-effects OK; no background music unless scene has no speech.
+** Silent-video variants: no audio dialogue; SFX and light music only (see variant instruction).
+** Use ALL Scene_Content fields as staging direction for what changes on screen — not as spoken lines.
 """
 
-
-STORY_SCENE_SPLIT_FROM_IMAGE_SYSTEM_PROMPT = """
-You split ONE story content (in one JSON object) into multiple scenes, according to the attached image (refer to sections of the on-image text as the scene boundaries).
-
-User message: the source story JSON to split (e.g. title, heart_message, story, speaking).
-
-Output ONLY a JSON array. Each scene object (all text in {language}):
+NOTEBOOKLM_VOICEOVER_NARRATION = """
+** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
+** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
+** Lip-sync: Host talking-avatar per Host_display; if scene image has no Host avatar, voice-over off-screen only.
+** If voiceover comments on a prior scene: keep prior scene image as stable background.
 """
+
+NOTEBOOKLM_VOICEOVER_SUPPLEMENT = """
+** Host/Narrator supplementary voiceover — use ``voiceover`` as bridge, summary, commentary, or contextual supplement (not full scene re-telling).
+** Tone: third-person counselor/analyst — connect scenes, highlight insight, fill gaps; shorter and reflective vs. pure narration.
+** May reference ``visual`` and ``speaking`` subtext but speak as narrator commentary, not as the protagonist.
+** Lip-sync: Host talking-avatar per Host_display; off-screen OK when no Host in image.
+"""
+
+NOTEBOOKLM_VOICEOVER_INSTRUCTION = NOTEBOOKLM_VOICEOVER_NARRATION
+
+NOTEBOOKLM_SPEAKING_SCRIPT = """
+** Protagonist speaking ONLY — deliver the ``speaking`` field (and ``actor`` identity) in first-person feeling tone.
+** Subjective, in-the-moment experience; may not draw conclusions or lecture.
+** Lip-sync: story character (actor) talking-avatar; Host/Narrator must NOT deliver speaking lines.
+** Do NOT read text printed in the image aloud.
+"""
+
+NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = """
+** speaking about the Word-in-image ~ naturally talk through the key points (not reading text in image), while speaking about a point/element, animate it to attract audience's attention.
+** Protagonist (``actor``) explains the scene visually — walk through composition, symbols, character state, and story beats implied by ``visual``.
+** Use ``speaking`` field as emotional tone reference; do NOT literally read words printed in the image.
+** Lip-sync allowed when a talking-avatar is present in the scene image.
+"""
+
+NOTEBOOKLM_SPEAKING_INSTRUCTION = NOTEBOOKLM_SPEAKING_SCRIPT
 
 
 # Direct Video：从单张场景图生成视频的指令选项（Story 编辑区「Direct Video」按钮）。
@@ -508,6 +647,191 @@ def build_direct_video_clipbody(
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
+SLIDE_ANALYSIS_OUTPUT_FORMAT = """
+Output: as json array like
+
+[
+    {
+        "caption": "Scene title; for 1st scene, give the title for the whole-story",
+        "actor": "actor of the story content : gender/age/race | mood | actions",
+        "speaking": "Actor's speaking line, as the 1st person's perspective",
+        "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
+        "voiceover": "Host/narrator's introduction / elaborate / summary, as the outsider's perspective"
+    },
+    {
+        "caption": "Scene title",
+        "actor": "actor of the story content : gender/age/race | mood | actions",
+        "speaking": "Actor's speaking line, as the 1st person's perspective",
+        "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
+        "voiceover": "Host/narrator's introduction / elaborate-insight / summary, as the outsider's perspective"
+    },
+    ...
+]
+
+"""
+
+SLIDE_ANALYSIS_TECH_SOLUTION_ZH = """
+这是一个关于技术方案（Technical Solution）的 PowerPoint。请认真阅读每一页的内容，并为每一页生成一段专业、自然、生动的中文解说词，最终形成一套完整的演讲稿。
+
+请严格遵循以下要求：
+
+整体要求
+- 保持全篇连贯性，每一页不仅要讲解当前内容，还要自然衔接上一页和下一页，形成完整的故事线，而不是独立的页面说明。
+- 以向客户或决策者进行方案汇报的口吻进行讲解，让听众能够跟随演讲节奏逐步理解整个 Solution。
+- 解说词应具有较强的代入感，让听众感觉是在观看一场专业的方案演示，而不是在阅读 PPT。
+- 每页控制在适合口头讲解的长度（约30–90秒），节奏自然。
+
+每页讲解要求
+- 根据页面内容进行讲解，不遗漏重点信息。
+- 抓住页面核心信息，突出重点，避免逐条念 PPT。
+- 语言精炼、逻辑清晰、表达自然，不啰嗦、不重复。
+
+讲解逻辑
+- 按照从上到下、从左到右的阅读顺序介绍内容。
+- 当页面包含流程图、架构图、时序图或步骤图时，应按照图示的发展顺序进行讲解。
+- 引导听众理解每一个元素之间的关系，而不是孤立介绍每个模块。
+- 让听众能够随着讲解，"看着画面一步一步理解方案"。
+
+衔接要求
+- 每一页的结尾应尽量自然过渡到下一页：总结当前页面的核心价值；引出下一页要解决的问题；或说明下一阶段的内容。
+- 整份 PPT 应像一场完整的 Solution Presentation，而不是若干独立页面的解说。
+
+风格要求
+- 专业、流畅、自信；富有感染力，但不过度营销；逻辑严谨、层次分明。
+- 易于理解，让听众能够清晰记住整个 Solution 的架构、流程和价值。
+
+最终目标：
+- 让整套 PPT 的解说词能够直接作为正式方案汇报的演讲稿使用，使听众在演讲结束后，对整个技术方案形成清晰、完整且深刻的印象。
+- STRICTLY: 每一页生成一个场景的JSON对象, 不要多也不少！！！
+
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+SLIDE_ANALYSIS_BUSINESS_PROPOSAL_ZH = """
+这是一份面向客户或投资方的商业提案 PowerPoint。请逐页阅读，为每一页撰写一段中文口头讲解词，串联成完整提案演讲稿。
+
+要求：
+- 突出商业价值、痛点、方案差异与可落地性；避免空泛口号。
+- 每页约 10 秒口播长度；逻辑递进，页与页之间自然过渡。
+- 按页面视觉布局顺序讲解（上→下、左→右）；有流程/对比/架构图时按图的发展顺序讲。
+- 语气专业、可信、有说服力，但不过度夸张。
+- 不逐条念 bullet，要提炼核心观点并用口语化表达。
+- 给出两个版本: 1. 'speaking' line, from the 1st person's perspective of the story/content;  2. 'voiceover' line, as the outsider/narrator's perspective of the story/content
+
+最终输出可直接用于客户提案现场口播。
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+SLIDE_ANALYSIS_TRAINING_ZH = """
+这是一套培训/教学类 PowerPoint。请为每一页生成清晰、易懂的中文讲解词，帮助学员循序渐进理解知识点。
+
+要求：
+- 教学口吻：先点明本页学习目标，再讲解要点，必要时用简短例子辅助理解。
+- 每页约 20–60 秒；语言通俗，避免堆砌术语；关键概念可重复强调。
+- 页间衔接：回顾上节要点 → 引入本节 → 预告下节内容。
+- 按页面阅读顺序与图示逻辑讲解；流程/步骤图按步骤顺序展开。
+- 不照读 PPT 原文，要转化为讲师口播语言。
+
+最终输出适合录课或现场授课使用。
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+SLIDE_ANALYSIS_EXECUTIVE_BRIEF_ZH = """
+这是一份面向高管的简报型 PowerPoint。请为每一页生成极简、高信息密度的中文讲解词。
+
+要求：
+- 每页控制在约 10 秒口播；只保留决策相关信息：结论、风险、收益、行动项。
+- 开门见山，避免背景铺垫过长；用「结论先行」结构。
+- 页间过渡简短有力，突出整体叙事主线。
+- 按页面布局顺序讲解；图表按关键趋势/对比点提炼，不展开技术细节。
+- 语气克制、专业、果断。
+- 给出两个版本: 1. 'speaking' line, from the 1st person's perspective of the story/content;  2. 'voiceover' line, as the outsider/narrator's perspective of the story/content
+
+最终输出适合董事会/管理层快速汇报。
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+SLIDE_ANALYSIS_TECH_SOLUTION_EN = """
+This is a Technical Solution PowerPoint deck. Read every slide carefully and write a professional, natural, engaging English narration for each slide, forming one complete presentation script.
+
+Requirements:
+- Maintain narrative continuity across slides; each slide should connect to the previous and next, not stand alone.
+- Speak as if presenting to a client or decision-maker walking through the solution live.
+- About 10 seconds of spoken content per slide; concise, logical, not repetitive.
+- Follow visual reading order (top-to-bottom, left-to-right); for diagrams/flows, follow the diagram progression.
+- End each slide with a smooth transition to the next (summary, open question, or next-phase hook).
+- Professional, confident tone; insightful but not overly salesy.
+- each scene, give 2 version of speaking-content: 1. 'speaking' line, from the 1st person's perspective of the story/content;  2. 'voiceover' line, as the outsider/narrator's perspective of the story/content
+
+Goal: a script ready for a formal solution presentation.
+
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+SLIDE_ANALYSIS_SCENE_JSON_ZH = """
+这是一份 PowerPoint / PDF 幻灯片。请逐页分析，为每一页生成适合视频制作的场景解说词。
+
+要求：
+- 每页对应 array 中的一个元素；``scene_number`` 从 1 递增，与页码一致。
+- ``speaking`` 字段为中文口播正文，约 10 秒；可用于后续 TTS 或分镜。
+- 保持全篇故事线连贯；页间有过渡句。
+- 抓住每页视觉与文字核心，不照读全部 bullet。
+- 若某页主要为图表/架构，按图示逻辑讲解组件关系。
+- 给出两个版本: 1. 'speaking' line, from the 1st person's perspective of the story/content;  2. 'voiceover' line, as the outsider/narrator's perspective of the story/content
+
+""" + SLIDE_ANALYSIS_OUTPUT_FORMAT
+
+
+SLIDE_ANALYSIS_PROMPT_CHOICES: list[tuple[str, str]] = [
+    (
+        "技术方案汇报（完整演讲稿 · 中文）",
+        SLIDE_ANALYSIS_TECH_SOLUTION_ZH,
+    ),
+    (
+        "商业提案汇报（客户提案 · 中文）",
+        SLIDE_ANALYSIS_BUSINESS_PROPOSAL_ZH,
+    ),
+    (
+        "培训课件讲解（教学口吻 · 中文）",
+        SLIDE_ANALYSIS_TRAINING_ZH,
+    ),
+    (
+        "高管简报（精简决策向 · 中文）",
+        SLIDE_ANALYSIS_EXECUTIVE_BRIEF_ZH,
+    ),
+    (
+        "Technical Solution（full script · EN）",
+        SLIDE_ANALYSIS_TECH_SOLUTION_EN,
+    ),
+    (
+        "幻灯片 → scene JSON（分镜口播 · 中文）",
+        SLIDE_ANALYSIS_SCENE_JSON_ZH,
+    ),
+]
+
+
+def build_slide_analysis_clipbody(
+    *,
+    instruction: str,
+    slide_path: str = "",
+    video_detail: dict | None = None,
+) -> str:
+    """组装 Slide/PDF 分析指令剪贴板正文。"""
+    parts: dict[str, object] = {}
+    parts["Instruction_for_slide_analysis"] = (instruction or "").strip()
+    sp = (slide_path or "").strip()
+    if sp:
+        parts["Slide_PDF_reference"] = sp
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    vid = vd.get("id")
+    if vid:
+        parts["Video_id"] = str(vid)
+    category = (
+        "topic_category: "
+        + str(vd.get("topic_category") or "")
+        + ",  topic_subtype: "
+        + str(vd.get("topic_subtype") or "")
+    )
+    if category.strip().rstrip(":"):
+        parts["Topic"] = category
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
 def build_notebooklm_gen_instruction_clipbody(
     *,
     mode: str,
@@ -517,15 +841,17 @@ def build_notebooklm_gen_instruction_clipbody(
     main_character: str = "",
     host_narrator: str = "",
     host_display: str = "",
+    variant: str = "",
 ) -> str:
-    """组装 NotebookLM 视觉/视频指令剪贴板正文。``mode`` 为 ``image`` ``video`` ``speak``。"""
+    """组装 NotebookLM 导出指令剪贴板正文。
+
+    ``mode`` + ``variant``：见 ``NOTEBOOKLM_EXPORT_VARIANTS``；也支持 ``image/slideshow`` 合成键。
+    """
+    base, var = normalize_nb_export_mode(mode, variant)
+
     vd = video_detail if isinstance(video_detail, dict) else {}
 
     parts: dict[str, object] = {}
-
-    vid = vd.get("id")
-    if not vid :
-        vid = ""
 
     category = (
         "topic_category: "
@@ -534,54 +860,82 @@ def build_notebooklm_gen_instruction_clipbody(
         + str(vd.get("topic_subtype") or "")
     )
 
-    if not visual_style :
+    if not visual_style:
         visual_style = "realistic"
 
     if not main_character:
         main_character = ""
 
-    if not host_narrator or host_narrator==HARRATOR_DISPLAY_OPTIONS[-1]:
-        voice = main_character + " (protagonist) performs, reflection, speak & interaction ~ 1st person speaking [say as 'I/we', and 'You' (not 'He/She')] ~ saying only the most key point,  not read words in image"
-        video = (
-                "** No Host (Narrator). Use the Story character as talking-avatar to speak about the content of scene."
-            )        
-    else:
-        voice = host_narrator + " ~ Host/Narrator narrates (" + host_display + ")"
-        video = (
-                "** If scene-image contains a Host(Narrator) talking-avatar → use Host to speak about the content of the scene. "
-                "** If scene-image has only a Story character (no Host) → use the Story character as talking-avatar to speak about the content of the scene."
-            )
+    host_narrator = (host_narrator or "").strip()
+    host_display = (host_display or "").strip() or HARRATOR_DISPLAY_OPTIONS[-1]
 
     scenes = scene_content if isinstance(scene_content, list) else []
     json_content = json.dumps(
-            scene_payload_for_slideshow_images(scenes, mode),
-            ensure_ascii=False,
-            indent=2,
-        )
+        scene_payload_for_notebooklm_export(scenes, base, var),
+        ensure_ascii=False,
+        indent=2,
+    )
 
-    if mode == "image":
-        parts["READ_FIRST__SLIDESHOW_MANDATE"] = NOTEBOOKLM_SLIDESHOW_MANDATE.format(Visual_Style=visual_style, character=main_character)
-        parts["Instruction_for_slideshow_image_generation"] = (
-            NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION.strip()
+    parts["Visual_Style"] = visual_style
+    parts["Export_variant"] = f"{base}/{var}"
+
+    if base == "image":
+        parts["READ_FIRST__SLIDESHOW_MANDATE"] = NOTEBOOKLM_SLIDESHOW_MANDATE.format(
+            Visual_Style=visual_style, character=main_character
+        )
+        img_instr = (
+            NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION
+            if var == "single"
+            else NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
+        )
+        parts["Instruction_for_image_generation"] = (
+            img_instr.strip() + "\n" + NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS.strip()
         )
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
-    elif mode == "video":
-        parts["Instruction_for_video_generation"] = video
-        parts["Voice"] = voice  
+    elif base == "video":
+        vid_instr = (
+            NOTEBOOKLM_VIDEO_WORD_IN_IMAGE
+            if var == "word_in_image"
+            else NOTEBOOKLM_VIDEO_MOTION_SILENT
+        )
+        parts["Instruction_for_video_generation"] = vid_instr.strip()
         parts["Instruction_for_video_and_audio_generation"] = (
             NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
         )
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
-    else:    # "speak":
-        parts["Instruction_for_video_generation"] = video
-        parts["Voice"] = voice  
-        parts["Instruction_for_video_and_audio_generation"] = (
-            NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
+    elif base == "voiceover":
+        parts["Voice"] = (
+            f"{host_narrator} ~ Host/Narrator ({host_display})"
+            if host_narrator
+            else "Host/Narrator not set — configure at login"
         )
+        parts["Host_display"] = host_display
+        vo_instr = (
+            NOTEBOOKLM_VOICEOVER_SUPPLEMENT
+            if var == "supplement"
+            else NOTEBOOKLM_VOICEOVER_NARRATION
+        )
+        parts["Instruction_for_voiceover_audio"] = vo_instr.strip()
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
+    elif base == "speaking":
+        parts["Voice"] = (
+            f"{main_character} ~ Protagonist/actor (1st person)"
+            if main_character
+            else "Protagonist not set — use each scene's actor field"
+        )
+        sp_instr = (
+            NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS
+            if var == "visual_keypoints"
+            else NOTEBOOKLM_SPEAKING_SCRIPT
+        )
+        parts["Instruction_for_speaking_audio"] = sp_instr.strip()
+        parts["Story_Category"] = category
+        parts["Story_Scene_Content"] = json_content
+    else:
+        raise ValueError(f"Unknown NotebookLM export mode: {mode!r}")
 
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 

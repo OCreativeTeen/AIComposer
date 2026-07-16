@@ -49,80 +49,82 @@ def overlay_corner_opts(overlay_cfg: dict | None) -> dict:
 def _find_overlay_png_file(
     rel: str,
     *,
-    repo_base: str,
-    default_media_path: str,
-    project_pid: str | None = None,
-    extra_relative_roots: tuple[str, ...] = (),
+    channel_dir: str | None = None,
 ) -> str | None:
-    rel = (rel or "").strip() or default_media_path
-    candidates: list[str] = []
+    """仅在 ``program/<channel_id>/``（或绝对路径）查找角标/水印 PNG。"""
+    rel = (rel or "").strip()
+    if not rel:
+        return None
     if os.path.isabs(rel):
-        candidates.append(rel)
-    else:
-        if project_pid:
-            candidates.append(os.path.join(config.get_project_path(project_pid), rel))
-        candidates.append(os.path.join(repo_base, rel))
-        for sub in extra_relative_roots:
-            candidates.append(os.path.join(repo_base, sub, os.path.basename(rel)))
-    candidates.append(os.path.join(repo_base, default_media_path))
-    seen: set[str] = set()
-    for p in candidates:
-        if not p or p in seen:
-            continue
-        seen.add(p)
-        if os.path.isfile(p):
-            return p
+        return rel if os.path.isfile(rel) else None
+    if not channel_dir:
+        return None
+    norm_rel = config.normalize_channel_overlay_rel_path(rel)
+    basename = os.path.basename(norm_rel.replace("\\", "/"))
+    for candidate in (
+        os.path.join(channel_dir, norm_rel),
+        os.path.join(channel_dir, basename),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
     return None
 
 
-def resolve_watermark_for_channel(channel_key: str) -> tuple[str | None, dict]:
-    """从频道配置解析右下角水印 PNG 与 opts（media downloader 等）。"""
-    import config_channel
+def _channel_dir_for_key(channel_key: str | None) -> str | None:
+    if not channel_key:
+        return None
+    try:
+        ch_id = config.get_channel_id(channel_key)
+        return config.get_channel_path(ch_id) if ch_id else None
+    except Exception:
+        return None
 
+
+def resolve_watermark_for_channel(channel_key: str) -> tuple[str | None, dict]:
+    """从频道配置解析右下角水印 PNG 与 opts（优先 ``program/<channel_id>/``）。"""
     try:
         ch_cfg = (
-            config_channel.get_channel_config(channel_key) if channel_key else None
+            config.get_channel_config(channel_key) if channel_key else None
         ) or {}
     except Exception:
         ch_cfg = {}
     wm = ch_cfg.get("watermark") if isinstance(ch_cfg, dict) else None
     wm = wm if isinstance(wm, dict) else {}
-    rel = wm.get("path") or "media/watermark.png"
+    rel = wm.get("path") or "watermark.png"
     path = _find_overlay_png_file(
         rel,
-        repo_base=repo_root(),
-        default_media_path="media/watermark.png",
-        extra_relative_roots=("media",),
+        channel_dir=_channel_dir_for_key(channel_key),
     )
     return (path, overlay_corner_opts(wm)) if path else (None, {})
 
 
 def resolve_watermark_for_project(
     project_config: dict | None,
-    *,
-    repo_base: str | None = None,
 ) -> tuple[str | None, dict]:
-    """从 PROJECT_CONFIG 解析右下角水印 PNG 与 opts（工作流 GUI）。"""
+    """从 PROJECT_CONFIG 解析右下角水印 PNG 与 opts（``program/<channel_id>/``）。"""
     pc = project_config if isinstance(project_config, dict) else {}
     wm = pc.get("watermark") if isinstance(pc.get("watermark"), dict) else {}
-    rel = wm.get("path", "media/watermark.png")
+    ch_key = pc.get("channel")
+    ch_wm: dict = {}
+    if ch_key:
+        try:
+            ch_wm = config.get_channel_config(ch_key).get("watermark") or {}
+        except Exception:
+            ch_wm = {}
+    ch_wm = ch_wm if isinstance(ch_wm, dict) else {}
+    merged_wm = {**ch_wm, **wm}
+    rel = merged_wm.get("path") or "watermark.png"
     path = _find_overlay_png_file(
         rel,
-        repo_base=repo_base or repo_root(),
-        default_media_path="media/watermark.png",
-        project_pid=pc.get("pid"),
+        channel_dir=_channel_dir_for_key(ch_key),
     )
-    return (path, overlay_corner_opts(wm)) if path else (None, {})
+    return (path, overlay_corner_opts(merged_wm)) if path else (None, {})
 
 
 def resolve_headmark_for_project(
     project_config: dict | None,
-    *,
-    repo_base: str | None = None,
 ) -> tuple[str | None, dict]:
-    """从项目 + 频道配置解析左上角角标 PNG 与 opts。"""
-    import config_channel
-
+    """从项目 + 频道配置解析左上角角标 PNG 与 opts（``program/<channel_id>/``）。"""
     pc = project_config if isinstance(project_config, dict) else {}
     proj_hm = pc.get("headmark")
     proj_hm = proj_hm if isinstance(proj_hm, dict) else {}
@@ -130,17 +132,15 @@ def resolve_headmark_for_project(
     ch_hm: dict = {}
     if ch_key:
         try:
-            ch_hm = config_channel.get_channel_config(ch_key).get("headmark") or {}
+            ch_hm = config.get_channel_config(ch_key).get("headmark") or {}
         except Exception:
             ch_hm = {}
     ch_hm = ch_hm if isinstance(ch_hm, dict) else {}
     hm = {**ch_hm, **proj_hm}
-    rel = hm.get("path") or "media/headmark.png"
+    rel = hm.get("path") or "headmark.png"
     path = _find_overlay_png_file(
         rel,
-        repo_base=repo_base or repo_root(),
-        default_media_path="media/headmark.png",
-        project_pid=pc.get("pid"),
+        channel_dir=_channel_dir_for_key(ch_key),
     )
     return (path, overlay_corner_opts(hm)) if path else (None, {})
 

@@ -40,6 +40,7 @@ rembg>=2.0.50
 moviepy
 ffmpeg-python
 opencv-python
+pymupdf
 
 # YouTube Download
 yt-dlp

@@ -161,12 +161,13 @@ class PublishReviewDialog:
         self.text_w = scrolledtext.ScrolledText(top, height=12, wrap=tk.WORD, font=("Arial", 10))
         self.text_w.pack(fill=tk.BOTH, expand=True, pady=4)
 
-        story_raw = self.video_detail.get("story")
-        summary = project_manager.publish_story_source_text(story_raw)
+        summary = project_manager.publish_description_source_text(self.video_detail)
         if not summary:
-            summary = project_manager.story_first_entry_text(story_raw) or ""
-        if not summary:
-            summary = (self.video_detail.get("analyzed_content") or "") or ""
+            sc = self.video_detail.get("scene_content")
+            if isinstance(sc, list) and sc and isinstance(sc[0], dict):
+                summary = project_manager.caption_from_scene_content_item(sc[0])
+            if not summary:
+                summary = (self.video_detail.get("analyzed_content") or "") or ""
 
         self.text_w.insert(tk.END, summary + "\n\n")
 

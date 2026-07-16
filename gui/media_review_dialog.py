@@ -4,7 +4,7 @@ import os, time, threading
 from PIL import Image, ImageTk
 from utility.file_util import get_file_path, safe_remove, safe_file
 from utility.audio_transcriber import AudioTranscriber
-import config, config_channel
+import config
 
 def _refresh_scene_media(*args, **kwargs):
     from project_manager import refresh_scene_media as _fn
@@ -1292,7 +1292,7 @@ class AVReviewDialog:
 
     def _build_remix_content_source_labels(self) -> list[str]:
         labels = [self._REMIX_CONTENT_LABEL_SCENE]
-        if project_manager.story_text_from_config(
+        if project_manager.narrative_text_from_config(
             project_manager.PROJECT_CONFIG or {}
         ):
             labels.append(self._REMIX_CONTENT_LABEL_STORY)
@@ -1410,7 +1410,7 @@ class AVReviewDialog:
     def _resolve_remix_llm_content(self) -> str:
         sel = (self.remix_content_source_var.get() or "").strip()
         if sel == self._REMIX_CONTENT_LABEL_STORY:
-            text = project_manager.story_text_from_config(
+            text = project_manager.narrative_text_from_config(
                 project_manager.PROJECT_CONFIG or {}
             )
             if not text:
@@ -1438,13 +1438,13 @@ class AVReviewDialog:
     def _load_remix_template_choices(self):
         """从项目 ``channel_prompt`` 或频道配置加载 remix prompt 选项。"""
         override = self._project_channel_prompt_override()
-        return config_channel.get_channel_template_prompt_choices(
+        return config.get_channel_template_prompt_choices(
             self.workflow.channel, channel_prompt_override=override
         )
 
     def _effective_remix_prompt_modes(self) -> dict[str, str]:
         override = self._project_channel_prompt_override()
-        return config_channel.get_channel_prompt_modes(
+        return config.get_channel_prompt_modes(
             self.workflow.channel, channel_prompt_override=override
         )
 
