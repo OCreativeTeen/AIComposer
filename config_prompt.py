@@ -414,12 +414,18 @@ def _image_painting_direction(scene: dict) -> str:
 
 
 def scene_payload_for_notebooklm_export(
-    scenes: list, mode: str, variant: str = ""
+    scenes: list, mode: str, variant: str = "", narrator: str = ""
 ) -> list[dict]:
     """按 NotebookLM 导出模式裁剪 scene JSON。"""
     import project_manager
 
     base, var = normalize_nb_export_mode(mode, variant)
+    project_narrator = (narrator or "").strip()
+    if not project_narrator:
+        pc = project_manager.PROJECT_CONFIG or {}
+        project_narrator = (
+            (pc.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
+        )
 
     new_scenes = []
     for scene in scenes:
@@ -446,7 +452,7 @@ def scene_payload_for_notebooklm_export(
                 new_scene.pop("story", None)
         elif base == "voiceover":
             slim = {}
-            for k in ("caption", "voiceover", "visual", "actor", "speaking"):
+            for k in ("voiceover",):
                 val = new_scene.get(k)
                 if isinstance(val, str):
                     if not val.strip():
@@ -454,11 +460,13 @@ def scene_payload_for_notebooklm_export(
                 elif not val:
                     continue
                 slim[k] = val
+            if project_narrator:
+                slim["narrator"] = project_narrator
             new_scenes.append(slim)
             continue
         elif base == "speaking":
             slim = {}
-            for k in ("caption", "speaking", "visual", "actor", "voiceover"):
+            for k in ("speaking", "actor"):
                 val = new_scene.get(k)
                 if isinstance(val, str):
                     if not val.strip():
@@ -473,9 +481,11 @@ def scene_payload_for_notebooklm_export(
     return new_scenes
 
 
-def scene_payload_for_slideshow_images(scenes: list, mode, variant: str = "") -> list[dict]:
+def scene_payload_for_slideshow_images(
+    scenes: list, mode, variant: str = "", narrator: str = ""
+) -> list[dict]:
     """兼容旧名；委托 ``scene_payload_for_notebooklm_export``。"""
-    return scene_payload_for_notebooklm_export(scenes, mode, variant)
+    return scene_payload_for_notebooklm_export(scenes, mode, variant, narrator=narrator)
 
 
 NOTEBOOKLM_VIDEO_MOTION_SILENT = """
@@ -871,7 +881,7 @@ def build_notebooklm_gen_instruction_clipbody(
 
     scenes = scene_content if isinstance(scene_content, list) else []
     json_content = json.dumps(
-        scene_payload_for_notebooklm_export(scenes, base, var),
+        scene_payload_for_notebooklm_export(scenes, base, var, narrator=host_narrator),
         ensure_ascii=False,
         indent=2,
     )
