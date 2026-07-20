@@ -83,11 +83,7 @@ def _format_nb_prompt_template(template: str, **kwargs) -> str:
     return template.format(**safe)
 
 
-_STORY_TO_SCENES_LABELS = frozenset({"Story to Scenes"})
-
-
 def _prompt_choice_entries(channel_key: str) -> list[tuple[str, str]]:
-    """从频道 config 读取 ``scenes_prompt_choices`` → (label, template)。"""
     cfg = config.get_channel_config(channel_key) or {}
     entries: list[tuple[str, str]] = []
     for item in cfg.get("scenes_prompt_choices") or []:
@@ -99,30 +95,6 @@ def _prompt_choice_entries(channel_key: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _scenes_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
-    return _prompt_choice_entries(channel_key)
-
-
-def _combined_scene_prompt_choices(channel_key: str) -> list[tuple[str, str]]:
-    """全部 LM 提示（不含 Story to Scenes）。"""
-    return [
-        (lbl, tpl)
-        for lbl, tpl in _prompt_choice_entries(channel_key)
-        if lbl not in _STORY_TO_SCENES_LABELS
-    ]
-
-
-def _default_combined_prompt_label(channel_key: str) -> str:
-    """默认 LM 提示：Content to Scenes → 合并列表首项。"""
-    picked = _pick_notebooklm_prompt_label(
-        channel_key, "Content to Scenes", "Content to Scene"
-    )
-    if picked:
-        return picked
-    choices = _combined_scene_prompt_choices(channel_key)
-    return choices[0][0] if choices else ""
-
-
 def _resolve_combined_prompt_template(
     channel_key: str,
     *,
@@ -130,7 +102,7 @@ def _resolve_combined_prompt_template(
     index: int = 0,
 ) -> tuple[str, str, int]:
     """在 ``scenes_prompt_choices`` 合并列表中解析 (label, template, index)。"""
-    choices = _combined_scene_prompt_choices(channel_key)
+    choices = _prompt_choice_entries(channel_key)
     if not choices:
         return ("", "", 0)
     if label:
@@ -219,34 +191,6 @@ def _pick_prompt_label_from_choices(
     return ""
 
 
-def _default_notebooklm_prompt_label(channel_key: str) -> str:
-    """场景智能生成等内部使用的默认提示 label。"""
-    for lbl, _ in _scenes_prompt_choices(channel_key):
-        if (lbl or "").strip() in ("Story", "Scenes"):
-            return lbl
-        if "Scene" in (lbl or ""):
-            return lbl
-    choices = _scenes_prompt_choices(channel_key)
-    return choices[0][0] if choices else ""
-
-
-def _pick_notebooklm_prompt_label(channel_key: str, *candidates: str) -> str:
-    """在频道 LM 提示中按 label 精确或子串匹配。"""
-    return _pick_prompt_label_from_choices(
-        _scenes_prompt_choices(channel_key), *candidates
-    )
-
-
-def _default_scene_editor_prompt_label(video_detail: dict, channel_key: str) -> str:
-    """场景编辑窗默认 LM 提示 label。"""
-    return _default_combined_prompt_label(channel_key)
-
-
-def _default_story_editor_prompt_label(channel_key: str) -> str:
-    """兼容旧调用：同 ``_default_combined_prompt_label``。"""
-    return _default_combined_prompt_label(channel_key)
-
-
 def _scene_entry_heading(entry: dict) -> str:
     """Scene 条目标题：``caption``。"""
     return project_manager.caption_from_scene_content_item(entry)
@@ -261,26 +205,6 @@ def _scene_entry_display_text(entry: dict) -> str:
     if title and body:
         return f"{title}\n\n{body}"
     return body or title
-
-
-def _resolve_notebooklm_prompt_template(
-    channel_key: str,
-    *,
-    label: str | None = None,
-    index: int = 0,
-) -> tuple[str, str, int]:
-    """按 label 或 index 取 (label, template, index)；无匹配时回退首项。"""
-    choices = _scenes_prompt_choices(channel_key)
-    if not choices:
-        return ("", "", 0)
-    if label:
-        want = label.strip()
-        for i, (lbl, tpl) in enumerate(choices):
-            if (lbl or "").strip() == want:
-                return (lbl, tpl, i)
-    idx = max(0, min(index, len(choices) - 1))
-    lbl, tpl = choices[idx]
-    return (lbl, tpl, idx)
 
 
 def _notebooklm_row_topic_fields(video_detail: dict) -> tuple[str, str, str]:
@@ -2748,6 +2672,53 @@ def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> d
 def _video_detail_project_pid(vd) -> str:
     """列表项绑定的工作流 pid（仅 ``project_profile.pid``）。"""
     return project_manager.list_json_row_workflow_pid(vd if isinstance(vd, dict) else {})
+
+
+def _video_detail_source_keys(vd: dict) -> tuple[str, str]:
+    """源 YouTube 行的 ``id`` / ``url``，用于匹配 ``cloned_from_*``。"""
+    if not isinstance(vd, dict):
+        return "", ""
+    return (str(vd.get("id") or "").strip(), str(vd.get("url") or "").strip())
+
+
+def _find_cloned_project_pids_for_source(vd: dict, channel_videos: list) -> list[str]:
+    """同源克隆项目 pid 列表（主题分表里「新建项目」追加的行，``cloned_from_id/url`` 指向源行）。"""
+    src_id, src_url = _video_detail_source_keys(vd)
+    if not src_id and not src_url:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in channel_videos or []:
+        if not isinstance(item, dict):
+            continue
+        pid = _video_detail_project_pid(item)
+        if not pid or pid in seen:
+            continue
+        cf_id = (item.get("cloned_from_id") or "").strip()
+        cf_url = (item.get("cloned_from_url") or "").strip()
+        matched = (src_id and cf_id == src_id) or (src_url and cf_url and cf_url == src_url)
+        if matched:
+            seen.add(pid)
+            out.append(pid)
+    return out
+
+
+def _linked_project_pids_for_video_detail(vd: dict, channel_videos: list | None) -> list[str]:
+    """本条已绑 pid，或从同源克隆行解析出的全部 pid（保持列表顺序）。"""
+    direct = _video_detail_project_pid(vd)
+    if direct:
+        return [direct]
+    return _find_cloned_project_pids_for_source(vd, channel_videos or [])
+
+
+def _list_row_index_for_pid(channel_videos: list, pid: str) -> int:
+    pid = (pid or "").strip()
+    if not pid:
+        return -1
+    for i, item in enumerate(channel_videos or []):
+        if _list_json_item_matches_pid(item, pid):
+            return i
+    return -1
 
 
 def _list_json_item_matches_pid(item: dict, wanted_pid: str) -> bool:
@@ -5819,7 +5790,7 @@ class MediaGUIManager:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         channel_key = self._channel_config_key()
         if not prompt_label:
-            prompt_label = _default_combined_prompt_label(channel_key)
+            prompt_label = _prompt_choice_entries(channel_key)[0][0]
         if not (video_detail.get("analyzed_content") or "").strip():
             messagebox.showwarning(
                 "提示",
@@ -5827,7 +5798,7 @@ class MediaGUIManager:
                 parent=parent,
             )
             return False
-        if not prompt_label and not _combined_scene_prompt_choices(channel_key):
+        if not prompt_label and not _prompt_choice_entries(channel_key):
             messagebox.showwarning(
                 "提示",
                 "当前频道未配置可用的 LM 提示词，无法智能生成。",
@@ -6185,7 +6156,6 @@ class MediaGUIManager:
             visual_style=(visual_style or "").strip() or project_manager.LAST_VISUAL_STYLE,
             main_character=(main_character or "").strip(),
             host_narrator=(project_manager.LAST_NARRATOR or "").strip(),
-            host_display=project_manager.LAST_HOST_DISPLAY,
         )
 
         _copy_text_to_clipboard(parent, clip_body)
@@ -6419,11 +6389,11 @@ class MediaGUIManager:
         ).pack(anchor=tk.W, pady=(0, 8))
 
         channel_key = self._channel_config_key()
-        nb_prompt_choices = _combined_scene_prompt_choices(channel_key)
+        nb_prompt_choices = _prompt_choice_entries(channel_key)
         prompt_row = ttk.Frame(frm)
         prompt_row.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(prompt_row, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
-        default_prompt_label = _default_combined_prompt_label(channel_key)
+        default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
         prompt_combo_var = tk.StringVar(value=default_prompt_label)
         prompt_combo = ttk.Combobox(
             prompt_row,
@@ -7404,9 +7374,8 @@ class MediaGUIManager:
                 ).lower()
 
                 transcript = config.read_transcript_text_from_video_detail(video_detail) or ""
-                analyzed = video_detail.get("analyzed_content")
+                analyzed = video_detail.get("analyzed_content") or ""
                 content = (transcript + "\n" + analyzed).strip().lower()
-                content = content.strip().lower()
                 if search_text in title or search_text in content:
                     tree.selection_add(item)
                     matched_count += 1
@@ -7883,6 +7852,7 @@ class MediaGUIManager:
             parent,
             *,
             forced_action=None,
+            bound_pid=None,
             topic_category=None,
             topic_subtype=None,
             topic_tags=None,
@@ -7921,10 +7891,15 @@ class MediaGUIManager:
                     return parse_tags_list(tags) or None
                 return None
 
-            existing_pid = _video_detail_project_pid(vd)
+            channel_videos = self.downloader.channel_videos or []
+            existing_pid = (bound_pid or _video_detail_project_pid(vd) or "").strip()
+            if not existing_pid:
+                linked = _find_cloned_project_pids_for_source(vd, channel_videos)
+                if len(linked) == 1:
+                    existing_pid = linked[0]
             list_idx = -1
             try:
-                list_idx = (self.downloader.channel_videos or []).index(vd)
+                list_idx = channel_videos.index(vd)
             except ValueError:
                 pass
             list_path = (self.downloader.channel_list_json or "").strip()
@@ -7934,6 +7909,20 @@ class MediaGUIManager:
                 LAST_NARRATOR,
                 LAST_VISUAL_STYLE,
             )
+
+            def _load_bound_project_cfg(for_pid: str = ""):
+                wanted = (for_pid or existing_pid or "").strip()
+                cfg = None
+                if wanted:
+                    row_ix = _list_row_index_for_pid(channel_videos, wanted)
+                    if row_ix >= 0 and list_path and os.path.isfile(list_path):
+                        item = channel_videos[row_ix]
+                        cfg = project_manager.project_config_from_list_item(
+                            item, list_path, row_ix
+                        )
+                if (not cfg or not cfg.get("pid")) and wanted:
+                    cfg = project_manager.load_project_config_by_pid(wanted)
+                return cfg
 
             def _persist_channel_list_and_refresh_tree(
                 select_key: str = "",
@@ -8117,7 +8106,6 @@ class MediaGUIManager:
                 *,
                 narrator=None,
                 visual_style=None,
-                host_display=None,
                 language=None,
                 topic_category_kw=None,
                 topic_subtype_kw=None,
@@ -8143,7 +8131,6 @@ class MediaGUIManager:
                     language=lang,
                     narrator=narrator if narrator is not None else LAST_NARRATOR,
                     visual_style=visual_style if visual_style is not None else LAST_VISUAL_STYLE,
-                    host_display=host_display or config_prompt.HARRATOR_DISPLAY_OPTIONS[-1],
                     analyzed_content=ac or None,
                     scene_content=scene_content,
                     topic_category=topic_category_kw if topic_category_kw is not None else _topic_category_val(),
@@ -8156,20 +8143,11 @@ class MediaGUIManager:
                         superseded_pid=superseded_pid,
                     )
 
-            def _load_bound_project_cfg():
-                cfg = None
-                if list_idx >= 0 and list_path and os.path.isfile(list_path):
-                    cfg = project_manager.project_config_from_list_item(vd, list_path, list_idx)
-                if not cfg or not cfg.get("pid"):
-                    if existing_pid:
-                        cfg = project_manager.load_project_config_by_pid(existing_pid)
-                return cfg
-
             if forced_action == "open":
                 if not existing_pid:
                     messagebox.showwarning("无法打开", "本条尚无 project_profile / 绑定项目。", parent=parent)
                     return
-                cfg = _load_bound_project_cfg()
+                cfg = _load_bound_project_cfg(existing_pid)
                 cfg_pid = (cfg.get("pid") or "").strip() if isinstance(cfg, dict) else ""
                 if not cfg_pid:
                     messagebox.showwarning(
@@ -8201,7 +8179,7 @@ class MediaGUIManager:
                 return
 
             if existing_pid:
-                cfg = _load_bound_project_cfg()
+                cfg = _load_bound_project_cfg(existing_pid)
                 if isinstance(cfg, dict) and (cfg.get("pid") or "").strip():
                     cfg_pid = (cfg.get("pid") or "").strip()
                     if cfg_pid != existing_pid:
@@ -8237,7 +8215,6 @@ class MediaGUIManager:
                                 sc,
                                 narrator=cfg.get("narrator"),
                                 visual_style=cfg.get("visual_style"),
-                                host_display=cfg.get("host_display"),
                                 language=cfg.get("language"),
                                 topic_category_kw=_topic_category_val(cfg),
                                 topic_subtype_kw=_topic_subtype_val(cfg),
@@ -8261,6 +8238,75 @@ class MediaGUIManager:
                 topic_tags_kw=_topic_tags_val(),
             )
 
+        def _open_project_for_video_detail(
+            vd,
+            parent,
+            *,
+            topic_category=None,
+            topic_subtype=None,
+            topic_tags=None,
+        ):
+            """打开项目：已有/同源克隆 pid 时询问打开或新建；否则直接新建（须 scene_content）。"""
+            if not isinstance(vd, dict):
+                return
+            linked_pids = _linked_project_pids_for_video_detail(
+                vd, self.downloader.channel_videos
+            )
+            if linked_pids:
+                choices = [
+                    (f"open:{pid}", f"打开已有项目（{pid}）") for pid in linked_pids
+                ]
+                choices.append(("new", "新建项目（基于当前 scene_content）"))
+                picked = askchoice("打开项目", choices, parent=parent)
+                if not picked:
+                    return
+                action = picked[1]
+                if action == "new":
+                    if not _video_detail_can_create_project(vd):
+                        messagebox.showwarning(
+                            "打开项目",
+                            "scene_content 须为有效 JSON array，无法启动新项目。\n"
+                            "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                            parent=parent,
+                        )
+                        return
+                    _run_project_start_for_video_detail(
+                        vd,
+                        parent,
+                        forced_action="new",
+                        topic_category=topic_category,
+                        topic_subtype=topic_subtype,
+                        topic_tags=topic_tags,
+                    )
+                    return
+                open_pid = action[5:] if action.startswith("open:") else linked_pids[0]
+                _run_project_start_for_video_detail(
+                    vd,
+                    parent,
+                    forced_action="open",
+                    bound_pid=open_pid,
+                    topic_category=topic_category,
+                    topic_subtype=topic_subtype,
+                    topic_tags=topic_tags,
+                )
+                return
+            if not _video_detail_can_create_project(vd):
+                messagebox.showwarning(
+                    "打开项目",
+                    "scene_content 须为有效 JSON array，无法启动新项目。\n"
+                    "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                    parent=parent,
+                )
+                return
+            _run_project_start_for_video_detail(
+                vd,
+                parent,
+                forced_action="new",
+                topic_category=topic_category,
+                topic_subtype=topic_subtype,
+                topic_tags=topic_tags,
+            )
+
         def on_enter_key(event):
             on_focus(event, low_priority=False)
 
@@ -8275,10 +8321,11 @@ class MediaGUIManager:
                     ("review_analyzed", "查看 analyzed content（分析内容预览）")
                 )
             existing_pid = _video_detail_project_pid(vd)
-            if existing_pid:
-                choices.append(("open_project", f"打开已有项目（{existing_pid}）"))
-            if _video_detail_has_raw_for_project(vd):
-                choices.append(("new_project", "新建项目（基于 scene_content）"))
+            linked_pids = _linked_project_pids_for_video_detail(
+                vd, self.downloader.channel_videos
+            )
+            if existing_pid or linked_pids or _video_detail_has_raw_for_project(vd):
+                choices.append(("open_project", "打开项目"))
             choices.append(("resummarize", "重摘（重新摘要 analyzed content）"))
 
             title = f"选择操作 — {_youtube_row_display_title(vd)}"
@@ -8294,9 +8341,7 @@ class MediaGUIManager:
             elif action == "review_analyzed":
                 self.show_analyzed_content_popup(vd, parent=dialog)
             elif action == "open_project":
-                _run_project_start_for_video_detail(vd, dialog, forced_action="open")
-            elif action == "new_project":
-                _run_project_start_for_video_detail(vd, dialog, forced_action="new")
+                _open_project_for_video_detail(vd, dialog)
             elif action == "resummarize":
                 _resummarize_one_video_detail(vd)
 
@@ -8448,41 +8493,47 @@ class MediaGUIManager:
                 sticky="ew",
                 pady=(6, 2),
             )
+            media_btn_row.columnconfigure(0, weight=1)
             ttk.Label(
                 media_btn_row,
                 textvariable=feature_media_var,
                 font=("Arial", 9),
-            ).pack(side=tk.LEFT, anchor=tk.W, padx=(5, 10))
+                wraplength=680,
+                justify=tk.LEFT,
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=(5, 10), pady=(0, 4))
+            media_actions_row = ttk.Frame(media_btn_row)
+            media_actions_row.grid(row=1, column=0, sticky="w")
             open_feature_folder_btn = ttk.Button(
-                media_btn_row,
+                media_actions_row,
                 text="打开成片文件夹",
                 width=16,
             )
             open_feature_folder_btn.pack(side=tk.LEFT, padx=(0, 6))
             edit_clip_segments_btn = ttk.Button(
-                media_btn_row,
+                media_actions_row,
                 text="编辑成片片段",
                 width=14,
             )
             edit_clip_segments_btn.pack(side=tk.LEFT, padx=(0, 6))
             copy_cover_clipboard_btn = ttk.Button(
-                media_btn_row,
+                media_actions_row,
                 text="封面复制",
                 width=14,
             )
             copy_cover_clipboard_btn.pack(side=tk.LEFT, padx=(0, 6))
             prompt_picker_btn = ttk.Button(
-                media_btn_row,
+                media_actions_row,
                 text="封面提示",
                 width=12,
             )
             prompt_picker_btn.pack(side=tk.LEFT, padx=(0, 6))
-            create_project_btn = ttk.Button(
-                media_btn_row,
-                text="创建项目",
+            open_project_btn = ttk.Button(
+                media_actions_row,
+                text="打开项目",
                 width=12,
             )
-            create_project_btn.pack(side=tk.LEFT, padx=(0, 6))
+            open_project_btn.pack(side=tk.LEFT, padx=(0, 6))
 
             def refresh_feature_media_row():
                 if not summary_window.winfo_exists():
@@ -8507,11 +8558,12 @@ class MediaGUIManager:
                 if seg_n:
                     parts.append(f"片段配置: {seg_n} 段")
                 if parts:
-                    feature_media_var.set("  |  ".join(parts))
+                    feature_media_var.set("\n".join(parts))
                 else:
                     gen_hint = _gen_video_storage_dir() or "(未配置 publish/gen_video)"
                     feature_media_var.set(
-                        f"尚未拖入成片/封面/幻灯片/场景 JSON（拖入 MP4、图片、PDF 或 .json 到本窗，保存至 {gen_hint}）"
+                        "尚未拖入成片/封面/幻灯片/场景 JSON\n"
+                        f"（拖入 MP4、图片、PDF 或 .json 到本窗，保存至 {gen_hint}）"
                     )
                 try:
                     copy_cover_clipboard_btn.config(
@@ -8530,10 +8582,14 @@ class MediaGUIManager:
                 except tk.TclError:
                     pass
                 try:
-                    create_project_btn.config(
-                        state=tk.NORMAL
-                        if _video_detail_can_create_project(video_detail)
-                        else tk.DISABLED
+                    _can_open_proj = bool(
+                        _linked_project_pids_for_video_detail(
+                            video_detail, self.downloader.channel_videos
+                        )
+                        or _video_detail_can_create_project(video_detail)
+                    )
+                    open_project_btn.config(
+                        state=tk.NORMAL if _can_open_proj else tk.DISABLED
                     )
                 except tk.TclError:
                     pass
@@ -8948,57 +9004,27 @@ class MediaGUIManager:
 
             prompt_picker_btn.config(command=on_open_prompt_picker)
 
-            def on_create_project_from_summary():
-                existing_pid = _video_detail_project_pid(video_detail)
-                if existing_pid:
-                    picked = askchoice(
-                        "创建项目",
-                        [
-                            ("open", f"打开已有项目（{existing_pid}）"),
-                            ("new", "新建项目（基于当前 scene_content）"),
-                        ],
-                        parent=summary_window,
-                    )
-                    if not picked:
-                        return
-                    action = picked[1]
-                    if action == "open":
-                        _run_project_start_for_video_detail(
-                            video_detail,
-                            summary_window,
-                            forced_action="open",
-                            topic_category=category_var.get().strip(),
-                            topic_subtype=subtype_var.get().strip(),
-                            topic_tags=tags_var.get().strip(),
-                        )
-                        return
-                _run_project_start_for_video_detail(
+            def on_open_project_from_summary():
+                _open_project_for_video_detail(
                     video_detail,
                     summary_window,
-                    forced_action="new",
                     topic_category=category_var.get().strip(),
                     topic_subtype=subtype_var.get().strip(),
                     topic_tags=tags_var.get().strip(),
                 )
 
-            create_project_btn.config(command=on_create_project_from_summary)
+            open_project_btn.config(command=on_open_project_from_summary)
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
-            # 画面风格 / 旁白 / Host 显示：与欢迎屏一致，只读（LAST_*）
+            # 画面风格 / 旁白：与欢迎屏一致，只读（LAST_*）
             ttk.Label(prompt_choice_frame, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
             ttk.Label(prompt_choice_frame, text=project_manager.LAST_VISUAL_STYLE, width=16, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
             ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
 
-            # 旁白：欢迎屏 narrator；Host 显示：欢迎屏选择
             ttk.Label(prompt_choice_frame, text="旁白").pack(side=tk.LEFT, padx=(0, 5))
             ttk.Label(prompt_choice_frame, text=str(project_manager.LAST_NARRATOR or ""), width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
-
-            ttk.Label(prompt_choice_frame, text="HOST").pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Label(prompt_choice_frame, text=project_manager.LAST_HOST_DISPLAY, width=18, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
 
 
             def copy_style_character():

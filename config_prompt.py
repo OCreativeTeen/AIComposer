@@ -35,51 +35,6 @@ SPEAKING_CONCISE_PROMPT = (
 )
 
 
-STORY_REMIX_SPEAKING_SYSTEM_PROMPT = """
-*** You are a narrative restructuring and natural speech refinement engine.
-
-*** Input
-    ** You will receive a JSON array.
-        * Each element in the array represents one scene.
-        * Each scene field "speaking" contains a short segment of spoken narration (a few sentences forming one idea cluster, in {language}).
-        * All scenes together form a complete story, explanation, analysis, or speech.
-
-
-*** Task
-	** Your job is to remix and restructure the narration while maintaining the exact original scene count.
-	** You must redistribute the narrative flow to balance the weight of each scene without changing the array size.
-
-*** Core Requirements
-	** CRITICAL: try to keep result json array length the same as input array length !!!!!!!!!!
-		* So, basically, DO NOT merge or split elements.
-	** Content Redistribution & Balancing
-		* You may move text across the boundaries of adjacent scenes to balance length.
-		* If a scene is too short, pull relevant detail from the previous or next scene to fill it.
-		* If a scene is too long, push some content into the adjacent scenes.
-		* The goal is for each of the scenes to feel like a balanced, meaningful unit !!!!!!!!!!
-	** No Summarization (Preserve Density)
-		* Do NOT summarize or shorten the total content.
-		* Preserve all original details, nuances, and descriptive richness.
-		* You may expand slightly for natural flow, but never reduce information density.
-	** Natural Spoken Style
-		* The output must sound like spontaneous human speech, not a written script.
-		* Keep it conversational and "perfectly imperfect":
-			- Use natural fillers, casual phrasing, discourse markers !!!!!!!!!!
-			- Allow for slight redundancies or minor repetitions common in speaking.
-			- Ensure the flow between scenes feels like a person thinking and talking in real-time.
-            - DO NOT use long sentences, or complex sentences !!!!!!!!!! Can break sentence into short sentences, or use short phrases.
-	** Language & Grammar
-		* Fix typos and punctuation errors in {language}.
-		* Ensure each scene is a self-contained "thought cluster" but remains part of the continuous flow.
-
-*** Output Format
-	** Return ONLY a valid JSON array.
-	** Each object MUST contain:
-		* "speaking" — the refined content for that scene (same position as in the input array).
-	** NO markdown code blocks (unless requested), or explanations in your response. Only the JSON.
-"""
-
-
 BUILD_CLEAR_STORIES_ON_CASE_STUDY_SUMMARIES_SYSTEM_PROMPT = """
 ROLE:
     ** You are a psychological narrative architect specializing in trauma-informed storytelling and systemic relationship dynamics.
@@ -255,47 +210,12 @@ the uploaded txt file is a json list, each item in this list has "content" & "su
 
 
 
-
-SCENE_VIDEO_INSTRUCTION = """
-Video generation instruction: 
-    *** MOST IMPORTANT!!!: if current scene image not has any 'actor' / 'narrator' as talking-avatar,  DO NOT add any talking-avatar to the video!!!  (actor or narrator info just used to choose voice !!!)
-
-    *** if current scene image has 'narrator' talking-avatar;
-        ** normally, the narrator is talking about the previous scene, current screen may keep the previous scene's image as background (which actor should not speak)
-        ** and the video should keep stable as the starting image (keep the narrator in same position), do not jump to other background because of the content narration.
-
---------------
-Scene-Image generation instruction:
-    ** Visual-Style
-        ** General Visual-Style:  {visual_style};  Detailed visual-style follows the scene json field "visual_style".
-    ** if current scene is 'narrator' speaking about the previous scene, normally should keep the previous scene image as background of current scene, and show 'narrator' as talking-avatar at front.
-
-
---------------
-Audio generation / Words-in-image generation instruction: 
-    ** Speaker:
-        * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
-        * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/young/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
-	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
-        * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
-        * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
-        * if current scene has both 'narrator' & 'actor', 'narrator' is the talking_avatar (lip_sync), and 'actor' only act (not speak); No interaction between 'narrator' & any 'actor'!!!!!
-    ** If 'speaking' is empty, but has 'actor' or 'narrator' field, then speaker should breifly speak about the content of image (i.e., text message in the image)
-    ** Use 'speaking' content as reference only. Concisify target max 10 seconds speech. 
-    ** May add sound-effects to enhance the scene, but no music.
-    ** For Word-in-image generation, try to make very very concise (no details, just key points in titles)
-
---------------
-Story Json-Content:
-"""
-
-
 # NotebookLM：由 downloader「Scene JSON → 指令」成功路径拆出的 slideshow / video 两段。
 # 勿用 SLIDESHOW_GENERATION_INSTRUCTION 直接喂 NotebookLM：过程说明过多，易生成「如何做片」的技术报告而非故事画面。
 
 NOTEBOOKLM_SLIDESHOW_MANDATE = """
 You generate PICTURE illustrations, NOT text slides.
-Each scene's ``act_and_talk_____not_rephrase`` tells you WHAT to paint — setting, character emotion, action, and light.
+Each scene's ``show_this_content`` tells you WHAT to paint — setting, character emotion, action, and light.
 ** Consistent Visual_Style : {Visual_Style}
 ** Consistent Story-Character look (VERY VERY IMPORTANT!!!!) : {character}.
 """
@@ -307,7 +227,7 @@ NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS = """
 
 NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
 ** Slideshow mode: exactly 1 image = 1 scene (one frozen moment per scene entry).
-** Use ``act_and_talk_____not_rephrase`` (+ Visual_Style) as painting direction. All JSON field values = staging cues, NOT text to render on the image.
+** Use ``show_this_content`` (+ Visual_Style) as painting direction. All JSON field values = staging cues, NOT text to render on the image.
 ** Output = one clean illustration per scene: environment + protagonist emotion + action + lighting tell the story visually.
 ** NEVER add onto the image: subtitles, caption paragraphs, small annotations, spreadsheet labels, or busy speech bubbles.
 ** If VERY CRITICAL highlighted info (very short) is ABSOLUTELY necessary, show as huge sparse background text only (transparent-like font).
@@ -322,13 +242,6 @@ NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
-NOTEBOOKLM_SLIDESHOW_EXECUTE_HINT = (
-    "Use 'Pasted Text / 粘贴的文字' to generate the Slide-Show. "
-    "每张图必须是纯插画：用画面和人物讲故事。"
-    "act_and_talk_____not_rephrase 是构图说明，不是要你写在图上的字幕或故事小字。"
-    "禁止在图上添加说明段落、对话字幕、表格文字、手机消息文字。"
-)
-
 # NotebookLM 导出：四大类 × 子类型（UI 菜单与 build 函数共用）
 NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
     "image": [
@@ -340,7 +253,8 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
         ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
     ],
     "speaking": [
-        ("script", "念 speaking 字段"),
+        ("script", "念 speaking · 第一人称口播"),
+        ("acting", "只演不讲 · 神态/肢体/思考"),
         ("visual_keypoints", "讲解画面要点 · 非念图内文字"),
     ],
     "voiceover": [
@@ -413,6 +327,70 @@ def _image_painting_direction(scene: dict) -> str:
     return "\n".join(parts)
 
 
+def _slim_scene_fields(scene: dict, keys: tuple[str, ...]) -> dict:
+    """从场景 dict 按字段名裁剪非空值。"""
+    slim: dict = {}
+    for k in keys:
+        val = scene.get(k)
+        if isinstance(val, str):
+            if not val.strip():
+                continue
+        elif not val:
+            continue
+        slim[k] = val
+    return slim
+
+
+# 工作流场景 dict 中的媒体/技术字段，NotebookLM 导出一律剔除
+_NOTEBOOKLM_WORKFLOW_ONLY_KEYS = frozenset({
+    "id",
+    "environment",
+    "start",
+    "end",
+    "duration",
+    "zero",
+    "zero_image",
+    "zero_audio",
+    "zero_image_last",
+    "zero_left",
+    "zero_right",
+    "clip",
+    "clip_audio",
+    "clip_image",
+    "clip_image_last",
+    "clip_left",
+    "clip_right",
+    "narration",
+    "narration_audio",
+    "narration_image",
+    "narration_image_last",
+    "narration_left",
+    "narration_right",
+    "visual_style",
+    "clip_animation",
+    "narration_animation",
+    "title_font",
+    "extension",
+    "cinematography",
+    "story",
+})
+
+
+def _notebooklm_scene_content_base(scene: dict) -> dict:
+    """工作流/列表场景 → 仅保留 NotebookLM 文案字段（就地 normalize）。"""
+    import project_manager
+
+    if not isinstance(scene, dict):
+        return {}
+    out = {
+        k: v
+        for k, v in scene.items()
+        if k not in _NOTEBOOKLM_WORKFLOW_ONLY_KEYS
+    }
+    project_manager.normalize_scene_content_item_for_workflow(out)
+    return out
+
+
 def scene_payload_for_notebooklm_export(
     scenes: list, mode: str, variant: str = "", narrator: str = ""
 ) -> list[dict]:
@@ -429,55 +407,39 @@ def scene_payload_for_notebooklm_export(
 
     new_scenes = []
     for scene in scenes:
-        new_scene = scene.copy()
-        project_manager.normalize_scene_content_item_for_workflow(new_scene)
+        new_scene = _notebooklm_scene_content_base(scene)
 
-        if base == "image":
-            painting = _image_painting_direction(new_scene)
-            slim = {}
-            if painting:
-                slim[
-                    "act_and_talk___rebuild_the_content_as_natual_story_telling___not_rephrase"
-                ] = painting
-            actor = (new_scene.get("actor") or "").strip()
-            if actor:
-                slim["actor"] = actor
-            caption = (new_scene.get("caption") or "").strip()
-            if caption:
-                slim["caption"] = caption
+        if base == "video":
+            slim = _slim_scene_fields(
+                new_scene,
+                ("visual", "speaking", "voiceover"),
+            )
+            slim["show_this_content_____not_speaking"] = new_scene.pop("speaking", "")+" ~~~ "+new_scene.pop("voiceover", "")
             new_scenes.append(slim)
             continue
-        if base == "video":
-            if new_scene.get("visual"):
-                new_scene.pop("story", None)
         elif base == "voiceover":
-            slim = {}
-            for k in ("voiceover",):
-                val = new_scene.get(k)
-                if isinstance(val, str):
-                    if not val.strip():
-                        continue
-                elif not val:
-                    continue
-                slim[k] = val
+            vo_keys: tuple[str, ...] = ("voiceover", "visual", "speaking")
+            slim = _slim_scene_fields(new_scene, vo_keys)
+            if var == "supplement":
+                slim["voiceover_is_the_suppplement_on_this_content"] = slim.pop("speaking", "")
             if project_narrator:
                 slim["narrator"] = project_narrator
             new_scenes.append(slim)
             continue
         elif base == "speaking":
-            slim = {}
-            for k in ("speaking", "actor"):
-                val = new_scene.get(k)
-                if isinstance(val, str):
-                    if not val.strip():
-                        continue
-                elif not val:
-                    continue
-                slim[k] = val
+            sp_keys: tuple[str, ...] = ("speaking", "actor", "visual")
+            slim = _slim_scene_fields(new_scene, sp_keys)
+            slim["act_and_natual_talk___not_rephrase"] = new_scene.pop("speaking", "")
             new_scenes.append(slim)
             continue
 
-        new_scenes.append(new_scene)
+        # To Generate Image
+        slim = {}
+        painting = _image_painting_direction(new_scene)
+        if painting:
+            slim["show_this_content"] = painting
+        new_scenes.append(slim)
+
     return new_scenes
 
 
@@ -492,7 +454,7 @@ NOTEBOOKLM_VIDEO_MOTION_SILENT = """
 ** NO speaking, lip-sync, or voice-over in this video.
 ** Prerequisite: slideshow or scene image(s) already generated for the same Scene_Content.
 ** Tell the story ONLY through: scene evolution, environmental changes, character actions, facial expressions, and camera movement across the narrative arc.
-** Elements and characters evolve as the story progresses — match emotional beats from ``speaking``, ``voiceover``, and ``actor`` via VISUAL change only.
+** Match emotional beats implied by ``visual``, ``speaking`` / ``voiceover`` subtext — express them via VISUAL change only (not dialogue).
 ** Use sound effects and light background music to support mood — no dialogue.
 """
 
@@ -500,7 +462,7 @@ NOTEBOOKLM_VIDEO_WORD_IN_IMAGE = """
 ** NO speaking, lip-sync, or voice-over in this video.
 ** Prerequisite: scene image(s) already generated.
 ** Show content (Word-in-image) only — animate each key element in sequence (with sound effect) to attract viewer's attention.
-** Extract ONLY the most critical keywords/phrases from ``visual``, ``speaking``, and ``voiceover`` — display as changing background text OR small thought-bubble-style callouts.
+** ONLY in absolute necessary case: Extract the most critical keywords/phrases from ``speaking`` / ``voiceover`` subtext — display as changing background text OR small thought-bubble-style callouts.
 ** Keep on-screen text sparse: short titles or keyword clusters; never long paragraphs; do not make the frame busy.
 """
 
@@ -508,37 +470,46 @@ NOTEBOOKLM_VIDEO_MOTION_INSTRUCTION = NOTEBOOKLM_VIDEO_MOTION_SILENT
 
 NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
 ** Silent-video variants: no audio dialogue; SFX and light music only (see variant instruction).
-** Use ALL Scene_Content fields as staging direction for what changes on screen — not as spoken lines.
+** Use ``visual`` / ``caption`` (and optional subtext fields) as staging direction for on-screen change — not as spoken lines. Do not assign lip-sync or narrator/host roles.
 """
 
 NOTEBOOKLM_VOICEOVER_NARRATION = """
 ** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
 ** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
-** Lip-sync: Host talking-avatar per Host_display; if scene image has no Host avatar, voice-over off-screen only.
+** Lip-sync: Host/Narrator talking-avatar when present in scene image; otherwise voice-over off-screen only.
 ** If voiceover comments on a prior scene: keep prior scene image as stable background.
+** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
 """
 
 NOTEBOOKLM_VOICEOVER_SUPPLEMENT = """
 ** Host/Narrator supplementary voiceover — use ``voiceover`` as bridge, summary, commentary, or contextual supplement (not full scene re-telling).
 ** Tone: third-person counselor/analyst — connect scenes, highlight insight, fill gaps; shorter and reflective vs. pure narration.
-** May reference ``visual`` and ``speaking`` subtext but speak as narrator commentary, not as the protagonist.
-** Lip-sync: Host talking-avatar per Host_display; off-screen OK when no Host in image.
+** May combine the ``voiceover`` and the supplement content based on ``visual`` and ``speaking``.
+** Lip-sync: Host/Narrator talking-avatar when present in scene image; off-screen OK when no Host in image.
+** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
 """
 
 NOTEBOOKLM_VOICEOVER_INSTRUCTION = NOTEBOOKLM_VOICEOVER_NARRATION
 
 NOTEBOOKLM_SPEAKING_SCRIPT = """
-** Protagonist speaking ONLY — deliver the ``speaking`` field (and ``actor`` identity) in first-person feeling tone.
+** Protagonist (``actor``) speaking as 1st person — deliver the ``speaking`` field in subjective, in-the-moment tone.
 ** Subjective, in-the-moment experience; may not draw conclusions or lecture.
-** Lip-sync: story character (actor) talking-avatar; Host/Narrator must NOT deliver speaking lines.
+** Lip-sync: story character (``actor``) talking-avatar when shown in the scene image.
 ** Do NOT read text printed in the image aloud.
+"""
+
+NOTEBOOKLM_SPEAKING_ACTING_SILENT = """
+** Protagonist (``actor``) NOT talking — no lip-sync, no spoken dialogue.
+** Use ``speaking`` field only as emotional/subtext reference: acting, wondering, reacting, hesitating, processing.
+** Express inner state through facial expression, posture, gesture, and subtle movement — as if thinking or wondering about the scene.
+** May reference ``visual`` composition for what to react to; do NOT read words printed in the image aloud.
 """
 
 NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = """
 ** speaking about the Word-in-image ~ naturally talk through the key points (not reading text in image), while speaking about a point/element, animate it to attract audience's attention.
 ** Protagonist (``actor``) explains the scene visually — walk through composition, symbols, character state, and story beats implied by ``visual``.
 ** Use ``speaking`` field as emotional tone reference; do NOT literally read words printed in the image.
-** Lip-sync allowed when a talking-avatar is present in the scene image.
+** Lip-sync allowed when protagonist (``actor``) appears as talking-avatar in the scene image.
 """
 
 NOTEBOOKLM_SPEAKING_INSTRUCTION = NOTEBOOKLM_SPEAKING_SCRIPT
@@ -850,7 +821,6 @@ def build_notebooklm_gen_instruction_clipbody(
     visual_style: str,
     main_character: str = "",
     host_narrator: str = "",
-    host_display: str = "",
     variant: str = "",
 ) -> str:
     """组装 NotebookLM 导出指令剪贴板正文。
@@ -877,7 +847,6 @@ def build_notebooklm_gen_instruction_clipbody(
         main_character = ""
 
     host_narrator = (host_narrator or "").strip()
-    host_display = (host_display or "").strip() or HARRATOR_DISPLAY_OPTIONS[-1]
 
     scenes = scene_content if isinstance(scene_content, list) else []
     json_content = json.dumps(
@@ -888,11 +857,19 @@ def build_notebooklm_gen_instruction_clipbody(
 
     parts["Visual_Style"] = visual_style
     parts["Export_variant"] = f"{base}/{var}"
+    _var_labels = {v: lbl for v, lbl in NOTEBOOKLM_EXPORT_VARIANTS[base]}
+    parts["Export_variant_label"] = _var_labels.get(var, var)
 
     if base == "image":
-        parts["READ_FIRST__SLIDESHOW_MANDATE"] = NOTEBOOKLM_SLIDESHOW_MANDATE.format(
+        _mandate = NOTEBOOKLM_SLIDESHOW_MANDATE.format(
             Visual_Style=visual_style, character=main_character
         )
+        _mandate_key = (
+            "READ_FIRST__SINGLE_IMAGE_MANDATE"
+            if var == "single"
+            else "READ_FIRST__SLIDESHOW_MANDATE"
+        )
+        parts[_mandate_key] = _mandate
         img_instr = (
             NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION
             if var == "single"
@@ -903,6 +880,7 @@ def build_notebooklm_gen_instruction_clipbody(
         )
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
+
     elif base == "video":
         vid_instr = (
             NOTEBOOKLM_VIDEO_WORD_IN_IMAGE
@@ -910,18 +888,16 @@ def build_notebooklm_gen_instruction_clipbody(
             else NOTEBOOKLM_VIDEO_MOTION_SILENT
         )
         parts["Instruction_for_video_generation"] = vid_instr.strip()
-        parts["Instruction_for_video_and_audio_generation"] = (
+        parts["Instruction_for_audio_generation"] = (
             NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
         )
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
+
     elif base == "voiceover":
         parts["Voice"] = (
-            f"{host_narrator} ~ Host/Narrator ({host_display})"
-            if host_narrator
-            else "Host/Narrator not set — configure at login"
+            f"{host_narrator} ~ Host/Narrator"
         )
-        parts["Host_display"] = host_display
         vo_instr = (
             NOTEBOOKLM_VOICEOVER_SUPPLEMENT
             if var == "supplement"
@@ -930,6 +906,7 @@ def build_notebooklm_gen_instruction_clipbody(
         parts["Instruction_for_voiceover_audio"] = vo_instr.strip()
         parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
+
     elif base == "speaking":
         parts["Voice"] = (
             f"{main_character} ~ Protagonist/actor (1st person)"
@@ -939,6 +916,8 @@ def build_notebooklm_gen_instruction_clipbody(
         sp_instr = (
             NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS
             if var == "visual_keypoints"
+            else NOTEBOOKLM_SPEAKING_ACTING_SILENT
+            if var == "acting"
             else NOTEBOOKLM_SPEAKING_SCRIPT
         )
         parts["Instruction_for_speaking_audio"] = sp_instr.strip()
@@ -1994,15 +1973,6 @@ ANIMATION_PROMPTS = [
     }
 ]
 
-
-# =============================================================================
-# Host 显示方式（英文 value，UI 与 JSON 一致）- 供 downloader、GUI、project_manager 共享
-# =============================================================================
-HARRATOR_DISPLAY_OPTIONS = [
-    "",
-    "speaking-at-image-left",
-    "speaking-at-image-right"
-]
 
 
 

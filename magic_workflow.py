@@ -696,9 +696,8 @@ class MagicWorkflow:
 
 
     def _defaults_from_project_config(self):
-        """欢迎屏 / 新建项目写入 PROJECT_CONFIG 的 narrator、host_display、visual_style，用于场景缺省补全。"""
+        """欢迎屏 / 新建项目写入 PROJECT_CONFIG 的 narrator、visual_style，用于场景缺省补全。"""
         narr = config.CHARACTER_PERSON_OPTIONS[0]
-        host_en = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
         visual_style = config.VISUAL_STYLE_OPTIONS[0]
         try:
             pc = project_manager.PROJECT_CONFIG
@@ -706,19 +705,16 @@ class MagicWorkflow:
                 n = pc.get("narrator")
                 if n:
                     narr = n
-                h = pc.get("host_display")
-                if h:
-                    host_en = h
                 v = pc.get("visual_style")
                 if v:
                     visual_style = v
         except Exception:
             pass
-        return narr, host_en, visual_style
+        return narr, visual_style
 
 
     def load_scenes(self):
-        _narr_default, _host_display_default, _visual_style_default = self._defaults_from_project_config()
+        _narr_default, _visual_style_default = self._defaults_from_project_config()
         scenes_file = config.get_scenes_path(self.pid)
         if os.path.exists(scenes_file):
             # 先读取文件到局部变量再赋值，避免先清空 self.scenes 导致在 make_backgroud_medias 期间若触发 save 会覆盖成空列表
@@ -743,8 +739,6 @@ class MagicWorkflow:
             self.scenes = loaded_scenes
 
             for story_scene in self.scenes:
-                if not story_scene.get("host_display"):
-                    story_scene["host_display"] = _host_display_default
                 if not story_scene.get("visual_style"):
                     story_scene["visual_style"] = _visual_style_default
                 if not story_scene.get("caption"):
@@ -773,8 +767,6 @@ class MagicWorkflow:
         #          element["caption"] = config.get_channel_config(channel)["channel_name"]
         #          self.add_story_scene(story_index, element, True, is_append=False)
         for story_scene in self.scenes:
-            if not story_scene.get("host_display"):
-                story_scene["host_display"] = _host_display_default
             if not story_scene.get("visual_style"):
                 story_scene["visual_style"] = _visual_style_default
             if not story_scene.get("caption"):

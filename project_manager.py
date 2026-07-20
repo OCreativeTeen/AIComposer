@@ -374,7 +374,6 @@ LAST_NARRATOR = (
 # 欢迎屏选择的画面风格（英文，与 config.VISUAL_STYLE_OPTIONS 一致）
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
-LAST_HOST_DISPLAY = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
 LAST_YT_LANGUAGE = "tw"
 
 # 频道「热门/视频列表」JSON 里每项的完整工作流配置（替代或并存 *.config）
@@ -387,7 +386,6 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "language",
     "narrator",
     "visual_style",
-    "host_display",
     "pid",
     "video_width",
     "video_height",
@@ -694,7 +692,6 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
         "video_height",
         "visual_style",
         "narrator",
-        "host_display",
         "watermark",
         "headmark",
         "scene_min_length",
@@ -1043,7 +1040,7 @@ class ProjectSelectionDialog:
     """项目选择对话框 - 可重用的项目选择界面"""
     
     def __init__(self, parent, config_manager, youtube_gui, create_only,
-                 initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None, initial_host_display=None,
+                 initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None):
 
         self.parent = parent
@@ -1061,7 +1058,6 @@ class ProjectSelectionDialog:
 
         _nar = initial_narrator or LAST_NARRATOR
         _vs = initial_visual_style or LAST_VISUAL_STYLE
-        _hd = initial_host_display or LAST_HOST_DISPLAY
         
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
@@ -1112,7 +1108,6 @@ class ProjectSelectionDialog:
             'language': default_lang,
             'narrator': _nar,
             'visual_style': _vs,
-            'host_display': _hd,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
@@ -1327,15 +1322,13 @@ class ProjectSelectionDialog:
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
 
-        # 频道、语言只读；画面风格 / HOST / 旁白 与欢迎屏一致，此处用 Combobox 可改，创建时从控件写入 story_result
+        # 频道、语言只读；画面风格 / 旁白 与欢迎屏一致，此处用 Combobox 可改，创建时从控件写入 story_result
         welcome_info_row = ttk.Frame(main_frame)
         welcome_info_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
         _np_styles = list(config.VISUAL_STYLE_OPTIONS)
         _vs_cur = self.story_result.get('visual_style')
-        _hd_init = self.story_result.get('host_display')
         _nar_init = self.story_result.get('narrator')
         new_project_visual_style_var = tk.StringVar(value=_vs_cur)
-        new_project_host_display_var = tk.StringVar(value=_hd_init)
 
         new_project_narrator_var = tk.StringVar(value=_nar_init)
         # SET new_project_narrator_var default value TO woman/qin-fast/chinese
@@ -1352,14 +1345,6 @@ class ProjectSelectionDialog:
             values=_np_styles,
             state="readonly",
             width=14,
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(welcome_info_row, text="HOST:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Combobox(
-            welcome_info_row,
-            textvariable=new_project_host_display_var,
-            values=list(config_prompt.HARRATOR_DISPLAY_OPTIONS),
-            state="readonly",
-            width=16,
         ).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(welcome_info_row, text="旁白:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Combobox(
@@ -1764,12 +1749,10 @@ class ProjectSelectionDialog:
             self.story_result['video_width'] = video_width
             self.story_result['video_height'] = video_height
             self.story_result['visual_style'] = new_project_visual_style_var.get()
-            self.story_result['host_display'] = new_project_host_display_var.get()
             self.story_result['narrator'] = new_project_narrator_var.get()
 
-            global LAST_NARRATOR, LAST_HOST_DISPLAY, LAST_VISUAL_STYLE
+            global LAST_NARRATOR, LAST_VISUAL_STYLE
             LAST_VISUAL_STYLE = self.story_result['visual_style']
-            LAST_HOST_DISPLAY = self.story_result['host_display']
             LAST_NARRATOR = self.story_result['narrator']
 
             self.story_result['action'] = 'new'
@@ -1836,7 +1819,6 @@ def launch_yt_media_tool(
     language: str,
     narrator: str,
     visual_style: str,
-    host_display: str,
     yt_method: str,
     yt_method_args: tuple = (),
 ):
@@ -1847,10 +1829,9 @@ def launch_yt_media_tool(
 
     当 ``parent`` 下没有任何 ``Toplevel`` 子窗口时，轮询 ``quit()`` 结束 ``mainloop``。
     """
-    global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_HOST_DISPLAY
+    global LAST_NARRATOR, LAST_VISUAL_STYLE
     LAST_NARRATOR = narrator
     LAST_VISUAL_STYLE = visual_style
-    LAST_HOST_DISPLAY = host_display
 
     ch = (channel or "").strip()
     lang = (language or "tw").strip()
@@ -1899,7 +1880,7 @@ def launch_yt_media_tool(
 
 
 def show_initial_choice_dialog(parent):
-    """``GUI_pm.py`` 独立入口：频道/语言、风格/预留、旁白/HOST；四个 YT 功能按钮。
+    """``GUI_pm.py`` 独立入口：频道/语言、风格/预留、旁白；四个 YT 功能按钮。
 
     视频/字幕语言在欢迎屏选择（``config.LANGUAGES``），不再在「项目管理」内二次弹窗。
 
@@ -1911,7 +1892,6 @@ def show_initial_choice_dialog(parent):
         'language': '',
         'narrator': LAST_NARRATOR,
         'visual_style': LAST_VISUAL_STYLE,
-        'host_display': LAST_HOST_DISPLAY
     }
 
     dialog = tk.Toplevel(parent)
@@ -1981,17 +1961,6 @@ def show_initial_choice_dialog(parent):
         width=_combo_w,
     )
 
-    _hd_cur = config_prompt.HARRATOR_DISPLAY_OPTIONS[0]
-    _host_opts = list(config_prompt.HARRATOR_DISPLAY_OPTIONS)
-    _host_default = _hd_cur if _hd_cur in _host_opts else _host_opts[0]
-    host_display_var = tk.StringVar(value=_host_default)
-    host_display_combo_welcome = ttk.Combobox(
-        opts_grid,
-        textvariable=host_display_var,
-        values=_host_opts,
-        state="readonly",
-        width=_combo_w,
-    )
     reserved_var = tk.StringVar(value="")
     reserved_combo = ttk.Combobox(
         opts_grid,
@@ -2014,8 +1983,6 @@ def show_initial_choice_dialog(parent):
 
     ttk.Label(opts_grid, text="旁白").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
     narrator_combo.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
-    ttk.Label(opts_grid, text="HOST").grid(row=2, column=2, sticky="w", padx=(0, 6), pady=_row_gap)
-    host_display_combo_welcome.grid(row=2, column=3, sticky="ew", pady=_row_gap)
 
     for col in (1, 3):
         opts_grid.columnconfigure(col, weight=1, uniform="yt_welcome_combo")
@@ -2030,11 +1997,6 @@ def show_initial_choice_dialog(parent):
         result['visual_style'] = visual_style_var.get()
         LAST_VISUAL_STYLE = result['visual_style']
 
-    def _sync_result_host_display():
-        global LAST_HOST_DISPLAY
-        result['host_display'] = host_display_var.get()
-        LAST_HOST_DISPLAY = result['host_display']
-
     def _resolve_language_key():
         display = (language_var.get() or "").strip()
         return _lang_display_to_key.get(display, default_lang_key)
@@ -2048,7 +2010,6 @@ def show_initial_choice_dialog(parent):
     def _sync_welcome_choices():
         _sync_result_narrator()
         _sync_result_visual_style()
-        _sync_result_host_display()
         _sync_result_language()
 
     def on_cancel():
@@ -2077,7 +2038,6 @@ def show_initial_choice_dialog(parent):
             language=_resolve_language_key(),
             narrator=narrator_var.get(),
             visual_style=visual_style_var.get(),
-            host_display=host_display_var.get(),
             yt_method=yt_method,
             yt_method_args=method_args,
         )
@@ -2126,7 +2086,6 @@ def show_initial_choice_dialog(parent):
         result['language'] or default_lang_key,
         result.get('narrator') or LAST_NARRATOR or (config.narrator_person_options()[0] if config.narrator_person_options() else ""),
         result.get('visual_style') or LAST_VISUAL_STYLE,
-        result.get('host_display') or config_prompt.HARRATOR_DISPLAY_OPTIONS[-1],
     )
 
 
@@ -2146,7 +2105,6 @@ def create_project_dialog(parent, youtube_gui=None):
         initial_language="tw",
         initial_narrator=LAST_NARRATOR,
         initial_visual_style=LAST_VISUAL_STYLE,
-        initial_host_display=LAST_HOST_DISPLAY,
     )
     result, selected_config = dialog.show()
 
@@ -2155,7 +2113,7 @@ def create_project_dialog(parent, youtube_gui=None):
     return result, selected_config
 
 
-def create_project_with_initial_raw(parent, channel, language, narrator, visual_style, host_display,
+def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags):
     """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。"""
     global PROJECT_CONFIG
@@ -2170,7 +2128,6 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
     config_manager = ProjectConfigManager()
     _nar = narrator if narrator is not None else LAST_NARRATOR
     _vs = visual_style if visual_style is not None else LAST_VISUAL_STYLE
-    _hd = host_display if host_display is not None else config_prompt.HARRATOR_DISPLAY_OPTIONS[-1]
 
     dialog = ProjectSelectionDialog(
         parent=parent,
@@ -2183,7 +2140,6 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         
         initial_narrator=_nar,
         initial_visual_style=_vs,
-        initial_host_display=_hd,
 
         initial_analyzed_content=analyzed_content,
         initial_scene_content=scene_content,
