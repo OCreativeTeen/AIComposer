@@ -258,28 +258,30 @@ class FfmpegAudioProcessor:
                 return None
             elif len(valid_audio_list) == 1:
                 return self.to_wav(valid_audio_list[0])
-            
-            audio_list_path = os.path.join(config.get_temp_path(self.pid), "concat_list.txt")
-            with open(audio_list_path, "w", encoding='utf-8') as f:
-                for audio in valid_audio_list:
-                    audio_escaped = audio.replace('\\', '/')
-                    f.write(f"file '{audio_escaped}'\n")
 
-            # Concatenate the audio files
-            concat_cmd = [
-                ffmpeg_path, "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", audio_list_path,
+            # filter_complex + aresample：避免 concat demuxer 在采样率/声道不一致时整段加速
+            n = len(valid_audio_list)
+            cmd = [ffmpeg_path, "-y"]
+            for audio in valid_audio_list:
+                cmd.extend(["-i", audio])
+            filter_parts = []
+            for i in range(n):
+                filter_parts.append(
+                    f"[{i}:a]aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=44100,"
+                    f"aresample=44100[a{i}]"
+                )
+            concat_in = "".join(f"[a{i}]" for i in range(n))
+            filter_parts.append(f"{concat_in}concat=n={n}:v=0:a=1[out]")
+            cmd.extend([
+                "-filter_complex", ";".join(filter_parts),
+                "-map", "[out]",
                 "-c:a", "pcm_s16le",
-                "-ac", "2",
                 "-ar", "44100",
-                "-avoid_negative_ts", "make_zero",
-                "-fflags", "+genpts",
-                output_path
-            ]
+                "-ac", "2",
+                output_path,
+            ])
             
-            subprocess.run(concat_cmd, check=True, capture_output=True, 
+            subprocess.run(cmd, check=True, capture_output=True, 
                          text=True, encoding='utf-8', errors='ignore')
             
             if os.path.exists(output_path):

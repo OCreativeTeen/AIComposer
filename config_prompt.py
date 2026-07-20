@@ -259,6 +259,7 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
     ],
     "voiceover": [
         ("narration", "旁白讲述 · 第三人叙述"),
+        ("narration_with_speakingavatar", "旁白讲述 · 主持人说话"),
         ("supplement", "补充/总结 · 衔接与点评"),
     ],
 }
@@ -420,7 +421,7 @@ def scene_payload_for_notebooklm_export(
         elif base == "voiceover":
             vo_keys: tuple[str, ...] = ("voiceover", "visual", "speaking")
             slim = _slim_scene_fields(new_scene, vo_keys)
-            if var == "supplement":
+            if var == "supplement" or var == "narration_with_speakingavatar":
                 slim["voiceover_is_the_suppplement_on_this_content"] = slim.pop("speaking", "")
             if project_narrator:
                 slim["narrator"] = project_narrator
@@ -477,7 +478,7 @@ NOTEBOOKLM_VOICEOVER_NARRATION = """
 ** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
 ** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
 ** Lip-sync: Host/Narrator talking-avatar when present in scene image; otherwise voice-over off-screen only.
-** If voiceover comments on a prior scene: keep prior scene image as stable background.
+** Scene-Image (2nd-image) animate elements inside, in sequence to follow the progress of the speaking)
 ** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
 """
 
@@ -489,7 +490,13 @@ NOTEBOOKLM_VOICEOVER_SUPPLEMENT = """
 ** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
 """
 
-NOTEBOOKLM_VOICEOVER_INSTRUCTION = NOTEBOOKLM_VOICEOVER_NARRATION
+
+NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR = """
+** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
+** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
+** Lip-sync: Use the person in 2nd-image as Talking-Avatar, to narrat the 1st-image (scene-image ~~ animate elements in it, following the progress of the speaking)
+"""
+
 
 NOTEBOOKLM_SPEAKING_SCRIPT = """
 ** Protagonist (``actor``) speaking as 1st person — deliver the ``speaking`` field in subjective, in-the-moment tone.
@@ -901,6 +908,8 @@ def build_notebooklm_gen_instruction_clipbody(
         vo_instr = (
             NOTEBOOKLM_VOICEOVER_SUPPLEMENT
             if var == "supplement"
+            else NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR
+            if var == "narration_with_speakingavatar"
             else NOTEBOOKLM_VOICEOVER_NARRATION
         )
         parts["Instruction_for_voiceover_audio"] = vo_instr.strip()

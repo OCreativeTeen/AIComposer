@@ -40,6 +40,7 @@ from utility.file_util import (
 from gui.media_review_dialog import AVReviewDialog
 #from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from utility.voicebox_speech_service import VoiceboxService, EXPRESSION_STYLES
+from utility.ffmpeg_processor import FfmpegProcessor
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
 import tkinterdnd2 as TkinterDnD
 from tkinterdnd2 import DND_FILES
@@ -441,8 +442,9 @@ class WorkflowGUI:
             command=lambda: self._open_workflow_content_field_editor("analyzed_content"),
         ).pack(side=tk.LEFT, padx=2)
 
-        ttk.Button(row1_frame, text="摘要生成", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
-        ttk.Button(row1_frame, text="全文演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
+        ttk.Button(row1_frame, text="摘要", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
+        ttk.Button(row1_frame, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
+        ttk.Button(row1_frame, text="Avatar", command=self.select_talking_avatar_to_clipboard).pack(side=tk.RIGHT, padx=(0, 10))
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -454,19 +456,19 @@ class WorkflowGUI:
         #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
 
 
-        ttk.Button(row1_frame, text="Video生成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="Video发布", command=lambda:self.publish_video()).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="视频生成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="视频发布", command=lambda:self.publish_video()).pack(side=tk.LEFT)
         #ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="Video播放", command=lambda:self.play_finalize_video()).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="视频播放", command=lambda:self.play_finalize_video()).pack(side=tk.LEFT)
         # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
 
-        ttk.Button(row1_frame, text="媒体清理",  command=self.clean_media).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="WAN清理",   command=self.clean_wan).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="SUNO管理", command=self._open_suno_gui).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="清媒体",  command=self.clean_media).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="清WAN",   command=self.clean_wan).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="SUNO", command=self._open_suno_gui).pack(side=tk.LEFT) 
 
    
     def _parse_video_size_combo_label(self, lbl: str):
@@ -907,6 +909,81 @@ class WorkflowGUI:
         except tk.TclError:
             pass
         threading.Thread(target=work, daemon=True).start()
+
+
+    def select_talking_avatar_to_clipboard(self) -> None:
+        """从频道 ``clip/`` 选择 talking-avatar 静帧（``avatar_169_*`` / ``avatar_916_*``）并复制到剪贴板。"""
+        pc = project_manager.PROJECT_CONFIG or {}
+        channel = (pc.get("channel") or "").strip()
+        if not channel:
+            messagebox.showwarning("Avatar", "项目未设置 channel。", parent=self.root)
+            return
+
+        try:
+            vw = int(pc.get("video_width", 1920))
+            vh = int(pc.get("video_height", 1080))
+        except (TypeError, ValueError):
+            vw, vh = 1920, 1080
+
+        landscape = vw > vh
+        ratio_tag = "169" if landscape else "916"
+        name_prefix = f"avatar_{ratio_tag}_"
+
+        ch_key = config.get_channel_id(channel)
+        clip_root = os.path.join(config.get_channel_path(ch_key), "clip")
+        if not os.path.isdir(clip_root):
+            messagebox.showwarning(
+                "Avatar",
+                f"未找到频道 clip 目录：\n{clip_root}",
+                parent=self.root,
+            )
+            return
+
+        img_ext = (".png", ".jpg", ".jpeg", ".webp")
+        choices: list[str] = []
+        path_by_rel: dict[str, str] = {}
+        for folder in config._channel_clip_media_dirs(channel):
+            if not os.path.isdir(folder):
+                continue
+            for fn in sorted(os.listdir(folder)):
+                fl = fn.lower()
+                if not fl.startswith(name_prefix) or not fl.endswith(img_ext):
+                    continue
+                full = os.path.join(folder, fn)
+                if not os.path.isfile(full):
+                    continue
+                rel = os.path.relpath(full, clip_root).replace("\\", "/")
+                if rel in path_by_rel:
+                    continue
+                path_by_rel[rel] = full
+                choices.append(rel)
+
+        if not choices:
+            messagebox.showwarning(
+                "Avatar",
+                f"在 clip 目录未找到 {name_prefix}* 图片（当前项目 {vw}×{vh}）。",
+                parent=self.root,
+            )
+            return
+
+        pick = askchoice_media_preview(
+            f"选择 Avatar（{ratio_tag} · {vw}×{vh}）",
+            choices,
+            clip_root,
+            self.root,
+        )
+        if not pick:
+            return
+
+        image_path = path_by_rel.get(pick) or os.path.join(clip_root, pick)
+        if self.copy_image_to_clipboard(image_path, silent=True):
+            show_auto_close_popup(
+                self.root,
+                "Avatar",
+                f"已复制到剪贴板：{os.path.basename(image_path)}",
+            )
+        else:
+            messagebox.showerror("Avatar", "复制到剪贴板失败。", parent=self.root)
 
 
     def clean_channel_media(self, track):
@@ -2416,7 +2493,7 @@ class WorkflowGUI:
         
         row_number = 1
 
-        # 第一行：故事导出 / 包装 / Import
+        # 第一行：故事导出 / 包装 / Import / 讲旁互换
         story_tools_frame = ttk.Frame(self.video_edit_frame)
         story_tools_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W, pady=2)
         row_number += 1
@@ -2463,8 +2540,14 @@ class WorkflowGUI:
             width=8,
             command=self.import_scene_data,
         ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(
+            story_tools_frame,
+            text="讲旁互换",
+            width=9,
+            command=self.swap_speaking_voiceover,
+        ).pack(side=tk.LEFT, padx=(4, 0))
 
-        # 第二行：延长 / 增主轨
+        # 第二行：延长 / 增主轨 / 主动画 / 次动画
         track_tools_frame = ttk.Frame(self.video_edit_frame)
         track_tools_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W + tk.E, pady=2)
         row_number += 1
@@ -2491,25 +2574,27 @@ class WorkflowGUI:
         self.enhance_level.pack(side=tk.LEFT, padx=2)
         self.enhance_level.set("30")
 
-        # 类型、情绪、动作选择（在同一行）
-        type_mood_action_frame = ttk.Frame(self.video_edit_frame)
-        type_mood_action_frame.grid(row=row_number, column=0, columnspan=2, sticky=tk.W+tk.E, pady=2)
-        row_number += 1
-
-        # 宣传模式（可编辑）
-        ttk.Label(type_mood_action_frame, text="主动画:").pack(side=tk.LEFT)
+        ttk.Label(track_tools_frame, text="主动画:").pack(side=tk.LEFT, padx=(10, 0))
         self.clip_animate = tk.StringVar(value="")
-        self.main_animate_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.clip_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=5)
+        self.main_animate_combobox = ttk.Combobox(
+            track_tools_frame, textvariable=self.clip_animate, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=5
+        )
         self.main_animate_combobox.pack(side=tk.LEFT)
-        self.main_animate_combobox.bind('<<ComboboxSelected>>', lambda event: self.on_scene_field_change("clip_animation", self.clip_animate.get()))
-        ttk.Button(type_mood_action_frame, text="生", width=3, command=lambda: self.regenerate_video("clip", False)).pack(side=tk.LEFT)
+        self.main_animate_combobox.bind(
+            '<<ComboboxSelected>>', lambda event: self.on_scene_field_change("clip_animation", self.clip_animate.get())
+        )
+        ttk.Button(track_tools_frame, text="生", width=3, command=lambda: self.regenerate_video("clip", False)).pack(side=tk.LEFT)
 
-        ttk.Label(type_mood_action_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
-        self.narration_animation_combobox = ttk.Combobox(type_mood_action_frame, textvariable=self.narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=5)
+        ttk.Label(track_tools_frame, text="次动画:").pack(side=tk.LEFT, padx=(10, 0))
+        self.narration_animation_combobox = ttk.Combobox(
+            track_tools_frame, textvariable=self.narration_animation, values=config_prompt.ANIMATE_SOURCE, state="readonly", width=5
+        )
         self.narration_animation_combobox.pack(side=tk.LEFT)
-        self.narration_animation_combobox.bind('<<ComboboxSelected>>', lambda event: self.on_scene_field_change("narration_animation", self.narration_animation.get()))
-        ttk.Button(type_mood_action_frame, text="生", width=3, command=lambda: self.regenerate_video("narration", False)).pack(side=tk.LEFT)
-        row_number += 1
+        self.narration_animation_combobox.bind(
+            '<<ComboboxSelected>>',
+            lambda event: self.on_scene_field_change("narration_animation", self.narration_animation.get()),
+        )
+        ttk.Button(track_tools_frame, text="生", width=3, command=lambda: self.regenerate_video("narration", False)).pack(side=tk.LEFT)
 
         #ttk.Button(action_frame, text="生主图-英", width=10, command=lambda: self.recreate_clip_image("en", True)).pack(side=tk.LEFT, padx=2)
         #ttk.Button(action_frame, text="生次图-中", width=8, command=lambda: self.recreate_clip_image("zh", False)).pack(side=tk.LEFT, padx=2)
@@ -4223,6 +4308,42 @@ class WorkflowGUI:
             self.next_scene()
         return "break"
 
+    def _on_scene_insert_silence_marker(self, event=None):
+        """讲话/旁白框按 Insert：弹出静音时长菜单，在光标处插入 <0.5> 等标记。"""
+        w = getattr(event, "widget", None)
+        if w is None:
+            return "break"
+
+        silence_choices = (
+            ("<0.5>", "0.5 秒"),
+            ("<0.75>", "0.75 秒"),
+            ("<1.0>", "1.0 秒"),
+            ("<1.25>", "1.25 秒"),
+            ("<1.5>", "1.5 秒"),
+        )
+
+        def _insert(marker: str):
+            w.insert(tk.INSERT, marker)
+            w.focus_set()
+
+        menu = tk.Menu(w, tearoff=0)
+        for marker, label in silence_choices:
+            menu.add_command(label=label, command=lambda m=marker: _insert(m))
+
+        try:
+            bbox = w.bbox(tk.INSERT)
+            if bbox:
+                x, y, _, h = bbox
+                menu.tk_popup(int(w.winfo_rootx() + x), int(w.winfo_rooty() + y + h))
+            else:
+                menu.tk_popup(int(w.winfo_rootx() + 8), int(w.winfo_rooty() + 8))
+        finally:
+            try:
+                menu.grab_release()
+            except tk.TclError:
+                pass
+        return "break"
+
 
     def on_scene_text_review(
         self,
@@ -4438,6 +4559,48 @@ class WorkflowGUI:
         return self.workflow.ffmpeg_processor.apply_watermark_to_flat_image(
             webp_path, wm_path, wm_opts
         )
+
+
+    def swap_speaking_voiceover(self):
+        """交换「讲话」与「旁白」字段内容（当前场景或本故事全部场景）。"""
+        if not getattr(self, "workflow", None) or not self.workflow.scenes:
+            messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
+            return
+        current_scene = self.update_current_scene()
+        if not current_scene:
+            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
+            return
+
+        scope = messagebox.askyesnocancel(
+            "讲旁互换",
+            "交换「讲话」与「旁白」内容：\n\n"
+            "「是」本故事全部场景\n"
+            "「否」仅当前场景\n"
+            "「取消」不处理",
+            parent=self.root,
+        )
+        if scope is None:
+            return
+
+        target_scenes = self.workflow.scenes_in_story(current_scene) if scope else [current_scene]
+        n = 0
+        for s in target_scenes:
+            sp = s.get("speaking") or ""
+            vo = s.get("voiceover") or ""
+            if sp == vo:
+                continue
+            s["speaking"] = vo
+            s["voiceover"] = sp
+            n += 1
+
+        if n == 0:
+            messagebox.showinfo("讲旁互换", "没有需要交换的内容。", parent=self.root)
+            return
+
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        scope_label = "本故事全部场景" if scope else "当前场景"
+        messagebox.showinfo("讲旁互换", f"已在{scope_label}交换 {n} 个场景的讲话/旁白。", parent=self.root)
 
 
     def add_headmark(self):
@@ -6839,8 +7002,10 @@ class WorkflowGUI:
             self.scene_speaking.bind(seq, self._on_speaking_ctrl_shift_nav_prev)
         for seq in ("<Control-Shift-Right>", "<Control-Shift-KP_Right>"):
             self.scene_speaking.bind(seq, self._on_speaking_ctrl_shift_nav_next)
+        for _w in (self.scene_speaking, self.scene_voiceover):
+            _w.bind("<Insert>", self._on_scene_insert_silence_marker)
 
-        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→/M")
+        print("📝 已绑定场景编辑字段：Enter 立即保存；Ctrl+Enter 保存不换行；失焦 500ms 防抖保存；讲话 Ctrl+S/←/→/M；讲话/旁白 Insert→静音菜单")
     
 
 

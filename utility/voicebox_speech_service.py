@@ -3,7 +3,7 @@ Voicebox TTS / ASR 客户端：与 MinimaxSpeechService 相同入口（create_ss
 便于在 GUI 中替换导入。
 
 环境变量（可选）：
-  VOICEBOX_BASE_URL   默认 http://10.0.0.231:17493
+  VOICEBOX_BASE_URL   默认 http://10.0.0.111:17493
   VOICEBOX_PROFILE_ID 默认示例 UUID（可被 VOICES 中 voice 覆盖）
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _repo_media_voices_json_path() -> str:
     return os.path.join(_REPO_ROOT, "media", "voices.json")
 
 
-DEFAULT_BASE_URL = "http://10.0.0.231:17493"
+DEFAULT_BASE_URL = "http://10.0.0.111:17493"
 DEFAULT_PROFILE_ID = "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
 
 
@@ -142,17 +142,47 @@ def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
 
 # 逐句 TTS 后拼接时，句间静音（秒）；来自 noise.wav 裁切，见 FfmpegAudioProcessor.make_silence
 _VB_SEGMENT_GAP_SEC = 0.15
+# 缓存版本：拼接逻辑变更后须 bump，避免复用错误速率的旧 mp3
+_VB_AUDIO_CACHE_VER = "v2"
+# 文案中的 ``<0.5>`` / ``＜1.25＞`` 等 → 插入对应秒数静音（0.5–1.5 等，同样用 noise.wav 裁切）
+_VB_SILENCE_MARKER_RE = re.compile(r"[<＜](\d+(?:\.\d+)?)[>＞]")
 
 
-def _split_voicebox_segments(text: str) -> List[str]:
-    """按中文句读标点拆句（作用于与 _normalize_for_voicebox 相同语义的文本）。"""
+def _split_voicebox_segments(text: str) -> List[tuple]:
+    """拆成 TTS 与静音片段：``[("speech", str), ("silence", 0.5), ...]``。
+
+    - 按 ``<0.5>`` / ``＜1.25＞`` 等标记插入显式静音（秒，如 0.5、0.75、1.0、1.25、1.5）
+    - 其余按 ``。！？`` 拆句；相邻 speech 段在合成时仍加句间短静音
+    """
     text = (text or "").strip()
     if not text:
         return []
-    text = re.sub(r" +", " ", text)
-    chunks = re.split(r"(?<=[。！？])", text)
-    parts = [c.strip() for c in chunks if c.strip()]
-    return parts if parts else [text]
+
+    out: List[tuple] = []
+    raw_parts = _VB_SILENCE_MARKER_RE.split(text)
+    for i, part in enumerate(raw_parts):
+        if i % 2 == 1:
+            try:
+                dur = float(part)
+            except (TypeError, ValueError):
+                continue
+            if dur > 0:
+                out.append(("silence", dur))
+            continue
+
+        chunk = (part or "").strip()
+        if not chunk:
+            continue
+        chunk = re.sub(r" +", " ", chunk)
+        sentences = re.split(r"(?<=[。！？])", chunk)
+        for sent in sentences:
+            s = sent.strip()
+            if s:
+                out.append(("speech", s))
+
+    if not out and text:
+        return [("speech", text)]
+    return out
 
 
 class VoiceboxService:
@@ -237,9 +267,14 @@ class VoiceboxService:
         """解析 create_ssml 的 JSON（或兼容仅含 text 字段），生成音频并保存为文件。
         多句时按标点拆句逐段生成，句间用 __init__ 预生成的静音片段拼接（concat_audios）。"""
         ssml_text = (ssml_text or "").strip()
-        audio_path = f"{config.get_project_path(self.pid)}/temp/{self.string_to_code(ssml_text)}.mp3"
-        if os.path.exists(audio_path):
-            return audio_path
+        cache_key = f"{self.string_to_code(ssml_text)}_{_VB_AUDIO_CACHE_VER}"
+        cache_dir = f"{config.get_project_path(self.pid)}/temp"
+        cache_mp3 = f"{cache_dir}/{cache_key}.mp3"
+        cache_wav = f"{cache_dir}/{cache_key}.wav"
+        if os.path.exists(cache_mp3):
+            return cache_mp3
+        if os.path.exists(cache_wav):
+            return cache_wav
 
         try:
             payload = json.loads(ssml_text)
@@ -254,39 +289,58 @@ class VoiceboxService:
 
         base = html.unescape(text)
         segments = _split_voicebox_segments(base)
-        if len(segments) <= 1:
-            if not self._post_generate_and_save_mp3(profile_id, text, audio_path):
+        speech_only = [v for k, v in segments if k == "speech"]
+        if len(segments) == 1 and segments[0][0] == "speech":
+            esc = html.escape(segments[0][1])
+            if not self._post_generate_and_save_mp3(profile_id, esc, cache_mp3):
                 return None
-            return audio_path
+            return cache_mp3
+        if not speech_only:
+            print("Voicebox: no speech segments after split")
+            return None
 
+        n_speech = len(speech_only)
+        n_silence = sum(1 for k, _ in segments if k == "silence")
         print(
-            f"Voicebox: 拆句 TTS 共 {len(segments)} 段，句间静音 {_VB_SEGMENT_GAP_SEC}s（noise.wav / concat）"
+            f"Voicebox: 拆句 TTS 共 {n_speech} 段"
+            + (f"，显式静音 {n_silence} 处" if n_silence else "")
+            + f"，句间静音 {_VB_SEGMENT_GAP_SEC}s（noise.wav / concat）"
         )
         gap = self._segment_gap_wav
         if not gap:
-            print("⚠️ Voicebox: 句间静音不可用，无静音直接拼接")
-        mp3_parts: List[str] = []
-        for i, seg in enumerate(segments):
-            esc = html.escape(seg)
+            print("⚠️ Voicebox: 句间静音不可用，无句间短静音")
+
+        chain: List[str] = []
+        for idx, (kind, val) in enumerate(segments):
+            if kind == "silence":
+                sil_wav = self._ffmpeg_audio.make_silence(float(val))
+                if sil_wav:
+                    chain.append(sil_wav)
+                else:
+                    print(f"⚠️ Voicebox: 生成 {val}s 静音失败，已跳过")
+                continue
+
+            esc = html.escape(str(val))
             part_path = config.get_temp_file(self.pid, "mp3")
             if not self._post_generate_and_save_mp3(profile_id, esc, part_path):
                 return None
-            mp3_parts.append(part_path)
-
-        chain: List[str] = []
-        for i, p in enumerate(mp3_parts):
-            chain.append(p)
-            chain.append(gap)
+            # Voicebox 返回的 mp3 常为 16k/24k；静音片段为 44.1k wav。
+            # concat 前必须统一采样率，否则整段会按错误速率播放（约快 2–3 倍）。
+            part_wav = self._ffmpeg_audio.to_wav(part_path)
+            if not part_wav:
+                print("Voicebox: TTS 片段转 WAV 失败")
+                return None
+            chain.append(part_wav)
+            next_kind = segments[idx + 1][0] if idx + 1 < len(segments) else None
+            if next_kind == "speech" and gap:
+                chain.append(gap)
 
         wav = self._ffmpeg_audio.concat_audios(chain)
         if not wav:
             return None
-        mp3_out = self._ffmpeg_audio.to_mp3(wav)
-        if not mp3_out:
-            return None
-        os.makedirs(os.path.dirname(audio_path) or ".", exist_ok=True)
-        safe_copy_overwrite(mp3_out, audio_path)
-        return audio_path
+        os.makedirs(cache_dir or ".", exist_ok=True)
+        safe_copy_overwrite(wav, cache_wav)
+        return cache_wav
 
     def synthesize_speaker_text_to_wav(self, speaker: str, text: str, language_key: str) -> Optional[str]:
         """

@@ -8315,17 +8315,21 @@ class MediaGUIManager:
             if not vd:
                 return
 
-            choices = [("edit", "打开摘要编辑")]
-            if (vd.get("analyzed_content","")):
-                choices.append(
-                    ("review_analyzed", "查看 analyzed content（分析内容预览）")
-                )
+            choices: list = []
             existing_pid = _video_detail_project_pid(vd)
             linked_pids = _linked_project_pids_for_video_detail(
                 vd, self.downloader.channel_videos
             )
-            if existing_pid or linked_pids or _video_detail_has_raw_for_project(vd):
+            has_project = bool(
+                existing_pid or linked_pids or _video_detail_has_raw_for_project(vd)
+            )
+            if has_project:
                 choices.append(("open_project", "打开项目"))
+            choices.append(("edit", "打开摘要编辑"))
+            if (vd.get("analyzed_content", "")):
+                choices.append(
+                    ("review_analyzed", "查看 analyzed content（分析内容预览）")
+                )
             choices.append(("resummarize", "重摘（重新摘要 analyzed content）"))
 
             title = f"选择操作 — {_youtube_row_display_title(vd)}"
