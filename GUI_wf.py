@@ -913,10 +913,6 @@ class WorkflowGUI:
     def select_talking_avatar_to_clipboard(self) -> None:
         """从频道 ``clip/`` 选择 talking-avatar 静帧（``avatar_169_*`` / ``avatar_916_*``）并复制到剪贴板。"""
         pc = project_manager.PROJECT_CONFIG or {}
-        channel = (pc.get("channel") or "").strip()
-        if not channel:
-            messagebox.showwarning("Avatar", "项目未设置 channel。", parent=self.root)
-            return
 
         try:
             vw = int(pc.get("video_width", 1920))
@@ -928,34 +924,21 @@ class WorkflowGUI:
         ratio_tag = "169" if landscape else "916"
         name_prefix = f"avatar_{ratio_tag}_"
 
-        ch_key = config.get_channel_id(channel)
-        clip_root = os.path.join(config.get_channel_path(ch_key), "clip")
-        if not os.path.isdir(clip_root):
-            messagebox.showwarning(
-                "Avatar",
-                f"未找到频道 clip 目录：\n{clip_root}",
-                parent=self.root,
-            )
-            return
-
-        img_ext = (".png", ".jpg", ".jpeg", ".webp")
+        img_ext = (".png")
         choices: list[str] = []
         path_by_rel: dict[str, str] = {}
-        for folder in config._channel_clip_media_dirs(channel):
-            if not os.path.isdir(folder):
+        for fn in sorted(os.listdir(config.AVATAR_PATH)):
+            fl = fn.lower()
+            if not fl.startswith(name_prefix) or not fl.endswith(img_ext):
                 continue
-            for fn in sorted(os.listdir(folder)):
-                fl = fn.lower()
-                if not fl.startswith(name_prefix) or not fl.endswith(img_ext):
-                    continue
-                full = os.path.join(folder, fn)
-                if not os.path.isfile(full):
-                    continue
-                rel = os.path.relpath(full, clip_root).replace("\\", "/")
-                if rel in path_by_rel:
-                    continue
-                path_by_rel[rel] = full
-                choices.append(rel)
+            full = os.path.join(config.AVATAR_PATH, fn)
+            if not os.path.isfile(full):
+                continue
+            rel = os.path.relpath(full, config.AVATAR_PATH).replace("\\", "/")
+            if rel in path_by_rel:
+                continue
+            path_by_rel[rel] = full
+            choices.append(rel)
 
         if not choices:
             messagebox.showwarning(
@@ -968,13 +951,13 @@ class WorkflowGUI:
         pick = askchoice_media_preview(
             f"选择 Avatar（{ratio_tag} · {vw}×{vh}）",
             choices,
-            clip_root,
+            config.AVATAR_PATH,
             self.root,
         )
         if not pick:
             return
 
-        image_path = path_by_rel.get(pick) or os.path.join(clip_root, pick)
+        image_path = path_by_rel.get(pick) or os.path.join(config.AVATAR_PATH, pick)
         if self.copy_image_to_clipboard(image_path, silent=True):
             show_auto_close_popup(
                 self.root,

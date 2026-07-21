@@ -579,6 +579,7 @@ BASE_MEDIA_PATH = "/AI_MEDIA"
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
+AVATAR_PATH = f"{BASE_MEDIA_PATH}/avatar"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
 # 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗、审阅发布等）

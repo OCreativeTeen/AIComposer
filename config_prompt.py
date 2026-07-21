@@ -422,7 +422,7 @@ def scene_payload_for_notebooklm_export(
             vo_keys: tuple[str, ...] = ("voiceover", "visual", "speaking")
             slim = _slim_scene_fields(new_scene, vo_keys)
             if var == "supplement" or var == "narration_with_speakingavatar":
-                slim["voiceover_is_the_suppplement_on_this_content"] = slim.pop("speaking", "")
+                slim["to_supply_this_content"] = slim.pop("speaking", "")
             if project_narrator:
                 slim["narrator"] = project_narrator
             new_scenes.append(slim)
@@ -494,7 +494,7 @@ NOTEBOOKLM_VOICEOVER_SUPPLEMENT = """
 NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR = """
 ** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
 ** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
-** Lip-sync: Use the person in 2nd-image as Talking-Avatar, to narrat the 1st-image (scene-image ~~ animate elements in it, following the progress of the speaking)
+** Lip-sync: Use the person in 2nd-image as Talking-Avatar, to introduce the 1st-image (scene-image ~~ animate elements in it, following the progress of the speaking)
 """
 
 
@@ -885,7 +885,6 @@ def build_notebooklm_gen_instruction_clipbody(
         parts["Instruction_for_image_generation"] = (
             img_instr.strip() + "\n" + NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS.strip()
         )
-        parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
 
     elif base == "video":
@@ -898,7 +897,6 @@ def build_notebooklm_gen_instruction_clipbody(
         parts["Instruction_for_audio_generation"] = (
             NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
         )
-        parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
 
     elif base == "voiceover":
@@ -913,7 +911,6 @@ def build_notebooklm_gen_instruction_clipbody(
             else NOTEBOOKLM_VOICEOVER_NARRATION
         )
         parts["Instruction_for_voiceover_audio"] = vo_instr.strip()
-        parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
 
     elif base == "speaking":
@@ -930,7 +927,6 @@ def build_notebooklm_gen_instruction_clipbody(
             else NOTEBOOKLM_SPEAKING_SCRIPT
         )
         parts["Instruction_for_speaking_audio"] = sp_instr.strip()
-        parts["Story_Category"] = category
         parts["Story_Scene_Content"] = json_content
     else:
         raise ValueError(f"Unknown NotebookLM export mode: {mode!r}")
