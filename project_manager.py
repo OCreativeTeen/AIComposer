@@ -376,6 +376,33 @@ LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
 LAST_YT_LANGUAGE = "tw"
 
+
+def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
+    """用 ``YT_tools_prefs.json`` 覆盖内存中的 LAST_*（若值合法）。"""
+    global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE
+    prefs = prefs if prefs is not None else config.load_yt_tools_prefs()
+    if not prefs:
+        return {}
+
+    lang = (prefs.get("language") or "").strip()
+    if lang in config.LANGUAGES:
+        LAST_YT_LANGUAGE = lang
+
+    vs = (prefs.get("visual_style") or "").strip()
+    if vs in config.VISUAL_STYLE_OPTIONS:
+        LAST_VISUAL_STYLE = vs
+
+    nar = (prefs.get("narrator") or "").strip()
+    narr_opts = config.narrator_person_options()
+    if nar and nar in narr_opts:
+        LAST_NARRATOR = nar
+
+    return prefs
+
+
+# 启动时恢复上次 YT 工具欢迎屏选择
+_apply_yt_tools_prefs_to_globals()
+
 # 频道「热门/视频列表」JSON 里每项的完整工作流配置（替代或并存 *.config）
 PROJECT_PROFILE_KEY = "project_profile"
 
@@ -753,8 +780,7 @@ def _write_profile_to_list_at_index(list_path: str, index: int, full_exported_cf
         return False
     sync_channel_list_item_from_full_config(arr[index], full_exported_cfg or {})
     try:
-        with open(list_path, "w", encoding="utf-8") as f:
-            json.dump(arr, f, ensure_ascii=False, indent=2)
+        config.write_channel_list_json(list_path, arr)
         return True
     except OSError:
         return False
@@ -825,8 +851,7 @@ def _upsert_profile_in_topic_list_file(list_path: str, file_pid: str, full_expor
         sync_channel_list_item_from_full_config(new_item, full_exported_cfg or {})
         arr.append(new_item)
     try:
-        with open(list_path, "w", encoding="utf-8") as f:
-            json.dump(arr, f, ensure_ascii=False, indent=2)
+        config.write_channel_list_json(list_path, arr)
         return True
     except OSError:
         return False
@@ -1906,6 +1931,17 @@ def show_initial_choice_dialog(parent):
     # 第 1 行：频道（YT_text_download.json）、语言；第 2 行：风格、预留；第 3 行：旁白、HOST
     _yt_ch = config.load_yt_text_download_channel_options()
     _yt_display_to_id = _yt_ch["display_to_id"]
+    _prefs = _apply_yt_tools_prefs_to_globals()
+
+    _ch_id = (_prefs.get("channel") or "").strip()
+    if _ch_id not in _yt_ch.get("channel_ids", []):
+        _ch_id = _yt_ch["default_channel"]
+    _channel_default_display = _yt_ch["default_display"]
+    for _disp, _cid in _yt_display_to_id.items():
+        if _cid == _ch_id:
+            _channel_default_display = _disp
+            break
+
     default_lang_key = LAST_YT_LANGUAGE if LAST_YT_LANGUAGE in config.LANGUAGES else 'tw'
     _lang_display_to_key = {
         f"{label} ({key})": key for key, label in config.LANGUAGES.items()
@@ -1924,7 +1960,7 @@ def show_initial_choice_dialog(parent):
     _combo_w = 28
     _row_gap = (10, 0)
 
-    channel_var = tk.StringVar(value=_yt_ch["default_display"])
+    channel_var = tk.StringVar(value=_channel_default_display)
     channel_combo = ttk.Combobox(
         opts_grid,
         textvariable=channel_var,
@@ -2012,6 +2048,19 @@ def show_initial_choice_dialog(parent):
         _sync_result_visual_style()
         _sync_result_language()
 
+    def _persist_yt_welcome_prefs():
+        """写入 program/YT_tools_prefs.json，下次启动自动恢复。"""
+        global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE
+        _sync_welcome_choices()
+        ch = _resolve_welcome_channel_id()
+        config.save_yt_tools_prefs({
+            "channel": ch,
+            "language": LAST_YT_LANGUAGE,
+            "narrator": LAST_NARRATOR,
+            "visual_style": LAST_VISUAL_STYLE,
+            "reserved": (reserved_var.get() or "").strip(),
+        })
+
     def on_cancel():
         result['choice'] = 'cancel'
         dialog.destroy()
@@ -2031,6 +2080,7 @@ def show_initial_choice_dialog(parent):
         _sync_welcome_choices()
         result["channel"] = ch
         result["choice"] = "yt"
+        _persist_yt_welcome_prefs()
         dialog.destroy()
         launch_yt_media_tool(
             parent,
@@ -2071,6 +2121,9 @@ def show_initial_choice_dialog(parent):
         text="取消",
         command=on_cancel,
     ).grid(row=5, column=3, sticky="ew")
+
+    for _combo in (channel_combo, language_combo, visual_style_combo, narrator_combo):
+        _combo.bind("<<ComboboxSelected>>", lambda _e: _persist_yt_welcome_prefs())
 
     dialog.update_idletasks()
     w, h = 520, 520

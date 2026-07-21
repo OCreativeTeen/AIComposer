@@ -444,7 +444,6 @@ class WorkflowGUI:
 
         ttk.Button(row1_frame, text="摘要", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
         ttk.Button(row1_frame, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
-        ttk.Button(row1_frame, text="Avatar", command=self.select_talking_avatar_to_clipboard).pack(side=tk.RIGHT, padx=(0, 10))
 
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
@@ -466,9 +465,9 @@ class WorkflowGUI:
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
 
-        ttk.Button(row1_frame, text="清媒体",  command=self.clean_media).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="清WAN",   command=self.clean_wan).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="SUNO", command=self._open_suno_gui).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="清媒体",command=self.clean_media).pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="清WAN", command=self.clean_wan).pack(side=tk.LEFT) 
+        ttk.Button(row1_frame, text="SUNO",  command=self._open_suno_gui).pack(side=tk.LEFT) 
 
    
     def _parse_video_size_combo_label(self, lbl: str):
@@ -2500,8 +2499,8 @@ class WorkflowGUI:
 
         self._nb_story_image_btn = ttk.Button(
             story_tools_frame,
-            text="故事Slide▼",
-            width=12,
+            text="图像▼",
+            width=7,
             command=self._show_story_notebooklm_image_menu,
         )
         self._nb_story_image_btn.pack(side=tk.LEFT)
@@ -2514,8 +2513,8 @@ class WorkflowGUI:
         self._nb_story_video_btn.pack(side=tk.LEFT)
         self._nb_scene_speaking_btn = ttk.Button(
             story_tools_frame,
-            text="主人公▼",
-            width=9,
+            text="主角▼",
+            width=7,
             command=self._show_scene_notebooklm_speaking_menu,
         )
         self._nb_scene_speaking_btn.pack(side=tk.LEFT)
@@ -2528,24 +2527,32 @@ class WorkflowGUI:
         self._nb_scene_voiceover_btn.pack(side=tk.LEFT)
         self._story_packaging_btn = ttk.Button(
             story_tools_frame,
-            text="故事包装▼",
-            width=10,
+            text="包装▼",
+            width=7,
             command=self._show_story_packaging_menu,
         )
-        self._story_packaging_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._story_packaging_btn.pack(side=tk.LEFT)
 
         ttk.Button(
             story_tools_frame,
-            text="Import",
-            width=8,
+            text="导入",
+            width=7,
             command=self.import_scene_data,
         ).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(
             story_tools_frame,
-            text="讲旁互换",
-            width=9,
+            text="互换",
+            width=7,
             command=self.swap_speaking_voiceover,
-        ).pack(side=tk.LEFT, padx=(4, 0))
+        ).pack(side=tk.LEFT)
+
+        # move Avator button to the right of the "互换" button in story_tools_frame
+        ttk.Button(
+            story_tools_frame,
+            text="头像",
+            width=7,
+            command=self.select_talking_avatar_to_clipboard,
+        ).pack(side=tk.LEFT)
 
         # 第二行：延长 / 增主轨 / 主动画 / 次动画
         track_tools_frame = ttk.Frame(self.video_edit_frame)

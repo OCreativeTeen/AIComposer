@@ -593,6 +593,31 @@ def publish_final_video_path(pid: str) -> str:
 
 
 YT_TEXT_DOWNLOAD_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_text_download.json")
+YT_TOOLS_PREFS_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_tools_prefs.json")
+
+
+def load_yt_tools_prefs() -> dict:
+    """读取 YT 工具欢迎屏上次选择（``program/YT_tools_prefs.json``）。"""
+    if not os.path.isfile(YT_TOOLS_PREFS_JSON):
+        return {}
+    try:
+        with open(YT_TOOLS_PREFS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_yt_tools_prefs(prefs: dict) -> None:
+    """保存 YT 工具欢迎屏选择到 ``program/YT_tools_prefs.json``。"""
+    if not isinstance(prefs, dict):
+        return
+    try:
+        os.makedirs(BASE_PROGRAM_PATH, exist_ok=True)
+        with open(YT_TOOLS_PREFS_JSON, "w", encoding="utf-8") as f:
+            json.dump(prefs, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"⚠️ 无法写入 YT 工具偏好: {YT_TOOLS_PREFS_JSON}: {e}")
 
 
 def _builtin_yt_text_download_config() -> dict:
@@ -834,6 +859,90 @@ def ensure_channel_list_json_dir(channel_path: str) -> str:
     d = channel_list_json_dir_abs(channel_path)
     os.makedirs(d, exist_ok=True)
     return d
+
+
+CHANNEL_LIST_BACKUP_SUBDIR = "_backup"
+CHANNEL_LIST_MAX_BACKUPS_PER_FILE = 60
+
+
+def is_channel_list_json_path(path: str) -> bool:
+    """是否为 ``program/<channel>/list/*.json`` 数据文件（排除 ``_backup``、``_*.json`` 配置）。"""
+    norm = os.path.normcase(os.path.normpath(path or ""))
+    if not norm.endswith(".json"):
+        return False
+    if f"{os.sep}_backup{os.sep}" in norm:
+        return False
+    base = os.path.basename(norm)
+    if base.startswith("_"):
+        return False
+    program_seg = f"{os.sep}program{os.sep}"
+    list_seg = f"{os.sep}list{os.sep}"
+    return program_seg in norm and list_seg in norm
+
+
+def channel_list_json_backup_dir(list_json_path: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(list_json_path)), CHANNEL_LIST_BACKUP_SUBDIR)
+
+
+def backup_channel_list_json_before_write(list_json_path: str) -> str | None:
+    """写入前备份当前 list JSON 到同目录 ``_backup/<stem>_YYYYMMDD_HHMMSS.json``。"""
+    import shutil
+    from datetime import datetime
+
+    list_json_path = os.path.abspath(list_json_path or "")
+    if not list_json_path or not os.path.isfile(list_json_path):
+        return None
+    if not is_channel_list_json_path(list_json_path):
+        return None
+    backup_dir = channel_list_json_backup_dir(list_json_path)
+    os.makedirs(backup_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(list_json_path))[0]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(backup_dir, f"{stem}_{ts}.json")
+    try:
+        shutil.copy2(list_json_path, backup_path)
+    except OSError as e:
+        print(f"⚠️ channel list 备份失败: {list_json_path}: {e}")
+        return None
+    _prune_channel_list_json_backups(backup_dir, stem, CHANNEL_LIST_MAX_BACKUPS_PER_FILE)
+    return backup_path
+
+
+def _prune_channel_list_json_backups(backup_dir: str, stem: str, max_keep: int) -> None:
+    if max_keep <= 0:
+        return
+    prefix = f"{stem}_"
+    try:
+        names = [
+            n
+            for n in os.listdir(backup_dir)
+            if n.startswith(prefix) and n.lower().endswith(".json")
+        ]
+    except OSError:
+        return
+    if len(names) <= max_keep:
+        return
+    paths = [os.path.join(backup_dir, n) for n in names]
+    paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    for old in paths[max_keep:]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+
+def write_channel_list_json(list_json_path: str, data) -> None:
+    """写频道 list JSON；若原文件存在则先备份到 ``list/_backup/``。"""
+    list_json_path = os.path.abspath(list_json_path or "")
+    if not list_json_path:
+        raise ValueError("list_json_path 为空")
+    parent = os.path.dirname(list_json_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    if os.path.isfile(list_json_path) and is_channel_list_json_path(list_json_path):
+        backup_channel_list_json_before_write(list_json_path)
+    with open(list_json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def normalize_topic_category_list_key(topic_category):

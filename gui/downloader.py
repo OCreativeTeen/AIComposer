@@ -1035,12 +1035,19 @@ def _apply_project_video_title(video_detail: dict, title: str) -> None:
 
 def _persist_channel_videos(mgr) -> bool:
     try:
-        with open(mgr.downloader.channel_list_json, "w", encoding="utf-8") as f:
-            json.dump(mgr.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+        _write_channel_list_json_file(
+            mgr.downloader.channel_list_json,
+            mgr.downloader.channel_videos,
+        )
         return True
     except Exception as e:
         print(f"保存 channel 列表失败: {e}")
         return False
+
+
+def _write_channel_list_json_file(list_path: str, data) -> None:
+    """写 ``program/<channel>/list/*.json``，写入前自动备份到 ``list/_backup/``。"""
+    config.write_channel_list_json(list_path, data)
 
 
 def _apply_titles_to_scene_content_first_entry(video_detail: dict, title: str) -> bool:
@@ -2410,8 +2417,7 @@ def _remove_pid_from_topic_category_lists(channel_path: str, pid: str) -> None:
         if len(new_arr) == len(arr):
             continue
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(new_arr, f, ensure_ascii=False, indent=2)
+            config.write_channel_list_json(path, new_arr)
         except OSError:
             pass
 
@@ -2439,8 +2445,7 @@ def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> No
         if os.path.isfile(p):
             continue
         try:
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
+            config.write_channel_list_json(p, [])
         except OSError:
             pass
 
@@ -2571,8 +2576,7 @@ def _upsert_topic_category_program_list_row(channel_path: str, topic_category: s
     if pid:
         arr = [it for it in arr if isinstance(it, dict) and not _list_json_item_matches_pid(it, pid)]
     arr.append(copy.deepcopy(entry))
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(arr, f, ensure_ascii=False, indent=2)
+    config.write_channel_list_json(path, arr)
     return path
 
 
@@ -5059,8 +5063,7 @@ class MediaDownloader:
                                 )                    
 
             _normalize_channel_videos_for_storage(self.channel_videos)
-            with open(self.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.channel_videos, f, ensure_ascii=False, indent=2)
+            _write_channel_list_json_file(self.channel_list_json, self.channel_videos)
 
             return channel_name
             
@@ -5495,8 +5498,7 @@ class MediaGUIManager:
                 self.root.after(0, lambda: messagebox.showwarning("提示", "获取视频列表失败或为空", parent=self.root))
                 return None
         else:
-            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
+            _write_channel_list_json_file(self.downloader.channel_list_json, [])
         self.downloader.channel_name = channel_name
         for v in self.downloader.channel_videos:
             self.check_video_status(v)
@@ -5607,8 +5609,7 @@ class MediaGUIManager:
             video_detail.pop('uploader', '')
 
         _normalize_channel_videos_for_storage(cleaned)
-        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+        _write_channel_list_json_file(self.downloader.channel_list_json, cleaned)
 
         self.downloader.channel_videos = cleaned
         self.downloader.latest_date = max(
@@ -5916,8 +5917,7 @@ class MediaGUIManager:
             self.downloader.channel_videos, ch_path
         )
         try:
-            with open(list_path, "w", encoding="utf-8") as f:
-                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            _write_channel_list_json_file(list_path, self.downloader.channel_videos)
             return True
         except OSError as e:
             show_auto_close_popup(
@@ -7064,8 +7064,9 @@ class MediaGUIManager:
                 video_detail["tags"] = parse_tags_list(raw_tags)
             # 保存到文件（在锁内，确保数据一致性）
             try:
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
                 dn = _youtube_row_display_title(video_detail)
                 print(f"✅ 摘要生成完成并已保存: {dn[:50] or 'Unknown'}")
             except Exception as e:
@@ -7163,8 +7164,9 @@ class MediaGUIManager:
                 if vid_s:
                     watch = f"https://www.youtube.com/watch?v={vid_s}"
                     video_detail["url"] = watch
-                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
 
                 tg_lines = []
                 try:
@@ -7619,8 +7621,9 @@ class MediaGUIManager:
                                 )
             
             _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
-            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            _write_channel_list_json_file(
+                self.downloader.channel_list_json, self.downloader.channel_videos
+            )
 
             # 更新顶部信息标签
             info_text = f"频道: {self.downloader.channel_name} | 共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count} | 热度: {hottest_degree:.2f}"
@@ -7709,8 +7712,9 @@ class MediaGUIManager:
                     self.downloader.channel_videos.remove(video_detail)
                     deleted_count += 1
             
-            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+            _write_channel_list_json_file(
+                self.downloader.channel_list_json, self.downloader.channel_videos
+            )
             print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
             
             # 刷新列表
@@ -7840,8 +7844,9 @@ class MediaGUIManager:
                 return
             self.prepare_category_for_content(vd, self.topic_choices)
             try:
-                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
             except OSError:
                 pass
             populate_tree()
@@ -7933,8 +7938,9 @@ class MediaGUIManager:
                     _normalize_channel_videos_for_storage(
                         self.downloader.channel_videos, self.channel_path or ""
                     )
-                    with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    _write_channel_list_json_file(
+                        self.downloader.channel_list_json, self.downloader.channel_videos
+                    )
                 except OSError:
                     pass
                 try:
@@ -8766,8 +8772,9 @@ class MediaGUIManager:
                 else:
                     video_detail.pop('tags', None)
                 # 保存到文件
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
                 
                 # 刷新树视图（如果对话框还存在）
                 try:
@@ -9041,8 +9048,9 @@ class MediaGUIManager:
                             return
                         video_detail["scene_content"] = scene_list
                         pending_scene[0] = None
-                        with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                        _write_channel_list_json_file(
+                            self.downloader.channel_list_json, self.downloader.channel_videos
+                        )
                         dialog.after(0, populate_tree)
 
                     def _video_scene_list() -> list:
@@ -9183,8 +9191,9 @@ class MediaGUIManager:
                                     for fld in ('channel', 'uploader'):
                                         if fld in video_data and video_data[fld]:
                                             v[fld] = video_data[fld]
-                                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                                    _write_channel_list_json_file(
+                                        self.downloader.channel_list_json, self.downloader.channel_videos
+                                    )
                                     break
                         except Exception:
                             continue
@@ -9239,8 +9248,9 @@ class MediaGUIManager:
                             updated_count += 1
                     if updated_count:
                         _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
-                        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                        _write_channel_list_json_file(
+                            self.downloader.channel_list_json, self.downloader.channel_videos
+                        )
                         if self.downloader.channel_videos and any(v.get('upload_date') for v in self.downloader.channel_videos):
                             self.downloader.latest_date = max(
                                 (datetime.strptime(v["upload_date"], "%Y%m%d") for v in self.downloader.channel_videos if v.get("upload_date")),
@@ -9310,8 +9320,9 @@ class MediaGUIManager:
                         self.downloader.channel_videos.append(v)
                     self.downloader.channel_videos.sort(key=lambda x: x.get('view_count', 0), reverse=True)
                     _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
-                    with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                        json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                    _write_channel_list_json_file(
+                        self.downloader.channel_list_json, self.downloader.channel_videos
+                    )
                     popup.destroy()
                     populate_tree()
                     show_auto_close_popup(dialog, "成功", f"已添加 {len(to_add)} 个视频到列表")
@@ -9373,15 +9384,17 @@ class MediaGUIManager:
                         else:
                             failed_count[0] += 1
                         try:
-                            with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                            _write_channel_list_json_file(
+                                self.downloader.channel_list_json, self.downloader.channel_videos
+                            )
                         except Exception:
                             pass
                     except Exception as e:
                         print(f"  ❌ 失败: {e}")
                         failed_count[0] += 1
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
                 dialog.after(
                     0,
                     lambda: [
@@ -9433,8 +9446,9 @@ class MediaGUIManager:
                             completed[0] += 1
                             print(f"[{idx}/{total}] 跳过（已存在）: {dn}")
                             try:
-                                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                                _write_channel_list_json_file(
+                                    self.downloader.channel_list_json, self.downloader.channel_videos
+                                )
                             except Exception:
                                 pass
                             continue
@@ -9455,8 +9469,9 @@ class MediaGUIManager:
                             video_detail["audio_download_status"] = "success"
                             completed[0] += 1
                             try:
-                                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
+                                _write_channel_list_json_file(
+                                    self.downloader.channel_list_json, self.downloader.channel_videos
+                                )
                             except Exception:
                                 pass
                         else:
@@ -9475,9 +9490,10 @@ class MediaGUIManager:
                 print(f"成功: {completed[0]} 个")
                 print(f"失败: {failed[0]} 个")
                 
-                with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-                    json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-                    print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
+                print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
                 # 在主线程中刷新列表
                 dialog.after(0, populate_tree)
             
@@ -9510,13 +9526,9 @@ class MediaGUIManager:
 
         def _save_channel_list_json():
             try:
-                with open(self.downloader.channel_list_json, "w", encoding="utf-8") as f:
-                    json.dump(
-                        self.downloader.channel_videos,
-                        f,
-                        ensure_ascii=False,
-                        indent=2,
-                    )
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
             except Exception:
                 pass
 
@@ -9885,9 +9897,10 @@ class MediaGUIManager:
                 print("⚠️ analyzed_content 未生成（文本不足或 LLM 失败）")
         _normalize_channel_videos_for_storage(self.downloader.channel_videos, self.channel_path or "")
 
-        with open(self.downloader.channel_list_json, 'w', encoding='utf-8') as f:
-            json.dump(self.downloader.channel_videos, f, ensure_ascii=False, indent=2)
-            print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
+        _write_channel_list_json_file(
+            self.downloader.channel_list_json, self.downloader.channel_videos
+        )
+        print(f"✅ 已保存更新后的视频列表到: {self.downloader.channel_list_json}")
 
         def _finish_download_ui():
             if analyze:
