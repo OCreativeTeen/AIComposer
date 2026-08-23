@@ -1,3 +1,7 @@
+
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+
+
 Create string video clip for "Mind Spring Melody" program -- (a song for the 心理咨询呃服务) : express content of 心理咨询 story :::  no speaker!!
 
 

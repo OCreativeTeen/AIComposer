@@ -1,0 +1,28 @@
+import sys
+import time
+import uiautomation as auto
+
+def click_app_button(button_name):
+    """根据按钮名称自动在主程序窗口查找并点击"""
+    # 定位你的软件主窗口（根据窗口标题模糊匹配）
+    window = auto.WindowControl(searchDepth=1, SubName="AI")
+    if not window.Exists(3, 1):
+        print(f"未找到主程序窗口")
+        return False
+        
+    window.SetFocus()
+    
+    # 查找对应的按钮
+    btn = window.ButtonControl(Name=button_name)
+    if btn.Exists(2, 1):
+        btn.Click()
+        print(f"成功点击按钮: {button_name}")
+        return True
+    else:
+        print(f"未找到按钮: {button_name}")
+        return False
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        target_button = sys.argv[1]
+        click_app_button(target_button)

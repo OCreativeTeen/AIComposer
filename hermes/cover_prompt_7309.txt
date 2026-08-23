@@ -1,0 +1,40 @@
+Visual_Style:
+realistic + 中国画(水墨/花鸟/山水)
+
+Export_variant:
+image/single
+
+Export_variant_label:
+单图 · 一张概括全部场景
+
+READ_FIRST__SINGLE_IMAGE_MANDATE:
+
+You generate PICTURE illustrations, NOT text slides.
+Each scene's ``show_this_content`` tells you WHAT to paint — setting, character emotion, action, and light.
+** Consistent Visual_Style : realistic + 中国画(水墨/花鸟/山水)
+** Consistent Story-Character look (VERY VERY IMPORTANT!!!!) : 男性/33岁/亚洲人.
+
+
+Instruction_for_image_generation:
+** Single-image mode: exactly ONE image for the entire Scene_Content block (all scenes combined into one master composition).
+** Summarize the full story arc in one cinematic still: setting, protagonist, emotional through-line, and key motifs from every scene.
+** Show emotional progression through expression, pose, symbolic props, and composition — NOT through written paragraphs on the image.
+** Keep the same Visual_Style and consistent character look across the composite.
+** When ``actor`` / ``speaking`` are present: the protagonist MUST appear with facial expression, posture, gesture, and action that MATCH the emotional state in ``speaking`` and ``actor``.
+** Use ``speaking`` only to infer mood and body language — NEVER render speaking lines as subtitles, captions, or speech bubbles (unless variant explicitly allows Word-in-image video).
+
+Story_Scene_Content:
+[
+  {
+    "show_this_content": "Scene title: 暗角：无处容身的傲慢\nScene visual: 破旧的出租屋里，墙角堆满杂物。桌上摆着一盘冒着热气的热汤面，那是邻居大姐特意端来的。男人坐在阴影里，看着那碗干净的面，眼神没有感激，只有被刺痛般的阴沉与警惕。\nCharacter (actor): 男/30岁/亚裔 | 阴郁、戒备、局促 | 坐在黑暗的角落里，双手抱胸，冷冷地盯着桌上的饭菜\nEmotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): 收起你那副悲天悯人的样子吧，谁稀罕你的施舍，不过是想让我觉得自己有多低贱罢了。"
+  },
+  {
+    "show_this_content": "Scene title: 撕裂：高高在上的坠落\nScene visual: 灯光下，男人突然猛地站起身，手掌狠狠一挥。热汤面连同瓷碗砸在地板上，汤汁四溅，碎瓷片散落一地。门口刚走进来的女人被这一幕惊呆了，手里还拎着刚买的日用品，错愕在原地。\nCharacter (actor): 男/30岁/亚裔 | 暴躁、愤怒、失控 | 居高临下地站着，手指着地上的狼藉，面目狰狞地冲对方低吼\nEmotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): 你以为自己是救世主吗？看看你现在吃惊的蠢样，你费尽心思对我好，到底想证明什么？"
+  },
+  {
+    "show_this_content": "Scene title: 翻转：毁灭之中的伪神\nScene visual: 混乱的房间里，男人看着对方眼底闪过的错愕、痛苦与难以置信，胸口涌起一股扭曲的快意。他缓缓弯下腰，眼神冰冷而戏谑，像一个俯视众生的神明，看着自己的杰作。\nCharacter (actor): 男/30岁/亚裔 | 扭曲的得意、冰冷、残忍 | 带着冷笑逼近对方，居高临下地俯视着瘫坐在地的身影\nEmotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): 怎么，后悔对我好了？现在尝到被愚弄的滋味了吧？在这个屋子里，究竟谁才是说了算的神？"
+  },
+  {
+    "show_this_content": "Scene title: 余烬：无法触碰的明天\nScene visual: 夜深人静，狼藉的房间已被简单收拾过。男人独自靠在窗边，外面下着冷雨，玻璃上映出他疲惫而空洞的脸。他看着自己的双手，眼底的疯狂渐渐褪去，只剩下无尽的冰冷与疲惫。\nCharacter (actor): 男/30岁/亚裔 | 疲惫、孤寂、释怀前的迷茫 | 靠在冰冷的窗前，眼神空洞地看着窗外的雨夜\nEmotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): 其实我只是……害怕当你们发现我根本没那么好的时候，会头也不回地丢下我一个人。"
+  }
+]

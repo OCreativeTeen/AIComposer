@@ -1,0 +1,93 @@
+1. GUI 「输出选择」 按钮
+在「热门视频管理」窗口底部（「输出简表」左侧）新增 输出选择 按钮：
+
+将树中已选中的视频条目写入队列
+输出路径：{BASE_PROGRAM_PATH}/video_choice_queue.json（即 /AI_MEDIA/program/video_choice_queue.json）
+同一条目（同一 list + row_key）不会重复写入
+每条队列记录包含：
+
+频道信息（channel_id、channel_path）
+列表文件路径（list_json_path）
+行定位键（row_key / url / id）
+标题、主题分类、标签
+是否已有摘要 / 场景
+工作流 workflow_pid（若已绑定项目）
+2. 命令行工具（aiagent/pick_video_choice.py）
+供外部 agent 逐条处理：
+
+# 查看队列状态
+python -m aiagent.pick_video_choice status --json
+# 列出全部 / 仅剩余
+python -m aiagent.pick_video_choice list --json
+python -m aiagent.pick_video_choice list --remaining
+
+
+# 取下一条（按 cursor）
+python -m aiagent.pick_video_choice next --with-detail --json
+	或双击：aiagent\pick_video_choice_next.bat
+	若带 --json，先向 stdout 输出 JSON（给 Hermes 用）
+	自动启动 GUI，等效于 GUI_pm.py，但跳过：	欢迎屏选频道 / 语言 / 风格 / 旁白（用队列里保存的值）
+	「选择频道列表」弹窗（直接用 list_json_path）
+	双击后的「打开摘要编辑」菜单（自动打开该条摘要编辑窗）
+
+	仅要 JSON、不启动界面时：
+		python -m aiagent.pick_video_choice next --with-detail --json --no-gui
+
+
+
+# 处理完成后标记
+python -m aiagent.pick_video_choice done <choice_id>
+# 跳过
+python -m aiagent.pick_video_choice skip <choice_id>
+# 按 choice_id 解析完整 video detail
+python -m aiagent.pick_video_choice resolve <choice_id> --json
+# 队列文件路径
+python -m aiagent.pick_video_choice path
+
+
+
+
+
+
+
+3. 典型 Hermes 工作流
+
+在 GUI 中选中若干视频 → 点 输出选择
+Agent 循环执行：
+
+python -m aiagent.pick_video_choice next --with-detail --json
+根据返回的 video_detail 启动后续 AI 工作流（生成视频等）
+
+完成后：
+python -m aiagent.pick_video_choice done <choice_id>
+重复直到 next 无 pending 条目
+
+
+
+----------
+
+Telegram :
+
+@StoryVideoGenerationWorkflow_bot
+
+Token :
+8981421223:AAGkHR-fZdASY89H86JyXtvIVayRjPyaJmQ
+
+chat-id :
+7075595427
+
+
+------------
+C:\Users\wenju\AppData\Local\hermes
+C:\Users\wenju\AppData\Local\hermes\config.yaml
+
+
+
+* Commands:
+
+   hermes              Start chatting
+   hermes setup        Configure API keys & settings
+   hermes config       View/edit configuration
+   hermes config edit  Open config in editor
+   hermes gateway      Start messaging gateway (Telegram, Discord, etc.)
+   hermes update       Update to latest version

@@ -595,6 +595,7 @@ def publish_final_video_path(pid: str) -> str:
 
 YT_TEXT_DOWNLOAD_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_text_download.json")
 YT_TOOLS_PREFS_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_tools_prefs.json")
+VIDEO_CHOICE_QUEUE_JSON = os.path.join(BASE_PROGRAM_PATH, "video_choice_queue.json")
 
 
 def load_yt_tools_prefs() -> dict:

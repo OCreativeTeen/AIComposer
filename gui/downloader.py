@@ -142,6 +142,7 @@ def _build_instruction_snippet_combo(
     if not choices:
         return
     placeholder = "— 选择片段插入 —"
+    ttk.Label(parent, text="").pack(anchor=tk.W)
     row = ttk.Frame(parent)
     row.pack(fill=tk.X, pady=(0, 4))
     ttk.Label(row, text="插入片段").pack(side=tk.LEFT, padx=(0, 5))
@@ -375,6 +376,77 @@ def _youtube_format_error_message(raw_error: str, *, cookies_invalid: bool = Fal
         hints.append("")
         hints.append(f"原始错误: {msg}")
     return "\n".join(hints)
+
+
+def _youtube_best_video_ydl_opts() -> dict:
+    """yt-dlp：最高分辨率 + 最高帧率（先 ``bestvideo*`` 再合并为 mp4）。"""
+    return {
+        "format": "bestvideo*+bestaudio/best",
+        "merge_output_format": "mp4",
+        "prefer_free_formats": False,
+        "format_sort": ["res:9999", "fps:9999", "size", "br", "asr"],
+        "format_sort_force": True,
+        "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
+    }
+
+
+YOUTUBE_VIDEO_FORMAT_FALLBACKS = (
+    "bestvideo*+bestaudio/best",
+    "bv*+ba/b",
+    "bestvideo+bestaudio/best",
+    "bestvideo*+bestaudio",
+    "best",
+)
+
+YOUTUBE_VIDEO_MIN_HEIGHT_TO_SKIP_REDOWNLOAD = 1080
+
+
+def _ffprobe_video_height(path: str) -> int | None:
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=height",
+                "-of",
+                "csv=p=0:s=x",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        h = int((r.stdout or "").strip())
+        return h if h > 0 else None
+    except Exception:
+        return None
+
+
+def _log_yt_downloaded_format_info(info: dict | None) -> None:
+    if not isinstance(info, dict):
+        return
+    parts: list[str] = []
+    for key in ("requested_formats", "requested_downloads"):
+        for fmt in info.get(key) or []:
+            if not isinstance(fmt, dict):
+                continue
+            if fmt.get("vcodec") == "none":
+                continue
+            h = fmt.get("height")
+            fps = fmt.get("fps")
+            ext = fmt.get("ext")
+            if h or fps or ext:
+                parts.append(f"{h or '?'}p {fps or '?'}fps {ext or '?'}")
+    fp = (info.get("filepath") or "").strip()
+    if parts:
+        print(f"📺 已选画质: {', '.join(parts)}")
+    if fp:
+        print(f"📁 输出: {fp}")
 
 
 YOUTUBE_AUDIO_FORMAT_FALLBACKS = (
@@ -4102,6 +4174,12 @@ class MediaDownloader:
             return ["mweb", "web", "android", "tv_embedded"]
         return ["android", "mweb", "web"]
 
+    def _default_youtube_video_player_clients(self) -> list[str]:
+        """视频最高画质：优先 web（android 常只有 360p/720p；tv_embedded 已弃用）。"""
+        if self.js_runtime[0]:
+            return ["web", "tv", "mweb"]
+        return ["web", "mweb", "tv"]
+
 
     def _load_yt_download_pref(self) -> dict | None:
         key = self._yt_download_pref_key()
@@ -4195,6 +4273,132 @@ class MediaDownloader:
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(url, download=download), url
 
+
+    def _yt_download_pref_video_key(self) -> str:
+        base = self._yt_download_pref_key()
+        return f"{base}::video" if base else ""
+
+    def _load_yt_download_video_pref(self) -> dict | None:
+        key = self._yt_download_pref_video_key()
+        if not key:
+            return None
+        path = self._yt_download_prefs_file()
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        ent = data.get(key)
+        return ent if isinstance(ent, dict) else None
+
+    def _save_yt_download_video_pref(self, pref: dict) -> None:
+        key = self._yt_download_pref_video_key()
+        if not key or not isinstance(pref, dict) or not pref.get("format"):
+            return
+        path = self._yt_download_prefs_file()
+        data: dict = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception:
+                pass
+        data[key] = {
+            "use_cookies": bool(pref.get("use_cookies", True)),
+            "format": str(pref["format"]),
+            "player_client": str(pref.get("player_client") or ""),
+        }
+        write_json(path, data)
+        print(
+            f"📌 已记住频道视频下载策略: cookies={data[key]['use_cookies']}, "
+            f"client={data[key]['player_client']}, format={data[key]['format']}"
+        )
+
+    def _yt_download_video_with_fallbacks(self, video_url: str, **extra_opts):
+        """视频最高画质下载：web 客户端 + 多 format 回退（与音频策略分开记忆）。"""
+        last_err = ""
+        base_opts = {**_youtube_best_video_ydl_opts(), **extra_opts}
+
+        saved = self._load_yt_download_video_pref()
+        if saved and (saved.get("player_client") or "").strip().lower() in (
+            "android",
+            "ios",
+        ):
+            print("⚠️ 忽略旧的 android/ios 视频策略，改用 web 客户端…")
+            saved = None
+        if saved:
+            fmt = saved.get("format")
+            client = (saved.get("player_client") or "").strip() or None
+            use_ck = bool(saved.get("use_cookies", True))
+            if fmt:
+                try:
+                    kw = self._yt_merge_player_client_args(base_opts, client)
+                    print(
+                        f"📌 复用频道视频下载策略: cookies={use_ck}, "
+                        f"client={client or 'default'}, format={fmt}"
+                    )
+                    return self._yt_extract_download(
+                        video_url,
+                        use_cookies=use_ck,
+                        download=True,
+                        format_string=fmt,
+                        **kw,
+                    )
+                except yt_dlp.utils.DownloadError as e:
+                    last_err = str(e)
+                    if "cookies are no longer valid" in last_err.lower() and use_ck:
+                        self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+                    if not self._yt_is_format_or_cookie_error(e):
+                        raise
+                    print("⚠️ 已保存的视频下载策略失效，重新探测…")
+
+        cookie_phases = (True, False) if self.cookie_file else (False,)
+        for use_ck in cookie_phases:
+            if use_ck and getattr(self, "_cookies_session_disabled", False):
+                continue
+            for client in self._default_youtube_video_player_clients():
+                for fmt in YOUTUBE_VIDEO_FORMAT_FALLBACKS:
+                    try:
+                        kw = self._yt_merge_player_client_args(base_opts, client)
+                        result = self._yt_extract_download(
+                            video_url,
+                            use_cookies=use_ck,
+                            download=True,
+                            format_string=fmt,
+                            **kw,
+                        )
+                        self._save_yt_download_video_pref(
+                            {
+                                "use_cookies": use_ck,
+                                "format": fmt,
+                                "player_client": client,
+                            }
+                        )
+                        return result
+                    except yt_dlp.utils.DownloadError as e:
+                        last_err = str(e)
+                        if "cookies are no longer valid" in last_err.lower() and use_ck:
+                            self._disable_cookies_for_session("YouTube 报告 cookies 无效")
+                            break
+                        if not self._yt_is_format_or_cookie_error(e):
+                            raise
+                        print(
+                            f"⚠️ 视频下载失败 (cookies={use_ck}, client={client}, "
+                            f"format={fmt})，尝试下一方案…"
+                        )
+                        continue
+                    except Exception:
+                        raise
+        cookies_bad = "cookies are no longer valid" in last_err.lower()
+        raise Exception(
+            _youtube_format_error_message(last_err, cookies_invalid=cookies_bad)
+        )
 
     def _yt_download_with_fallbacks(
         self,
@@ -4611,61 +4815,90 @@ class MediaDownloader:
         target_video_path = video_prefix + ".mp4"
         target_audio_path = video_prefix + ".mp3"
         if os.path.exists(target_video_path):
-            if video_detail.get('video_path', '') == target_video_path:
+            existing_h = _ffprobe_video_height(target_video_path)
+            if (
+                existing_h is not None
+                and existing_h >= YOUTUBE_VIDEO_MIN_HEIGHT_TO_SKIP_REDOWNLOAD
+            ):
+                if video_detail.get('video_path', '') == target_video_path:
+                    return video_detail['video_path']
+                video_detail['video_path'] = target_video_path
+                audio_path = video_detail.get('audio_path', '')
+                if not audio_path or audio_path != target_audio_path:
+                    a = self.ffmpeg_audio_processor.extract_audio_from_video(
+                        target_video_path, "mp3"
+                    )
+                    safe_copy_overwrite(a, target_audio_path)
+                    video_detail['audio_path'] = target_audio_path
+                print(
+                    f"✅ 已有高清视频（{existing_h}p），跳过下载: "
+                    f"{os.path.basename(target_video_path)}"
+                )
                 return video_detail['video_path']
-            video_detail['video_path'] = video_prefix + ".mp4"
-            audio_path = video_detail.get('audio_path', '')
-            if not audio_path or audio_path != target_audio_path:
-                a = self.ffmpeg_audio_processor.extract_audio_from_video(target_video_path, "mp3")
-                safe_copy_overwrite(a, target_audio_path)
-                video_detail['audio_path'] = target_audio_path
-            return video_detail['video_path']
+            if existing_h:
+                print(
+                    f"⚠️ 已有视频仅 {existing_h}p（<{YOUTUBE_VIDEO_MIN_HEIGHT_TO_SKIP_REDOWNLOAD}p），"
+                    "将重新下载更高画质…"
+                )
+            for ext in ("mp4", "webm", "mkv"):
+                p = video_prefix + f".{ext}"
+                if os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
 
         outtmpl = video_prefix + ".%(ext)s"
-        # 优先级: MP4 高质量 -> 任何高质量 -> 最佳可用
-        format_string = (
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo+bestaudio/"
-            "best[ext=mp4]/"
-            "best"
-        )
-        
-        # 使用基础选项，包含 cookies 支持
         ydl_opts_kwargs = {
-            'format': format_string,
-            'outtmpl': outtmpl,
-            'merge_output_format': 'mp4',
-            'quiet': False,
-            'progress_hooks': [self._progress_hook],
-            'skip_download': False,  # 需要下载
-            'ignoreerrors': False,  # 不忽略错误,让调用者处理
+            "outtmpl": outtmpl,
+            "quiet": False,
+            "progress_hooks": [self._progress_hook],
+            "skip_download": False,
+            "ignoreerrors": False,
         }
         if sleep_interval is not None:
-            ydl_opts_kwargs['sleep_interval'] = sleep_interval
-        
-        ydl_opts = self._get_ydl_opts_base(**ydl_opts_kwargs)
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                # 验证文件是否存在
-                if not os.path.exists(target_video_path):
-                    # 尝试查找其他扩展名
-                    base_path = target_video_path.rsplit('.', 1)[0]
-                    for ext in ['webm', 'mkv', 'mp4']:
-                        alt_path = f"{base_path}.{ext}"
-                        if os.path.exists(alt_path):
-                            print(f"✅ 找到下载文件: {alt_path}")
-                            target_video_path = alt_path
-                            break
-                
-                safe_copy_overwrite(self.ffmpeg_audio_processor.extract_audio_from_video(target_video_path, "mp3"), target_audio_path)
-                video_detail['audio_path'] = target_audio_path
-                video_detail['video_path'] = target_video_path
+            ydl_opts_kwargs["sleep_interval"] = sleep_interval
 
-                return target_video_path
+        self._check_and_update_cookies()
+        try:
+            info, _ = self._yt_download_video_with_fallbacks(
+                video_url,
+                **ydl_opts_kwargs,
+            )
+            _log_yt_downloaded_format_info(info)
+            if not os.path.exists(target_video_path):
+                base_path = target_video_path.rsplit('.', 1)[0]
+                for ext in ['webm', 'mkv', 'mp4']:
+                    alt_path = f"{base_path}.{ext}"
+                    if os.path.exists(alt_path):
+                        print(f"✅ 找到下载文件: {alt_path}")
+                        target_video_path = alt_path
+                        break
+                fp = ""
+                if isinstance(info, dict):
+                    fp = (info.get("filepath") or "").strip()
+                if fp and os.path.isfile(fp):
+                    target_video_path = os.path.abspath(fp)
+
+            if not os.path.exists(target_video_path):
+                print("❌ 视频下载完成但未找到输出文件")
+                return None
+
+            safe_copy_overwrite(
+                self.ffmpeg_audio_processor.extract_audio_from_video(
+                    target_video_path, "mp3"
+                ),
+                target_audio_path,
+            )
+            video_detail['audio_path'] = target_audio_path
+            video_detail['video_path'] = target_video_path
+            out_h = _ffprobe_video_height(target_video_path)
+            if out_h:
+                print(f"✅ 视频已保存: {out_h}p → {target_video_path}")
+            return target_video_path
 
         except Exception as e:
+            print(f"❌ 下载视频失败: {e}")
             return None
 
 
@@ -5504,6 +5737,75 @@ class MediaGUIManager:
             self.check_video_status(v)
         return True
 
+    def _load_channel_list_json_into_downloader(self, list_json_path: str) -> bool:
+        """读取 ``list/*.json`` 到 ``downloader.channel_videos``（与「频道列表项目管理」选列表后相同）。"""
+        list_json_path = (list_json_path or "").strip()
+        if not list_json_path or not os.path.isfile(list_json_path):
+            messagebox.showwarning("提示", f"列表文件不存在：{list_json_path}", parent=self.root)
+            return False
+
+        self.downloader.channel_list_json = list_json_path
+        basename = os.path.basename(list_json_path)
+        self.downloader.channel_name = os.path.splitext(basename)[0]
+
+        with open(list_json_path, "r", encoding="utf-8") as f:
+            channel_videos = json.load(f)
+
+        _normalize_channel_videos_for_storage(channel_videos, self.channel_path or "")
+
+        for video in channel_videos:
+            scene_content = video.get("scene_content")
+            if isinstance(scene_content, str):
+                try:
+                    scene_content = json.loads(scene_content)
+                except Exception:
+                    video.pop("scene_content", None)
+                    continue
+            if isinstance(scene_content, list) and scene_content:
+                video["scene_content"] = scene_content
+            else:
+                video.pop("scene_content", None)
+
+        cleaned = dedupe_channel_video_list(channel_videos)
+
+        for video_detail in cleaned:
+            video_detail.pop("description", "")
+            video_detail.pop("thumbnail", "")
+            video_detail.pop("uploader", "")
+
+        _normalize_channel_videos_for_storage(cleaned, self.channel_path or "")
+        _write_channel_list_json_file(self.downloader.channel_list_json, cleaned)
+
+        self.downloader.channel_videos = cleaned
+        self.downloader.latest_date = max(
+            (
+                datetime.strptime(v["upload_date"], "%Y%m%d")
+                for v in self.downloader.channel_videos
+                if v.get("upload_date")
+            ),
+            default=None,
+        )
+        if not self.downloader.channel_videos:
+            messagebox.showwarning("提示", "视频列表为空", parent=self.root)
+            return False
+
+        for video in self.downloader.channel_videos:
+            self.check_video_status(video)
+        return True
+
+    def open_hot_videos_from_list_json(
+        self,
+        list_json_path: str,
+        *,
+        auto_open_summary_row_keys: list[str] | None = None,
+    ) -> None:
+        """跳过「选择频道列表」弹窗，直接打开热门视频管理；可选自动打开摘要编辑。"""
+        self.downloader.language = "en" if self.language == "en" else "zh"
+        if not self._load_channel_list_json_into_downloader(list_json_path):
+            return
+        keys = [str(k).strip() for k in (auto_open_summary_row_keys or []) if str(k).strip()]
+        self._show_channel_videos_dialog(auto_open_summary_row_keys=keys)
+
     def manage_hot_videos(self):
         # 语言已在 YT 欢迎屏（project_manager.show_initial_choice_dialog）选择
         self.downloader.language = 'en' if self.language == 'en' else 'zh'
@@ -5580,54 +5882,8 @@ class MediaGUIManager:
             return
         # 获取选中的频道
         channel = choice_to_channel[selected_choice]
-        self.downloader.channel_list_json = channel['file']
-        
-        # 读出 list：按外层 id 去重（YouTube id / 项目 pid）；勿按展示标题合并不同项目行
-        with open(self.downloader.channel_list_json, 'r', encoding='utf-8') as f:
-            channel_videos = json.load(f)
-
-        _normalize_channel_videos_for_storage(channel_videos)
-
-        for video in channel_videos:
-            scene_content = video.get('scene_content')
-            if isinstance(scene_content, str):
-                try:
-                    scene_content = json.loads(scene_content)
-                except Exception:
-                    video.pop('scene_content', None)
-                    continue
-            if isinstance(scene_content, list) and scene_content:
-                video['scene_content'] = scene_content
-            else:
-                video.pop('scene_content', None)
-
-        cleaned = dedupe_channel_video_list(channel_videos)
-
-        for video_detail in cleaned:
-            video_detail.pop('description', '')
-            video_detail.pop('thumbnail', '')
-            video_detail.pop('uploader', '')
-
-        _normalize_channel_videos_for_storage(cleaned)
-        _write_channel_list_json_file(self.downloader.channel_list_json, cleaned)
-
-        self.downloader.channel_videos = cleaned
-        self.downloader.latest_date = max(
-            (
-                datetime.strptime(v["upload_date"], "%Y%m%d")
-                for v in self.downloader.channel_videos
-                if v.get("upload_date")
-            ),
-            default=None
-        )
-        if not self.downloader.channel_videos:
-            messagebox.showwarning("提示", "视频列表为空")
+        if not self._load_channel_list_json_into_downloader(channel["file"]):
             return
-
-        self.downloader.channel_name = channel['name']   
-        for video in self.downloader.channel_videos:
-            self.check_video_status(video)
-        # 显示该频道的视频管理对话框
         self._show_channel_videos_dialog()
 
 
@@ -6367,8 +6623,7 @@ class MediaGUIManager:
         dlg.title("分镜 / Scene")
         dlg.geometry("920x820")
         dlg.minsize(640, 560)
-        dlg.transient(parent)
-        dlg.grab_set()
+        # 非模态：允许切回摘要窗 / 列表等其它窗口（勿 grab_set / transient）
         dlg.update_idletasks()
         sw = dlg.winfo_screenwidth()
         sh = dlg.winfo_screenheight()
@@ -6404,6 +6659,8 @@ class MediaGUIManager:
         )
         prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
 
+        ttk.Label(frm, text="").pack(anchor=tk.W)
+
         _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
         _pp = video_detail.get("project_profile") if isinstance(video_detail.get("project_profile"), dict) else {}
         _vs_cur = (_pp.get("visual_style") or project_manager.LAST_VISUAL_STYLE or "").strip()
@@ -6421,6 +6678,8 @@ class MediaGUIManager:
             width=48,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        ttk.Label(frm, text="").pack(anchor=tk.W)
+
         ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
             anchor=tk.W, pady=(0, 2)
         )
@@ -6430,6 +6689,8 @@ class MediaGUIManager:
             instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
         )
         instruction_tx.pack(fill=tk.X, pady=(0, 4))
+
+        ttk.Label(frm, text="").pack(anchor=tk.W)
 
         ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
             anchor=tk.W, pady=(0, 2)
@@ -7235,7 +7496,7 @@ class MediaGUIManager:
             on_refresh,
         )
 
-    def _show_channel_videos_dialog(self):
+    def _show_channel_videos_dialog(self, *, auto_open_summary_row_keys: list[str] | None = None):
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
         dialog.title(f"热门视频管理 - {self.downloader.channel_name}")
@@ -9159,6 +9420,44 @@ class MediaGUIManager:
             _bind_ctrl_arrow_nav(tree)
             _bind_ctrl_arrow_nav(dialog)
             dialog._summary_nav_tree_bound = True
+
+        def _auto_open_summary_for_row_keys():
+            keys = {str(k).strip() for k in (auto_open_summary_row_keys or []) if str(k).strip()}
+            if not keys:
+                return
+            for item in tree.get_children():
+                t = _treeview_item_tags_safe(tree, item)
+                if not t:
+                    continue
+                tag0 = (t[0] or "").strip()
+                if tag0 in keys:
+                    tree.selection_set(item)
+                    tree.see(item)
+                    tree.focus(item)
+                    on_focus(_SummaryNavFakeEvt(), low_priority=True)
+                    return
+            for item in tree.get_children():
+                t = _treeview_item_tags_safe(tree, item)
+                if not t:
+                    continue
+                vd = self.get_video_detail((t[0] or "").strip())
+                if not isinstance(vd, dict):
+                    continue
+                candidates = {
+                    _channel_list_row_tree_key(vd),
+                    (vd.get("url") or "").strip(),
+                    project_manager.list_json_row_id(vd),
+                    project_manager.list_json_row_workflow_pid(vd),
+                }
+                if keys & {c for c in candidates if c}:
+                    tree.selection_set(item)
+                    tree.see(item)
+                    tree.focus(item)
+                    on_focus(_SummaryNavFakeEvt(), low_priority=True)
+                    return
+
+        if auto_open_summary_row_keys:
+            dialog.after(250, _auto_open_summary_for_row_keys)
         
         # 底部按钮框架（先创建框架，按钮在后面定义函数后添加）
         bottom_frame = ttk.Frame(dialog)
@@ -9666,6 +9965,47 @@ class MediaGUIManager:
             populate_tree()
 
 
+        def export_selected_choices():
+            """将树中选中行导出到 program/video_choice_queue.json，供 CLI / AI agent 逐条取用。"""
+            if not tree.selection():
+                messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
+                return
+            from aiagent.video_choice_queue import export_video_details_to_queue
+
+            details = _unique_video_details_from_tree_selection()
+            if not details:
+                messagebox.showwarning("提示", "未找到有效的视频条目", parent=dialog)
+                return
+            ch_path = self.channel_path or ""
+            ch_id = config.get_channel_id(os.path.basename(ch_path)) if ch_path else ""
+            list_path = (self.downloader.channel_list_json or "").strip()
+            added, skipped, out_path = export_video_details_to_queue(
+                details,
+                channel_id=ch_id,
+                channel_path=ch_path,
+                list_json_path=list_path,
+                title_fn=_youtube_row_display_title,
+                yt_language=project_manager.LAST_YT_LANGUAGE,
+                visual_style=project_manager.LAST_VISUAL_STYLE,
+                narrator=project_manager.LAST_NARRATOR,
+            )
+            if added == 0:
+                messagebox.showwarning(
+                    "输出选择",
+                    f"无有效条目可写入（跳过 {skipped} 条）。\n\n{out_path}",
+                    parent=dialog,
+                )
+                return
+            messagebox.showinfo(
+                "输出选择",
+                f"已覆盖写入 {added} 条"
+                + (f"（跳过 {skipped} 条无效/重复）" if skipped else "")
+                + f"\n\n{out_path}\n\n"
+                "命令行取用（自动打开摘要编辑）：\n"
+                "  python -m aiagent.pick_video_choice next --with-detail --json",
+                parent=dialog,
+            )
+
         def list_summary():
             # new list for items in the list, only item with summary, include fields:
             # analyzed_content, title, url, topic_category, topic_subtype, tags
@@ -9739,6 +10079,8 @@ class MediaGUIManager:
 
         # 在所有函数定义后创建按钮
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(bottom_frame, text="输出选择", command=export_selected_choices).pack(side=tk.RIGHT, padx=5)
 
         ttk.Button(bottom_frame, text="输出简表", command=list_summary).pack(side=tk.RIGHT, padx=5)
 
@@ -9845,7 +10187,30 @@ class MediaGUIManager:
             return
 
         if not transcribe:
-            self.downloader.download_video_highest_resolution(video_data)
+            path = self.downloader.download_video_highest_resolution(video_data)
+            if path and os.path.isfile(path):
+                h = _ffprobe_video_height(path)
+                msg = f"已保存:\n{path}"
+                if h:
+                    msg = f"已保存 ({h}p):\n{path}"
+                self.root.after(
+                    0,
+                    lambda m=msg: show_auto_close_popup(self.root, "下载完成", m),
+                )
+            else:
+                self.root.after(
+                    0,
+                    lambda: show_auto_close_popup(
+                        self.root,
+                        "下载失败",
+                        "未能下载最高画质视频。\n\n"
+                        "请确认：\n"
+                        "1) 已安装 ffmpeg 并在 PATH 中\n"
+                        "2) program/<频道>/Download 下有有效的 YouTube cookies\n"
+                        "3) yt-dlp 为最新版: pip install -U yt-dlp",
+                        kind="error",
+                    ),
+                )
             return
 
         self._bind_yt_text_download_channel_list()
