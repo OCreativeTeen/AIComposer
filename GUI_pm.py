@@ -23,8 +23,17 @@ except ImportError:
 
 
 def main():
+    from cli.gui_session import SOURCE_MANUAL, clear_gui_launch_source, set_gui_launch_source
+
+    set_gui_launch_source(SOURCE_MANUAL)
     root = _ROOT_FACTORY()
     root.title("AIComposer — YT 工具")
+    try:
+        from gui.cli_bridge import register_bridge_root
+
+        register_bridge_root(root)
+    except Exception:
+        pass
     # 切勿在此处 withdraw(root)。在 Windows 上父窗口被 withdraw 时，其子 Toplevel（YT 工具选择窗）
     # 往往完全不显示。根窗缩到极小并移到屏外，减少空白主窗干扰。
     try:
@@ -36,11 +45,15 @@ def main():
     choice, *_rest = show_initial_choice_dialog(root) 
 
     if choice == "cancel":
+        clear_gui_launch_source()
         root.destroy()
         return
 
     # choice == "yt"：业务对话框关闭后轮询会 quit；此处进入事件循环
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        clear_gui_launch_source()
     try:
         root.destroy()
     except tk.TclError:

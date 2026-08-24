@@ -1,4 +1,8 @@
-"""摘要窗拖入 MP4：审阅、裁剪片段、调整顺序，确认后末帧延长、拼接并加水印保存。"""
+"""摘要窗拖入 MP4：审阅、裁剪片段、调整顺序。
+
+确认后的成片（末帧延长 / 拼接 / 水印）交给 ``gui.story_video_concat``，
+与 CLI ``video_concat`` 共用同一套处理。
+"""
 from __future__ import annotations
 
 import os
@@ -29,7 +33,6 @@ from PIL import Image, ImageTk
 import config
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor, ffmpeg_path
-from utility.file_util import safe_copy_overwrite, safe_remove
 
 
 def _parse_dnd_mp4_paths(widget, raw) -> list[str]:
@@ -67,7 +70,6 @@ class _ClipState:
 SPEED_MIN = 0.7
 SPEED_MAX = 1.2
 SPEED_STEP = 0.1
-CLIP_END_FREEZE_SEC = 0.66
 
 
 def _fmt_time(sec: float) -> str:
@@ -928,75 +930,17 @@ def run_trim_concat_watermark_worker(
     dest_name: str,
     on_done,
 ) -> None:
-    """后台：逐段 trim → 末帧延长 → concat → watermark → 写入 gen_video。"""
+    """后台成片：转给 ``gui.story_video_concat``（trim → 末帧延长 → concat → 水印）。"""
+    from gui.story_video_concat import run_concat_worker
 
-    def _worker():
-        out_ok = ""
-        err_msg = ""
-        stage_tmps: list[str] = []
-        concat_tmp = ""
-        wm_tmp = ""
-        try:
-            os.makedirs(gen_dir, exist_ok=True)
-            ff = FfmpegProcessor(pid, lang)
-            processed: list[str] = []
-            for seg in segments:
-                p = seg["path"]
-                st = float(seg["start"])
-                en = float(seg["end"])
-                spd = float(seg.get("speed") or 1.0)
-                tp = ff.trim_video(p, st, en, volume=1.0, speed=spd)
-                if not tp:
-                    err_msg = f"裁剪失败：{os.path.basename(p)}"
-                    return
-                stage_tmps.append(tp)
-                frozen = ff.extend_clip_end_with_last_frame(tp, CLIP_END_FREEZE_SEC)
-                if not frozen:
-                    err_msg = f"末帧延长 {CLIP_END_FREEZE_SEC:.2f}s 失败：{os.path.basename(p)}"
-                    return
-                if frozen != tp:
-                    stage_tmps.append(frozen)
-                processed.append(frozen)
-            if len(processed) == 1:
-                source = processed[0]
-            else:
-                source = ff.concat_videos(processed, True)
-                concat_tmp = source or ""
-                if not source:
-                    err_msg = f"拼接 {len(processed)} 段失败。"
-                    return
-            wm_tmp = config.get_temp_file(pid, "mp4")
-            ok = ff.apply_watermark_to_video(
-                source, wm_tmp, wm_path, wm_opts or {}
-            )
-            if not ok:
-                err_msg = "叠加水印失败。"
-                return
-            dest_abs = os.path.join(gen_dir, dest_name)
-            safe_copy_overwrite(wm_tmp, dest_abs)
-            FfmpegProcessor.invalidate_duration_cache(dest_abs)
-            safe_remove(wm_tmp)
-            wm_tmp = ""
-            out_ok = dest_abs
-        except Exception as ex:
-            err_msg = str(ex)
-        finally:
-            for t in stage_tmps:
-                if t and t != out_ok and t != concat_tmp:
-                    try:
-                        safe_remove(t)
-                    except Exception:
-                        pass
-            if concat_tmp and concat_tmp not in stage_tmps and concat_tmp != out_ok:
-                try:
-                    safe_remove(concat_tmp)
-                except Exception:
-                    pass
-            if wm_tmp:
-                try:
-                    safe_remove(wm_tmp)
-                except Exception:
-                    pass
-        on_done(out_ok, err_msg, len(segments))
-
-    threading.Thread(target=_worker, daemon=True).start()
+    run_concat_worker(
+        segments=segments,
+        pid=pid,
+        lang=lang,
+        wm_path=wm_path,
+        wm_opts=wm_opts or {},
+        gen_dir=gen_dir,
+        dest_name=dest_name,
+        trim=True,
+        on_done=on_done,
+    )

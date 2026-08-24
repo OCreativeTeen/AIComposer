@@ -597,6 +597,138 @@ YT_TEXT_DOWNLOAD_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_text_download.json")
 YT_TOOLS_PREFS_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_tools_prefs.json")
 VIDEO_CHOICE_QUEUE_JSON = os.path.join(BASE_PROGRAM_PATH, "video_choice_queue.json")
 
+# GUI 当前活动屏（跨进程：GUI 写入，CLI / Telegram 读取）
+SCREEN_NONE = "none"
+SCREEN_STORY_ROOT = "story_root"
+SCREEN_STORY_SCENE = "story_scene"
+SCREEN_VIDEO_LIST = "video_list"
+SCREEN_YT_TOOLS = "yt_tools"
+ACTIVE_SCREEN = SCREEN_NONE
+ACTIVE_SCREEN_JSON = os.path.join(BASE_PROGRAM_PATH, "active_screen.json")
+GUI_LAUNCH_SOURCE_JSON = os.path.join(BASE_PROGRAM_PATH, "gui_launch_source.json")
+GUI_LAUNCH_MANUAL = "manual"
+GUI_LAUNCH_QUEUE = "queue"
+CLI_BRIDGE_REQUEST_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_request.json")
+CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_reply.json")
+WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_PROGRAM_PATH, "whole_story_images.json")
+STORY_SCENE_PROMPT_CHOICE_JSON = os.path.join(
+    BASE_PROGRAM_PATH, "story_scene_prompt_choice.json"
+)
+GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_PROGRAM_PATH, "grok_scene_videos.json")
+CHROME_PROFILES_USED_JSON = os.path.join(BASE_PROGRAM_PATH, "chrome_profiles_used.json")
+
+
+def set_active_screen(name: str) -> str:
+    """记住当前 GUI 屏（内存 + ``active_screen.json``）。"""
+    global ACTIVE_SCREEN
+    allowed = {SCREEN_NONE, SCREEN_STORY_ROOT, SCREEN_STORY_SCENE}
+    value = (name or SCREEN_NONE).strip() or SCREEN_NONE
+    if value not in allowed:
+        value = SCREEN_NONE
+    ACTIVE_SCREEN = value
+    try:
+        os.makedirs(BASE_PROGRAM_PATH, exist_ok=True)
+        with open(ACTIVE_SCREEN_JSON, "w", encoding="utf-8") as f:
+            json.dump({"screen": ACTIVE_SCREEN}, f, ensure_ascii=False)
+    except OSError:
+        pass
+    return ACTIVE_SCREEN
+
+
+def get_active_screen() -> str:
+    """读取当前活动屏；CLI 进程以文件为准。"""
+    global ACTIVE_SCREEN
+    path = ACTIVE_SCREEN_JSON
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                name = (data.get("screen") or "").strip()
+                if name:
+                    ACTIVE_SCREEN = name
+                    return ACTIVE_SCREEN
+        except (OSError, json.JSONDecodeError):
+            pass
+    return ACTIVE_SCREEN or SCREEN_NONE
+
+
+# Chrome / Gemini（CLI ``gemini``）。Playwright 经 CDP 连接，不需要管理员权限。
+CHROME_EXE = (os.environ.get("CHROME_EXE") or r"C:\Program Files\Google\Chrome\Application\chrome.exe").strip()
+CHROME_REMOTE_DEBUGGING_PORT = int(os.environ.get("CHROME_REMOTE_DEBUGGING_PORT") or "9222")
+CHROME_USER_DATA_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA") or "",
+    "Google",
+    "Chrome",
+    "User Data",
+)
+# 专用 user-data-dir：普通 Chrome 开着时也能带 --remote-debugging-port 起一个实例。
+# 首次使用需在该窗口登录一次 Google，之后长期保留。
+CHROME_CDP_USER_DATA_DIR = (
+    os.environ.get("CHROME_CDP_USER_DATA_DIR")
+    or os.path.join(os.environ.get("LOCALAPPDATA") or "", "HermesChromeCDP")
+).strip()
+# Telegram 询问 owner 时按此列表编号（回复 1/2/3）
+GEMINI_CHROME_PROFILES = [
+    {"label": "ocreativeteen@gmail.com", "directory": "Profile 2"},
+    {"label": "triumphdt777@gmail.com", "directory": ""},
+    {"label": "myhomefun@gmail.com", "directory": "Profile 3"},
+]
+# 当前选中的账号（交互选号后会改这个值）
+GEMINI_CHROME_PROFILE = GEMINI_CHROME_PROFILES[0]["label"]
+GEMINI_CHROME_PROFILE_DIRECTORY = (
+    os.environ.get("GEMINI_CHROME_PROFILE_DIRECTORY") or ""
+).strip()
+GEMINI_URL = "https://gemini.google.com/"
+NOTEBOOKLM_URL = "https://notebooklm.google.com/"
+GROK_IMAGINE_URL = "https://grok.com/imagine"
+
+
+def list_gemini_chrome_profiles() -> list[dict]:
+    out = []
+    for item in GEMINI_CHROME_PROFILES:
+        if not isinstance(item, dict):
+            continue
+        label = (item.get("label") or "").strip()
+        if not label:
+            continue
+        out.append(
+            {
+                "label": label,
+                "directory": (item.get("directory") or "").strip(),
+            }
+        )
+    return out
+
+
+def set_gemini_chrome_profile(label_or_index) -> dict:
+    """Set current Gemini Chrome profile; returns the selected ``{label, directory}``."""
+    global GEMINI_CHROME_PROFILE, GEMINI_CHROME_PROFILE_DIRECTORY
+    profiles = list_gemini_chrome_profiles()
+    if not profiles:
+        raise ValueError("GEMINI_CHROME_PROFILES is empty")
+    selected = None
+    if isinstance(label_or_index, int):
+        if 1 <= label_or_index <= len(profiles):
+            selected = profiles[label_or_index - 1]
+        elif 0 <= label_or_index < len(profiles):
+            selected = profiles[label_or_index]
+    else:
+        want = str(label_or_index or "").strip()
+        if want.isdigit():
+            return set_gemini_chrome_profile(int(want))
+        want = want.lower()
+        for item in profiles:
+            if item["label"].lower() == want:
+                selected = item
+                break
+    if selected is None:
+        raise ValueError(f"unknown Gemini Chrome profile: {label_or_index}")
+    GEMINI_CHROME_PROFILE = selected["label"]
+    if selected.get("directory"):
+        GEMINI_CHROME_PROFILE_DIRECTORY = selected["directory"]
+    return selected
+
 
 def load_yt_tools_prefs() -> dict:
     """读取 YT 工具欢迎屏上次选择（``program/YT_tools_prefs.json``）。"""
@@ -1226,7 +1358,17 @@ TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "cir
 
 
 # =============================================================================
-# Telegram：发布成片到 YouTube 成功后可选推送到私信/群组/频道（Bot API）
+# Telegram：两套独立 Bot，禁止混用 token
+#
+# 1) 发布 Bot（成片推送，只出不进）
+#    .env: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / TELEGRAM_CHAT_IDS
+#    代码: config.TELEGRAM_PUBLISH → utility.telegram_notify
+#
+# 2) CLI Bot（GUI 命令，只服务 TELEGRAM_CLI_CHAT_ID）
+#    .env: TELEGRAM_CLI_BOT_NAME / TELEGRAM_CLI_BOT_TOKEN / TELEGRAM_CLI_CHAT_ID
+#    代码: config.TELEGRAM_CLI → utility.telegram_cli
+#
+# 共用 HTTP 在 utility.telegram，按 ROLE_PUBLISH / ROLE_CLI 选 token。
 # =============================================================================
 #
 # 【一次性设置概要】
@@ -1282,6 +1424,13 @@ TELEGRAM_PUBLISH = {
     "bot_token": (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(),
     "chat_ids": _telegram_publish_chat_ids_from_env(),
     "max_video_mb": 48,
+}
+
+# CLI Bot — 与 TELEGRAM_PUBLISH 无关，勿填同一 token
+TELEGRAM_CLI = {
+    "bot_name": (os.environ.get("TELEGRAM_CLI_BOT_NAME") or "").strip(),
+    "bot_token": (os.environ.get("TELEGRAM_CLI_BOT_TOKEN") or "").strip(),
+    "chat_id": (os.environ.get("TELEGRAM_CLI_CHAT_ID") or "").strip(),
 }
 
 # =============================================================================
@@ -1453,11 +1602,11 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             ("Short Story", config_channel.COUNSELING_STORY_SHORT),
-            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
-            ("Long Story", config_channel.COUNSELING_STORY_LONG),
             ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
             ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
             ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
+            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
+            ("Long Story", config_channel.COUNSELING_STORY_LONG),
             ("Content to Scenes", config_channel.COUNSELING_CONTENT_SCENES),
             ("Talk", config_channel.COUNSELING_TALK_SCENES),
             ("Conversation", config_channel.COUNSELING_CONVERSATION_SCENES),
@@ -1497,11 +1646,11 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             ("Short Story", config_channel.FLYLINK_STORY_SHORT),
-            ("Mini Story", config_channel.FLYLINK_STORY_MINI),
-            ("Long Story", config_channel.FLYLINK_STORY_LONG),
             ("2 Step Story", config_channel.FLYLINK_STORY_2STEP),
             ("3 Step Story", config_channel.FLYLINK_STORY_3STEP),
             ("4 Step Story", config_channel.FLYLINK_STORY_4STEP),
+            ("Mini Story", config_channel.FLYLINK_STORY_MINI),
+            ("Long Story", config_channel.FLYLINK_STORY_LONG),
             ("Content to Scenes", config_channel.FLYLINK_CONTENT_SCENES)
         ],
 
@@ -1569,11 +1718,11 @@ CHANNEL_CONFIG = {
         "channel_id": "counseling",
         "scenes_prompt_choices": [
             ("Short Story", config_channel.COUNSELING_STORY_SHORT),
-            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
-            ("Long Story", config_channel.COUNSELING_STORY_LONG),
             ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
             ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
             ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
+            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
+            ("Long Story", config_channel.COUNSELING_STORY_LONG),
             ("Message", config_channel.COUNSELING_STORY_MINI),
             ("Full Story", config_channel.COUNSELING_CONTENT_SCENES),
             ("Talk", config_channel.COUNSELING_TALK_SCENES),

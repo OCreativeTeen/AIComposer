@@ -22,9 +22,10 @@ python -m aiagent.pick_video_choice list --json
 python -m aiagent.pick_video_choice list --remaining
 
 
-# 取下一条（按 cursor）
+# 取下一条（按 cursor）——给听筒内部用，不要单独双击 bat
+# Telegram / Hermes：只开 cli\run_bot.bat（会内部执行 next --with-detail --json）
+# 纯手工：只开 GUI_pm.py，不必开听筒
 python -m aiagent.pick_video_choice next --with-detail --json
-	或双击：aiagent\pick_video_choice_next.bat
 	若带 --json，先向 stdout 输出 JSON（给 Hermes 用）
 	自动启动 GUI，等效于 GUI_pm.py，但跳过：	欢迎屏选频道 / 语言 / 风格 / 旁白（用队列里保存的值）
 	「选择频道列表」弹窗（直接用 list_json_path）

@@ -19,13 +19,20 @@ from utility.voicebox_speech_service import VoiceboxService
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 
 
+def _safe_print(message: str) -> None:
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        print(message.encode("ascii", "replace").decode("ascii"))
+
+
 # 尝试导入拖放支持
 try:
     from tkinterdnd2 import DND_FILES
     DND_AVAILABLE = True
 except ImportError:
     DND_AVAILABLE = False
-    print("警告: tkinterdnd2 不可用，拖放功能将被禁用")
+    _safe_print("警告: tkinterdnd2 不可用，拖放功能将被禁用")
 
 # Audio recording imports (optional)
 try:
@@ -35,7 +42,7 @@ try:
     RECORDING_AVAILABLE = True
 except ImportError:
     RECORDING_AVAILABLE = False
-    print("警告: sounddevice 或 soundfile 不可用，录音功能将被禁用")
+    _safe_print("警告: sounddevice 或 soundfile 不可用，录音功能将被禁用")
 
 # Video playback imports
 try:
@@ -43,7 +50,7 @@ try:
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
-    print("警告: cv2 不可用，视频播放功能将被禁用")
+    _safe_print("警告: cv2 不可用，视频播放功能将被禁用")
 
 
 # Audio playback imports
@@ -52,7 +59,7 @@ try:
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
-    print("警告: pygame 不可用，音频播放功能将被禁用")
+    _safe_print("警告: pygame 不可用，音频播放功能将被禁用")
 
 
 PROJECT_TYPE_STORY = "story"

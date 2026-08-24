@@ -6,6 +6,7 @@
     python -m aiagent.pick_video_choice list
     python -m aiagent.pick_video_choice next --json
     python -m aiagent.pick_video_choice next --with-detail --json
+    python -m aiagent.pick_video_choice open <choice_id> --with-detail
     python -m aiagent.pick_video_choice done <choice_id>
     python -m aiagent.pick_video_choice skip <choice_id>
 """
@@ -33,7 +34,11 @@ import config
 import project_manager
 
 VIDEO_CHOICE_QUEUE_JSON = config.VIDEO_CHOICE_QUEUE_JSON
-QUEUE_VERSION = 2
+QUEUE_VERSION = 3
+
+STATUS_PENDING = "pending"
+STATUS_IN_PROGRESS = "in_progress"
+STATUS_DONE = "done"
 
 
 def _utc_now_iso() -> str:
@@ -47,19 +52,22 @@ def _ensure_program_dir() -> None:
 def load_queue() -> dict:
     """读取队列；文件不存在时返回空队列。"""
     path = VIDEO_CHOICE_QUEUE_JSON
+    empty = {"version": QUEUE_VERSION, "cursor": 0, "active_choice_id": "", "items": []}
     if not os.path.isfile(path):
-        return {"version": QUEUE_VERSION, "cursor": 0, "items": []}
+        return dict(empty)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        data = {"version": QUEUE_VERSION, "cursor": 0, "items": []}
+        data = dict(empty)
     if not isinstance(data, dict):
-        data = {"version": QUEUE_VERSION, "cursor": 0, "items": []}
+        data = dict(empty)
     if not isinstance(data.get("items"), list):
         data["items"] = []
     if not isinstance(data.get("cursor"), int) or data["cursor"] < 0:
         data["cursor"] = 0
+    if not isinstance(data.get("active_choice_id"), str):
+        data["active_choice_id"] = str(data.get("active_choice_id") or "").strip()
     data["version"] = QUEUE_VERSION
     return data
 
@@ -209,11 +217,13 @@ def export_video_details_to_queue(
             **base,
             "choice_id": uuid.uuid4().hex[:12],
             "exported_at": now,
+            "status": STATUS_PENDING,
         })
 
     data = {
         "version": QUEUE_VERSION,
         "cursor": 0,
+        "active_choice_id": "",
         "exported_at": now,
         "items": items,
     }
@@ -240,8 +250,179 @@ def _find_item_by_choice_id(data: dict, choice_id: str) -> dict | None:
     return None
 
 
+def normalize_item_status(item: dict) -> str:
+    s = (item.get("status") or "").strip().lower() if isinstance(item, dict) else ""
+    if s in (STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_DONE):
+        return s
+    return STATUS_PENDING
+
+
+def _row_looks_published(item: dict) -> bool:
+    """列表行已有发布记录时，显示为已完成（即使队列 JSON 还没写 status）。"""
+    row = resolve_video_detail_from_queue_item(item)
+    if not isinstance(row, dict):
+        return False
+    return bool((row.get("publish") or "").strip())
+
+
+def item_display_status(item: dict) -> tuple[str, str]:
+    """``(status_key, 中文标签)``。``done`` 优先认队列字段，其次认列表发布记录。"""
+    if not isinstance(item, dict):
+        return STATUS_PENDING, "未处理"
+    s = normalize_item_status(item)
+    extra = (item.get("processed_at") or "").strip()
+    extra_day = extra[:10] if extra else ""
+    if s == STATUS_DONE:
+        label = "已完成" + (f" {extra_day}" if extra_day else "")
+        return STATUS_DONE, label
+    if s == STATUS_IN_PROGRESS:
+        return STATUS_IN_PROGRESS, "处理中"
+    if _row_looks_published(item):
+        return STATUS_DONE, "已完成（列表已有发布记录）"
+    return STATUS_PENDING, "未处理"
+
+
+def _set_active_index(data: dict, index: int) -> dict:
+    """把 ``items[index]`` 标为处理中，其它处理中的退回未处理。"""
+    items = data.get("items") or []
+    if index < 0 or index >= len(items) or not isinstance(items[index], dict):
+        raise ValueError(f"无效的队列下标: {index}")
+    chosen = items[index]
+    cid = (chosen.get("choice_id") or "").strip()
+    for i, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        if i == index:
+            it["status"] = STATUS_IN_PROGRESS
+            continue
+        if normalize_item_status(it) == STATUS_IN_PROGRESS:
+            it["status"] = STATUS_PENDING
+    data["active_choice_id"] = cid
+    data["cursor"] = index + 1
+    return chosen
+
+
+def activate_queue_item(choice_id: str) -> dict:
+    """按 ``choice_id`` 设为当前条（可重做已完成的）。"""
+    cid = (choice_id or "").strip()
+    if not cid:
+        raise ValueError("choice_id 为空")
+    data = load_queue()
+    items = data.get("items") or []
+    idx = -1
+    for i, it in enumerate(items):
+        if isinstance(it, dict) and (it.get("choice_id") or "").strip() == cid:
+            idx = i
+            break
+    if idx < 0:
+        raise ValueError(f"未找到 choice_id: {cid}")
+    chosen = _set_active_index(data, idx)
+    save_queue(data)
+    return copy.deepcopy(chosen)
+
+
+def activate_queue_item_at(index_1based: int) -> dict:
+    """按 1-based 列表序号设为当前条。"""
+    item = queue_item_at(index_1based)
+    return activate_queue_item(item.get("choice_id") or "")
+
+
+def queue_item_at(index_1based: int) -> dict:
+    """按 1-based 序号取出条目（不改状态）。"""
+    items = list_queue_items()
+    if index_1based < 1 or index_1based > len(items):
+        raise ValueError(f"序号超出范围: {index_1based}（共 {len(items)} 条）")
+    return copy.deepcopy(items[index_1based - 1])
+
+
+def mark_active_item_done(choice_id: str = "") -> dict | None:
+    """当前条（或指定 choice_id）标为已完成。"""
+    data = load_queue()
+    cid = (choice_id or "").strip() or (data.get("active_choice_id") or "").strip()
+    it = _find_item_by_choice_id(data, cid) if cid else None
+    if it is None:
+        items = [x for x in (data.get("items") or []) if isinstance(x, dict)]
+        cursor = int(data.get("cursor") or 0)
+        if 1 <= cursor <= len(items):
+            it = items[cursor - 1]
+    if it is None:
+        return None
+    it["status"] = STATUS_DONE
+    it["processed_at"] = _utc_now_iso()
+    save_queue(data)
+    return copy.deepcopy(it)
+
+
+def first_pending_story_index() -> int | None:
+    """原顺序里第一条未处理（不含处理中 / 已完成）的 1-based 序号。"""
+    items = list_queue_items()
+    for i, it in enumerate(items, 1):
+        key, _ = item_display_status(it)
+        if key == STATUS_PENDING:
+            return i
+    return None
+
+
+def describe_queue_stories() -> dict:
+    """供 ``story_pickup`` 列出全部故事及处理状态。"""
+    data = load_queue()
+    items = [it for it in (data.get("items") or []) if isinstance(it, dict)]
+    active = (data.get("active_choice_id") or "").strip()
+    rows: list[dict] = []
+    n_pending = n_done = n_busy = 0
+    current_index = None
+    for i, it in enumerate(items, 1):
+        key, zh = item_display_status(it)
+        cid = (it.get("choice_id") or "").strip()
+        is_current = bool(cid and cid == active)
+        if is_current:
+            current_index = i
+        if key == STATUS_DONE:
+            n_done += 1
+        elif key == STATUS_IN_PROGRESS:
+            n_busy += 1
+        else:
+            n_pending += 1
+        title = (it.get("title") or it.get("row_key") or cid or "?").strip()
+        rows.append(
+            {
+                "index": i,
+                "choice_id": cid,
+                "title": title,
+                "status": key,
+                "status_zh": zh,
+                "current": is_current,
+            }
+        )
+    return {
+        "path": os.path.abspath(VIDEO_CHOICE_QUEUE_JSON),
+        "total": len(rows),
+        "pending": n_pending,
+        "in_progress": n_busy,
+        "done": n_done,
+        "current_index": current_index,
+        "suggest": first_pending_story_index(),
+        "rows": rows,
+    }
+
+
+def current_taken_queue_item() -> dict | None:
+    """当前正在处理的那一条：优先 ``active_choice_id``，否则 ``items[cursor - 1]``。"""
+    data = load_queue()
+    cid = (data.get("active_choice_id") or "").strip()
+    if cid:
+        it = _find_item_by_choice_id(data, cid)
+        if it:
+            return copy.deepcopy(it)
+    items = [it for it in (data.get("items") or []) if isinstance(it, dict)]
+    cursor = int(data.get("cursor") or 0)
+    if cursor < 1 or cursor > len(items):
+        return None
+    return copy.deepcopy(items[cursor - 1])
+
+
 def pick_next_item(*, advance: bool = True) -> dict | None:
-    """按 ``cursor`` 取下一条；默认取用后 cursor +1（无 pending / in_progress 状态）。"""
+    """按 ``cursor`` 取下一条；默认取用后标为处理中并前移 cursor。"""
     data = load_queue()
     items = data.get("items") or []
     cursor = int(data.get("cursor") or 0)
@@ -251,8 +432,9 @@ def pick_next_item(*, advance: bool = True) -> dict | None:
     if not isinstance(item, dict):
         return None
     if advance:
-        data["cursor"] = cursor + 1
+        _set_active_index(data, cursor)
         save_queue(data)
+        item = items[cursor]
     return copy.deepcopy(item)
 
 
@@ -375,6 +557,12 @@ def launch_queue_item_gui(item: dict) -> int:
 
     root.title("AIComposer — YT 工具")
     try:
+        from gui.cli_bridge import register_bridge_root
+
+        register_bridge_root(root)
+    except Exception:
+        pass
+    try:
         root.geometry("1x1+-3000+-3000")
         root.resizable(False, False)
     except tk.TclError:
@@ -407,6 +595,16 @@ def launch_queue_item_gui(item: dict) -> int:
     ]
     auto_key = row_keys[0] if row_keys else ""
 
+    from cli.gui_session import SOURCE_QUEUE, clear_gui_launch_source, set_gui_launch_source
+
+    set_gui_launch_source(SOURCE_QUEUE)
+    try:
+        return _run_queue_item_gui(root, tk, ch, lang, list_path, row_keys)
+    finally:
+        clear_gui_launch_source()
+
+
+def _run_queue_item_gui(root, tk, ch, lang, list_path, row_keys) -> int:
     from gui.downloader import MediaGUIManager
 
     _yt_log = tk.Text(root)
@@ -467,6 +665,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_list.add_argument("--json", action="store_true", help="JSON 输出")
 
+    p_open = sub.add_parser("open", help="按 choice_id 打开该条 GUI（不按 cursor 顺序）")
+    p_open.add_argument("choice_id")
+    p_open.add_argument("--json", action="store_true")
+    p_open.add_argument(
+        "--with-detail",
+        action="store_true",
+        help="附带从 list JSON 解析的完整 video_detail",
+    )
+    p_open.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="只设为当前条并输出，不启动 GUI",
+    )
+
     p_next = sub.add_parser("next", help="取下一条（按 cursor 顺序）")
     p_next.add_argument("--json", action="store_true")
     p_next.add_argument(
@@ -510,15 +722,30 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "list":
-        items = list_queue_items(remaining_only=args.remaining)
+        if args.remaining:
+            items = list_queue_items(remaining_only=True)
+            if args.json:
+                _print_json(items)
+            else:
+                for it in items:
+                    print(
+                        f"{it.get('choice_id', '?'):12}  "
+                        f"{(it.get('title') or it.get('row_key') or '')[:80]}"
+                    )
+            return 0
+        info = describe_queue_stories()
         if args.json:
-            _print_json(items)
+            _print_json(info)
         else:
-            for it in items:
+            for row in info.get("rows") or []:
+                mark = "  ← 当前" if row.get("current") else ""
                 print(
-                    f"{it.get('choice_id', '?'):12}  "
-                    f"{(it.get('title') or it.get('row_key') or '')[:80]}"
+                    f"{row['index']}) [{row.get('status_zh')}] "
+                    f"{(row.get('title') or '')[:80]}{mark}"
                 )
+            suggest = info.get("suggest")
+            if suggest:
+                print(f"建议下一个未处理：{suggest}")
         return 0
 
     if args.command == "next":
@@ -542,6 +769,26 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"title: {item.get('title')}")
                 print(f"list: {item.get('list_json_path')}")
                 print(f"row_key: {item.get('row_key')}")
+            return 0
+        return launch_queue_item_gui(item)
+
+    if args.command == "open":
+        try:
+            item = activate_queue_item(args.choice_id)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.with_detail:
+            detail = resolve_video_detail_from_queue_item(item)
+            payload = {"queue_item": item, "video_detail": detail}
+        else:
+            payload = item
+        if args.json:
+            _print_json(payload)
+        if args.no_gui:
+            if not args.json:
+                print(f"choice_id: {item.get('choice_id')}")
+                print(f"title: {item.get('title')}")
             return 0
         return launch_queue_item_gui(item)
 
@@ -584,18 +831,28 @@ def main(argv: list[str] | None = None) -> int:
         total = len(data.get("items") or [])
         cursor = int(data.get("cursor") or 0)
         remaining = max(0, total - cursor)
+        info = describe_queue_stories()
         payload = {
             "path": os.path.abspath(VIDEO_CHOICE_QUEUE_JSON),
             "total": total,
             "cursor": cursor,
             "remaining": remaining,
+            "pending": info.get("pending"),
+            "in_progress": info.get("in_progress"),
+            "done": info.get("done"),
+            "active_choice_id": data.get("active_choice_id") or "",
+            "suggest": info.get("suggest"),
             "exported_at": data.get("exported_at"),
         }
         if args.json:
             _print_json(payload)
         else:
             print(f"队列: {payload['path']}")
-            print(f"合计: {total}  已取用: {cursor}  剩余: {remaining}")
+            print(
+                f"合计: {total}  未处理: {payload['pending']}  "
+                f"处理中: {payload['in_progress']}  已完成: {payload['done']}"
+            )
+            print(f"cursor: {cursor}  remaining(旧): {remaining}")
         return 0
 
     parser.print_help()

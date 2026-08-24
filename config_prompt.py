@@ -308,6 +308,58 @@ def nb_export_mode_label(mode: str, variant: str = "") -> str:
     return f"{base_names.get(base, base)} · {labels.get(var, var)}"
 
 
+_NB_EXPORT_CAT_LABELS = {
+    "image": "Image 幻灯片",
+    "video": "Video 视频",
+    "speaking": "Speaking 主人公",
+    "voiceover": "Voiceover 旁白",
+}
+
+_NB_EXPORT_CHOICE_ALIASES = {
+    "单图": ("image", "single"),
+    "image/单图": ("image", "single"),
+    "image/single": ("image", "single"),
+    "image_single": ("image", "single"),
+    "slideshow": ("image", "slideshow"),
+    "image/slideshow": ("image", "slideshow"),
+    "image/幻灯片": ("image", "slideshow"),
+    "纯画面": ("video", "motion"),
+    "video/纯画面": ("video", "motion"),
+    "video/motion": ("video", "motion"),
+    "video_motion": ("video", "motion"),
+    "motion": ("video", "motion"),
+}
+
+
+def notebooklm_export_flat_choices(lang_label: str = "") -> list[tuple[str, str, str]]:
+    """Flatten nested NotebookLM menu → ``[(label, base, variant), ...]``.
+
+    CLI 用编号单选代替 GUI 的两级菜单。第一项是 Image / 单图。
+    """
+    suffix = f" ({lang_label})" if (lang_label or "").strip() else ""
+    out: list[tuple[str, str, str]] = []
+    for base, variants in NOTEBOOKLM_EXPORT_VARIANTS.items():
+        cat = _NB_EXPORT_CAT_LABELS.get(base, base) + suffix
+        for var, var_label in variants:
+            out.append((f"{cat} / {var_label}", base, var))
+    return out
+
+
+def parse_nb_export_choice(want: str) -> tuple[str, str] | None:
+    """Parse ``image/single`` / ``image/单图`` / ``单图`` → ``(base, variant)``."""
+    raw = (want or "").strip()
+    if not raw:
+        return None
+    compact = raw.lower().replace(" ", "")
+    for alias, pair in _NB_EXPORT_CHOICE_ALIASES.items():
+        if alias.lower().replace(" ", "") == compact:
+            return pair
+    try:
+        return normalize_nb_export_mode(raw)
+    except ValueError:
+        return None
+
+
 def _image_painting_direction(scene: dict) -> str:
     parts: list[str] = []
     vis = (scene.get("visual") or scene.get("story") or "").strip()

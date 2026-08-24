@@ -127,6 +127,58 @@ def append_poem_to_description(body: str, poem: str) -> str:
     return poem
 
 
+# 与发布对话框单选顺序一致（分析 → 场景 JSON → speaking/voiceover → 审阅文稿）
+DESCRIPTION_SOURCE_CHOICES: list[tuple[str, str]] = [
+    (SOURCE_ANALYZED, "分析内容"),
+    (SOURCE_SCENE_FULL, "场景内容（全部）"),
+    (SOURCE_VOICEOVER, "场景 speaking & voiceover（全部）"),
+    (SOURCE_REVIEW_SCRIPT, "审阅文稿 / 转写"),
+]
+
+
+def description_text_for_source(
+    source: str,
+    *,
+    language: str,
+    scene_content_list: list | None = None,
+    analyzed_content: str = "",
+    review_script_text: str = "",
+) -> str:
+    lang = language or "zh"
+    scenes = scene_content_list or []
+    if source == SOURCE_VOICEOVER:
+        return all_scene_speaking_voiceover_text(scenes, lang)
+    if source == SOURCE_SCENE_FULL:
+        return full_scene_content_text(scenes)
+    if source == SOURCE_ANALYZED:
+        return config.chinese_convert((analyzed_content or "").strip(), lang)
+    if source == SOURCE_REVIEW_SCRIPT:
+        return config.chinese_convert((review_script_text or "").strip(), lang)
+    return ""
+
+
+def list_available_description_sources(
+    *,
+    language: str,
+    scene_content_list: list | None = None,
+    analyzed_content: str = "",
+    review_script_text: str = "",
+) -> list[tuple[str, str]]:
+    """只返回当前故事有内容的描述素材选项（与对话框可点的单选一致）。"""
+    out: list[tuple[str, str]] = []
+    for key, label in DESCRIPTION_SOURCE_CHOICES:
+        text = description_text_for_source(
+            key,
+            language=language,
+            scene_content_list=scene_content_list,
+            analyzed_content=analyzed_content,
+            review_script_text=review_script_text,
+        )
+        if (text or "").strip():
+            out.append((key, label))
+    return out
+
+
 def default_publish_description_source(
     *,
     analyzed: str = "",

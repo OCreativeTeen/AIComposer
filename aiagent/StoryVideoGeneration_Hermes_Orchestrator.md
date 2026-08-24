@@ -20,7 +20,7 @@ queue item → story/scene JSON (Gemini) → cover images (NotebookLM) → human
    Disregard all prior chat history, execution memory and cached variables. Treat every run as a completely clean, isolated execution based strictly on this document.
 
 2. **Process Persistence**  
-   - `python -m aiagent.pick_video_choice next --with-detail --json` deliberately keeps the AIComposer Detail Editor (`摘要.拖入`) alive.  
+   - `cli\run_bot.bat` keeps the 听筒 and (if needed) the Detail Editor (`摘要.拖入`) alive.  
    - A long-running process is **NOT** a failure.  
    - **Never** impose short timeouts, never kill, never call `exit`, never launch a second AIComposer instance.
 
@@ -47,23 +47,27 @@ queue item → story/scene JSON (Gemini) → cover images (NotebookLM) → human
 ### 1.0 AI agent package (`D:\AIComposer\aiagent`)
 
 **All Hermes / agent CLI tools live only in this folder.**  
-Do **not** look for, run, or create `browser_tasks.py`, `win_gui_tasks.py`, `pick_video_choice.py`, `video_choice_queue.py`, or `pick_video_choice_next.bat` under `D:\AIComposer\` itself. Those root copies were removed.
+Do **not** look for, run, or create `browser_tasks.py`, `win_gui_tasks.py`, `pick_video_choice.py`, `video_choice_queue.py` under `D:\AIComposer\` itself. Those root copies were removed. There is no `pick_video_choice_next.bat` — Telegram 只用 `cli\run_bot.bat`。
 
 | File | Role |
 |------|------|
-| `D:\AIComposer\aiagent\pick_video_choice.py` | CLI: `next` / `done` / `skip` / `list` / `status` |
-| `D:\AIComposer\aiagent\pick_video_choice_next.bat` | Double-click / async launch of `next --with-detail --json` |
+| `D:\AIComposer\cli\run_bot.bat` | Telegram 听筒；无 GUI 时内部 `pick_video_choice next --with-detail --json` |
+| `D:\AIComposer\aiagent\pick_video_choice.py` | 队列 CLI（听筒内部调用，不要单独双击 bat） |
 | `D:\AIComposer\aiagent\video_choice_queue.py` | Queue read/write used by the CLI and GUI |
 | `D:\AIComposer\aiagent\win_gui_tasks.py` | Windows GUI clicks / paste / 4-step select |
 | `D:\AIComposer\aiagent\browser_tasks.py` | Gemini browser automation |
 
 **How to run** (working directory must be `D:\AIComposer` so `python -m aiagent.*` resolves):
 
+```
+D:\AIComposer\cli\open_listener.bat
+```
+
+Launch this path only. It returns immediately and opens the 听筒 in its own window. Do **not** run `run_bot.bat` directly (it never exits and will hang you). Do **not** prefix with `start "title" …`. Working directory for later `python -m cli …` is `D:\AIComposer`.
+
 ```bat
 cd /d D:\AIComposer
-python -m aiagent.pick_video_choice next --with-detail --json
-python -m aiagent.win_gui_tasks click 场景
-python -m aiagent.browser_tasks gemini_clipboard
+python -m cli story_pickup
 ```
 
 Equivalent script form (also valid):
@@ -76,11 +80,28 @@ python D:\AIComposer\aiagent\browser_tasks.py gemini_clipboard
 
 If you need a **new** Python helper for this workflow, create it under `D:\AIComposer\aiagent` and invoke it the same way (`python -m aiagent.<name>` or `python D:\AIComposer\aiagent\<name>.py`).
 
+**GUI CLI** commands live in `D:\AIComposer\cli`. Telegram I/O is only in `utility` and uses a **different** bot from YouTube publish:
+
+| Role | `.env` | Code |
+|------|--------|------|
+| Publish finished video | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_IDS` | `utility.telegram_notify` (`ROLE_PUBLISH`) |
+| GUI CLI commands | `TELEGRAM_CLI_BOT_TOKEN` / `TELEGRAM_CLI_CHAT_ID` | `utility.telegram_cli` (`ROLE_CLI`) |
+
+```bat
+cd /d D:\AIComposer
+python -m cli screen
+python -m cli save
+python -m cli scene
+python -m cli bot
+```
+
+`screen` returns `story_root` when the 摘要.拖入 window is open. Button commands (`save` → 保存, `scene` → 场景, …) click that window. Start the CLI bot with `python -m cli bot` or `D:\AIComposer\cli\run_bot.bat`.
+
 ### 1.1 Local Tools
 
 | Purpose | Command / Path |
 |---------|----------------|
-| Load next queue item + open Detail Editor | `D:\AIComposer\aiagent\pick_video_choice_next.bat` or `python -m aiagent.pick_video_choice next --with-detail --json` |
+| Load next queue item + open Detail Editor | `D:\AIComposer\cli\run_bot.bat`（内部 next；不要单独跑 pick_video_choice） |
 | GUI automation helpers | `python -m aiagent.win_gui_tasks <action>` |
 | Browser automation (Gemini) | `python -m aiagent.browser_tasks gemini_clipboard` |
 | Mark item finished | `python -m aiagent.pick_video_choice done <choice_id>` |
@@ -135,11 +156,11 @@ After Step 7 succeeds, call `python -m aiagent.pick_video_choice done <choice_id
 
 ### STEP 1 — Launch & Bind AIComposer Detail Editor
 
-1. Run (asynchronously, do **not** wait for process exit):
-   ```bat
-   python -m aiagent.pick_video_choice next --with-detail --json
+1. Run this path only (it returns immediately). Do **not** wrap it in `start "title" …`, and do **not** run `run_bot.bat` itself:
    ```
-   (or `D:\AIComposer\aiagent\pick_video_choice_next.bat`)
+   D:\AIComposer\cli\open_listener.bat
+   ```
+   听筒若没有摘要/分镜，会内部执行 `pick_video_choice next --with-detail --json`。不要再开 `GUI_pm.py`，也不要单独跑 next。
 
 2. Read stdout until the first valid JSON object appears. Extract at minimum:
    - `choice_id`
