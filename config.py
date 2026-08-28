@@ -576,6 +576,7 @@ TRANSCRIBE_FALLBACK_TO_AUDIO = True
 # 基础路径配置
 # =============================================================================
 BASE_MEDIA_PATH = "/AI_MEDIA"
+WORKING_MEDIA_PATH = f"{BASE_MEDIA_PATH}/working"
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
@@ -610,6 +611,8 @@ GUI_LAUNCH_MANUAL = "manual"
 GUI_LAUNCH_QUEUE = "queue"
 CLI_BRIDGE_REQUEST_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_request.json")
 CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_reply.json")
+# GUI 写心跳，CLI 读：区分「GUI 没跑」与「GUI 主线程卡住」
+CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_heartbeat.json")
 WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_PROGRAM_PATH, "whole_story_images.json")
 STORY_SCENE_PROMPT_CHOICE_JSON = os.path.join(
     BASE_PROGRAM_PATH, "story_scene_prompt_choice.json"
@@ -681,6 +684,14 @@ GEMINI_CHROME_PROFILE_DIRECTORY = (
 ).strip()
 GEMINI_URL = "https://gemini.google.com/"
 NOTEBOOKLM_URL = "https://notebooklm.google.com/"
+# NotebookLM automation CDP port (separate from Gemini on 9222).
+NOTEBOOKLM_CDP_PORT = int(os.environ.get("NOTEBOOKLM_CDP_PORT") or "9223")
+# Grok ``gr``: HermesChromeCDP + profile（与 D:\Hermes\run_grok_imagine.bat 相同模型）。
+GROK_CDP_PORT = int(
+    os.environ.get("GROK_CDP_PORT")
+    or os.environ.get("CHROME_REMOTE_DEBUGGING_PORT")
+    or "9222"
+)
 GROK_IMAGINE_URL = "https://grok.com/imagine"
 
 

@@ -27,6 +27,8 @@ CLI 回 timeout / 需要SCENE / 没有作用到SCENE：停，不要打开 Gemini
 解释器：`D:\AIComposer\venv\Scripts\python.exe`（下文 `python` 都指它）  
 命令可以打在 DOS 里 `python -m cli …`，也可以发到 CLI Telegram，效果一样。大小写无所谓。
 
+**Telegram 听筒（异步）：** 发 `nbi` / `gem` / `grv` 等长命令时，听筒**立刻**回 `⏳ 已开始 [任务号] …`，**不要**以为卡住。等另一条 `ok [任务号]` 或 `error [任务号]` 再发下一条依赖它的命令。`sync` / `busy` / `win` 仍秒回。封面选图时回 `1/2/3` 也秒回。
+
 **窗名（标题前缀，用来认窗）：** `STORY` 摘要　`SCENE` 分镜　`LIST` 列表　`YT` 欢迎
 
 **短 CLI（最多 4 字母；长名仍可用）：**
@@ -37,16 +39,16 @@ CLI 回 timeout / 需要SCENE / 没有作用到SCENE：停，不要打开 Gemini
 | `gem` | gemini | `pst` | paste_scene |
 | `sty` | style | `snp` | snippet |
 | `prf` | profile | `nbp` | notebooklm |
-| `nbi` | open_notebooklm | `itc` | whole_story_pick |
-| `igp` | whole_story_image | `gr` | grok_image |
-| `gri` | grok_image_prompt | `sc` | scene_choice |
-| `grv` | grok_video | `grvd` | grok_video download |
-| `nbv` | notebooklm 纯画面 | `vc` | video_concat |
-| `vp` | video_publish | `pick` | story_pickup |
-| `pub` | publish | `ana` | analyze |
-| `poe` | poem | `scr` | script |
-| `cov` | cover | `cx` | cancel |
-| `win` | screen |
+| `nbi` | open_notebooklm | `nbif` | notebooklm_ready |
+| `itc` | whole_story_pick | `igp` | whole_story_image |
+| `gr` | grok_image | `gri` | grok_image_prompt |
+| `sc` | scene_choice | `grv` | grok_video |
+| `grvd` | grok_video download | `nbv` | notebooklm 纯画面 |
+| `vc` | video_concat | `vp` | video_publish |
+| `pick` | story_pickup | `pub` | publish |
+| `ana` | analyze | `poe` | poem |
+| `scr` | script | `cov` | cover |
+| `cx` | cancel | `win` | screen |
 
 `story` 只是窗名，**不要**当打开分镜的命令。打开 SCENE 用 `scn`。
 
@@ -168,10 +170,13 @@ gem → pst → save
     ▼
 nbp 1（Image / 单图）
 nbi → 建议还没用过的 Chrome
-    → 3 张整篇故事 Infographic 下到 Downloads
+    → Generate ×3 后立刻返回（不等待）
     │
     ▼
-itc → Telegram 发 3 张，用户选 1/2/3（记入 whole_story_images.json）
+过几分钟 nbif → 三个新 infographic ready？还在 Generating 就再等再 nbif
+    │
+    ▼
+itc → 打开三张、Copy image 存 working、Telegram 发 3 张，用户选 1/2/3
     │
     ▼
 gr → 建议还没用过的 Chrome → 开 4 个 Imagrne 标签
@@ -190,7 +195,7 @@ vp default   （立即 unlisted）
 
 对应 CLI（细节在第 4 节）：
 
-`open_listener.bat` → `pick next` → `scn` → `lm 4` → `gem` → `pst` → `save` → `nbp 1` → `nbi`（建议号）→ `itc`（Telegram 选封面）→ `gr`（建议号）→ `igp` → `gri 1`…`4` → 每场景 `sc i` + `grv i` → `grvd` → `vc` → `vp default` → **再 `pick next`**
+`open_listener.bat` → `pick next` → `scn` → `lm 4` → `gem` → `pst` → `save` → `nbp 1` → `nbi`（建议号）→ `nbif`（ready）→ `itc`（Telegram 选封面）→ `gr`（建议号）→ `igp` → `gri 1`…`4` → 每场景 `sc i` + `grv i` → `grvd` → `vc` → `vp default` → **再 `pick next`**
 
 听筒同步里的「可发：lm  gem  pst …」是给你自己用的。**你就是那个发命令的人。** 不要把同步消息转给主人等他回。
 
@@ -229,6 +234,7 @@ python -m cli gem
 ```bat
 python -m cli nbp
 python -m cli nbi
+python -m cli nbif
 python -m cli itc
 python -m cli gr
 python -m cli igp
@@ -244,7 +250,8 @@ python -m cli igp
 | `pick` | `next` |
 | `nbp` | `1` = Image / 单图 |
 | `nbi` / `gr` | 列表里「建议：还没用过」；没有建议就 1 |
-| `itc` | 无参发 Telegram；用户 Telegram 回 `1/2/3` 或你发 `itc 1` |
+| `nbif` | 无参；查询三张 infographic 是否 ready（主人也可从 Telegram 发） |
+| `itc` | 无参=当前窗口拷图；窗口关了发 `itc N`（Chrome 号，与 nbi 相同）；用户 Telegram 回 `1/2/3` 选封面 |
 | `igp` | 无参（贴已选封面） |
 | `vp` | `default` |
 
@@ -284,8 +291,9 @@ python -m cli grv i
    | `pst` | 剪贴板 JSON → 分镜 `scene_content` |
    | `nbp 1` | NotebookLM ▼ → **Image / 单图** 提示词上剪贴板（整篇封面，给 `nbi`；默认 All 场景） |
    | `nbv` | 可选：仅按当前场景再拷 **Video / 纯画面**（`sc i` 已含；`grv` 剪贴板失败时重发） |
-   | `nbi N` | 该 Chrome 账号打开已有 notebook，Infographic × 3，下载到 Downloads |
-   | `itc` | Telegram 发 3 张封面请选；或 `itc N` 仅记录选择 |
+   | `nbi N` | 该 Chrome 账号打开已有 notebook，Infographic Generate × 3，立刻返回 |
+   | `nbif` | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
+   | `itc` | 当前窗口拷最上边三张；窗口关了 `itc N` 用 Chrome 号重开 notebook 再拷；选封面 Telegram 回 1/2/3 |
    | `gr N` | 该 Chrome 账号按 LM 步数打开 `grok.com/imagine` 标签 |
    | `igp` | 已选整篇故事图上剪贴板，并贴进**所有** Grok 对话框（`igp N` 可一步选+贴） |
    | `gri i` | Image *i* 提示词 → 第 *i* 个 Grok 标签 → 贴字校验 → 图片模式 → 生成 → **等到出图才 ok** |
@@ -300,7 +308,7 @@ python -m cli grv i
 6. 不要最大化 Cursor 挡住 GUI。不要深扫 Chrome 控件树。不要 Win32 缩放 AIComposer 标题栏。
 7. 有 `python -m cli …` 就不要改用手点或旧脚本（`hermes/`、`win_gui_tasks select_4step` 等）。
 8. Chrome 账号要选**三次**（Gemini、NotebookLM、Grok）。每次先列出，你自己选标了「建议：还没用过」的号，下一轮换号避开额度。不要等主人点名。
-9. `nbi` 和 `gem` / `gri 1` / `grv 1` 都可能要等几分钟。不要中断，不要并行再开同一条。
+9. `nbi` 打开 Chrome + 点 Generate 可能要一两分钟；`gem` / `gri 1` / `grv 1` 也可能要等几分钟。不要中断，不要并行再开同一条。`nbi` 返回后用 `nbif` 查 ready，不要以为 `nbi` 会等到出图。
 10. `sc 1` ≠ All。数字就是场景号，跟 `lm 1`（列表第 1 项）不是同一套编号。
 11. 一条 YouTube 发完不是整次任务结束。立刻关窗再 `pick next`。没有未处理了：发 `pick` 列出 1/2/3… 等主人选，不要说打不开。
 
@@ -451,36 +459,55 @@ python -m cli nbi
 python -m cli nbi N
 ```
 
-该 CLI 会一次做完：
+该 CLI 会：
 
 1. 用该 profile 新开 Chrome → `notebooklm.google.com`
 2. **不要点 Create new**。只打开 Recent notebooks 里已有的第一张（Create new **右侧**那张 Story Builder）
 3. Studio → **Infographic**
 4. Orientation = **Portrait**，Level of detail = **Concise**
 5. 把剪贴板提示词贴进 Describe → **Generate**（自动重复 **3 次**，只发一条 `nbi N`）
-6. **等几分钟**直到 Studio 右侧出现 3 条新 infographic
-7. 自动逐条点开 → 右上角 **⋮** → **Download** → 关预览 → 下一条（共 3 张到 Windows **Downloads**）
-8. 路径记入 `whole_story_images.json`（files / selected / selected_path）
+6. **立刻返回**，不等待生成结束，不拷图
 
-**不要连发 3 次 `nbi`**。一条命令 = Generate ×3 + Download ×3。
+**不要连发 3 次 `nbi`**。一条命令 = Generate ×3 然后结束。
 
-这一步可能要等很久。不要中断。额度用完换一个号再 `nbi N`。
+额度用完换一个号再 `nbi N`。
 
-### 4.9.1 Telegram 选封面（`itc`）
+### 4.9.0 查询是否 ready（`nbif`）
 
-`nbi` 完成后发：
+`nbi` 返回后过几分钟发：
+
+```bat
+python -m cli nbif
+```
+
+- Studio 右侧还能看到 **“Generating infographic...”** 和转圈 → **还没 ready**。再等几分钟再发 `nbif`。
+- 最上边三张已是**中文标题** + `1 source · …`，没有 Generating → **ready**。然后才能 `itc`。
+
+主人也可以从 Telegram 直接发 `nbif`。这是查询命令，不要在还 Generating 时发 `itc`。
+
+### 4.9.1 拷图 + Telegram 选封面（`itc`）
+
+`nbif` 显示 ready 后发：
 
 ```bat
 python -m cli itc
 ```
 
-Telegram 会收到 3 张封面。用户回复 `1` / `2` / `3`（听筒自动转成 `itc N`），或你自己发：
+该 CLI 会：逐张打开最上边 3 张 infographic → 右键图片 **Copy image** → 存到 `D:\AI_MEDIA\working\YYYYMMDDHHMMSS.png` → Telegram 发 3 张。用户回复 `1` / `2` / `3`（听筒记选择）。
+
+如果 NotebookLM 窗口已经关掉，用**当初 nbi 的那个 Chrome 号**重开再拷：
 
 ```bat
-python -m cli itc 2
+python -m cli itc N
 ```
 
-只记录选择（`selected` / `selected_path`），**不贴 Grok**。选定后再做 4.10、4.11。
+选定封面不要发 `itc 2`（那会重开 Chrome 2）。Telegram 直接回 `2`，或：
+
+```bat
+python -m cli itc pick 2
+```
+
+记下选择（`selected` / `selected_path`）并把所选图拷到剪贴板，**不贴 Grok**。选定后再做 4.10、4.11。
 
 ### 4.10 打开 Grok Imagrne 标签（你选建议 Chrome）
 
@@ -501,13 +528,13 @@ python -m cli gr N
 
 ### 4.11 把整篇故事图贴进所有 Grok 对话框
 
-必须先 4.9 下载完、`itc` 已选定封面，且先 4.10 开好标签。
+必须先 `itc` 已选定封面，且先 4.10 开好标签。
 
 ```bat
 python -m cli igp
 ```
 
-该 CLI 会：把 **itc 已选** 的 JPG 拷到剪贴板，并在**每一个**已开的 Grok Imagrne 对话框里贴同一张图。
+该 CLI 会：把 **itc 已选** 的 PNG 拷到剪贴板，并在**每一个**已开的 Grok Imagrne 对话框里贴同一张图。
 
 也可一步选+贴：`python -m cli igp 1`（会同时记下选择并贴图）。
 
@@ -668,9 +695,11 @@ python -m cli pick
 | `nbi` 额度用完 | 换 profile 再 `nbi N` |
 | 点到了空 notebook / Add sources | 点到了 Create new；只开已有第一张 Story Builder |
 | 看不到 Infographic | 确认 Create new **右侧**第一张是 Story Builder；原文给主人 |
-| 等很久仍在 Generating | 停，把页面状态给主人 |
-| `igp` 没有文件 | 先跑完 `nbi` 等到下载结束 |
-| `igp` 未选定封面 | 先 `itc`（或 `itc N`） |
+| `nbif` 还在 Generating | 再等几分钟再发 `nbif`；不要急着 `itc` |
+| `itc` 说还没 ready | 先 `nbif` |
+| `igp` 没有文件 | 先 `nbif` ready，再 `itc` 拷图选封面 |
+| `itc` 找不到窗口 | 发 `itc N`（N = 当初 `nbi` 用的 Chrome 号） |
+| `igp` 未选定封面 | 先 Telegram 回 `1/2/3`，或 `itc pick N` |
 | `gr` 没有 LM 记录 | 先 `lm N`，再 `gr` |
 | `igp` 贴不进 Grok | 先 `gr` 开标签，再 `igp` |
 | `gri` 找不到标签 | 先 `gr` + `igp`，再 `gri 1`… |
@@ -725,8 +754,9 @@ gem ok  JSON on clipboard
 pst ok
 save ok
 nbp → nbp 1 ok（Image / 单图）
-nbi → 建议号 ok（Generate × 3 + Downloads）
-itc ok（Telegram 选封面，记下 selected_path）
+nbi → 建议号 ok（Generate × 3，不等待）
+nbif → ready
+itc ok（拷 working PNG，Telegram 选封面，记下 selected_path）
 gr → 建议号 ok（开 4 个 Imagrne 标签）
 igp 拷图并贴进所有 Grok 标签
 gri 1…4

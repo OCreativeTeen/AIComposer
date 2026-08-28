@@ -31,6 +31,9 @@ def load_whole_story_image_record() -> dict:
         "telegram_sent_at": "",
         "picked_at": "",
         "updated_at": "",
+        "expected": 0,
+        "generate_clicked": 0,
+        "generate_started_at": "",
     }
     path = _whole_story_images_path()
     if not path or not os.path.isfile(path):
@@ -64,6 +67,14 @@ def load_whole_story_image_record() -> dict:
     if selected < 0 or selected > len(files):
         selected = 0
         selected_path = ""
+    try:
+        expected = int(data.get("expected") or 0)
+    except (TypeError, ValueError):
+        expected = 0
+    try:
+        generate_clicked = int(data.get("generate_clicked") or 0)
+    except (TypeError, ValueError):
+        generate_clicked = 0
     return {
         "files": files,
         "selected": selected,
@@ -72,6 +83,9 @@ def load_whole_story_image_record() -> dict:
         "telegram_sent_at": str(data.get("telegram_sent_at") or ""),
         "picked_at": str(data.get("picked_at") or ""),
         "updated_at": str(data.get("updated_at") or ""),
+        "expected": max(0, expected),
+        "generate_clicked": max(0, generate_clicked),
+        "generate_started_at": str(data.get("generate_started_at") or ""),
     }
 
 
@@ -87,6 +101,9 @@ def _write_whole_story_image_record(
     pending_pick: bool = False,
     telegram_sent_at: str | None = None,
     picked_at: str | None = None,
+    expected: int | None = None,
+    generate_clicked: int | None = None,
+    generate_started_at: str | None = None,
 ) -> list[str]:
     prev = load_whole_story_image_record()
     sel = max(0, int(selected or 0))
@@ -100,6 +117,17 @@ def _write_whole_story_image_record(
     )
     pk = picked_at if picked_at is not None else str(prev.get("picked_at") or "")
     path = _whole_story_images_path()
+    exp = int(expected) if expected is not None else int(prev.get("expected") or 0)
+    clicked = (
+        int(generate_clicked)
+        if generate_clicked is not None
+        else int(prev.get("generate_clicked") or 0)
+    )
+    started = (
+        generate_started_at
+        if generate_started_at is not None
+        else str(prev.get("generate_started_at") or "")
+    )
     payload = {
         "files": files,
         "selected": sel,
@@ -108,6 +136,9 @@ def _write_whole_story_image_record(
         "telegram_sent_at": ts,
         "picked_at": pk,
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expected": max(0, exp),
+        "generate_clicked": max(0, clicked),
+        "generate_started_at": started,
     }
     if sel >= 1:
         payload["pending_pick"] = False
@@ -123,8 +154,25 @@ def _write_whole_story_image_record(
     return files
 
 
+def mark_notebooklm_generate_started(times: int) -> dict:
+    """nbi 已点 Generate ×N，尚未拷图。清掉上一轮封面路径。"""
+    n = max(1, int(times or 3))
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_whole_story_image_record(
+        [],
+        selected=0,
+        pending_pick=False,
+        telegram_sent_at="",
+        picked_at="",
+        expected=n,
+        generate_clicked=n,
+        generate_started_at=stamp,
+    )
+    return load_whole_story_image_record()
+
+
 def save_whole_story_images(paths: list[str]) -> list[str]:
-    """记住本轮 nbi 下载的封面路径（whole_story_images.json）。"""
+    """记住本轮 itc 拷到 working 的封面路径（whole_story_images.json）。"""
     files: list[str] = []
     for item in paths or []:
         p = os.path.normpath(os.path.abspath((item or "").strip()))
@@ -506,7 +554,7 @@ class TelegramCliSession:
         if whole_story_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
-                return dispatch(f"{short_cli('whole_story_pick')} {digit}")
+                return dispatch(f"{short_cli('whole_story_pick')} pick {digit}")
         cmd, _ = split_command(raw)
         if cmd in ("sync", "where", "here"):
             return True, self.announce_sync()
@@ -517,6 +565,8 @@ def welcome_text(mode: str | None = None) -> str:
     del mode
     return (
         "Telegram 听筒已就绪（人 / Hermes 当操作员）。\n"
+        "长命令（nbi / gem / grv …）后台执行：立刻回 ⏳，完成后再发 ok/error [任务号]。\n"
+        "发 busy 可看当前队列。\n"
         "若电脑上还没有 STORY/SCENE，我会用队列启动：\n"
         "python -m aiagent.pick_video_choice next --with-detail --json\n"
         "这是队列会话，随后可用 pick / pick 1 / pick 2 选故事（已完成的也能重做）。\n"

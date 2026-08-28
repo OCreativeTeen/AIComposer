@@ -105,6 +105,7 @@ def listen_clis_for_screen(screen: str) -> list[str]:
             "nbp",
             "onb",
             "nbi",
+            "nbif",
             "itc",
             "igp",
             "gr",

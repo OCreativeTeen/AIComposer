@@ -488,7 +488,7 @@ def _copy_text_to_clipboard(widget, text: str) -> None:
         try:
             w.clipboard_clear()
             w.clipboard_append(s)
-            w.update()
+            w.update_idletasks()
             return
         except tk.TclError:
             continue
@@ -2277,6 +2277,142 @@ def _youtube_row_scene_meta_title(video_detail: dict) -> str:
     if isinstance(sc, list) and sc and isinstance(sc[0], dict):
         return project_manager.caption_from_scene_content_item(sc[0])
     return ""
+
+
+def _drop_topmost(win) -> None:
+    try:
+        win.attributes("-topmost", False)
+    except tk.TclError:
+        pass
+
+
+def _hwnds_for_tk(win) -> list[int]:
+    hwnds: list[int] = []
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        child = int(win.winfo_id())
+        root = int(user32.GetAncestor(child, 2) or 0)  # GA_ROOT
+        parent = int(user32.GetParent(child) or 0)
+        for h in (root, parent, child):
+            if h and h not in hwnds:
+                hwnds.append(h)
+    except Exception:
+        pass
+    return hwnds
+
+
+def _map_tk_window_noactivate(win) -> None:
+    """Show a Toplevel without AttachThreadInput / SetForegroundWindow."""
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        SW_SHOWNOACTIVATE = 4
+        SW_SHOW = 5
+        HWND_TOPMOST = -1
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+        SWP_FRAMECHANGED = 0x0020
+        flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        for hwnd in _hwnds_for_tk(win):
+            user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+            user32.ShowWindow(hwnd, SW_SHOW)
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    except Exception:
+        pass
+
+
+def _force_tk_repaint(win) -> None:
+    try:
+        win.update_idletasks()
+    except tk.TclError:
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        # Invalidate only — RDW_UPDATENOW / UpdateWindow / tk.update() wait for
+        # paint while Tk is already on the stack and freeze the bridge pump.
+        flags = 0x0001 | 0x0004 | 0x0080 | 0x0400
+        for hwnd in _hwnds_for_tk(win):
+            user32.InvalidateRect(hwnd, None, True)
+            user32.RedrawWindow(hwnd, None, None, flags)
+    except Exception:
+        pass
+
+
+def _raise_own_window(win) -> None:
+    """Map SCENE/STORY. Activation is done by the CLI process, not here."""
+    try:
+        win.deiconify()
+        win.lift()
+        win.attributes("-topmost", True)
+        _map_tk_window_noactivate(win)
+        _force_tk_repaint(win)
+        win.after(80, lambda: _force_tk_repaint(win))
+        win.after(400, lambda: _drop_topmost(win))
+    except tk.TclError:
+        pass
+
+
+def _apply_scene_lm_combo(
+    combo,
+    combo_var,
+    labels: list[str],
+    matched: str,
+    *,
+    host=None,
+) -> None:
+    """Switch a readonly ttk.Combobox and force the label to repaint on screen."""
+    combo_var.set(matched)
+    idx = None
+    try:
+        idx = labels.index(matched)
+    except ValueError:
+        pass
+    state = "readonly"
+    try:
+        state = str(combo.cget("state"))
+    except tk.TclError:
+        pass
+    try:
+        if state == "readonly":
+            combo.configure(state="normal")
+        if idx is not None:
+            combo.current(idx)
+        combo.set(matched)
+    except tk.TclError:
+        try:
+            combo.set(matched)
+        except Exception:
+            pass
+    finally:
+        try:
+            if state == "readonly":
+                combo.configure(state="readonly")
+        except tk.TclError:
+            pass
+    if host is not None:
+        try:
+            combo.update_idletasks()
+            host.update_idletasks()
+        except tk.TclError:
+            pass
+
+
+def _after_scene_lm_changed(dlg, prompt_combo, prompt_tx, refresh_fn) -> None:
+    """Refresh preview on the next idle tick so the bridge pump can reply first."""
+    try:
+        dlg.after_idle(refresh_fn)
+    except tk.TclError:
+        try:
+            refresh_fn()
+        except Exception:
+            pass
 
 
 def _youtube_row_display_title(video_detail: dict) -> str:
@@ -6636,17 +6772,16 @@ class MediaGUIManager:
         if existing is not None:
             try:
                 if existing.winfo_exists():
-                    from aiagent.win_gui_tasks import find_panel_window, set_foreground
+                    from gui.cli_bridge import is_screen_bound
 
+                    if is_screen_bound(config.SCREEN_STORY_SCENE):
+                        _raise_own_window(existing)
+                        return None
                     try:
-                        existing.lift()
-                        existing.focus_force()
+                        existing.destroy()
                     except tk.TclError:
                         pass
-                    hwnd = find_panel_window()
-                    if hwnd:
-                        set_foreground(hwnd)
-                    return None
+                    self._scene_content_dialog = None
             except tk.TclError:
                 self._scene_content_dialog = None
         dlg = tk.Toplevel(parent)
@@ -6660,578 +6795,736 @@ class MediaGUIManager:
         sh = dlg.winfo_screenheight()
         dlg.geometry(f"980x880+{(sw - 980) // 2}+{(sh - 880) // 2}")
 
-        frm = ttk.Frame(dlg, padding=12)
+        frm = tk.Frame(dlg, padx=12, pady=12, bg="#f0f0f0")
         frm.pack(fill=tk.BOTH, expand=True)
         title = _youtube_row_display_title(video_detail) or "YouTube 视频"
         short = title[:48].rstrip() + ("…" if len(title) > 48 else "")
         dlg.title(f"SCENE | {short}")
-        ttk.Label(
+
+        def _raise_scene_dialog() -> None:
+            _raise_own_window(dlg)
+
+        loading_lbl = tk.Label(
             frm,
-            text=(
-                f"{title}\n"
-                "选 LM 提示；{content} 固定为 analyzed_content，{instruction} 为下方导向说明。"
-                "「智能生成」用所选提示生成 scene_content 并自动保存。"
-                "左侧索引按钮：All / 1 / 2 … 选择拷贝范围；NotebookLM ▼ 菜单按当前索引与子类型拷贝。"
-            ),
-            wraplength=940,
-        ).pack(anchor=tk.W, pady=(0, 8))
-
-        channel_key = self._channel_config_key()
-        nb_prompt_choices = _prompt_choice_entries(channel_key)
-        prompt_row = ttk.Frame(frm)
-        prompt_row.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(prompt_row, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
-        default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
-        prompt_combo_var = tk.StringVar(value=default_prompt_label)
-        prompt_combo = ttk.Combobox(
-            prompt_row,
-            textvariable=prompt_combo_var,
-            values=[opt[0] for opt in nb_prompt_choices],
-            state="readonly" if nb_prompt_choices else "disabled",
-            width=22,
+            text="正在加载 SCENE 编辑器…",
+            bg="#f0f0f0",
+            fg="#222222",
+            font=("Arial", 12),
+            anchor=tk.W,
         )
-        prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+        loading_lbl.pack(anchor=tk.W, pady=(0, 8))
+        _raise_scene_dialog()
 
-        ttk.Label(frm, text="").pack(anchor=tk.W)
+        from gui.cli_bridge import bind_screen as _bind_scene_early, unbind_screen as _unbind_scene_early
 
-        _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
-        _pp = video_detail.get("project_profile") if isinstance(video_detail.get("project_profile"), dict) else {}
-        _vs_cur = (_pp.get("visual_style") or project_manager.LAST_VISUAL_STYLE or "").strip()
-        if _vs_cur not in _vs_opts:
-            _vs_cur = _vs_opts[0] if _vs_opts else "realistic"
-        style_row = ttk.Frame(frm)
-        style_row.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(style_row, text="Visual Style").pack(side=tk.LEFT, padx=(0, 5))
-        visual_style_var = tk.StringVar(value=_vs_cur)
-        ttk.Combobox(
-            style_row,
-            textvariable=visual_style_var,
-            values=_vs_opts,
-            state="readonly",
-            width=48,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        visual_style_combo_opts = list(_vs_opts)
-
-        ttk.Label(frm, text="").pack(anchor=tk.W)
-
-        ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
-            anchor=tk.W, pady=(0, 2)
-        )
-        instruction_frm = ttk.Frame(frm)
-        instruction_frm.pack(fill=tk.X, pady=(0, 8))
-        instruction_tx = scrolledtext.ScrolledText(
-            instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
-        )
-        instruction_tx.pack(fill=tk.X, pady=(0, 4))
-
-        ttk.Label(frm, text="").pack(anchor=tk.W)
-
-        ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
-            anchor=tk.W, pady=(0, 2)
-        )
-        prompt_tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=100, height=8, font=("Arial", 9)
-        )
-        prompt_tx.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
-        tx = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=100, height=20, font=("Consolas", 10)
-        )
-        tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
-        scenes = video_detail.get("scene_content") or []
-        if not isinstance(scenes, list):
-            scenes = []
-        scene_json = ""
-        if scenes:
-            scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
-            tx.insert("1.0", scene_json)
-            try:
-                _copy_text_to_clipboard(dlg, scene_json)
-            except Exception:
-                pass
-        _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
-
-        def _scene_list_from_editor() -> list | None:
-            raw = (tx.get("1.0", tk.END) or "").strip()
-            if not raw:
-                return None
-            try:
-                parsed = json.loads(safe_clipboard_json_copy(raw))
-            except (json.JSONDecodeError, TypeError):
-                return None
-            if not isinstance(parsed, list):
-                return None
-            return parsed if parsed else None
-
-        def refresh_scene_prompt(*_args):
-            sel = (prompt_combo_var.get() or "").strip()
-            if not sel or not nb_prompt_choices:
-                prompt_tx.delete("1.0", tk.END)
-                return
-            instr = (instruction_tx.get("1.0", tk.END) or "").strip()
-            _, prompt = self._combined_prompt_text_for_label(
-                video_detail, sel, instruction=instr
-            )
-            prompt_tx.delete("1.0", tk.END)
-            if prompt:
-                prompt_tx.insert("1.0", prompt)
-                _copy_text_to_clipboard(dlg, prompt)
-
-        snippet_handle = _build_instruction_snippet_combo(
-            instruction_frm, channel_key, instruction_tx, on_changed=refresh_scene_prompt
-        )
-
-        if nb_prompt_choices:
-            def on_prompt_combo_selected(_event=None):
-                sel = (prompt_combo_var.get() or "").strip()
-                if sel:
-                    try:
-                        from utility.telegram_session import save_story_scene_prompt_choice
-
-                        save_story_scene_prompt_choice(sel)
-                    except Exception:
-                        pass
-                refresh_scene_prompt()
-
-            prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
-        instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
-        if nb_prompt_choices:
-            refresh_scene_prompt()
-
-        btn_row = ttk.Frame(frm)
-        btn_row.pack(fill=tk.X)
-
-        _lang_lbl = config.llm_language_label(self.language)
-        _scene_copy_index = [-1]  # -1 = All；0..N-1 = 第 1..N 条
-
-        def _scene_index_button_label(idx: int) -> str:
-            return "All" if idx < 0 else str(idx + 1)
-
-        def _scene_count() -> int:
-            scenes = _scene_list_from_editor()
-            n = len(scenes) if scenes else 0
-            if n <= 0:
-                try:
-                    from utility.telegram_session import load_story_scene_prompt_choice
-
-                    n = int(load_story_scene_prompt_choice().get("tabs") or 0)
-                except Exception:
-                    n = 0
-            return max(0, n)
-
-        def _scene_choice_labels():
-            n = _scene_count()
-            return ["All"] + [str(i) for i in range(1, n + 1)]
-
-        def _cycle_scene_copy_index():
-            scenes = _scene_list_from_editor()
-            n = len(scenes) if scenes else 0
-            cur = _scene_copy_index[0]
-            if cur < 0:
-                _scene_copy_index[0] = 0 if n > 0 else -1
-            else:
-                nxt = cur + 1
-                _scene_copy_index[0] = -1 if nxt >= n else nxt
-            try:
-                scene_index_btn.config(text=_scene_index_button_label(_scene_copy_index[0]))
-            except (NameError, tk.TclError):
-                pass
-
-        def _copy_scene_instruction(nb_mode: str, nb_variant: str = ""):
-            scenes = _scene_list_from_editor()
-            if scenes is None:
-                messagebox.showwarning(
-                    "无 Scene JSON",
-                    "请先在编辑区填写有效的 scene_content JSON 数组。",
-                    parent=dlg,
-                )
-                return
-            self._copy_notebooklm_scene_instruction(
-                parent=dlg,
-                video_detail=video_detail,
-                scenes=scenes,
-                nb_mode=nb_mode,
-                nb_variant=nb_variant,
-                main_character=main_character,
-                channel_path=channel_path or self.channel_path or "",
-                scene_index=_scene_copy_index[0],
-                visual_style=(visual_style_var.get() or "").strip(),
-            )
-
-        def on_show_nb_export_menu():
-            m = tk.Menu(dlg, tearoff=0)
-            _cat_labels = {
-                "image": f"Image 幻灯片 ({_lang_lbl})",
-                "video": f"Video 视频 ({_lang_lbl})",
-                "speaking": f"Speaking 主人公 ({_lang_lbl})",
-                "voiceover": f"Voiceover 旁白 ({_lang_lbl})",
-            }
-            for base, cat_label in _cat_labels.items():
-                sub = tk.Menu(m, tearoff=0)
-                for var, var_label in config_prompt.NOTEBOOKLM_EXPORT_VARIANTS[base]:
-                    sub.add_command(
-                        label=var_label,
-                        command=lambda b=base, v=var: _copy_scene_instruction(b, v),
-                    )
-                m.add_cascade(label=cat_label, menu=sub)
-            post_menu_below_widget(m, nb_export_btn)
-
-        def _busy(btn):
-            try:
-                btn.config(state=tk.DISABLED)
-                dlg.config(cursor="watch")
-                dlg.update_idletasks()
-            except tk.TclError:
-                pass
-
-        def _idle(btn):
-            try:
-                btn.config(state=tk.NORMAL)
-                dlg.config(cursor="")
-            except tk.TclError:
-                pass
-
-        def on_smart_generate():
-            self._run_scene_smart_generate_async(
-                dlg,
-                video_detail,
-                (prompt_combo_var.get() or "").strip(),
-                lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
-                get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
-                on_busy=lambda: _busy(smart_btn),
-                on_idle=lambda: _idle(smart_btn),
-                persist_fn=persist,
-                on_saved=on_saved,
-                on_title_updated=on_title_updated,
-            )
-
-        def on_confirm():
-            raw = (tx.get("1.0", tk.END) or "").strip()
-            if not raw:
-                if not messagebox.askyesno(
-                    "清空场景",
-                    "内容为空，将删除本条 scene_content。继续？",
-                    parent=dlg,
-                ):
-                    return
-                video_detail.pop("scene_content", None)
-                result_holder[0] = []
-            else:
-                try:
-                    parsed = json.loads(safe_clipboard_json_copy(raw))
-                except (json.JSONDecodeError, TypeError) as e:
-                    show_auto_close_popup(
-                        dlg,
-                        "JSON 无效",
-                        f"无法解析 scene_content：\n{e}",
-                        kind="error",
-                    )
-                    return
-                if not isinstance(parsed, list):
-                    show_auto_close_popup(
-                        dlg,
-                        "JSON 无效",
-                        "scene_content 必须是 JSON 数组（以 [ 开头的 list）。",
-                        kind="error",
-                    )
-                    return
-                if not parsed:
-                    messagebox.showwarning(
-                        "无效场景",
-                        "解析后无有效场景条目，请检查 JSON 结构。",
-                        parent=dlg,
-                    )
-                    return
-                video_detail["scene_content"] = parsed
-                result_holder[0] = parsed
-            if not persist(video_detail, parent=dlg):
-                return
-            dlg.destroy()
-            if callable(on_saved):
-                on_saved()
-
-        smart_btn = ttk.Button(btn_row, text="智能生成", command=on_smart_generate)
-        smart_btn.pack(side=tk.LEFT, padx=(0, 8))
-        if not nb_prompt_choices:
-            smart_btn.config(state=tk.DISABLED)
-        scene_index_btn = ttk.Button(
-            btn_row,
-            text=_scene_index_button_label(_scene_copy_index[0]),
-            width=5,
-            command=_cycle_scene_copy_index,
-        )
-        scene_index_btn.pack(side=tk.LEFT, padx=(0, 4))
-        nb_export_btn = ttk.Button(
-            btn_row,
-            text="NotebookLM ▼",
-            command=on_show_nb_export_menu,
-        )
-        nb_export_btn.pack(side=tk.LEFT, padx=(0, 8))
-        save_btn = ttk.Button(btn_row, text="保存", command=on_confirm)
-        save_btn.pack(side=tk.LEFT, padx=(0, 8))
-        cancel_btn = ttk.Button(btn_row, text="取消", command=dlg.destroy)
-        cancel_btn.pack(side=tk.LEFT)
-
-        from gui.cli_bridge import bind_screen, match_choice, unbind_screen
-
-        def _unbind_scene_cli(_event=None):
-            if _event is not None and getattr(_event, "widget", None) is not dlg:
-                return
-            unbind_screen(config.SCREEN_STORY_SCENE)
-
-        def _close_scene_editor():
+        def _stub_cancel():
+            _unbind_scene_early(config.SCREEN_STORY_SCENE)
             if getattr(self, "_scene_content_dialog", None) is dlg:
                 self._scene_content_dialog = None
-            _unbind_scene_cli()
             try:
                 dlg.destroy()
             except tk.TclError:
                 pass
 
-        def on_confirm_cli():
-            on_confirm()
-            try:
-                if not dlg.winfo_exists():
-                    _unbind_scene_cli()
-            except tk.TclError:
-                _unbind_scene_cli()
-
-        def _set_lm(value: str):
-            labels = [opt[0] for opt in nb_prompt_choices]
-            matched = match_choice(value, labels)
-            if not matched:
-                return False, "unknown LM prompt: " + value + "\nchoices: " + " | ".join(labels)
-            prompt_combo_var.set(matched)
-            try:
-                prompt_combo.set(matched)
-            except Exception:
-                pass
-            try:
-                prompt_combo.event_generate("<<ComboboxSelected>>")
-            except Exception:
-                refresh_scene_prompt()
-            try:
-                dlg.update_idletasks()
-            except Exception:
-                pass
-            try:
-                from utility.telegram_session import save_story_scene_prompt_choice
-
-                save_story_scene_prompt_choice(matched)
-            except Exception:
-                pass
-            prompt = (prompt_tx.get("1.0", tk.END) or "").strip()
-            n = len(prompt)
-            if n < 400:
-                refresh_scene_prompt()
-                prompt = (prompt_tx.get("1.0", tk.END) or "").strip()
-                n = len(prompt)
-            return True, (
-                f"{matched} — 选LM提示下拉已切换；"
-                f"提示词预览 {n} 字已上剪贴板。"
-                "屏幕上应看见这一项。"
-            )
-
-        def _set_style(value: str):
-            matched = match_choice(value, visual_style_combo_opts)
-            if not matched:
-                return False, "unknown style: " + value + "\nchoices: " + " | ".join(visual_style_combo_opts)
-            visual_style_var.set(matched)
-            return True, matched
-
-        def _set_instruction(value: str):
-            instruction_tx.delete("1.0", tk.END)
-            instruction_tx.insert("1.0", value)
-            refresh_scene_prompt()
-            return True, "instruction set"
-
-        def _set_snippet(value: str):
-            labels = list(snippet_handle.get("labels") or [])
-            matched = match_choice(value, labels)
-            if not matched:
-                return False, "unknown snippet: " + value + "\nchoices: " + " | ".join(labels)
-            apply_fn = snippet_handle.get("apply")
-            if not callable(apply_fn) or not apply_fn(matched):
-                return False, f"failed to insert snippet {matched}"
-            return True, f"inserted {matched}"
-
-        def _set_content(value: str):
-            tx.delete("1.0", tk.END)
-            tx.insert("1.0", value)
-            return True, "scene_content set"
-
-        def _set_scene_choice(value: str):
-            raw = (value or "").strip().translate(
-                str.maketrans("０１２３４５６７８９", "0123456789")
-            )
-            if not raw:
-                return False, "empty scene_choice"
-            n = _scene_count()
-            low = raw.lower().replace(" ", "")
-            if low in ("all", "全部", "0", "-1"):
-                _scene_copy_index[0] = -1
-            elif raw.isdigit():
-                i = int(raw)
-                if i < 1:
-                    return False, "scene_choice 用 all 或 1/2/3/…"
-                if n > 0 and i > n:
-                    return False, f"scene {i} out of range (1..{n})"
-                _scene_copy_index[0] = i - 1
-            else:
-                return False, (
-                    "unknown scene_choice: " + value
-                    + "（用 all / 1 / 2 / …）\nchoices: "
-                    + " | ".join(_scene_choice_labels())
-                )
-            try:
-                scene_index_btn.config(
-                    text=_scene_index_button_label(_scene_copy_index[0])
-                )
-            except (NameError, tk.TclError):
-                pass
-            scene_msg = (
-                f"scene_choice={_scene_index_button_label(_scene_copy_index[0])}"
-            )
-            if _scene_copy_index[0] >= 0:
-                parsed = config_prompt.parse_nb_export_choice("纯画面")
-                base, var = parsed if parsed else ("video", "motion")
-                copied = self._copy_notebooklm_scene_instruction(
-                    parent=dlg,
-                    video_detail=video_detail,
-                    scenes=_scene_list_from_editor() or [],
-                    nb_mode=base,
-                    nb_variant=var,
-                    main_character=main_character,
-                    channel_path=channel_path or self.channel_path or "",
-                    scene_index=_scene_copy_index[0],
-                    visual_style=(visual_style_var.get() or "").strip(),
-                )
-                if not copied:
-                    return False, (
-                        f"{scene_msg}; failed to copy Video/纯画面 — "
-                        "scene_content 需要有效 JSON 数组"
-                    )
-                try:
-                    nb_label = config_prompt.nb_export_mode_label(base, var)
-                except ValueError:
-                    nb_label = "Video / 纯画面"
-                return True, f"{scene_msg}; copied {nb_label} to clipboard"
-            return True, scene_msg
-
-        def _nb_choice_rows():
-            lang = config.llm_language_label(getattr(self, "language", "") or "")
-            return config_prompt.notebooklm_export_flat_choices(lang)
-
-        def _nb_labels():
-            return [row[0] for row in _nb_choice_rows()]
-
-        def _set_notebooklm(value: str):
-            rows = _nb_choice_rows()
-            labels = [row[0] for row in rows]
-            matched = match_choice(value, labels)
-            base = var = ""
-            if matched:
-                for label, b, v in rows:
-                    if label == matched:
-                        base, var = b, v
-                        break
-            else:
-                parsed = config_prompt.parse_nb_export_choice(value)
-                if parsed:
-                    base, var = parsed
-                    try:
-                        matched = next(
-                            label for label, b, v in rows if b == base and v == var
-                        )
-                    except StopIteration:
-                        matched = config_prompt.nb_export_mode_label(base, var)
-            if not base:
-                return False, (
-                    "unknown NotebookLM export: " + value
-                    + "\nchoices: " + " | ".join(labels)
-                )
-            copied = self._copy_notebooklm_scene_instruction(
-                parent=dlg,
-                video_detail=video_detail,
-                scenes=_scene_list_from_editor() or [],
-                nb_mode=base,
-                nb_variant=var,
-                main_character=main_character,
-                channel_path=channel_path or self.channel_path or "",
-                scene_index=_scene_copy_index[0],
-                visual_style=(visual_style_var.get() or "").strip(),
-            )
-            if not copied:
-                return False, (
-                    "failed to copy NotebookLM prompt — "
-                    "scene_content 需要有效 JSON 数组"
-                )
-            return True, f"copied {matched} ({base}/{var}) to clipboard"
-
-        save_btn.config(command=on_confirm_cli)
-        cancel_btn.config(command=_close_scene_editor)
-        bind_screen(
+        # ready=False: the bridge reports "still building" instead of timing out
+        # while the (large) editor body is created on the next Tk tick.
+        _bind_scene_early(
             config.SCREEN_STORY_SCENE,
             dlg,
-            {
-                "lm": {
-                    "get": lambda: (prompt_combo_var.get() or "").strip(),
-                    "set": _set_lm,
-                    "choices": lambda: [opt[0] for opt in nb_prompt_choices],
-                },
-                "style": {
-                    "get": lambda: (visual_style_var.get() or "").strip(),
-                    "set": _set_style,
-                    "choices": lambda: list(visual_style_combo_opts),
-                },
-                "instruction": {
-                    "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
-                    "set": _set_instruction,
-                },
-                "snippet": {
-                    "get": lambda: (
-                        snippet_handle.get("var").get()
-                        if snippet_handle.get("var")
-                        else ""
-                    ),
-                    "set": _set_snippet,
-                    "choices": lambda: list(snippet_handle.get("labels") or []),
-                },
-                "content": {
-                    "get": lambda: (tx.get("1.0", tk.END) or "").strip(),
-                    "set": _set_content,
-                },
-                "scene_choice": {
-                    "get": lambda: _scene_index_button_label(_scene_copy_index[0]),
-                    "set": _set_scene_choice,
-                    "choices": _scene_choice_labels,
-                },
-                "prompt": {
-                    "get": lambda: (prompt_tx.get("1.0", tk.END) or "").strip(),
-                },
-                "notebooklm": {
-                    "get": lambda: "",
-                    "set": _set_notebooklm,
-                    "choices": _nb_labels,
-                },
-                "save": {"click": on_confirm_cli},
-                "cancel": {"click": _close_scene_editor},
-                "generate": {"click": on_smart_generate},
-            },
+            {"cancel": {"click": _stub_cancel}},
+            ready=False,
         )
-        dlg.bind("<Destroy>", _unbind_scene_cli)
-        dlg.protocol("WM_DELETE_WINDOW", _close_scene_editor)
-        try:
-            dlg.lift()
-            dlg.focus_force()
-        except tk.TclError:
-            pass
-        from aiagent.win_gui_tasks import find_panel_window, set_foreground
 
-        hwnd = find_panel_window()
-        if hwnd:
-            set_foreground(hwnd)
+        scene_ui: dict = {}
+
+        def _build_editor_ui():
+            ttk.Label(
+                frm,
+                text=(
+                    f"{title}\n"
+                    "选 LM 提示；{content} 固定为 analyzed_content，{instruction} 为下方导向说明。"
+                    "「智能生成」用所选提示生成 scene_content 并自动保存。"
+                    "左侧索引按钮：All / 1 / 2 … 选择拷贝范围；NotebookLM ▼ 菜单按当前索引与子类型拷贝。"
+                ),
+                wraplength=940,
+            ).pack(anchor=tk.W, pady=(0, 8))
+
+            channel_key = self._channel_config_key()
+            nb_prompt_choices = _prompt_choice_entries(channel_key)
+            prompt_row = ttk.Frame(frm)
+            prompt_row.pack(fill=tk.X, pady=(0, 6))
+            ttk.Label(prompt_row, text="选LM提示").pack(side=tk.LEFT, padx=(0, 5))
+            default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
+            prompt_combo_var = tk.StringVar(value=default_prompt_label)
+            prompt_combo = ttk.Combobox(
+                prompt_row,
+                textvariable=prompt_combo_var,
+                values=[opt[0] for opt in nb_prompt_choices],
+                state="readonly" if nb_prompt_choices else "disabled",
+                width=22,
+            )
+            prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+
+            ttk.Label(frm, text="").pack(anchor=tk.W)
+
+            _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
+            _pp = video_detail.get("project_profile") if isinstance(video_detail.get("project_profile"), dict) else {}
+            _vs_cur = (_pp.get("visual_style") or project_manager.LAST_VISUAL_STYLE or "").strip()
+            if _vs_cur not in _vs_opts:
+                _vs_cur = _vs_opts[0] if _vs_opts else "realistic"
+            style_row = ttk.Frame(frm)
+            style_row.pack(fill=tk.X, pady=(0, 6))
+            ttk.Label(style_row, text="Visual Style").pack(side=tk.LEFT, padx=(0, 5))
+            visual_style_var = tk.StringVar(value=_vs_cur)
+            ttk.Combobox(
+                style_row,
+                textvariable=visual_style_var,
+                values=_vs_opts,
+                state="readonly",
+                width=48,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            visual_style_combo_opts = list(_vs_opts)
+
+            ttk.Label(frm, text="").pack(anchor=tk.W)
+
+            ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
+                anchor=tk.W, pady=(0, 2)
+            )
+            instruction_frm = ttk.Frame(frm)
+            instruction_frm.pack(fill=tk.X, pady=(0, 8))
+            instruction_tx = scrolledtext.ScrolledText(
+                instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+            )
+            instruction_tx.pack(fill=tk.X, pady=(0, 4))
+
+            ttk.Label(frm, text="").pack(anchor=tk.W)
+
+            ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
+                anchor=tk.W, pady=(0, 2)
+            )
+            prompt_tx = scrolledtext.ScrolledText(
+                frm, wrap=tk.WORD, width=100, height=8, font=("Arial", 9)
+            )
+            prompt_tx.pack(fill=tk.X, pady=(0, 8))
+
+            def refresh_scene_prompt(*_args):
+                sel = (prompt_combo_var.get() or "").strip()
+                if not sel or not nb_prompt_choices:
+                    prompt_tx.delete("1.0", tk.END)
+                    return
+                instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+                _, prompt = self._combined_prompt_text_for_label(
+                    video_detail, sel, instruction=instr
+                )
+                prompt_tx.delete("1.0", tk.END)
+                if prompt:
+                    prompt_tx.insert("1.0", prompt)
+                    dlg.after_idle(
+                        lambda p=prompt: _copy_text_to_clipboard(dlg, p)
+                    )
+
+            snippet_handle = _build_instruction_snippet_combo(
+                instruction_frm, channel_key, instruction_tx, on_changed=refresh_scene_prompt
+            )
+
+            if nb_prompt_choices:
+                def on_prompt_combo_selected(_event=None):
+                    sel = (prompt_combo_var.get() or "").strip()
+                    if sel:
+                        try:
+                            from utility.telegram_session import save_story_scene_prompt_choice
+
+                            save_story_scene_prompt_choice(sel)
+                        except Exception:
+                            pass
+                    refresh_scene_prompt()
+
+                prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
+            instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
+            if nb_prompt_choices:
+                dlg.after_idle(refresh_scene_prompt)
+
+            from gui.cli_bridge import bind_screen, match_choice, unbind_screen
+
+            def _unbind_scene_cli(_event=None):
+                if _event is not None and getattr(_event, "widget", None) is not dlg:
+                    return
+                unbind_screen(config.SCREEN_STORY_SCENE)
+
+            def _close_scene_editor():
+                if getattr(self, "_scene_content_dialog", None) is dlg:
+                    self._scene_content_dialog = None
+                _unbind_scene_cli()
+                try:
+                    dlg.destroy()
+                except tk.TclError:
+                    pass
+
+            def _set_lm_early(value: str):
+                labels = [opt[0] for opt in nb_prompt_choices]
+                matched = match_choice(value, labels)
+                if not matched:
+                    return False, "unknown LM prompt: " + value + "\nchoices: " + " | ".join(labels)
+                _apply_scene_lm_combo(
+                    prompt_combo, prompt_combo_var, labels, matched, host=dlg
+                )
+                try:
+                    from utility.telegram_session import save_story_scene_prompt_choice
+
+                    save_story_scene_prompt_choice(matched)
+                except Exception:
+                    pass
+                _after_scene_lm_changed(dlg, prompt_combo, prompt_tx, refresh_scene_prompt)
+                return True, f"{matched} — 选LM提示下拉已切换。"
+
+            def _set_style_early(value: str):
+                matched = match_choice(value, visual_style_combo_opts)
+                if not matched:
+                    return False, "unknown style: " + value + "\nchoices: " + " | ".join(visual_style_combo_opts)
+                visual_style_var.set(matched)
+                return True, matched
+
+            def _set_instruction_early(value: str):
+                instruction_tx.delete("1.0", tk.END)
+                instruction_tx.insert("1.0", value)
+                refresh_scene_prompt()
+                return True, "instruction set"
+
+            def _set_snippet_early(value: str):
+                labels = list(snippet_handle.get("labels") or [])
+                matched = match_choice(value, labels)
+                if not matched:
+                    return False, "unknown snippet: " + value + "\nchoices: " + " | ".join(labels)
+                apply_fn = snippet_handle.get("apply")
+                if not callable(apply_fn) or not apply_fn(matched):
+                    return False, f"failed to insert snippet {matched}"
+                return True, f"inserted {matched}"
+
+            # ready=True as soon as the top half exists — scn / lm must not wait
+            # for the large JSON editor + button row to finish building.
+            _raise_scene_dialog()
+            bind_screen(
+                config.SCREEN_STORY_SCENE,
+                dlg,
+                {
+                    "lm": {
+                        "get": lambda: (prompt_combo_var.get() or "").strip(),
+                        "set": _set_lm_early,
+                        "choices": lambda: [opt[0] for opt in nb_prompt_choices],
+                    },
+                    "style": {
+                        "get": lambda: (visual_style_var.get() or "").strip(),
+                        "set": _set_style_early,
+                        "choices": lambda: list(visual_style_combo_opts),
+                    },
+                    "instruction": {
+                        "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
+                        "set": _set_instruction_early,
+                    },
+                    "snippet": {
+                        "get": lambda: (
+                            snippet_handle.get("var").get()
+                            if snippet_handle.get("var")
+                            else ""
+                        ),
+                        "set": _set_snippet_early,
+                        "choices": lambda: list(snippet_handle.get("labels") or []),
+                    },
+                    "prompt": {
+                        "get": lambda: (prompt_tx.get("1.0", tk.END) or "").strip(),
+                    },
+                    "cancel": {"click": _close_scene_editor},
+                },
+            )
+            _raise_scene_dialog()
+            try:
+                loading_lbl.destroy()
+            except tk.TclError:
+                pass
+            scene_ui.update(
+                {
+                    "prompt_combo_var": prompt_combo_var,
+                    "prompt_combo": prompt_combo,
+                    "nb_prompt_choices": nb_prompt_choices,
+                    "instruction_tx": instruction_tx,
+                    "prompt_tx": prompt_tx,
+                    "visual_style_var": visual_style_var,
+                    "visual_style_combo_opts": visual_style_combo_opts,
+                    "snippet_handle": snippet_handle,
+                    "refresh_scene_prompt": refresh_scene_prompt,
+                }
+            )
+            parent.after(1, _build_editor_ui_rest)
+
+        def _build_editor_ui_rest():
+            prompt_combo_var = scene_ui["prompt_combo_var"]
+            prompt_combo = scene_ui["prompt_combo"]
+            nb_prompt_choices = scene_ui["nb_prompt_choices"]
+            instruction_tx = scene_ui["instruction_tx"]
+            prompt_tx = scene_ui["prompt_tx"]
+            visual_style_var = scene_ui["visual_style_var"]
+            visual_style_combo_opts = scene_ui["visual_style_combo_opts"]
+            snippet_handle = scene_ui["snippet_handle"]
+            refresh_scene_prompt = scene_ui["refresh_scene_prompt"]
+            ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
+            tx = scrolledtext.ScrolledText(
+                frm, wrap=tk.WORD, width=100, height=20, font=("Consolas", 10)
+            )
+            tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+            _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
+
+            def _fill_scene_editor_rest():
+                scenes = video_detail.get("scene_content") or []
+                if not isinstance(scenes, list):
+                    scenes = []
+                scene_json = ""
+                if scenes:
+                    scene_json = json.dumps(scenes, ensure_ascii=False, indent=2)
+                    tx.insert("1.0", scene_json)
+                    dlg.after_idle(
+                        lambda s=scene_json: _copy_text_to_clipboard(dlg, s)
+                    )
+
+                def _scene_list_from_editor() -> list | None:
+                    raw = (tx.get("1.0", tk.END) or "").strip()
+                    if not raw:
+                        return None
+                    try:
+                        parsed = json.loads(safe_clipboard_json_copy(raw))
+                    except (json.JSONDecodeError, TypeError):
+                        return None
+                    if not isinstance(parsed, list):
+                        return None
+                    return parsed if parsed else None
+
+                btn_row = ttk.Frame(frm)
+                btn_row.pack(fill=tk.X)
+
+                _lang_lbl = config.llm_language_label(self.language)
+                _scene_copy_index = [-1]  # -1 = All；0..N-1 = 第 1..N 条
+
+                def _scene_index_button_label(idx: int) -> str:
+                    return "All" if idx < 0 else str(idx + 1)
+
+                def _scene_count() -> int:
+                    scenes = _scene_list_from_editor()
+                    n = len(scenes) if scenes else 0
+                    if n <= 0:
+                        try:
+                            from utility.telegram_session import load_story_scene_prompt_choice
+
+                            n = int(load_story_scene_prompt_choice().get("tabs") or 0)
+                        except Exception:
+                            n = 0
+                    return max(0, n)
+
+                def _scene_choice_labels():
+                    n = _scene_count()
+                    return ["All"] + [str(i) for i in range(1, n + 1)]
+
+                def _cycle_scene_copy_index():
+                    scenes = _scene_list_from_editor()
+                    n = len(scenes) if scenes else 0
+                    cur = _scene_copy_index[0]
+                    if cur < 0:
+                        _scene_copy_index[0] = 0 if n > 0 else -1
+                    else:
+                        nxt = cur + 1
+                        _scene_copy_index[0] = -1 if nxt >= n else nxt
+                    try:
+                        scene_index_btn.config(text=_scene_index_button_label(_scene_copy_index[0]))
+                    except (NameError, tk.TclError):
+                        pass
+
+                def _copy_scene_instruction(nb_mode: str, nb_variant: str = ""):
+                    scenes = _scene_list_from_editor()
+                    if scenes is None:
+                        messagebox.showwarning(
+                            "无 Scene JSON",
+                            "请先在编辑区填写有效的 scene_content JSON 数组。",
+                            parent=dlg,
+                        )
+                        return
+                    self._copy_notebooklm_scene_instruction(
+                        parent=dlg,
+                        video_detail=video_detail,
+                        scenes=scenes,
+                        nb_mode=nb_mode,
+                        nb_variant=nb_variant,
+                        main_character=main_character,
+                        channel_path=channel_path or self.channel_path or "",
+                        scene_index=_scene_copy_index[0],
+                        visual_style=(visual_style_var.get() or "").strip(),
+                    )
+
+                def on_show_nb_export_menu():
+                    m = tk.Menu(dlg, tearoff=0)
+                    _cat_labels = {
+                        "image": f"Image 幻灯片 ({_lang_lbl})",
+                        "video": f"Video 视频 ({_lang_lbl})",
+                        "speaking": f"Speaking 主人公 ({_lang_lbl})",
+                        "voiceover": f"Voiceover 旁白 ({_lang_lbl})",
+                    }
+                    for base, cat_label in _cat_labels.items():
+                        sub = tk.Menu(m, tearoff=0)
+                        for var, var_label in config_prompt.NOTEBOOKLM_EXPORT_VARIANTS[base]:
+                            sub.add_command(
+                                label=var_label,
+                                command=lambda b=base, v=var: _copy_scene_instruction(b, v),
+                            )
+                        m.add_cascade(label=cat_label, menu=sub)
+                    post_menu_below_widget(m, nb_export_btn)
+
+                def _busy(btn):
+                    try:
+                        btn.config(state=tk.DISABLED)
+                        dlg.config(cursor="watch")
+                        dlg.update_idletasks()
+                    except tk.TclError:
+                        pass
+
+                def _idle(btn):
+                    try:
+                        btn.config(state=tk.NORMAL)
+                        dlg.config(cursor="")
+                    except tk.TclError:
+                        pass
+
+                def on_smart_generate():
+                    self._run_scene_smart_generate_async(
+                        dlg,
+                        video_detail,
+                        (prompt_combo_var.get() or "").strip(),
+                        lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
+                        get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
+                        on_busy=lambda: _busy(smart_btn),
+                        on_idle=lambda: _idle(smart_btn),
+                        persist_fn=persist,
+                        on_saved=on_saved,
+                        on_title_updated=on_title_updated,
+                    )
+
+                def on_confirm():
+                    raw = (tx.get("1.0", tk.END) or "").strip()
+                    if not raw:
+                        if not messagebox.askyesno(
+                            "清空场景",
+                            "内容为空，将删除本条 scene_content。继续？",
+                            parent=dlg,
+                        ):
+                            return
+                        video_detail.pop("scene_content", None)
+                        result_holder[0] = []
+                    else:
+                        try:
+                            parsed = json.loads(safe_clipboard_json_copy(raw))
+                        except (json.JSONDecodeError, TypeError) as e:
+                            show_auto_close_popup(
+                                dlg,
+                                "JSON 无效",
+                                f"无法解析 scene_content：\n{e}",
+                                kind="error",
+                            )
+                            return
+                        if not isinstance(parsed, list):
+                            show_auto_close_popup(
+                                dlg,
+                                "JSON 无效",
+                                "scene_content 必须是 JSON 数组（以 [ 开头的 list）。",
+                                kind="error",
+                            )
+                            return
+                        if not parsed:
+                            messagebox.showwarning(
+                                "无效场景",
+                                "解析后无有效场景条目，请检查 JSON 结构。",
+                                parent=dlg,
+                            )
+                            return
+                        video_detail["scene_content"] = parsed
+                        result_holder[0] = parsed
+                    if not persist(video_detail, parent=dlg):
+                        return
+                    dlg.destroy()
+                    if callable(on_saved):
+                        on_saved()
+
+                smart_btn = ttk.Button(btn_row, text="智能生成", command=on_smart_generate)
+                smart_btn.pack(side=tk.LEFT, padx=(0, 8))
+                if not nb_prompt_choices:
+                    smart_btn.config(state=tk.DISABLED)
+                scene_index_btn = ttk.Button(
+                    btn_row,
+                    text=_scene_index_button_label(_scene_copy_index[0]),
+                    width=5,
+                    command=_cycle_scene_copy_index,
+                )
+                scene_index_btn.pack(side=tk.LEFT, padx=(0, 4))
+                nb_export_btn = ttk.Button(
+                    btn_row,
+                    text="NotebookLM ▼",
+                    command=on_show_nb_export_menu,
+                )
+                nb_export_btn.pack(side=tk.LEFT, padx=(0, 8))
+                save_btn = ttk.Button(btn_row, text="保存", command=on_confirm)
+                save_btn.pack(side=tk.LEFT, padx=(0, 8))
+                cancel_btn = ttk.Button(btn_row, text="取消", command=dlg.destroy)
+                cancel_btn.pack(side=tk.LEFT)
+
+                from gui.cli_bridge import bind_screen, match_choice, unbind_screen
+
+                def _unbind_scene_cli(_event=None):
+                    if _event is not None and getattr(_event, "widget", None) is not dlg:
+                        return
+                    unbind_screen(config.SCREEN_STORY_SCENE)
+
+                def _close_scene_editor():
+                    if getattr(self, "_scene_content_dialog", None) is dlg:
+                        self._scene_content_dialog = None
+                    _unbind_scene_cli()
+                    try:
+                        dlg.destroy()
+                    except tk.TclError:
+                        pass
+
+                def on_confirm_cli():
+                    on_confirm()
+                    try:
+                        if not dlg.winfo_exists():
+                            _unbind_scene_cli()
+                    except tk.TclError:
+                        _unbind_scene_cli()
+
+                def _set_lm(value: str):
+                    labels = [opt[0] for opt in nb_prompt_choices]
+                    matched = match_choice(value, labels)
+                    if not matched:
+                        return False, "unknown LM prompt: " + value + "\nchoices: " + " | ".join(labels)
+                    _apply_scene_lm_combo(
+                        prompt_combo, prompt_combo_var, labels, matched, host=dlg
+                    )
+                    try:
+                        from utility.telegram_session import save_story_scene_prompt_choice
+
+                        save_story_scene_prompt_choice(matched)
+                    except Exception:
+                        pass
+                    _after_scene_lm_changed(dlg, prompt_combo, prompt_tx, refresh_scene_prompt)
+                    return True, (
+                        f"{matched} — 选LM提示下拉已切换；"
+                        "提示词预览将马上更新并复制到剪贴板。"
+                        "屏幕上应看见这一项。"
+                    )
+
+                def _set_style(value: str):
+                    matched = match_choice(value, visual_style_combo_opts)
+                    if not matched:
+                        return False, "unknown style: " + value + "\nchoices: " + " | ".join(visual_style_combo_opts)
+                    visual_style_var.set(matched)
+                    return True, matched
+
+                def _set_instruction(value: str):
+                    instruction_tx.delete("1.0", tk.END)
+                    instruction_tx.insert("1.0", value)
+                    refresh_scene_prompt()
+                    return True, "instruction set"
+
+                def _set_snippet(value: str):
+                    labels = list(snippet_handle.get("labels") or [])
+                    matched = match_choice(value, labels)
+                    if not matched:
+                        return False, "unknown snippet: " + value + "\nchoices: " + " | ".join(labels)
+                    apply_fn = snippet_handle.get("apply")
+                    if not callable(apply_fn) or not apply_fn(matched):
+                        return False, f"failed to insert snippet {matched}"
+                    return True, f"inserted {matched}"
+
+                def _set_content(value: str):
+                    tx.delete("1.0", tk.END)
+                    tx.insert("1.0", value)
+                    return True, "scene_content set"
+
+                def _set_scene_choice(value: str):
+                    raw = (value or "").strip().translate(
+                        str.maketrans("０１２３４５６７８９", "0123456789")
+                    )
+                    if not raw:
+                        return False, "empty scene_choice"
+                    n = _scene_count()
+                    low = raw.lower().replace(" ", "")
+                    if low in ("all", "全部", "0", "-1"):
+                        _scene_copy_index[0] = -1
+                    elif raw.isdigit():
+                        i = int(raw)
+                        if i < 1:
+                            return False, "scene_choice 用 all 或 1/2/3/…"
+                        if n > 0 and i > n:
+                            return False, f"scene {i} out of range (1..{n})"
+                        _scene_copy_index[0] = i - 1
+                    else:
+                        return False, (
+                            "unknown scene_choice: " + value
+                            + "（用 all / 1 / 2 / …）\nchoices: "
+                            + " | ".join(_scene_choice_labels())
+                        )
+                    try:
+                        scene_index_btn.config(
+                            text=_scene_index_button_label(_scene_copy_index[0])
+                        )
+                    except (NameError, tk.TclError):
+                        pass
+                    scene_msg = (
+                        f"scene_choice={_scene_index_button_label(_scene_copy_index[0])}"
+                    )
+                    if _scene_copy_index[0] >= 0:
+                        parsed = config_prompt.parse_nb_export_choice("纯画面")
+                        base, var = parsed if parsed else ("video", "motion")
+                        copied = self._copy_notebooklm_scene_instruction(
+                            parent=dlg,
+                            video_detail=video_detail,
+                            scenes=_scene_list_from_editor() or [],
+                            nb_mode=base,
+                            nb_variant=var,
+                            main_character=main_character,
+                            channel_path=channel_path or self.channel_path or "",
+                            scene_index=_scene_copy_index[0],
+                            visual_style=(visual_style_var.get() or "").strip(),
+                        )
+                        if not copied:
+                            return False, (
+                                f"{scene_msg}; failed to copy Video/纯画面 — "
+                                "scene_content 需要有效 JSON 数组"
+                            )
+                        try:
+                            nb_label = config_prompt.nb_export_mode_label(base, var)
+                        except ValueError:
+                            nb_label = "Video / 纯画面"
+                        return True, f"{scene_msg}; copied {nb_label} to clipboard"
+                    return True, scene_msg
+
+                def _nb_choice_rows():
+                    lang = config.llm_language_label(getattr(self, "language", "") or "")
+                    return config_prompt.notebooklm_export_flat_choices(lang)
+
+                def _nb_labels():
+                    return [row[0] for row in _nb_choice_rows()]
+
+                def _set_notebooklm(value: str):
+                    rows = _nb_choice_rows()
+                    labels = [row[0] for row in rows]
+                    matched = match_choice(value, labels)
+                    base = var = ""
+                    if matched:
+                        for label, b, v in rows:
+                            if label == matched:
+                                base, var = b, v
+                                break
+                    else:
+                        parsed = config_prompt.parse_nb_export_choice(value)
+                        if parsed:
+                            base, var = parsed
+                            try:
+                                matched = next(
+                                    label for label, b, v in rows if b == base and v == var
+                                )
+                            except StopIteration:
+                                matched = config_prompt.nb_export_mode_label(base, var)
+                    if not base:
+                        return False, (
+                            "unknown NotebookLM export: " + value
+                            + "\nchoices: " + " | ".join(labels)
+                        )
+                    copied = self._copy_notebooklm_scene_instruction(
+                        parent=dlg,
+                        video_detail=video_detail,
+                        scenes=_scene_list_from_editor() or [],
+                        nb_mode=base,
+                        nb_variant=var,
+                        main_character=main_character,
+                        channel_path=channel_path or self.channel_path or "",
+                        scene_index=_scene_copy_index[0],
+                        visual_style=(visual_style_var.get() or "").strip(),
+                    )
+                    if not copied:
+                        return False, (
+                            "failed to copy NotebookLM prompt — "
+                            "scene_content 需要有效 JSON 数组"
+                        )
+                    return True, f"copied {matched} ({base}/{var}) to clipboard"
+
+                save_btn.config(command=on_confirm_cli)
+                cancel_btn.config(command=_close_scene_editor)
+                bind_screen(
+                    config.SCREEN_STORY_SCENE,
+                    dlg,
+                    {
+                        "lm": {
+                            "get": lambda: (prompt_combo_var.get() or "").strip(),
+                            "set": _set_lm,
+                            "choices": lambda: [opt[0] for opt in nb_prompt_choices],
+                        },
+                        "style": {
+                            "get": lambda: (visual_style_var.get() or "").strip(),
+                            "set": _set_style,
+                            "choices": lambda: list(visual_style_combo_opts),
+                        },
+                        "instruction": {
+                            "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
+                            "set": _set_instruction,
+                        },
+                        "snippet": {
+                            "get": lambda: (
+                                snippet_handle.get("var").get()
+                                if snippet_handle.get("var")
+                                else ""
+                            ),
+                            "set": _set_snippet,
+                            "choices": lambda: list(snippet_handle.get("labels") or []),
+                        },
+                        "content": {
+                            "get": lambda: (tx.get("1.0", tk.END) or "").strip(),
+                            "set": _set_content,
+                        },
+                        "scene_choice": {
+                            "get": lambda: _scene_index_button_label(_scene_copy_index[0]),
+                            "set": _set_scene_choice,
+                            "choices": _scene_choice_labels,
+                        },
+                        "prompt": {
+                            "get": lambda: (prompt_tx.get("1.0", tk.END) or "").strip(),
+                        },
+                        "notebooklm": {
+                            "get": lambda: "",
+                            "set": _set_notebooklm,
+                            "choices": _nb_labels,
+                        },
+                        "save": {"click": on_confirm_cli},
+                        "cancel": {"click": _close_scene_editor},
+                        "generate": {"click": on_smart_generate},
+                    },
+                )
+                dlg.bind("<Destroy>", _unbind_scene_cli)
+                dlg.protocol("WM_DELETE_WINDOW", _close_scene_editor)
+                _raise_scene_dialog()
+            parent.after(1, _fill_scene_editor_rest)
+
+
+        def _build_editor_ui_guarded():
+            try:
+                _build_editor_ui()
+            except Exception as exc:
+                # Without this the stub bind stays ready=False forever and every
+                # SCENE command would answer "仍在加载".
+                try:
+                    loading_lbl.config(text=f"SCENE 编辑器加载失败：{exc}")
+                except tk.TclError:
+                    pass
+                _unbind_scene_early(config.SCREEN_STORY_SCENE)
+                if getattr(self, "_scene_content_dialog", None) is dlg:
+                    self._scene_content_dialog = None
+                raise
+
+        parent.after(1, _build_editor_ui_guarded)
         return result_holder[0]
 
     def open_content_field_editor(

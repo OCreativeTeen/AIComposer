@@ -34,7 +34,7 @@ def main():
         register_bridge_root(root)
     except Exception:
         pass
-    # 切勿在此处 withdraw(root)。在 Windows 上父窗口被 withdraw 时，其子 Toplevel（YT 工具选择窗）
+    # 切勿在此处 withdraw(root)。在 Windows 上父窗口被 withdraw 时，其子 Toplevel（YT 工具选择窗）然后还有有另一个那个cly
     # 往往完全不显示。根窗缩到极小并移到屏外，减少空白主窗干扰。
     try:
         root.geometry("1x1+-3000+-3000")

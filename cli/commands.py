@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import time
 
-from cli.bridge import send_bridge_command
+from cli.bridge import bridge_screen_bound, send_bridge_command
 from cli.screens import (
     SCREEN_STORY_ROOT,
     SCREEN_STORY_SCENE,
@@ -62,6 +63,7 @@ _SHORT_CLI: dict[str, str] = {
     "paste_scene": "pst",
     "notebooklm": "nbp",
     "open_notebooklm": "nbi",
+    "notebooklm_ready": "nbif",
     "whole_story_image": "igp",
     "whole_story_pick": "itc",
     "grok_image": "gr",
@@ -87,6 +89,34 @@ def short_cli(name: str) -> str:
     return _SHORT_CLI.get((name or "").strip(), name)
 
 _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def _wait_screen_ready(screen: str, timeout_s: float = 25.0) -> bool:
+    """Wait until the GUI reports a screen finished building."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if bridge_screen_bound(screen, timeout_s=1.0):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _lm_bridge_retry(want: str, *, timeout_s: float = 15.0) -> tuple[bool, str] | None:
+    """Retry bridge ``lm`` set while SCENE is still finishing its async UI build."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if bridge_screen_bound(SCREEN_STORY_SCENE, timeout_s=1.0):
+            ok, msg = send_bridge_command(
+                screen=SCREEN_STORY_SCENE,
+                op="set",
+                field="lm",
+                value=want,
+                timeout_s=6.0,
+            )
+            if ok:
+                return True, msg
+        time.sleep(0.25)
+    return None
 
 _ALIASES: dict[str, str] = {
     "审阅发布": "publish",
@@ -119,6 +149,10 @@ _ALIASES: dict[str, str] = {
     "pst": "paste_scene",
     "onb": "open_notebooklm",
     "nbi": "open_notebooklm",
+    "nbif": "notebooklm_ready",
+    "nbf": "notebooklm_ready",
+    "infographic_ready": "notebooklm_ready",
+    "notebooklm_ready": "notebooklm_ready",
     "gi": "grok_image",
     "gr": "grok_image",
     "sc": "scene_choice",
@@ -134,6 +168,9 @@ _ALIASES: dict[str, str] = {
     "gen": "generate",
     "cx": "cancel",
     "win": "screen",
+    "gui": "gui_health",
+    "health": "gui_health",
+    "diag": "gui_health",
     "visual": "style",
     "visual_style": "style",
     "guide": "instruction",
@@ -229,30 +266,28 @@ def split_command(raw: str) -> tuple[str, str]:
     return key, rest.strip()
 
 
-def _click_story_root(button_name: str) -> tuple[bool, str]:
-    from aiagent.win_gui_tasks import (
-        click_app_button,
-        find_detail_window,
-        find_existing_ai_window,
-        open_scene_panel,
-        set_foreground,
-        try_uia_click,
-    )
+def _click_story_root(field: str) -> tuple[bool, str]:
+    """Click a STORY toolbar control via GUI bridge (no mouse simulation)."""
+    import time
 
-    if button_name == "场景":
-        if open_scene_panel():
-            return True, "clicked 场景 — SCENE is open"
-        return False, "failed to open SCENE (could not switch to GUI / click 场景)"
+    from aiagent.win_gui_tasks import find_detail_window, set_foreground
 
-    hwnd = find_detail_window() or find_existing_ai_window()
+    hwnd = find_detail_window()
     if not hwnd:
-        return False, "STORY window not found (open a story first)"
+        return False, "STORY 窗口未找到（请先从 LIST 打开一条故事）"
     set_foreground(hwnd)
-    if try_uia_click(button_name, hwnd):
-        return True, f"clicked {button_name}"
-    if click_app_button(button_name):
-        return True, f"clicked {button_name} (fallback)"
-    return False, f"failed to click {button_name}"
+    time.sleep(0.15)
+
+    ok, msg = send_bridge_command(
+        screen=SCREEN_STORY_ROOT,
+        op="click",
+        field=field,
+        timeout_s=30.0,
+    )
+    if not ok:
+        label = STORY_ROOT_BUTTONS.get(field, field)
+        return False, f"bridge 点击「{label}」失败: {msg}"
+    return True, msg or f"clicked {field}"
 
 
 def cmd_screen() -> tuple[bool, str]:
@@ -263,13 +298,43 @@ def cmd_screen() -> tuple[bool, str]:
     return True, f"{name}{extra}"
 
 
+def cmd_gui_health() -> tuple[bool, str]:
+    """Report whether the GUI is running, responsive, and which screens are bound."""
+    from cli.bridge import gui_heartbeat
+
+    beat = gui_heartbeat()
+    if beat is None:
+        return False, (
+            "GUI：没在跑（没有心跳）。\n"
+            "请先启动 GUI，再发命令。"
+        )
+
+    lines = []
+    if beat.get("pump_alive"):
+        lines.append(f"GUI：正常（Tk 主线程 {beat.get('pump_age_s')}s 前刚跑过）")
+    else:
+        lines.append(
+            f"GUI：卡住 — Tk 主线程已 {beat.get('pump_age_s')}s 没处理 bridge。\n"
+            "多半有窗口在做同步长任务。等一会儿或重启 GUI。"
+        )
+    ready = beat.get("ready") or []
+    building = beat.get("building") or []
+    lines.append("已就绪的屏：" + (", ".join(ready) if ready else "（无）"))
+    if building:
+        lines.append("正在加载：" + ", ".join(building))
+    inbox = beat.get("inbox") or 0
+    if inbox:
+        lines.append(f"待处理 bridge 请求：{inbox}")
+    return bool(beat.get("pump_alive")), "\n".join(lines)
+
+
 def cmd_help() -> tuple[bool, str]:
     screen = current_screen()
     lines = [
         f"win={public_screen_name(screen)}  (story=STORY  scene=SCENE  list=LIST  yt=YT)",
         "sync  — 再同步一次",
         "",
-        "SCENE:  lm 4  sty  snp  prf  gem  pst  save  nbp  nbi  itc  igp  gr  gri  sc  grv  gvd  vc  vp  nbv  gen  cx  sync",
+        "SCENE:  lm 4  sty  snp  prf  gem  pst  save  nbp  nbi  nbif  itc  igp  gr  sc  grv  gvd  vc  vp  nbv  gen  cx  sync",
         "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
@@ -309,83 +374,86 @@ def cmd_profile(value: str = "") -> tuple[bool, str]:
 
 
 def cmd_go() -> tuple[bool, str]:
-    """Foreground GUI and open 分镜 if needed. Succeed only when SCENE bridge is live."""
+    """Foreground GUI and open SCENE via bridge (calls do_review_scene, no mouse)."""
     import time
 
     import config
-    from aiagent.win_gui_tasks import (
-        find_detail_window,
-        find_panel_window,
-        open_scene_panel,
-        set_foreground,
-    )
-    from gui.cli_bridge import is_screen_bound
+    from aiagent.win_gui_tasks import find_panel_window, flash_window, set_foreground
+    from cli.bridge import gui_heartbeat
+
+    def _bring_scene_front() -> bool:
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            hwnd = find_panel_window()
+            if hwnd:
+                set_foreground(hwnd)
+                flash_window(hwnd)
+                return True
+            time.sleep(0.12)
+        return False
 
     def _scene_ready() -> bool:
-        hwnd = find_panel_window()
-        return bool(
-            hwnd
-            and is_screen_bound(config.SCREEN_STORY_SCENE)
-        )
+        return bridge_screen_bound(config.SCREEN_STORY_SCENE, timeout_s=1.5)
 
-    panel = find_panel_window()
-    if panel and _scene_ready():
+    def _wait_scene_ready(deadline: float) -> bool:
+        while time.monotonic() < deadline:
+            hwnd = find_panel_window()
+            if hwnd:
+                set_foreground(hwnd)
+            if _scene_ready():
+                return True
+            time.sleep(0.2)
+        return False
+
+    if _scene_ready():
         config.set_active_screen(SCREEN_STORY_SCENE)
-        set_foreground(panel)
+        _bring_scene_front()
         return True, "already on scene — SCENE is in front (bridge ready)"
 
-    story = find_detail_window()
-    if story:
-        set_foreground(story)
-        time.sleep(0.25)
+    if not bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=2.0):
+        return False, (
+            "STORY 屏未绑定 CLI bridge。请先从 LIST 打开一条故事，再发 scn。\n"
+            "若刚改过代码：关 STORY 再从 LIST 打开一次。"
+        )
 
+    # Do not win32-foreground STORY here — it shares the GUI process and can
+    # stall Tk while the bridge click is waiting for the pump.
     ok, bridge_msg = send_bridge_command(
         screen=SCREEN_STORY_ROOT,
         op="click",
         field="scene",
-        timeout_s=20.0,
+        timeout_s=15.0,
     )
-    if not ok and story:
-        ok, bridge_msg = send_bridge_command(
-            screen=SCREEN_STORY_ROOT,
-            op="click",
-            field="scene",
-            timeout_s=20.0,
-        )
-
-    deadline = time.monotonic() + 25.0
-    while time.monotonic() < deadline:
-        panel = find_panel_window()
-        if panel and _scene_ready():
-            config.set_active_screen(SCREEN_STORY_SCENE)
-            set_foreground(panel)
-            return True, "opened scene — SCENE is in front (bridge ready)"
-        time.sleep(0.12)
 
     if not ok:
-        if open_scene_panel():
-            deadline = time.monotonic() + 12.0
-            while time.monotonic() < deadline:
-                panel = find_panel_window()
-                if panel and _scene_ready():
-                    config.set_active_screen(SCREEN_STORY_SCENE)
-                    set_foreground(panel)
-                    return True, "opened scene via 场景 click — bridge ready"
-                time.sleep(0.12)
-
-    panel = find_panel_window()
-    if panel:
-        set_foreground(panel)
-        if _scene_ready():
+        beat = gui_heartbeat() or {}
+        building = beat.get("building") or []
+        if config.SCREEN_STORY_SCENE in building and _wait_scene_ready(
+            time.monotonic() + 25.0
+        ):
             config.set_active_screen(SCREEN_STORY_SCENE)
-            return True, "SCENE is open (bridge ready)"
+            _bring_scene_front()
+            return True, "opened scene — SCENE is in front (bridge ready)"
         return False, (
-            "SCENE 窗口已出现，但 CLI bridge 未绑定（lm/gem 会 timeout）。\n"
+            "未能打开 SCENE。\n"
             f"bridge: {bridge_msg}\n"
-            "请关 SCENE 再发 scn；仍不行就重启 GUI + 听筒。"
+            "若刚改过代码：关 STORY 再从 LIST 打开一次，然后重发 scn。"
+        )
+
+    if _wait_scene_ready(time.monotonic() + 30.0):
+        config.set_active_screen(SCREEN_STORY_SCENE)
+        _bring_scene_front()
+        return True, "opened scene — SCENE is in front (bridge ready)"
+
+    if find_panel_window():
+        _bring_scene_front()
+        return False, (
+            "SCENE 窗口已出现，但编辑器还没加载完（30 秒内未就绪）。\n"
+            f"bridge: {bridge_msg}\n"
+            "稍等几秒直接发 lm；一直不行就关 SCENE 再发 scn。"
         )
     return False, (
-        "未能打开 SCENE。请确认 STORY 窗还在，不要把 Cursor 最大化挡住 GUI。\n"
+        "未能打开 SCENE。\n"
         f"bridge: {bridge_msg}\n"
         "若刚改过代码：关 STORY 再从 LIST 打开一次，然后重发 scn。"
     )
@@ -594,32 +662,8 @@ def _record_chrome_profile(kind: str, selected: dict) -> None:
 
 
 def _lm_gui_fallback(want: str) -> tuple[bool, str] | None:
-    """Bridge 超时时，直接前台 SCENE 用 UIA 选 LM 下拉。"""
-    from aiagent.win_gui_tasks import find_panel_window, select_4step_prompt, set_foreground
-
-    raw = (want or "").strip().translate(_FULLWIDTH_DIGITS)
-    if not raw:
-        return None
-    hwnd = find_panel_window()
-    if not hwnd:
-        return None
-    set_foreground(hwnd)
-    if raw in ("4", "4step", "4stepstory") or raw.lower() in (
-        "4 step story",
-        "4step story",
-    ):
-        if select_4step_prompt():
-            try:
-                from utility.telegram_session import save_story_scene_prompt_choice
-
-                save_story_scene_prompt_choice("4 Step Story")
-            except Exception:
-                pass
-            return True, (
-                "4 Step Story — 选LM提示下拉已切换（GUI 直连回退）。"
-                "请看 SCENE 是否已变；提示词预览应变长。"
-            )
-    return None
+    """Bridge-only retry — never click the screen (coords lie, UIA needs COM)."""
+    return _lm_bridge_retry(want)
 
 
 def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
@@ -656,6 +700,11 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
         return True, _format_numbered_choices(
             f"{shown} 选项（当前 SCENE）：", labels, shown
         )
+    if field in ("lm", "style", "snippet", "scene_choice", "notebooklm"):
+        if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
+            return False, (
+                f"{shown} 需要 SCENE 已就绪。先发 scn，等窗口出来后再发 {shown} {want}。"
+            )
     ok, msg = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="set",
@@ -666,7 +715,7 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
     if not ok and public_cmd == "prompt_choice" and want:
         fb = _lm_gui_fallback(want)
         if fb:
-            return fb
+            ok, msg = fb
     if ok:
         if public_cmd == "prompt_choice":
             try:
@@ -676,6 +725,35 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
                 save_story_scene_prompt_choice(label)
             except Exception:
                 pass
+            got_ok, got = send_bridge_command(
+                screen=SCREEN_STORY_SCENE,
+                op="get",
+                field="lm",
+                timeout_s=4.0,
+            )
+            if got_ok:
+                got_val = (got or "").split("\n", 1)[0].strip()
+                want_label = ""
+                if want.isdigit():
+                    ch_ok, ch_msg = send_bridge_command(
+                        screen=SCREEN_STORY_SCENE,
+                        op="choices",
+                        field="lm",
+                        timeout_s=4.0,
+                    )
+                    if ch_ok:
+                        labels = [
+                            ln.strip() for ln in (ch_msg or "").splitlines() if ln.strip()
+                        ]
+                        idx = int(want)
+                        if 1 <= idx <= len(labels):
+                            want_label = labels[idx - 1]
+                if want_label and want_label not in got_val:
+                    return False, (
+                        f"lm set 回了 ok，但 SCENE 下拉仍是 {got_val!r}，"
+                        f"不是 {want_label!r}。请重发 lm {want}。"
+                    )
+            _foreground_story_scene()
             return True, (
                 f"{shown} ok — {msg}\n"
                 "请看 SCENE「选LM提示」：必须已变成这一项，"
@@ -691,7 +769,7 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
 
 
 def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
-    """Pick a Chrome profile, open NotebookLM, generate 3 Portrait/Concise infographics."""
+    """Pick a Chrome profile, open NotebookLM, click Generate ×3, return immediately."""
     import config
 
     shown = short_cli("open_notebooklm")
@@ -720,72 +798,185 @@ def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
             f"可换一个 profile 再发 {shown} N。"
         )
 
-    from utility.telegram_session import load_whole_story_images
-
-    files = load_whole_story_images()
-    if not files:
-        return False, (
-            f"{shown} 已点 Generate，但没有成功下载封面到 Downloads。\n{detail}"
-        )
+    nbif = short_cli("notebooklm_ready")
     itc = short_cli("whole_story_pick")
-    igp = short_cli("whole_story_image")
     body = (
         f"{shown} ok — profile={selected['label']}\n{detail}\n"
-        f"已自动生成并下载 {len(files)} 张 → whole_story_images.json\n"
-        f"（一条 {shown} = Generate×3 + Studio⋮Download×3）\n"
-        f"下一步发 {itc}（Telegram 发图选封面），选定后再发 {igp} 贴进 Grok。"
+        f"已点 Generate ×3，不等待结束、不拷图。\n"
+        f"请过几分钟发 {nbif} 查询三张新 infographic 是否 ready；"
+        f"ready 后再发 {itc} 拷图并发 Telegram 选一张。"
     )
     return True, body
 
 
-def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
-    """Send nbi cover JPGs to Telegram for pick, or record choice 1/2/3 (no paste)."""
+def cmd_notebooklm_ready(value: str = "") -> tuple[bool, str]:
+    """Query Studio: three new infographics ready, or still generating."""
+    del value
+    from aiagent.browser_tasks import check_notebooklm_infographic_status
+    from utility.telegram_session import load_whole_story_image_record
+
+    shown = short_cli("notebooklm_ready")
+    itc = short_cli("whole_story_pick")
+    rec = load_whole_story_image_record()
+    expected = int(rec.get("expected") or rec.get("generate_clicked") or 3) or 3
+    try:
+        st = check_notebooklm_infographic_status(expected=expected)
+    except Exception as exc:
+        return False, f"{shown} failed: {exc}"
+    if not st.get("ok"):
+        return False, f"{shown} — {st.get('error') or '查询失败'}"
+    gen_n = int(st.get("generating_count") or 0)
+    if st.get("ready"):
+        return True, (
+            f"{shown} — 三个新的 infographic 已经 ready。\n"
+            f"Studio 右侧看不到 “Generating infographic...”，"
+            f"最上边应是带中文标题的完成项（例如 1 source · …）。\n"
+            f"下一步发 {itc}：打开这三张、拷图保存到 working，再 Telegram 发给你选一张。"
+        )
+    if st.get("uncertain"):
+        return True, (
+            f"{shown} — 还不能判定 ready。\n"
+            f"{st.get('error') or '没读到页面上的 Generating 文字。'}\n"
+            "如果你仍然看见第一项是 Generating infographic，就还没好，请稍后再发 nbif。"
+        )
+    return True, (
+        f"{shown} — 还没有 ready，仍在生成中。\n"
+        f"Studio 里还能看到 “Generating infographic...”"
+        f"{f'（约 {gen_n} 条）' if gen_n else ''}。\n"
+        f"请稍后再发 {shown}。"
+    )
+
+
+def _itc_send_covers(files: list[str], shown: str, igp: str) -> tuple[bool, str]:
     from utility.telegram_cli import notify_whole_story_covers_for_pick
+    from utility.telegram_session import mark_whole_story_telegram_sent
+
+    if not files:
+        return False, f"{shown} 没有拷到 infographic 图。"
+    tg_lines = notify_whole_story_covers_for_pick(files)
+    mark_whole_story_telegram_sent()
+    extra = "\n".join(tg_lines) if tg_lines else ""
+    listed = _format_numbered_choices(
+        f"已拷 {len(files)} 张封面到 working：",
+        [os.path.basename(p) for p in files],
+        "封面",
+    )
+    msg = (
+        f"{shown} ok — 已发 Telegram 请选封面。\n{listed}\n"
+        f"Telegram 直接回复 1…{len(files)}（不要发 {shown} N，那是重开 Chrome）。\n"
+        f"或 CLI 发 {shown} pick N。选定后会记下并拷到剪贴板；再发 {igp} 贴进 Grok。"
+    )
+    if extra:
+        msg += f"\n{extra}"
+    return True, msg
+
+
+def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
+    """Copy top 3 infographic images, or reopen Chrome profile N and recopy.
+
+    ``itc`` — use the already-open NotebookLM window.
+    ``itc N`` — open Chrome profile N, open the existing notebook, copy top 3.
+    ``itc pick N`` / Telegram ``1/2/3`` — record which cover the owner chose.
+    """
+    import config
     from utility.telegram_session import (
         load_whole_story_image_record,
         load_whole_story_images,
-        mark_whole_story_telegram_sent,
         record_whole_story_pick,
     )
 
     shown = short_cli("whole_story_pick")
     igp = short_cli("whole_story_image")
-    files = load_whole_story_images()
-    if not files:
-        return False, (
-            "还没有封面图。请先 nbi（Generate ×3 并下载到 Downloads）。"
-        )
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
-    if not want:
-        tg_lines = notify_whole_story_covers_for_pick(files)
-        mark_whole_story_telegram_sent()
-        extra = "\n".join(tg_lines) if tg_lines else ""
-        listed = _format_numbered_choices(
-            f"已记录 {len(files)} 张封面（Downloads）：",
-            [os.path.basename(p) for p in files],
-            shown,
+    first, _, rest = want.partition(" ")
+    first_l = first.lower()
+
+    if first_l in ("pick", "sel", "choice", "选"):
+        files = load_whole_story_images()
+        idx_text = (rest or "").strip()
+        if not files:
+            return False, (
+                f"还没有封面图。请先 {shown} 或 {shown} N 拷图，再 {shown} pick N。"
+            )
+        if not idx_text.isdigit():
+            return False, (
+                f"{shown} pick 要跟序号。Telegram 回复 1…{len(files)}，"
+                f"或发 {shown} pick 1…{len(files)}。"
+            )
+        idx = int(idx_text)
+        try:
+            picked = record_whole_story_pick(idx)
+        except ValueError as exc:
+            return False, str(exc)
+        rec = load_whole_story_image_record()
+        path = picked.get("path") or rec.get("selected_path") or ""
+        clip_note = ""
+        if path:
+            try:
+                from aiagent.browser_tasks import copy_image_file_to_clipboard
+
+                copy_image_file_to_clipboard(path)
+                clip_note = "\n已把所选图拷到剪贴板。"
+            except Exception as exc:
+                clip_note = f"\n拷到剪贴板失败：{exc}"
+        return True, (
+            f"{shown} ok — 已选 #{idx} {os.path.basename(path)}\n"
+            f"记录：selected_path={rec.get('selected_path')}"
+            f"{clip_note}\n"
+            f"下一步发 {igp}（无参）把该图贴进所有 Grok Imagine 标签。"
         )
-        msg = (
-            f"{shown} ok — 已发 Telegram 请选封面。\n{listed}\n"
-            f"Telegram 回复 1…{len(files)}，或 CLI 发 {shown} N。\n"
-            f"选定后再发 {igp} 贴进所有 Grok 标签。"
-        )
-        if extra:
-            msg += f"\n{extra}"
-        return True, msg
-    if not want.isdigit():
-        return False, f"unknown {shown}: {value}（无参=发 Telegram；或 {shown} 1…{len(files)}）"
-    idx = int(want)
-    try:
-        picked = record_whole_story_pick(idx)
-    except ValueError as exc:
-        return False, str(exc)
+
     rec = load_whole_story_image_record()
-    igp = short_cli("whole_story_image")
-    return True, (
-        f"{shown} ok — 已选 #{idx} {os.path.basename(picked['path'])}\n"
-        f"记录：selected_path={rec.get('selected_path')}\n"
-        f"下一步发 {igp}（无参）把该图贴进所有 Grok Imagine 标签。"
+    expected = int(rec.get("expected") or rec.get("generate_clicked") or 3) or 3
+
+    if not want:
+        from aiagent.browser_tasks import (
+            capture_notebooklm_infographics,
+            notebooklm_window_open,
+        )
+
+        if not notebooklm_window_open():
+            return True, _format_chrome_profile_choices(
+                f"{shown} 找不到已打开的 NotebookLM。"
+                f"发 {shown} N 用该 Chrome 号重新打开已有 notebook，再拷最上边三张",
+                shown,
+                "notebooklm",
+            )
+        try:
+            files = capture_notebooklm_infographics(times=expected)
+        except Exception as exc:
+            return False, f"{shown} failed: {exc}"
+        return _itc_send_covers(files, shown, igp)
+
+    if want.isdigit():
+        try:
+            selected = config.set_gemini_chrome_profile(want)
+        except ValueError as exc:
+            return False, str(exc) + "\n\n" + _format_chrome_profile_choices(
+                f"{shown} 选项（Chrome 号，重新打开 notebook 再拷图）：",
+                shown,
+                "notebooklm",
+            )
+        _record_chrome_profile("notebooklm", selected)
+        from aiagent.browser_tasks import reopen_notebooklm_and_capture
+
+        try:
+            files = reopen_notebooklm_and_capture(times=expected)
+        except Exception as exc:
+            return False, (
+                f"{shown} failed ({selected['label']}): {exc}\n"
+                f"可换一个 profile 再发 {shown} N。"
+            )
+        ok, msg = _itc_send_covers(files, shown, igp)
+        if ok:
+            msg = f"{shown} ok — 已用 {selected['label']} 重新打开 notebook 并拷图。\n" + msg
+        return ok, msg
+
+    return False, (
+        f"unknown {shown}: {value}\n"
+        f"无参 = 当前已打开的 NotebookLM 拷最上边三张；\n"
+        f"{shown} N = 用 Chrome 号 N 重新打开 notebook 再拷图；\n"
+        f"选封面：Telegram 回 1/2/3，或 {shown} pick N。"
     )
 
 
@@ -822,11 +1013,12 @@ def cmd_whole_story_image(value: str = "") -> tuple[bool, str]:
 
     shown = short_cli("whole_story_image")
     itc = short_cli("whole_story_pick")
+    nbif = short_cli("notebooklm_ready")
     rec = load_whole_story_image_record()
     files = load_whole_story_images()
     if not files:
         return False, (
-            f"还没有 whole story image。请先 nbi，再 {itc} 选封面。"
+            f"还没有 whole story image。请先 {nbif} 确认 ready，再 {itc} 拷图选封面。"
         )
     labels = [os.path.basename(p) for p in files]
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
@@ -842,7 +1034,7 @@ def cmd_whole_story_image(value: str = "") -> tuple[bool, str]:
             shown,
         )
         listed += (
-            f"\n先 {itc}（Telegram 选图）或 {itc} 1…{len(files)}，"
+            f"\n先 Telegram 回复 1…{len(files)}，或发 {itc} pick N，"
             f"再发 {shown} 贴进 Grok。\n"
             f"或一步：{shown} N 直接选第 N 张并贴进 Grok。"
         )
@@ -891,6 +1083,14 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
         )
 
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
+    if want.lower() in ("prep", "prepare", "paste", "ready"):
+        from aiagent.browser_tasks import prepare_open_grok_imagine_tabs
+
+        try:
+            detail = prepare_open_grok_imagine_tabs(paste_image=True)
+        except Exception as exc:
+            return False, f"{shown} prep failed: {exc}"
+        return True, f"{shown} prep ok — {detail}"
     if not want:
         return True, _format_chrome_profile_choices(
             f"{shown} 先选 Chrome profile（将开 {tabs} 个 Imagine 标签，LM={label}；建议选本轮还没用过的）：",
@@ -917,11 +1117,12 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
 
 
 def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
-    """List Direct Video / step-image prompts, or copy one (apply to Grok tab 1–N)."""
+    """Deprecated: scene image prompts are applied by ``gr`` automatically."""
     import config_prompt
     from utility.telegram_session import load_story_scene_prompt_choice
 
     shown = short_cli("grok_image_prompt")
+    gr = short_cli("grok_image")
     rows = [
         (str(lbl).strip(), str(tpl or ""))
         for lbl, tpl in (config_prompt.DIRECT_VIDEO_PROMPT_CHOICES or [])
@@ -935,69 +1136,25 @@ def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
     lm_label = (rec.get("label") or "").strip()
     image_rows = rows[:4]
     video_rows = rows[4:]
-    gr = short_cli("grok_image")
     if n < 1:
         active_rows = rows
-        lm_note = f"还没记下 LM；{shown} 1…4 按四场景列出。先发 lm 再 {gr}。"
+        lm_note = f"还没记下 LM；先发 lm 再 {gr}。"
     else:
         active_rows = image_rows[:n] + video_rows
-        lm_note = f"LM={lm_label} → 场景图 {shown} 1…{n}（共 {n} 个 Grok 标签）"
+        lm_note = f"LM={lm_label} → 场景图已并入 {gr}（{gr} 1 自动贴封面 + Image 1…{n} 提示词）"
 
     labels = [lbl for lbl, _ in active_rows]
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
-    if not want:
-        title = f"{shown} 选项（Image to Detail / Image to Video）："
-        if lm_note:
-            title += f"\n{lm_note}"
-        return True, _format_numbered_choices(title, labels, shown)
-
-    picked_tpl = ""
-    picked_label = ""
-    picked_idx = 0
-    if want.isdigit():
-        idx = int(want)
-        if 1 <= idx <= len(active_rows):
-            picked_label, picked_tpl = active_rows[idx - 1]
-            picked_idx = idx
-    if not picked_tpl:
-        low = want.lower()
-        for i, (lbl, tpl) in enumerate(active_rows, 1):
-            if lbl.lower() == low or low in lbl.lower():
-                picked_label, picked_tpl = lbl, tpl
-                picked_idx = i
-                break
-    if not picked_tpl:
+    if want:
         return False, (
-            f"unknown {shown}: {value}\n\n"
-            + _format_numbered_choices(f"{shown} 选项：", labels, shown)
-            + (f"\n{lm_note}" if lm_note else "")
+            f"{shown} 已合并到 {gr}：请发 {gr} 1，会自动在每个 Grok 标签贴封面图"
+            f"+ 对应场景提示词（Image to Detail-Single-Step-Image 1…{n or 'N'}）。"
+            f"\n视频提示词仍用 sc i → grv i。"
         )
-
-    from aiagent.browser_tasks import write_windows_clipboard
-
-    write_windows_clipboard(picked_tpl)
-    apply_note = f"copied {picked_label} to clipboard"
-    is_scene_image = picked_idx >= 1 and picked_idx <= min(n, len(image_rows)) if n >= 1 else (
-        picked_idx >= 1 and picked_idx <= len(image_rows)
-    )
-    if is_scene_image:
-        tab_index = picked_idx
-        if n >= 1 and tab_index > n:
-            return False, (
-                f"{shown} {picked_idx} 超出 LM 记录的 {n} 个场景（{lm_label or '?'}）。"
-                f"只发 {shown} 1…{n}。"
-            )
-        try:
-            from aiagent.browser_tasks import apply_grok_image_prompt_to_tab
-
-            apply_note = apply_grok_image_prompt_to_tab(tab_index, picked_tpl)
-        except Exception as exc:
-            apply_note = (
-                f"copied {picked_label} to clipboard; "
-                f"未能应用到 Grok 标签 {tab_index}：{exc}"
-            )
-            return True, f"{shown} ok — {apply_note}"
-    return True, f"{shown} ok — {apply_note}"
+    title = f"{shown} 已合并到 {gr}（下列仅供参考；场景图提示词由 {gr} 自动粘贴）："
+    if lm_note:
+        title += f"\n{lm_note}"
+    return True, _format_numbered_choices(title, labels, shown)
 
 
 def _format_scene_choice_list(labels: list[str], current: str, lm_note: str) -> str:
@@ -1369,6 +1526,8 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_help()
     if cmd == "screen":
         return cmd_screen()
+    if cmd == "gui_health":
+        return cmd_gui_health()
     if cmd in ("sync", "where", "here"):
         from cli.mode import get_mode
         from utility.telegram_session import TelegramCliSession
@@ -1410,6 +1569,8 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_paste_scene()
     if cmd == "open_notebooklm":
         return cmd_open_notebooklm(value)
+    if cmd == "notebooklm_ready":
+        return cmd_notebooklm_ready(value)
     if cmd == "whole_story_pick":
         return cmd_whole_story_pick(value)
     if cmd == "whole_story_image":
@@ -1444,7 +1605,7 @@ def dispatch(raw: str) -> tuple[bool, str]:
     if cmd in STORY_ROOT_BUTTONS:
         if screen not in (SCREEN_STORY_ROOT, "none"):
             return False, f"{cmd} is a STORY button; current win={public_screen_name(screen)}"
-        result = _click_story_root(STORY_ROOT_BUTTONS[cmd])
+        result = _click_story_root(cmd)
         if result[0] and cmd == "scene":
             import config
 

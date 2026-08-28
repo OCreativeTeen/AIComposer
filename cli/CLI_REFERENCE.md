@@ -34,7 +34,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 听筒同步里常见：
 
-`lm` `sty` `snp` `prf` `gem` `pst` `save` `nbp` `nbi` `itc` `igp` `gr` `gri` `sc` `grv` `grvd` `nbv` `vc` `vp` `sync`
+`lm` `sty` `snp` `prf` `gem` `pst` `save` `nbp` `nbi` `nbif` `itc` `igp` `gr` `gri` `sc` `grv` `grvd` `nbv` `vc` `vp` `sync`
 
 ### STORY（`story_root`）
 
@@ -60,8 +60,10 @@ gem                # Gemini 生成 4 场 JSON → 剪贴板
 pst                # 剪贴板 JSON 写入 scene_content
 save               # 保存 SCENE
 nbp 1               # 选 NotebookLM 导出类型（先无参看列表）
-nbi 1              # 选 Chrome 号，开 NotebookLM 生成 3 张封面并下载
-itc                # Telegram 发 3 张封面，请用户选 1/2/3（或 itc 2 本地选）
+nbi 1              # 选 Chrome 号，开 NotebookLM，Generate ×3 后立刻返回（不等待）
+nbif               # 查询三张新 infographic 是否 ready
+itc                # 当前 NotebookLM 窗口拷最上边三张；窗口关了就 itc 1（Chrome 号）
+itc pick 2         # 选定第 2 张封面（Telegram 直接回 2 也可以）
 igp                # 把已选封面拷剪贴板并贴进所有 Grok 标签
 gr 1               # 选 Chrome 号，按 LM 场景数开 Grok Imagine 标签
 gri 1 … gri 4      # 各场景 Image 出图（Image 模式）
@@ -198,8 +200,9 @@ pick next          # 下一条
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
 | `nbp` | `notebooklm` | 见下 | 选导出类型，拷贝 prompt 到剪贴板（prompts） |
-| `nbi` | `open_notebooklm` | Chrome 序号 | 开 NotebookLM，Generate ×3，下载封面到 Downloads |
-| `itc` | `whole_story_pick` | 1–3 或无参 | 无参：Telegram 发 3 张封面请选；`itc N` 仅记录选择 |
+| `nbi` | `open_notebooklm` | Chrome 序号 | 开 NotebookLM，Generate ×3，立刻返回（不等待、不拷图） |
+| `nbif` | `notebooklm_ready` | 无 | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
+| `itc` | `whole_story_pick` | 无参 / Chrome 号 / `pick N` | 无参：当前窗口拷最上边三张并发 Telegram；`itc N`：用 Chrome 号 N 重开 notebook 再拷图；选封面用 Telegram `1/2/3` 或 `itc pick N` |
 | `nbv` | — | `纯画面` 等 | 可选：仅重拷 Video·纯画面（`sc i` 已含；场景已选时用） |
 | `igp` | `whole_story_image` | 无参或序号 | 无参：贴已选封面进 Grok；`igp N` 选第 N 张并贴 |
 
@@ -222,9 +225,11 @@ pick next          # 下一条
 
 **用法：** `nbp` → `nbp 3` 或 `nbp 纯画面`
 
-**`nbi`：** 先 `nbi` 选 Chrome 号 → `nbi 1`；需 SCENE 里已有有效 `scene_content`。下载 3 张后记入 `whole_story_images.json`。
+**`nbi`：** 先 `nbi` 选 Chrome 号 → `nbi 1`；需 SCENE 里已有有效 `scene_content`。点完 Generate ×3 立刻返回，不等待。随后用 `nbif` 查询。
 
-**`itc`：** 无参 → Telegram 发 3 张封面请选；用户 Telegram 回复 `1/2/3` 或 CLI 发 `itc 2`。只记录选择，不贴 Grok。（旧别名 `wsp`）
+**`nbif`：** 看 Studio 右侧。有 “Generating infographic...” 和转圈 = 还没 ready；最上边三张已是中文标题 + `1 source · …` = ready。
+
+**`itc`：** 须 infographic 已做好。无参 → 用**当前已打开**的 NotebookLM，逐张打开最上边 3 张，右键 Copy image，存到 `D:\AI_MEDIA\working\YYYYMMDDHHMMSS.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开已有 notebook 再拷图。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
 
 **`igp`：** 无参 → 把 `itc` 已选封面贴进所有 Grok 标签；`igp N` 可一步选第 N 张并贴。（旧别名 `wsi`）
 
@@ -291,6 +296,7 @@ pick next          # 下一条
 | `pst` | `paste_scene` |
 | `nbp` | `notebooklm` |
 | `nbi` | `open_notebooklm` |
+| `nbif` | `notebooklm_ready` |
 | `itc` | `whole_story_pick` |
 | `igp` | `whole_story_image` |
 | `gr` | `grok_image` |
@@ -318,7 +324,7 @@ pick next          # 下一条
 
 ## 6. Choice 命令通用规则
 
-适用于：`lm` `sty` `snp` `nbp` `prf` `nbi` `itc` `gr` `igp` `gri` `sc` `grv` `vp` `pick`
+适用于：`lm` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `gr` `igp` `gri` `sc` `grv` `vp` `pick`
 
 1. **无参数** → 单列选项，格式：`cmd N: (说明)`，例如 `sty 2: (pixar-art cartoon)`
 2. **数字** → 选第 N 项（`1` 起）

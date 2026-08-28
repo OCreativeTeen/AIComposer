@@ -13,7 +13,9 @@ Supported actions:
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
+import io
 import json
 import os
 import re
@@ -38,6 +40,8 @@ NOTEBOOKLM_COVER_TIMES = 3
 NOTEBOOKLM_PROMPT_MIN_CHARS = 200
 NOTEBOOKLM_READY_MIN_S = 45
 NOTEBOOKLM_READY_TIMEOUT_S = 12 * 60
+INFOGRAPHIC_PREVIEW_LOAD_TIMEOUT_S = 30.0
+INFOGRAPHIC_POPUP_OPEN_TIMEOUT_S = 12.0
 
 # Per ``handle_gemini`` run: sidebar star only once at open.
 _GEMINI_SIDEBAR_DONE = False
@@ -102,6 +106,204 @@ def cdp_ready(port: int | None = None) -> bool:
         return False
 
 
+def _chrome_process_running() -> bool:
+    """True when any chrome.exe process is alive."""
+    if sys.platform != "win32":
+        return False
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        out = (result.stdout or "").lower()
+        return "chrome.exe" in out
+    except Exception as exc:
+        log(f"chrome process probe failed: {exc}")
+        return False
+
+
+def _kill_all_chrome() -> None:
+    """Force-close all Chrome processes (for a clean CDP launch)."""
+    if sys.platform != "win32" or not _chrome_process_running():
+        return
+    log("taskkill chrome.exe for clean Grok CDP launch")
+    try:
+        subprocess.run(
+            ["taskkill", "/IM", "chrome.exe", "/F"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        log(f"taskkill chrome.exe failed: {exc}")
+    time.sleep(2.0)
+
+
+def _wait_chrome_closed(timeout_s: float = 25.0) -> None:
+    """Wait until no chrome.exe remains."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not _chrome_process_running():
+            time.sleep(1.0)
+            if not _chrome_process_running():
+                return
+        time.sleep(0.5)
+    raise RuntimeError(
+        "Chrome 仍在运行。请在任务管理器结束所有 chrome.exe，再重发 gr 1。"
+    )
+
+
+def _read_profile_devtools_port(user_data: str, profile_dir: str) -> int | None:
+    """Read Chrome ``DevToolsActivePort`` written under the profile folder."""
+    port_file = Path(user_data) / profile_dir / "DevToolsActivePort"
+    if not port_file.is_file():
+        return None
+    try:
+        lines = port_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+        if lines and str(lines[0]).strip().isdigit():
+            return int(str(lines[0]).strip())
+    except Exception as exc:
+        log(f"read DevToolsActivePort failed: {exc}")
+    return None
+
+
+def _discover_grok_cdp_port(
+    user_data: str, profile_dir: str, preferred: int | None = None
+) -> int | None:
+    """Return a working CDP port from DevToolsActivePort or *preferred*."""
+    discovered = _read_profile_devtools_port(user_data, profile_dir)
+    if discovered and cdp_ready(discovered):
+        log(f"Grok CDP on {discovered} (DevToolsActivePort)")
+        return discovered
+    if preferred and cdp_ready(int(preferred)):
+        return int(preferred)
+    return None
+
+
+def _wait_grok_cdp_port(
+    user_data: str,
+    profile_dir: str,
+    preferred: int | None,
+    *,
+    timeout_s: float = 90.0,
+) -> int:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        port = _discover_grok_cdp_port(user_data, profile_dir, preferred)
+        if port:
+            time.sleep(1.0)
+            return port
+        time.sleep(0.5)
+    return 0
+
+
+def _spawn_grok_chrome_window(
+    pages: list[str],
+    *,
+    user_data: str,
+    profile_dir: str,
+    debug_port: int = 0,
+) -> None:
+    """Start daily Chrome with Grok tab(s). Does not wait for CDP."""
+    exe = (getattr(config, "CHROME_EXE", "") or "").strip()
+    if not exe or not Path(exe).is_file():
+        raise RuntimeError(f"Chrome executable not found: {exe}")
+    profile_label = (getattr(config, "GEMINI_CHROME_PROFILE", "") or "").strip()
+    args = [
+        exe,
+        f"--user-data-dir={user_data}",
+        f"--profile-directory={profile_dir}",
+        f"--remote-debugging-port={int(debug_port)}",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-allow-origins=*",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        *pages,
+    ]
+    log(
+        f"spawn Grok Chrome debug_port={debug_port}: "
+        f"profile={profile_dir} account={profile_label!r} tabs={len(pages)}"
+    )
+    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _grok_cdp_port() -> int:
+    return int(getattr(config, "GROK_CDP_PORT", 9222) or 9222)
+
+
+def ensure_grok_cdp(*urls: str, timeout_s: float = 30.0) -> int:
+    """Launch HermesChromeCDP Chrome with CDP (same model as D:\\Hermes\\grok_paste)."""
+    port = _grok_cdp_port()
+    if cdp_ready(port):
+        log(f"Grok CDP already up on {port} (HermesChromeCDP)")
+        return port
+
+    exe = (getattr(config, "CHROME_EXE", "") or "").strip()
+    if not exe or not Path(exe).is_file():
+        raise RuntimeError(f"Chrome executable not found: {exe}")
+
+    user_data = _chrome_cdp_user_data_dir()
+    Path(user_data).mkdir(parents=True, exist_ok=True)
+    profile_dir = resolve_chrome_profile_directory(
+        getattr(config, "GEMINI_CHROME_PROFILE", "")
+    )
+    args = [
+        exe,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={user_data}",
+        f"--profile-directory={profile_dir}",
+        "--remote-allow-origins=*",
+        "--remote-debugging-address=127.0.0.1",
+        "--start-maximized",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    log(
+        f"launch Grok CDP Chrome: port={port} user-data-dir={user_data} "
+        f"profile={profile_dir}"
+    )
+    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if cdp_ready(port):
+            log(f"Grok CDP ready on {port}")
+            time.sleep(1.0)
+            return port
+        time.sleep(0.5)
+
+    raise RuntimeError(
+        f"Grok Chrome CDP 未在 {port} 就绪。\n"
+        f"user-data-dir={user_data}\n"
+        f"profile-directory={profile_dir}\n"
+        "请确认 CHROME_EXE 路径，或手工运行 D:\\Hermes\\run_grok_imagine.bat 验证。"
+    )
+
+
+def _grok_attach_cdp_port(*, allow_launch: bool = False) -> int:
+    """Attach to Grok CDP. Only ``gr`` may launch Chrome; ``gri``/``igp`` reuse existing."""
+    port = _grok_cdp_port()
+    if cdp_ready(port):
+        log(f"Grok CDP reuse on {port} (no launch)")
+        return port
+    if allow_launch:
+        return ensure_grok_cdp()
+    raise RuntimeError(
+        "Grok Imagine 还没打开。请先 gr 1 开标签并贴好封面图，再发 gri。"
+        f"（CDP 端口 {port} 未连接）"
+    )
+
+
+def _grok_resolve_cdp_port(*urls: str, timeout_s: float = 30.0) -> int:
+    """Reuse existing Grok CDP (do not launch). Used by gri / igp / gr prep."""
+    return _grok_attach_cdp_port(allow_launch=False)
+
+
 def ensure_chrome_cdp() -> None:
     """Attach to Chrome on the debug port, or launch it with GEMINI_CHROME_PROFILE."""
     port = int(getattr(config, "CHROME_REMOTE_DEBUGGING_PORT", 9222) or 9222)
@@ -144,6 +346,48 @@ def _chrome_cdp_user_data_dir() -> str:
     if path:
         return path
     return str(Path.home() / "AppData" / "Local" / "HermesChromeCDP")
+
+
+def _grok_imagine_pages(ctx: BrowserContext) -> list[Page]:
+    """Imagine tabs in real browser tab order (same CDP Chrome as ``gr``)."""
+    return [
+        pg
+        for pg in ctx.pages
+        if "grok.com/imagine" in (pg.url or "")
+    ]
+
+
+def _grok_open_imagine_tabs(
+    port: int, n: int, *, fresh: bool = False
+) -> list[Page]:
+    """Open or ensure *n* ``grok.com/imagine`` tabs on the CDP Chrome."""
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        if not browser.contexts:
+            raise RuntimeError("Grok CDP connected but no browser context")
+        ctx = browser.contexts[0]
+        if fresh:
+            pages: list[Page] = []
+            for _ in range(n):
+                pg = ctx.new_page()
+                pg.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=60_000)
+                pages.append(pg)
+                time.sleep(0.5)
+            log(f"Grok CDP: opened {len(pages)} fresh imagine tab(s)")
+            return pages
+        pages = _grok_imagine_pages(ctx)
+        need = max(0, n - len(pages))
+        log(f"Grok CDP port {port}: have {len(pages)} imagine tab(s), need {need} more")
+        for _ in range(need):
+            pg = ctx.new_page()
+            pg.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=60_000)
+            time.sleep(0.6)
+        pages = _grok_imagine_pages(ctx)
+        if len(pages) < n:
+            raise RuntimeError(
+                f"Grok CDP opened {len(pages)} tab(s), expected {n}."
+            )
+        return pages
 
 
 def ensure_gemini_cdp(timeout_s: float = 30.0) -> int:
@@ -1309,11 +1553,12 @@ def read_prompt_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def launch_chrome_profile_window(*urls: str) -> str:
+def launch_chrome_profile_window(*urls: str, debug_port: int | None = None) -> str:
     """Open URL(s) in a new Chrome window using the currently selected profile.
 
     Multiple URLs become multiple tabs in that window (Grok Imagine × N).
-    Does not attach CDP. Empty directory maps to Default.
+    When *debug_port* is set, Chrome may expose CDP for Playwright DOM control
+    (only when this launch actually owns the debugging port).
     """
     pages = [u.strip() for u in urls if (u or "").strip()]
     if not pages:
@@ -1324,12 +1569,19 @@ def launch_chrome_profile_window(*urls: str) -> str:
     profile_dir = resolve_chrome_profile_directory(
         getattr(config, "GEMINI_CHROME_PROFILE", "")
     )
-    args = [
-        exe,
-        f"--profile-directory={profile_dir}",
-        "--new-window",
-        *pages,
-    ]
+    user_data = (getattr(config, "CHROME_USER_DATA_DIR", "") or "").strip()
+    args = [exe]
+    if debug_port and user_data:
+        args.append(f"--user-data-dir={user_data}")
+    args.append(f"--profile-directory={profile_dir}")
+    if debug_port:
+        args.extend(
+            [
+                f"--remote-debugging-port={int(debug_port)}",
+                "--remote-allow-origins=*",
+            ]
+        )
+    args.extend(["--new-window", *pages])
     log("launching Chrome: " + " ".join(args))
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return profile_dir
@@ -1438,6 +1690,12 @@ def _click_rect_center(rect, *, extra_x: int = 0) -> bool:
 
 def _uia_root(hwnd: int):
     try:
+        from aiagent.win_gui_tasks import ensure_uia_com
+
+        ensure_uia_com()
+    except Exception:
+        pass
+    try:
         import uiautomation as auto
     except Exception:
         return None
@@ -1494,6 +1752,54 @@ def _click_named(
         return False
     log(f"UIA click {name!r}")
     return _click_rect_center(rect, extra_x=extra_x)
+
+
+def _uia_named_all(
+    hwnd: int,
+    name: str,
+    control_types: list[str],
+    *,
+    search_depth: int = 14,
+    limit: int = 6,
+    timeout_s: float = 0.12,
+) -> list:
+    """Every match for ``name``, via foundIndex (no WalkControl — it freezes Chrome).
+
+    foundIndex counts per control type, so each type is enumerated separately —
+    sharing one counter across types silently skips matches.
+    """
+    found = []
+    for ctype in control_types:
+        for index in range(1, max(1, limit) + 1):
+            ctrl = _uia_named(
+                hwnd,
+                name,
+                [ctype],
+                search_depth=search_depth,
+                timeout_s=timeout_s,
+                found_index=index,
+            )
+            if ctrl is None:
+                break
+            found.append(ctrl)
+    return found
+
+
+def _ctrl_box(ctrl) -> tuple[int, int, int, int] | None:
+    """(left, top, right, bottom) for a UIA control, or None when unusable."""
+    try:
+        rect = ctrl.BoundingRectangle
+        left, top, right, bottom = (
+            int(rect.left),
+            int(rect.top),
+            int(rect.right),
+            int(rect.bottom),
+        )
+    except Exception:
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
 
 
 def _uia_value(ctrl) -> str:
@@ -1620,67 +1926,386 @@ def _notebooklm_quota_hit(hwnd: int) -> bool:
     return False
 
 
-def _open_first_existing_notebook(hwnd: int) -> None:
-    """Home: first EXISTING Recent notebook (right of Create new). Never create one."""
+_NOTEBOOK_CARD_TYPES = [
+    "ButtonControl",
+    "HyperlinkControl",
+    "ListItemControl",
+    "GroupControl",
+    "CustomControl",
+]
+
+
+def _notebooklm_window_title(hwnd: int) -> str:
+    from aiagent.win_gui_tasks import win32gui
+
+    if not hwnd or win32gui is None:
+        return ""
+    try:
+        return (win32gui.GetWindowText(int(hwnd)) or "").strip()
+    except Exception:
+        return ""
+
+
+def _title_looks_like_open_notebook(title: str) -> bool:
+    low = (title or "").lower()
+    if "story builder" in low:
+        return True
+    # Home tab is typically just "Gemini Notebook" / "NotebookLM".
+    if low in ("gemini notebook", "notebooklm", "notebooklm - google chrome"):
+        return False
+    if "notebook" in low and any(
+        token in low for token in ("story", "builder", "sources")
+    ):
+        return True
+    return False
+
+
+def _inside_notebook(hwnd: int, *, timeout_s: float = 0.35) -> bool:
     if _named_exists(
         hwnd,
         "Infographic",
         ["ButtonControl", "HyperlinkControl"],
-        search_depth=14,
-        timeout_s=0.35,
+        search_depth=16,
+        timeout_s=timeout_s,
     ):
+        return True
+    return _title_looks_like_open_notebook(_notebooklm_window_title(hwnd))
+
+
+def _notebooklm_cdp_port() -> int:
+    return int(getattr(config, "NOTEBOOKLM_CDP_PORT", 9223) or 9223)
+
+
+def _create_new_box(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Rect of the Recent-row ``Create new notebook`` tile — not the header button."""
+    card_types = [
+        "ButtonControl",
+        "HyperlinkControl",
+        "GroupControl",
+        "ListItemControl",
+        "TextControl",
+    ]
+    candidates: list[tuple[int, int, int, int]] = []
+    for name in ("Create new notebook", "Create new"):
+        for ctrl in _uia_named_all(hwnd, name, card_types, search_depth=22, limit=6):
+            box = _ctrl_box(ctrl)
+            if box and box not in candidates:
+                candidates.append(box)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    # Header "+ Create new" sits high; Recent-row card is lower and usually taller.
+    picked = max(candidates, key=lambda b: (b[1], b[3] - b[1]))
+    log(f"Create-new anchor picked from {len(candidates)} candidates: {picked}")
+    return picked
+
+
+def _pick_first_recent_card(
+    anchor: tuple[int, int, int, int],
+    boxes: list[tuple[int, int, int, int]],
+) -> tuple[int, int, int, int] | None:
+    """Leftmost box sharing the 'Create new' row and sitting to its right.
+
+    Featured notebooks carry the same captions but live in a higher row, so the
+    vertical filter is what keeps them out.
+    """
+    _, a_top, a_right, a_bottom = anchor
+    a_mid_y = (a_top + a_bottom) // 2
+    a_height = max(1, a_bottom - a_top)
+
+    same_row = [
+        box
+        for box in dict.fromkeys(boxes)
+        if abs((box[1] + box[3]) // 2 - a_mid_y) <= a_height and box[0] >= a_right - 8
+    ]
+    if not same_row:
+        return None
+    return min(same_row, key=lambda b: b[0])
+
+
+def _first_recent_notebook_box(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Rect of the first EXISTING notebook card on the NotebookLM home page.
+
+    Every notebook tile carries an 'N sources' caption, so those captions locate
+    the cards without a deep tree walk.
+    """
+    anchor = _create_new_box(hwnd)
+    if not anchor:
+        return None
+
+    boxes = []
+    for ctrl in _uia_named_all(
+        hwnd,
+        "sources",
+        ["TextControl", "ListItemControl", "ButtonControl"],
+        search_depth=20,
+        limit=6,
+    ):
+        box = _ctrl_box(ctrl)
+        if box:
+            boxes.append(box)
+
+    picked = _pick_first_recent_card(anchor, boxes)
+    if picked is None:
+        log(f"no 'N sources' caption in the Recent row (saw {len(boxes)} captions)")
+    else:
+        log(f"first Recent notebook card box={picked}")
+    return picked
+
+
+def _return_to_notebooklm_home(hwnd: int) -> bool:
+    """Undo a click that navigated somewhere other than a notebook."""
+    if _create_new_box(hwnd):
+        return True
+    import pyautogui
+
+    from aiagent.win_gui_tasks import set_foreground
+
+    pyautogui.FAILSAFE = False
+    set_foreground(hwnd)
+    log("click went off-target; going back to the NotebookLM home page")
+    pyautogui.hotkey("alt", "left")
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        if _create_new_box(hwnd):
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _find_notebooklm_cdp_page(browser):
+    for ctx in browser.contexts:
+        for page in ctx.pages:
+            url = (page.url or "").lower()
+            if "notebook.google.com" in url or "notebooklm" in url:
+                return page
+    return None
+
+
+def _run_with_notebooklm_page(fn):
+    """Call ``fn(page)`` on the live NotebookLM tab, or ``fn(None)`` if CDP is down."""
+    port = _notebooklm_cdp_port()
+    if not cdp_ready(port):
+        log(f"NotebookLM CDP not ready on {port}; Studio history clicks will use UIA")
+        return fn(None)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            page = _find_notebooklm_cdp_page(browser)
+            if page is None:
+                log("NotebookLM CDP connected but no notebook tab")
+                return fn(None)
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            return fn(page)
+    except Exception as exc:
+        log(f"NotebookLM CDP session failed: {exc}")
+        return fn(None)
+
+
+def _open_notebook_home_card_via_dom(page) -> bool:
+    """Click the first existing Recent notebook on the NotebookLM home page."""
+    import re
+
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    try:
+        if page.get_by_text("Infographic", exact=False).count() > 0:
+            log("CDP/DOM: already inside notebook (Infographic visible)")
+            return True
+    except Exception:
+        pass
+
+    for pattern in (
+        re.compile(r"Story Builder", re.I),
+        re.compile(r"Young Chinese", re.I),
+    ):
+        try:
+            loc = page.get_by_role("link", name=pattern)
+            if loc.count() == 0:
+                loc = page.locator("a, [role='button'], [role='link']").filter(
+                    has_text=pattern
+                )
+            if loc.count() > 0:
+                loc.first.click(timeout=8000)
+                log(f"CDP/DOM: clicked notebook card matching /{pattern.pattern}/")
+                page.get_by_text("Infographic", exact=False).first.wait_for(
+                    state="visible", timeout=20000
+                )
+                return True
+        except PWTimeout:
+            log(f"CDP/DOM: Infographic did not appear after clicking /{pattern.pattern}/")
+        except Exception as exc:
+            log(f"CDP/DOM: card click failed for /{pattern.pattern}/: {exc}")
+
+    try:
+        create = page.get_by_text("Create new notebook", exact=False)
+        if create.count() > 0:
+            box = create.first.bounding_box()
+            if box:
+                cy = box["y"] + box["height"] / 2
+                sources = page.get_by_text(re.compile(r"\d+\s+sources?", re.I))
+                best_el = None
+                best_x = None
+                for i in range(min(sources.count(), 14)):
+                    el = sources.nth(i)
+                    b = el.bounding_box()
+                    if not b:
+                        continue
+                    if abs((b["y"] + b["height"] / 2) - cy) > box["height"] * 1.2:
+                        continue
+                    if b["x"] <= box["x"] + box["width"] - 5:
+                        continue
+                    if best_x is None or b["x"] < best_x:
+                        best_x = b["x"]
+                        best_el = el
+                if best_el is not None:
+                    best_el.click(timeout=8000)
+                    log("CDP/DOM: clicked first Recent-row card (right of Create new notebook)")
+                    page.get_by_text("Infographic", exact=False).first.wait_for(
+                        state="visible", timeout=20000
+                    )
+                    return True
+    except PWTimeout:
+        log("CDP/DOM: Infographic did not appear after Recent-row geometry click")
+    except Exception as exc:
+        log(f"CDP/DOM: Recent-row geometry click failed: {exc}")
+
+    return False
+
+
+def _open_first_existing_notebook_cdp(port: int, *, timeout_s: float = 22.0) -> bool:
+    """Open the first existing Recent notebook via Playwright CDP (no screen coords)."""
+    if not cdp_ready(port):
+        log(f"NotebookLM CDP not ready on port {port}")
+        return False
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        log(f"playwright unavailable for NotebookLM CDP: {exc}")
+        return False
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+                page = _find_notebooklm_cdp_page(browser)
+                if page is None:
+                    time.sleep(0.4)
+                    continue
+                try:
+                    page.bring_to_front()
+                except Exception:
+                    pass
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=6000)
+                except Exception:
+                    pass
+                if _open_notebook_home_card_via_dom(page):
+                    return True
+        except Exception as exc:
+            log(f"NotebookLM CDP attempt failed: {exc}")
+        time.sleep(0.45)
+    return False
+
+
+def _open_first_existing_notebook(hwnd: int) -> None:
+    """Home: first EXISTING Recent notebook (right of Create new). Never create one."""
+    if _inside_notebook(hwnd):
         log("already inside a notebook (Infographic visible)")
         return
 
-    if _click_named(
-        hwnd,
-        "Story Builder",
-        [
-            "ButtonControl",
-            "HyperlinkControl",
-            "ListItemControl",
-            "GroupControl",
-            "TextControl",
-            "CustomControl",
-        ],
-        search_depth=14,
-    ):
-        log("clicked existing notebook: Story Builder")
-        time.sleep(2.2)
-        return
-
-    create = _uia_named(
-        hwnd,
-        "Create new",
-        ["ButtonControl", "HyperlinkControl", "GroupControl", "ListItemControl"],
-        search_depth=14,
-        timeout_s=0.4,
-    )
-    if create:
-        try:
-            rect = create.BoundingRectangle
-            w = rect.width() if callable(getattr(rect, "width", None)) else (rect.right - rect.left)
-            # Next card to the RIGHT of Create new — never the plus card itself.
-            x = rect.right + max(28, int((w or 160) * 0.55))
-            y = (rect.top + rect.bottom) // 2
-            log(f"click first EXISTING notebook (right of Create new) at ({x},{y})")
-            _click_xy(x, y, pause=2.2)
-            return
-        except Exception:
-            pass
-
-    log("UIA missed Story Builder; ratio-click first existing Recent card (not Create new)")
-    for x_r, y_r in ((0.34, 0.70), (0.38, 0.66), (0.32, 0.72), (0.40, 0.68)):
-        _click_ratio(hwnd, x_r, y_r, pause=1.2)
-        if _wait_named(
+    def _opened() -> bool:
+        if _inside_notebook(hwnd, timeout_s=0.4):
+            return True
+        return _wait_named(
             hwnd,
             "Infographic",
             ["ButtonControl", "HyperlinkControl"],
-            timeout_s=2.5,
-            search_depth=14,
-        ):
+            timeout_s=5.0,
+            search_depth=16,
+        )
+
+    deadline = time.monotonic() + 12.0
+    while time.monotonic() < deadline and not (
+        _create_new_box(hwnd)
+        or _named_exists(
+            hwnd,
+            "Recent notebooks",
+            ["TextControl", "GroupControl"],
+            search_depth=16,
+            timeout_s=0.2,
+        )
+    ):
+        time.sleep(0.4)
+
+    # 1) Story Builder card — try every UIA match (not just the first false positive).
+    for ctrl in _uia_named_all(
+        hwnd, "Story Builder", _NOTEBOOK_CARD_TYPES + ["TextControl"], search_depth=22, limit=8
+    ):
+        box = _ctrl_box(ctrl)
+        if not box:
+            continue
+        left, top, right, bottom = box
+        x, y = (left + right) // 2, (top + bottom) // 2
+        log(f"click Story Builder card at ({x},{y}) box={box}")
+        _click_xy(x, y, pause=2.0)
+        if _opened():
             return
-    time.sleep(1.5)
+        _return_to_notebooklm_home(hwnd)
+
+    if _click_named(hwnd, "Story Builder", _NOTEBOOK_CARD_TYPES, search_depth=20):
+        log("clicked existing notebook by name: Story Builder")
+        if _opened():
+            return
+        _return_to_notebooklm_home(hwnd)
+
+    # 2) Geometry anchored on the real 'Create new notebook' rect — no hardcoded ratios.
+    box = _first_recent_notebook_box(hwnd)
+    if box:
+        left, top, right, bottom = box
+        x, y = (left + right) // 2, (top + bottom) // 2
+        log(f"click first Recent notebook card at ({x},{y}) box={box}")
+        _click_xy(x, y, pause=2.0)
+        if _opened():
+            return
+        _return_to_notebooklm_home(hwnd)
+
+    # 3) Step right from 'Create new notebook' in increasing strides.
+    for factor in (0.75, 1.15, 1.55, 1.95):
+        anchor = _create_new_box(hwnd)
+        if not anchor:
+            break
+        _, a_top, a_right, a_bottom = anchor
+        x = a_right + int(max(120, a_right - anchor[0]) * factor)
+        y = (a_top + a_bottom) // 2
+        log(f"probe right of Create new at ({x},{y}) factor={factor}")
+        _click_xy(x, y, pause=1.6)
+        if _opened():
+            return
+        _return_to_notebooklm_home(hwnd)
+
+    # 4) UIA-free: Recent row, first card to the right of Create new.
+    #    Create new sits ~x 0.08-0.20; Story Builder ~x 0.22-0.38; row ~y 0.56-0.70.
+    log("UIA missed the card; ratio-click first Recent notebook (not Create new)")
+    for x_r, y_r in (
+        (0.28, 0.62),
+        (0.30, 0.58),
+        (0.26, 0.66),
+        (0.32, 0.64),
+        (0.28, 0.70),
+    ):
+        _click_ratio(hwnd, x_r, y_r, pause=1.8)
+        if _opened():
+            return
+        if _title_looks_like_open_notebook(_notebooklm_window_title(hwnd)):
+            return
+        _return_to_notebooklm_home(hwnd)
+    log("all probes right of Create new failed")
 
 
 def _infographic_customize_open(hwnd: int) -> bool:
@@ -1917,49 +2542,238 @@ def copy_image_file_to_clipboard(image_path: str) -> None:
         win32clipboard.CloseClipboard()
 
 
+_GENERATING_INFOGRAPHIC_RE = re.compile(
+    r"generating\s+info?r?graphics?",
+    re.IGNORECASE,
+)
+_GENERATING_BASED_ON_RE = re.compile(
+    r"based on\s+\d+\s+sources?",
+    re.IGNORECASE,
+)
+
+
+def _count_generating_markers_in_text(blob: str) -> int:
+    text = blob or ""
+    n = len(_GENERATING_INFOGRAPHIC_RE.findall(text))
+    if n:
+        return n
+    n = len(_GENERATING_BASED_ON_RE.findall(text))
+    if n:
+        return n
+    if "正在生成" in text and ("信息图" in text or "infographic" in text.lower()):
+        return max(1, text.count("正在生成"))
+    return 0
+
+
+def _looks_like_generating_studio_text(name: str) -> bool:
+    """Studio spinner row: 'Generating infographic...' / 'based on 1 source'."""
+    return _count_generating_markers_in_text(name or "") > 0
+
+
+def _notebooklm_generating_via_cdp() -> dict:
+    """Read Studio text from the live NotebookLM tab (same text you see)."""
+    port = _notebooklm_cdp_port()
+    if not cdp_ready(port):
+        return {"ok": False, "count": 0, "via": "cdp", "error": f"CDP not listening on {port}"}
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        return {"ok": False, "count": 0, "via": "cdp", "error": f"playwright: {exc}"}
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            page = _find_notebooklm_cdp_page(browser)
+            if page is None:
+                return {"ok": False, "count": 0, "via": "cdp", "error": "no NotebookLM tab"}
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            loc_n = 0
+            try:
+                loc = page.get_by_text(_GENERATING_INFOGRAPHIC_RE)
+                loc_n = int(loc.count() or 0)
+            except Exception as exc:
+                log(f"nbif CDP get_by_text failed: {exc}")
+            js = {}
+            try:
+                js = page.evaluate(
+                    """() => {
+                        const visit = (node, parts) => {
+                            if (!node) return;
+                            if (node.nodeType === Node.TEXT_NODE) {
+                                const v = node.nodeValue || '';
+                                if (v.trim()) parts.push(v);
+                                return;
+                            }
+                            if (node.shadowRoot) visit(node.shadowRoot, parts);
+                            try {
+                                if (node.contentDocument)
+                                    visit(node.contentDocument.documentElement, parts);
+                            } catch (e) {}
+                            const kids = node.childNodes || [];
+                            for (const c of kids) visit(c, parts);
+                        };
+                        const parts = [];
+                        visit(document.documentElement, parts);
+                        const blob = parts.join('\\n');
+                        const re = /generating\\s+info?r?graphics?/gi;
+                        const based = /based on\\s+\\d+\\s+sources?/gi;
+                        const gen = (blob.match(re) || []).length;
+                        const basedN = (blob.match(based) || []).length;
+                        return {
+                            blob: blob.slice(0, 6000),
+                            generating: Math.max(gen, basedN),
+                        };
+                    }"""
+                ) or {}
+            except Exception as exc:
+                log(f"nbif CDP innerText failed: {exc}")
+                js = {}
+            blob = str(js.get("blob") or "")
+            js_n = int(js.get("generating") or 0)
+            if not js_n and blob:
+                js_n = _count_generating_markers_in_text(blob)
+            count = max(loc_n, js_n)
+            log(
+                f"nbif CDP loc={loc_n} js={js_n} count={count} "
+                f"blob_head={blob[:180]!r}"
+            )
+            return {
+                "ok": True,
+                "count": count,
+                "via": "cdp",
+                "error": "",
+                "blob_head": blob[:180],
+            }
+    except Exception as exc:
+        log(f"nbif CDP connect failed: {exc}")
+        return {"ok": False, "count": 0, "via": "cdp", "error": str(exc)}
+
+
 def _infographic_still_generating(hwnd: int) -> bool:
+    return _count_generating_infographics(hwnd) > 0
+
+
+def _count_generating_infographics(hwnd: int) -> int:
+    """UIA fallback: spinner row names (Chrome often does not expose these)."""
+    types = ["TextControl", "CustomControl", "GroupControl", "ListItemControl", "ButtonControl"]
+    best = 0
     for name in (
-        "Generating Infographic",
         "Generating infographic",
-        "正在生成信息图",
-        "正在生成",
+        "Generating Infographic",
+        "based on 1 source",
     ):
-        if _named_exists(
+        found = _uia_named_all(
             hwnd,
             name,
-            ["TextControl", "ButtonControl", "StatusBarControl"],
-            search_depth=14,
-            timeout_s=0.15,
-        ):
-            return True
+            types,
+            search_depth=22,
+            limit=4,
+            timeout_s=0.25,
+        )
+        best = max(best, len(found))
+        if best:
+            return best
+    ctrl = _uia_named(
+        hwnd,
+        "Generating",
+        types,
+        search_depth=22,
+        timeout_s=0.4,
+    )
+    if ctrl is not None:
+        try:
+            label = ctrl.Name or ""
+        except Exception:
+            label = ""
+        if _looks_like_generating_studio_text(label) or "generating" in label.lower():
+            return 1
+    return best
+
+
+def _is_studio_artifact_stamp(name: str) -> bool:
+    """Finished Studio list row: '1 source · 30m ago' / '2h ago' / '刚刚'."""
+    text = (name or "").strip()
+    low = text.lower()
+    if not text or _looks_like_generating_studio_text(text):
+        return False
+    if "based on" in low:
+        return False
+    if re.search(r"\d+\s*sources?", low):
+        return True
+    if re.search(r"\d+\s*[mh]\s*ago", low):
+        return True
+    if re.search(r"\d+\s*(min(?:ute)?s?|hours?|hrs?|days?)\s*ago", low):
+        return True
+    if any(tok in text for tok in ("just now", "Just now", "刚刚", "剛剛", "秒前", "分钟前", "分鐘前")):
+        return True
     return False
 
 
-def _studio_infographic_rows_ready(hwnd: int, expected: int) -> int:
-    """Count Studio infographic rows that look finished (``Nm ago`` / ``just now``)."""
-    found = 0
-    for i in range(1, max(1, expected) + 1):
-        labels = (
-            f"{i}m ago",
-            f"{i} min ago",
-            f"{i} minute ago",
-            f"{i} 分鐘前",
-            f"{i}分钟前",
-        )
-        if i == 1:
-            labels = ("just now", "Just now", "剛剛", "刚刚", *labels)
-        if any(
-            _named_exists(
-                hwnd,
-                label,
-                ["TextControl", "HyperlinkControl", "ButtonControl", "ListItemControl"],
-                search_depth=22,
-                timeout_s=0.12,
-            )
-            for label in labels
+def _is_recent_studio_stamp(name: str) -> bool:
+    """Alias: any finished Studio artifact row (top-N is chosen by y-order)."""
+    return _is_studio_artifact_stamp(name)
+
+
+def _dedupe_row_boxes(
+    boxes: list[tuple[int, int, int, int]],
+) -> list[tuple[int, int, int, int]]:
+    ordered = sorted(dict.fromkeys(boxes), key=lambda b: (b[1], b[0]))
+    out: list[tuple[int, int, int, int]] = []
+    for box in ordered:
+        mid = (box[1] + box[3]) // 2
+        if out and abs(((out[-1][1] + out[-1][3]) // 2) - mid) < 28:
+            continue
+        out.append(box)
+    return out
+
+
+def _studio_recent_row_boxes(hwnd: int) -> list[tuple[int, int, int, int]]:
+    """Top-to-bottom rects of Studio history *buttons* (title + 1 source · …)."""
+    win_left, _win_top, width, _height = _chrome_window_rect(hwnd)
+    min_x = win_left + int(width * 0.52)
+    boxes: list[tuple[int, int, int, int]] = []
+    needles = (
+        "source ·",
+        "source •",
+        "sources ·",
+        "sources •",
+        "1 source",
+    )
+    for needle in needles:
+        for ctrl in _uia_named_all(
+            hwnd,
+            needle,
+            ["ButtonControl", "ListItemControl", "HyperlinkControl"],
+            search_depth=22,
+            limit=8,
         ):
-            found = max(found, i)
-    return found
+            try:
+                name = ctrl.Name or ""
+            except Exception:
+                name = ""
+            if _looks_like_generating_studio_text(name):
+                continue
+            if "source" not in name.lower():
+                continue
+            box = _ctrl_box(ctrl)
+            if not box:
+                continue
+            left, top, right, bottom = box
+            if left < min_x:
+                continue
+            if (bottom - top) > 240 or (right - left) > int(width * 0.48):
+                continue
+            if (bottom - top) < 24:
+                continue
+            boxes.append(box)
+    return _dedupe_row_boxes(boxes)
+
+
+def _studio_infographic_rows_ready(hwnd: int, expected: int) -> int:
+    """Count recently finished Studio infographic rows."""
+    return len(_studio_recent_row_boxes(hwnd))
 
 
 def _wait_infographics_ready(
@@ -1969,21 +2783,41 @@ def _wait_infographics_ready(
 ) -> None:
     want = max(1, int(expected or NOTEBOOKLM_COVER_TIMES))
     started = time.monotonic()
+    idle_s = 0.0
     log(f"waiting for {want} infographics in Studio (up to {int(timeout_s)}s)…")
     while time.monotonic() - started < timeout_s:
         elapsed = time.monotonic() - started
         generating = _infographic_still_generating(hwnd)
         rows = _studio_infographic_rows_ready(hwnd, want)
-        log(f"infographic wait {elapsed:.0f}s generating={generating} studio_rows={rows}/{want}")
-        if (
+        if generating:
+            idle_s = 0.0
+        else:
+            idle_s += 8.0
+        log(
+            f"infographic wait {elapsed:.0f}s generating={generating} "
+            f"studio_rows={rows}/{want} idle={idle_s:.0f}s"
+        )
+        counted = (
             elapsed >= NOTEBOOKLM_READY_MIN_S
             and not generating
             and rows >= want
-        ):
+        )
+        # Spinners gone for a while: generation finished even if UIA count is off.
+        settled = (
+            not generating
+            and idle_s >= 90.0
+            and elapsed >= max(120.0, want * 35.0)
+        )
+        if counted or settled:
             time.sleep(3.0)
-            if _studio_infographic_rows_ready(hwnd, want) >= want:
-                log("infographics look ready in Studio")
-                return
+            if _infographic_still_generating(hwnd):
+                idle_s = 0.0
+                continue
+            log(
+                "infographics look ready in Studio "
+                f"(rows={_studio_infographic_rows_ready(hwnd, want)}, settled={settled})"
+            )
+            return
         time.sleep(8.0)
     raise RuntimeError(
         f"等了 {int(timeout_s // 60)} 分钟，Studio 里仍不足 {want} 张 infographic。"
@@ -1998,11 +2832,14 @@ def _infographic_preview_open(hwnd: int) -> bool:
         "Bad content",
         "Zoom in",
         "Zoom out",
+        "Download",
+        "下载",
+        "下載",
     ):
         if _named_exists(
             hwnd,
             marker,
-            ["ButtonControl", "TextControl", "HyperlinkControl"],
+            ["ButtonControl", "TextControl", "HyperlinkControl", "MenuItemControl"],
             search_depth=22,
             timeout_s=0.2,
         ):
@@ -2015,8 +2852,10 @@ def _click_infographic_preview_more_menu(hwnd: int) -> bool:
         "More",
         "More options",
         "More actions",
+        "More menu",
         "更多",
         "更多选项",
+        "更多選項",
     ):
         if _click_named(
             hwnd, name, ["ButtonControl", "MenuItemControl"], search_depth=22
@@ -2024,7 +2863,16 @@ def _click_infographic_preview_more_menu(hwnd: int) -> bool:
             time.sleep(0.45)
             return True
     log("ratio-click infographic preview ⋮ menu (top-right of modal)")
-    _click_ratio(hwnd, 0.718, 0.152, pause=0.55)
+    for x_r, y_r in ((0.80, 0.10), (0.77, 0.11), (0.83, 0.09), (0.80, 0.12)):
+        _click_ratio(hwnd, x_r, y_r, pause=0.4)
+        if _named_exists(
+            hwnd,
+            "Download",
+            ["MenuItemControl", "ButtonControl", "TextControl"],
+            search_depth=12,
+            timeout_s=0.2,
+        ):
+            return True
     return True
 
 
@@ -2039,24 +2887,32 @@ def _click_infographic_download_menu_item(hwnd: int) -> bool:
             time.sleep(0.8)
             return True
     log("ratio-click Download in ⋮ menu")
-    _click_ratio(hwnd, 0.718, 0.205, pause=0.85)
+    for x_r, y_r in ((0.80, 0.14), (0.80, 0.16), (0.77, 0.15), (0.718, 0.205)):
+        _click_ratio(hwnd, x_r, y_r, pause=0.85)
+        if _named_exists(
+            hwnd,
+            "Export Image",
+            ["ButtonControl", "MenuItemControl", "TextControl"],
+            search_depth=14,
+            timeout_s=0.25,
+        ) or _named_exists(
+            hwnd,
+            "JPG",
+            ["ButtonControl", "MenuItemControl", "TextControl"],
+            search_depth=14,
+            timeout_s=0.25,
+        ):
+            return True
     return True
 
 
 def _close_infographic_preview(hwnd: int) -> None:
+    """Dismiss the infographic overlay with Escape. Never click Close (that can quit Chrome)."""
     import pyautogui
 
     pyautogui.FAILSAFE = False
-    for name in ("Close", "关闭", "關閉"):
-        if _click_named(
-            hwnd, name, ["ButtonControl"], search_depth=22
-        ):
-            time.sleep(0.45)
-            return
-    log("ratio-click preview Close (X)")
-    _click_ratio(hwnd, 0.688, 0.152, pause=0.35)
     pyautogui.press("escape")
-    time.sleep(0.35)
+    time.sleep(0.4)
 
 
 def _wait_new_browser_download(
@@ -2108,6 +2964,259 @@ def _save_download_as_jpg(src: Path, dest: Path) -> bool:
         return False
 
 
+def _save_download_as_png(src: Path, dest: Path) -> bool:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if src.suffix.lower() == ".png":
+            shutil.copy2(src, dest)
+        else:
+            from PIL import Image
+
+            img = Image.open(src)
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA")
+            img.save(dest, "PNG")
+        return dest.is_file() and dest.stat().st_size > 2000
+    except Exception as exc:
+        log(f"save download as png failed: {exc}")
+        return False
+
+
+def _physical_click_viewport(page, hwnd: int, vx: float, vy: float, *, pause: float = 0.45) -> None:
+    """Move the real mouse and click a page viewport point (visible to the user)."""
+    from aiagent.win_gui_tasks import set_foreground
+
+    set_foreground(hwnd)
+    time.sleep(0.12)
+    sx, sy = _viewport_point_to_screen(hwnd, page, vx, vy)
+    log(f"physical click viewport=({vx:.0f},{vy:.0f}) screen=({sx},{sy})")
+    _click_xy(sx, sy, pause=pause)
+
+
+def _physical_click_export_dialog_button(page, hwnd: int, names: tuple[str, ...]) -> bool:
+    if page is None:
+        return False
+    try:
+        info = page.evaluate(_EXPORT_DIALOG_BUTTON_JS, list(names))
+    except Exception as exc:
+        log(f"export dialog button lookup failed: {exc}")
+        return False
+    if not isinstance(info, dict) or not info.get("x"):
+        return False
+    _physical_click_viewport(
+        page, hwnd, float(info["x"]), float(info["y"]), pause=0.55
+    )
+    log(f"physical export dialog click {info.get('text')!r}")
+    return True
+
+
+def _confirm_infographic_export_dialog(page, hwnd: int) -> bool:
+    """If NotebookLM opens JPG/Export Image after Download, confirm it."""
+    jpg_done = False
+    exported = False
+    deadline = time.monotonic() + 28.0
+    while time.monotonic() < deadline:
+        if page is not None and not jpg_done:
+            for name in ("JPG", "PNG"):
+                try:
+                    btn = page.get_by_role("button", name=name)
+                    if int(btn.count() or 0) > 0 and btn.first.is_visible():
+                        btn.first.click(timeout=2500)
+                        log(f"CDP export dialog: chose {name}")
+                        jpg_done = True
+                        time.sleep(0.45)
+                        break
+                except Exception:
+                    pass
+        if page is not None:
+            for name in ("Export Image", "Export", "Download"):
+                try:
+                    btn = page.get_by_role("button", name=name)
+                    if int(btn.count() or 0) > 0 and btn.first.is_visible():
+                        btn.first.click(timeout=4000)
+                        log(f"CDP export dialog: clicked {name!r}")
+                        exported = True
+                        time.sleep(0.5)
+                        break
+                except Exception:
+                    pass
+        if exported:
+            return True
+        if not jpg_done:
+            for name in ("JPG", "PNG"):
+                if _physical_click_export_dialog_button(page, hwnd, (name,)):
+                    jpg_done = True
+                    time.sleep(0.45)
+                    break
+                if _click_named(
+                    hwnd,
+                    name,
+                    ["ButtonControl", "MenuItemControl", "HyperlinkControl"],
+                    search_depth=16,
+                ):
+                    log(f"UIA export dialog: chose {name!r}")
+                    jpg_done = True
+                    time.sleep(0.45)
+                    break
+        for name in ("Export Image", "Export", "Download"):
+            if _physical_click_export_dialog_button(page, hwnd, (name,)):
+                exported = True
+                time.sleep(0.55)
+                return True
+            if _click_named(
+                hwnd,
+                name,
+                ["ButtonControl", "MenuItemControl", "HyperlinkControl"],
+                search_depth=16,
+            ):
+                log(f"UIA export dialog: clicked {name!r}")
+                exported = True
+                time.sleep(0.55)
+                return True
+        time.sleep(0.45)
+    return exported
+
+
+def _physical_download_via_preview_menu(page, hwnd: int, dest: Path) -> bool:
+    """Visible mouse: preview ⋮ → Download → Export Image → save PNG."""
+    from aiagent.win_gui_tasks import set_foreground
+
+    if page is None:
+        return False
+    set_foreground(hwnd)
+    time.sleep(0.25)
+    since = time.time()
+    try:
+        info = page.evaluate(_PREVIEW_MORE_BUTTON_JS)
+    except Exception as exc:
+        log(f"physical ⋮ lookup failed: {exc}")
+        return False
+    if not isinstance(info, dict) or not info.get("x"):
+        log("physical ⋮ button not found")
+        return False
+    _physical_click_viewport(
+        page, hwnd, float(info["x"]), float(info["y"]), pause=0.6
+    )
+    dl_info = None
+    deadline = time.monotonic() + 6.0
+    while time.monotonic() < deadline:
+        try:
+            items = page.evaluate(_PREVIEW_MENU_ITEMS_JS) or []
+        except Exception:
+            items = []
+        if items:
+            texts = [str(i.get("text") or "") for i in items]
+            log(f"preview ⋮ menu items: {texts}")
+            for item in items:
+                text = str(item.get("text") or "").strip()
+                if re.match(r"^(download|下载|下載|export|save image|导出)", text, re.I):
+                    dl_info = item
+                    break
+            if dl_info:
+                break
+        try:
+            dl_info = page.evaluate(_PREVIEW_DOWNLOAD_MENU_JS)
+        except Exception:
+            dl_info = None
+        if isinstance(dl_info, dict) and dl_info.get("x"):
+            break
+        time.sleep(0.35)
+    if not isinstance(dl_info, dict) or not dl_info.get("x"):
+        log("physical Download menu item not found after ⋮ click")
+        try:
+            import pyautogui
+
+            pyautogui.FAILSAFE = False
+            pyautogui.press("escape")
+        except Exception:
+            pass
+        return False
+    _physical_click_viewport(
+        page,
+        hwnd,
+        float(dl_info["x"]),
+        float(dl_info["y"]),
+        pause=0.85,
+    )
+    log(f"physical clicked menu item {dl_info.get('text')!r}")
+    time.sleep(0.5)
+    _confirm_infographic_export_dialog(page, hwnd)
+    downloaded = _wait_new_browser_download(since, timeout_s=50.0)
+    if downloaded and _save_download_as_png(downloaded, dest):
+        log(f"physical ⋮ Download saved → {dest}")
+        return True
+    log("physical ⋮ Download clicked but no file in Downloads")
+    return False
+
+
+def working_media_dir() -> Path:
+    """Folder for itc PNG captures. Always prefer ``D:\\AI_MEDIA\\working``."""
+    preferred = Path(r"D:\AI_MEDIA\working")
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        if preferred.is_dir():
+            return preferred
+    except OSError as exc:
+        log(f"D:\\AI_MEDIA\\working not usable: {exc}")
+    raw = str(getattr(config, "WORKING_MEDIA_PATH", "") or "").strip()
+    candidates: list[Path] = []
+    if raw:
+        candidates.append(Path(raw))
+    candidates.append(Path(str(getattr(config, "BASE_MEDIA_PATH", "") or "")) / "working")
+    for p in candidates:
+        try:
+            if not str(p).strip() or str(p) in ("working", "\\working"):
+                continue
+            p.mkdir(parents=True, exist_ok=True)
+            if p.is_dir():
+                return p
+        except OSError:
+            continue
+    preferred.mkdir(parents=True, exist_ok=True)
+    return preferred
+
+
+def _next_working_png() -> Path:
+    folder = working_media_dir()
+    for _ in range(8):
+        stamp = time.strftime("%Y%m%d%H%M%S")
+        dest = folder / f"{stamp}.png"
+        if not dest.exists():
+            return dest
+        time.sleep(1.05)
+    return folder / f"{time.strftime('%Y%m%d%H%M%S')}_{os.getpid()}.png"
+
+
+def _save_clipboard_image_png(dest: Path) -> bool:
+    try:
+        from PIL import Image, ImageGrab
+    except Exception as exc:
+        log(f"Pillow ImageGrab missing: {exc}")
+        return False
+    clip = ImageGrab.grabclipboard()
+    if clip is None:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if isinstance(clip, list):
+            src = next((str(p) for p in clip if p and Path(p).is_file()), "")
+            if not src:
+                return False
+            img = Image.open(src)
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA")
+            img.save(dest, "PNG")
+        else:
+            mode = getattr(clip, "mode", "") or ""
+            if mode not in ("RGB", "RGBA"):
+                clip = clip.convert("RGBA")
+            clip.save(dest, "PNG")
+    except Exception as exc:
+        log(f"save clipboard png failed: {exc}")
+        return False
+    return dest.is_file() and dest.stat().st_size > 2000
+
+
 def _save_clipboard_image(dest: Path) -> bool:
     try:
         from PIL import ImageGrab
@@ -2134,17 +3243,1171 @@ def _save_clipboard_image(dest: Path) -> bool:
     return dest.is_file() and dest.stat().st_size > 2000
 
 
-def _copy_visible_infographic_image(hwnd: int) -> bool:
-    """Right-click the open infographic → Copy image (as in the Chrome context menu)."""
+# CDK aria-describedby tooltips on Studio artifact cards. Skip chrome UI.
+_STUDIO_TOOLTIP_SKIP_RE = re.compile(
+    r"^(share|analytics|export|new note|jump to bottom|close|more|download|"
+    r"view prompt|zoom in|zoom out|good content|bad content)$"
+    r"|^(generate |drive files|chat history|make a copy|based on your)",
+    re.I,
+)
+
+_STUDIO_ARTIFACT_TITLES_JS = """() => {
+    const skipExact = new Set([
+        'share','analytics','export','new note','close','more','download',
+        'jump to bottom','view prompt','zoom in','zoom out',
+        'good content','bad content','copy','edit'
+    ]);
+    const skipRe = /^(generate |drive files|chat history|make a copy|based on your)/i;
+    const titles = [];
+    const seen = new Set();
+    for (const tip of document.querySelectorAll('[role="tooltip"]')) {
+        const t = (tip.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!t || t.length < 2 || t.length > 90) continue;
+        if (skipExact.has(t.toLowerCase()) || skipRe.test(t)) continue;
+        if (seen.has(t)) continue;
+        seen.add(t);
+        titles.push({id: tip.id || '', title: t});
+    }
+    return titles;
+}"""
+
+_STUDIO_CARD_FOR_TITLE_JS = """(title) => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const want = (title || '').trim();
+    if (!want) return null;
+    const hits = [];
+    const add = (el, how) => {
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        if (r.width < 36 || r.height < 18) return;
+        if (r.bottom < 70 || r.top > vh - 4) return;
+        hits.push({
+            how, text: want,
+            x: r.left, y: r.top, w: r.width, h: r.height,
+            cx: r.left + Math.min(90, Math.max(28, r.width * 0.30)),
+            cy: r.top + r.height * 0.42,
+        });
+    };
+    const collect = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        for (const el of root.querySelectorAll('button, [role="button"]')) {
+            const label = (
+                el.getAttribute('aria-label') ||
+                el.getAttribute('mattooltip') ||
+                el.innerText ||
+                el.textContent ||
+                ''
+            ).replace(/\\s+/g, ' ').trim();
+            if (label.includes(want)) add(el, 'button');
+        }
+        for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) collect(el.shadowRoot);
+        }
+    };
+    collect(document.documentElement);
+    if (!hits.length) return null;
+    hits.sort((a, b) => (b.x - a.x) || (a.y - b.y) || (a.w * a.h - b.w * b.h));
+    const right = hits.filter(h => h.x >= vw * 0.48);
+    const best = (right.length ? right : hits)[0];
+    if (best.w > vw * 0.50) {
+        best.cx = best.x + Math.min(80, best.w * 0.18);
+        best.cy = best.y + Math.min(48, best.h * 0.35);
+    }
+    return best;
+}"""
+
+
+_PREVIEW_IMG_JS = """() => {
+    const consider = (el, extra) => {
+        const r = el.getBoundingClientRect();
+        if (r.width < 180 || r.height < 180) return;
+        const area = r.width * r.height;
+        if (!best || area > best.area) {
+            best = {
+                src: extra.src || '',
+                tag: extra.tag || (el.tagName || ''),
+                x: r.x, y: r.y, w: r.width, h: r.height, area,
+                nw: extra.nw || 0, nh: extra.nh || 0,
+            };
+        }
+    };
+    let best = null;
+    const visit = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        for (const img of root.querySelectorAll('img')) {
+            const nw = img.naturalWidth || 0;
+            if (nw > 0 && nw < 40) continue;
+            consider(img, {
+                tag: 'IMG',
+                src: img.currentSrc || img.src || '',
+                nw, nh: img.naturalHeight || 0,
+            });
+        }
+        for (const canvas of root.querySelectorAll('canvas')) {
+            consider(canvas, {
+                tag: 'CANVAS', src: '',
+                nw: canvas.width || 0, nh: canvas.height || 0,
+            });
+        }
+        for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document.documentElement);
+    return best;
+}"""
+
+_PREVIEW_IMAGE_LOADED_JS = """() => {
+    const spinners = document.querySelectorAll(
+        'mat-spinner, mat-progress-spinner, [role="progressbar"], .loading, .spinner'
+    );
+    for (const sp of spinners) {
+        const r = sp.getBoundingClientRect();
+        if (r.width >= 16 && r.height >= 16 && r.top > 70 && r.bottom < window.innerHeight - 8) {
+            return { ready: false, reason: 'spinner' };
+        }
+    }
+    let best = null;
+    const consider = (el, tag, nw, nh, src) => {
+        const r = el.getBoundingClientRect();
+        if (r.width < 220 || r.height < 220) return;
+        if (tag === 'IMG') {
+            if (!el.complete) return;
+            if (nw > 0 && nw < 120) return;
+            if (nh > 0 && nh < 120) return;
+        } else if (tag === 'CANVAS') {
+            if (nw < 200 || nh < 200) return;
+        }
+        const area = r.width * r.height;
+        if (!best || area > best.area) {
+            best = {
+                ready: true,
+                reason: 'loaded',
+                tag, nw, nh,
+                x: r.x, y: r.y, w: r.width, h: r.height, area,
+                src: src || '',
+            };
+        }
+    };
+    const visit = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        for (const img of root.querySelectorAll('img')) {
+            consider(img, 'IMG', img.naturalWidth || 0, img.naturalHeight || 0,
+                     img.currentSrc || img.src || '');
+        }
+        for (const c of root.querySelectorAll('canvas')) {
+            consider(c, 'CANVAS', c.width || 0, c.height || 0, '');
+        }
+        for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document.documentElement);
+    return best || { ready: false, reason: 'no-image' };
+}"""
+
+_CANVAS_PNG_JS = """() => {
+    const found = [];
+    const visit = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        for (const c of root.querySelectorAll('canvas')) {
+            const r = c.getBoundingClientRect();
+            if (r.width < 180 || r.height < 180) continue;
+            found.push(c);
+        }
+        for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document.documentElement);
+    if (!found.length) return '';
+    found.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+    try { return found[0].toDataURL('image/png'); } catch (e) { return ''; }
+}"""
+
+_PREVIEW_MORE_BUTTON_JS = """() => {
+    const bigEnough = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 480 && r.height > 360;
+    };
+    const hasMarker = (node) => {
+        const t = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ');
+        return /View prompt|Good content|Zoom in|Zoom out|Bad content/i.test(t);
+    };
+    const findRoot = () => {
+        for (const pane of document.querySelectorAll('.cdk-overlay-pane')) {
+            if (!bigEnough(pane)) continue;
+            if (hasMarker(pane)) return pane;
+        }
+        for (const marker of ['View prompt', 'Good content', 'Zoom in', 'Bad content']) {
+            for (const el of document.querySelectorAll('button, span, div, a, p, h1, h2')) {
+                const t = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (!t.includes(marker)) continue;
+                let p = el;
+                for (let i = 0; i < 22 && p; i++) {
+                    if (bigEnough(p) && hasMarker(p)) return p;
+                    p = p.parentElement;
+                }
+            }
+        }
+        const panes = [...document.querySelectorAll('.cdk-overlay-pane')].filter(bigEnough);
+        if (panes.length) {
+            panes.sort((a, b) => {
+                const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+                return (rb.width * rb.height) - (ra.width * ra.height);
+            });
+            return panes[0];
+        }
+        return null;
+    };
+    const root = findRoot();
+    if (!root) return null;
+    const vw = window.innerWidth;
+    const btns = [];
+    for (const b of root.querySelectorAll(
+        'button.artifact-more-button, button[aria-label="More"], button.mat-mdc-menu-trigger'
+    )) {
+        const r = b.getBoundingClientRect();
+        if (r.width < 16 || r.height < 16) continue;
+        if (r.left < vw * 0.30) continue;
+        btns.push({ x: r.left + r.width / 2, y: r.top + r.height / 2, right: r.right, top: r.top });
+    }
+    if (!btns.length) {
+        for (const b of document.querySelectorAll('button.artifact-more-button, button[aria-label="More"]')) {
+            const r = b.getBoundingClientRect();
+            if (r.width < 16 || r.height < 16) continue;
+            if (r.top > window.innerHeight * 0.30) continue;
+            if (r.left < vw * 0.35) continue;
+            let p = b.parentElement;
+            let inPreview = false;
+            for (let i = 0; i < 24 && p; i++) {
+                if (bigEnough(p) && hasMarker(p)) { inPreview = true; break; }
+                p = p.parentElement;
+            }
+            if (!inPreview) continue;
+            btns.push({ x: r.left + r.width / 2, y: r.top + r.height / 2, right: r.right, top: r.top });
+        }
+    }
+    if (!btns.length) return null;
+    btns.sort((a, b) => (b.right - a.right) || (a.top - b.top));
+    const best = btns[0];
+    return { x: best.x, y: best.y, mode: document.querySelectorAll('.cdk-overlay-pane').length ? 'overlay' : 'inline' };
+}"""
+
+_PREVIEW_DOWNLOAD_MENU_JS = """() => {
+    const panels = [...document.querySelectorAll(
+        '.cdk-overlay-container .mat-mdc-menu-panel, .mat-mdc-menu-panel'
+    )];
+    const panel = panels.filter(p => {
+        const r = p.getBoundingClientRect();
+        return r.width > 40 && r.height > 20;
+    }).pop();
+    if (!panel) return null;
+    for (const item of panel.querySelectorAll('.mat-mdc-menu-item, [role="menuitem"]')) {
+        const t = (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!/^(download|下载|下載|save image|export)$/i.test(t)) continue;
+        const r = item.getBoundingClientRect();
+        if (r.width < 20 || r.height < 10) continue;
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: t };
+    }
+    return null;
+}"""
+
+_PREVIEW_MENU_ITEMS_JS = """() => {
+    const panels = [...document.querySelectorAll(
+        '.cdk-overlay-container .mat-mdc-menu-panel, .mat-mdc-menu-panel'
+    )];
+    const panel = panels.filter(p => {
+        const r = p.getBoundingClientRect();
+        return r.width > 40 && r.height > 20;
+    }).pop();
+    if (!panel) return [];
+    return [...panel.querySelectorAll('.mat-mdc-menu-item, [role="menuitem"]')].map(item => {
+        const t = (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim();
+        const r = item.getBoundingClientRect();
+        return {
+            text: t,
+            x: r.left + r.width / 2,
+            y: r.top + r.height / 2,
+            w: r.width,
+            h: r.height,
+        };
+    }).filter(i => i.w > 10 && i.h > 8);
+}"""
+
+_EXPORT_DIALOG_BUTTON_JS = """(names) => {
+    const want = (names || []).map(n => String(n).toLowerCase());
+    for (const btn of document.querySelectorAll('button,[role="button"]')) {
+        const t = (btn.innerText || btn.textContent || btn.getAttribute('aria-label') || '')
+            .replace(/\\s+/g, ' ').trim();
+        if (!t) continue;
+        if (!want.includes(t.toLowerCase())) continue;
+        const r = btn.getBoundingClientRect();
+        if (r.width < 20 || r.height < 12) continue;
+        return { text: t, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    return null;
+}"""
+
+
+def _list_studio_history_rows(page) -> list[dict]:
+    """Studio artifact cards by CDK tooltip title (e.g. 內心的破曉), not Chat timestamps."""
+    titles: list[str] = []
+    try:
+        raw = page.evaluate(_STUDIO_ARTIFACT_TITLES_JS) or []
+    except Exception as exc:
+        log(f"CDP tooltip titles failed: {exc}")
+        raw = []
+    for item in raw:
+        if isinstance(item, dict):
+            t = str(item.get("title") or "").strip()
+        else:
+            t = str(item or "").strip()
+        if not t or _STUDIO_TOOLTIP_SKIP_RE.search(t):
+            continue
+        if t not in titles:
+            titles.append(t)
+    rows: list[dict] = [{"text": t} for t in titles]
+    if not rows:
+        try:
+            loc = page.get_by_role("button").filter(
+                has_text=re.compile(r"\d+\s+sources?\s*[·•]", re.I)
+            )
+            n = min(int(loc.count() or 0), 12)
+            vw = float(page.evaluate("() => window.innerWidth") or 1920)
+            seen: list[str] = []
+            for i in range(n):
+                box = loc.nth(i).bounding_box()
+                if not box or box["x"] < vw * 0.48:
+                    continue
+                name = (loc.nth(i).inner_text() or "").replace("\n", " ").strip()
+                if name in seen:
+                    continue
+                seen.append(name)
+                rows.append({"text": name, "x": box["x"], "y": box["y"]})
+        except Exception as exc:
+            log(f"CDP button fallback list failed: {exc}")
+    preview = "; ".join(
+        f"{i + 1}:{(r.get('text') or '')[:40]!r}" for i, r in enumerate(rows[:8])
+    )
+    log(f"Studio history rows={len(rows)} [{preview}]")
+    return rows
+
+
+def _pick_rightmost_locator(page, loc):
+    """Studio is the right column; Chat in the middle also may contain the title."""
+    try:
+        n = int(loc.count() or 0)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    vw = 1920.0
+    try:
+        vw = float(page.evaluate("() => window.innerWidth") or vw)
+    except Exception:
+        pass
+    best = None
+    best_x = -1.0
+    for i in range(min(n, 12)):
+        try:
+            box = loc.nth(i).bounding_box()
+        except Exception:
+            box = None
+        if not box:
+            continue
+        if box["x"] < vw * 0.45:
+            continue
+        if box["x"] >= best_x:
+            best_x = box["x"]
+            best = loc.nth(i)
+    return best
+
+
+def _click_studio_title_via_playwright(page, title: str) -> bool:
+    """Click the Studio history *button* whose accessible name includes *title*."""
+    title = (title or "").strip()
+    if not title:
+        return False
+    locators = []
+    try:
+        locators.append(page.get_by_role("button", name=title))
+    except Exception:
+        pass
+    try:
+        locators.append(
+            page.get_by_role("button").filter(has_text=title)
+        )
+    except Exception:
+        pass
+    try:
+        locators.append(page.get_by_text(title, exact=True))
+    except Exception:
+        pass
+    for loc in locators:
+        target = _pick_rightmost_locator(page, loc)
+        if target is None:
+            continue
+        try:
+            box = target.bounding_box()
+            log(
+                f"CDP click Studio button {title!r} "
+                f"box=({box['x']:.0f},{box['y']:.0f},{box['width']:.0f}x{box['height']:.0f})"
+                if box else f"CDP click Studio button {title!r}"
+            )
+            target.click(timeout=7000)
+            return True
+        except Exception as exc:
+            log(f"CDP locator click failed for {title!r}: {exc}")
+    try:
+        geom = page.evaluate(_STUDIO_CARD_FOR_TITLE_JS, title)
+    except Exception as exc:
+        log(f"CDP card geom failed for {title!r}: {exc}")
+        geom = None
+    if isinstance(geom, dict) and geom.get("cx") is not None:
+        cx = float(geom["cx"])
+        cy = float(geom["cy"])
+        log(
+            f"CDP mouse click Studio card {title!r} at ({cx:.0f},{cy:.0f}) "
+            f"box=({geom.get('x'):.0f},{geom.get('y'):.0f},"
+            f"{geom.get('w'):.0f}x{geom.get('h'):.0f})"
+        )
+        try:
+            page.mouse.click(cx, cy)
+            return True
+        except Exception as exc:
+            log(f"CDP mouse click failed for {title!r}: {exc}")
+    return False
+
+
+def _infographic_image_loaded(page) -> dict:
+    """True when the popup infographic pixels are ready (not just the shell)."""
+    if page is None:
+        return {"ready": False, "reason": "no-page"}
+    try:
+        info = page.evaluate(_PREVIEW_IMAGE_LOADED_JS)
+    except Exception as exc:
+        log(f"CDP/DOM image-loaded probe failed: {exc}")
+        return {"ready": False, "reason": "probe-failed"}
+    return info if isinstance(info, dict) else {"ready": False, "reason": "bad-probe"}
+
+
+def _largest_preview_img_info(page) -> dict | None:
+    try:
+        info = page.evaluate(_PREVIEW_IMG_JS)
+    except Exception as exc:
+        log(f"CDP/DOM preview img probe failed: {exc}")
+        return None
+    return info if isinstance(info, dict) and info.get("w") else None
+
+
+def _preview_markers_open(page) -> bool:
+    if page is None:
+        return False
+    try:
+        for marker in ("View prompt", "Zoom in", "Good content"):
+            if page.get_by_text(marker, exact=False).count() > 0:
+                return True
+    except Exception:
+        pass
+    return _largest_preview_img_info(page) is not None
+
+
+def _wait_infographic_preview_ready(
+    hwnd: int,
+    page=None,
+    *,
+    timeout_s: float = INFOGRAPHIC_PREVIEW_LOAD_TIMEOUT_S,
+) -> bool:
+    """Wait for popup, then wait until the infographic image has finished loading."""
+    deadline = time.monotonic() + timeout_s
+    popup_open_deadline = time.monotonic() + min(
+        INFOGRAPHIC_POPUP_OPEN_TIMEOUT_S, timeout_s * 0.4
+    )
+    popup_seen = False
+    last_reason = ""
+    log(f"waiting for infographic image to load (up to {int(timeout_s)}s)…")
+    while time.monotonic() < deadline:
+        loaded = _infographic_image_loaded(page) if page is not None else {"ready": False}
+        if loaded.get("ready"):
+            log(
+                f"infographic image ready {loaded.get('tag')!r} "
+                f"natural={loaded.get('nw')}x{loaded.get('nh')} "
+                f"box={loaded.get('w'):.0f}x{loaded.get('h'):.0f}"
+            )
+            time.sleep(0.6)
+            return True
+        last_reason = str(loaded.get("reason") or "")
+        if page is not None and _preview_markers_open(page):
+            popup_seen = True
+        elif _infographic_preview_open(hwnd):
+            popup_seen = True
+        if not popup_seen and time.monotonic() > popup_open_deadline:
+            log("infographic popup never opened")
+            return False
+        if popup_seen and last_reason in ("spinner", "no-image"):
+            elapsed = timeout_s - (deadline - time.monotonic())
+            if int(elapsed) % 4 == 0:
+                log(f"popup open, image still loading ({last_reason})…")
+        time.sleep(0.55)
+    log(f"infographic image not loaded within {int(timeout_s)}s (last={last_reason})")
+    return False
+
+
+def _write_image_png(data: bytes, dest: Path) -> bool:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA")
+        img.save(dest, "PNG")
+    except Exception:
+        try:
+            dest.write_bytes(data)
+        except Exception as exc:
+            log(f"write png failed: {exc}")
+            return False
+    return dest.is_file() and dest.stat().st_size > 2000
+
+
+def _save_png_from_src(page, src: str, dest: Path) -> bool:
+    if not src:
+        return False
+    if src.startswith("data:"):
+        try:
+            _, b64 = src.split(",", 1)
+            return _write_image_png(base64.b64decode(b64), dest)
+        except Exception as exc:
+            log(f"data-url png failed: {exc}")
+            return False
+    try:
+        resp = page.request.get(src, timeout=20000)
+        if resp.ok:
+            data = resp.body()
+            if data and len(data) > 2000:
+                return _write_image_png(data, dest)
+    except Exception as exc:
+        log(f"page.request get image failed: {exc}")
+    try:
+        b64 = page.evaluate(
+            """async (src) => {
+                const r = await fetch(src, {credentials: 'include'});
+                const buf = await r.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let s = '';
+                const chunk = 0x8000;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                }
+                return btoa(s);
+            }""",
+            src,
+        )
+        data = base64.b64decode(b64)
+        if data and len(data) > 2000:
+            return _write_image_png(data, dest)
+    except Exception as exc:
+        log(f"page.evaluate fetch image failed: {exc}")
+    return False
+
+
+def _open_studio_infographic_via_dom(page, index: int):
+    """Click Studio history item *index* by title. Returns (preview_page, extra_tab, clicked, title)."""
+    try:
+        page.keyboard.press("Escape")
+        time.sleep(0.25)
+    except Exception:
+        pass
+    rows = _list_studio_history_rows(page)
+    if not (1 <= index <= len(rows)):
+        log(f"CDP/DOM: no Studio history row {index} (have {len(rows)})")
+        return None, False, False, ""
+    title = str(rows[index - 1].get("text") or "").strip()
+    ctx = page.context
+    before = list(ctx.pages)
+    log(f"CDP open Studio history #{index} title={title!r}")
+    if not _click_studio_title_via_playwright(page, title):
+        log(f"CDP/DOM: could not click Studio title {title!r}")
+        return None, False, False, title
+    time.sleep(0.8)
+    deadline = time.monotonic() + 2.5
+    while time.monotonic() < deadline:
+        after = list(ctx.pages)
+        if len(after) > len(before):
+            newp = [p for p in after if p not in before]
+            if newp:
+                p = newp[-1]
+                try:
+                    p.bring_to_front()
+                except Exception:
+                    pass
+                log("CDP/DOM: infographic opened in a new tab")
+                return p, True, True, title
+        time.sleep(0.2)
+    return page, False, True, title
+
+
+def _dismiss_infographic_popup(
+    hwnd: int,
+    *,
+    notebook_page=None,
+    preview_page=None,
+    extra_tab: bool = False,
+) -> None:
+    """Close the infographic overlay/tab only. Never quit Chrome or the notebook tab."""
+    if (
+        extra_tab
+        and preview_page is not None
+        and notebook_page is not None
+        and preview_page is not notebook_page
+    ):
+        try:
+            others = [p for p in preview_page.context.pages if p is not preview_page]
+        except Exception:
+            others = []
+        notebook_alive = False
+        for p in others:
+            try:
+                url = (p.url or "").lower()
+            except Exception:
+                url = ""
+            if "notebook.google.com" in url or "notebooklm" in url:
+                notebook_alive = True
+                break
+        if notebook_alive:
+            log("closing infographic extra tab; notebook tab stays open")
+            try:
+                preview_page.close()
+                time.sleep(0.45)
+                return
+            except Exception as exc:
+                log(f"extra-tab close failed: {exc}")
+        else:
+            log("skip extra-tab close (would close the only NotebookLM tab)")
+    target = preview_page if extra_tab else (notebook_page or preview_page)
+    for _ in range(3):
+        try:
+            if target is not None:
+                target.keyboard.press("Escape")
+            else:
+                import pyautogui
+
+                pyautogui.FAILSAFE = False
+                pyautogui.press("escape")
+        except Exception:
+            try:
+                import pyautogui
+
+                pyautogui.FAILSAFE = False
+                pyautogui.press("escape")
+            except Exception:
+                pass
+        time.sleep(0.5)
+        still = False
+        try:
+            if _preview_markers_open(notebook_page or preview_page):
+                still = True
+            elif _infographic_preview_open(hwnd):
+                still = True
+        except Exception:
+            still = False
+        if not still:
+            log("infographic popup dismissed (Escape)")
+            return
+    log("infographic popup still open after Escape; leaving Chrome open")
+
+
+def _close_infographic_preview_smart(hwnd: int, page=None) -> None:
+    _dismiss_infographic_popup(hwnd, notebook_page=page, preview_page=page, extra_tab=False)
+
+
+def _wait_studio_history_visible(page, *, timeout_s: float = 6.0) -> bool:
+    if page is None:
+        time.sleep(0.5)
+        return True
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            if len(_list_studio_history_rows(page)) >= 1 and not _preview_markers_open(page):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return False
+
+
+def _viewport_point_to_screen(hwnd: int, page, vx: float, vy: float) -> tuple[int, int]:
+    """Map a page viewport point to Windows screen pixels via ClientToScreen."""
+    from aiagent.win_gui_tasks import set_foreground
+
+    set_foreground(hwnd)
+    time.sleep(0.15)
+    chrome = page.evaluate(
+        """() => {
+            const side = (window.outerWidth - window.innerWidth) / 2;
+            const top = window.outerHeight - window.innerHeight - side;
+            return { side, top };
+        }"""
+    )
+    cx = int(round(float(chrome.get("side") or 0) + float(vx)))
+    cy = int(round(float(chrome.get("top") or 0) + float(vy)))
+    return _gemini_client_to_screen(hwnd, cx, cy)
+
+
+def _preview_image_click_points(page) -> list[tuple[float, float, str]]:
+    """Viewport points to right-click the opened infographic image (center first)."""
+    points: list[tuple[float, float, str]] = []
+    info = _largest_preview_img_info(page)
+    if info and float(info.get("w") or 0) >= 120:
+        x = float(info["x"]) + float(info["w"]) * 0.50
+        y = float(info["y"]) + float(info["h"]) * 0.50
+        points.append((x, y, "dom-img-center"))
+    try:
+        vw, vh = page.evaluate("() => [window.innerWidth, window.innerHeight]")
+        vw, vh = float(vw), float(vh)
+        # Modal infographic sits in the page centre (see user screenshot).
+        for x_r, y_r, label in (
+            (0.40, 0.52, "modal-centre"),
+            (0.38, 0.55, "modal-centre-low"),
+            (0.42, 0.48, "modal-centre-high"),
+        ):
+            points.append((vw * x_r, vh * y_r, label))
+    except Exception:
+        pass
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[float, float, str]] = []
+    for x, y, label in points:
+        key = (int(x // 8), int(y // 8))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((x, y, label))
+    return out
+
+
+def _click_copy_image_menu(hwnd: int) -> bool:
+    """Click Copy image. Chrome's context menu is a desktop popup, not under hwnd."""
+    from aiagent.win_gui_tasks import ensure_uia_com
+
+    ensure_uia_com()
+    names = ("Copy image", "复制图片", "複製圖片")
+    for name in names:
+        if _click_named(
+            hwnd,
+            name,
+            ["MenuItemControl", "MenuControl", "ButtonControl", "TextControl"],
+            search_depth=10,
+        ):
+            return True
+    try:
+        import uiautomation as auto
+
+        desktop = auto.GetRootControl()
+        for name in names:
+            for kwargs in ({"Name": name}, {"SubName": name}):
+                try:
+                    item = desktop.MenuItemControl(searchDepth=12, **kwargs)
+                    if item.Exists(0.55, 0.05):
+                        rect = item.BoundingRectangle
+                        log(f"desktop UIA click {name!r}")
+                        return _click_rect_center(rect)
+                except Exception:
+                    continue
+    except Exception as extra:
+        log(f"desktop Copy image lookup failed: {extra}")
+    return False
+
+
+def _activate_copy_image_menu(hwnd: int, *, menu_x: int, menu_y: int) -> bool:
+    """Pick Copy image from Chrome's image context menu."""
+    if _click_copy_image_menu(hwnd):
+        return True
     import pyautogui
 
     pyautogui.FAILSAFE = False
-    left, top, width, height = _chrome_window_rect(hwnd)
-    # Portrait infographic sits in the main/center column.
-    x = left + int(width * 0.42)
-    y = top + int(height * 0.48)
-    log(f"right-click infographic at ({x},{y})")
-    _right_click_xy(x, y, pause=0.55)
+    # Chrome image menu order: Open in new tab, Save image as, Copy image (3rd).
+    log("Copy image UIA miss; keyboard Down×2 Enter on context menu")
+    time.sleep(0.2)
+    pyautogui.press("down")
+    time.sleep(0.06)
+    pyautogui.press("down")
+    time.sleep(0.06)
+    pyautogui.press("enter")
+    return True
+
+
+def _right_click_copy_image_to_png(
+    page,
+    hwnd: int,
+    dest: Path,
+    x: float,
+    y: float,
+    *,
+    label: str = "",
+) -> bool:
+    """Real OS right-click on the image → Copy image → write PNG to dest."""
+    write_windows_clipboard("__expect_infographic_image__")
+    time.sleep(0.12)
+    try:
+        sx, sy = _viewport_point_to_screen(hwnd, page, x, y)
+    except Exception as extra:
+        log(f"viewport-to-screen failed: {extra}")
+        sx, sy = int(x), int(y)
+    tag = f" ({label})" if label else ""
+    log(f"right-click infographic{tag} viewport=({x:.0f},{y:.0f}) screen=({sx},{sy})")
+    try:
+        _right_click_xy(sx, sy, pause=1.0)
+    except Exception as extra:
+        log(f"pyautogui right-click failed: {extra}")
+        return False
+    if not _activate_copy_image_menu(hwnd, menu_x=sx, menu_y=sy):
+        log("Copy image menu activation failed; dismissing menu")
+        try:
+            import pyautogui
+
+            pyautogui.FAILSAFE = False
+            pyautogui.press("escape")
+        except Exception:
+            pass
+        return False
+    time.sleep(0.85)
+    if _save_clipboard_image_png(dest):
+        log(f"saved preview via Copy image → {dest}")
+        return True
+    log("Copy image clicked but clipboard had no image")
+    return False
+
+
+def _screenshot_preview_to_png(page, dest: Path, info: dict | None) -> bool:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if info and float(info.get("w") or 0) >= 180 and float(info.get("h") or 0) >= 180:
+        try:
+            clip = {
+                "x": max(0.0, float(info["x"])),
+                "y": max(0.0, float(info["y"])),
+                "width": float(info["w"]),
+                "height": float(info["h"]),
+            }
+            page.screenshot(path=str(dest), clip=clip)
+            if dest.is_file() and dest.stat().st_size > 2000:
+                log(f"saved preview via clip screenshot → {dest}")
+                return True
+        except Exception as extra:
+            log(f"clip screenshot failed: {extra}")
+    try:
+        vw, vh = page.evaluate("() => [window.innerWidth, window.innerHeight]")
+        clip = {
+            "x": float(vw) * 0.12,
+            "y": float(vh) * 0.12,
+            "width": float(vw) * 0.56,
+            "height": float(vh) * 0.76,
+        }
+        page.screenshot(path=str(dest), clip=clip)
+        if dest.is_file() and dest.stat().st_size > 2000:
+            log(f"saved preview via modal clip screenshot → {dest}")
+            return True
+    except Exception as extra:
+        log(f"modal clip screenshot failed: {extra}")
+    try:
+        data_url = page.evaluate(_CANVAS_PNG_JS) or ""
+        if data_url and _save_png_from_src(page, str(data_url), dest):
+            log(f"saved preview via canvas → {dest}")
+            return True
+    except Exception as extra:
+        log(f"canvas png failed: {extra}")
+    return False
+
+
+def _preview_root_locator(page):
+    """Open infographic preview container (CDK overlay or inline in-page viewer)."""
+    panes = page.locator(".cdk-overlay-pane")
+    for marker in ("View prompt", "Good content", "Zoom in", "Bad content"):
+        try:
+            hit = panes.filter(has=page.get_by_text(marker, exact=False))
+            if int(hit.count() or 0) > 0:
+                return hit.last
+        except Exception:
+            continue
+    for marker in ("View prompt", "Good content"):
+        try:
+            dlg = page.get_by_role("dialog").filter(has=page.get_by_text(marker, exact=False))
+            if int(dlg.count() or 0) > 0:
+                return dlg.last
+        except Exception:
+            pass
+    try:
+        inline = page.locator("*").filter(
+            has=page.get_by_text("View prompt", exact=False)
+        ).filter(has=page.get_by_text("Good content", exact=False))
+        if int(inline.count() or 0) > 0:
+            return inline.last
+    except Exception:
+        pass
+    return page.locator("body")
+
+
+def _preview_overlay_locator(page):
+    """Backward-compatible alias."""
+    return _preview_root_locator(page)
+
+
+def _wait_mat_menu_visible(page, *, timeout_ms: int = 4000) -> bool:
+    menu = page.locator(".cdk-overlay-container .mat-mdc-menu-panel").last
+    try:
+        menu.wait_for(state="visible", timeout=timeout_ms)
+        return True
+    except Exception:
+        return False
+
+
+def _click_preview_download_menu_playwright(page) -> bool:
+    """Click Download in the preview popup's ⋮ menu (Angular mat-menu in overlay)."""
+    if not _wait_mat_menu_visible(page, timeout_ms=5000):
+        log("CDP mat-menu panel not visible after ⋮ click")
+    menu = page.locator(".cdk-overlay-container .mat-mdc-menu-panel").last
+    patterns = (
+        re.compile(r"^Download$", re.I),
+        re.compile(r"^Export$", re.I),
+        re.compile(r"^下载$"),
+        re.compile(r"^下載$"),
+        re.compile(r"Save image", re.I),
+    )
+    for pat in patterns:
+        try:
+            item = menu.get_by_role("menuitem", name=pat)
+            if int(item.count() or 0) > 0:
+                item.first.click(timeout=5000)
+                log(f"CDP clicked menuitem /{pat.pattern}/")
+                return True
+        except Exception as exc:
+            log(f"CDP menuitem /{pat.pattern}/ failed: {exc}")
+    try:
+        item = menu.locator(".mat-mdc-menu-item").filter(
+            has_text=re.compile(r"^Download$|^Export$|^下载$|^下載$", re.I)
+        )
+        if int(item.count() or 0) > 0:
+            item.first.click(timeout=5000)
+            log("CDP clicked Download via .mat-mdc-menu-item text")
+            return True
+    except Exception as exc:
+        log(f"CDP Download text locator failed: {exc}")
+    try:
+        item = page.get_by_role("menuitem", name=re.compile(r"download|下载|下載", re.I))
+        if int(item.count() or 0) > 0:
+            item.last.click(timeout=5000)
+            log("CDP clicked menuitem via download regex")
+            return True
+    except Exception as exc:
+        log(f"CDP download regex menuitem failed: {exc}")
+    try:
+        info = page.evaluate(_PREVIEW_DOWNLOAD_MENU_JS)
+    except Exception as exc:
+        log(f"CDP Download menu lookup failed: {exc}")
+        info = None
+    if isinstance(info, dict) and info.get("x") and info.get("y"):
+        x, y = float(info["x"]), float(info["y"])
+        log(f"CDP click Download menu at viewport ({x:.0f},{y:.0f}) text={info.get('text')!r}")
+        page.mouse.click(x, y)
+        time.sleep(0.45)
+        return True
+    return False
+
+
+def _click_preview_more_menu_playwright(page) -> bool:
+    """Click the ⋮ button in the opened infographic preview (not Studio list rows)."""
+    try:
+        info = page.evaluate(_PREVIEW_MORE_BUTTON_JS)
+    except Exception as exc:
+        log(f"CDP preview ⋮ lookup failed: {exc}")
+        info = None
+    if isinstance(info, dict) and info.get("x") and info.get("y"):
+        x, y = float(info["x"]), float(info["y"])
+        mode = info.get("mode") or "unknown"
+        log(f"CDP click preview ⋮ at viewport ({x:.0f},{y:.0f}) mode={mode}")
+        page.mouse.click(x, y)
+        time.sleep(0.55)
+        if _wait_mat_menu_visible(page, timeout_ms=3500):
+            return True
+        log("CDP ⋮ clicked but mat-menu not visible yet; continuing")
+        return True
+
+    root = _preview_root_locator(page)
+    for label, loc in (
+        ("artifact-more-button", root.locator("button.artifact-more-button")),
+        ("More role", root.get_by_role("button", name=re.compile(r"^More$", re.I))),
+        (
+            "artifact-more global",
+            page.locator("button.artifact-more-button"),
+        ),
+    ):
+        try:
+            n = int(loc.count() or 0)
+            if n <= 0:
+                continue
+            btn = loc.last
+            box = btn.bounding_box()
+            if box and box["x"] < float(page.evaluate("() => window.innerWidth") or 1920) * 0.30:
+                continue
+            btn.scroll_into_view_if_needed(timeout=2500)
+            btn.click(timeout=5000)
+            log(f"CDP click preview ⋮ via {label}")
+            time.sleep(0.45)
+            if _wait_mat_menu_visible(page, timeout_ms=3500):
+                return True
+        except Exception as exc:
+            log(f"CDP preview ⋮ {label} failed: {exc}")
+    return False
+
+
+def _try_save_via_copy_image(page, hwnd: int, dest: Path) -> bool:
+    """Visible right-click infographic → Copy image → save PNG."""
+    if page is None:
+        return False
+    log("trying visible right-click Copy image…")
+    write_windows_clipboard("__expect_infographic_image__")
+    time.sleep(0.12)
+    for vx, vy, label in _preview_image_click_points(page):
+        if _right_click_copy_image_to_png(page, hwnd, dest, vx, vy, label=label):
+            return True
+    return False
+
+
+def _download_infographic_via_preview_menu(page, hwnd: int, dest: Path) -> bool:
+    """Save the open infographic via preview ⋮ → Download → D:\\AI_MEDIA\\working\\*.png."""
+    from aiagent.win_gui_tasks import set_foreground
+
+    dest = Path(dest)
+    set_foreground(hwnd)
+    time.sleep(0.25)
+
+    def _persist_downloaded(src: Path | None) -> bool:
+        if src and _save_download_as_png(src, dest):
+            log(f"saved preview via ⋮ Download → {dest}")
+            return True
+        return False
+
+    if page is not None:
+        if _physical_download_via_preview_menu(page, hwnd, dest):
+            return True
+
+        try:
+            with page.expect_download(timeout=60000) as dl_info:
+                if not _click_preview_more_menu_playwright(page):
+                    raise RuntimeError("preview ⋮ not found")
+                if not _click_preview_download_menu_playwright(page):
+                    raise RuntimeError("Download menuitem not found")
+                _confirm_infographic_export_dialog(page, hwnd)
+            download = dl_info.value
+            suffix = Path(download.suggested_filename or "infographic.png").suffix or ".png"
+            tmp = dest.parent / f"_itc_{int(time.time())}{suffix}"
+            download.save_as(str(tmp))
+            ok = _persist_downloaded(tmp)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if ok:
+                return True
+        except PlaywrightTimeoutError:
+            log("CDP expect_download timed out; trying Downloads folder watch")
+        except Exception as exc:
+            log(f"CDP expect_download failed: {exc}")
+
+        since = time.time()
+        try:
+            if _click_preview_more_menu_playwright(page):
+                if _click_preview_download_menu_playwright(page):
+                    time.sleep(0.7)
+                    _confirm_infographic_export_dialog(page, hwnd)
+                    if _persist_downloaded(_wait_new_browser_download(since, timeout_s=45.0)):
+                        return True
+                    log("CDP Download clicked but no new file in Downloads")
+                else:
+                    log("CDP Download menuitem not found after ⋮ click")
+            else:
+                log("CDP could not find preview ⋮ button")
+        except Exception as exc:
+            log(f"CDP preview download failed: {exc}")
+
+    log("UIA fallback: preview ⋮ → Download")
+    since = time.time()
+    _click_infographic_preview_more_menu(hwnd)
+    _click_infographic_download_menu_item(hwnd)
+    time.sleep(0.8)
+    _confirm_infographic_export_dialog(page, hwnd)
+    return _persist_downloaded(_wait_new_browser_download(since, timeout_s=45.0))
+
+
+def _save_open_infographic_png(page, hwnd: int, dest: Path) -> bool:
+    """Save open infographic: preview ⋮ → Download, then screenshot fallback."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    log(f"itc save target {dest}")
+    loaded = _infographic_image_loaded(page)
+    if not loaded.get("ready"):
+        log("image not marked loaded before save; waiting again…")
+        if not _wait_infographic_preview_ready(
+            hwnd, page, timeout_s=INFOGRAPHIC_PREVIEW_LOAD_TIMEOUT_S
+        ):
+            log("image still not loaded; trying ⋮ Download anyway")
+    else:
+        info = _largest_preview_img_info(page) or loaded
+        if info:
+            log(
+                f"preview visual {info.get('tag')!r} "
+                f"{info.get('w', 0):.0f}x{info.get('h', 0):.0f} "
+                f"natural={info.get('nw', 0)}x{info.get('nh', 0)}"
+            )
+
+    if _download_infographic_via_preview_menu(page, hwnd, dest):
+        return True
+
+    if _try_save_via_copy_image(page, hwnd, dest):
+        return True
+
+    log("⋮ Download and Copy image failed; trying screenshot fallback")
+    info = _largest_preview_img_info(page) or loaded
+    if _screenshot_preview_to_png(page, dest, info):
+        return True
+    try:
+        imgs = page.locator("img")
+        best_i = None
+        best_a = 0.0
+        for i in range(min(int(imgs.count() or 0), 24)):
+            box = imgs.nth(i).bounding_box()
+            if not box or box["width"] < 180 or box["height"] < 180:
+                continue
+            area = box["width"] * box["height"]
+            if area > best_a:
+                best_a = area
+                best_i = i
+        if best_i is not None:
+            imgs.nth(best_i).screenshot(path=str(dest))
+            if dest.is_file() and dest.stat().st_size > 2000:
+                log(f"saved preview via element screenshot → {dest}")
+                return True
+    except Exception as extra:
+        log(f"img locator screenshot failed: {extra}")
+    if info and info.get("src"):
+        if _save_png_from_src(page, str(info["src"]), dest):
+            log(f"saved preview via image src → {dest}")
+            return True
+    log(f"all save methods failed for {dest}")
+    return False
+
+
+def _copy_visible_infographic_image(hwnd: int, *, x: int | None = None, y: int | None = None) -> bool:
+    """Right-click the opened infographic image. Never click Chat (window center)."""
+    import pyautogui
+
+    pyautogui.FAILSAFE = False
+    if x is None or y is None:
+        log("skip window-center right-click (that hits Chat, not the infographic)")
+        return False
+    log(f"right-click infographic image at ({x},{y})")
+    _right_click_xy(int(x), int(y), pause=0.55)
     if _click_named(
         hwnd,
         "Copy image",
@@ -2161,59 +4424,42 @@ def _copy_visible_infographic_image(hwnd: int) -> bool:
     ):
         time.sleep(0.5)
         return True
-    # Context menu: Open / Save as / Copy image (3rd item) — screenshot layout.
-    log("Copy image menu item not named; click 3rd context-menu row")
-    _click_xy(x + 90, y + 78, pause=0.5)
-    return True
+    pyautogui.press("escape")
+    return False
 
 
-def _click_studio_infographic_row(hwnd: int, index: int) -> None:
-    """Open the Nth generated infographic in Studio (1-based, newest-first)."""
-    ago_labels = [
-        f"{index}m ago",
-        f"{index} min ago",
-        f"{index} minute ago",
-        f"{index} 分鐘前",
-        f"{index}分钟前",
-    ]
-    if index == 1:
-        ago_labels = ["just now", "Just now", "剛剛", "刚刚", *ago_labels]
-    for label in ago_labels:
-        if _click_named(
-            hwnd,
-            label,
-            ["TextControl", "HyperlinkControl", "ButtonControl", "ListItemControl"],
-            search_depth=22,
-        ):
-            log(f"click Studio infographic row {index} via {label!r}")
-            time.sleep(2.0)
-            return
-
-    left, top, width, height = _chrome_window_rect(hwnd)
-    cutoff = top + int(height * 0.52)
-    for name in ("is ready", "Infographic"):
+def _click_studio_infographic_row(
+    hwnd: int, index: int, title: str = ""
+) -> bool:
+    """Click the Nth Studio history *button*. False if that row was not found."""
+    title = (title or "").strip()
+    if title:
         ctrl = _uia_named(
             hwnd,
-            name,
-            ["ButtonControl", "HyperlinkControl", "TextControl", "ListItemControl"],
-            search_depth=18,
-            timeout_s=0.25,
-            found_index=index,
+            title,
+            ["ButtonControl", "HyperlinkControl", "ListItemControl"],
+            search_depth=22,
+            timeout_s=0.4,
         )
-        if not ctrl:
-            continue
-        try:
-            rect = ctrl.BoundingRectangle
-            if rect.top >= cutoff or name == "is ready":
-                log(f"click Studio infographic row {index} via {name!r}")
-                _click_rect_center(rect)
-                time.sleep(2.0)
-                return
-        except Exception:
-            continue
-    y_r = 0.565 + (index - 1) * 0.085
-    log(f"ratio-click Studio note row {index} at (0.82, {y_r:.2f})")
-    _click_ratio(hwnd, 0.82, y_r, pause=2.0)
+        box = _ctrl_box(ctrl) if ctrl is not None else None
+        if box:
+            left, top, right, bottom = box
+            x = left + min(80, max(24, (right - left) // 3))
+            y = (top + bottom) // 2
+            log(f"UIA click Studio title {title!r} at ({x},{y}) box={box}")
+            _click_xy(x, y, pause=1.6)
+            return True
+        log(f"UIA did not find button named {title!r}")
+    boxes = _studio_recent_row_boxes(hwnd)
+    if not (1 <= index <= len(boxes)):
+        log(f"UIA Studio history row {index} not found (have {len(boxes)}); not guessing")
+        return False
+    left, top, right, bottom = boxes[index - 1]
+    x = left + min(80, max(24, (right - left) // 3))
+    y = (top + bottom) // 2
+    log(f"click Studio infographic row {index} at ({x},{y}) box={boxes[index - 1]}")
+    _click_xy(x, y, pause=1.6)
+    return True
 
 
 def _download_one_infographic_via_menu(hwnd: int, index: int, dest: Path) -> bool:
@@ -2221,12 +4467,14 @@ def _download_one_infographic_via_menu(hwnd: int, index: int, dest: Path) -> boo
     _click_studio_infographic_row(hwnd, index)
     time.sleep(1.8)
     if not _infographic_preview_open(hwnd):
-        log(f"preview may not be open for row {index}; trying download anyway")
+        log(f"preview may not be open for row {index}; skip download (no Chat right-click)")
+        return False
 
     since = time.time()
     _click_infographic_preview_more_menu(hwnd)
     _click_infographic_download_menu_item(hwnd)
-
+    time.sleep(0.8)
+    _confirm_infographic_export_dialog(None, hwnd)
     downloaded = _wait_new_browser_download(since, timeout_s=35.0)
     if downloaded and _save_download_as_jpg(downloaded, dest):
         log(f"downloaded row {index} via menu → {dest}")
@@ -2269,11 +4517,305 @@ def _download_whole_story_images(hwnd: int, times: int) -> list[str]:
     return save_whole_story_images(saved)
 
 
+def check_notebooklm_infographic_status(
+    expected: int = NOTEBOOKLM_COVER_TIMES,
+) -> dict:
+    """Look at Studio: generating spinner vs finished titled rows. Does not wait."""
+    from aiagent.win_gui_tasks import ensure_uia_com, set_foreground
+
+    want = max(1, int(expected or NOTEBOOKLM_COVER_TIMES))
+    hwnd = _find_notebooklm_hwnd()
+    if not hwnd:
+        return {
+            "ok": False,
+            "ready": False,
+            "generating": False,
+            "generating_count": 0,
+            "finished_count": 0,
+            "expected": want,
+            "error": "找不到 NotebookLM 窗口。请先发 nbi 打开并点 Generate。",
+        }
+    ensure_uia_com()
+    set_foreground(hwnd)
+    time.sleep(0.25)
+    cdp = _notebooklm_generating_via_cdp()
+    generating_n = 0
+    via = "uia"
+    uncertain = False
+    if cdp.get("ok"):
+        generating_n = int(cdp.get("count") or 0)
+        via = "cdp"
+        generating = generating_n > 0
+        # Only call ready when we actually read the page and the spinner text is gone.
+        ready = not generating
+    else:
+        generating_n = _count_generating_infographics(hwnd)
+        generating = generating_n > 0
+        ready = False
+        uncertain = not generating
+        log(f"nbif CDP unavailable ({cdp.get('error')}); UIA count={generating_n}")
+    log(
+        f"nbif via={via} generating={generating} count={generating_n} "
+        f"ready={ready} uncertain={uncertain}"
+    )
+    err = ""
+    if uncertain:
+        err = (
+            f"没能读取 NotebookLM 页面文字（{cdp.get('error') or 'CDP 失败'}），"
+            "UIA 也没扫到 Generating。不能判定为 ready。"
+        )
+    return {
+        "ok": True,
+        "ready": ready,
+        "generating": generating,
+        "generating_count": generating_n,
+        "finished_count": 0,
+        "expected": want,
+        "uncertain": uncertain,
+        "via": via,
+        "error": err,
+    }
+
+
+def _copy_one_infographic_to_png(hwnd: int, index: int, dest: Path, page=None) -> bool:
+    """Open Studio history item *index*, wait for the image page, copy PNG, close it."""
+    preview_page = page
+    extra_tab = False
+    clicked = False
+    title = ""
+    if page is not None:
+        preview_page, extra_tab, clicked, title = _open_studio_infographic_via_dom(
+            page, index
+        )
+    if not clicked:
+        clicked = _click_studio_infographic_row(hwnd, index, title=title)
+        preview_page = page
+        extra_tab = False
+    if not clicked:
+        log(f"did not click Studio history #{index}; skip wait and skip Chat clicks")
+        return False
+
+    log(f"itc item {index} will save to {dest}")
+    if not _wait_infographic_preview_ready(
+        hwnd,
+        preview_page,
+        timeout_s=INFOGRAPHIC_PREVIEW_LOAD_TIMEOUT_S,
+    ):
+        log(f"Studio history #{index} click did not open infographic page")
+        _dismiss_infographic_popup(
+            hwnd, notebook_page=page, preview_page=preview_page, extra_tab=extra_tab
+        )
+        return False
+
+    saved = False
+    if preview_page is not None:
+        saved = _save_open_infographic_png(preview_page, hwnd, dest)
+    elif _infographic_preview_open(hwnd):
+        log("CDP page unavailable; trying physical/UIA save on open preview")
+        saved = _save_open_infographic_png(None, hwnd, dest)
+    if not saved:
+        log(f"Studio item {index}: preview open but ⋮ Download save failed")
+
+    log(f"dismiss infographic popup #{index} (keep Chrome / notebook open)")
+    _dismiss_infographic_popup(
+        hwnd, notebook_page=page, preview_page=preview_page, extra_tab=extra_tab
+    )
+    _wait_studio_history_visible(page, timeout_s=6.0)
+
+    ok = bool(saved and dest.is_file() and dest.stat().st_size > 2000)
+    if ok:
+        log(f"saved infographic {index} → {dest}")
+    else:
+        log(f"failed to save infographic {index} to {dest}")
+    return ok
+
+
+def notebooklm_window_open() -> bool:
+    return bool(_find_notebooklm_hwnd())
+
+
+def close_notebooklm_chrome_window() -> bool:
+    """Close the NotebookLM Chrome window after itc finishes copying."""
+    hwnd = _find_notebooklm_hwnd()
+    if not hwnd:
+        return False
+    log(f"closing NotebookLM Chrome hwnd={hwnd}")
+    try:
+        import win32con
+        import win32gui
+
+        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        time.sleep(0.7)
+        return True
+    except Exception as exc:
+        log(f"PostMessage close failed: {exc}")
+    try:
+        import pyautogui
+        from aiagent.win_gui_tasks import set_foreground
+
+        set_foreground(hwnd)
+        time.sleep(0.2)
+        pyautogui.hotkey("alt", "f4")
+        time.sleep(0.5)
+        return True
+    except Exception as exc:
+        log(f"Alt+F4 close failed: {exc}")
+        return False
+
+
+def capture_notebooklm_infographics(
+    times: int = NOTEBOOKLM_COVER_TIMES,
+    *,
+    require_ready: bool = True,
+) -> list[str]:
+    """Open each Studio history infographic, copy image, save timestamp PNGs."""
+    from aiagent.win_gui_tasks import ensure_uia_com, set_foreground
+    from utility.telegram_session import save_whole_story_images
+
+    n = max(1, int(times or NOTEBOOKLM_COVER_TIMES))
+    hwnd = _find_notebooklm_hwnd()
+    if not hwnd:
+        raise RuntimeError(
+            "找不到 NotebookLM 窗口。请发 itc N（N=Chrome 号）重新打开 notebook 再拷图。"
+        )
+    ensure_uia_com()
+    status = check_notebooklm_infographic_status(expected=n)
+    if status.get("generating"):
+        raise RuntimeError(
+            "Studio 里还能看到 “Generating infographic...”，还没 ready。"
+            "请先发 nbif，等 ready 后再 itc。"
+        )
+    if require_ready and not status.get("ready"):
+        raise RuntimeError(
+            status.get("error")
+            or "还不能确认三张 infographic 已经 ready。请先发 nbif。"
+        )
+
+    def _copy_all(page) -> list[str]:
+        saved_local: list[str] = []
+        for i in range(1, n + 1):
+            hwnd_now = _find_notebooklm_hwnd() or hwnd
+            set_foreground(hwnd_now)
+            time.sleep(1.0)
+            dest = _next_working_png()
+            if _copy_one_infographic_to_png(hwnd_now, i, dest, page=page):
+                saved_local.append(str(dest))
+                log(f"saved {dest} ({dest.stat().st_size} bytes)")
+            else:
+                log(f"failed to copy infographic {i} to {dest}")
+            time.sleep(1.0)
+        return saved_local
+
+    saved = _run_with_notebooklm_page(_copy_all)
+    if len(saved) < n:
+        if saved:
+            save_whole_story_images(saved)
+        raise RuntimeError(
+            f"只拷到 {len(saved)}/{n} 张 infographic。"
+            "请确认已点开 Studio 右侧历史上边的 generate 项，再重发 itc。"
+        )
+    paths = save_whole_story_images(saved)
+    log("all infographics saved; closing NotebookLM Chrome now")
+    close_notebooklm_chrome_window()
+    return paths
+
+
+def open_existing_notebooklm_window() -> tuple[int, str]:
+    """Launch current Chrome profile → NotebookLM home → first existing notebook.
+
+    Does not Generate. Returns ``(hwnd, profile_dir)``.
+    """
+    try:
+        import pyautogui
+    except Exception as exc:
+        raise RuntimeError(f"pyautogui is required for NotebookLM: {exc}") from exc
+
+    pyautogui.FAILSAFE = False
+    from aiagent.win_gui_tasks import ensure_uia_com, set_foreground, win32con, win32gui
+
+    ensure_uia_com()
+    before = {hwnd for hwnd, _ in _enum_titled_windows()}
+    nbl_port = _notebooklm_cdp_port()
+    profile_dir = launch_chrome_profile_window(NOTEBOOKLM_URL, debug_port=nbl_port)
+    try:
+        hwnd = _wait_notebooklm_hwnd(exclude=before, timeout_s=10.0)
+    except RuntimeError:
+        log("no new NotebookLM window; trying existing")
+        hwnd = _find_notebooklm_hwnd()
+        if not hwnd:
+            hwnd = _wait_notebooklm_hwnd(timeout_s=12.0)
+    log(f"NotebookLM hwnd={hwnd} profile_dir={profile_dir} cdp_port={nbl_port}")
+    if win32gui is not None and win32con is not None:
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+        except Exception:
+            pass
+    set_foreground(hwnd)
+    time.sleep(3.5)
+
+    cdp_deadline = time.monotonic() + 10.0
+    while time.monotonic() < cdp_deadline and not cdp_ready(nbl_port):
+        time.sleep(0.35)
+
+    opened = False
+    if cdp_ready(nbl_port):
+        opened = _open_first_existing_notebook_cdp(nbl_port)
+        if opened:
+            log("opened first Recent notebook via CDP/DOM")
+    if not opened:
+        _open_first_existing_notebook(hwnd)
+    time.sleep(2.5)
+    hwnd = _find_notebooklm_hwnd() or hwnd
+    set_foreground(hwnd)
+    if _named_exists(
+        hwnd,
+        "Add sources",
+        ["ButtonControl", "TextControl", "HyperlinkControl"],
+        search_depth=12,
+        timeout_s=0.25,
+    ) and not _inside_notebook(hwnd, timeout_s=0.35):
+        raise RuntimeError(
+            "看起来点到了 Create new（空 notebook）。"
+            "请不要新建，只打开 Recent notebooks 里已有的第一张 Story Builder。"
+        )
+    if not _inside_notebook(hwnd, timeout_s=0.5):
+        _wait_named(
+            hwnd,
+            "Infographic",
+            ["ButtonControl", "HyperlinkControl"],
+            timeout_s=10.0,
+            search_depth=16,
+        )
+    if not _inside_notebook(hwnd, timeout_s=0.5):
+        if _create_new_box(hwnd) or not _title_looks_like_open_notebook(
+            _notebooklm_window_title(hwnd)
+        ):
+            raise RuntimeError(
+                "还停在 NotebookLM 首页，没能点开 Recent notebooks 第一张卡片。"
+                "请确认首页已完全加载（Create new 右边确实有一张 Story Builder 卡），"
+                "然后再发 nbi N 或 itc N。"
+            )
+        raise RuntimeError(
+            "打开已有 notebook 后看不到 Infographic。"
+            "请确认 Recent notebooks 第一张（Create new 右侧）是 Story Builder，且没有点到 Create new。"
+        )
+    return int(hwnd), str(profile_dir)
+
+
+def reopen_notebooklm_and_capture(
+    times: int = NOTEBOOKLM_COVER_TIMES,
+) -> list[str]:
+    """Open current Chrome profile + existing notebook, then copy top N infographics."""
+    open_existing_notebooklm_window()
+    return capture_notebooklm_infographics(times=times, require_ready=False)
+
+
 def handle_notebooklm_covers(times: int = NOTEBOOKLM_COVER_TIMES) -> str:
     """Open NotebookLM with the current Chrome profile and Generate infographic N times.
 
     Clipboard must already hold the NotebookLM cover prompt (``notebooklm 1``).
     Clicks: first Recent notebook → Infographic → Portrait + Concise → paste → Generate.
+    Does not wait for generation to finish; use ``nbif`` then ``itc``.
     """
     try:
         import pyautogui
@@ -2292,59 +4834,9 @@ def handle_notebooklm_covers(times: int = NOTEBOOKLM_COVER_TIMES) -> str:
             "先在 SCENE 发 nbp，再 nbp 1（Image / 单图）。"
         )
 
-    from aiagent.win_gui_tasks import set_foreground, win32con, win32gui
+    from aiagent.win_gui_tasks import set_foreground
 
-    before = {hwnd for hwnd, _ in _enum_titled_windows()}
-    profile_dir = launch_chrome_profile_window(NOTEBOOKLM_URL)
-    try:
-        hwnd = _wait_notebooklm_hwnd(exclude=before, timeout_s=10.0)
-    except RuntimeError:
-        log("no new NotebookLM window; trying existing")
-        hwnd = _find_notebooklm_hwnd()
-        if not hwnd:
-            hwnd = _wait_notebooklm_hwnd(timeout_s=12.0)
-    log(f"NotebookLM hwnd={hwnd} profile_dir={profile_dir}")
-    if win32gui is not None and win32con is not None:
-        try:
-            win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-        except Exception:
-            pass
-    set_foreground(hwnd)
-    time.sleep(3.5)
-
-    _open_first_existing_notebook(hwnd)
-    time.sleep(2.5)
-    hwnd = _find_notebooklm_hwnd() or hwnd
-    set_foreground(hwnd)
-    if _named_exists(
-        hwnd,
-        "Add sources",
-        ["ButtonControl", "TextControl", "HyperlinkControl"],
-        search_depth=12,
-        timeout_s=0.25,
-    ) and not _named_exists(
-        hwnd,
-        "Infographic",
-        ["ButtonControl", "HyperlinkControl"],
-        search_depth=14,
-        timeout_s=0.25,
-    ):
-        raise RuntimeError(
-            "看起来点到了 Create new（空 notebook）。"
-            "请不要新建，只打开 Recent notebooks 里已有的第一张 Story Builder。"
-        )
-    if not _wait_named(
-        hwnd,
-        "Infographic",
-        ["ButtonControl", "HyperlinkControl"],
-        timeout_s=14.0,
-        search_depth=14,
-    ):
-        raise RuntimeError(
-            "打开已有 notebook 后看不到 Infographic。"
-            "请确认 Recent notebooks 第一张（Create new 右侧）是 Story Builder，且没有点到 Create new。"
-        )
-
+    hwnd, profile_dir = open_existing_notebooklm_window()
     if _notebooklm_quota_hit(hwnd):
         raise RuntimeError(
             "NotebookLM daily limit reached on this profile. "
@@ -2368,20 +4860,98 @@ def handle_notebooklm_covers(times: int = NOTEBOOKLM_COVER_TIMES) -> str:
         log(f"Generate {i + 1} clicked; dialog_closed={closed}")
         time.sleep(2.4)
 
-    hwnd = _find_notebooklm_hwnd() or hwnd
-    set_foreground(hwnd)
-    _wait_infographics_ready(hwnd, expected=n)
-    files = _download_whole_story_images(hwnd, n)
-    names = ", ".join(Path(p).name for p in files) or "(none)"
+    from utility.telegram_session import mark_notebooklm_generate_started
+
+    mark_notebooklm_generate_started(started or n)
     return (
         f"launched {NOTEBOOKLM_URL} profile_dir={profile_dir}; "
         f"clicked Generate {started} time(s) (Portrait + Concise); "
-        f"downloaded {len(files)} whole story image(s) to Downloads: {names}"
+        f"未等待生成结束。请稍后发 nbif 查询是否 ready，ready 后再发 itc 拷图。"
     )
 
 
+def _clipboard_has_image() -> bool:
+    """True when the Windows clipboard currently holds a pasteable bitmap."""
+    try:
+        from PIL import ImageGrab
+
+        clip = ImageGrab.grabclipboard()
+        if clip is None:
+            return False
+        if hasattr(clip, "size"):
+            w, h = clip.size
+            return w > 0 and h > 0
+        if isinstance(clip, list) and clip:
+            return True
+    except Exception as exc:
+        log(f"clipboard image probe failed: {exc}")
+    return False
+
+
+def _wait_grok_hwnd(timeout_s: float = 28.0) -> int:
+    from aiagent.win_gui_tasks import set_foreground
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        hwnd = _find_grok_chrome_hwnd()
+        if hwnd:
+            set_foreground(hwnd)
+            time.sleep(0.35)
+            return hwnd
+        time.sleep(0.5)
+    raise RuntimeError(
+        "Grok Imagine 窗口未出现。请检查 Chrome 是否已打开 grok.com/imagine。"
+    )
+
+
+def _wait_grok_composer_ready(hwnd: int, timeout_s: float = 18.0) -> bool:
+    per = max(2.0, timeout_s / 5.0)
+    for name in (
+        "输入或粘贴图像",
+        "输入你的想象",
+        "Ask Grok",
+        "What do you want",
+        "Imagine",
+        "我们应该想象什么",
+        "Message",
+    ):
+        if _wait_named(
+            hwnd,
+            name,
+            ["TextControl", "EditControl", "ButtonControl"],
+            timeout_s=per,
+            search_depth=14,
+        ):
+            return True
+    return False
+
+
+def _grok_scene_image_prompts(n: int) -> list[tuple[str, str]]:
+    """Scene image prompts 1…N from ``DIRECT_VIDEO_PROMPT_CHOICES`` (same as old ``gri``)."""
+    import config_prompt
+
+    rows = [
+        (str(lbl).strip(), str(tpl or ""))
+        for lbl, tpl in (config_prompt.DIRECT_VIDEO_PROMPT_CHOICES or [])
+        if str(lbl or "").strip()
+    ]
+    image_rows = rows[:4]
+    if len(image_rows) < n:
+        raise RuntimeError(
+            f"需要 {n} 个场景图提示词，DIRECT_VIDEO_PROMPT_CHOICES 只有 {len(image_rows)} 个。"
+        )
+    out: list[tuple[str, str]] = []
+    for i in range(n):
+        lbl, tpl = image_rows[i]
+        text = (tpl or "").strip()
+        if not text:
+            raise RuntimeError(f"场景图提示词为空：{lbl}")
+        out.append((lbl, text))
+    return out
+
+
 def handle_grok_imagine_tabs() -> str:
-    """Open N ``grok.com/imagine`` tabs from recorded ``story_scene_prompt_choice``."""
+    """Open N ``grok.com/imagine`` tabs and prepare each for scene image generation."""
     from utility.telegram_session import load_story_scene_prompt_choice
 
     choice = load_story_scene_prompt_choice()
@@ -2392,13 +4962,831 @@ def handle_grok_imagine_tabs() -> str:
             "还没有记录 story_scene_prompt_choice。"
             "先在 SCENE 选 LM：lm 4。"
         )
-    urls = [GROK_IMAGINE_URL] * n
-    profile_dir = launch_chrome_profile_window(*urls)
-    log(f"Grok Imagine × {n} ({label}) profile_dir={profile_dir}")
+    grok_port = _grok_attach_cdp_port(allow_launch=True)
+    profile_dir = resolve_chrome_profile_directory(
+        getattr(config, "GEMINI_CHROME_PROFILE", "")
+    )
+    profile_label = (getattr(config, "GEMINI_CHROME_PROFILE", "") or profile_dir).strip()
+    user_data = _chrome_cdp_user_data_dir()
+    log(
+        f"Grok Imagine × {n} ({label}) cdp_port={grok_port} "
+        f"account={profile_label!r} profile={profile_dir} user-data={user_data}"
+    )
+    cover_png = _grok_resolve_cover_png()
+    if not cover_png:
+        raise RuntimeError(
+            "没有封面图。请先 itc 选封面（或 Copy image 到剪贴板），再 gr 1。"
+        )
+    scene_prompts = _grok_scene_image_prompts(n)
+    pasted_n, prompt_n = _grok_prepare_all_tabs_cdp(
+        n,
+        cover_png=cover_png,
+        port=grok_port,
+        fresh_tabs=True,
+        scene_prompts=scene_prompts,
+        auto_generate=True,
+    )
+    if pasted_n < n:
+        raise RuntimeError(
+            f"第一轮只成功粘贴 {pasted_n}/{n} 个标签的封面图。"
+            "请确认封面图有效，并重发 gr 1。"
+        )
+    paste_note = f"; pasted cover image into {n} tab(s) (round 1 Ctrl+V)"
+    if prompt_n < n:
+        raise RuntimeError(
+            f"只成功粘贴 {prompt_n}/{n} 个场景提示词。"
+            "请重发 gr 1。"
+        )
+    prompt_labels = ", ".join(lbl for lbl, _ in scene_prompts)
     return (
         f"opened {n} Grok Imagine tab(s) for {label!r} "
-        f"({GROK_IMAGINE_URL}) profile_dir={profile_dir}"
+        f"({GROK_IMAGINE_URL}) account={profile_label} "
+        f"profile_dir={profile_dir} cdp={grok_port}; "
+        f"prepared image + 9:16 竖屏 + scene prompts + Submit generate on each tab{paste_note}; "
+        f"prompts: {prompt_labels}"
     )
+
+
+def prepare_open_grok_imagine_tabs(*, paste_image: bool = True) -> str:
+    """On already-open Grok Imagine tabs: paste clipboard image + 9:16 竖屏."""
+    n = _grok_recorded_tab_count() or 1
+    port = _grok_resolve_cdp_port()
+    cover_png = _grok_resolve_cover_png() if paste_image else None
+    pasted_n, _prompt_n = _grok_prepare_all_tabs_cdp(
+        n, cover_png=cover_png, port=port, fresh_tabs=False
+    )
+    if cover_png:
+        if pasted_n < n:
+            raise RuntimeError(
+                f"只成功粘贴 {pasted_n}/{n} 个 Grok 标签。"
+                "请确认剪贴板有图片；若 Grok 窗口已关，先关尽 Chrome 再重发 gr 1。"
+            )
+        note = f"pasted clipboard image + 9:16 竖屏 on {n} tab(s) (verified)"
+    else:
+        note = f"set 9:16 竖屏 on {n} tab(s); clipboard 无图片"
+    return note
+
+
+# Grok Imagine composer sits in the page center (not the bottom gallery).
+GROK_PROMPT_X = 0.52
+GROK_PROMPT_Y = 0.52
+GROK_TOOLBAR_Y = 0.575
+GROK_ASPECT_BTN_X = 0.595
+GROK_ASPECT_MENU_Y = 0.468
+GROK_IMAGE_ICON_X = 0.395
+GROK_GENERATE_X = 0.665
+
+# Stable Grok Imagine DOM selectors (from page outerHTML analysis).
+GROK_EDITOR_SEL = (
+    'div[data-testid="chat-input"] div[contenteditable="true"][role="textbox"]'
+)
+GROK_EDITOR_ALT_SEL = '[contenteditable="true"][aria-label="Ask Grok anything"]'
+GROK_FILE_INPUT_SEL = 'input[type="file"][name="files"]'
+GROK_UPLOAD_BTN_SEL = 'button[aria-label="上传"]'
+GROK_DROP_CONTAINER_SEL = '[data-testid="drop-container"]'
+GROK_IMAGE_ATTACH_TIMEOUT_S = 20.0
+GROK_IMAGE_READY_MIN_S = 6
+GROK_IMAGE_READY_TIMEOUT_S = 6 * 60
+GROK_VIDEO_READY_MIN_S = 8
+GROK_VIDEO_READY_TIMEOUT_S = 8 * 60
+GROK_DOWNLOAD_TIMEOUT_S = 120
+
+
+_GROK_FOCUS_COMPOSER_JS = """() => {
+  const sel = ['[data-testid="chat-input"]', '[contenteditable="true"]',
+               '[role="textbox"]', 'textarea', 'input[placeholder]',
+               '[placeholder]'];
+  for (const s of sel) {
+    const el = document.querySelector(s);
+    if (el) { el.focus(); el.click(); return true; }
+  }
+  return false;
+}"""
+
+
+_GROK_OPEN_FILE_CHOOSER_JS = """() => {
+  const btns=[...document.querySelectorAll('button')];
+  const cand=btns.find(b=>{
+    const t=(b.getAttribute('aria-label')||'')+(b.getAttribute('title')||'')+(b.innerText||'');
+    if(/480p|720p|1080p|6s|10s|15s|resolution|duration/i.test(t)) return false;
+    return /attach|upload|image|图片|图象|上传|add|plus|\\+|file|附件|添/i.test(t);
+  });
+  if(cand){cand.click(); return 'button';}
+  const fi=document.querySelector('input[type=file]');
+  if(fi){fi.click(); return 'input';}
+  return 'none';
+}"""
+
+
+def _restore_windows_clipboard_image_from_png(path: Path) -> None:
+    """Put a PNG back on the Windows clipboard as CF_DIB (for repeated Ctrl+V paste)."""
+    import io
+
+    from PIL import Image
+
+    try:
+        import win32clipboard
+        import win32con
+    except ImportError as exc:
+        raise RuntimeError("pywin32 required for clipboard image restore") from exc
+    img = Image.open(path)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    out = io.BytesIO()
+    img.save(out, "BMP")
+    dib = out.getvalue()[14:]
+    out.close()
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardData(win32con.CF_DIB, dib)
+    finally:
+        win32clipboard.CloseClipboard()
+    log(f"restored clipboard image from {path.name}")
+
+
+def _clipboard_dib_to_temp_png() -> Path | None:
+    """Read CF_DIB / CF_DIBV5 from Windows clipboard (Hermes model)."""
+    import io
+    import struct
+    import tempfile
+
+    try:
+        import win32clipboard
+        from PIL import Image
+    except ImportError:
+        return None
+    CF_DIB, CF_DIBV5 = 8, 17
+    win32clipboard.OpenClipboard()
+    try:
+        fmts = set()
+        f = 0
+        while True:
+            f = win32clipboard.EnumClipboardFormats(f)
+            if f == 0:
+                break
+            fmts.add(f)
+        src = CF_DIBV5 if CF_DIBV5 in fmts else (CF_DIB if CF_DIB in fmts else None)
+        if src is None:
+            return None
+        data = win32clipboard.GetClipboardData(src)
+    finally:
+        win32clipboard.CloseClipboard()
+    try:
+        bi_size = struct.unpack("<I", data[0:4])[0]
+        bi_comp = struct.unpack("<I", data[16:20])[0]
+        if bi_comp == 4:
+            bmp = data[bi_size:]
+        else:
+            bi_clr = struct.unpack("<I", data[32:36])[0]
+            bi_bit = struct.unpack("<H", data[14:16])[0]
+            if bi_clr == 0 and bi_bit <= 8:
+                bi_clr = 1 << bi_bit
+            off = 14 + bi_size + bi_clr * 4
+            bmp = b"BM" + struct.pack("<I", off + len(data) - bi_size) + b"\0\0\0\0" + struct.pack("<I", off) + data
+        img = Image.open(io.BytesIO(bmp))
+        path = Path(tempfile.gettempdir()) / f"grok_clip_{int(time.time() * 1000)}.png"
+        img.convert("RGB").save(path, "PNG")
+        return path
+    except Exception as exc:
+        log(f"clipboard DIB → png failed: {exc}")
+        return None
+
+
+def _clipboard_image_to_temp_png() -> Path | None:
+    """Write clipboard bitmap or image file path to a temp PNG."""
+    png = _clipboard_dib_to_temp_png()
+    if png and png.is_file():
+        return png
+    import tempfile
+
+    from PIL import Image, ImageGrab
+
+    clip = ImageGrab.grabclipboard()
+    if clip is None:
+        return None
+    path = Path(tempfile.gettempdir()) / f"grok_clip_{int(time.time() * 1000)}.png"
+    try:
+        if hasattr(clip, "save"):
+            clip.save(path, "PNG")
+            return path
+        if isinstance(clip, list) and clip:
+            src = Path(str(clip[0]).strip())
+            if src.is_file():
+                Image.open(src).convert("RGB").save(path, "PNG")
+                return path
+    except Exception as exc:
+        log(f"clipboard → temp png failed: {exc}")
+    return None
+
+
+def _grok_resolve_cover_png() -> Path | None:
+    """Cover for gr round 1: clipboard first, else itc-selected whole_story image."""
+    png = _clipboard_image_to_temp_png()
+    if png and png.is_file():
+        log(f"Grok cover image from clipboard → {png}")
+        return png
+    try:
+        from utility.telegram_session import selected_whole_story_image_path
+
+        picked = (selected_whole_story_image_path() or "").strip()
+        if picked and Path(picked).is_file():
+            import tempfile
+
+            from PIL import Image
+
+            path = Path(tempfile.gettempdir()) / f"grok_cover_{int(time.time() * 1000)}.png"
+            Image.open(picked).convert("RGB").save(path, "PNG")
+            copy_image_file_to_clipboard(picked)
+            log(f"Grok cover image from itc record → {picked}")
+            return path
+    except Exception as exc:
+        log(f"Grok cover from itc/session failed: {exc}")
+    return None
+
+
+_GROK_COMPOSER_HAS_IMAGE_JS = """
+() => {
+  if (document.querySelector('button[aria-label="Remove image"]')) return true;
+  if (document.querySelector('button[aria-label*="Remove"]')) return true;
+  if (document.querySelector('img[src^="blob:https://grok.com/"]')) return true;
+  if (document.querySelector('img[src^="blob:"]')) return true;
+  const root = document.querySelector('[data-testid="chat-input"]');
+  if (root && root.querySelector('.group\\/current-files img')) return true;
+  if (root && root.querySelector('img')) return true;
+  const n = document.querySelectorAll(
+    'img[src^="blob:"], [data-testid*="attach"], [class*="attachment"], [class*="thumb"], [class*="preview"]'
+  ).length;
+  return n > 0;
+}
+"""
+
+
+_GROK_INJECT_FILE_INPUT_JS = """
+({ b64, mime, name }) => {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const file = new File([arr], name || 'reference.png', { type: mime });
+  const input = document.querySelector('input[type="file"][name="files"]');
+  if (!input) return 'no-file-input';
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return 'file-input-events';
+}
+"""
+
+
+_GROK_DROP_FILE_JS = """
+({ b64, mime, name }) => {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const file = new File([arr], name || 'reference.png', { type: mime });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const drop = document.querySelector('[data-testid="drop-container"]')
+    || document.querySelector('[data-testid="drop-ui"]');
+  if (!drop) return 'no-drop-target';
+  for (const type of ['dragenter', 'dragover', 'drop']) {
+    drop.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }
+  return 'drop-events';
+}
+"""
+
+
+_GROK_ASPECT_916_JS = """
+() => {
+  const pillRx = /^9:16$|^1:1$|^16:9$|^2:3$|^3:2$|^4:3$/;
+  const pill = [...document.querySelectorAll('button')].find(
+    (b) => pillRx.test((b.innerText || b.textContent || '').trim())
+  );
+  if (pill) pill.click();
+  const opts = ['9:16 竖屏', '9:16 Vertical', '9:16 vertical'];
+  for (const lab of opts) {
+    const el = [...document.querySelectorAll(
+      '[role="menuitem"], [role="option"], button, div, span, li'
+    )].find((n) => (n.innerText || n.textContent || '').trim() === lab);
+    if (el) {
+      el.click();
+      return lab;
+    }
+  }
+  return null;
+}
+"""
+
+
+_GROK_READ_COMPOSER_TEXT_JS = """() => {
+  const el = document.querySelector('[data-testid="chat-input"] [contenteditable="true"]')
+    || document.querySelector('[contenteditable="true"][role="textbox"]');
+  return el ? (el.innerText || el.textContent || '') : '';
+}"""
+
+
+_GROK_CLICK_IMAGE_MODE_JS = """() => {
+  const btns = [...document.querySelectorAll('button')];
+  const cand = btns.find((b) => {
+    const t = (b.getAttribute('aria-label') || '') + (b.getAttribute('title') || '')
+      + (b.innerText || '');
+    if (/video|视频|480p|720p|1080p|6s|10s|15s|resolution|duration/i.test(t)) return false;
+    const lab = (b.getAttribute('aria-label') || b.innerText || '').trim();
+    return lab === '图片' || lab === 'Image' || /^image$/i.test(lab);
+  });
+  if (cand) { cand.click(); return cand.getAttribute('aria-label') || '图片'; }
+  return null;
+}"""
+
+
+_GROK_CLICK_GENERATE_JS = """() => {
+  const labels = ['Submit', 'Send', '生成', 'Generate', 'Start'];
+  for (const b of document.querySelectorAll('button')) {
+    const lab = (b.getAttribute('aria-label') || '').trim();
+    if (labels.some((x) => lab.toLowerCase() === x.toLowerCase())) {
+      b.click();
+      return lab;
+    }
+  }
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (!input) return null;
+  let container = input.closest('form') || input.parentElement;
+  for (let up = 0; up < 8 && container; up++) {
+    const btns = [...container.querySelectorAll('button')].filter((b) => !b.disabled);
+    for (const b of [...btns].reverse()) {
+      const aria = (b.getAttribute('aria-label') || '').trim();
+      if (/submit|send|arrow|生成/i.test(aria)) {
+        b.click();
+        return aria || 'submit';
+      }
+      const r = b.getBoundingClientRect();
+      if (r.width >= 28 && r.width <= 64 && Math.abs(r.width - r.height) < 10) {
+        if (b.querySelector('svg')) {
+          b.click();
+          return 'round-submit-arrow';
+        }
+      }
+    }
+    container = container.parentElement;
+  }
+  const root = input.closest('form') || input.parentElement;
+  if (root) {
+    const btns = [...root.querySelectorAll('button')].filter((b) => !b.disabled);
+    if (btns.length) {
+      btns[btns.length - 1].click();
+      return 'last-toolbar-btn';
+    }
+  }
+  return null;
+}"""
+
+
+_GROK_REPLACE_PROMPT_JS = """(text) => {
+  const root = document.querySelector('[data-testid="chat-input"]');
+  const el = root?.querySelector('[contenteditable="true"][role="textbox"]')
+    || root?.querySelector('[contenteditable="true"]');
+  if (!el) return 'no-editor';
+  el.focus();
+  el.click();
+  // Clear text only — keep attachment thumbnails / file chips
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((n) => { n.textContent = ''; });
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  document.execCommand('insertText', false, text);
+  return (el.innerText || el.textContent || '').slice(0, 120);
+}"""
+
+
+_GROK_CLICK_SUBMIT_NEAR_INPUT_JS = """() => {
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (!input) return null;
+  let node = input;
+  for (let up = 0; up < 12; up++) {
+    node = node.parentElement;
+    if (!node) break;
+    const rect = node.getBoundingClientRect();
+    const btns = [...node.querySelectorAll('button')].filter((b) => !b.disabled);
+    let best = null;
+    let bestScore = -1;
+    for (const b of btns) {
+      const r = b.getBoundingClientRect();
+      if (r.width < 24 || r.height < 24) continue;
+      const svg = b.querySelector('svg');
+      const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+      let score = 0;
+      if (/submit|send|生成|generate/.test(aria)) score += 100;
+      if (svg) score += 50;
+      if (Math.abs(r.width - r.height) < 12) score += 30;
+      const right = r.right >= rect.right - 80;
+      const bottom = r.bottom >= rect.bottom - 80;
+      if (right && bottom) score += 40;
+      if (score > bestScore) { bestScore = score; best = b; }
+    }
+    if (best && bestScore >= 50) {
+      best.click();
+      return best.getAttribute('aria-label') || 'submit-near-input';
+    }
+  }
+  return null;
+}"""
+
+
+_GROK_IS_GENERATING_JS = """() => {
+  const t = document.body.innerText || '';
+  return /generating|正在生成|生成中|creating image|creating video/i.test(t);
+}"""
+
+
+_GROK_HAS_OUTPUT_IMAGE_JS = """() => {
+  const composer = document.querySelector('[data-testid="chat-input"]');
+  const imgs = [...document.querySelectorAll('img')].filter((img) => {
+    if (!img.src) return false;
+    if (composer && composer.contains(img)) return false;
+    const r = img.getBoundingClientRect();
+    return r.width > 120 && r.height > 120;
+  });
+  return imgs.length > 0;
+}"""
+
+
+def _grok_paste_prompt_cdp(page: Page, prompt: str) -> None:
+    """Replace composer text with scene prompt (keeps attached image thumbnail)."""
+    text = (prompt or "").strip()
+    if not text:
+        raise RuntimeError("Grok composer: empty prompt")
+    page.wait_for_load_state("domcontentloaded", timeout=20_000)
+    snippet = page.evaluate(_GROK_REPLACE_PROMPT_JS, text)
+    if not snippet or snippet == "no-editor":
+        raise RuntimeError("Grok composer editor not found for prompt replace")
+    time.sleep(0.4)
+    actual = str(page.evaluate(_GROK_READ_COMPOSER_TEXT_JS) or "")
+    _paste_text_verified(text, actual, field_label="Grok composer")
+    log(f"Grok CDP: prompt set ({len(text)} chars)")
+
+
+def _grok_click_image_mode_cdp(page: Page) -> bool:
+    label = page.evaluate(_GROK_CLICK_IMAGE_MODE_JS)
+    if not label:
+        log("Grok CDP: 图片 mode button not found; continuing")
+        return False
+    log(f"Grok CDP: clicked image mode {label!r}")
+    time.sleep(0.25)
+    return True
+
+
+def _grok_click_generate_cdp(page: Page) -> None:
+    page.evaluate(_GROK_FOCUS_COMPOSER_JS)
+    time.sleep(0.2)
+    pt = page.evaluate("""() => {
+      const input = document.querySelector('[data-testid="chat-input"]');
+      if (!input) return null;
+      let card = input;
+      for (let i = 0; i < 8; i++) {
+        card = card.parentElement;
+        if (!card) break;
+        const r = card.getBoundingClientRect();
+        if (r.width > 380 && r.height > 100) {
+          return { x: r.right - 32, y: r.bottom - 32 };
+        }
+      }
+      return null;
+    }""")
+    if pt:
+        page.mouse.click(float(pt["x"]), float(pt["y"]))
+        log(f"Grok CDP: mouse Submit at ({pt['x']:.0f},{pt['y']:.0f})")
+        time.sleep(0.5)
+        return
+    clicked = page.evaluate(_GROK_CLICK_SUBMIT_NEAR_INPUT_JS)
+    if clicked:
+        log(f"Grok CDP: clicked Submit near input ({clicked!r})")
+        return
+    for sel in (
+        'button[aria-label="Submit"]',
+        'button[aria-label="Send"]',
+        'button[aria-label="生成"]',
+    ):
+        loc = page.locator(sel)
+        if loc.count() > 0:
+            loc.first.click(timeout=5000, force=True)
+            log(f"Grok CDP: clicked generate via {sel}")
+            return
+    label = page.evaluate(_GROK_CLICK_GENERATE_JS)
+    if label:
+        log(f"Grok CDP: clicked generate {label!r}")
+        return
+    raise RuntimeError("Grok Submit 按钮未找到（右下角蓝色上箭头）")
+
+
+def _grok_wait_image_ready_cdp(
+    page: Page, timeout_s: float = GROK_IMAGE_READY_TIMEOUT_S
+) -> None:
+    started = time.monotonic()
+    log(f"waiting for Grok image via CDP (up to {int(timeout_s)}s)…")
+    while time.monotonic() - started < timeout_s:
+        elapsed = time.monotonic() - started
+        try:
+            generating = bool(page.evaluate(_GROK_IS_GENERATING_JS))
+            has_output = bool(page.evaluate(_GROK_HAS_OUTPUT_IMAGE_JS))
+        except Exception as exc:
+            log(f"Grok CDP image wait probe failed: {exc}")
+            generating = False
+            has_output = False
+        log(
+            f"grok image CDP wait {elapsed:.0f}s "
+            f"generating={generating} output={has_output}"
+        )
+        if (
+            elapsed >= GROK_IMAGE_READY_MIN_S
+            and not generating
+            and has_output
+        ):
+            time.sleep(2.0)
+            try:
+                still_gen = bool(page.evaluate(_GROK_IS_GENERATING_JS))
+                still_out = bool(page.evaluate(_GROK_HAS_OUTPUT_IMAGE_JS))
+            except Exception:
+                still_gen = True
+                still_out = False
+            if not still_gen and still_out:
+                log("Grok image looks ready (CDP)")
+                return
+        time.sleep(4.0)
+    raise RuntimeError(
+        f"等了 {int(timeout_s // 60)} 分钟 Grok image 仍在生成。请看该标签是否卡住。"
+    )
+
+
+def _grok_composer_has_image_page(page: Page) -> bool:
+    try:
+        return bool(page.evaluate(_GROK_COMPOSER_HAS_IMAGE_JS))
+    except Exception as exc:
+        log(f"Grok composer image probe failed: {exc}")
+        return False
+
+
+def _grok_wait_image_attached(page: Page, timeout_s: float = GROK_IMAGE_ATTACH_TIMEOUT_S) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _grok_composer_has_image_page(page):
+            return True
+        time.sleep(0.35)
+    return False
+
+
+def _grok_focus_editor(page: Page):
+    for sel in (GROK_EDITOR_SEL, GROK_EDITOR_ALT_SEL):
+        loc = page.locator(sel)
+        if loc.count() > 0:
+            loc.first.wait_for(state="visible", timeout=12_000)
+            loc.first.click(timeout=8000)
+            return loc.first
+    raise RuntimeError("Grok ProseMirror editor not found")
+
+
+def _grok_paste_cover_image_cdp(page: Page, cover_png: Path) -> bool:
+    """Paste cover via Ctrl+V (Hermes), file-input fallback if needed."""
+    path_str = str(cover_png)
+    page.bring_to_front()
+    try:
+        page.locator('[data-testid="chat-input"]').wait_for(
+            state="visible", timeout=25_000
+        )
+    except Exception as exc:
+        log(f"Grok CDP: chat-input wait failed: {exc}")
+    page.wait_for_load_state("domcontentloaded", timeout=20_000)
+    time.sleep(2.0)
+
+    _restore_windows_clipboard_image_from_png(cover_png)
+    for attempt in range(1, 4):
+        try:
+            editor = page.locator(GROK_EDITOR_SEL).first
+            if editor.count() > 0:
+                editor.click(timeout=8000)
+            else:
+                page.evaluate(_GROK_FOCUS_COMPOSER_JS)
+            time.sleep(0.4)
+            page.keyboard.press("Control+V")
+            log(f"Grok CDP: Control+V cover attempt {attempt}")
+            if _grok_wait_image_attached(page, 10.0):
+                return True
+            time.sleep(1.0)
+        except Exception as exc:
+            log(f"Grok CDP cover Ctrl+V attempt {attempt}: {exc}")
+
+    try:
+        file_input = page.locator(GROK_FILE_INPUT_SEL)
+        if file_input.count() > 0:
+            file_input.set_input_files(path_str)
+            log("Grok CDP: cover via set_input_files fallback")
+            if _grok_wait_image_attached(page, 15.0):
+                return True
+    except Exception as exc:
+        log(f"Grok CDP cover file-input fallback: {exc}")
+
+    try:
+        with page.expect_file_chooser(timeout=10_000) as fc_info:
+            page.evaluate(_GROK_OPEN_FILE_CHOOSER_JS)
+        fc_info.value.set_files(path_str)
+        log("Grok CDP: cover via file chooser fallback")
+        if _grok_wait_image_attached(page, 15.0):
+            return True
+    except Exception as exc:
+        log(f"Grok CDP cover file chooser fallback: {exc}")
+
+    return False
+
+
+def _grok_paste_image_clipboard_cdp(page: Page) -> bool:
+    """Legacy wrapper — requires cover_png on caller."""
+    return False
+
+
+def _grok_paste_image_cdp(page: Page) -> bool:
+    return _grok_paste_image_clipboard_cdp(page)
+
+
+def _grok_set_aspect_916_cdp(page: Page) -> bool:
+    try:
+        label = page.evaluate(_GROK_ASPECT_916_JS)
+        log(f"Grok CDP aspect selected: {label!r}")
+        return bool(label)
+    except Exception as exc:
+        log(f"Grok CDP aspect failed: {exc}")
+        return False
+
+
+def _grok_prepare_tab_cdp(page: Page, *, paste_image: bool) -> bool:
+    pasted = False
+    if paste_image:
+        cover = _grok_resolve_cover_png()
+        if cover:
+            pasted = _grok_paste_cover_image_cdp(page, cover)
+            try:
+                cover.unlink(missing_ok=True)
+            except OSError:
+                pass
+    _grok_set_aspect_916_cdp(page)
+    return pasted or not paste_image
+
+
+def _grok_generate_image_on_tab_cdp(page: Page) -> None:
+    """Switch to 图片 mode, click Submit (blue up-arrow), wait until image ready."""
+    _grok_click_image_mode_cdp(page)
+    time.sleep(0.3)
+    _grok_click_generate_cdp(page)
+    time.sleep(0.6)
+    _grok_wait_image_ready_cdp(page)
+
+
+def _grok_prepare_all_tabs_cdp(
+    n: int,
+    *,
+    cover_png: Path | None = None,
+    port: int | None = None,
+    fresh_tabs: bool = False,
+    scene_prompts: list[tuple[str, str]] | None = None,
+    auto_generate: bool = False,
+) -> tuple[int, int]:
+    """Prepare N Grok Imagine tabs. Returns (image_paste_ok_count, prompt_paste_ok_count)."""
+    port = int(port or _grok_cdp_port())
+    if not cdp_ready(port):
+        raise RuntimeError(f"Grok CDP not listening on {port}")
+    pasted = 0
+    prompts_done = 0
+    if cover_png is None or not cover_png.is_file():
+        cover_png = _grok_resolve_cover_png()
+    paste_image = cover_png is not None and cover_png.is_file()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            if not browser.contexts:
+                raise RuntimeError("Grok CDP connected but no browser context")
+            ctx = browser.contexts[0]
+            pages: list[Page] = []
+            if fresh_tabs:
+                # Hermes model: open tab → wait → paste cover → 9:16 (one tab at a time)
+                log(f"Grok round 1: open + paste cover on {n} tab(s)")
+                for i in range(n):
+                    tab_no = i + 1
+                    pg = ctx.new_page()
+                    pg.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=60_000)
+                    pages.append(pg)
+                    log(f"Grok round 1 tab {tab_no}/{n} opened {pg.url}")
+                    if paste_image and cover_png:
+                        if _grok_paste_cover_image_cdp(pg, cover_png):
+                            pasted += 1
+                            log(f"Grok tab {tab_no}: cover pasted")
+                        else:
+                            raise RuntimeError(
+                                f"第一轮：标签 {tab_no} 封面图粘贴失败。"
+                            )
+                        _grok_set_aspect_916_cdp(pg)
+                        time.sleep(0.25)
+                log(f"Grok round 1 done: {pasted}/{n} tabs have cover")
+            else:
+                pages = _grok_imagine_pages(ctx)
+                need = max(0, n - len(pages))
+                for _ in range(need):
+                    pg = ctx.new_page()
+                    pg.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=60_000)
+                    time.sleep(0.6)
+                pages = _grok_imagine_pages(ctx)
+                if len(pages) < n:
+                    raise RuntimeError(
+                        f"Grok CDP found {len(pages)} imagine tab(s), need {n}. "
+                        "请重发 gr 1。"
+                    )
+                if paste_image and cover_png:
+                    log(f"Grok round 1: paste cover to {n} existing tab(s)")
+                    for i in range(n):
+                        tab_no = i + 1
+                        page = pages[i]
+                        log(f"Grok round 1 tab {tab_no}/{n}")
+                        if _grok_paste_cover_image_cdp(page, cover_png):
+                            pasted += 1
+                        else:
+                            raise RuntimeError(
+                                f"第一轮：标签 {tab_no} 封面图粘贴失败。"
+                            )
+                        _grok_set_aspect_916_cdp(page)
+                        time.sleep(0.25)
+
+            # ── Round 2: scene prompt + Submit per tab ──
+            if scene_prompts:
+                log(f"Grok round 2: scene prompts + Submit on {n} tab(s)")
+                for i in range(n):
+                    tab_no = i + 1
+                    page = pages[i]
+                    if i >= len(scene_prompts):
+                        break
+                    lbl, prompt = scene_prompts[i]
+                    log(f"Grok round 2 tab {tab_no}/{n} ({lbl})")
+                    page.bring_to_front()
+                    page.wait_for_load_state("domcontentloaded", timeout=20_000)
+                    time.sleep(0.8)
+                    _grok_paste_prompt_cdp(page, prompt)
+                    prompts_done += 1
+                    log(f"Grok tab {tab_no}: scene prompt set")
+                    if auto_generate:
+                        log(f"Grok tab {tab_no}: clicking Submit…")
+                        _grok_generate_image_on_tab_cdp(page)
+                        log(f"Grok tab {tab_no}: image generation complete")
+    finally:
+        if cover_png is not None:
+            try:
+                cover_png.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return pasted, prompts_done
+
+
+def _grok_run_on_tab(tab_index: int, fn, *, port: int | None = None) -> Any:
+    port = int(port or _grok_cdp_port())
+    if not cdp_ready(port):
+        raise RuntimeError(f"Grok CDP not listening on {port}")
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        if not browser.contexts:
+            raise RuntimeError("Grok CDP connected but no browser context")
+        ctx = browser.contexts[0]
+        pages = _grok_imagine_pages(ctx)
+        if tab_index < 1 or tab_index > len(pages):
+            raise RuntimeError(
+                f"Grok CDP tab {tab_index} not found ({len(pages)} imagine page(s))"
+            )
+        page = pages[tab_index - 1]
+        page.bring_to_front()
+        time.sleep(0.35)
+        return fn(page)
+
+
+def _click_uia_ctrl(ctrl) -> bool:
+    box = _ctrl_box(ctrl)
+    if not box:
+        return False
+    left, top, right, bottom = box
+
+    class _Rect:
+        pass
+
+    rect = _Rect()
+    rect.left = left
+    rect.top = top
+    rect.right = right
+    rect.bottom = bottom
+    rect.width = lambda: right - left
+    rect.height = lambda: bottom - top
+    return _click_rect_center(rect)
 
 
 def _find_grok_chrome_hwnd() -> Optional[int]:
@@ -2449,32 +5837,118 @@ def _focus_grok_tab(hwnd: int, index: int) -> None:
 
 
 def _click_grok_composer(hwnd: int) -> None:
-    if _click_named(
-        hwnd,
+    _click_grok_prompt_input(hwnd)
+
+
+def _click_grok_prompt_input(hwnd: int) -> None:
+    """Focus the central prompt box (输入或粘贴图像 / 输入你的想象)."""
+    for name in (
+        "输入或粘贴图像",
+        "输入你的想象",
         "Ask Grok",
-        ["EditControl", "ComboBoxControl"],
-        search_depth=14,
-    ):
-        return
-    if _click_named(
-        hwnd,
         "What do you want",
-        ["EditControl"],
-        search_depth=14,
-    ):
-        return
-    if _click_named(
-        hwnd,
         "Message",
-        ["EditControl"],
-        search_depth=14,
     ):
-        return
-    _click_ratio(hwnd, 0.50, 0.90, pause=0.25)
+        if _click_named(
+            hwnd,
+            name,
+            ["EditControl", "TextControl", "ComboBoxControl"],
+            search_depth=14,
+        ):
+            return
+    log("ratio-click Grok prompt input")
+    _click_ratio(hwnd, GROK_PROMPT_X, GROK_PROMPT_Y, pause=0.3)
+
+
+def _grok_composer_has_image_hwnd(hwnd: int) -> bool:
+    for name in ("Remove image", "Remove", "移除图片", "移除"):
+        if _named_exists(
+            hwnd, name, ["ButtonControl"], search_depth=16, timeout_s=0.15
+        ):
+            return True
+    return False
+
+
+def _paste_grok_via_upload_dialog(hwnd: int) -> bool:
+    """Physical 上传 → file path, or prompt Ctrl+V (no CDP)."""
+    import pyautogui
+    from aiagent.win_gui_tasks import set_foreground
+
+    temp = _clipboard_image_to_temp_png()
+    if temp is None:
+        return False
+    pyautogui.FAILSAFE = False
+    set_foreground(hwnd)
+    time.sleep(0.35)
+    _force_english_ime()
+    path_str = str(temp)
+
+    if _click_named(hwnd, "上传", ["ButtonControl"], search_depth=16):
+        time.sleep(1.0)
+        pyautogui.hotkey("alt", "d")
+        time.sleep(0.25)
+        pyautogui.write(path_str, interval=0.012)
+        time.sleep(0.2)
+        pyautogui.press("enter")
+        time.sleep(1.2)
+        if _grok_composer_has_image_hwnd(hwnd):
+            log("hwnd paste ok via 上传 + file path")
+            return True
+
+    log("hwnd paste: click prompt + Ctrl+V")
+    _click_grok_prompt_input(hwnd)
+    time.sleep(0.35)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(1.2)
+    if _grok_composer_has_image_hwnd(hwnd):
+        log("hwnd paste ok via Ctrl+V")
+        return True
+    return False
+
+
+def _prepare_all_grok_via_hwnd(n: int, *, paste_image: bool) -> int:
+    hwnd = _focus_grok_window()
+    pasted = 0
+    for i in range(1, n + 1):
+        log(f"hwnd prepare Grok tab {i}/{n}")
+        _focus_grok_tab(hwnd, i)
+        _wait_grok_composer_ready(hwnd)
+        if paste_image and _paste_grok_via_upload_dialog(hwnd):
+            pasted += 1
+        _click_grok_aspect_ratio_916(hwnd)
+        time.sleep(0.25)
+    return pasted
+
+
+def _paste_image_into_grok_composer(hwnd: int, tab_index: int = 1) -> bool:
+    """Paste clipboard bitmap into the Grok Imagine prompt area."""
+    if not _clipboard_has_image():
+        return False
+    if cdp_ready(_grok_cdp_port()):
+        try:
+            return bool(
+                _grok_run_on_tab(
+                    tab_index,
+                    lambda page: _grok_paste_image_cdp(page),
+                )
+            )
+        except Exception as exc:
+            log(f"Grok CDP paste error tab {tab_index}: {exc}")
+
+    import pyautogui
+
+    pyautogui.FAILSAFE = False
+    _force_english_ime()
+    log("UIA fallback: click prompt then Ctrl+V clipboard image")
+    _click_grok_prompt_input(hwnd)
+    time.sleep(0.35)
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(1.0)
+    return False
 
 
 def _click_grok_image_mode(hwnd: int) -> None:
-    """First icon beside + under the composer → 图片 / Image."""
+    """Picture icon beside + on the composer toolbar."""
     if _click_named(
         hwnd, "图片", ["ButtonControl", "RadioButtonControl"], search_depth=14
     ):
@@ -2483,9 +5957,77 @@ def _click_grok_image_mode(hwnd: int) -> None:
         hwnd, "Image", ["ButtonControl", "RadioButtonControl"], search_depth=14
     ):
         return
-    # + is left of the composer pill; first icon sits just to its right.
-    _click_ratio(hwnd, 0.305, 0.905, pause=0.25)
-    _click_ratio(hwnd, 0.328, 0.905, pause=0.2)
+    _click_ratio(hwnd, GROK_IMAGE_ICON_X, GROK_TOOLBAR_Y, pause=0.25)
+
+
+def _click_grok_aspect_ratio_916(hwnd: int) -> None:
+    """Toolbar 9:16 pill → dropdown → 9:16 竖屏 (see user screenshot)."""
+    _left, top, _w, height = _chrome_window_rect(hwnd)
+    toolbar_y = top + int(height * 0.50)
+
+    toolbar_btn = None
+    best_y = -1
+    for ctrl in _uia_named_all(
+        hwnd,
+        "9:16",
+        ["ButtonControl", "TextControl"],
+        search_depth=16,
+        limit=8,
+    ):
+        box = _ctrl_box(ctrl)
+        if not box:
+            continue
+        cy = (box[1] + box[3]) // 2
+        if cy >= toolbar_y and cy > best_y:
+            best_y = cy
+            toolbar_btn = ctrl
+
+    if toolbar_btn is not None:
+        log("UIA click toolbar 9:16 pill")
+        _click_uia_ctrl(toolbar_btn)
+    else:
+        log("ratio-click toolbar 9:16 pill")
+        _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_TOOLBAR_Y, pause=0.35)
+    time.sleep(0.45)
+
+    for opt in ("9:16 竖屏", "9:16 Vertical", "9:16 vertical", "竖屏"):
+        if _click_named(
+            hwnd,
+            opt,
+            ["MenuItemControl", "ButtonControl", "TextControl", "ListItemControl"],
+            search_depth=16,
+        ):
+            log(f"selected aspect ratio {opt!r}")
+            time.sleep(0.2)
+            return
+
+    log("ratio-click dropdown item 9:16 竖屏")
+    _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_ASPECT_MENU_Y, pause=0.25)
+
+
+def _prepare_grok_imagine_tab(
+    hwnd: int, tab_index: int = 1, *, paste_image: bool = False
+) -> bool:
+    """Current Grok tab: paste cover image, then set 9:16 竖屏. Returns paste ok."""
+    if not _wait_grok_composer_ready(hwnd):
+        log("Grok composer not confirmed by UIA; continuing")
+    if cdp_ready(_grok_cdp_port()):
+        try:
+            return bool(
+                _grok_run_on_tab(
+                    tab_index,
+                    lambda page: _grok_prepare_tab_cdp(page, paste_image=paste_image),
+                )
+            )
+        except Exception as exc:
+            log(f"Grok CDP prepare tab {tab_index} failed: {exc}; UIA fallback")
+
+    pasted = False
+    if paste_image:
+        pasted = _paste_image_into_grok_composer(hwnd, tab_index)
+    _click_grok_aspect_ratio_916(hwnd)
+    time.sleep(0.2)
+    return pasted or not paste_image
 
 
 def _click_grok_video_mode(hwnd: int) -> None:
@@ -2498,9 +6040,8 @@ def _click_grok_video_mode(hwnd: int) -> None:
         hwnd, "Video", ["ButtonControl", "RadioButtonControl"], search_depth=14
     ):
         return
-    # First icon ~0.305–0.328; second is one slot to the right.
-    _click_ratio(hwnd, 0.350, 0.905, pause=0.25)
-    _click_ratio(hwnd, 0.372, 0.905, pause=0.2)
+    _click_ratio(hwnd, 0.430, GROK_TOOLBAR_Y, pause=0.25)
+    _click_ratio(hwnd, 0.450, GROK_TOOLBAR_Y, pause=0.2)
 
 
 def _click_grok_video_settings(hwnd: int) -> None:
@@ -2532,45 +6073,69 @@ def _click_grok_generate(hwnd: int) -> None:
             hwnd, name, ["ButtonControl"], search_depth=14
         ):
             return
-    _click_ratio(hwnd, 0.74, 0.905, pause=0.3)
-    _click_ratio(hwnd, 0.78, 0.905, pause=0.2)
+    _click_ratio(hwnd, GROK_GENERATE_X, GROK_TOOLBAR_Y, pause=0.3)
 
 
 def paste_image_into_all_grok_tabs() -> str:
-    """Paste the clipboard image into every open Grok Imagine tab composer."""
-    import pyautogui
-
-    pyautogui.FAILSAFE = False
+    """Paste clipboard image + 9:16 竖屏 on every open Grok Imagine tab."""
     n = _grok_recorded_tab_count() or 1
-    hwnd = _focus_grok_window()
-    for i in range(1, n + 1):
-        log(f"paste whole-story image into Grok tab {i}/{n}")
-        _focus_grok_tab(hwnd, i)
-        _click_grok_composer(hwnd)
-        time.sleep(0.2)
-        pyautogui.hotkey("ctrl", "v")
-        time.sleep(0.85)
-    return f"pasted image into {n} Grok Imagine tab(s)"
+    port = _grok_resolve_cdp_port()
+    cover_png = _grok_resolve_cover_png()
+    pasted_n, _prompt_n = _grok_prepare_all_tabs_cdp(
+        n, cover_png=cover_png, port=port, fresh_tabs=False
+    )
+    if pasted_n < n:
+        raise RuntimeError(
+            f"只成功粘贴 {pasted_n}/{n} 个 Grok 标签。"
+            "请确认剪贴板有图片，并确保 Grok 窗口在前台后重发 gr paste。"
+        )
+    return f"pasted image + 9:16 竖屏 on {n} Grok Imagine tab(s) (verified)"
 
 
 def apply_grok_image_prompt_to_tab(tab_index: int, prompt: str) -> str:
-    """Paste prompt into Grok tab N, switch to 图片, Generate, wait until ready."""
-    hwnd = _focus_grok_window()
-    n = _grok_recorded_tab_count() or 1
-    if tab_index < 1 or tab_index > n:
-        raise RuntimeError(
-            f"没有第 {tab_index} 个 Grok 标签（当前记录 {n} 个）。"
-        )
-    _focus_grok_tab(hwnd, tab_index)
-    _paste_grok_composer_text(hwnd, prompt, replace=True)
-    _click_grok_image_mode(hwnd)
-    time.sleep(0.25)
-    _click_grok_generate(hwnd)
-    time.sleep(0.6)
-    _wait_grok_image_ready(hwnd)
+    """Reuse gr's Grok Imagine tab N: paste prompt, 图片 mode, Generate, wait."""
+    port = _grok_attach_cdp_port(allow_launch=False)
+    recorded = _grok_recorded_tab_count()
+
+    def _apply(page: Page) -> bool:
+        page.bring_to_front()
+        page.wait_for_load_state("domcontentloaded", timeout=20_000)
+        time.sleep(0.6)
+        _grok_paste_prompt_cdp(page, prompt)
+        _grok_click_image_mode_cdp(page)
+        time.sleep(0.3)
+        _grok_click_generate_cdp(page)
+        time.sleep(0.6)
+        _grok_wait_image_ready_cdp(page)
+        return True
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        if not browser.contexts:
+            raise RuntimeError("Grok CDP connected but no browser context")
+        pages = _grok_imagine_pages(browser.contexts[0])
+        n = len(pages)
+        if n < 1:
+            raise RuntimeError(
+                "找不到 grok.com/imagine 标签。请先 gr 1 打开标签。"
+            )
+        if tab_index < 1 or tab_index > n:
+            raise RuntimeError(
+                f"没有第 {tab_index} 个 Grok Imagine 标签（当前 {n} 个）。"
+                "请先 gr 开够标签。"
+            )
+        if recorded and tab_index > recorded:
+            raise RuntimeError(
+                f"第 {tab_index} 个标签超出 LM 记录的 {recorded} 个场景。"
+                f"只发 gri 1…{recorded}。"
+            )
+        page = pages[tab_index - 1]
+        log(f"gri: reuse tab {tab_index}/{n} url={page.url}")
+        _apply(page)
+
     return (
-        f"Grok tab {tab_index}: prompt verified, 图片 mode, "
-        f"Generate done — image ready"
+        f"Grok tab {tab_index}/{n}: prompt pasted (reuse, CDP verified), "
+        f"图片 mode, Generate done — image ready"
     )
 
 
@@ -2606,13 +6171,6 @@ def apply_grok_video_prompt_to_tab(tab_index: int, prompt: str = "") -> str:
         f"Grok tab {tab_index}: video prompt verified, Video mode, "
         f"Generate done — video ready"
     )
-
-
-GROK_IMAGE_READY_MIN_S = 6
-GROK_IMAGE_READY_TIMEOUT_S = 6 * 60
-GROK_VIDEO_READY_MIN_S = 8
-GROK_VIDEO_READY_TIMEOUT_S = 8 * 60
-GROK_DOWNLOAD_TIMEOUT_S = 120
 
 
 def _grok_still_generating(hwnd: int) -> bool:

@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import os
 import re
 import sys
+import threading
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 try:
     import uiautomation as auto
@@ -54,6 +56,64 @@ except Exception:
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
+
+_COINIT_APARTMENTTHREADED = 0x2
+_S_OK = 0
+_S_FALSE = 1
+
+
+def ensure_uia_com() -> None:
+    """Initialize COM in *this* thread so UIAutomation can load.
+
+    Telegram job/ui lanes and ``call_with_timeout`` workers are not the process
+    main thread. Without CoInitialize, every UIA call prints
+    ``CoInitialize has not been called`` / ``Can not load UIAutomationCore.dll``
+    and silently fails — which is why ``nbi`` opens the home page then never
+    clicks Story Builder.
+    """
+    t = threading.current_thread()
+    if getattr(t, "_aic_uia_com", False):
+        return
+    hr = -1
+    try:
+        hr = int(ctypes.windll.ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED))
+    except Exception:
+        try:
+            hr = int(ctypes.windll.ole32.CoInitialize(None))
+        except Exception:
+            hr = -1
+    t._aic_uia_com = True
+    if hr not in (_S_OK, _S_FALSE) and hr not in (0, 1):
+        # RPC_E_CHANGED_MODE (0x80010106): already initialized as MTA. UIA may
+        # still work; log once so a remaining failure is diagnosable.
+        log(f"CoInitializeEx hr=0x{hr & 0xFFFFFFFF:08X} on {t.name}")
+
+
+def call_with_timeout(fn: Callable[[], Any], timeout_s: float, default: Any = None) -> Any:
+    """Run ``fn`` on a throwaway thread and give up after ``timeout_s``.
+
+    UIAutomation (cross-process COM) and ``AttachThreadInput`` block forever when
+    the target app stops pumping messages. Everything the Telegram listener calls
+    must be able to give up, otherwise the whole listener goes silent.
+    """
+    box: list[Any] = [default]
+    done = threading.Event()
+
+    def _runner() -> None:
+        ensure_uia_com()
+        try:
+            box[0] = fn()
+        except Exception:
+            box[0] = default
+        finally:
+            done.set()
+
+    threading.Thread(target=_runner, daemon=True).start()
+    if not done.wait(timeout_s):
+        log(f"WARNING: call timed out after {timeout_s}s (GUI may be frozen)")
+        return default
+    return box[0]
+
 
 _enum_found: list[tuple[int, str]] = []
 _enum_sub = ""
@@ -139,14 +199,19 @@ def _is_skipped_summary_title(title: str) -> bool:
 def _window_has_button(hwnd: int, button_name: str) -> bool:
     if auto is None or not hwnd:
         return False
-    try:
-        root = auto.ControlFromHandle(hwnd)
-        if not root:
+
+    def _probe() -> bool:
+        try:
+            root = auto.ControlFromHandle(hwnd)
+            if not root:
+                return False
+            btn = root.ButtonControl(searchDepth=12, Name=button_name)
+            return bool(btn.Exists(0.12, 0.04))
+        except Exception:
             return False
-        btn = root.ButtonControl(searchDepth=12, Name=button_name)
-        return bool(btn.Exists(0.12, 0.04))
-    except Exception:
-        return False
+
+    # UIA talks COM to the other process; a frozen GUI would hang us forever.
+    return bool(call_with_timeout(_probe, 2.0, False))
 
 
 def _pick_summary_candidate(candidates: list[tuple[int, str]]) -> Optional[int]:
@@ -219,10 +284,33 @@ def find_yt_tools_window() -> Optional[int]:
     return None
 
 
+def owns_window(hwnd: int) -> bool:
+    """True when hwnd belongs to this very process."""
+    if not hwnd or win32process is None:
+        return False
+    try:
+        _tid, pid = win32process.GetWindowThreadProcessId(int(hwnd))
+    except Exception:
+        return False
+    return int(pid or 0) == os.getpid()
+
+
 def set_foreground(hwnd: int) -> None:
-    """Bring hwnd in front of Cursor / Telegram. Windows blocks naive SetForegroundWindow."""
+    """Bring hwnd in front of Cursor / Telegram, giving up if the target is frozen."""
     if not hwnd or win32gui is None:
         return
+    if owns_window(hwnd):
+        # Self-deadlock guard: AttachThreadInput / SetForegroundWindow wait for the
+        # target window's thread to pump messages. On our own window that thread is
+        # the caller (blocked in call_with_timeout), so nobody pumps and the GUI
+        # wedges for good. In-process callers must use Tk's lift/focus_force.
+        log(f"refusing to win32-foreground our own window hwnd={hwnd}; use Tk lift()")
+        return
+    # AttachThreadInput blocks indefinitely when the target thread stops pumping.
+    call_with_timeout(lambda: _set_foreground_blocking(hwnd), 3.0, None)
+
+
+def _set_foreground_blocking(hwnd: int) -> None:
     user32 = ctypes.windll.user32
     try:
         if win32con is not None:
@@ -270,6 +358,17 @@ def set_foreground(hwnd: int) -> None:
         log(f"warning: could not foreground hwnd={hwnd}: {exc}")
 
 
+def flash_window(hwnd: int, *, until_foreground: bool = True) -> None:
+    """Flash taskbar button so the user notices SCENE/STORY behind other apps."""
+    if not hwnd:
+        return
+    try:
+        if win32gui is not None:
+            win32gui.FlashWindow(int(hwnd), bool(until_foreground))
+    except Exception as exc:
+        log(f"warning: FlashWindow hwnd={hwnd}: {exc}")
+
+
 def get_window_rect(hwnd: int) -> Tuple[int, int, int, int]:
     if win32gui is None:
         raise RuntimeError("pywin32 is required for coordinate calculations")
@@ -308,6 +407,10 @@ def try_uia_click(button_name: str, hwnd: Optional[int]) -> bool:
     """Locate a control named button_name and click its physical center."""
     if auto is None or pyautogui is None:
         return False
+    return bool(call_with_timeout(lambda: _try_uia_click_blocking(button_name, hwnd), 8.0, False))
+
+
+def _try_uia_click_blocking(button_name: str, hwnd: Optional[int]) -> bool:
     try:
         root = auto.ControlFromHandle(hwnd) if hwnd else auto.GetForegroundControl()
         if not root:
@@ -390,8 +493,10 @@ def click_app_button(button_name: str) -> bool:
 
 def open_scene_panel() -> bool:
     """Foreground the 摘要窗 and click 场景 until 分镜 / Scene exists."""
-    if find_panel_window():
-        set_foreground(find_panel_window())
+    panel = find_panel_window()
+    if panel:
+        set_foreground(panel)
+        flash_window(panel)
         return True
     hwnd = find_detail_window()
     if not hwnd:
@@ -404,6 +509,7 @@ def open_scene_panel() -> bool:
         panel = find_panel_window()
         if panel:
             set_foreground(panel)
+            flash_window(panel)
             log("分镜 window is open")
             return True
     log("ERROR: 场景 click did not open 分镜 window")
