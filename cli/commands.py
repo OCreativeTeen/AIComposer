@@ -66,10 +66,9 @@ _SHORT_CLI: dict[str, str] = {
     "notebooklm_ready": "nbif",
     "whole_story_image": "igp",
     "whole_story_pick": "itc",
-    "grok_image": "gr",
+    "grok_image": "grv",
     "grok_image_prompt": "gri",
-    "scene_choice": "sc",
-    "grok_video": "grv",
+    "grok_download": "gvd",
     "video_concat": "vc",
     "video_publish": "vp",
     "story_pickup": "pick",
@@ -154,8 +153,7 @@ _ALIASES: dict[str, str] = {
     "infographic_ready": "notebooklm_ready",
     "notebooklm_ready": "notebooklm_ready",
     "gi": "grok_image",
-    "gr": "grok_image",
-    "sc": "scene_choice",
+    "grv": "grok_image",
     "vc": "video_concat",
     "vp": "video_publish",
     "pick": "story_pickup",
@@ -210,15 +208,8 @@ _ALIASES: dict[str, str] = {
     "grok_prompt": "grok_image_prompt",
     "gip": "grok_image_prompt",
     "gri": "grok_image_prompt",
-    "scenechoice": "scene_choice",
-    "scene_index": "scene_choice",
-    "sceneidx": "scene_choice",
-    "场景选择": "scene_choice",
-    "gork_video": "grok_video",
-    "grok_clip": "grok_video",
-    "gv": "grok_video",
-    "grv": "grok_video",
-    "grvd": "grok_video",
+    "gvd": "grok_download",
+    "grvd": "grok_download",
     "videoconcat": "video_concat",
     "video_join": "video_concat",
     "concat_video": "video_concat",
@@ -334,11 +325,11 @@ def cmd_help() -> tuple[bool, str]:
         f"win={public_screen_name(screen)}  (story=STORY  scene=SCENE  list=LIST  yt=YT)",
         "sync  — 再同步一次",
         "",
-        "SCENE:  lm 4  sty  snp  prf  gem  pst  save  nbp  nbi  nbif  itc  igp  gr  sc  grv  gvd  vc  vp  nbv  gen  cx  sync",
+        "SCENE:  lm 4  sty  snp  prf  gem  pst  save  nbp  nbi  nbif  itc  igp  grv  gvd  vc  vp  nbv  gen  cx  sync",
         "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
-        "lm 4 = 4 Step Story   sc 1 = 场景1+video提示词   grv 1 = 出片   gvd = 下载   nbp 1 = 封面单图",
+        "lm 4 = 4 Step Story   grv 1 [1…8] = 开标签+出图+出片+下载(全自动)   nbv = video变体   gvd = 补下载   nbp 1 = 封面单图",
         "长名仍可用（prompt_choice / gemini / paste_scene …）",
         "",
         "bot:  python -m cli bot",
@@ -700,7 +691,7 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
         return True, _format_numbered_choices(
             f"{shown} 选项（当前 SCENE）：", labels, shown
         )
-    if field in ("lm", "style", "snippet", "scene_choice", "notebooklm"):
+    if field in ("lm", "style", "snippet", "notebooklm"):
         if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
             return False, (
                 f"{shown} 需要 SCENE 已就绪。先发 scn，等窗口出来后再发 {shown} {want}。"
@@ -831,7 +822,7 @@ def cmd_notebooklm_ready(value: str = "") -> tuple[bool, str]:
             f"{shown} — 三个新的 infographic 已经 ready。\n"
             f"Studio 右侧看不到 “Generating infographic...”，"
             f"最上边应是带中文标题的完成项（例如 1 source · …）。\n"
-            f"下一步发 {itc}：打开这三张、拷图保存到 working，再 Telegram 发给你选一张。"
+            f"下一步发 {itc}：打开这三张、下载到 Windows Downloads，再 Telegram 发给你选一张。"
         )
     if st.get("uncertain"):
         return True, (
@@ -995,7 +986,7 @@ def _paste_whole_story_image_to_grok(picked: str, picked_idx: int) -> tuple[bool
     except Exception as exc:
         return True, (
             f"{shown} ok — #{picked_idx} {os.path.basename(picked)} → clipboard\n"
-            f"未能贴进 Grok（{exc}）。请先 gr 开标签，再重发 {shown}。"
+            f"未能贴进 Grok（{exc}）。请先 grv 开标签，再重发 {shown}。"
         )
     return True, (
         f"{shown} ok — #{picked_idx} {os.path.basename(picked)} → clipboard; {extra}"
@@ -1069,9 +1060,14 @@ def cmd_whole_story_image(value: str = "") -> tuple[bool, str]:
 
 
 def cmd_grok_image(value: str = "") -> tuple[bool, str]:
-    """Pick a Chrome profile, open N grok.com/imagine tabs from story_scene_prompt_choice."""
+    """Pick Chrome profile + optional video prompt variant (1…8), open Grok Imagine tabs."""
     import config
-    from utility.telegram_session import load_story_scene_prompt_choice
+    import config_prompt
+    from utility.telegram_session import (
+        load_grok_scene_video_nb_index,
+        load_story_scene_prompt_choice,
+        save_grok_scene_video_nb_index,
+    )
 
     shown = short_cli("grok_image")
     choice = load_story_scene_prompt_choice()
@@ -1091,38 +1087,64 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
         except Exception as exc:
             return False, f"{shown} prep failed: {exc}"
         return True, f"{shown} prep ok — {detail}"
-    if not want:
-        return True, _format_chrome_profile_choices(
-            f"{shown} 先选 Chrome profile（将开 {tabs} 个 Imagine 标签，LM={label}；建议选本轮还没用过的）：",
-            shown,
-            "grok",
+    parts = [p for p in want.split() if p]
+    video_nb_index: int | None = None
+    profile_want = ""
+    if len(parts) >= 2 and parts[-1].isdigit():
+        vi = int(parts[-1])
+        n_var = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
+        if 1 <= vi <= n_var:
+            video_nb_index = vi
+            profile_want = parts[0]
+    elif parts:
+        profile_want = parts[0]
+    if not profile_want:
+        cur_v = load_grok_scene_video_nb_index()
+        return True, (
+            _format_chrome_profile_choices(
+                f"{shown} 先选 Chrome profile（将开 {tabs} 个 Imagine 标签，LM={label}）：",
+                shown,
+                "grok",
+            )
+            + "\n\n"
+            + config_prompt.format_grok_scene_video_nb_choices()
+            + f"\n当前 video 变体：{cur_v}（"
+            + config_prompt.grok_scene_video_nb_choice_label(cur_v)
+            + "）\n"
+            f"例：{shown} 1 {cur_v}  或  {shown} 1 5"
         )
     try:
-        selected = config.set_gemini_chrome_profile(want)
+        selected = config.set_gemini_chrome_profile(profile_want)
     except ValueError as exc:
         return False, str(exc) + "\n\n" + _format_chrome_profile_choices(
             f"{shown} 选项：", shown, "grok"
         )
     _record_chrome_profile("grok", selected)
 
+    if video_nb_index is not None:
+        save_grok_scene_video_nb_index(video_nb_index)
+    v_idx = video_nb_index if video_nb_index is not None else load_grok_scene_video_nb_index()
+    v_label = config_prompt.grok_scene_video_nb_choice_label(v_idx)
+
     from aiagent.browser_tasks import handle_grok_imagine_tabs
 
     try:
-        detail = handle_grok_imagine_tabs()
+        detail = handle_grok_imagine_tabs(video_nb_index=v_idx)
     except Exception as exc:
         return False, f"{shown} failed ({selected['label']}): {exc}"
     return True, (
-        f"{shown} ok — profile={selected['label']}  LM={label}  tabs={tabs}\n{detail}"
+        f"{shown} ok — profile={selected['label']}  LM={label}  tabs={tabs}  "
+        f"video_nb={v_idx} ({v_label})\n{detail}"
     )
 
 
 def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
-    """Deprecated: scene image prompts are applied by ``gr`` automatically."""
+    """Deprecated: scene image prompts are applied by ``grv`` automatically."""
     import config_prompt
     from utility.telegram_session import load_story_scene_prompt_choice
 
     shown = short_cli("grok_image_prompt")
-    gr = short_cli("grok_image")
+    grv = short_cli("grok_image")
     rows = [
         (str(lbl).strip(), str(tpl or ""))
         for lbl, tpl in (config_prompt.DIRECT_VIDEO_PROMPT_CHOICES or [])
@@ -1138,156 +1160,42 @@ def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
     video_rows = rows[4:]
     if n < 1:
         active_rows = rows
-        lm_note = f"还没记下 LM；先发 lm 再 {gr}。"
+        lm_note = f"还没记下 LM；先发 lm 再 {grv}。"
     else:
         active_rows = image_rows[:n] + video_rows
-        lm_note = f"LM={lm_label} → 场景图已并入 {gr}（{gr} 1 自动贴封面 + Image 1…{n} 提示词）"
+        lm_note = f"LM={lm_label} → 场景图已并入 {grv}（{grv} 1 自动贴封面 + Image 1…{n} 提示词）"
 
     labels = [lbl for lbl, _ in active_rows]
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
     if want:
         return False, (
-            f"{shown} 已合并到 {gr}：请发 {gr} 1，会自动在每个 Grok 标签贴封面图"
+            f"{shown} 已合并到 {grv}：请发 {grv} 1，会自动在每个 Grok 标签贴封面图"
             f"+ 对应场景提示词（Image to Detail-Single-Step-Image 1…{n or 'N'}）。"
-            f"\n视频提示词仍用 sc i → grv i。"
+            f"\nvideo 提示词由 {grv} 自动按 nbv/grv 变体粘贴并生成。"
         )
-    title = f"{shown} 已合并到 {gr}（下列仅供参考；场景图提示词由 {gr} 自动粘贴）："
+    title = f"{shown} 已合并到 {grv}（下列仅供参考；场景图提示词由 {grv} 自动粘贴）："
     if lm_note:
         title += f"\n{lm_note}"
     return True, _format_numbered_choices(title, labels, shown)
 
 
-def _format_scene_choice_list(labels: list[str], current: str, lm_note: str) -> str:
-    """Values match the GUI button (all / 1 / 2), not 1-based list where 1=All."""
-    lines = ["sc："]
-    for lab in labels:
-        key = "all" if lab.lower() == "all" else lab
-        if key == "all":
-            hint = "所有场景（只改按钮，不拷 video 提示词）"
-        else:
-            hint = f"场景 {lab} + Video/纯画面 → 剪贴板（等同点场景按钮再选 NotebookLM）"
-        lines.append(f"sc {key}: ({hint})")
-    if lm_note:
-        lines.append(lm_note)
-    if current:
-        lines.append(f"当前：{current}")
-    return "\n".join(lines)
-
-
-def cmd_scene_choice(value: str = "") -> tuple[bool, str]:
-    """Set 分镜底栏场景索引；选 1/2/3… 时同时拷 Video/纯画面 到剪贴板（等同场景按钮 + NotebookLM）。"""
-    from utility.telegram_session import load_story_scene_prompt_choice
-
-    rec = load_story_scene_prompt_choice()
-    recorded_n = int(rec.get("tabs") or rec.get("scenes") or 0)
-    lm_label = (rec.get("label") or "").strip()
-    lm_note = ""
-    if lm_label:
-        lm_note = f"记下的 LM：{lm_label} → {recorded_n} 个场景"
-    want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
-
-    ok_ch, msg_ch = send_bridge_command(
-        screen=SCREEN_STORY_SCENE,
-        op="choices",
-        field="scene_choice",
-    )
-    labels: list[str] = []
-    if ok_ch:
-        labels = [ln.strip() for ln in (msg_ch or "").splitlines() if ln.strip()]
-    if not labels:
-        n = recorded_n or 1
-        labels = ["All"] + [str(i) for i in range(1, n + 1)]
-
-    ok_cur, msg_cur = send_bridge_command(
-        screen=SCREEN_STORY_SCENE,
-        op="get",
-        field="scene_choice",
-    )
-    current = ""
-    if ok_cur:
-        current = (msg_cur or "").splitlines()[0].strip() if msg_cur else ""
-
-    if not want:
-        listed = _format_scene_choice_list(labels, current, lm_note)
-        if not ok_ch:
-            listed += (
-                f"\n\n（SCENE 未绑定：{msg_ch}。选中仍需打开 SCENE 并重启 GUI 后再 sc 1。）"
-            )
-        return True, listed
-
-    ok, msg = send_bridge_command(
-        screen=SCREEN_STORY_SCENE,
-        op="set",
-        field="scene_choice",
-        value=want,
-    )
-    if ok:
-        return True, f"sc ok — {msg}"
-    return False, (
-        f"sc 需要 SCENE。先发 scn，再发 sc {want}。\n{msg}"
-    )
-
-
-def cmd_grok_video(value: str = "") -> tuple[bool, str]:
-    """Generate on tab i, or ``download`` all scene clips into Windows Downloads."""
-    from utility.telegram_session import load_story_scene_prompt_choice
-
-    shown = short_cli("grok_video")
-    rec = load_story_scene_prompt_choice()
-    n = int(rec.get("tabs") or rec.get("scenes") or 0)
-    lm_label = (rec.get("label") or "").strip()
-    want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
-    if n < 1:
-        return False, (
-            "还没有记下 LM，不知道有几个场景。\n"
-            "先在 SCENE 发 lm 4，再 grv。"
-        )
-    if not want:
-        labels = [f"场景 {i} → Grok Imagine 标签 {i}" for i in range(1, n + 1)]
-        extra = f"（LM={lm_label} → {n} 个）" if lm_label else f"（{n} 个场景）"
-        listed = _format_numbered_choices(
-            f"{shown} 选项{extra}；剪贴板须已是该场景提示词",
-            labels,
-            shown,
-        )
-        return True, listed + "\ngvd: (全部下载到 Downloads)"
-    low = want.lower().replace(" ", "")
-    if low in ("download", "dl", "下载"):
-        try:
-            from aiagent.browser_tasks import download_grok_scene_videos
-
-            files = download_grok_scene_videos()
-        except Exception as exc:
-            return False, f"gvd failed: {exc}"
-        if not files:
-            return False, "gvd 没有记下任何 mp4"
-        lines = [
-            f"gvd ok — {len(files)} clip(s) → Windows Downloads"
-        ]
-        for item in files:
-            lines.append(
-                f"  scene {item.get('scene')}: {os.path.basename(item.get('path') or '')}"
-            )
-        return True, "\n".join(lines)
-    if not want.isdigit():
-        return False, (
-            f"unknown {shown}: {value}（用 1…{n} 生成，或 gvd）\n\n"
-            + _format_numbered_choices(
-                f"{shown} 选项：",
-                [f"场景 {i}" for i in range(1, n + 1)],
-                shown,
-            )
-        )
-    idx = int(want)
-    if idx < 1 or idx > n:
-        return False, f"没有第 {idx} 个场景（当前记录 {n} 个，LM={lm_label or '?'}）"
+def cmd_grok_download(value: str = "") -> tuple[bool, str]:
+    """Download all Grok scene mp4 clips into Windows Downloads."""
+    _ = value
     try:
-        from aiagent.browser_tasks import apply_grok_video_prompt_to_tab
+        from aiagent.browser_tasks import download_grok_scene_videos
 
-        note = apply_grok_video_prompt_to_tab(idx)
+        files = download_grok_scene_videos()
     except Exception as exc:
-        return False, f"{shown} failed: {exc}"
-    return True, f"{shown} ok — {note}"
+        return False, f"gvd failed: {exc}"
+    if not files:
+        return False, "gvd 没有记下任何 mp4"
+    lines = [f"gvd ok — {len(files)} clip(s) → Windows Downloads"]
+    for item in files:
+        lines.append(
+            f"  scene {item.get('scene')}: {os.path.basename(item.get('path') or '')}"
+        )
+    return True, "\n".join(lines)
 
 
 def cmd_video_concat(value: str = "") -> tuple[bool, str]:
@@ -1299,7 +1207,7 @@ def cmd_video_concat(value: str = "") -> tuple[bool, str]:
     if not clips:
         return False, (
             "还没有记录 grok 场景 video。\n"
-            "等各标签出完片后先发 gvd。"
+            "先 grv（已含每场景下载），或各标签出片后 gvd。"
         )
     preview = "\n".join(
         f"  {item.get('scene')}: {os.path.basename(item.get('path') or '')}"
@@ -1542,9 +1450,33 @@ def dispatch(raw: str) -> tuple[bool, str]:
     if cmd == "story":
         return True, "story 是窗名（STORY），不是命令。打开 SCENE 发 scn。看当前窗发 win。"
     if cmd in ("gvd", "grvd"):
-        return cmd_grok_video("download")
+        return cmd_grok_download(value)
     if cmd == "nbv":
-        return _choice_cli("notebooklm", "notebooklm", "纯画面")
+        import config_prompt
+        from utility.telegram_session import (
+            load_grok_scene_video_nb_index,
+            save_grok_scene_video_nb_index,
+        )
+
+        want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
+        if not want:
+            cur = load_grok_scene_video_nb_index()
+            return True, (
+                config_prompt.format_grok_scene_video_nb_choices()
+                + f"\n当前：{cur}（{config_prompt.grok_scene_video_nb_choice_label(cur)}）"
+                + f"\n用法：nbv 3  切换变体；grv 1 3  一次指定 profile+变体"
+            )
+        if want.isdigit():
+            idx = int(want)
+            try:
+                save_grok_scene_video_nb_index(idx)
+            except ValueError as exc:
+                return False, str(exc)
+            return True, (
+                f"nbv ok — video 提示词变体 {idx}（"
+                f"{config_prompt.grok_scene_video_nb_choice_label(idx)}）"
+            )
+        return _choice_cli("notebooklm", "notebooklm", want)
     if cmd in ("next", "queue_next"):
         from cli.gui_session import is_manual_gui_session
 
@@ -1579,10 +1511,8 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_grok_image(value)
     if cmd == "grok_image_prompt":
         return cmd_grok_image_prompt(value)
-    if cmd == "scene_choice":
-        return cmd_scene_choice(value)
-    if cmd == "grok_video":
-        return cmd_grok_video(value)
+    if cmd == "grok_download":
+        return cmd_grok_download(value)
     if cmd == "video_concat":
         return cmd_video_concat(value)
     if cmd == "video_publish":

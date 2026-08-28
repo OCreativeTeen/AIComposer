@@ -328,7 +328,62 @@ _NB_EXPORT_CHOICE_ALIASES = {
     "video/motion": ("video", "motion"),
     "video_motion": ("video", "motion"),
     "motion": ("video", "motion"),
+    "念speaking": ("speaking", "script"),
+    "念 speaking": ("speaking", "script"),
+    "speaking/script": ("speaking", "script"),
+    "speaking_script": ("speaking", "script"),
+    "speaking/念speaking": ("speaking", "script"),
 }
+
+# Grok 场景 video：NotebookLM 提示词 1…8（video + speaking + voiceover，不含 image）
+GROK_SCENE_VIDEO_NB_VARIANTS: list[tuple[str, str, str]] = [
+    ("video", "motion", "纯画面 · 动作/表情/场景演进（无口播）"),
+    ("video", "word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
+    ("speaking", "script", "念 speaking · 第一人称口播"),
+    ("speaking", "acting", "只演不讲 · 神态/肢体/思考"),
+    ("speaking", "visual_keypoints", "讲解画面要点 · 非念图内文字"),
+    ("voiceover", "narration", "旁白讲述 · 第三人叙述"),
+    ("voiceover", "narration_with_speakingavatar", "旁白讲述 · 主持人说话"),
+    ("voiceover", "supplement", "补充/总结 · 衔接与点评"),
+]
+GROK_SCENE_VIDEO_NB_DEFAULT_INDEX = 3
+
+
+def grok_scene_video_nb_export(index: int | None = None) -> tuple[str, str, str]:
+    """``index`` 1…8 → ``(base, variant, short_label)``."""
+    rows = GROK_SCENE_VIDEO_NB_VARIANTS
+    if not rows:
+        return ("speaking", "script", "念 speaking")
+    try:
+        i = int(index) if index is not None else GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    except (TypeError, ValueError):
+        i = GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    if i < 1 or i > len(rows):
+        i = GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    base, var, lbl = rows[i - 1]
+    return base, var, lbl
+
+
+def grok_scene_video_nb_choice_label(index: int | None = None) -> str:
+    base, var, short = grok_scene_video_nb_export(index)
+    try:
+        return nb_export_mode_label(base, var)
+    except ValueError:
+        return f"{base}/{var} · {short}"
+
+
+def format_grok_scene_video_nb_choices() -> str:
+    lines = ["grv <profile> <1…8>  video 提示词变体："]
+    for i, (base, var, lbl) in enumerate(GROK_SCENE_VIDEO_NB_VARIANTS, start=1):
+        cat = _NB_EXPORT_CAT_LABELS.get(base, base)
+        lines.append(f"  {i}: {cat} / {lbl}  ({base}/{var})")
+    default = GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    lines.append(f"默认：{default}（{grok_scene_video_nb_choice_label(default)}）")
+    return "\n".join(lines)
+
+
+# 兼容旧别名（念 speaking = 3）
+GROK_SCENE_VIDEO_NB_CHOICE = "念speaking"
 
 
 def notebooklm_export_flat_choices(lang_label: str = "") -> list[tuple[str, str, str]]:

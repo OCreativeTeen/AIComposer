@@ -34,7 +34,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 听筒同步里常见：
 
-`lm` `sty` `snp` `prf` `gem` `pst` `save` `nbp` `nbi` `nbif` `itc` `igp` `gr` `gri` `sc` `grv` `grvd` `nbv` `vc` `vp` `sync`
+`lm` `sty` `snp` `prf` `gem` `pst` `save` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
 
 ### STORY（`story_root`）
 
@@ -59,21 +59,21 @@ lm 4               # 选「4 Step Story」，长 prompt 上剪贴板
 gem                # Gemini 生成 4 场 JSON → 剪贴板
 pst                # 剪贴板 JSON 写入 scene_content
 save               # 保存 SCENE
-nbp 1               # 选 NotebookLM 导出类型（先无参看列表）
+nbp 1              # 选 NotebookLM 导出类型（先无参看列表）
 nbi 1              # 选 Chrome 号，开 NotebookLM，Generate ×3 后立刻返回（不等待）
 nbif               # 查询三张新 infographic 是否 ready
 itc                # 当前 NotebookLM 窗口拷最上边三张；窗口关了就 itc 1（Chrome 号）
 itc pick 2         # 选定第 2 张封面（Telegram 直接回 2 也可以）
-igp                # 把已选封面拷剪贴板并贴进所有 Grok 标签
-gr 1               # 选 Chrome 号，按 LM 场景数开 Grok Imagine 标签
-gri 1 … gri 4      # 各场景 Image 出图（Image 模式）
-sc 1 … sc 4        # 场景 i + Video/纯画面 提示词 → 剪贴板（再 grv i）
-grv 1 … grv 4      # 各标签 Video 出片
-grvd               # 下载全部 mp4 到 Downloads（别名 gvd）
+grv 1 3             # 选 Chrome 号 + video 变体 3；全自动出图+出片+每场景下载
+                   # 省略变体时用 session 已存值（默认 3）
+grv 1               # 同上，用已存变体
+gvd                # （可选）补下载全部 mp4（grv 已含下载时通常不必再发）
 vc                 # 拼接成片
 vp default         # 上传 YouTube
 pick next          # 下一条
 ```
+
+**Grok 全自动：** `grv 1 [1…8]` 一轮完成开标签、贴封面、场景出图、video 出片，并在每个标签出片后**立刻 CDP 下载 mp4**（与 `gvd` 同路数）。封面须先 `itc pick`。
 
 ---
 
@@ -191,7 +191,7 @@ pick next          # 下一条
 
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
-| `prf` | `profile` | 序号或邮箱 | 选 Gemini 用 Chrome 账号（`gem`/`nbi`/`gr` 前常选） |
+| `prf` | `profile` | 序号或邮箱 | 选 Gemini 用 Chrome 账号（`gem`/`nbi`/`grv` 前常选） |
 
 ---
 
@@ -203,8 +203,7 @@ pick next          # 下一条
 | `nbi` | `open_notebooklm` | Chrome 序号 | 开 NotebookLM，Generate ×3，立刻返回（不等待、不拷图） |
 | `nbif` | `notebooklm_ready` | 无 | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
 | `itc` | `whole_story_pick` | 无参 / Chrome 号 / `pick N` | 无参：当前窗口拷最上边三张并发 Telegram；`itc N`：用 Chrome 号 N 重开 notebook 再拷图；选封面用 Telegram `1/2/3` 或 `itc pick N` |
-| `nbv` | — | `纯画面` 等 | 可选：仅重拷 Video·纯画面（`sc i` 已含；场景已选时用） |
-| `igp` | `whole_story_image` | 无参或序号 | 无参：贴已选封面进 Grok；`igp N` 选第 N 张并贴 |
+| `igp` | `whole_story_image` | 无参或序号 | 无参：贴已选封面进 Grok；`igp N` 选第 N 张并贴（`grv` 已含贴封面，通常只需 `itc pick`） |
 
 #### `nbp` 选项结构（先 `nbp` 看编号）
 
@@ -214,22 +213,24 @@ pick next          # 下一条
 |----|------|----------|
 | Image 幻灯片 | 单图 | `单图`, `image/single` |
 | Image 幻灯片 | 幻灯片 | `slideshow`, `image/slideshow` |
-| Video 视频 | 纯画面 | **`纯画面`**, `video/motion`, `nbv` |
-| Video 视频 | 文字动画 | |
-| Speaking 主人公 | 念 speaking | |
-| Speaking 主人公 | 只演不讲 | |
-| Speaking 主人公 | 讲解画面要点 | |
-| Voiceover 旁白 | 旁白讲述 | |
-| Voiceover 旁白 | 旁白+主持人 | |
-| Voiceover 旁白 | 补充/总结 | |
+| Video 视频 | 纯画面 | `纯画面`, `video/motion` |
+| Video 视频 | 文字动画 | `video/word_in_image` |
+| Speaking 主人公 | 念 speaking | `speaking/script` |
+| Speaking 主人公 | 只演不讲 | `speaking/acting` |
+| Speaking 主人公 | 讲解画面要点 | `speaking/visual_keypoints` |
+| Voiceover 旁白 | 旁白讲述 | `voiceover/narration` |
+| Voiceover 旁白 | 旁白+主持人 | `voiceover/narration_with_speakingavatar` |
+| Voiceover 旁白 | 补充/总结 | `voiceover/supplement` |
 
-**用法：** `nbp` → `nbp 3` 或 `nbp 纯画面`
+**用法：** `nbp` → `nbp 3` 或 `nbp 纯画面`（编号以无参列表为准）。
 
-**`nbi`：** 先 `nbi` 选 Chrome 号 → `nbi 1`；需 SCENE 里已有有效 `scene_content`。点完 Generate ×3 立刻返回，不等待。随后用 `nbif` 查询。
+**与 Grok：** 单场景 video 提示词用 **`nbv` 1…8** 或 **`grv <profile> <1…8>`**（见 §4.7），与上表 Video/Speaking/Voiceover 子项对应，但编号独立（1=纯画面 … 8=补充/总结）。
+
+**`nbi`：** 先 `nbi` 选 Chrome 号 → `nbi 1`；需 SCENE 里已有有效 `scene_content`。与 **`grv` 共用 HermesChromeCDP（端口 9222）**——若 `grv` 已开过 Chrome，`nbi`/`itc` 直接连上去，不再另开普通 Chrome。点完 Generate ×3 立刻返回，不等待。随后用 `nbif` 查询。
 
 **`nbif`：** 看 Studio 右侧。有 “Generating infographic...” 和转圈 = 还没 ready；最上边三张已是中文标题 + `1 source · …` = ready。
 
-**`itc`：** 须 infographic 已做好。无参 → 用**当前已打开**的 NotebookLM，逐张打开最上边 3 张，右键 Copy image，存到 `D:\AI_MEDIA\working\YYYYMMDDHHMMSS.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开已有 notebook 再拷图。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
+**`itc`：** 须 infographic 已做好。与 **`grv` 同一 HermesChromeCDP（9222）**：已开则直接连，否则自动启动。无参 → 在当前 NotebookLM 逐张打开最上边 3 张，⋮ → Download（失败则拉 lh3 URL），存到 `%USERPROFILE%\\Downloads\\whole_story_image_N_*.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开 notebook 再下载。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
 
 **`igp`：** 无参 → 把 `itc` 已选封面贴进所有 Grok 标签；`igp N` 可一步选第 N 张并贴。（旧别名 `wsi`）
 
@@ -239,34 +240,62 @@ pick next          # 下一条
 
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
-| `gr` | `grok_image` | Chrome 序号 | 按 `lm` 记录的场景数开 N 个 `grok.com/imagine` 标签 |
-| `gri` | `grok_image_prompt` | 1–4 或名称 | 场景图 prompt → Image 模式 → 出图（贴字校验 + 等待） |
-| `sc` | `scene_choice` | 见下 | 场景 `1/2/…`：底栏按钮 + **Video/纯画面** 拷剪贴板；`all` 只改按钮 |
-| `grv` | `grok_video` | `1`…`N` 或 `download` | Video 模式出片（贴字校验 + 等待） |
-| `grvd` / `gvd` | — | 无 | 同 `grv download`：各场景 mp4 → Downloads |
-| `nbv` | — | `纯画面` | 可选：仅按**当前**场景再拷 Video/纯画面（`sc i` 已含此步） |
+| `grv` | `grok_image` | 见下 | **全自动**：开 N 标签 → 贴封面 + 出图 + 出片 + **每场景下载** |
+| `gri` | `grok_image_prompt` | — | **已废弃**（并入 `grv`）；发参数会提示改用 `grv` |
+| `gvd` / `grvd` | `grok_download` | 无 | 补下载各场景 mp4（`grv` 已含下载；漏了或重做时用） |
+| `nbv` | — | `1`…`8` | 切换 Grok **video 提示词变体**（写入 session，供 `grv` 共用） |
+| `igp` | `whole_story_image` | 无参或序号 | 贴封面进已有 Grok 标签（`grv` 已含贴封面，少用） |
 
-#### `gri` 选项（`DIRECT_VIDEO_PROMPT_CHOICES`）
+#### `grv` 全自动四轮（每个 Imagine 标签）
 
-1. Image to Detail-Single-Step-Image 1  
-2. Image to Detail-Single-Step-Image 2  
-3. Image to Detail-Single-Step-Image 3  
-4. Image to Detail-Single-Step-Image 4  
-5. Image to Video (protagonist reflection & interaction  
-6. Image to Video (narrator voiceover only  
-7. Image to Video (atmospheric motion only …  
-（完整列表以 `gri` 无参输出为准）
+| 轮次 | 动作 |
+|------|------|
+| Round 1 | 开标签 → Ctrl+V 封面 → 9:16 竖屏 |
+| Round 2 | 贴场景 **出图** 提示词 → Image Submit → 等出图 |
+| Round 3 | 贴 **video** 提示词 → Video Submit → 等出片 |
+| Round 4 | CDP 读 ``<video>.src`` + cookie 直拉 mp4 → Downloads（与 `gvd` 共用代码） |
 
-**用法：** `gri 1` … `gri 4` 各场景出图；`sc i` → `grv i` 各场景出片。
+**前置：** 已 `lm 4`（或对应步数）；`scene_content` 有效；封面已 `itc pick`（或剪贴板有图）。
 
-#### `sc` 参数
+**Chrome：** 日常 Chrome + 所选 Profile（与 Gemini CDP 分离）；贴图用 Ctrl+V；改代码后重启 `open_listener.bat`。
 
-| 值 | 含义 |
-|----|------|
-| `all` | 底栏切到 All（**不**拷 video 提示词） |
-| `1` `2` `3` `4` | 场景按钮切到第 N 场，并拷 **Video / 纯画面** 到剪贴板（等同手工：场景按钮 → NotebookLM ▼ → Video → 纯画面） |
+#### `grv` 参数
 
-**与 `nbp` 的区别：** `nbp 1` = Image / 单图（整篇封面，给 `nbi`）；`sc i` = 单场景 Video / 纯画面（给 `grv i`）。`nbv` 仍可用，只在已选好场景时单独重拷提示词。
+| 参数 | 含义 |
+|------|------|
+| （无） | 列出 Chrome profile + video 变体 1…8 + 当前 session 变体 |
+| `1` `2` … | Chrome profile 序号；video 变体用 session 已存值（默认 **3**） |
+| `1 5` | profile `1` + video 变体 `5`（一并写入 session） |
+| `prep` | 仅向已有标签贴封面（不重新开标签、不出图出片） |
+
+**示例：** `grv` → `grv 1 3`（4 场景、念 speaking） / `nbv 6` 再 `grv 2`（旁白讲述）
+
+#### Video 提示词变体 1…8（`GROK_SCENE_VIDEO_NB_VARIANTS`）
+
+对应 NotebookLM 的 Video / Speaking / Voiceover（**不含** Image）。`grv`、`nbv` 共用；记在 `story_scene_prompt_choice` JSON 的 `video_nb_index`。
+
+| # | 类 | 变体 | 说明 |
+|---|-----|------|------|
+| 1 | Video | `motion` | 纯画面 · 动作/表情/场景演进（无口播） |
+| 2 | Video | `word_in_image` | 文字动画 · 关键词/思想泡泡（无口播） |
+| 3 | Speaking | `script` | 念 speaking · 第一人称口播 **（默认）** |
+| 4 | Speaking | `acting` | 只演不讲 · 神态/肢体/思考 |
+| 5 | Speaking | `visual_keypoints` | 讲解画面要点 · 非念图内文字 |
+| 6 | Voiceover | `narration` | 旁白讲述 · 第三人叙述 |
+| 7 | Voiceover | `narration_with_speakingavatar` | 旁白讲述 · 主持人说话 |
+| 8 | Voiceover | `supplement` | 补充/总结 · 衔接与点评 |
+
+**用法：** `nbv` 看列表 → `nbv 5` 切换；或 `grv 1 5` 一次指定。
+
+#### `gvd` / `grvd`
+
+**补下载**（与 `grv` Round 4 同路数）：等各标签 video 已出片，CDP 读 `<video>.src` + grok.com cookie 直拉 mp4。`grv` 成功后会自动下载并记入 session，通常**不必再发 `gvd`**。
+
+**与 `nbp` 的区别：** `nbp` = Image 类（整篇封面/幻灯片，给 `nbi`）；`grv` Round 3 = 单场景 video 类（上表 1…8）。`nbp` 的 Video/Speaking/Voiceover 子项与 `nbv` 1…8 同源（`NOTEBOOKLM_EXPORT_VARIANTS`），但 **Grok 流水线用 `nbv`/`grv` 的编号**，不是 `nbp` 的平铺序号。
+
+#### `gri`（已并入 `grv`）
+
+场景图提示词（Image to Detail-Single-Step-Image 1…4）现由 `grv` Round 2 自动粘贴。若仍发 `gri 1` 会提示改发 `grv 1`。
 
 ---
 
@@ -299,12 +328,10 @@ pick next          # 下一条
 | `nbif` | `notebooklm_ready` |
 | `itc` | `whole_story_pick` |
 | `igp` | `whole_story_image` |
-| `gr` | `grok_image` |
-| `gri` | `grok_image_prompt` |
-| `sc` | `scene_choice` |
-| `grv` | `grok_video` |
-| `grvd` / `gvd` | `grv download` |
-| `nbv` | `notebooklm 纯画面` |
+| `grv` | `grok_image` |
+| `gri` | `grok_image_prompt`（已并入 `grv`） |
+| `gvd` / `grvd` | `grok_download` |
+| `nbv` | Grok video 变体 1…8（session） |
 | `vc` | `video_concat` |
 | `vp` | `video_publish` |
 | `pick` | `story_pickup` |
@@ -324,7 +351,9 @@ pick next          # 下一条
 
 ## 6. Choice 命令通用规则
 
-适用于：`lm` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `gr` `igp` `gri` `sc` `grv` `vp` `pick`
+适用于：`lm` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `grv` `igp` `nbv` `vp` `pick`
+
+**`grv` 特例：** 第二个数字是 **video 变体 1…8**，不是 Chrome profile 列表项。例：`grv 1 5` = profile 1 + 变体 5。
 
 1. **无参数** → 单列选项，格式：`cmd N: (说明)`，例如 `sty 2: (pixar-art cartoon)`
 2. **数字** → 选第 N 项（`1` 起）
@@ -343,8 +372,11 @@ pick next          # 下一条
 | `pst` 不是 JSON | 先 `gem` 或 `fetch` |
 | `pick` 已关掉 | 手工 GUI 会话；直接 `scn` 继续 |
 | `scn` 打不开 | STORY 要在；勿挡 GUI；再发一次 `scn` |
-| `gr` 没有 LM | 先 `lm 4` |
-| `grvd` / `gvd` 没有 mp4 | 各场景先 `grv 1`…`grv N` 等出完 |
+| `grv` 没有 LM | 先 `lm 4` |
+| `grv` 没有封面图 | 先 `itc pick`（或 Copy image 到剪贴板） |
+| `grv` video 提示词为空 | 确认 `pst` 后 `scene_content` 为有效 JSON；SCENE 窗口须打开 |
+| `gri` 提示已合并 | 改发 `grv 1`（或 `grv 1 3` 指定变体） |
+| `gvd` / `grvd` 没有 mp4 | 先等 `grv` 跑完（已含下载）；或单独 `gvd` 补下 |
 
 ---
 

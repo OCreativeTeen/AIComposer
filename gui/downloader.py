@@ -7377,8 +7377,10 @@ class MediaGUIManager:
                         f"scene_choice={_scene_index_button_label(_scene_copy_index[0])}"
                     )
                     if _scene_copy_index[0] >= 0:
-                        parsed = config_prompt.parse_nb_export_choice("纯画面")
-                        base, var = parsed if parsed else ("video", "motion")
+                        from utility.telegram_session import load_grok_scene_video_nb_index
+
+                        nb_idx = load_grok_scene_video_nb_index()
+                        base, var, _ = config_prompt.grok_scene_video_nb_export(nb_idx)
                         copied = self._copy_notebooklm_scene_instruction(
                             parent=dlg,
                             video_detail=video_detail,
@@ -7392,14 +7394,16 @@ class MediaGUIManager:
                         )
                         if not copied:
                             return False, (
-                                f"{scene_msg}; failed to copy Video/纯画面 — "
+                                f"{scene_msg}; failed to copy NotebookLM video 提示词 — "
                                 "scene_content 需要有效 JSON 数组"
                             )
                         try:
-                            nb_label = config_prompt.nb_export_mode_label(base, var)
+                            nb_label = config_prompt.grok_scene_video_nb_choice_label(nb_idx)
                         except ValueError:
-                            nb_label = "Video / 纯画面"
-                        return True, f"{scene_msg}; copied {nb_label} to clipboard"
+                            nb_label = config_prompt.nb_export_mode_label(base, var)
+                        return True, (
+                            f"{scene_msg}; copied [{nb_idx}] {nb_label} to clipboard"
+                        )
                     return True, scene_msg
 
                 def _nb_choice_rows():

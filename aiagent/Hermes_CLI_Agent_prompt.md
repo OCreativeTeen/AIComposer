@@ -41,9 +41,8 @@ CLI 回 timeout / 需要SCENE / 没有作用到SCENE：停，不要打开 Gemini
 | `prf` | profile | `nbp` | notebooklm |
 | `nbi` | open_notebooklm | `nbif` | notebooklm_ready |
 | `itc` | whole_story_pick | `igp` | whole_story_image |
-| `gr` | grok_image | `gri` | grok_image_prompt |
-| `sc` | scene_choice | `grv` | grok_video |
-| `grvd` | grok_video download | `nbv` | notebooklm 纯画面 |
+| `grv` | grok_image | `gri` | grok_image_prompt（已并入 grv） |
+| `gvd` / `grvd` | grok_download | `nbv` | video 变体 1…8 |
 | `vc` | video_concat | `vp` | video_publish |
 | `pick` | story_pickup | `pub` | publish |
 | `ana` | analyze | `poe` | poem |
@@ -118,7 +117,7 @@ python -m cli pick
 
 4. 已有「← 当前」：不要再 pickup 同一条，立刻 `scn`（第 4.2 节）。  
    没有当前条：立刻 `python -m cli pick next`（下一个未处理）。不要问主人选哪条。
-5. **你自己**做完 4.2–4.16。SCENE 一开就 `lm 4`（4 Step Story），**立刻** `gem`，中间不准停、不准等 Telegram。然后 pst → save → 做到 YouTube。
+5. **你自己**做完 4.2–4.13。SCENE 一开就 `lm 4`（4 Step Story），**立刻** `gem`，中间不准停、不准等 Telegram。然后 pst → save → 做到 YouTube。
 6. 关掉当前STORY/SCENE（不要开第二个 AIComposer），再 `pick next`，从 4.2 再走。Chrome 换还没用过的号。
 7. 没有未处理的了：发 `pick` 把 1/2/3… 列给主人，等他选 `pick N` 重做。不要说打不开。不要只 `pick exit`（除非主人说停）。
 
@@ -176,26 +175,23 @@ nbi → 建议还没用过的 Chrome
 过几分钟 nbif → 三个新 infographic ready？还在 Generating 就再等再 nbif
     │
     ▼
-itc → 打开三张、Copy image 存 working、Telegram 发 3 张，用户选 1/2/3
+itc → 打开三张、Download 存 Windows Downloads、Telegram 发 3 张，用户选 1/2/3
     │
     ▼
-gr → 建议还没用过的 Chrome → 开 4 个 Imagrne 标签
-igp → 已选封面贴进所有对话框
+grv N [1…8] → 建议还没用过的 Chrome
+    → 开 N 个 Imagine 标签 + 贴封面 + 出图 + 出片 + 每场景下载 mp4
     │
     ▼
-gri 1…4
-每个场景  sc i → grv i
-grvd
 vc
 vp default   （立即 unlisted）
     │
     ▼
-关窗 → pick next（4.17）
+关窗 → pick next（4.14）
 ```
 
 对应 CLI（细节在第 4 节）：
 
-`open_listener.bat` → `pick next` → `scn` → `lm 4` → `gem` → `pst` → `save` → `nbp 1` → `nbi`（建议号）→ `nbif`（ready）→ `itc`（Telegram 选封面）→ `gr`（建议号）→ `igp` → `gri 1`…`4` → 每场景 `sc i` + `grv i` → `grvd` → `vc` → `vp default` → **再 `pick next`**
+`open_listener.bat` → `pick next` → `scn` → `lm 4` → `gem` → `pst` → `save` → `nbp 1` → `nbi`（建议号）→ `nbif`（ready）→ `itc`（Telegram 选封面）→ `grv N` 或 `grv N 3` → `vc` → `vp default` → **再 `pick next`**
 
 听筒同步里的「可发：lm  gem  pst …」是给你自己用的。**你就是那个发命令的人。** 不要把同步消息转给主人等他回。
 
@@ -236,11 +232,10 @@ python -m cli nbp
 python -m cli nbi
 python -m cli nbif
 python -m cli itc
-python -m cli gr
-python -m cli igp
+python -m cli grv
 ```
 
-`gri`、`sc`、`grv`、`grvd`、`vc` 不要先列菜单。（`nbv` 一般不用单独发，`sc i` 已拷 Video/纯画面。）
+`gvd`、`vc` 不要先列菜单。（`nbv` 可选；默认变体 3 = 念 speaking，通常 `grv N 3` 一次指定。）
 
 本流水线你自己这样选：
 
@@ -249,27 +244,18 @@ python -m cli igp
 | `lm` | **永远** `lm 4`（4 Step Story）。不要先列 |
 | `pick` | `next` |
 | `nbp` | `1` = Image / 单图 |
-| `nbi` / `gr` | 列表里「建议：还没用过」；没有建议就 1 |
+| `nbi` / `grv` | 列表里「建议：还没用过」；没有建议就 1 |
 | `nbif` | 无参；查询三张 infographic 是否 ready（主人也可从 Telegram 发） |
 | `itc` | 无参=当前窗口拷图；窗口关了发 `itc N`（Chrome 号，与 nbi 相同）；用户 Telegram 回 `1/2/3` 选封面 |
-| `igp` | 无参（贴已选封面） |
+| `grv` | `grv N` 或 `grv N V`（Chrome 号 + 可选 video 变体 1…8）；全自动出图+出片 |
 | `vp` | `default` |
 
 - 对外一律用 `lm 4`。
 - SCENE当前若显示 Short Story，也必须立刻 `lm 4`，不要沿用。
 
-`gri 1…N`：**不问**。整篇图选定并贴进 Grok 之后，按 4.3 记下的步数自动发。第 *i* 个标签固定用 Image to Detail-Single-Step-Image *i*。
+**`grv`：** 封面选定（`itc pick`）后，按 4.3 记下的步数**一条命令**跑完全流程：开标签 → 贴封面 → 各场景 Image Submit → 各场景 Video Submit。默认变体 **3**（念 speaking）；要纯画面发 `grv N 1`，要旁白发 `grv N 6`。也可先 `nbv 6` 再 `grv N`。
 
-出 video clip：**不问**。场景图出完后，按同样步数自动发：
-
-```bat
-python -m cli sc i
-python -m cli grv i
-```
-
-`sc` 的 value 就是底栏按钮上的字：`all` / `1` / `2` / `3` / `4`。**`sc 1` 是第一场景，不是 All。** All 用 `sc all`（只改按钮，不拷 video 提示词）。场景个数来自 4.3 记下的 LM（4 Step → 4）。
-
-**`sc i`（i≥1）** 一次做完手工两步：底栏场景按钮切到 **i**，再从 NotebookLM ▼ 选 **Video / 纯画面（无口播）**，提示词上剪贴板。不要另发 `nbp` / `nbv`，除非 `grv` 报剪贴板太短要重拷。
+不要另发 `gri`、`igp`（已并入 `grv`）。
 
 ---
 
@@ -290,16 +276,12 @@ python -m cli grv i
    | `gem` | 剪贴板提示词 → Gemini → 等完 → JSON 回剪贴板 |
    | `pst` | 剪贴板 JSON → 分镜 `scene_content` |
    | `nbp 1` | NotebookLM ▼ → **Image / 单图** 提示词上剪贴板（整篇封面，给 `nbi`；默认 All 场景） |
-   | `nbv` | 可选：仅按当前场景再拷 **Video / 纯画面**（`sc i` 已含；`grv` 剪贴板失败时重发） |
+   | `nbv` | 可选：切换 Grok video 变体 1…8（写入 session；也可 `grv N V` 一次指定） |
    | `nbi N` | 该 Chrome 账号打开已有 notebook，Infographic Generate × 3，立刻返回 |
    | `nbif` | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
    | `itc` | 当前窗口拷最上边三张；窗口关了 `itc N` 用 Chrome 号重开 notebook 再拷；选封面 Telegram 回 1/2/3 |
-   | `gr N` | 该 Chrome 账号按 LM 步数打开 `grok.com/imagine` 标签 |
-   | `igp` | 已选整篇故事图上剪贴板，并贴进**所有** Grok 对话框（`igp N` 可一步选+贴） |
-   | `gri i` | Image *i* 提示词 → 第 *i* 个 Grok 标签 → 贴字校验 → 图片模式 → 生成 → **等到出图才 ok** |
-   | `sc i` | 场景按钮 = **i**，并拷该场景 **Video / 纯画面** → 剪贴板（给 `grv i`） |
-   | `grv i` | 剪贴板 video 提示词 → 第 *i* 个 Grok 标签 → 贴字校验 → Video 模式（+ 旁第二个图标）→ 生成 → **等到出片才 ok** |
-   | `grvd` | 等各标签出完片 → 按 1…N 点下载 → Windows Downloads → 按场景记入 Telegram 模块 |
+   | `grv N [V]` | 该 Chrome 账号：开 N 个 Imagine 标签 → 贴封面 → 各场景出图 → 各场景出片（全自动，等到全部 ok） |
+   | `gvd` | 可选补下载（`grv` 已含每场景下载；漏了再发） |
    | `vc` | 记下的 clip 按场景顺序：末帧延长 + 水印 + 拼接 → `publish/gen_video/<id>.mp4` |
    | `vp` | 列出描述素材来源（你看一眼，接着发 default） |
    | `vp default` | 默认来源 + 默认标题，立即 unlisted 上传 YouTube |
@@ -308,9 +290,8 @@ python -m cli grv i
 6. 不要最大化 Cursor 挡住 GUI。不要深扫 Chrome 控件树。不要 Win32 缩放 AIComposer 标题栏。
 7. 有 `python -m cli …` 就不要改用手点或旧脚本（`hermes/`、`win_gui_tasks select_4step` 等）。
 8. Chrome 账号要选**三次**（Gemini、NotebookLM、Grok）。每次先列出，你自己选标了「建议：还没用过」的号，下一轮换号避开额度。不要等主人点名。
-9. `nbi` 打开 Chrome + 点 Generate 可能要一两分钟；`gem` / `gri 1` / `grv 1` 也可能要等几分钟。不要中断，不要并行再开同一条。`nbi` 返回后用 `nbif` 查 ready，不要以为 `nbi` 会等到出图。
-10. `sc 1` ≠ All。数字就是场景号，跟 `lm 1`（列表第 1 项）不是同一套编号。
-11. 一条 YouTube 发完不是整次任务结束。立刻关窗再 `pick next`。没有未处理了：发 `pick` 列出 1/2/3… 等主人选，不要说打不开。
+9. `nbi` 打开 Chrome + 点 Generate 可能要一两分钟；`gem` / `grv` 也可能要等十几分钟。不要中断，不要并行再开同一条。`nbi` 返回后用 `nbif` 查 ready，不要以为 `nbi` 会等到出图。
+10. 一条 YouTube 发完不是整次任务结束。立刻关窗再 `pick next`。没有未处理了：发 `pick` 列出 1/2/3… 等主人选，不要说打不开。
 
 ---
 
@@ -344,8 +325,8 @@ python -m cli save
 ## 4. 一条队列的顺序
 
 每步看输出，成功再发下一步。  
-下面是**当前已实现的完整顺序**。不要跳步，不要对调 4.10 / 4.11。4.13 必须等 4.12 的场景图出完。4.14 必须等 4.13 的 video 出完。  
-**外层循环**是 4.1 选故事 → 4.2–4.16 做完这一条 → 4.17 再 pickup。不要做完 4.16 就收工。
+下面是**当前已实现的完整顺序**。不要跳步。`grv` 须等 `itc` 封面选定；`grv` 成功已含每场景 mp4 下载，通常不必再 `gvd`。  
+**外层循环**是 4.1 选故事 → 4.2–4.13 做完这一条 → 4.14 再 pickup。不要做完 4.13 就收工。
 
 ### 4.1 从队列选故事（你自己选下一个未处理）
 
@@ -493,7 +474,7 @@ python -m cli nbif
 python -m cli itc
 ```
 
-该 CLI 会：逐张打开最上边 3 张 infographic → 右键图片 **Copy image** → 存到 `D:\AI_MEDIA\working\YYYYMMDDHHMMSS.png` → Telegram 发 3 张。用户回复 `1` / `2` / `3`（听筒记选择）。
+该 CLI 会：逐张打开最上边 3 张 infographic（`artifact-viewer`）→ **More options → Download**（失败则拉 lh3 图 URL）→ 存到 `%USERPROFILE%\Downloads\whole_story_image_N_*.png` → Telegram 发 3 张。用户回复 `1` / `2` / `3`（听筒记选择）。
 
 如果 NotebookLM 窗口已经关掉，用**当初 nbi 的那个 Chrome 号**重开再拷：
 
@@ -509,136 +490,54 @@ python -m cli itc pick 2
 
 记下选择（`selected` / `selected_path`）并把所选图拷到剪贴板，**不贴 Grok**。选定后再做 4.10、4.11。
 
-### 4.10 打开 Grok Imagrne 标签（你选建议 Chrome）
+### 4.10 Grok 全自动出图+出片（`grv`，不问主人）
 
-必须先有 4.3 的 `scene_lm`。标签数见上表。
-
-```bat
-python -m cli gr
-```
-
-立刻选「建议：还没用过」的号：
+必须先有 4.3 的 `scene_lm` 和有效 `scene_content`，且 **4.9.1 `itc` 已选定封面**。
 
 ```bat
-python -m cli gr N
+python -m cli grv
 ```
 
-用该 profile 新开 Chrome，打开对应数量的 `https://grok.com/imagine` 标签。  
-本步**只开网页**，还不贴图、不生成。
-
-### 4.11 把整篇故事图贴进所有 Grok 对话框
-
-必须先 `itc` 已选定封面，且先 4.10 开好标签。
+立刻选「建议：还没用过」的号，并带上 video 变体（默认 3 = 念 speaking）：
 
 ```bat
-python -m cli igp
+python -m cli grv N
+python -m cli grv N 3
 ```
 
-该 CLI 会：把 **itc 已选** 的 PNG 拷到剪贴板，并在**每一个**已开的 Grok Imagrne 对话框里贴同一张图。
+| 变体 | 含义 |
+|------|------|
+| `1` | 纯画面（无口播） |
+| `2` | 文字动画 |
+| `3` | 念 speaking **（默认）** |
+| `4` | 只演不讲 |
+| `5` | 讲解画面要点 |
+| `6` | 旁白讲述 |
+| `7` | 旁白 + 主持人 |
+| `8` | 补充/总结 |
 
-也可一步选+贴：`python -m cli igp 1`（会同时记下选择并贴图）。
+该 CLI **一条命令**完成（每个 Imagine 标签）：
 
-Grok 还没开时只会拷剪贴板；那时先做 4.10，再重发 `igp`。
+1. 开 N 个 `grok.com/imagine` 标签（N = LM 步数）
+2. Round 1：Ctrl+V 封面 → 9:16 竖屏
+3. Round 2：场景出图提示词 → Image Submit → 等到出图
+4. Round 3：video 提示词（当前变体）→ Video Submit → 等到出片
 
-### 4.12 每个场景自动出图（不问主人）
+**可能要十几分钟。** 听筒会立刻回 `⏳`，等 `grv ok`（已含下载）再发 `vc`。不要中断，不要并行再开同一条。
 
-`igp` 贴图成功后，**立刻**按 4.3 记下的步数逐标签生成，不要再列出 `gri`、不要再问 Image 1 还是 2。
+也可先 `python -m cli nbv 6` 切换变体，再 `python -m cli grv N`。
 
-对应关系写死：
+不要另发 `gri`、`igp`（已并入 `grv`）。
 
-| 4.3 记下的 LM | 你要连续发的命令 |
-|---------------|------------------|
-| `2 Step Story` | `python -m cli gri 1` 然后 `python -m cli gri 2` |
-| `3 Step Story` | `gri 1` → `2` → `3`（都是完整 CLI） |
-| `4 Step Story` | `gri 1` → `2` → `3` → `4` |
-| 其它 | 只发 `python -m cli gri 1` |
+### 4.11 下载（已并入 `grv`；`gvd` 仅补下）
 
-每一条：拷 Image to Detail-Single-Step-Image *i* → 第 *i* 个 Grok 标签 → 贴进对话框（整篇图已在）→ 点 **图片** → 点向上箭头 **生成**。
+`grv` 每个标签 Round 3 出片后会立刻下载：CDP 读 `video.src` + cookie 直拉 mp4（同 `D:\Hermes\cdp_download.py`），写入 Downloads 并记入 session。
 
-等上一条成功再发下一条。不要自己编提示词。不要发 `gri 5`（那是视频提示词列表里的项，不是 grv）。2 Step 不要发 3、4。
+若某场景漏下，再发 `python -m cli gvd`。
 
-本步只是**出静帧图**。出完图还要继续 4.13 出 video clip，不要在这里停任务、不要问主人「要不要做视频」。
+### 4.12 简化拼接成片（不问主人）
 
-### 4.13 每个场景自动出 Video clip（不问主人）
-
-这是 4.12 的下一截，同一条队列必须接着做完。
-
-前提：
-
-1. SCENE还开着（`win` = `scene`），`scene_content` 已保存。
-2. 4.10 开好的 Grok Imagrne 标签还在。第 *i* 个标签 = 第 *i* 个场景。
-3. 4.12 的 `gri 1…N` 都已点过生成。
-4. **先等该标签的场景图出完**（页面不再 Generating，能看到图）。图还在转就对该标签发 `grv` 会失败。
-5. 步数 *N* 只用 4.3 记下的 LM，不要另问、不要另数。
-
-不要再列出 `sc`、不要再列出 `nbp`、不要再列出 `grv`，不要问主人选 Video 菜单或场景号。
-
-每个场景 *i* 固定两步，**一条 CLI 做一件事**，上一条 ok 再发下一条：
-
-```bat
-python -m cli sc i
-python -m cli grv i
-```
-
-含义：
-
-| 顺序 | CLI | 做什么 |
-|------|-----|--------|
-| 1 | `sc i` | 底栏场景按钮切到 **i**，并拷 **Video / 纯画面（无口播）** 到剪贴板（等同手工点场景按钮 + NotebookLM ▼ → Video → 纯画面）。`1` 是第一场景，**不是 All** |
-| 2 | `grv i` | 切到第 *i* 个 Grok 标签 → 贴字校验 → 点 **+ 旁边第二个图标（Video）** → 720p / 10s → 生成 → **等到出片才 ok** |
-
-对应关系写死（和 4.12 同一套 *N*）：
-
-| 4.3 记下的 LM | 你要连续发的命令 |
-|---------------|------------------|
-| `2 Step Story` | `sc 1` → `grv 1`，然后对 2 再来一组 |
-| `3 Step Story` | 对 1、2、3 各做一组（每组两条完整 CLI） |
-| `4 Step Story` | 对 1、2、3、4 各做一组 |
-| 其它 | 只做场景 1 那一组 |
-
-4 Step 的完整顺序（每行都是 `python -m cli …`）：
-
-```bat
-python -m cli sc 1
-python -m cli grv 1
-
-python -m cli sc 2
-python -m cli grv 2
-
-python -m cli sc 3
-python -m cli grv 3
-
-python -m cli sc 4
-python -m cli grv 4
-```
-
-2 Step 只做到上面的场景 2；3 Step 做到场景 3。不要发 `sc 3` / `grv 3` 给 2 Step。不要用 `sc all` 做出片。
-
-`grv i` 成功表示该标签 **Video 已生成完**（贴字校验 + 等到出片）。再发下一组 `sc` → `grv`。
-
-全部场景都 `grv ok` 后继续 4.14 下载，不要在这里停任务。
-
-### 4.14 按场景顺序下载 Video clip（不问主人）
-
-等 **每一个** Grok 标签的 video 都出完（不再 Generating，预览里能看到能动的片子），再发：
-
-```bat
-python -m cli grvd
-```
-
-不要列出选项、不要问主人「下哪个」。该 CLI 会：
-
-1. 切到第 1 个 Grok Imagrne 标签 → 等该片就绪 → 点右栏 **共享下面那一排小图标里的下载**（向下箭头）→ mp4 进 Windows **Downloads**
-2. 再切第 2、第 3…直到 4.3 记下的 *N*
-3. 按场景顺序把路径记进 Telegram 模块（`grok_scene_1_…mp4` 这种名字）
-
-不要自己去资源管理器里挑文件、不要按修改时间手排。顺序只认记下的 scene 1…N。
-
-2 Step 只会下 1、2；不要指望 Downloads 里另有第 3 条。
-
-### 4.15 简化拼接成片（不问主人）
-
-`grvd` 成功后立刻：
+`grv ok` 后立刻：
 
 ```bat
 python -m cli vc
@@ -652,9 +551,9 @@ python -m cli vc
 
 这一步可能要等一两分钟（ffmpeg）。不要中断。
 
-向主人报：本条 `choice_id` 成片路径。然后继续 4.16，不要在这里停任务。
+向主人报：本条 `choice_id` 成片路径。然后继续 4.13，不要在这里停任务。
 
-### 4.16 发布到 YouTube（你发 default）
+### 4.13 发布到 YouTube（你发 default）
 
 不要打开STORY点「审阅发布」，不要做转写 / 重合成 / 改文稿。成片已经在 `gen_video`。
 
@@ -664,9 +563,9 @@ python -m cli vc
 python -m cli vp default
 ```
 
-这一步会走 YouTube API（可能弹出浏览器做频道授权）。等上传结束。成功后把 watch URL 记下来。本条会标成**已完成**。然后立刻做 4.17。
+这一步会走 YouTube API（可能弹出浏览器做频道授权）。等上传结束。成功后把 watch URL 记下来。本条会标成**已完成**。然后立刻做 4.14。
 
-### 4.17 再 pickup：下一条（不要问要不要继续）
+### 4.14 再 pickup：下一条（不要问要不要继续）
 
 本条已标成已完成。先关掉当前STORY/SCENE，等 `win=none`。然后：
 
@@ -697,17 +596,13 @@ python -m cli pick
 | 看不到 Infographic | 确认 Create new **右侧**第一张是 Story Builder；原文给主人 |
 | `nbif` 还在 Generating | 再等几分钟再发 `nbif`；不要急着 `itc` |
 | `itc` 说还没 ready | 先 `nbif` |
-| `igp` 没有文件 | 先 `nbif` ready，再 `itc` 拷图选封面 |
 | `itc` 找不到窗口 | 发 `itc N`（N = 当初 `nbi` 用的 Chrome 号） |
-| `igp` 未选定封面 | 先 Telegram 回 `1/2/3`，或 `itc pick N` |
-| `gr` 没有 LM 记录 | 先 `lm N`，再 `gr` |
-| `igp` 贴不进 Grok | 先 `gr` 开标签，再 `igp` |
-| `gri` 找不到标签 | 先 `gr` + `igp`，再 `gri 1`… |
-| `sc` 需要SCENE | 先 `scn`，SCENE 须已打开 |
-| `grv` 剪贴板太短 | 再发 `sc i`（或 `nbv`），再 `grv i` |
-| `grv` 找不到标签 | 先完成 4.10–4.12，确认该标签场景图已出完 |
-| `grvd` 没有新 mp4 | 该标签是否还在 Generating；下载图标是否点到；再试一次 `grvd` |
-| `vc` 没有记录 | 先 `grvd` 成功 |
+| `itc` 未选定封面 | 先 Telegram 回 `1/2/3`，或 `itc pick N` |
+| `grv` 没有 LM 记录 | 先 `lm N`，再 `grv` |
+| `grv` 没有封面图 | 先 `itc pick`，再 `grv N` |
+| `grv` 超时 / 失败 | 看 AutomationLog；确认 SCENE 已开、`scene_content` 有效；可重发 `grv N` |
+| `gvd` 没有 mp4 / HTTP 403 | 确认 `grv` 已出片；Chrome 仍登录 grok.com；可对照 `D:\Hermes\cdp_download.py` 试同一浏览器 |
+| `vc` 没有记录 | 先 `gvd` 成功 |
 | `vc` 没有水印 PNG | 频道 `program/<频道>/watermark.png`；原文给主人 |
 | `vp` 没有成片 | 先 `vc` 成功 |
 | `vp` 没有频道配置 | 队列条目的 channel_id；原文给主人 |
@@ -724,16 +619,12 @@ python -m cli pick
 - 不要把听筒同步的「可发：…」当成要等人选的菜单。
 - 不要问 YouTube 定时发布时间；`vp` 一律立即 unlisted。
 - 不要打开「审阅发布」窗去做手工改稿；发布只用 `vp`。
-- **场景出图提示词不要问**：`igp` 成功后按步数自动 `gri 1…N`。
-- **场景 video clip 不要问**：场景图出完后按步数自动 `sc i` → `grv i`。
-- **下载 / 拼接不要问**：片子出完后自动 `grvd`，成功后立刻 `vc`。不要打开STORY审阅对话框去拖文件。
-- 不要把 `sc 1` 理解成列表第一项 All。
+- **Grok 出图+出片不要问**：封面选定后自动 `grv N`（或 `grv N V` 指定变体），等到 `grv ok`。
+- **下载 / 拼接不要问**：`grv ok` 后（已含 mp4 下载）立刻 `vc`。不要打开STORY审阅对话框去拖文件。
 - 不要把 `gem` 和 `pst` 合成一步。
 - 不要把 `nbp`（拷提示词）和 `nbi`（开浏览器）合成一步。
-- 不要在 Grok 标签还没开时就指望 `igp` 贴进对话框。
 - 不要点 NotebookLM 的 **Create new**；只打开已有的第一张 notebook。
-- 不要对没有的 Grok 标签发 `gri 4` / `grv 4`（2 Step 只发 1 和 2）。
-- 不要在场景图还在 Generating 时就对该标签发 `grv`。
+- 不要在 `grv` 还在跑时再发第二条 `grv`。
 - 不要关闭正在用的 Chrome / STORY / SCENE。
 - 不要跳过第 0 步：读完提示**立刻**启动 `D:\AIComposer\cli\open_listener.bat`。不要先说话、不要先检查环境、不要问要不要开听筒。不要自己跑 `pick_video_choice next`。不要为 Telegram 任务再开 `GUI_pm.py`。
 - 不要对同一条再 `pick N`。已经打开的那一条直接 `scn`。
@@ -756,13 +647,8 @@ save ok
 nbp → nbp 1 ok（Image / 单图）
 nbi → 建议号 ok（Generate × 3，不等待）
 nbif → ready
-itc ok（拷 working PNG，Telegram 选封面，记下 selected_path）
-gr → 建议号 ok（开 4 个 Imagrne 标签）
-igp 拷图并贴进所有 Grok 标签
-gri 1…4
-sc 1 → grv 1
-…直到 4
-grvd
+itc ok（下载到 Downloads PNG，Telegram 选封面，记下 selected_path）
+grv N [V] ok（全自动出图+出片+下载）
 vc
 vp default ok（立即 unlisted；本条已完成）
 关窗 → pick next → 从 4.2 再走

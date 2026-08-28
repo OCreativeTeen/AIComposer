@@ -49,7 +49,7 @@ _FAST_INLINE_CMDS = frozenset(
 )
 
 # 只跟 GUI bridge 打交道的命令：几秒内返回，走独立「界面车道」，
-# 这样 lm / sc 不会排在 nbi / gem 这种十几分钟的浏览器任务后面。
+# 这样 lm 不会排在 nbi / gem 这种十几分钟的浏览器任务后面。
 _UI_LANE_CMDS = frozenset(
     {
         "scene",
@@ -58,7 +58,6 @@ _UI_LANE_CMDS = frozenset(
         "instruction",
         "snippet",
         "content",
-        "scene_choice",
         "notebooklm",
         "save",
         "cancel",
@@ -123,7 +122,7 @@ class _AsyncCliWorker:
 
     两条独立车道：
 
-    * ``ui``  — 只跟 GUI bridge 打交道（lm / sc / save …），秒级返回。
+    * ``ui``  — 只跟 GUI bridge 打交道（lm / save …），秒级返回。
     * ``job`` — 浏览器自动化（gem / nbi / grv …），可能跑十几分钟。
 
     分开跑，长任务就不会堵住界面命令。
@@ -171,7 +170,7 @@ class _AsyncCliWorker:
                     lines.append(f"[{label}] ▶ 空闲")
                 for i, item in enumerate(self._pending(lane), 1):
                     lines.append(f"    {i}. {item}")
-        lines.append("界面命令（lm / sc / save …）不会排在长任务后面。")
+        lines.append("界面命令（lm / save …）不会排在长任务后面。")
         return "\n".join(lines)
 
     def submit(self, text: str) -> tuple[bool, str]:

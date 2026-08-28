@@ -172,7 +172,7 @@ def mark_notebooklm_generate_started(times: int) -> dict:
 
 
 def save_whole_story_images(paths: list[str]) -> list[str]:
-    """记住本轮 itc 拷到 working 的封面路径（whole_story_images.json）。"""
+    """记住本轮 itc 下载到 Windows Downloads 的封面路径（whole_story_images.json）。"""
     files: list[str] = []
     for item in paths or []:
         p = os.path.normpath(os.path.abspath((item or "").strip()))
@@ -411,11 +411,81 @@ def load_story_scene_prompt_choice() -> dict:
         return dict(empty)
     if tabs_i < 1:
         tabs_i = grok_tab_count_for_prompt_choice(label) or 1
-    return {"label": label, "tabs": tabs_i, "scenes": tabs_i}
+    return {"label": label, "tabs": tabs_i, "scenes": tabs_i, "video_nb_index": _video_nb_index_from(data)}
+
+
+def _video_nb_index_from(data: dict) -> int:
+    import config_prompt
+
+    raw = data.get("video_nb_index")
+    try:
+        i = int(raw)
+    except (TypeError, ValueError):
+        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    n = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
+    if i < 1 or i > n:
+        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    return i
+
+
+def load_grok_scene_video_nb_index() -> int:
+    """Grok scene video NotebookLM variant index 1…8 (see ``GROK_SCENE_VIDEO_NB_VARIANTS``)."""
+    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
+    if not path or not os.path.isfile(path):
+        import config_prompt
+
+        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        import config_prompt
+
+        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    if not isinstance(data, dict):
+        import config_prompt
+
+        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
+    return _video_nb_index_from(data)
+
+
+def save_grok_scene_video_nb_index(index: int) -> dict:
+    """Remember Grok video prompt variant for ``grv`` / ``nbv``."""
+    import config_prompt
+
+    i = int(index)
+    n = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
+    if i < 1 or i > n:
+        raise ValueError(f"video_nb_index must be 1…{n}, got {index!r}")
+    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
+    payload: dict = {}
+    if path and os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                payload = existing
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    payload["video_nb_index"] = i
+    payload["video_nb_label"] = config_prompt.grok_scene_video_nb_choice_label(i)
+    payload["video_nb_updated_at"] = datetime.now(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return payload
 
 
 def save_story_scene_prompt_choice(label: str) -> dict:
-    """Remember 分镜窗 LM 提示选择，供 ``grok_image`` / ``scene_choice`` 决定场景数。"""
+    """Remember 分镜窗 LM 提示选择，供 ``grok_image`` 决定场景数。"""
     text = (label or "").strip()
     tabs = grok_tab_count_for_prompt_choice(text)
     payload = {

@@ -239,7 +239,7 @@ def concat_scene_clips(
         if (p or "").strip() and os.path.isfile(p)
     ]
     if not paths:
-        raise RuntimeError("没有可拼接的 mp4（请先 grok_video download）")
+        raise RuntimeError("没有可拼接的 mp4（请先 gvd）")
     return concat_segments_to_gen_video(
         [{"path": p} for p in paths],
         pid=pid,
@@ -263,7 +263,7 @@ def concat_recorded_scene_clips(clips: list[dict] | list[str] | None = None) -> 
         clips = load_grok_scene_videos()
     paths = _paths_in_scene_order(clips)
     if not paths:
-        raise RuntimeError("还没有记录 grok 场景 video。先 grok_video download。")
+        raise RuntimeError("还没有记录 grok 场景 video。先 gvd。")
 
     item = current_taken_queue_item() or {}
     vd = resolve_video_detail_from_queue_item(item) if item else None
