@@ -31,7 +31,7 @@ def _hwnd_title(hwnd: Optional[int]) -> str:
     if not hwnd:
         return ""
     try:
-        from aiagent.win_gui_tasks import win32gui
+        from cli.win_gui_tasks import win32gui
 
         if win32gui is None:
             return ""
@@ -42,7 +42,7 @@ def _hwnd_title(hwnd: Optional[int]) -> str:
 
 def current_screen() -> str:
     """Use real windows first; prefer the foreground STORY/SCENE when both exist."""
-    from aiagent.win_gui_tasks import (
+    from cli.win_gui_tasks import (
         find_detail_window,
         find_panel_window,
         find_video_list_window,
@@ -72,7 +72,7 @@ def current_screen() -> str:
 
 
 def current_screen_info() -> dict:
-    from aiagent.win_gui_tasks import (
+    from cli.win_gui_tasks import (
         find_detail_window,
         find_existing_ai_window,
         find_panel_window,

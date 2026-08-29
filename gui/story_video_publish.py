@@ -25,7 +25,7 @@ from gui.publish_metadata_dialog import (
 
 def resolve_current_publish_context() -> dict:
     """当前队列条 + video_detail + 成片 mp4。缺一则抛 RuntimeError。"""
-    from aiagent.video_choice_queue import (
+    from cli.video_choice_queue import (
         current_taken_queue_item,
         resolve_video_detail_from_queue_item,
     )
@@ -132,7 +132,7 @@ def build_publish_metadata(ctx: dict, source_key: str | None = None) -> dict:
 
 
 def _patch_list_row(item: dict, updates: dict) -> None:
-    from aiagent.video_choice_queue import _match_row_in_list
+    from cli.video_choice_queue import _match_row_in_list
 
     list_path = (item.get("list_json_path") or "").strip()
     if not list_path or not os.path.isfile(list_path):

@@ -261,7 +261,7 @@ def _click_story_root(field: str) -> tuple[bool, str]:
     """Click a STORY toolbar control via GUI bridge (no mouse simulation)."""
     import time
 
-    from aiagent.win_gui_tasks import find_detail_window, set_foreground
+    from cli.win_gui_tasks import find_detail_window, set_foreground
 
     hwnd = find_detail_window()
     if not hwnd:
@@ -369,7 +369,7 @@ def cmd_go() -> tuple[bool, str]:
     import time
 
     import config
-    from aiagent.win_gui_tasks import find_panel_window, flash_window, set_foreground
+    from cli.win_gui_tasks import find_panel_window, flash_window, set_foreground
     from cli.bridge import gui_heartbeat
 
     def _bring_scene_front() -> bool:
@@ -452,7 +452,7 @@ def cmd_go() -> tuple[bool, str]:
 
 def _foreground_story_scene() -> None:
     try:
-        from aiagent.win_gui_tasks import find_panel_window, set_foreground
+        from cli.win_gui_tasks import find_panel_window, set_foreground
 
         hwnd = find_panel_window()
         if hwnd:
@@ -462,7 +462,7 @@ def _foreground_story_scene() -> None:
 
 
 def _load_gemini_prompt() -> str:
-    from aiagent.browser_tasks import read_windows_clipboard
+    from cli.browser_tasks import read_windows_clipboard
 
     try:
         prompt = read_windows_clipboard()
@@ -486,7 +486,7 @@ def cmd_gemini() -> tuple[bool, str]:
     """Clipboard prompt → Gemini chat → wait → copy finished JSON back to clipboard."""
     import json
 
-    from aiagent.browser_tasks import GEMINI_PASTED_MARK, handle_gemini, write_windows_clipboard
+    from cli.browser_tasks import GEMINI_PASTED_MARK, handle_gemini, write_windows_clipboard
     from utility.telegram_session import story_scene_count
 
     prompt = _load_gemini_prompt()
@@ -538,7 +538,7 @@ def cmd_gemini_copy() -> tuple[bool, str]:
     """Copy the already-generated Gemini JSON onto the clipboard. Does not re-send."""
     import json
 
-    from aiagent.browser_tasks import copy_existing_gemini_json, write_windows_clipboard
+    from cli.browser_tasks import copy_existing_gemini_json, write_windows_clipboard
 
     try:
         raw = copy_existing_gemini_json()
@@ -565,7 +565,7 @@ def cmd_paste_scene() -> tuple[bool, str]:
     """Clipboard JSON → 分镜窗 scene_content text field."""
     import json
 
-    from aiagent.browser_tasks import parse_ready_scene_json, read_windows_clipboard
+    from cli.browser_tasks import parse_ready_scene_json, read_windows_clipboard
     from utility.telegram_session import story_scene_count
 
     expected = story_scene_count()
@@ -607,8 +607,8 @@ def cmd_paste_scene() -> tuple[bool, str]:
         return True, f"pst ok — {len(parsed)} scenes written to scene_content"
 
     try:
-        from aiagent.browser_tasks import write_windows_clipboard
-        from aiagent.win_gui_tasks import paste_scene
+        from cli.browser_tasks import write_windows_clipboard
+        from cli.win_gui_tasks import paste_scene
 
         write_windows_clipboard(pretty)
         if paste_scene():
@@ -779,7 +779,7 @@ def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
         )
     _record_chrome_profile("notebooklm", selected)
 
-    from aiagent.browser_tasks import handle_notebooklm_covers
+    from cli.browser_tasks import handle_notebooklm_covers
 
     try:
         detail = handle_notebooklm_covers(times=3)
@@ -788,6 +788,13 @@ def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
             f"{shown} failed ({selected['label']}): {exc}\n"
             f"可换一个 profile 再发 {shown} N。"
         )
+
+    try:
+        from utility.telegram_session import save_notebooklm_last_profile
+
+        save_notebooklm_last_profile(profile=selected.get("label") or "", index=int(want) if want.isdigit() else 0)
+    except Exception:
+        pass
 
     nbif = short_cli("notebooklm_ready")
     itc = short_cli("whole_story_pick")
@@ -803,7 +810,7 @@ def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
 def cmd_notebooklm_ready(value: str = "") -> tuple[bool, str]:
     """Query Studio: three new infographics ready, or still generating."""
     del value
-    from aiagent.browser_tasks import check_notebooklm_infographic_status
+    from cli.browser_tasks import check_notebooklm_infographic_status
     from utility.telegram_session import load_whole_story_image_record
 
     shown = short_cli("notebooklm_ready")
@@ -817,23 +824,31 @@ def cmd_notebooklm_ready(value: str = "") -> tuple[bool, str]:
     if not st.get("ok"):
         return False, f"{shown} — {st.get('error') or '查询失败'}"
     gen_n = int(st.get("generating_count") or 0)
+    gen_items = list(st.get("generating_items") or [])
+    gen_detail = ""
+    if gen_items:
+        gen_detail = "\n仍在生成：\n" + "\n".join(
+            f"  · {g.get('title', '')}" for g in gen_items[:5]
+        )
     if st.get("ready"):
+        total = int(st.get("total_items") or 0)
         return True, (
             f"{shown} — 三个新的 infographic 已经 ready。\n"
-            f"Studio 右侧看不到 “Generating infographic...”，"
-            f"最上边应是带中文标题的完成项（例如 1 source · …）。\n"
+            f"Studio 右侧列表无 Generating 项"
+            f"{f'（共 {total} 个 artifact）' if total else ''}。\n"
             f"下一步发 {itc}：打开这三张、下载到 Windows Downloads，再 Telegram 发给你选一张。"
         )
     if st.get("uncertain"):
         return True, (
             f"{shown} — 还不能判定 ready。\n"
-            f"{st.get('error') or '没读到页面上的 Generating 文字。'}\n"
+            f"{st.get('error') or '没读到 Studio 列表。'}\n"
             "如果你仍然看见第一项是 Generating infographic，就还没好，请稍后再发 nbif。"
         )
     return True, (
         f"{shown} — 还没有 ready，仍在生成中。\n"
-        f"Studio 里还能看到 “Generating infographic...”"
-        f"{f'（约 {gen_n} 条）' if gen_n else ''}。\n"
+        f"Studio 右侧列表里还有 Generating 项"
+        f"{f'（{gen_n} 条）' if gen_n else ''}。"
+        f"{gen_detail}\n"
         f"请稍后再发 {shown}。"
     )
 
@@ -904,7 +919,7 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
         clip_note = ""
         if path:
             try:
-                from aiagent.browser_tasks import copy_image_file_to_clipboard
+                from cli.browser_tasks import copy_image_file_to_clipboard
 
                 copy_image_file_to_clipboard(path)
                 clip_note = "\n已把所选图拷到剪贴板。"
@@ -921,7 +936,7 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
     expected = int(rec.get("expected") or rec.get("generate_clicked") or 3) or 3
 
     if not want:
-        from aiagent.browser_tasks import (
+        from cli.browser_tasks import (
             capture_notebooklm_infographics,
             notebooklm_window_open,
         )
@@ -949,7 +964,7 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
                 "notebooklm",
             )
         _record_chrome_profile("notebooklm", selected)
-        from aiagent.browser_tasks import reopen_notebooklm_and_capture
+        from cli.browser_tasks import reopen_notebooklm_and_capture
 
         try:
             files = reopen_notebooklm_and_capture(times=expected)
@@ -972,7 +987,7 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
 
 
 def _paste_whole_story_image_to_grok(picked: str, picked_idx: int) -> tuple[bool, str]:
-    from aiagent.browser_tasks import copy_image_file_to_clipboard
+    from cli.browser_tasks import copy_image_file_to_clipboard
 
     shown = short_cli("whole_story_image")
     try:
@@ -980,7 +995,7 @@ def _paste_whole_story_image_to_grok(picked: str, picked_idx: int) -> tuple[bool
     except Exception as exc:
         return False, f"拷贝图片到剪贴板失败：{exc}"
     try:
-        from aiagent.browser_tasks import paste_image_into_all_grok_tabs
+        from cli.browser_tasks import paste_image_into_all_grok_tabs
 
         extra = paste_image_into_all_grok_tabs()
     except Exception as exc:
@@ -1080,7 +1095,7 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
 
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
     if want.lower() in ("prep", "prepare", "paste", "ready"):
-        from aiagent.browser_tasks import prepare_open_grok_imagine_tabs
+        from cli.browser_tasks import prepare_open_grok_imagine_tabs
 
         try:
             detail = prepare_open_grok_imagine_tabs(paste_image=True)
@@ -1126,7 +1141,7 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
     v_idx = video_nb_index if video_nb_index is not None else load_grok_scene_video_nb_index()
     v_label = config_prompt.grok_scene_video_nb_choice_label(v_idx)
 
-    from aiagent.browser_tasks import handle_grok_imagine_tabs
+    from cli.browser_tasks import handle_grok_imagine_tabs
 
     try:
         detail = handle_grok_imagine_tabs(video_nb_index=v_idx)
@@ -1183,7 +1198,7 @@ def cmd_grok_download(value: str = "") -> tuple[bool, str]:
     """Download all Grok scene mp4 clips into Windows Downloads."""
     _ = value
     try:
-        from aiagent.browser_tasks import download_grok_scene_videos
+        from cli.browser_tasks import download_grok_scene_videos
 
         files = download_grok_scene_videos()
     except Exception as exc:
@@ -1296,7 +1311,7 @@ def cmd_video_publish(value: str = "") -> tuple[bool, str]:
     if tg:
         lines.append("Telegram: " + " | ".join(str(x) for x in tg))
     try:
-        from aiagent.video_choice_queue import first_pending_story_index, mark_active_item_done
+        from cli.video_choice_queue import first_pending_story_index, mark_active_item_done
 
         done = mark_active_item_done()
         if done:
@@ -1318,7 +1333,7 @@ def cmd_video_publish(value: str = "") -> tuple[bool, str]:
 
 
 def _format_story_pickup_list() -> str:
-    from aiagent.video_choice_queue import describe_queue_stories
+    from cli.video_choice_queue import describe_queue_stories
 
     info = describe_queue_stories()
     rows = info.get("rows") or []
@@ -1356,7 +1371,7 @@ def cmd_story_pickup(value: str = "") -> tuple[bool, str]:
             "要用队列选故事，请先关掉这个 GUI，再发 pick。"
         )
 
-    from aiagent.video_choice_queue import (
+    from cli.video_choice_queue import (
         first_pending_story_index,
         list_queue_items,
         queue_item_at,

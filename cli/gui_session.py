@@ -60,7 +60,7 @@ def read_gui_launch_source() -> str:
 
 def gui_session_open() -> bool:
     """Any AIComposer YT 工具会话窗（含列表 / 欢迎），不只是摘要/分镜。"""
-    from aiagent.win_gui_tasks import (
+    from cli.win_gui_tasks import (
         find_detail_window,
         find_panel_window,
         find_video_list_window,
@@ -155,7 +155,7 @@ def format_listen_sync(info: dict) -> str:
     if (not is_manual_gui_session()) and screen == "none":
         names = ["pick"] + [n for n in names if n != "pick"]
         try:
-            from aiagent.video_choice_queue import describe_queue_stories
+            from cli.video_choice_queue import describe_queue_stories
 
             rows = (describe_queue_stories().get("rows") or [])
             names = [f"pick {row['index']}" for row in rows] + ["pick"]

@@ -236,7 +236,7 @@ class _AsyncCliWorker:
             warn_after = max(warn_after, 120.0)
 
     def _loop(self, lane: str) -> None:
-        from aiagent.win_gui_tasks import ensure_uia_com
+        from cli.win_gui_tasks import ensure_uia_com
 
         ensure_uia_com()
         label = self._LANE_LABELS[lane]
@@ -256,7 +256,7 @@ class _AsyncCliWorker:
             try:
                 if lane == _UI_LANE:
                     # A wedged Win32/UIA call must not own the UI lane forever.
-                    from aiagent.win_gui_tasks import call_with_timeout
+                    from cli.win_gui_tasks import call_with_timeout
 
                     result = call_with_timeout(
                         lambda t=text: self._session.handle(t), _UI_LANE_ABANDON_S, None
@@ -291,6 +291,8 @@ class _AsyncCliWorker:
 _CLI_BOT_MUTEX_NAME = "Local\\AIComposerCliTelegramListener"
 _CLI_BOT_MUTEX_HANDLE = None
 _ERROR_ALREADY_EXISTS = 183
+_ERROR_FILE_NOT_FOUND = 2
+_ERROR_ACCESS_DENIED = 5
 _SYNCHRONIZE = 0x00100000
 
 
@@ -303,21 +305,45 @@ def _enable_utf8_stdio() -> None:
                 pass
 
 
+def cli_bot_mutex_held() -> bool:
+    """True if the Telegram 听筒 mutex is already held (instant, no PowerShell)."""
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_mutex = kernel32.OpenMutexW
+        open_mutex.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p]
+        open_mutex.restype = ctypes.c_void_p
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_bool
+
+        handle = open_mutex(_SYNCHRONIZE, False, _CLI_BOT_MUTEX_NAME)
+        err = ctypes.get_last_error()
+    except Exception:
+        return False
+    if handle:
+        try:
+            close_handle(handle)
+        except Exception:
+            pass
+        return True
+    return err == _ERROR_ACCESS_DENIED
+
+
 def _cli_bot_process_running() -> bool:
-    """True only if a live ``python -m cli bot`` process exists."""
+    """Slow fallback: scan for ``python -m cli bot``. Prefer ``cli_bot_mutex_held``."""
     try:
         completed = subprocess.run(
             [
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-CimInstance Win32_Process | "
+                "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
                 "Where-Object { $_.CommandLine -and $_.CommandLine -like '*-m cli bot*' } | "
                 "Measure-Object | Select-Object -ExpandProperty Count",
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=4,
         )
     except Exception:
         return False
@@ -328,8 +354,10 @@ def _cli_bot_process_running() -> bool:
 
 
 def cli_bot_already_running() -> bool:
-    """True if a live 听筒 process is polling Telegram. Mutex alone is not enough."""
-    return _cli_bot_process_running()
+    """True if a live 听筒 is polling Telegram."""
+    if cli_bot_mutex_held():
+        return True
+    return False
 
 
 def _acquire_cli_bot_mutex() -> bool:
@@ -493,7 +521,7 @@ def run_cli_bot(handle_text=None, mode: str | None = None) -> int:
     stop_watch = threading.Event()
 
     def _watch_screens() -> None:
-        from aiagent.win_gui_tasks import call_with_timeout
+        from cli.win_gui_tasks import call_with_timeout
 
         while not stop_watch.wait(2.0):
             try:
@@ -530,7 +558,7 @@ def run_cli_bot(handle_text=None, mode: str | None = None) -> int:
         except Exception as exc:
             msg = _safe_updates_error(exc)
             print(f"[cli] getUpdates error: {msg}", flush=True)
-            time.sleep(8 if "409" in msg else 2)
+            time.sleep(1.5 if "409" in msg else 2)
             continue
 
         for upd in updates:

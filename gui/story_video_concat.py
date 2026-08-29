@@ -252,7 +252,7 @@ def concat_scene_clips(
 
 def concat_recorded_scene_clips(clips: list[dict] | list[str] | None = None) -> str:
     """用队列当前条 + Telegram 记下的场景 clip 生成成片。"""
-    from aiagent.video_choice_queue import (
+    from cli.video_choice_queue import (
         current_taken_queue_item,
         resolve_video_detail_from_queue_item,
     )

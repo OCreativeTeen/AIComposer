@@ -388,7 +388,7 @@ pick next          # 下一条
 | `cli/gui_session.py` | 听筒「可发」列表 |
 | `cli/bridge.py` | CLI ↔ GUI 文件桥 |
 | `cli/CLI_REFERENCE.md` | 本文档 |
-| `aiagent/Hermes_CLI_Agent_prompt.md` | Hermes 自动化提示词 |
+| `D:\AI_MEDIA\aiagent\Hermes_CLI_Agent_prompt.md` | Hermes 自动化提示词 |
 
 ---
 

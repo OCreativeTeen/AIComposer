@@ -2049,7 +2049,7 @@ def show_initial_choice_dialog(parent):
         _sync_result_language()
 
     def _persist_yt_welcome_prefs():
-        """写入 program/YT_tools_prefs.json，下次启动自动恢复。"""
+        """写入 aiagent/YT_tools_prefs.json，下次启动自动恢复。"""
         global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE
         _sync_welcome_choices()
         ch = _resolve_welcome_channel_id()

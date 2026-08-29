@@ -14,13 +14,13 @@ _gui_proc: subprocess.Popen | None = None
 
 
 def gui_windows_open() -> bool:
-    from aiagent.win_gui_tasks import find_detail_window, find_panel_window
+    from cli.win_gui_tasks import find_detail_window, find_panel_window
 
     return bool(find_detail_window() or find_panel_window())
 
 
 def _queue_preview() -> dict | None:
-    from aiagent.video_choice_queue import first_pending_story_index, queue_item_at
+    from cli.video_choice_queue import first_pending_story_index, queue_item_at
 
     idx = first_pending_story_index()
     if not idx:
@@ -68,12 +68,12 @@ def _spawn_pick_video_choice(
         py = root / ".venv" / "Scripts" / "python.exe"
     python_exe = str(py) if py.is_file() else sys.executable
 
-    log_dir = Path(config.BASE_PROGRAM_PATH)
+    log_dir = Path(config.ensure_aiagent_path())
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / log_name
     log_fh = open(log_path, "w", encoding="utf-8", errors="replace")
 
-    cmd = [python_exe, "-X", "utf8", "-m", "aiagent.pick_video_choice", *args]
+    cmd = [python_exe, "-X", "utf8", "-m", "cli.pick_video_choice", *args]
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
@@ -106,7 +106,7 @@ def _spawn_pick_video_choice(
     tail = _log_tail(log_path)
     detail = f"\n\n日志末尾：\n{tail}" if tail else f"\n日志：{log_path}"
     return False, (
-        f"已执行 python -m aiagent.pick_video_choice {' '.join(args)}，"
+        f"已执行 python -m cli.pick_video_choice {' '.join(args)}，"
         f"但摘要窗没有出现。{extra}{detail}"
     )
 
@@ -138,7 +138,7 @@ def ensure_gui_from_queue(*, timeout_s: float = 75.0) -> tuple[bool, str]:
             "发 sync 再等一次。"
         )
 
-    from aiagent.video_choice_queue import list_queue_items
+    from cli.video_choice_queue import list_queue_items
 
     preview = _queue_preview()
     if preview:
@@ -148,7 +148,7 @@ def ensure_gui_from_queue(*, timeout_s: float = 75.0) -> tuple[bool, str]:
             ["next", "--with-detail", "--json"],
             title=title,
             choice_id=choice_id,
-            log_name="cli_pick_next.log",
+            log_name=os.path.basename(config.CLI_PICK_NEXT_LOG),
             timeout_s=timeout_s,
         )
 
@@ -165,7 +165,7 @@ def ensure_gui_from_queue(*, timeout_s: float = 75.0) -> tuple[bool, str]:
 
 def ensure_gui_for_queue_item(item: dict, *, timeout_s: float = 75.0) -> tuple[bool, str]:
     """打开指定队列故事。GUI 已开时不启动第二个 AIComposer。"""
-    from aiagent.video_choice_queue import (
+    from cli.video_choice_queue import (
         activate_queue_item,
         current_taken_queue_item,
     )
@@ -214,6 +214,6 @@ def ensure_gui_for_queue_item(item: dict, *, timeout_s: float = 75.0) -> tuple[b
         ["open", cid, "--with-detail", "--json"],
         title=title,
         choice_id=cid,
-        log_name="cli_story_pickup.log",
+        log_name=os.path.basename(config.CLI_STORY_PICKUP_LOG),
         timeout_s=timeout_s,
     )

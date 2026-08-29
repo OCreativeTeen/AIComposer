@@ -1727,7 +1727,7 @@ def _topic_category_program_list_path(channel_path: str, topic_category: str) ->
     return os.path.join(d, config.topic_category_list_file_basename(topic_category))
 
 
-# --- 全 program 共享 persistent 剪贴板：``{BASE_PROGRAM_PATH}/program_clipboard.json`` ---
+# --- 全频道共享 persistent 剪贴板：``{BASE_AIAGENT_PATH}/program_clipboard.json`` ---
 
 PROGRAM_CLIPBOARD_JSON_NAME = "program_clipboard.json"
 LEGACY_CHANNEL_CLIPBOARD_JSON_NAME = "channel_clipboard.json"
@@ -1735,9 +1735,12 @@ _program_clipboard_manager_window: "ChannelClipboardManagerWindow | None" = None
 
 
 def _program_clipboard_file() -> str:
-    root = (config.BASE_PROGRAM_PATH or "").strip()
+    path = (getattr(config, "PROGRAM_CLIPBOARD_JSON", "") or "").strip()
+    if path:
+        return path
+    root = (getattr(config, "BASE_AIAGENT_PATH", "") or "").strip()
     if not root:
-        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "program")
+        root = os.path.join(config.BASE_MEDIA_PATH or "/AI_MEDIA", "aiagent")
     os.makedirs(root, exist_ok=True)
     return os.path.join(root, PROGRAM_CLIPBOARD_JSON_NAME)
 
@@ -1775,7 +1778,7 @@ def _merge_legacy_clipboard_file_into_items(
 
 
 def _migrate_legacy_channel_clipboards(data: dict) -> dict:
-    """一次性合并各频道子目录下旧剪贴板 JSON 到 ``program/program_clipboard.json``。"""
+    """一次性合并各频道子目录下旧剪贴板 JSON 到 ``aiagent/program_clipboard.json``。"""
     if not isinstance(data, dict):
         data = {"items": []}
     items = data.setdefault("items", [])
@@ -2070,7 +2073,7 @@ def open_or_refresh_channel_clipboard_manager(
     select_last: bool = False,
     on_pick=None,
 ):
-    """兼容旧签名：``channel_path`` 已忽略，剪贴板为 ``BASE_PROGRAM_PATH`` 下全局共享。"""
+    """兼容旧签名：``channel_path`` 已忽略，剪贴板为 ``BASE_AIAGENT_PATH`` 下全局共享。"""
     return open_or_refresh_program_clipboard_manager(
         parent,
         clipboard_host,
@@ -10604,11 +10607,11 @@ class MediaGUIManager:
 
 
         def export_selected_choices():
-            """将树中选中行导出到 program/video_choice_queue.json，供 CLI / AI agent 逐条取用。"""
+            """将树中选中行导出到 aiagent/video_choice_queue.json，供 CLI 逐条取用。"""
             if not tree.selection():
                 messagebox.showwarning("提示", "请至少选择一个视频", parent=dialog)
                 return
-            from aiagent.video_choice_queue import export_video_details_to_queue
+            from cli.video_choice_queue import export_video_details_to_queue
 
             details = _unique_video_details_from_tree_selection()
             if not details:

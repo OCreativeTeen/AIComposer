@@ -580,6 +580,8 @@ WORKING_MEDIA_PATH = f"{BASE_MEDIA_PATH}/working"
 INPUT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/input"
 DEFAULT_MEDIA_PATH = f"{BASE_MEDIA_PATH}/default"
 BASE_PROGRAM_PATH = f"{BASE_MEDIA_PATH}/program"
+# CLI / Hermes 运行时状态（队列、bridge、剪贴板、Chrome profile 记录等）
+BASE_AIAGENT_PATH = f"{BASE_MEDIA_PATH}/aiagent"
 AVATAR_PATH = f"{BASE_MEDIA_PATH}/avatar"
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
@@ -595,8 +597,8 @@ def publish_final_video_path(pid: str) -> str:
 
 
 YT_TEXT_DOWNLOAD_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_text_download.json")
-YT_TOOLS_PREFS_JSON = os.path.join(BASE_PROGRAM_PATH, "YT_tools_prefs.json")
-VIDEO_CHOICE_QUEUE_JSON = os.path.join(BASE_PROGRAM_PATH, "video_choice_queue.json")
+YT_TOOLS_PREFS_JSON = os.path.join(BASE_AIAGENT_PATH, "YT_tools_prefs.json")
+VIDEO_CHOICE_QUEUE_JSON = os.path.join(BASE_AIAGENT_PATH, "video_choice_queue.json")
 
 # GUI 当前活动屏（跨进程：GUI 写入，CLI / Telegram 读取）
 SCREEN_NONE = "none"
@@ -605,20 +607,97 @@ SCREEN_STORY_SCENE = "story_scene"
 SCREEN_VIDEO_LIST = "video_list"
 SCREEN_YT_TOOLS = "yt_tools"
 ACTIVE_SCREEN = SCREEN_NONE
-ACTIVE_SCREEN_JSON = os.path.join(BASE_PROGRAM_PATH, "active_screen.json")
-GUI_LAUNCH_SOURCE_JSON = os.path.join(BASE_PROGRAM_PATH, "gui_launch_source.json")
+ACTIVE_SCREEN_JSON = os.path.join(BASE_AIAGENT_PATH, "active_screen.json")
+GUI_LAUNCH_SOURCE_JSON = os.path.join(BASE_AIAGENT_PATH, "gui_launch_source.json")
 GUI_LAUNCH_MANUAL = "manual"
 GUI_LAUNCH_QUEUE = "queue"
-CLI_BRIDGE_REQUEST_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_request.json")
-CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_reply.json")
+CLI_BRIDGE_REQUEST_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_request.json")
+CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_reply.json")
 # GUI 写心跳，CLI 读：区分「GUI 没跑」与「GUI 主线程卡住」
-CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_PROGRAM_PATH, "cli_bridge_heartbeat.json")
-WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_PROGRAM_PATH, "whole_story_images.json")
+CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_heartbeat.json")
+WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_AIAGENT_PATH, "whole_story_images.json")
 STORY_SCENE_PROMPT_CHOICE_JSON = os.path.join(
-    BASE_PROGRAM_PATH, "story_scene_prompt_choice.json"
+    BASE_AIAGENT_PATH, "story_scene_prompt_choice.json"
 )
-GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_PROGRAM_PATH, "grok_scene_videos.json")
-CHROME_PROFILES_USED_JSON = os.path.join(BASE_PROGRAM_PATH, "chrome_profiles_used.json")
+GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_videos.json")
+CHROME_PROFILES_USED_JSON = os.path.join(BASE_AIAGENT_PATH, "chrome_profiles_used.json")
+# nbi 上次成功 launch 的 Chrome profile；下次 Hermes client 自动切到下一个
+NOTEBOOKLM_LAST_PROFILE_JSON = os.path.join(
+    BASE_AIAGENT_PATH, "notebooklm_last_profile.json"
+)
+# HermesChromeCDP 当前占着 9222 的 profile（nbi/grv/gem 换号依据）
+HERMES_CDP_ACTIVE_PROFILE_JSON = os.path.join(
+    BASE_AIAGENT_PATH, "hermes_cdp_active_profile.json"
+)
+PROGRAM_CLIPBOARD_JSON = os.path.join(BASE_AIAGENT_PATH, "program_clipboard.json")
+CLI_PICK_NEXT_LOG = os.path.join(BASE_AIAGENT_PATH, "cli_pick_next.log")
+CLI_STORY_PICKUP_LOG = os.path.join(BASE_AIAGENT_PATH, "cli_story_pickup.log")
+_AIAGENT_RUNTIME_MIGRATION_FLAG = os.path.join(
+    BASE_AIAGENT_PATH, ".migrated_runtime_from_program_v1"
+)
+_AIAGENT_RUNTIME_FILES_FROM_PROGRAM = (
+    "YT_tools_prefs.json",
+    "video_choice_queue.json",
+    "active_screen.json",
+    "gui_launch_source.json",
+    "cli_bridge_request.json",
+    "cli_bridge_reply.json",
+    "cli_bridge_heartbeat.json",
+    "whole_story_images.json",
+    "story_scene_prompt_choice.json",
+    "grok_scene_videos.json",
+    "chrome_profiles_used.json",
+    "notebooklm_last_profile.json",
+    "hermes_cdp_active_profile.json",
+    "program_clipboard.json",
+    "cli_pick_next.log",
+    "cli_story_pickup.log",
+)
+
+
+def ensure_aiagent_path() -> str:
+    """确保 ``BASE_AIAGENT_PATH`` 存在。"""
+    try:
+        os.makedirs(BASE_AIAGENT_PATH, exist_ok=True)
+    except OSError:
+        pass
+    return BASE_AIAGENT_PATH
+
+
+def migrate_aiagent_runtime_files_from_program() -> None:
+    """一次性把旧 ``program/`` 下的 CLI 运行时文件迁到 ``aiagent/``。"""
+    import shutil
+
+    if os.path.isfile(_AIAGENT_RUNTIME_MIGRATION_FLAG):
+        return
+    ensure_aiagent_path()
+    moved = False
+    for name in _AIAGENT_RUNTIME_FILES_FROM_PROGRAM:
+        old = os.path.join(BASE_PROGRAM_PATH, name)
+        new = os.path.join(BASE_AIAGENT_PATH, name)
+        if not os.path.isfile(old):
+            continue
+        try:
+            if os.path.isfile(new):
+                os.remove(old)
+            else:
+                shutil.move(old, new)
+            moved = True
+        except OSError:
+            pass
+    try:
+        with open(_AIAGENT_RUNTIME_MIGRATION_FLAG, "w", encoding="utf-8") as f:
+            f.write("ok\n")
+    except OSError:
+        if moved:
+            pass
+        else:
+            return
+    if moved:
+        print(f"✓ CLI 运行时文件已迁到 {BASE_AIAGENT_PATH}")
+
+
+migrate_aiagent_runtime_files_from_program()
 
 
 def set_active_screen(name: str) -> str:
@@ -630,7 +709,7 @@ def set_active_screen(name: str) -> str:
         value = SCREEN_NONE
     ACTIVE_SCREEN = value
     try:
-        os.makedirs(BASE_PROGRAM_PATH, exist_ok=True)
+        ensure_aiagent_path()
         with open(ACTIVE_SCREEN_JSON, "w", encoding="utf-8") as f:
             json.dump({"screen": ACTIVE_SCREEN}, f, ensure_ascii=False)
     except OSError:
@@ -665,17 +744,20 @@ CHROME_USER_DATA_DIR = os.path.join(
     "Chrome",
     "User Data",
 )
-# 专用 user-data-dir：普通 Chrome 开着时也能带 --remote-debugging-port 起一个实例。
-# 首次使用需在该窗口登录一次 Google，之后长期保留。
+# Hermes CLI（gem / nbi / grv / itc）专用 Chrome 数据目录；与日常 Chrome 隔离。
+# 默认：%LOCALAPPDATA%\\HermesChromeCDP\\Profile 1…4
 CHROME_CDP_USER_DATA_DIR = (
     os.environ.get("CHROME_CDP_USER_DATA_DIR")
     or os.path.join(os.environ.get("LOCALAPPDATA") or "", "HermesChromeCDP")
 ).strip()
 # Telegram 询问 owner 时按此列表编号（回复 1/2/3）
+# CLI 编号 1–4 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
+# 若 directory 与 Local State 不一致，browser_tasks 会按已登录邮箱自动纠正。
 GEMINI_CHROME_PROFILES = [
     {"label": "ocreativeteen@gmail.com", "directory": "Profile 2"},
-    {"label": "triumphdt777@gmail.com", "directory": ""},
-    {"label": "myhomefun@gmail.com", "directory": "Profile 3"},
+    {"label": "creative4teen@gmail.com", "directory": "Profile 3"},
+    {"label": "triumphdt777@gmail.com", "directory": "Default"},
+    {"label": "myhomefun@gmail.com", "directory": "Profile 4"},
 ]
 # 当前选中的账号（交互选号后会改这个值）
 GEMINI_CHROME_PROFILE = GEMINI_CHROME_PROFILES[0]["label"]
@@ -736,13 +818,12 @@ def set_gemini_chrome_profile(label_or_index) -> dict:
     if selected is None:
         raise ValueError(f"unknown Gemini Chrome profile: {label_or_index}")
     GEMINI_CHROME_PROFILE = selected["label"]
-    if selected.get("directory"):
-        GEMINI_CHROME_PROFILE_DIRECTORY = selected["directory"]
+    GEMINI_CHROME_PROFILE_DIRECTORY = (selected.get("directory") or "").strip() or "Default"
     return selected
 
 
 def load_yt_tools_prefs() -> dict:
-    """读取 YT 工具欢迎屏上次选择（``program/YT_tools_prefs.json``）。"""
+    """读取 YT 工具欢迎屏上次选择（``aiagent/YT_tools_prefs.json``）。"""
     if not os.path.isfile(YT_TOOLS_PREFS_JSON):
         return {}
     try:
@@ -754,11 +835,11 @@ def load_yt_tools_prefs() -> dict:
 
 
 def save_yt_tools_prefs(prefs: dict) -> None:
-    """保存 YT 工具欢迎屏选择到 ``program/YT_tools_prefs.json``。"""
+    """保存 YT 工具欢迎屏选择到 ``aiagent/YT_tools_prefs.json``。"""
     if not isinstance(prefs, dict):
         return
     try:
-        os.makedirs(BASE_PROGRAM_PATH, exist_ok=True)
+        ensure_aiagent_path()
         with open(YT_TOOLS_PREFS_JSON, "w", encoding="utf-8") as f:
             json.dump(prefs, f, ensure_ascii=False, indent=2)
     except OSError as e:

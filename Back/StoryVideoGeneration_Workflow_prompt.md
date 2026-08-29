@@ -257,6 +257,7 @@ b. choose one of following profile (for a Chrome instance under one account)
     1. `ocreativeteen@gmail.com`
     2. `triumphdt777@gmail.com`
     3. `myhomefun@gmail.com`
+    4. 'creative4teen@gmail.com'
 c. if already launched the Chrome instance for the wanted profile, can re-use it without re-launching
 
 AI Web Interfaces & profile/account relations

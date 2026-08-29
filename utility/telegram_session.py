@@ -572,6 +572,100 @@ def record_chrome_profile_used(kind: str, label: str) -> dict:
     return payload
 
 
+def _notebooklm_last_profile_path() -> str:
+    return getattr(config, "NOTEBOOKLM_LAST_PROFILE_JSON", "") or ""
+
+
+def load_notebooklm_last_profile() -> dict:
+    """上次成功 ``nbi`` 的 Chrome profile（跨进程、跨次启动）。"""
+    empty = {"profile": "", "index": 0, "launched_at": ""}
+    path = _notebooklm_last_profile_path()
+    if not path or not os.path.isfile(path):
+        return dict(empty)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return dict(empty)
+    if not isinstance(data, dict):
+        return dict(empty)
+    try:
+        index = int(data.get("index") or 0)
+    except (TypeError, ValueError):
+        index = 0
+    return {
+        "profile": str(data.get("profile") or "").strip(),
+        "index": max(0, index),
+        "launched_at": str(data.get("launched_at") or ""),
+    }
+
+
+def _notebooklm_profile_ring() -> list[dict]:
+    return list(config.list_gemini_chrome_profiles() or [])
+
+
+def _index_for_notebooklm_label(label: str, profiles: list[dict] | None = None) -> int:
+    want = (label or "").strip().lower()
+    if not want:
+        return 0
+    rows = profiles if profiles is not None else _notebooklm_profile_ring()
+    for i, item in enumerate(rows, 1):
+        name = (item.get("label") or "").strip().lower()
+        if name == want or (want and want in name) or (name and name in want):
+            return i
+    return 0
+
+
+def save_notebooklm_last_profile(*, profile: str = "", index: int = 0) -> dict:
+    """记下本次成功 nbi 用的 profile name，供下次切到下一个号。"""
+    profiles = _notebooklm_profile_ring()
+    label = (profile or "").strip()
+    idx = int(index or 0)
+    if idx < 1 and label:
+        idx = _index_for_notebooklm_label(label, profiles)
+    if idx < 1:
+        idx = 1
+    if not label and 1 <= idx <= len(profiles):
+        label = str(profiles[idx - 1].get("label") or "").strip()
+    payload = {
+        "profile": label,
+        "index": idx,
+        "launched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    path = _notebooklm_last_profile_path()
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return payload
+
+
+def next_notebooklm_profile_index(*, override: int | None = None) -> tuple[int, str]:
+    """本次 nbi 该用的号：显式 override，否则「上次成功号的下一个」（没有记录则从 1 起）。"""
+    profiles = _notebooklm_profile_ring()
+    n = len(profiles) or 1
+    if override is not None:
+        i = max(1, min(int(override), n))
+        label = str(profiles[i - 1].get("label") or "").strip() if profiles else ""
+        return i, label
+    rec = load_notebooklm_last_profile()
+    last_i = int(rec.get("index") or 0)
+    last_name = str(rec.get("profile") or "").strip()
+    if last_i < 1 and last_name:
+        last_i = _index_for_notebooklm_label(last_name, profiles)
+    if last_i < 1:
+        nxt = 1
+    else:
+        nxt = (last_i % n) + 1
+    label = str(profiles[nxt - 1].get("label") or "").strip() if profiles else ""
+    return nxt, label
+
+
 def chrome_profile_choice_labels(kind: str = "") -> tuple[list[str], int | None]:
     """列出 Chrome 账号，标注本轮已用过的；返回 (显示文案, 建议的 1-based 序号)。"""
     profiles = config.list_gemini_chrome_profiles()
@@ -638,7 +732,7 @@ def welcome_text(mode: str | None = None) -> str:
         "长命令（nbi / gem / grv …）后台执行：立刻回 ⏳，完成后再发 ok/error [任务号]。\n"
         "发 busy 可看当前队列。\n"
         "若电脑上还没有 STORY/SCENE，我会用队列启动：\n"
-        "python -m aiagent.pick_video_choice next --with-detail --json\n"
+        "python -m cli.pick_video_choice next --with-detail --json\n"
         "这是队列会话，随后可用 pick / pick 1 / pick 2 选故事（已完成的也能重做）。\n"
         "若已是 GUI_pm 手工会话：不自动 next，pick 已关掉，我只跟着窗口同步。\n"
         "你进到 STORY/SCENE 时我会主动告诉你能发哪些短 CLI。发 sync 可再同步一次。"
