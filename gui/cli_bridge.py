@@ -504,6 +504,14 @@ def _apply(req: dict) -> tuple[bool, str]:
             if not callable(fn):
                 return False, f"{field} has no setter"
             return fn(value)
+        if op == "persist":
+            fn = spec.get("persist")
+            if not callable(fn):
+                return False, f"{field} has no persist"
+            result = fn()
+            if isinstance(result, tuple) and len(result) >= 2:
+                return bool(result[0]), str(result[1])
+            return True, f"persisted {field}"
     except Exception as exc:
         return False, f"{field} failed: {exc}"
     return False, f"unknown op {op}"

@@ -34,7 +34,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 听筒同步里常见：
 
-`lm` `sty` `snp` `prf` `gem` `pst` `save` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
+`lm` `sty` `snp` `prf` `gem` `scnsave` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
 
 ### STORY（`story_root`）
 
@@ -57,13 +57,12 @@ pick next          # 或 pick 3；队列里取下一条
 scn                # STORY → 打开 SCENE
 lm 4               # 选「4 Step Story」，长 prompt 上剪贴板
 gem                # Gemini 生成 4 场 JSON → 剪贴板
-pst                # 剪贴板 JSON 写入 scene_content
-save               # 保存 SCENE
+scnsave             # 剪贴板 JSON → scene_content + 保存到频道列表（不关窗）
 nbp 1              # 选 NotebookLM 导出类型（先无参看列表）
 nbi 1              # 选 Chrome 号，开 NotebookLM，Generate ×3 后立刻返回（不等待）
 nbif               # 查询三张新 infographic 是否 ready
-itc                # 当前 NotebookLM 窗口拷最上边三张；窗口关了就 itc 1（Chrome 号）
-itc pick 2         # 选定第 2 张封面（Telegram 直接回 2 也可以）
+itc                # 拷最上边三张并发 Telegram 请选
+itc 2              # 选第 2 张封面（Telegram 直接回 2 也可以）
 grv 1 3             # 选 Chrome 号 + video 变体 3；全自动出图+出片+每场景下载
                    # 省略变体时用 session 已存值（默认 3）
 grv 1               # 同上，用已存变体
@@ -181,11 +180,11 @@ pick next          # 下一条
 |------|------|------|------|------|
 | `gem` | `gemini` | SCENE（逻辑上） | 无 | 剪贴板长 prompt → CDP 开 Gemini → 生成 → **4 场 JSON 写回剪贴板** |
 | `fetch` | `gemini_copy`, `copyjson` | 同左 | 无 | 不重新生成；从当前 Gemini 页读已有 JSON → 剪贴板 |
-| `pst` | `paste_scene`, `paste_json` | SCENE | 无 | 剪贴板 JSON → `scene_content` |
+| `scnsave` | `scene_save` | SCENE | 无 | 剪贴板 JSON → scene_content → 写入 video_detail（不关窗） |
 
 **`gem` 前置：** 已 `lm 4`，剪贴板或「提示词预览」有长 prompt。
 
-**`gem` 成功后：** 回复 `gem ok — 4 scenes on clipboard` → 发 `pst`。
+**`gem` 成功后：** 回复 `gem ok — 4 scenes on clipboard` → 发 `scnsave`。
 
 **Chrome：** 使用专用 CDP 配置（`HermesChromeCDP`），与日常 Chrome 可并存；首次需在该窗口登录 Google。
 
@@ -203,7 +202,7 @@ pick next          # 下一条
 | `nbi` | `open_notebooklm` | Chrome 序号 | 开 NotebookLM，Generate ×3，立刻返回（不等待、不拷图） |
 | `nbif` | `notebooklm_ready` | 无 | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
 | `itc` | `whole_story_pick` | 无参 / Chrome 号 / `pick N` | 无参：当前窗口拷最上边三张并发 Telegram；`itc N`：用 Chrome 号 N 重开 notebook 再拷图；选封面用 Telegram `1/2/3` 或 `itc pick N` |
-| `igp` | `whole_story_image` | 无参或序号 | 无参：贴已选封面进 Grok；`igp N` 选第 N 张并贴（`grv` 已含贴封面，通常只需 `itc pick`） |
+
 
 #### `nbp` 选项结构（先 `nbp` 看编号）
 
@@ -231,8 +230,6 @@ pick next          # 下一条
 **`nbif`：** 看 Studio 右侧。有 “Generating infographic...” 和转圈 = 还没 ready；最上边三张已是中文标题 + `1 source · …` = ready。
 
 **`itc`：** 须 infographic 已做好。与 **`grv` 同一 HermesChromeCDP（9222）**：已开则直接连，否则自动启动。无参 → 在当前 NotebookLM 逐张打开最上边 3 张，⋮ → Download（失败则拉 lh3 URL），存到 `%USERPROFILE%\\Downloads\\whole_story_image_N_*.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开 notebook 再下载。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
-
-**`igp`：** 无参 → 把 `itc` 已选封面贴进所有 Grok 标签；`igp N` 可一步选第 N 张并贴。（旧别名 `wsi`）
 
 ---
 
@@ -322,7 +319,7 @@ pick next          # 下一条
 | `prf` | `profile` |
 | `gem` | `gemini` |
 | `fetch` | `gemini_copy` |
-| `pst` | `paste_scene` |
+| `scnsave` | `scene_save` |
 | `nbp` | `notebooklm` |
 | `nbi` | `open_notebooklm` |
 | `nbif` | `notebooklm_ready` |
@@ -369,12 +366,12 @@ pick next          # 下一条
 | `lm` bridge timeout | 关 SCENE 重开；或重启 GUI 后再 `scn` → `lm 4` |
 | `lm` 成功但下拉没变 | 没选上，**不要 `gem`** |
 | `gem` prompt too short | 先 `lm 4` |
-| `pst` 不是 JSON | 先 `gem` 或 `fetch` |
+| `scnsave` 不是 JSON | 先 `gem` 或 `fetch` |
 | `pick` 已关掉 | 手工 GUI 会话；直接 `scn` 继续 |
 | `scn` 打不开 | STORY 要在；勿挡 GUI；再发一次 `scn` |
 | `grv` 没有 LM | 先 `lm 4` |
 | `grv` 没有封面图 | 先 `itc pick`（或 Copy image 到剪贴板） |
-| `grv` video 提示词为空 | 确认 `pst` 后 `scene_content` 为有效 JSON；SCENE 窗口须打开 |
+| `grv` video 提示词为空 | 确认 `scnsave` 后 `scene_content` 为有效 JSON；SCENE 窗口须打开 |
 | `gri` 提示已合并 | 改发 `grv 1`（或 `grv 1 3` 指定变体） |
 | `gvd` / `grvd` 没有 mp4 | 先等 `grv` 跑完（已含下载）；或单独 `gvd` 补下 |
 

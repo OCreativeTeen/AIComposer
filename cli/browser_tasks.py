@@ -658,7 +658,7 @@ def _grok_attach_cdp_port(*, allow_launch: bool = False) -> int:
 
 
 def _grok_resolve_cdp_port(*urls: str, timeout_s: float = 30.0) -> int:
-    """Reuse existing Grok CDP (do not launch). Used by gri / igp / grv prep."""
+    """Reuse existing Grok CDP (do not launch). Used by grv prep."""
     return _grok_attach_cdp_port(allow_launch=False)
 
 

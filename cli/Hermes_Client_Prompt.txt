@@ -22,7 +22,7 @@ TELEGRAM ENV:
    - 对于查询类长任务（如 `nbif`），若 Bot 返回 --> “仍在生成中/未 ready”（如 `Studio 右侧列表里还有 Generating 项`），你必须**每隔 60 秒**重新发送一次 `nbif`，循环轮询，直到 Bot 回复 --> `三张/新的 infographic 已经 ready`。
 
 3. **人工干预（Human-in-the-Loop）**：
-   - **绝对禁止自动化接管封面选择**：当 Bot 完成 `itc` 命令并向 Telegram 发送 3 张封面图、提示“请选一张整篇故事封面：回复 1 / 2 / 3”时，**Agent 必须挂起/暂停操作，等待人类（Wenjun）在 Telegram 中手动输入选图指令**（例如发送 `itc pick 3` 或 `3`）。
+   - **绝对禁止自动化接管封面选择**：当 Bot 完成 `itc` 命令并向 Telegram 发送 3 张封面图、提示“请选一张整篇故事封面：回复 1 / 2 / 3”时，**Agent 必须挂起/暂停操作，等待人类（Wenjun）在 Telegram 中手动输入选图指令**（例如发送 `itc 3` 或 `3`）。
    - 收到人类用户的选图指令并在 Telegram 中确认已被 Bot 记录后，Agent 再恢复自动化流程。
 
 4. **主循环（Main Queue Loop）**：
@@ -59,7 +59,7 @@ PRE-TASK (launch Telegram Bot):
 - **等待**：长任务（约 20-50 秒），直到收到 `ok [...] Gem`（提示 scenes on clipboard）。
 
 ### 步骤 5：写入场景 (Paste Scenes)
-- **动作**：发送 `pst`
+- **动作**：发送 `scnsave`（写入 scene_content 并保存到频道列表，不关 SCENE 窗）
 - **等待**：直到收到 `ok [...] Pst`（提示 scenes written to scene_content）。
 
 ### 步骤 6：生成 Infographic 预设 (NotebookLM Preparation)
@@ -83,8 +83,8 @@ PRE-TASK (launch Telegram Bot):
 - **等待**：长任务（约 72 秒），直到 Bot 在 Telegram 发送 3 张图片并提示“请选一张整篇故事封面”。
 
 ### 步骤 10：【人工介入】等待用户选图 (Human Selection)
-- **状态**：**暂停自动化逻辑**，等待人类用户（Wenjun）在 Telegram 输入选择命令（如 `itc pick 3`）。
-- **恢复条件**：人类发送选择后，收到 Bot 的 `ok [...] Itc pick N`（如 `selected_path=...`）。
+- **状态**：**暂停自动化逻辑**，等待人类用户（Wenjun）在 Telegram 输入选择命令（如 `itc 3` 或 `3`）。
+- **恢复条件**：人类发送选择后，收到 Bot 的 `ok [...] itc ok — 已选 #N`（如 `selected_path=...`）。
 
 ### 步骤 11：生成 Grok 场景图与视频 (Grok Video Generation)
 - **动作**：发送 `grv 1 3`

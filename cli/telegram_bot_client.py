@@ -241,10 +241,10 @@ class HermesTelegramClient:
                     return
             except Exception:
                 return
-            self._dismiss_save_prompt()
+            self._dismisscnsave_prompt()
             time.sleep(0.35)
 
-    def _dismiss_save_prompt(self) -> None:
+    def _dismisscnsave_prompt(self) -> None:
         try:
             import uiautomation as auto
         except Exception:
@@ -379,14 +379,18 @@ class HermesTelegramClient:
             self._apply_cover_pick(int(digit))
             return
         compact = text.translate(_FULLWIDTH_DIGITS).lower()
-        if compact.startswith("itc pick ") or compact.startswith("itc  pick "):
+        if compact.startswith("itc "):
             parts = compact.split()
-            if len(parts) >= 3 and parts[2].isdigit():
+            if len(parts) == 2 and parts[1].isdigit():
+                self._apply_cover_pick(int(parts[1]))
+                return
+            if len(parts) >= 3 and parts[1] == "pick" and parts[2].isdigit():
                 self._apply_cover_pick(int(parts[2]))
+                return
 
     def _apply_cover_pick(self, index: int) -> None:
         with self._cover_lock:
-            ok, msg = self.cli(f"itc pick {index}")
+            ok, msg = self.cli(f"itc {index}")
         if ok:
             self.log(f"封面已选 #{index}\n{msg}", telegram=True)
         else:
@@ -516,20 +520,20 @@ class HermesTelegramClient:
                 continue
         raise PipelineError(f"gem failed: {last}")
 
-    def _paste_scenes(self) -> None:
+    def _scene_save(self) -> None:
         last = ""
         for attempt in range(3):
-            ok, msg = self.cli("pst")
+            ok, msg = self.cli("scnsave")
             last = msg
-            if ok and "written to scene_content" in msg.lower():
+            if ok and "scnsave ok" in msg.lower():
                 return
             if "不是 JSON" in msg or "不是有效的 SCENE JSON" in msg:
-                self.log("pst 不是 JSON — 重做 gem", telegram=True)
+                self.log("scnsave 不是 JSON — 重做 gem", telegram=True)
                 self._generate_scenes()
                 continue
             if attempt < 2:
                 time.sleep(2.0)
-        raise PipelineError(f"pst failed: {last}")
+        raise PipelineError(f"scnsave failed: {last}")
 
     def _nbp_preset(self) -> None:
         self.cli_ok("nbp 1", contain="nbp ok", tries=3, pause_s=2.0)
@@ -711,8 +715,8 @@ class HermesTelegramClient:
             self._select_lm()
             self.log("步骤 4 gem", telegram=True)
             self._generate_scenes()
-            self.log("步骤 5 pst", telegram=True)
-            self._paste_scenes()
+            self.log("步骤 5 scnsave", telegram=True)
+            self._scene_save()
             self.log("步骤 6 nbp 1", telegram=True)
             self._nbp_preset()
             self.log("步骤 7 nbi", telegram=True)

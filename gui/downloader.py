@@ -1076,6 +1076,33 @@ def _parse_scene_json_list(raw) -> list[dict]:
     return []
 
 
+def apply_scene_content_from_editor_text(
+    video_detail: dict,
+    raw: str,
+    *,
+    allow_clear: bool = False,
+) -> tuple[bool, str, list | None]:
+    """Parse scene_content JSON from the editor and assign to ``video_detail`` (no disk I/O)."""
+    if not isinstance(video_detail, dict):
+        return False, "invalid video_detail", None
+    text = (raw or "").strip()
+    if not text:
+        if not allow_clear:
+            return False, "scene_content 为空", None
+        video_detail.pop("scene_content", None)
+        return True, "cleared scene_content", []
+    try:
+        parsed = json.loads(safe_clipboard_json_copy(text))
+    except (json.JSONDecodeError, TypeError) as e:
+        return False, f"无法解析 scene_content：{e}", None
+    if not isinstance(parsed, list):
+        return False, "scene_content 必须是 JSON 数组（以 [ 开头的 list）。", None
+    if not parsed:
+        return False, "解析后无有效场景条目，请检查 JSON 结构。", None
+    video_detail["scene_content"] = parsed
+    return True, f"parsed {len(parsed)} scene(s)", parsed
+
+
 def _normalize_scene_dict_entry(item: dict) -> dict | None:
     """单条 scene JSON：保留 LLM 返回的全部字段。"""
     if not isinstance(item, dict):
@@ -7207,6 +7234,26 @@ class MediaGUIManager:
                         on_title_updated=on_title_updated,
                     )
 
+                def on_persist_keep_open():
+                    raw = (tx.get("1.0", tk.END) or "").strip()
+                    ok, msg, parsed = apply_scene_content_from_editor_text(
+                        video_detail, raw
+                    )
+                    if not ok:
+                        return False, msg
+                    result_holder[0] = parsed
+                    if not persist(video_detail, parent=dlg):
+                        return False, "写入频道列表失败"
+                    if callable(on_saved):
+                        try:
+                            on_saved()
+                        except Exception:
+                            pass
+                    return True, (
+                        f"saved {len(parsed or [])} scene(s) to channel list "
+                        "(window kept open)"
+                    )
+
                 def on_confirm():
                     raw = (tx.get("1.0", tk.END) or "").strip()
                     if not raw:
@@ -7219,32 +7266,17 @@ class MediaGUIManager:
                         video_detail.pop("scene_content", None)
                         result_holder[0] = []
                     else:
-                        try:
-                            parsed = json.loads(safe_clipboard_json_copy(raw))
-                        except (json.JSONDecodeError, TypeError) as e:
+                        ok, msg, parsed = apply_scene_content_from_editor_text(
+                            video_detail, raw
+                        )
+                        if not ok:
                             show_auto_close_popup(
                                 dlg,
                                 "JSON 无效",
-                                f"无法解析 scene_content：\n{e}",
+                                msg,
                                 kind="error",
                             )
                             return
-                        if not isinstance(parsed, list):
-                            show_auto_close_popup(
-                                dlg,
-                                "JSON 无效",
-                                "scene_content 必须是 JSON 数组（以 [ 开头的 list）。",
-                                kind="error",
-                            )
-                            return
-                        if not parsed:
-                            messagebox.showwarning(
-                                "无效场景",
-                                "解析后无有效场景条目，请检查 JSON 结构。",
-                                parent=dlg,
-                            )
-                            return
-                        video_detail["scene_content"] = parsed
                         result_holder[0] = parsed
                     if not persist(video_detail, parent=dlg):
                         return
@@ -7491,6 +7523,7 @@ class MediaGUIManager:
                         "content": {
                             "get": lambda: (tx.get("1.0", tk.END) or "").strip(),
                             "set": _set_content,
+                            "persist": on_persist_keep_open,
                         },
                         "scene_choice": {
                             "get": lambda: _scene_index_button_label(_scene_copy_index[0]),

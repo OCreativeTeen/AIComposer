@@ -718,7 +718,7 @@ class TelegramCliSession:
         if whole_story_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
-                return dispatch(f"{short_cli('whole_story_pick')} pick {digit}")
+                return dispatch(f"{short_cli('whole_story_pick')} {digit}")
         cmd, _ = split_command(raw)
         if cmd in ("sync", "where", "here"):
             return True, self.announce_sync()

@@ -72,7 +72,7 @@ _UI_LANE_CMDS = frozenset(
         "clips",
         "project",
         "profile",
-        "paste_scene",
+        "scene_save",
     }
 )
 
