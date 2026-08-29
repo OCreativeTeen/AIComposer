@@ -73,6 +73,9 @@ _UI_LANE_CMDS = frozenset(
         "project",
         "profile",
         "scene_save",
+        "scnsave",
+        "ssave",
+        "s_save",
     }
 )
 

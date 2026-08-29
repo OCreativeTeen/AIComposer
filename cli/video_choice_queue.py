@@ -363,6 +363,25 @@ def first_pending_story_index() -> int | None:
     return None
 
 
+def resolve_story_pick_index(want: str = "") -> int | None:
+    """把 ``pick`` 参数解析为 1-based 序号。
+
+    ``next`` / 空：优先第一条未处理；若无未处理但队列非空则回退到 1（可重做处理中/已完成）。
+    数字：直接返回对应序号。
+    """
+    raw = (want or "").strip()
+    low = raw.lower().replace(" ", "")
+    if low in ("next", "n", "下一个", "下一条", ""):
+        idx = first_pending_story_index()
+        if idx is not None:
+            return idx
+        return 1 if list_queue_items() else None
+    if raw.isdigit():
+        n = int(raw)
+        return n if n >= 1 else None
+    return None
+
+
 def describe_queue_stories() -> dict:
     """供 ``story_pickup`` 列出全部故事及处理状态。"""
     data = load_queue()

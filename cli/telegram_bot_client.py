@@ -107,6 +107,7 @@ class HermesTelegramClient:
         self._listener_owns_inbox = True
         self._nbi_used = 0
         self._cover_lock = threading.Lock()
+        self._cover_tg_offset = 0
         self._last_tg = 0.0
 
     # ------------------------------------------------------------------ logging
@@ -311,6 +312,12 @@ class HermesTelegramClient:
                 "听筒已在跑：本 client 不抢 getUpdates，封面选图走 JSON。",
                 telegram=True,
             )
+            self.log(
+                "⚠️ 听筒与 client 共用同一 GUI bridge：跑 client 时不要在 Telegram "
+                "发 gem / lm / scn / nbi 等命令（只回封面 1/2/3），否则会出现 "
+                "GUI stuck / lm 假失败。",
+                telegram=True,
+            )
             return
         self._listener_owns_inbox = False
         self._tg_thread = threading.Thread(
@@ -396,12 +403,71 @@ class HermesTelegramClient:
         else:
             self.log(f"封面选择失败 #{index}\n{msg}", telegram=True)
 
+    def _sync_cover_telegram_offset(self) -> None:
+        """Ignore Telegram messages sent before itc posted the 3 covers."""
+        if not self.telegram_enabled or self._listener_running():
+            return
+        from utility.telegram import ROLE_CLI, get_updates
+
+        try:
+            for upd in get_updates(
+                ROLE_CLI,
+                offset=self._cover_tg_offset,
+                timeout=0,
+                request_timeout=20,
+            ):
+                uid = upd.get("update_id")
+                if isinstance(uid, int):
+                    self._cover_tg_offset = max(self._cover_tg_offset, uid + 1)
+        except Exception as exc:
+            self.log(f"封面选图：同步 Telegram offset 失败：{exc}")
+
+    def _poll_telegram_cover_replies(self) -> None:
+        """When 听筒 is off, client polls 1/2/3 itself (outbound-only mode)."""
+        if not self.telegram_enabled or self._listener_running():
+            return
+        from utility.telegram import ROLE_CLI, get_updates
+        from utility.telegram_cli import cli_allowed_chat_id
+
+        allowed = cli_allowed_chat_id()
+        try:
+            updates = get_updates(
+                ROLE_CLI,
+                offset=self._cover_tg_offset,
+                timeout=8,
+                request_timeout=20,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "409" in msg:
+                self.log(
+                    "封面选图：听筒也在轮询 Telegram，本 client 改读 JSON。"
+                    "若 1/2/3 无反应请只留 run_bot 或只留 client。",
+                    telegram=True,
+                )
+                self._listener_owns_inbox = True
+            return
+        for upd in updates:
+            uid = upd.get("update_id")
+            if isinstance(uid, int):
+                self._cover_tg_offset = uid + 1
+            msg = upd.get("message") or upd.get("edited_message") or {}
+            text = (msg.get("text") or "").strip()
+            chat = msg.get("chat") or {}
+            chat_id = str(chat.get("id") or "").strip()
+            if not text:
+                continue
+            if allowed and chat_id and chat_id != allowed:
+                continue
+            self.log(f"telegram << {text}")
+            self._on_telegram_text(text)
+
     # ------------------------------------------------------------------ steps
 
     def _pick_story(self) -> bool:
         from cli.ensure_gui import gui_windows_open
         from cli.gui_session import is_manual_gui_session
-        from cli.video_choice_queue import first_pending_story_index
+        from cli.video_choice_queue import first_pending_story_index, resolve_story_pick_index
 
         self._ensure_single_instance()
         win = self._public_win()
@@ -413,16 +479,21 @@ class HermesTelegramClient:
             self.log("GUI_pm 手工会话且没有 STORY/SCENE，无法 pick。", telegram=True)
             return False
 
-        want = self.pick_arg.lower()
-        if want in ("next", "n", ""):
-            if not first_pending_story_index():
-                self.log("队列没有未处理故事。", telegram=True)
+        idx = resolve_story_pick_index(self.pick_arg)
+        if idx is None:
+            raw = (self.pick_arg or "").strip()
+            if not raw:
+                self.log("队列没有故事可选。", telegram=True)
                 return False
-            cmd = "pick next"
-        elif want.isdigit():
-            cmd = f"pick {want}"
+            cmd = f"pick {raw}"
         else:
-            cmd = f"pick {self.pick_arg}"
+            want = (self.pick_arg or "").strip().lower().replace(" ", "")
+            if want in ("next", "n", "下一个", "下一条", "") and not first_pending_story_index():
+                self.log(
+                    f"队列无未处理条，自动 pick {idx} 重做。",
+                    telegram=True,
+                )
+            cmd = f"pick {idx}"
 
         try:
             msg = self.cli_ok(cmd, tries=2, pause_s=4.0)
@@ -464,8 +535,18 @@ class HermesTelegramClient:
 
     def _lm_dropdown_is_4step(self, set_msg: str = "") -> bool:
         blob = (set_msg or "").lower()
-        if "仍是" in (set_msg or "") or "没变" in (set_msg or "") or "没有作用到 scene" in blob:
+        raw = set_msg or ""
+
+        # commands.py 失败文案（勿用宽泛子串如「没变」——成功 ok 里也含「没变就是没选上」）
+        if "没有作用到 scene" in blob:
             return False
+        if "lm set 回了 ok，但" in raw or "下拉仍是" in raw:
+            return False
+
+        # 成功：lm ok — 4 Step Story …
+        if "lm ok" in blob and "4 step" in blob:
+            return True
+
         try:
             from cli.bridge import send_bridge_command
             from cli.screens import SCREEN_STORY_SCENE
@@ -480,7 +561,17 @@ class HermesTelegramClient:
                 return True
         except Exception:
             pass
-        return "lm ok" in blob and "4 step" in blob
+
+        try:
+            from utility.telegram_session import load_story_scene_prompt_choice
+
+            label = (load_story_scene_prompt_choice().get("label") or "").strip()
+            if self.lm == "4" and "4 step" in label.lower():
+                self.log(f"lm 已确认（session 记录）：{label}", telegram=True)
+                return True
+        except Exception:
+            pass
+        return False
 
     def _select_lm(self) -> None:
         last = ""
@@ -520,17 +611,30 @@ class HermesTelegramClient:
                 continue
         raise PipelineError(f"gem failed: {last}")
 
+    def _scnsave_ok(self, msg: str) -> bool:
+        low = (msg or "").lower()
+        return (
+            "scnsave ok" in low
+            or "s_save ok" in low
+            or "scenes saved to video_detail" in low
+        )
+
     def _scene_save(self) -> None:
         last = ""
         for attempt in range(3):
+            self._wait_gui_if_stuck()
             ok, msg = self.cli("scnsave")
             last = msg
-            if ok and "scnsave ok" in msg.lower():
+            if ok and self._scnsave_ok(msg):
                 return
             if "不是 JSON" in msg or "不是有效的 SCENE JSON" in msg:
                 self.log("scnsave 不是 JSON — 重做 gem", telegram=True)
                 self._generate_scenes()
                 continue
+            if "unknown command" in (msg or "").lower() and "scnsave" in (msg or "").lower():
+                raise PipelineError(
+                    "scnsave 命令未注册 — 请更新 AIComposer 并重启 GUI / client。"
+                )
             if attempt < 2:
                 time.sleep(2.0)
         raise PipelineError(f"scnsave failed: {last}")
@@ -586,19 +690,22 @@ class HermesTelegramClient:
             except Exception:
                 pass
             self.log(f"nbi {acc} ({label or '?'})", telegram=True)
-            for retry in range(2):
+            ok, msg = self.cli(f"nbi {acc}")
+            last = msg
+            if ok and "nbi ok" in msg.lower():
+                self._nbi_used = acc
+                return acc
+            if "Customize Infographic dialog did not open" in msg:
+                self.log(f"nbi {acc} dialog 没开 — 同号重试一次", telegram=True)
+                time.sleep(4.0)
                 ok, msg = self.cli(f"nbi {acc}")
                 last = msg
                 if ok and "nbi ok" in msg.lower():
                     self._nbi_used = acc
                     return acc
-                if "Customize Infographic dialog did not open" in msg:
-                    self.log(f"nbi {acc} dialog 没开 — retry {retry + 1}", telegram=True)
-                    time.sleep(4.0)
-                    continue
-                break
-            self.log(f"nbi {acc} 失败，换号", telegram=True)
-        raise PipelineError(f"nbi 全部账号失败: {last}")
+            brief = (msg or "").strip().split("\n")[0][:160]
+            self.log(f"nbi {acc} 失败，立即换下一个号：{brief}", telegram=True)
+        raise PipelineError(f"nbi 全部 {n} 个账号都失败: {last}")
 
     def _poll_notebooklm_ready(self) -> None:
         for i in range(_NBIF_MAX_POLLS):
@@ -637,7 +744,20 @@ class HermesTelegramClient:
         from utility.telegram_session import (
             load_whole_story_image_record,
             selected_whole_story_image_path,
+            whole_story_pick_pending,
         )
+
+        self._sync_cover_telegram_offset()
+        if self.telegram_enabled and not self._listener_running():
+            self.log(
+                "听筒未运行：本 client 会直接收 Telegram 的 1 / 2 / 3。",
+                telegram=True,
+            )
+        elif self.telegram_enabled and self._listener_running():
+            self.log(
+                "听筒在跑：请在 Telegram 回 1/2/3（听筒写入 JSON，client 自动继续）。",
+                telegram=True,
+            )
 
         self.log(
             "【人工选封面】请在 Telegram 回复 1 / 2 / 3。Agent 不会代选。",
@@ -645,6 +765,7 @@ class HermesTelegramClient:
         )
         last_remind = time.monotonic()
         while not self._stop.is_set():
+            self._poll_telegram_cover_replies()
             rec = load_whole_story_image_record()
             path = selected_whole_story_image_path()
             selected = int(rec.get("selected") or 0)
@@ -659,8 +780,10 @@ class HermesTelegramClient:
             if time.monotonic() - last_remind >= _COVER_WAIT_REMIND_S:
                 last_remind = time.monotonic()
                 files = list(rec.get("files") or [])
+                pending = whole_story_pick_pending()
                 self.log(
-                    f"仍在等选封面（共 {len(files)} 张）。请回 1 / 2 / 3。",
+                    f"仍在等选封面（共 {len(files)} 张；pending={pending}）。"
+                    "请回 1 / 2 / 3。",
                     telegram=True,
                 )
             time.sleep(2.0)
@@ -780,6 +903,12 @@ class HermesTelegramClient:
             "封面必须由你在 Telegram 回 1/2/3。发 stop 可在本条结束后停。",
             telegram=True,
         )
+        if self._listener_running():
+            self.log(
+                "⚠️ 检测到 run_bot 听筒也在跑：流水线由本 client 自动驱动，"
+                "Telegram 上请勿再发 gem/lm/scn/nbi（只回 1/2/3 选封面）。",
+                telegram=True,
+            )
 
         stories = 0
         try:
@@ -823,7 +952,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--pick",
         default="next",
-        help="next（默认，下一条未处理）或队列序号，如 1。已有 STORY/SCENE 时忽略。",
+        help="next（默认：下一条未处理；无未处理时自动 pick 1 重做）或队列序号如 1。已有 STORY/SCENE 时忽略。",
     )
     p.add_argument("--once", action="store_true", help="只做当前/下一条，做完退出")
     p.add_argument("--lm", default="4", help="LM 提示序号，默认 4 = 4 Step Story")

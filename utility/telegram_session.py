@@ -238,8 +238,16 @@ def selected_whole_story_image_path() -> str:
 
 
 def whole_story_pick_pending() -> bool:
+    """True when the owner should reply 1/2/3 for a whole-story cover."""
     rec = load_whole_story_image_record()
-    return bool(rec.get("pending_pick")) and bool(rec.get("files"))
+    files = list(rec.get("files") or [])
+    if not files:
+        return False
+    if int(rec.get("selected") or 0) >= 1:
+        return False
+    if rec.get("pending_pick"):
+        return True
+    return bool(str(rec.get("telegram_sent_at") or "").strip())
 
 
 def load_grok_scene_videos() -> list[dict]:

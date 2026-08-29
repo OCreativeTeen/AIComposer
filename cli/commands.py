@@ -146,6 +146,9 @@ _ALIASES: dict[str, str] = {
     "gem": "gemini",
     "scnsave": "scene_save",
     "ssave": "scene_save",
+    "s_save": "scene_save",
+    "pst": "scene_save",
+    "paste_scene": "scene_save",
     "onb": "open_notebooklm",
     "nbi": "open_notebooklm",
     "nbif": "notebooklm_ready",
@@ -893,6 +896,14 @@ def _itc_do_cover_pick(idx: int, shown: str, igp: str) -> tuple[bool, str]:
         return False, str(exc)
     rec = load_whole_story_image_record()
     path = picked.get("path") or rec.get("selected_path") or ""
+    cover_note = ""
+    if path:
+        cov_ok, cov_msg = install_story_cover_from_image(path)
+        if not cov_ok:
+            return False, (
+                f"{shown} 已选 #{idx}，但写入 STORY 封面失败：{cov_msg}"
+            )
+        cover_note = f"\n{cov_msg}"
     clip_note = ""
     if path:
         try:
@@ -905,9 +916,60 @@ def _itc_do_cover_pick(idx: int, shown: str, igp: str) -> tuple[bool, str]:
     return True, (
         f"{shown} ok — 已选 #{idx} {os.path.basename(path)}\n"
         f"记录：selected_path={rec.get('selected_path')}"
+        f"{cover_note}"
         f"{clip_note}\n"
         f"下一步发 {igp}（无参）把该图贴进所有 Grok Imagine 标签。"
     )
+
+
+def install_story_cover_from_image(image_path: str) -> tuple[bool, str]:
+    """``itc N`` / Telegram 选封面：无弹窗写入 gen_video/<id>.webp（与拖放共用底层）。"""
+    path = (image_path or "").strip()
+    if not path or not os.path.isfile(path):
+        return False, f"封面文件不存在: {path or image_path}"
+
+    from cli.bridge import bridge_screen_bound, send_bridge_command
+    from cli.screens import SCREEN_STORY_ROOT
+
+    if bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=3.0):
+        return send_bridge_command(
+            screen=SCREEN_STORY_ROOT,
+            op="set",
+            field="cover_image",
+            value=path,
+            timeout_s=120.0,
+        )
+
+    from cli.video_choice_queue import (
+        apply_queue_item_yt_prefs,
+        current_taken_queue_item,
+        resolve_video_detail_from_queue_item,
+    )
+    from gui.downloader import save_cover_image_as_gen_video_webp
+
+    item = current_taken_queue_item()
+    vd = resolve_video_detail_from_queue_item(item) if item else None
+    if not vd:
+        return False, (
+            "STORY 窗未打开，且队列无当前条。"
+            "请先 pick 打开故事，或保持 STORY 窗在前台。"
+        )
+    prefs = apply_queue_item_yt_prefs(item) if item else {}
+    ch = ""
+    if item:
+        ch = (item.get("channel_id") or prefs.get("channel") or "").strip()
+    lang = (prefs.get("language") or "zh") if prefs else "zh"
+    pid = str(vd.get("id") or vd.get("pid") or "yt_img")
+    ok, dest, err = save_cover_image_as_gen_video_webp(
+        path,
+        vd,
+        channel=ch,
+        pid=pid,
+        lang=lang,
+    )
+    if ok:
+        return True, f"封面已保存: {dest}"
+    return False, err or "保存封面失败"
 
 
 def _itc_parse_cover_index(want: str) -> int | None:
@@ -1564,7 +1626,7 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_gemini()
     if cmd in ("gemini_copy", "copyjson", "fetch"):
         return cmd_gemini_copy()
-    if cmd in ("scene_save", "scnsave", "ssave"):
+    if cmd in ("scene_save", "scnsave", "ssave", "s_save", "paste_scene", "pst"):
         return cmd_scene_save()
     if cmd == "open_notebooklm":
         return cmd_open_notebooklm(value)

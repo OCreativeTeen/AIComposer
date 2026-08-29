@@ -1285,6 +1285,189 @@ def _ask_video_title_before_cover_save_dialog(
     return result_holder
 
 
+def save_cover_image_as_gen_video_webp(
+    image_path: str,
+    video_detail: dict,
+    *,
+    channel: str = "",
+    pid: str = "yt_img",
+    lang: str = "zh",
+    cleanup_source: bool = False,
+) -> tuple[bool, str, str]:
+    """加水印并写入 ``gen_video/<id>.webp``（同步；不弹窗、不改标题）。
+
+    Returns ``(ok, dest_abs, error_msg)``.
+    """
+    if not isinstance(video_detail, dict):
+        return False, "", "invalid video_detail"
+    src = (image_path or "").strip()
+    if not src or not os.path.isfile(src):
+        return False, "", f"封面源文件不存在: {src or image_path}"
+
+    wm_path, wm_opts = resolve_watermark_for_channel(channel or "")
+    if not wm_path:
+        return (
+            False,
+            "",
+            r"未找到水印 PNG（请放在 program/<频道>/ 下，或配置频道 watermark.path）。",
+        )
+
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+    dest_name = _gen_video_cover_webp_dest_filename(video_detail)
+    wm_webp = ""
+    webp_tmp = ""
+    out_ok = ""
+    err_msg = ""
+    try:
+        os.makedirs(gen_dir, exist_ok=True)
+        ff = FfmpegProcessor(pid or "yt_img", lang or "zh")
+        wm_webp = ff.apply_watermark_to_flat_image(src, wm_path, wm_opts or {})
+        if not wm_webp or not os.path.isfile(wm_webp):
+            return False, "", "图片叠加水印失败。"
+        webp_tmp = ff.image_to_webp(wm_webp)
+        if not webp_tmp or not os.path.isfile(webp_tmp):
+            return False, "", "图片转 WebP 失败。"
+        dest_abs = os.path.join(gen_dir, dest_name)
+        safe_copy_overwrite(webp_tmp, dest_abs)
+        out_ok = os.path.abspath(dest_abs)
+    except Exception as ex:
+        err_msg = str(ex)
+    finally:
+        if cleanup_source and src and os.path.isfile(src):
+            try:
+                safe_remove(src)
+            except Exception:
+                pass
+        for tmp in (wm_webp, webp_tmp):
+            if tmp and tmp != out_ok and os.path.isfile(tmp):
+                try:
+                    safe_remove(tmp)
+                except Exception:
+                    pass
+    if out_ok:
+        return True, out_ok, ""
+    return False, "", err_msg or "保存封面失败"
+
+
+def accept_summary_cover_image(
+    image_path: str,
+    summary_window: tk.Toplevel,
+    ctx: dict,
+    *,
+    interactive: bool = True,
+    async_ui: bool = True,
+    refresh_ui: bool = True,
+    cleanup_source: bool = False,
+) -> tuple[bool, str]:
+    """接受一张图片作为当前 STORY 的 gen_video 封面。
+
+  * ``interactive=True``（拖放）：弹窗确认成片名并写回列表。
+  * ``interactive=False``（``itc N`` / Telegram）：不弹窗、不改标题，只写 webp。
+    """
+    mgr = ctx.get("mgr")
+    vd = ctx.get("vd")
+    if mgr is None or not isinstance(vd, dict):
+        return False, "STORY 上下文无效（mgr / video_detail）"
+    if not image_path or not os.path.isfile(image_path):
+        return False, "封面图片路径无效"
+
+    if interactive:
+        par = summary_window if summary_window.winfo_exists() else (
+            getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+        )
+        title_choice = _ask_video_title_before_cover_save_dialog(par, vd)
+        if title_choice is None:
+            if cleanup_source and image_path and os.path.isfile(image_path):
+                try:
+                    safe_remove(image_path)
+                except Exception:
+                    pass
+            return False, "已取消保存封面"
+        ch_path = getattr(mgr, "channel_path", "") or ""
+        _apply_video_title_before_cover_save(
+            vd,
+            video_title=title_choice.get("video_title", ""),
+            channel_path=ch_path,
+        )
+        if _persist_channel_videos(mgr):
+            if refresh_ui:
+                rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
+                if callable(rfn_title):
+                    try:
+                        rfn_title()
+                    except Exception:
+                        _refresh_summary_window_title(summary_window, vd)
+                else:
+                    _refresh_summary_window_title(summary_window, vd)
+                refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
+                if callable(refresh_tree):
+                    try:
+                        refresh_tree()
+                    except Exception:
+                        pass
+
+    channel = getattr(mgr, "channel", "") or ""
+    pid = getattr(mgr, "pid", "") or "yt_img"
+    lang = getattr(mgr, "language", "") or "zh"
+
+    def _finish_ui(out_ok: str, err_msg: str) -> tuple[bool, str]:
+        if refresh_ui:
+            rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
+            if callable(rfn_feat):
+                try:
+                    rfn_feat()
+                except Exception:
+                    pass
+        if out_ok:
+            if interactive:
+                par = summary_window if summary_window.winfo_exists() else (
+                    getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+                )
+                show_auto_close_popup(
+                    par,
+                    "封面已保存",
+                    f"已加水印并保存为 WebP：\n{out_ok}",
+                )
+                return True, f"封面已保存: {out_ok}"
+            return True, f"封面已保存: {out_ok}"
+        if interactive:
+            par = summary_window if summary_window.winfo_exists() else (
+                getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+            )
+            show_auto_close_popup(par, "保存失败", err_msg or "保存封面失败", kind="error")
+        return False, err_msg or "保存封面失败"
+
+    if not async_ui:
+        ok, dest, err = save_cover_image_as_gen_video_webp(
+            image_path,
+            vd,
+            channel=channel,
+            pid=pid,
+            lang=lang,
+            cleanup_source=cleanup_source,
+        )
+        return _finish_ui(dest if ok else "", err)
+
+    def _worker():
+        ok, out_ok, err_msg = save_cover_image_as_gen_video_webp(
+            image_path,
+            vd,
+            channel=channel,
+            pid=pid,
+            lang=lang,
+            cleanup_source=cleanup_source,
+        )
+        root = getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+
+        def _done_ui():
+            _finish_ui(out_ok if ok else "", err_msg)
+
+        root.after(0, _done_ui)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return True, "封面保存中…"
+
+
 def _start_summary_cover_webp_save(
     image_path: str,
     summary_window: tk.Toplevel,
@@ -1292,118 +1475,16 @@ def _start_summary_cover_webp_save(
     *,
     cleanup_source: bool = False,
 ):
-    """图片：加水印转 webp 写入 gen_video。"""
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-    if not image_path or not os.path.isfile(image_path):
-        return
-
-    par = summary_window if summary_window.winfo_exists() else (
-        getattr(mgr, "root", None) or summary_window.winfo_toplevel()
+    """图片：加水印转 webp 写入 gen_video（拖放 / 粘贴 — 含确认弹窗）。"""
+    accept_summary_cover_image(
+        image_path,
+        summary_window,
+        ctx,
+        interactive=True,
+        async_ui=True,
+        refresh_ui=True,
+        cleanup_source=cleanup_source,
     )
-    title_choice = _ask_video_title_before_cover_save_dialog(par, vd)
-    if title_choice is None:
-        if cleanup_source and image_path and os.path.isfile(image_path):
-            try:
-                safe_remove(image_path)
-            except Exception:
-                pass
-        return
-
-    ch_path = getattr(mgr, "channel_path", "") or ""
-    _apply_video_title_before_cover_save(
-        vd,
-        video_title=title_choice.get("video_title", ""),
-        channel_path=ch_path,
-    )
-    if _persist_channel_videos(mgr):
-        rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
-        if callable(rfn_title):
-            try:
-                rfn_title()
-            except Exception:
-                _refresh_summary_window_title(summary_window, vd)
-        else:
-            _refresh_summary_window_title(summary_window, vd)
-        refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
-        if callable(refresh_tree):
-            try:
-                refresh_tree()
-            except Exception:
-                pass
-
-    wm_path, wm_opts = resolve_watermark_for_channel(getattr(mgr, "channel", "") or "")
-    if not wm_path:
-        messagebox.showwarning(
-            "加水印失败",
-            r"未找到水印 PNG（请放在 program/<频道>/ 下，或配置频道 watermark.path）。",
-            parent=summary_window,
-        )
-        return
-
-    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
-    dest_name = _gen_video_cover_webp_dest_filename(vd)
-    pid = getattr(mgr, "pid", "") or "yt_img"
-    lang = getattr(mgr, "language", "") or "zh"
-
-    def _worker():
-        out_ok = ""
-        err_msg = ""
-        wm_webp = ""
-        webp_tmp = ""
-        try:
-            os.makedirs(gen_dir, exist_ok=True)
-            ff = FfmpegProcessor(pid, lang)
-            wm_webp = ff.apply_watermark_to_flat_image(image_path, wm_path, wm_opts or {})
-            if not wm_webp or not os.path.isfile(wm_webp):
-                err_msg = "图片叠加水印失败。"
-                return
-            webp_tmp = ff.image_to_webp(wm_webp)
-            if not webp_tmp or not os.path.isfile(webp_tmp):
-                err_msg = "图片转 WebP 失败。"
-                return
-            dest_abs = os.path.join(gen_dir, dest_name)
-            safe_copy_overwrite(webp_tmp, dest_abs)
-            out_ok = dest_abs
-        except Exception as ex:
-            err_msg = str(ex)
-        finally:
-            if cleanup_source and image_path and os.path.isfile(image_path):
-                try:
-                    safe_remove(image_path)
-                except Exception:
-                    pass
-            for tmp in (wm_webp, webp_tmp):
-                if tmp and tmp != out_ok and os.path.isfile(tmp):
-                    try:
-                        safe_remove(tmp)
-                    except Exception:
-                        pass
-
-        root = getattr(mgr, "root", None) or summary_window.winfo_toplevel()
-
-        def _done_ui():
-            par = summary_window if summary_window.winfo_exists() else root
-            rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
-            if callable(rfn_feat):
-                try:
-                    rfn_feat()
-                except Exception:
-                    pass
-            if out_ok:
-                show_auto_close_popup(
-                    par,
-                    "封面已保存",
-                    f"已加水印并保存为 WebP：\n{out_ok}",
-                )
-            elif err_msg:
-                show_auto_close_popup(par, "保存失败", err_msg, kind="error")
-
-        root.after(0, _done_ui)
-
-    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _start_summary_slide_pdf_save(
@@ -9895,6 +9976,19 @@ class MediaGUIManager:
 
             from gui.cli_bridge import bind_screen, unbind_screen
 
+            def _cli_set_story_cover(image_path: str):
+                drop_ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                if not isinstance(drop_ctx, dict):
+                    return False, "STORY context missing"
+                return accept_summary_cover_image(
+                    (image_path or "").strip(),
+                    summary_window,
+                    drop_ctx,
+                    interactive=False,
+                    async_ui=False,
+                    refresh_ui=False,
+                )
+
             def _unbind_story_root(event=None):
                 if event is not None and getattr(event, "widget", None) is not summary_window:
                     return
@@ -9910,6 +10004,7 @@ class MediaGUIManager:
                     "analyze": {"click": do_review_analyzed},
                     "poem": {"click": do_poem_view},
                     "script": {"click": do_review_script},
+                    "cover_image": {"set": _cli_set_story_cover},
                 },
             )
             summary_window.bind("<Destroy>", _unbind_story_root)

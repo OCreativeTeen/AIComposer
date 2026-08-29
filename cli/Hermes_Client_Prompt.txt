@@ -58,9 +58,9 @@ PRE-TASK (launch Telegram Bot):
 - **动作**：发送 `gem`
 - **等待**：长任务（约 20-50 秒），直到收到 `ok [...] Gem`（提示 scenes on clipboard）。
 
-### 步骤 5：写入场景 (Paste Scenes)
-- **动作**：发送 `scnsave`（写入 scene_content 并保存到频道列表，不关 SCENE 窗）
-- **等待**：直到收到 `ok [...] Pst`（提示 scenes written to scene_content）。
+### 步骤 5：写入场景并保存 (scnsave)
+- **动作**：发送 `scnsave`（原 `pst` + `save` 已合并：剪贴板 JSON → scene_content → 写入 video_detail，**不关 SCENE 窗**）
+- **等待**：直到收到 `ok [...] scnsave`（提示 `scnsave ok — N scenes saved to video_detail`）。
 
 ### 步骤 6：生成 Infographic 预设 (NotebookLM Preparation)
 - **动作**：发送 `nbp 1`
