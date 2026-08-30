@@ -6098,19 +6098,32 @@ _GROK_DROP_FILE_JS = """
 
 _GROK_ASPECT_916_JS = """
 () => {
-  const pillRx = /^9:16$|^1:1$|^16:9$|^2:3$|^3:2$|^4:3$/;
-  const pill = [...document.querySelectorAll('button')].find(
-    (b) => pillRx.test((b.innerText || b.textContent || '').trim())
-  );
-  if (pill) pill.click();
-  const opts = ['9:16 竖屏', '9:16 Vertical', '9:16 vertical'];
-  for (const lab of opts) {
-    const el = [...document.querySelectorAll(
-      '[role="menuitem"], [role="option"], button, div, span, li'
-    )].find((n) => (n.innerText || n.textContent || '').trim() === lab);
-    if (el) {
+  const norm = (s) => (s || '').trim();
+  const txt = (el) => norm(el.innerText || el.textContent);
+  const aria = (el) => norm(el.getAttribute('aria-label') || el.getAttribute('title') || '');
+
+  const btns = [...document.querySelectorAll('button, [role="button"]')];
+  const isRatioPill = (b) => /^\\d+:\\d+$/.test(txt(b));
+  const isAspectBtn = (b) => {
+    const blob = (txt(b) + ' ' + aria(b)).toLowerCase();
+    return isRatioPill(b)
+      || /纵横比|aspect\\s*ratio|方比例/.test(blob);
+  };
+
+  let pill = btns.find((b) => txt(b) === '9:16');
+  if (!pill) pill = btns.find(isAspectBtn);
+  if (!pill) pill = btns.find(isRatioPill);
+  if (!pill) return null;
+  pill.click();
+
+  const items = [...document.querySelectorAll(
+    '[role="menuitem"], [role="option"], [role="menuitemradio"], button, div, span, li'
+  )];
+  for (const el of items) {
+    const t = txt(el);
+    if (/^9:16/.test(t)) {
       el.click();
-      return lab;
+      return t;
     }
   }
   return null;
@@ -7031,13 +7044,27 @@ def _grok_paste_image_cdp(page: Page) -> bool:
 
 
 def _grok_set_aspect_916_cdp(page: Page) -> bool:
-    try:
-        label = page.evaluate(_GROK_ASPECT_916_JS)
-        log(f"Grok CDP aspect selected: {label!r}")
-        return bool(label)
-    except Exception as exc:
-        log(f"Grok CDP aspect failed: {exc}")
-        return False
+    for attempt in range(1, 4):
+        try:
+            label = page.evaluate(_GROK_ASPECT_916_JS)
+            if label:
+                log(f"Grok CDP aspect 9:16 selected: {label!r}")
+                time.sleep(0.35)
+                return True
+            log(f"Grok CDP aspect 9:16 attempt {attempt}: menu item not found")
+            time.sleep(0.45)
+        except Exception as exc:
+            log(f"Grok CDP aspect attempt {attempt}: {exc}")
+            time.sleep(0.45)
+    log("Grok CDP aspect: failed to select 9:16")
+    return False
+
+
+def _grok_ensure_image_mode_and_aspect_916_cdp(page: Page) -> bool:
+    """图片模式 + 9:16（贴封面后、点生成前都要设）。"""
+    _grok_click_image_mode_cdp(page)
+    time.sleep(0.3)
+    return _grok_set_aspect_916_cdp(page)
 
 
 def _grok_prepare_tab_cdp(page: Page, *, paste_image: bool) -> bool:
@@ -7050,14 +7077,14 @@ def _grok_prepare_tab_cdp(page: Page, *, paste_image: bool) -> bool:
                 cover.unlink(missing_ok=True)
             except OSError:
                 pass
-    _grok_set_aspect_916_cdp(page)
+    _grok_ensure_image_mode_and_aspect_916_cdp(page)
     return pasted or not paste_image
 
 
 def _grok_generate_image_on_tab_cdp(page: Page) -> None:
-    """Switch to 图片 mode, click Submit (blue up-arrow), wait until image ready."""
-    _grok_click_image_mode_cdp(page)
-    time.sleep(0.3)
+    """Switch to 图片 mode, set 9:16, click Submit, wait until image ready."""
+    _grok_ensure_image_mode_and_aspect_916_cdp(page)
+    time.sleep(0.2)
     _grok_click_generate_cdp(page, deep_image=False)
     time.sleep(0.6)
     _grok_wait_image_ready_cdp(page)
@@ -7131,7 +7158,7 @@ def _grok_prepare_all_tabs_cdp(
                             raise RuntimeError(
                                 f"第一轮：标签 {tab_no} 封面图粘贴失败。"
                             )
-                        _grok_set_aspect_916_cdp(pg)
+                        _grok_ensure_image_mode_and_aspect_916_cdp(pg)
                         time.sleep(0.25)
                 log(f"Grok round 1 done: {pasted}/{n} tabs have cover")
             else:
@@ -7159,7 +7186,7 @@ def _grok_prepare_all_tabs_cdp(
                             raise RuntimeError(
                                 f"第一轮：标签 {tab_no} 封面图粘贴失败。"
                             )
-                        _grok_set_aspect_916_cdp(page)
+                        _grok_ensure_image_mode_and_aspect_916_cdp(page)
                         time.sleep(0.25)
 
             # ── Round 2: scene prompt + Submit per tab ──
@@ -7384,6 +7411,8 @@ def _prepare_all_grok_via_hwnd(n: int, *, paste_image: bool) -> int:
         _wait_grok_composer_ready(hwnd)
         if paste_image and _paste_grok_via_upload_dialog(hwnd):
             pasted += 1
+        _click_grok_image_mode(hwnd)
+        time.sleep(0.2)
         _click_grok_aspect_ratio_916(hwnd)
         time.sleep(0.25)
     return pasted
@@ -7430,54 +7459,56 @@ def _click_grok_image_mode(hwnd: int) -> None:
 
 
 def _click_grok_aspect_ratio_916(hwnd: int) -> None:
-    """Toolbar 9:16 pill → dropdown → 9:16 竖屏 (see user screenshot)."""
+    """Toolbar 纵横比 / 9:16 → dropdown → 9:16."""
     _left, top, _w, height = _chrome_window_rect(hwnd)
     toolbar_y = top + int(height * 0.50)
 
     toolbar_btn = None
     best_y = -1
-    for ctrl in _uia_named_all(
-        hwnd,
-        "9:16",
-        ["ButtonControl", "TextControl"],
-        search_depth=16,
-        limit=8,
-    ):
-        box = _ctrl_box(ctrl)
-        if not box:
-            continue
-        cy = (box[1] + box[3]) // 2
-        if cy >= toolbar_y and cy > best_y:
-            best_y = cy
-            toolbar_btn = ctrl
+    for label in ("纵横比", "Aspect ratio", "Aspect Ratio", "9:16"):
+        for ctrl in _uia_named_all(
+            hwnd,
+            label,
+            ["ButtonControl", "TextControl"],
+            search_depth=16,
+            limit=8,
+        ):
+            box = _ctrl_box(ctrl)
+            if not box:
+                continue
+            cy = (box[1] + box[3]) // 2
+            if cy >= toolbar_y and cy > best_y:
+                best_y = cy
+                toolbar_btn = ctrl
+        if toolbar_btn is not None:
+            break
 
     if toolbar_btn is not None:
-        log("UIA click toolbar 9:16 pill")
+        log("UIA click toolbar aspect-ratio pill")
         _click_uia_ctrl(toolbar_btn)
     else:
-        log("ratio-click toolbar 9:16 pill")
+        log("ratio-click toolbar aspect-ratio pill")
         _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_TOOLBAR_Y, pause=0.35)
     time.sleep(0.45)
 
-    for opt in ("9:16 竖屏", "9:16 Vertical", "9:16 vertical", "竖屏"):
-        if _click_named(
-            hwnd,
-            opt,
-            ["MenuItemControl", "ButtonControl", "TextControl", "ListItemControl"],
-            search_depth=16,
-        ):
-            log(f"selected aspect ratio {opt!r}")
-            time.sleep(0.2)
-            return
+    if _click_named(
+        hwnd,
+        "9:16",
+        ["MenuItemControl", "ButtonControl", "TextControl", "ListItemControl"],
+        search_depth=16,
+    ):
+        log("selected aspect ratio 9:16")
+        time.sleep(0.2)
+        return
 
-    log("ratio-click dropdown item 9:16 竖屏")
+    log("ratio-click dropdown item 9:16")
     _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_ASPECT_MENU_Y, pause=0.25)
 
 
 def _prepare_grok_imagine_tab(
     hwnd: int, tab_index: int = 1, *, paste_image: bool = False
 ) -> bool:
-    """Current Grok tab: paste cover image, then set 9:16 竖屏. Returns paste ok."""
+    """Current Grok tab: paste cover image, then 图片 mode + 9:16. Returns paste ok."""
     if not _wait_grok_composer_ready(hwnd):
         log("Grok composer not confirmed by UIA; continuing")
     if cdp_ready(_grok_cdp_port()):
