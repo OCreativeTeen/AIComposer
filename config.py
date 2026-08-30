@@ -750,14 +750,15 @@ CHROME_CDP_USER_DATA_DIR = (
     os.environ.get("CHROME_CDP_USER_DATA_DIR")
     or os.path.join(os.environ.get("LOCALAPPDATA") or "", "HermesChromeCDP")
 ).strip()
-# Telegram 询问 owner 时按此列表编号（回复 1/2/3）
-# CLI 编号 1–4 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
+# Telegram 询问 owner 时按此列表编号（回复 1/2/3/4/5）
+# CLI 编号 1–5 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
 # 若 directory 与 Local State 不一致，browser_tasks 会按已登录邮箱自动纠正。
 GEMINI_CHROME_PROFILES = [
     {"label": "ocreativeteen@gmail.com", "directory": "Profile 2"},
     {"label": "creative4teen@gmail.com", "directory": "Profile 3"},
     {"label": "triumphdt777@gmail.com", "directory": "Default"},
     {"label": "myhomefun@gmail.com", "directory": "Profile 4"},
+    {"label": "mindstoryroom@gmail.com", "directory": "Profile 5"},
 ]
 # 当前选中的账号（交互选号后会改这个值）
 GEMINI_CHROME_PROFILE = GEMINI_CHROME_PROFILES[0]["label"]

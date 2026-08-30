@@ -40,6 +40,11 @@ STATUS_PENDING = "pending"
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_DONE = "done"
 
+# 流水线子状态（``status`` 仍为 in_progress）
+WORKFLOW_STATUS_NBIF_TIMEOUT = "nbif_timeout"
+WORKFLOW_STEP_NBIF_POLL = "nbif_poll"
+WORKFLOW_STEP_ITC = "itc"
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -270,12 +275,19 @@ def item_display_status(item: dict) -> tuple[str, str]:
     if not isinstance(item, dict):
         return STATUS_PENDING, "未处理"
     s = normalize_item_status(item)
+    wf = (item.get("workflow_status") or "").strip().lower()
     extra = (item.get("processed_at") or "").strip()
     extra_day = extra[:10] if extra else ""
     if s == STATUS_DONE:
         label = "已完成" + (f" {extra_day}" if extra_day else "")
         return STATUS_DONE, label
     if s == STATUS_IN_PROGRESS:
+        if wf == WORKFLOW_STATUS_NBIF_TIMEOUT:
+            failed = (item.get("workflow_failed_at") or "")[:16].replace("T", " ")
+            note = f"（nbif 轮询超时，待 resume）"
+            if failed:
+                note = f"（nbif 轮询超时 {failed}，待 resume）"
+            return STATUS_IN_PROGRESS, f"处理中{note}"
         return STATUS_IN_PROGRESS, "处理中"
     if _row_looks_published(item):
         return STATUS_DONE, "已完成（列表已有发布记录）"
@@ -349,8 +361,155 @@ def mark_active_item_done(choice_id: str = "") -> dict | None:
         return None
     it["status"] = STATUS_DONE
     it["processed_at"] = _utc_now_iso()
+    for k in (
+        "workflow_status",
+        "workflow_step",
+        "workflow_error",
+        "workflow_failed_at",
+        "nbi_profile_index",
+        "resume_hint",
+    ):
+        it.pop(k, None)
     save_queue(data)
     return copy.deepcopy(it)
+
+
+def _workflow_touch_item(
+    it: dict,
+    *,
+    workflow_status: str = "",
+    workflow_step: str = "",
+    workflow_error: str = "",
+    nbi_profile_index: int = 0,
+    resume_hint: str = "",
+    polls_done: int = 0,
+    elapsed_s: float = 0,
+) -> None:
+    if workflow_status:
+        it["workflow_status"] = workflow_status
+    if workflow_step:
+        it["workflow_step"] = workflow_step
+    if workflow_error:
+        it["workflow_error"] = workflow_error
+    if workflow_status == WORKFLOW_STATUS_NBIF_TIMEOUT:
+        it["workflow_failed_at"] = _utc_now_iso()
+    if nbi_profile_index > 0:
+        it["nbi_profile_index"] = int(nbi_profile_index)
+    if resume_hint:
+        it["resume_hint"] = resume_hint
+    if polls_done > 0:
+        it["nbif_polls_done"] = int(polls_done)
+    if elapsed_s > 0:
+        it["nbif_elapsed_s"] = round(float(elapsed_s), 1)
+
+
+def mark_active_item_nbif_timeout(
+    *,
+    choice_id: str = "",
+    error_msg: str = "",
+    nbi_profile_index: int = 0,
+    polls_done: int = 0,
+    elapsed_s: float = 0,
+) -> dict | None:
+    """nbif 轮询超时：保持 in_progress，写入可 resume 的子状态。"""
+    data = load_queue()
+    cid = (choice_id or "").strip() or (data.get("active_choice_id") or "").strip()
+    it = _find_item_by_choice_id(data, cid) if cid else None
+    if it is None:
+        items = [x for x in (data.get("items") or []) if isinstance(x, dict)]
+        cursor = int(data.get("cursor") or 0)
+        if 1 <= cursor <= len(items):
+            it = items[cursor - 1]
+    if it is None:
+        return None
+    it["status"] = STATUS_IN_PROGRESS
+    _workflow_touch_item(
+        it,
+        workflow_status=WORKFLOW_STATUS_NBIF_TIMEOUT,
+        workflow_step=WORKFLOW_STEP_NBIF_POLL,
+        workflow_error=(error_msg or "nbif 超时：infographic 仍未 ready").strip(),
+        nbi_profile_index=nbi_profile_index,
+        polls_done=polls_done,
+        elapsed_s=elapsed_s,
+        resume_hint="cli\\run_telegram_client_resume.bat — 人工确认 NotebookLM 后从 nbif 继续轮询",
+    )
+    save_queue(data)
+    return copy.deepcopy(it)
+
+
+def mark_active_item_workflow_step(
+    *,
+    workflow_step: str,
+    choice_id: str = "",
+    nbi_profile_index: int = 0,
+) -> dict | None:
+    """记录流水线进行到哪一步（如 nbi 成功后进入 nbif）。"""
+    data = load_queue()
+    cid = (choice_id or "").strip() or (data.get("active_choice_id") or "").strip()
+    it = _find_item_by_choice_id(data, cid) if cid else None
+    if it is None:
+        return None
+    it["status"] = STATUS_IN_PROGRESS
+    it["workflow_step"] = (workflow_step or "").strip()
+    it.pop("workflow_status", None)
+    it.pop("workflow_error", None)
+    it.pop("workflow_failed_at", None)
+    it.pop("resume_hint", None)
+    if nbi_profile_index > 0:
+        it["nbi_profile_index"] = int(nbi_profile_index)
+    save_queue(data)
+    return copy.deepcopy(it)
+
+
+def clear_item_nbif_timeout_for_resume(choice_id: str = "") -> dict | None:
+    """resume 前：清掉 nbif_timeout 标记，保持 in_progress。"""
+    data = load_queue()
+    cid = (choice_id or "").strip() or (data.get("active_choice_id") or "").strip()
+    it = _find_item_by_choice_id(data, cid) if cid else None
+    if it is None:
+        return None
+    for k in ("workflow_status", "workflow_error", "workflow_failed_at", "resume_hint"):
+        it.pop(k, None)
+    it["workflow_step"] = WORKFLOW_STEP_NBIF_POLL
+    it["status"] = STATUS_IN_PROGRESS
+    save_queue(data)
+    return copy.deepcopy(it)
+
+
+def find_nbif_timeout_resume_item() -> dict | None:
+    """找上次 nbif 轮询超时、待 resume 的条目（优先 active_choice_id）。"""
+    data = load_queue()
+    active = (data.get("active_choice_id") or "").strip()
+    items = [it for it in (data.get("items") or []) if isinstance(it, dict)]
+
+    def _is_nbif_timeout(it: dict) -> bool:
+        return (
+            (it.get("workflow_status") or "").strip().lower()
+            == WORKFLOW_STATUS_NBIF_TIMEOUT
+        )
+
+    def _is_nbif_resume_candidate(it: dict) -> bool:
+        if normalize_item_status(it) != STATUS_IN_PROGRESS:
+            return False
+        step = (it.get("workflow_step") or "").strip().lower()
+        return step == WORKFLOW_STEP_NBIF_POLL or _is_nbif_timeout(it)
+
+    if active:
+        it = _find_item_by_choice_id(data, active)
+        if it and (_is_nbif_timeout(it) or _is_nbif_resume_candidate(it)):
+            return copy.deepcopy(it)
+    for it in reversed(items):
+        if _is_nbif_timeout(it):
+            return copy.deepcopy(it)
+    for it in reversed(items):
+        if _is_nbif_resume_candidate(it):
+            return copy.deepcopy(it)
+    return None
+
+
+def mark_nbif_resume_succeeded(choice_id: str = "") -> dict | None:
+    """itc 下载成功后再清 nbif_timeout 标记。"""
+    return clear_item_nbif_timeout_for_resume(choice_id)
 
 
 def first_pending_story_index() -> int | None:

@@ -510,6 +510,34 @@ def _hermes_cdp_port_live() -> int | None:
     return _discover_grok_cdp_port(user_data, profile_dir, port)
 
 
+def _resolve_hermes_cdp_attach_port(*, attach_only: bool = True) -> int:
+    """Connect to HermesChromeCDP on 9222 — no profile verification.
+
+    User may launch Chrome manually with any ``--profile-directory``; attach
+    paths must not kill, relaunch, or reject based on session/profile mismatch.
+    """
+    preferred = int(_grok_cdp_port())
+    if cdp_ready(preferred):
+        log(
+            f"HermesChromeCDP attach-only: port {preferred} "
+            f"(skip profile verify — use whatever Chrome you opened)"
+        )
+        return preferred
+    if attach_only:
+        raise RuntimeError(
+            f"HermesChromeCDP 未在 {preferred} 监听。"
+            "请用 --remote-debugging-port=9222 "
+            "--user-data-dir=%LOCALAPPDATA%\\HermesChromeCDP 启动 Chrome，"
+            "并保持 NotebookLM 标签页打开。"
+        )
+    return 0
+
+
+def hermes_cdp_is_open() -> bool:
+    """True when port 9222 answers — regardless of which profile owns it."""
+    return cdp_ready(int(_grok_cdp_port()))
+
+
 def _hermes_cdp_open_urls(port: int, urls: list[str]) -> None:
     """Bring an existing tab to front or open a new tab on HermesChromeCDP."""
     pages = [u.strip() for u in urls if (u or "").strip()]
@@ -537,16 +565,29 @@ def _hermes_cdp_open_urls(port: int, urls: list[str]) -> None:
                 pg.goto(url, wait_until="domcontentloaded", timeout=60_000)
 
 
-def ensure_hermes_cdp_chrome(*urls: str, timeout_s: float = 45.0) -> int:
+def ensure_hermes_cdp_chrome(
+    *urls: str,
+    timeout_s: float = 45.0,
+    attach_only: bool = False,
+) -> int:
     """Attach to or launch HermesChromeCDP on GROK_CDP_PORT (9222).
 
     Same Chrome instance for ``grv``, ``nbi``, and ``itc`` **only when the
     selected ``GEMINI_CHROME_PROFILE`` already owns that instance**. Chrome
     ignores ``--profile-directory`` if HermesChromeCDP is already running, so
     a mismatch (e.g. ``nbi 2`` while ocreativeteen is on 9222) must restart.
+
+    ``attach_only=True``: never kill/relaunch — connect to whatever is already
+    on 9222 (used by ``nbif`` / ``itc`` / resume after manual review).
     """
     exe = (getattr(config, "CHROME_EXE", "") or "").strip()
     if not exe or not Path(exe).is_file():
+        if attach_only:
+            live = _hermes_cdp_port_live()
+            if live and cdp_ready(live):
+                if urls:
+                    _hermes_cdp_open_urls(live, list(urls))
+                return live
         raise RuntimeError(f"Chrome executable not found: {exe}")
 
     user_data = _chrome_cdp_user_data_dir()
@@ -560,6 +601,21 @@ def ensure_hermes_cdp_chrome(*urls: str, timeout_s: float = 45.0) -> int:
     live_port, live_dir = _hermes_cdp_active_profile(user_data, preferred)
     session_dir = load_hermes_cdp_session().get("profile_dir") or ""
     active_dir = live_dir or session_dir
+
+    if attach_only:
+        port = live_port or (preferred if cdp_ready(preferred) else None)
+        if not port:
+            raise RuntimeError(
+                f"HermesChromeCDP 未在 {preferred} 运行。"
+                "请保持已打开的 NotebookLM Chrome，不要关闭。"
+            )
+        log(
+            f"HermesChromeCDP attach-only on {port} "
+            f"(live profile={active_dir or 'unknown'}; want {profile_dir})"
+        )
+        if urls:
+            _hermes_cdp_open_urls(port, list(urls))
+        return port
 
     if live_port and _profile_dirs_match(active_dir, profile_dir):
         log(
@@ -2306,13 +2362,36 @@ def _notebooklm_cdp_port() -> int:
     return _grok_cdp_port()
 
 
-def _resolve_notebooklm_cdp_port() -> int | None:
+def _resolve_notebooklm_cdp_port(*, attach_only: bool = False) -> int | None:
+    if attach_only:
+        try:
+            return _resolve_hermes_cdp_attach_port(attach_only=True)
+        except RuntimeError:
+            return None
     return _hermes_cdp_port_live()
 
 
-def ensure_notebooklm_cdp(*urls: str, timeout_s: float = 45.0) -> int:
-    """HermesChromeCDP for NotebookLM — same attach/launch path as ``grv``."""
+def ensure_notebooklm_cdp(
+    *urls: str,
+    timeout_s: float = 45.0,
+    attach_only: bool = False,
+) -> int:
+    """HermesChromeCDP for NotebookLM — reuse live 9222 when possible (no kill)."""
     open_urls = [u.strip() for u in urls if (u or "").strip()] or [NOTEBOOKLM_URL]
+    if attach_only:
+        port = _resolve_hermes_cdp_attach_port(attach_only=True)
+        log(f"NotebookLM CDP attach-only port={port}")
+        if open_urls:
+            _hermes_cdp_open_urls(port, open_urls)
+        return port
+    live = _hermes_cdp_port_live()
+    if live:
+        port = live
+        if cdp_ready(port):
+            log(f"NotebookLM CDP reuse port={port}")
+            if open_urls:
+                _hermes_cdp_open_urls(port, open_urls)
+            return port
     return ensure_hermes_cdp_chrome(*open_urls, timeout_s=timeout_s)
 
 
@@ -2415,17 +2494,27 @@ def _return_to_notebooklm_home(hwnd: int) -> bool:
 
 
 def _find_notebooklm_cdp_page(browser):
+    hits: list = []
     for ctx in browser.contexts:
         for page in ctx.pages:
             url = (page.url or "").lower()
             if "notebook.google.com" in url or "notebooklm" in url:
-                return page
-    return None
+                hits.append(page)
+    if not hits:
+        return None
+    for page in hits:
+        if "/notebook/" in (page.url or "").lower():
+            return page
+    return hits[0]
 
 
-def _run_with_notebooklm_page(fn):
+def _run_with_notebooklm_page(fn, port: int | None = None, *, attach_only: bool = False):
     """Call ``fn(page)`` on the live NotebookLM tab via HermesChromeCDP."""
-    port = _hermes_cdp_port_live()
+    if port is None:
+        if attach_only:
+            port = _resolve_hermes_cdp_attach_port(attach_only=True)
+        else:
+            port = _hermes_cdp_port_live()
     if port is None:
         log(
             f"HermesChromeCDP not on {_grok_cdp_port()}; "
@@ -3003,9 +3092,23 @@ _NOTEBOOKLM_STUDIO_INSPECT_JS = r"""() => {
 }"""
 
 
-def _notebooklm_studio_status_via_cdp(*, ensure_cdp: bool = True) -> dict:
+def _notebooklm_studio_status_via_cdp(
+    *, ensure_cdp: bool = True, attach_only: bool = False
+) -> dict:
     """Inspect Studio panel via HermesChromeCDP (D:\\Hermes\\check_notebooklm_generating.py)."""
     port = _hermes_cdp_port_live()
+    if port is None and attach_only:
+        try:
+            port = _resolve_hermes_cdp_attach_port(attach_only=True)
+        except RuntimeError as exc:
+            return {
+                "ok": False,
+                "count": 0,
+                "generating": False,
+                "ready": False,
+                "via": "cdp",
+                "error": str(exc),
+            }
     if port is None:
         if not ensure_cdp:
             p = _grok_cdp_port()
@@ -3018,7 +3121,9 @@ def _notebooklm_studio_status_via_cdp(*, ensure_cdp: bool = True) -> dict:
                 "error": f"HermesChromeCDP not listening on {p}",
             }
         try:
-            port = ensure_hermes_cdp_chrome(NOTEBOOKLM_URL, timeout_s=25.0)
+            port = ensure_notebooklm_cdp(
+                NOTEBOOKLM_URL, timeout_s=25.0, attach_only=attach_only
+            )
         except Exception as exc:
             return {
                 "ok": False,
@@ -4984,12 +5089,18 @@ def _download_whole_story_images(hwnd: int, times: int) -> list[str]:
 
 def check_notebooklm_infographic_status(
     expected: int = NOTEBOOKLM_COVER_TIMES,
+    *,
+    attach_only: bool = False,
 ) -> dict:
     """Look at Studio right-hand list: generating spinner vs finished rows (Hermes CDP)."""
     from cli.win_gui_tasks import ensure_uia_com, set_foreground
 
     want = max(1, int(expected or NOTEBOOKLM_COVER_TIMES))
-    cdp = _notebooklm_studio_status_via_cdp(ensure_cdp=True)
+    if attach_only is False and hermes_cdp_is_open():
+        attach_only = True
+    cdp = _notebooklm_studio_status_via_cdp(
+        ensure_cdp=True, attach_only=attach_only
+    )
     if cdp.get("ok"):
         generating_n = int(cdp.get("count") or 0)
         generating = bool(cdp.get("generating"))
@@ -5353,6 +5464,8 @@ def capture_notebooklm_infographics(
     times: int = NOTEBOOKLM_COVER_TIMES,
     *,
     require_ready: bool = True,
+    attach_only: bool = False,
+    close_chrome: bool = False,
 ) -> list[str]:
     """Open each Studio infographic via artifact-viewer, download PNGs to Downloads."""
     from cli.win_gui_tasks import ensure_uia_com
@@ -5360,18 +5473,20 @@ def capture_notebooklm_infographics(
 
     n = max(1, int(times or NOTEBOOKLM_COVER_TIMES))
     hwnd = _find_notebooklm_hwnd()
-    if not hwnd:
+    if not hwnd and not attach_only:
         raise RuntimeError(
             "找不到 NotebookLM 窗口。请发 itc N（N=Chrome 号）重新打开 notebook 再拷图。"
         )
     ensure_uia_com()
-    port = ensure_notebooklm_cdp(NOTEBOOKLM_URL)
+    port = ensure_notebooklm_cdp(NOTEBOOKLM_URL, attach_only=attach_only)
     hwnd = _find_notebooklm_hwnd() or hwnd
-    if port and not _inside_notebook(hwnd, timeout_s=0.5):
+    if port and hwnd and not _inside_notebook(hwnd, timeout_s=0.5):
         if _open_first_existing_notebook_cdp(port):
             time.sleep(2.0)
             hwnd = _find_notebooklm_hwnd() or hwnd
-    status = check_notebooklm_infographic_status(expected=n)
+    status = check_notebooklm_infographic_status(
+        expected=n, attach_only=attach_only
+    )
     if status.get("generating"):
         raise RuntimeError(
             "Studio 里还能看到 “Generating infographic...”，还没 ready。"
@@ -5391,7 +5506,9 @@ def capture_notebooklm_infographics(
             )
         return _capture_infographics_via_artifact_viewer(page, n)
 
-    saved = _run_with_notebooklm_page(_copy_all)
+    saved = _run_with_notebooklm_page(
+        _copy_all, port=port, attach_only=attach_only
+    )
     if len(saved) < n:
         if saved:
             save_whole_story_images(saved)
@@ -5400,8 +5517,11 @@ def capture_notebooklm_infographics(
             "请确认已点开 Studio 右侧历史上边的 generate 项，再重发 itc。"
         )
     paths = save_whole_story_images(saved)
-    log("all infographics saved; closing NotebookLM Chrome now")
-    close_notebooklm_chrome_window()
+    if close_chrome:
+        log("all infographics saved; closing NotebookLM Chrome now")
+        close_notebooklm_chrome_window()
+    else:
+        log("all infographics saved; keeping NotebookLM Chrome open")
     return paths
 
 

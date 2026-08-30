@@ -67,9 +67,9 @@ PRE-TASK (launch Telegram Bot):
 - **等待**：直到收到 `ok [...] Nbp 1`。
 
 ### 步骤 7：触发 NotebookLM 生成 (NotebookLM Infographic Trigger)
-- **动作**：发送 `nbi 1` or  `nbi 2` or  `nbi 3`  or  `nbi 4` 
+- **动作**：发送 `nbi 1` … `nbi 5`（按 Chrome 账号轮换）
 - **等待**：长任务（约 165 秒），直到收到 `ok [...] Nbi 1`。
-- FYI :   `nbi 1` or  `nbi 2` or  `nbi 3`  or  `nbi 4`   对应的是以不同的 Profile 打开google chrome browser （1. `ocreativeteen@gmail.com`   2. `triumphdt777@gmail.com`   3. `myhomefun@gmail.com`   4. `creative4teen@gmail.com`）以此来突破每一个账户对notebook lm使用的限制  
+- FYI :   `nbi 1` … `nbi 5` 对应以不同 Profile 打开 HermesChromeCDP（1. `ocreativeteen@gmail.com`   2. `creative4teen@gmail.com`   3. `triumphdt777@gmail.com`   4. `myhomefun@gmail.com`   5. `mindstoryroom@gmail.com`）以此来突破每一个账户对 NotebookLM 使用的限制  
 
 ### 步骤 8：轮询检查生成状态 (Poll Infographic Status)
 - **循环动作**：
@@ -77,6 +77,8 @@ PRE-TASK (launch Telegram Bot):
   2. 检查返回结果：
      - 若包含“仍在生成中 / Generating”，**等待 60 秒**，返回第 1 步重新发送 `nbif`。
      - 若包含“三个新的 infographic 已经 ready”，进入【步骤 9】。
+- **超时（全自动 client）**：至少轮询 **5 分钟**、最长约 **40 分钟** 仍 not ready → client **退出**，**不关 Chrome**，队列条目标为 `nbif_timeout`。
+- **恢复**：人工打开 NotebookLM 确认 ready 后，运行 **`cli\run_telegram_client_resume.bat`** — **不重开 Chrome**，直连已开窗口下载三张封面。
 
 ### 步骤 9：打开并下载封面图 (Download Infographics)
 - **动作**：发送 `itc`

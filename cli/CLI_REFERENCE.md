@@ -188,6 +188,22 @@ pick next          # 下一条
 
 **Chrome：** 使用专用 CDP 配置（`HermesChromeCDP`），与日常 Chrome 可并存；首次需在该窗口登录 Google。
 
+**HermesChromeCDP 账号（`prf` / `nbi N` / `grv N` / `itc N` 共用编号）：**
+
+| # | 邮箱 | `--profile-directory` |
+|---|------|------------------------|
+| 1 | `ocreativeteen@gmail.com` | `Profile 2` |
+| 2 | `creative4teen@gmail.com` | `Profile 3` |
+| 3 | `triumphdt777@gmail.com` | `Default` |
+| 4 | `myhomefun@gmail.com` | `Profile 4` |
+| 5 | `mindstoryroom@gmail.com` | `Profile 5` |
+
+启动示例（profile 5）：
+
+```text
+chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesChromeCDP" --profile-directory="Profile 5"
+```
+
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
 | `prf` | `profile` | 序号或邮箱 | 选 Gemini 用 Chrome 账号（`gem`/`nbi`/`grv` 前常选） |
@@ -228,6 +244,15 @@ pick next          # 下一条
 **`nbi`：** 先 `nbi` 选 Chrome 号 → `nbi 1`；需 SCENE 里已有有效 `scene_content`。与 **`grv` 共用 HermesChromeCDP（端口 9222）**——若 `grv` 已开过 Chrome，`nbi`/`itc` 直接连上去，不再另开普通 Chrome。点完 Generate ×3 立刻返回，不等待。随后用 `nbif` 查询。
 
 **`nbif`：** 看 Studio 右侧。有 “Generating infographic...” 和转圈 = 还没 ready；最上边三张已是中文标题 + `1 source · …` = ready。
+
+**`run_telegram_client.bat`（全自动 client）nbif 轮询：** 每 **60s** 查一次；至少 **5 分钟**、最长约 **40 分钟**。超时后：
+
+- **不关闭 Chrome**（HermesChromeCDP / NotebookLM 留给人工查看）
+- **不关闭 STORY/SCENE**（若当时还开着）
+- 在 `D:\AI_MEDIA\aiagent\video_choice_queue.json` 当前条写入 `workflow_status: nbif_timeout`
+- client **退出**（exit code 2）
+
+人工确认 NotebookLM 三张图 ready 后，双击 **`cli\run_telegram_client_resume.bat`**：**不重开/关闭 Chrome**，**不验证 profile**，只要 9222 能连上就直连下载三张 → 选封面 → grv …
 
 **`itc`：** 须 infographic 已做好。与 **`grv` 同一 HermesChromeCDP（9222）**：已开则直接连，否则自动启动。无参 → 在当前 NotebookLM 逐张打开最上边 3 张，⋮ → Download（失败则拉 lh3 URL），存到 `%USERPROFILE%\\Downloads\\whole_story_image_N_*.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开 notebook 再下载。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
 

@@ -1012,6 +1012,32 @@ def _itc_send_covers(files: list[str], shown: str, igp: str) -> tuple[bool, str]
     return True, msg
 
 
+def download_notebooklm_covers_and_notify(
+    *,
+    attach_only: bool = False,
+    require_ready: bool = True,
+    close_chrome: bool = False,
+) -> tuple[bool, str]:
+    """Download top infographics from open NotebookLM and Telegram them for pick."""
+    from cli.browser_tasks import capture_notebooklm_infographics
+    from utility.telegram_session import load_whole_story_image_record
+
+    shown = short_cli("whole_story_pick")
+    igp = short_cli("whole_story_image")
+    rec = load_whole_story_image_record()
+    expected = int(rec.get("expected") or rec.get("generate_clicked") or 3) or 3
+    try:
+        files = capture_notebooklm_infographics(
+            times=expected,
+            require_ready=require_ready,
+            attach_only=attach_only,
+            close_chrome=close_chrome,
+        )
+    except Exception as exc:
+        return False, f"{shown} failed: {exc}"
+    return _itc_send_covers(files, shown, igp)
+
+
 def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
     """Copy top 3 infographic images, or record which cover the owner chose.
 
@@ -1049,12 +1075,11 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
     expected = int(rec.get("expected") or rec.get("generate_clicked") or 3) or 3
 
     if not want:
-        from cli.browser_tasks import (
-            capture_notebooklm_infographics,
-            notebooklm_window_open,
-        )
+        from cli.browser_tasks import hermes_cdp_is_open, notebooklm_window_open
 
-        if not notebooklm_window_open():
+        live_cdp = hermes_cdp_is_open()
+
+        if not notebooklm_window_open() and not live_cdp:
             return True, _format_chrome_profile_choices(
                 f"{shown} 找不到已打开的 NotebookLM。"
                 f"先发 nbi N 打开 notebook，再 {shown}；"
@@ -1062,11 +1087,11 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
                 shown,
                 "notebooklm",
             )
-        try:
-            files = capture_notebooklm_infographics(times=expected)
-        except Exception as exc:
-            return False, f"{shown} failed: {exc}"
-        return _itc_send_covers(files, shown, igp)
+        return download_notebooklm_covers_and_notify(
+            attach_only=True if live_cdp else False,
+            require_ready=not live_cdp,
+            close_chrome=False,
+        )
 
     if want.isdigit():
         try:

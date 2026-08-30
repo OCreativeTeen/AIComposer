@@ -35,6 +35,7 @@ NBI_ACCOUNTS = {
     2: "triumphdt777",
     3: "myhomefun",
     4: "creative4teen",
+    5: "mindstoryroom",
 }
 
 _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -44,7 +45,8 @@ _STOP_WORDS = frozenset(
 _SKIP_WORDS = frozenset({"skip", "跳过", "next"})
 _COVER_WAIT_REMIND_S = 180.0
 _NBIF_INTERVAL_S = 60.0
-_NBIF_MAX_POLLS = 40
+_NBIF_MIN_DURATION_S = 300.0  # 至少轮询 5 分钟才允许因超时而退出
+_NBIF_MAX_DURATION_S = 2400.0  # 上限约 40 分钟
 _GRV_DOWNLOAD_WAIT_S = 120.0
 _HEARTBEAT_STUCK_S = 150.0
 
@@ -75,6 +77,21 @@ class PipelineError(RuntimeError):
     """A step failed after retries; abort this story (or the whole run)."""
 
 
+class NbifTimeoutError(PipelineError):
+    """nbif 轮询超时：写入队列后退出，不关 Chrome，等人工 resume。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        polls_done: int = 0,
+        elapsed_s: float = 0.0,
+    ) -> None:
+        super().__init__(message)
+        self.polls_done = int(polls_done)
+        self.elapsed_s = float(elapsed_s)
+
+
 class HermesTelegramClient:
     """Local harness: CLI state machine + Telegram cover-pick inbox."""
 
@@ -89,6 +106,7 @@ class HermesTelegramClient:
         grv_variant: int = 3,
         telegram: bool = True,
         telegram_inbox: bool = False,
+        resume_nbif: bool = False,
     ) -> None:
         self.pick_arg = (pick or "next").strip() or "next"
         self.once = bool(once)
@@ -98,6 +116,7 @@ class HermesTelegramClient:
         self.grv_variant = max(1, int(grv_variant))
         self.telegram_enabled = bool(telegram)
         self.telegram_inbox = bool(telegram_inbox)
+        self.resume_nbif = bool(resume_nbif)
 
         self._stop = threading.Event()
         self._stop_requested = False
@@ -708,15 +727,22 @@ class HermesTelegramClient:
         raise PipelineError(f"nbi 全部 {n} 个账号都失败: {last}")
 
     def _poll_notebooklm_ready(self) -> None:
-        for i in range(_NBIF_MAX_POLLS):
+        start = time.monotonic()
+        poll_n = 0
+        while time.monotonic() - start < _NBIF_MAX_DURATION_S:
             if self._stop_requested:
                 raise PipelineError("stopped during nbif")
+            poll_n += 1
             ok, msg = self.cli("nbif")
             low = (msg or "").lower()
             if ok and ("已经 ready" in msg or "infographic 已经 ready" in msg):
                 return
+            elapsed = time.monotonic() - start
             if "仍在生成" in msg or "generating" in low or "还没有 ready" in msg:
-                self.log(f"nbif poll {i + 1}/{_NBIF_MAX_POLLS} — 等 {_NBIF_INTERVAL_S:.0f}s")
+                self.log(
+                    f"nbif poll {poll_n} — 已 {elapsed / 60:.1f} 分钟，"
+                    f"等 {_NBIF_INTERVAL_S:.0f}s"
+                )
                 time.sleep(_NBIF_INTERVAL_S)
                 continue
             if "还不能判定" in msg or "uncertain" in low:
@@ -727,17 +753,128 @@ class HermesTelegramClient:
                 time.sleep(_NBIF_INTERVAL_S)
                 continue
             time.sleep(_NBIF_INTERVAL_S)
-        raise PipelineError("nbif 超时：infographic 仍未 ready")
+        elapsed = time.monotonic() - start
+        if elapsed < _NBIF_MIN_DURATION_S:
+            self.log(
+                f"nbif 已达上限但未满 {_NBIF_MIN_DURATION_S / 60:.0f} 分钟，"
+                f"再等 {_NBIF_INTERVAL_S:.0f}s 后重试",
+                telegram=True,
+            )
+            time.sleep(_NBIF_INTERVAL_S)
+            ok, msg = self.cli("nbif")
+            if ok and ("已经 ready" in msg or "infographic 已经 ready" in msg):
+                return
+            elapsed = time.monotonic() - start
+        raise NbifTimeoutError(
+            f"nbif 超时：infographic 仍未 ready"
+            f"（轮询 {poll_n} 次，约 {elapsed / 60:.1f} 分钟）",
+            polls_done=poll_n,
+            elapsed_s=elapsed,
+        )
 
-    def _download_covers(self, nbi_acc: int) -> None:
+    def _mark_nbif_timeout(self, exc: NbifTimeoutError, *, nbi_acc: int) -> None:
+        try:
+            from cli.video_choice_queue import mark_active_item_nbif_timeout
+
+            item = mark_active_item_nbif_timeout(
+                error_msg=str(exc),
+                nbi_profile_index=int(nbi_acc or 0),
+                polls_done=int(exc.polls_done),
+                elapsed_s=float(exc.elapsed_s),
+            )
+            if item:
+                title = (item.get("title") or item.get("choice_id") or "?").strip()
+                self.log(
+                    f"队列已记录 nbif 超时：{title}\n"
+                    f"choice_id={item.get('choice_id')}\n"
+                    "未关闭 Chrome（请人工打开 NotebookLM 查看）。\n"
+                    "确认可继续后运行：cli\\run_telegram_client_resume.bat",
+                    telegram=True,
+                )
+        except Exception as mark_exc:
+            self.log(f"队列写入 nbif 超时失败：{mark_exc}", telegram=True)
+
+    def _ensure_nbi_chrome_profile(self, nbi_acc: int) -> None:
+        """Resume: log recorded nbi index only — do not switch Chrome profile."""
+        if nbi_acc <= 0:
+            return
+        self.log(
+            f"resume：使用你已手动打开的 Chrome（不验证/切换 profile；"
+            f"队列记录 nbi={nbi_acc}）",
+            telegram=True,
+        )
+
+    def _prepare_resume_nbif(self) -> tuple[dict, int]:
+        from cli.ensure_gui import ensure_gui_for_queue_item, gui_windows_open
+        from cli.video_choice_queue import (
+            activate_queue_item,
+            find_nbif_timeout_resume_item,
+        )
+
+        item = find_nbif_timeout_resume_item()
+        if not item:
+            raise PipelineError(
+                "队列里没有 nbif 轮询超时的条目。"
+                "请先跑完 nbi，或检查 video_choice_queue.json。"
+            )
+        cid = (item.get("choice_id") or "").strip()
+        title = (item.get("title") or item.get("row_key") or cid or "?").strip()
+        nbi_acc = int(item.get("nbi_profile_index") or 0)
+        self.log(
+            f"resume：从 nbif 继续 — {title}\n"
+            f"choice_id={cid}  nbi_profile={nbi_acc or '?'}",
+            telegram=True,
+        )
+        try:
+            activate_queue_item(cid)
+        except ValueError as exc:
+            raise PipelineError(str(exc)) from exc
+
+        if not gui_windows_open():
+            ok, msg = ensure_gui_for_queue_item(item)
+            if not ok:
+                raise PipelineError(f"resume 打开 GUI 失败：{msg}")
+            self.log(msg, telegram=True)
+            deadline = time.monotonic() + 90.0
+            while time.monotonic() < deadline:
+                if self._public_win() in ("story", "scene") or gui_windows_open():
+                    break
+                time.sleep(1.0)
+        else:
+            self.cli("sync")
+            self.log("GUI 已开 — 已 sync，从 nbif 继续轮询", telegram=True)
+
+        if nbi_acc <= 0:
+            try:
+                from utility.telegram_session import load_notebooklm_last_profile
+
+                nbi_acc = int(load_notebooklm_last_profile().get("index") or 0)
+            except Exception:
+                nbi_acc = 0
+        self._ensure_nbi_chrome_profile(nbi_acc)
+        return item, nbi_acc
+
+    def _download_covers(self, nbi_acc: int, *, attach_only: bool = False) -> None:
+        from cli.commands import download_notebooklm_covers_and_notify
+
+        ok, msg = download_notebooklm_covers_and_notify(
+            attach_only=attach_only,
+            require_ready=not attach_only,
+            close_chrome=False,
+        )
+        if ok and "已发 Telegram" in msg:
+            self.log(msg)
+            return
+        if attach_only:
+            raise PipelineError(f"itc failed (attach-only): {msg}")
         ok, msg = self.cli("itc")
         if ok and "已发 Telegram" in msg:
             return
         if "找不到已打开的 NotebookLM" in msg or (ok and "发 itc N" in msg):
-            self.log(f"NotebookLM 窗不在，itc {nbi_acc} 重开", telegram=True)
-            ok, msg = self.cli(f"itc {nbi_acc}")
-            if ok and "已发 Telegram" in msg:
-                return
+            raise PipelineError(
+                f"itc failed: {msg}\n"
+                "resume 模式不会重开 Chrome。请保持 NotebookLM 窗口打开后再试。"
+            )
         raise PipelineError(f"itc failed: {msg}")
 
     def _wait_human_cover_pick(self) -> str:
@@ -824,30 +961,49 @@ class HermesTelegramClient:
 
         return bool(first_pending_story_index())
 
-    def run_one_story(self) -> bool:
+    def run_one_story(self, *, resume_from_nbif: bool = False) -> bool:
         from cli.gui_session import is_manual_gui_session
+        from cli.video_choice_queue import mark_active_item_workflow_step
 
-        if not self._pick_story():
-            return False
-        self._ensure_single_instance()
         nbi_acc = 0
+        skip_close_on_exit = False
+        resume_choice_id = ""
         try:
-            self.log("步骤 2 scn", telegram=True)
-            self._open_scene()
-            self.log(f"步骤 3 lm {self.lm}", telegram=True)
-            self._select_lm()
-            self.log("步骤 4 gem", telegram=True)
-            self._generate_scenes()
-            self.log("步骤 5 scnsave", telegram=True)
-            self._scene_save()
-            self.log("步骤 6 nbp 1", telegram=True)
-            self._nbp_preset()
-            self.log("步骤 7 nbi", telegram=True)
-            nbi_acc = self._trigger_notebooklm()
-            self.log("步骤 8 nbif 轮询", telegram=True)
-            self._poll_notebooklm_ready()
-            self.log("步骤 9 itc", telegram=True)
-            self._download_covers(nbi_acc)
+            if resume_from_nbif:
+                _item, nbi_acc = self._prepare_resume_nbif()
+                resume_choice_id = (_item.get("choice_id") or "").strip()
+                self.log(
+                    "步骤 8 resume：直连已开 Chrome，下载三张 infographic（不重开 Chrome）",
+                    telegram=True,
+                )
+                self._download_covers(nbi_acc, attach_only=True)
+                from cli.video_choice_queue import mark_nbif_resume_succeeded
+
+                mark_nbif_resume_succeeded(resume_choice_id)
+            else:
+                if not self._pick_story():
+                    return False
+                self._ensure_single_instance()
+                self.log("步骤 2 scn", telegram=True)
+                self._open_scene()
+                self.log(f"步骤 3 lm {self.lm}", telegram=True)
+                self._select_lm()
+                self.log("步骤 4 gem", telegram=True)
+                self._generate_scenes()
+                self.log("步骤 5 scnsave", telegram=True)
+                self._scene_save()
+                self.log("步骤 6 nbp 1", telegram=True)
+                self._nbp_preset()
+                self.log("步骤 7 nbi", telegram=True)
+                nbi_acc = self._trigger_notebooklm()
+                mark_active_item_workflow_step(
+                    workflow_step="nbif_poll",
+                    nbi_profile_index=nbi_acc,
+                )
+                self.log("步骤 8 nbif 轮询", telegram=True)
+                self._poll_notebooklm_ready()
+                self.log("步骤 9 itc", telegram=True)
+                self._download_covers(nbi_acc, attach_only=False)
             self.log("步骤 10 等待人工选封面", telegram=True)
             self._wait_human_cover_pick()
             self.log(
@@ -856,17 +1012,57 @@ class HermesTelegramClient:
             )
             self._grok_video()
             self.log("本条故事流水线完成。", telegram=True)
+        except NbifTimeoutError as exc:
+            skip_close_on_exit = True
+            self._mark_nbif_timeout(exc, nbi_acc=nbi_acc)
+            self.log(f"本条失败：{exc}", telegram=True)
+            self.log(
+                "已退出等待人工审核 NotebookLM。"
+                "确认三张图 ready 后运行 cli\\run_telegram_client_resume.bat 继续 nbif。",
+                telegram=True,
+            )
+            raise
         except PipelineError as exc:
             self.log(f"本条失败：{exc}", telegram=True)
+            if resume_from_nbif:
+                skip_close_on_exit = True
             raise
         finally:
-            if not is_manual_gui_session():
+            if not is_manual_gui_session() and not skip_close_on_exit:
                 self.log("关闭当前 STORY/SCENE", telegram=True)
                 try:
                     self._close_current_story()
                 except Exception as exc:
                     self.log(f"关窗失败: {exc}")
         return True
+
+    def run_resume_nbif(self) -> int:
+        """从队列里上次 nbif 超时的条目继续轮询。"""
+        from cli.win_gui_tasks import ensure_uia_com
+        from utility.telegram import token_for, ROLE_CLI, warn_if_tokens_overlap
+        from utility.telegram_cli import cli_allowed_chat_id
+
+        _enable_utf8_stdio()
+        ensure_uia_com()
+        warn_if_tokens_overlap()
+
+        if self.telegram_enabled:
+            if not token_for(ROLE_CLI) or not cli_allowed_chat_id():
+                print("ERROR: TELEGRAM_CLI_BOT_TOKEN / TELEGRAM_CLI_CHAT_ID missing", flush=True)
+                return 1
+
+        self._start_telegram_inbox()
+        self.log(
+            "Hermes resume：直连已开 Chrome 下载封面（不重开/关闭 Chrome）",
+            telegram=True,
+        )
+        try:
+            self.run_one_story(resume_from_nbif=True)
+        except NbifTimeoutError:
+            return 2
+        except PipelineError:
+            return 1
+        return 0
 
     def run(self) -> int:
         from cli.win_gui_tasks import ensure_uia_com
@@ -915,6 +1111,8 @@ class HermesTelegramClient:
             while not self._stop.is_set() and not self._stop_requested:
                 try:
                     ran = self.run_one_story()
+                except NbifTimeoutError:
+                    return 2
                 except PipelineError:
                     if self.once:
                         return 1
@@ -976,6 +1174,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="不发 Telegram 状态；封面仍写 JSON，需另开听筒才能在 Telegram 选图",
     )
     p.add_argument(
+        "--resume",
+        action="store_true",
+        help="从 video_choice_queue 里上次 nbif 轮询超时的条目继续（不关 Chrome）",
+    )
+    p.add_argument(
         "--telegram-inbox",
         action="store_true",
         dest="telegram_inbox",
@@ -996,7 +1199,10 @@ def main(argv: list[str] | None = None) -> int:
         grv_variant=int(args.grv_variant),
         telegram=not args.no_telegram,
         telegram_inbox=bool(args.telegram_inbox),
+        resume_nbif=bool(args.resume),
     )
+    if args.resume:
+        return client.run_resume_nbif()
     return client.run()
 
 
