@@ -78,7 +78,7 @@ PRE-TASK (launch Telegram Bot):
      - 若包含“仍在生成中 / Generating”，**等待 60 秒**，返回第 1 步重新发送 `nbif`。
      - 若包含“三个新的 infographic 已经 ready”，进入【步骤 9】。
 - **超时（全自动 client）**：至少轮询 **5 分钟**、最长约 **40 分钟** 仍 not ready → client **退出**，**不关 Chrome**，队列条目标为 `nbif_timeout`。
-- **恢复**：人工打开 NotebookLM 确认 ready 后，运行 **`cli\run_telegram_client_resume.bat`** — **不重开 Chrome**，直连已开窗口下载三张封面。
+- **恢复**：人工打开 NotebookLM 确认 ready 后，运行 **`cli\run_telegram_client_resume.bat`** — **不重开 Chrome**，直连下载封面 → 选封面 → **grv 前自动 scn（SCENE 未开时）**。
 
 ### 步骤 9：打开并下载封面图 (Download Infographics)
 - **动作**：发送 `itc`

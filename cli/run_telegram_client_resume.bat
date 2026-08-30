@@ -9,7 +9,7 @@ cd /d "%~dp0\.."
 echo.
 echo  Hermes Telegram client — RESUME nbif
 echo  Finds nbif-timeout item, connects to OPEN Chrome (no kill/relaunch), downloads 3 covers.
-echo  Run AFTER you manually confirmed NotebookLM infographics are ready.
+echo  Then: cover pick 1/2/3 -^> auto scn if needed -^> grv
 echo.
 
 if exist "venv\Scripts\python.exe" (

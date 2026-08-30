@@ -396,7 +396,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | `scn` 打不开 | STORY 要在；勿挡 GUI；再发一次 `scn` |
 | `grv` 没有 LM | 先 `lm 4` |
 | `grv` 没有封面图 | 先 `itc pick`（或 Copy image 到剪贴板） |
-| `grv` video 提示词为空 | 确认 `scnsave` 后 `scene_content` 为有效 JSON；SCENE 窗口须打开 |
+| `grv` video 提示词为空 | 确认 `scnsave` 后 `scene_content` 为有效 JSON；**SCENE 须打开**（client/resume 会在 grv 前自动 `scn`；若 STORY 也关了会从队列重开） |
 | `gri` 提示已合并 | 改发 `grv 1`（或 `grv 1 3` 指定变体） |
 | `gvd` / `grvd` 没有 mp4 | 先等 `grv` 跑完（已含下载）；或单独 `gvd` 补下 |
 

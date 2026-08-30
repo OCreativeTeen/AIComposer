@@ -9,7 +9,7 @@ cd /d "%~dp0\.."
 echo.
 echo  Hermes Telegram client
 echo  Runs the story-video pipeline on this PC.
-echo  Pipeline: pick -^> scn -^> lm -^> gem -^> scnsave (was pst+save) -^> nbi ...
+echo  Pipeline: pick -^> scn -^> ... -^> itc -^> grv (auto scn if SCENE closed)
 echo  Story pick: next = first pending, or auto pick 1 if queue has only in-progress/done.
 echo  Cover pick: reply 1 / 2 / 3 in Telegram (client polls if run_bot is off).
 echo  If nbif times out: Chrome stays open; run cli\run_telegram_client_resume.bat after manual check.

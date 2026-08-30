@@ -926,9 +926,55 @@ class HermesTelegramClient:
             time.sleep(2.0)
         raise PipelineError("stopped")
 
+    def _ensure_story_scene_for_grv(self) -> None:
+        """``grv`` 需要 SCENE 窗口已绑定；没有则 ``scn``，全无则从队列重开 GUI。"""
+        from cli.ensure_gui import gui_windows_open
+        from cli.video_choice_queue import (
+            current_taken_queue_item,
+            find_nbif_timeout_resume_item,
+        )
+
+        win = self._public_win()
+        if win == "scene":
+            self.log("SCENE 已在前台，继续 grv")
+            return
+        if win == "story":
+            self.log("STORY 已开 — 执行 scn 打开 SCENE", telegram=True)
+            self._open_scene()
+            return
+        if gui_windows_open():
+            self.log("GUI 在但 SCENE 未绑定 — 执行 scn", telegram=True)
+            self._open_scene()
+            return
+
+        item = current_taken_queue_item() or find_nbif_timeout_resume_item()
+        if item:
+            from cli.ensure_gui import ensure_gui_for_queue_item
+
+            title = (item.get("title") or item.get("choice_id") or "?").strip()
+            self.log(f"STORY/SCENE 已关 — 从队列重开：{title}", telegram=True)
+            ok, msg = ensure_gui_for_queue_item(item)
+            if not ok:
+                raise PipelineError(f"重开 STORY 失败：{msg}")
+            self.log(msg)
+            deadline = time.monotonic() + 90.0
+            while time.monotonic() < deadline:
+                if self._public_win() in ("story", "scene") or gui_windows_open():
+                    break
+                time.sleep(1.0)
+            self._ensure_single_instance()
+            self.cli("sync")
+            self._open_scene()
+            return
+
+        raise PipelineError(
+            "STORY/SCENE 未打开，无法 grv。请先 pick 故事并 scn 打开 SCENE。"
+        )
+
     def _grok_video(self) -> None:
         from utility.telegram_session import load_grok_scene_videos, story_scene_count
 
+        self._ensure_story_scene_for_grv()
         cmd = f"grv {self.grv_profile} {self.grv_variant}"
         self.log(f"开始 {cmd}（可能 5–15 分钟）", telegram=True)
         ok, msg = self.cli(cmd)
@@ -1007,7 +1053,7 @@ class HermesTelegramClient:
             self.log("步骤 10 等待人工选封面", telegram=True)
             self._wait_human_cover_pick()
             self.log(
-                f"步骤 11 grv {self.grv_profile} {self.grv_variant}",
+                f"步骤 11 确认 SCENE + grv {self.grv_profile} {self.grv_variant}",
                 telegram=True,
             )
             self._grok_video()
