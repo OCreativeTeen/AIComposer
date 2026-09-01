@@ -197,11 +197,12 @@ pick next          # 下一条
 | 3 | `triumphdt777@gmail.com` | `Default` |
 | 4 | `myhomefun@gmail.com` | `Profile 4` |
 | 5 | `mindstoryroom@gmail.com` | `Profile 5` |
+| 6 | `bjtombj2023@gmail.com` | `Profile 6` |
 
-启动示例（profile 5）：
+启动示例（profile 6）：
 
 ```text
-chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesChromeCDP" --profile-directory="Profile 5"
+chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesChromeCDP" --profile-directory="Profile 6"
 ```
 
 | 短名 | 长名 | 参数 | 作用 |
@@ -260,6 +261,8 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 ### 4.7 Grok Imagine（分镜视频）
 
+**Grok 账号轮换：** 每条故事默认在 **#1 `ocreativeteen`** 与 **#6 `bjtombj2023`** 间切换（`aiagent/chrome_profiles_used.json` → `grok_last`）。`gem` 仍固定 #1。无参 `grv` 自动选下一个；`grv list` 看上次/下次；`grv 6 3` 强制 profile + 变体。
+
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
 | `grv` | `grok_image` | 见下 | **全自动**：开 N 标签 → 贴封面 + 出图 + 出片 + **每场景下载** |
@@ -285,16 +288,18 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 | 参数 | 含义 |
 |------|------|
-| （无） | 列出 Chrome profile + video 变体 1…8 + 当前 session 变体 |
-| `1` `2` … | Chrome profile 序号；video 变体用 session 已存值（默认 **3**） |
-| `1 5` | profile `1` + video 变体 `5`（一并写入 session） |
+| （无） | 自动用轮换环下一个 profile + 已存 video 变体（默认 **3**） |
+| `list` / `?` | 列出轮换环、上次/下次 profile、video 变体 |
+| `6` `3` | 强制 profile `6` + video 变体 `3` |
 | `prep` | 仅向已有标签贴封面（不重新开标签、不出图出片） |
 
-**示例：** `grv` → `grv 1 3`（4 场景、念 speaking） / `nbv 6` 再 `grv 2`（旁白讲述）
+**示例：** `grv`（自动 #1↔#6 轮换 + 变体 3） / `grv 6 5` 强制 bjtombj + 变体 5
+
+**场景数：** `scnsave` 之后以当前条 **`video_detail.scene_content`** 数组长度为准（`grv` / `nbv` 开几个标签都看这个）。`gem` 之前尚无 scene_content 时，从 LM 长 prompt 解析期望条数校验。
 
 #### Video 提示词变体 1…8（`GROK_SCENE_VIDEO_NB_VARIANTS`）
 
-对应 NotebookLM 的 Video / Speaking / Voiceover（**不含** Image）。`grv`、`nbv` 共用；记在 `story_scene_prompt_choice` JSON 的 `video_nb_index`。
+对应 NotebookLM 的 Video / Speaking / Voiceover（**不含** Image）。`grv`、`nbv` 共用；记在 `aiagent/grok_scene_video_nb.json` 的 `video_nb_index`。
 
 | # | 类 | 变体 | 说明 |
 |---|-----|------|------|

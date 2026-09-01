@@ -32,10 +32,11 @@ os.chdir(ROOT)
 
 NBI_ACCOUNTS = {
     1: "ocreativeteen",
-    2: "triumphdt777",
-    3: "myhomefun",
-    4: "creative4teen",
+    2: "creative4teen",
+    3: "triumphdt777",
+    4: "myhomefun",
     5: "mindstoryroom",
+    6: "bjtombj2023",
 }
 
 _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -102,7 +103,7 @@ class HermesTelegramClient:
         once: bool = False,
         lm: str = "4",
         nbi: int | None = None,
-        grv_profile: int = 1,
+        grv_profile: int | None = None,
         grv_variant: int = 3,
         telegram: bool = True,
         telegram_inbox: bool = False,
@@ -112,7 +113,7 @@ class HermesTelegramClient:
         self.once = bool(once)
         self.lm = (lm or "4").strip() or "4"
         self.nbi_override = int(nbi) if nbi is not None else None
-        self.grv_profile = max(1, int(grv_profile))
+        self.grv_profile = int(grv_profile) if grv_profile is not None else None
         self.grv_variant = max(1, int(grv_variant))
         self.telegram_enabled = bool(telegram)
         self.telegram_inbox = bool(telegram_inbox)
@@ -486,14 +487,25 @@ class HermesTelegramClient:
     def _pick_story(self) -> bool:
         from cli.ensure_gui import gui_windows_open
         from cli.gui_session import is_manual_gui_session
+        from cli.queue_gui_nav import retreat_to_list_window, sync_gui_window_path_from_hwnds
         from cli.video_choice_queue import first_pending_story_index, resolve_story_pick_index
+        from cli.win_gui_tasks import find_video_list_window
 
         self._ensure_single_instance()
         win = self._public_win()
+        list_hwnd = find_video_list_window()
         if win in ("story", "scene") or gui_windows_open():
-            ok, sync = self.cli("sync")
-            self.log(f"已有故事窗 win={win}，不再 pick。\n{sync}", telegram=True)
-            return True
+            if list_hwnd:
+                self.log("退回 LIST 再 pick 下一条", telegram=True)
+                ok, msg = retreat_to_list_window(run_cx=lambda: self.cli("cx"))
+                self.log(msg)
+                if not ok:
+                    return False
+                win = self._public_win()
+            else:
+                ok, sync = self.cli("sync")
+                self.log(f"已有故事窗 win={win}，不再 pick。\n{sync}", telegram=True)
+                return True
         if is_manual_gui_session():
             self.log("GUI_pm 手工会话且没有 STORY/SCENE，无法 pick。", telegram=True)
             return False
@@ -526,6 +538,7 @@ class HermesTelegramClient:
         while time.monotonic() < deadline:
             if self._public_win() in ("story", "scene") or gui_windows_open():
                 self._ensure_single_instance()
+                sync_gui_window_path_from_hwnds()
                 self.cli("win")
                 self.cli("sync")
                 return True
@@ -534,9 +547,12 @@ class HermesTelegramClient:
         return False
 
     def _open_scene(self) -> None:
+        from cli.queue_gui_nav import sync_gui_window_path_from_hwnds
+
         win = self._public_win()
         if win == "scene":
             self.log("already on SCENE")
+            sync_gui_window_path_from_hwnds()
             return
         last_err = ""
         for _ in range(3):
@@ -546,6 +562,7 @@ class HermesTelegramClient:
             if ok and ("SCENE is in front" in msg or "already on scene" in msg.lower()):
                 time.sleep(1.0)
                 if self._public_win() == "scene":
+                    sync_gui_window_path_from_hwnds()
                     return
             if "STORY 屏未绑定" in msg:
                 raise PipelineError(msg)
@@ -577,16 +594,6 @@ class HermesTelegramClient:
                 timeout_s=4.0,
             )
             if got_ok and "4 step" in (got or "").lower():
-                return True
-        except Exception:
-            pass
-
-        try:
-            from utility.telegram_session import load_story_scene_prompt_choice
-
-            label = (load_story_scene_prompt_choice().get("label") or "").strip()
-            if self.lm == "4" and "4 step" in label.lower():
-                self.log(f"lm 已确认（session 记录）：{label}", telegram=True)
                 return True
         except Exception:
             pass
@@ -971,18 +978,44 @@ class HermesTelegramClient:
             "STORY/SCENE 未打开，无法 grv。请先 pick 故事并 scn 打开 SCENE。"
         )
 
+    def _choose_grv_profile(self) -> tuple[int, str]:
+        from utility.telegram_session import (
+            load_grok_imagine_last_profile,
+            next_grok_imagine_profile_index,
+        )
+
+        idx, label = next_grok_imagine_profile_index(override=self.grv_profile)
+        last = load_grok_imagine_last_profile()
+        if self.grv_profile is not None:
+            self.log(
+                f"grv 指定 profile {idx} ({label or '?'})",
+                telegram=True,
+            )
+        elif last.get("index"):
+            self.log(
+                f"grv 上次 {last.get('index')} ({last.get('profile') or '?'}) "
+                f"→ 本次 {idx} ({label})",
+                telegram=True,
+            )
+        else:
+            self.log(f"grv 无上次记录，从 {idx} ({label}) 开始", telegram=True)
+        return idx, label
+
     def _grok_video(self) -> None:
         from utility.telegram_session import load_grok_scene_videos, story_scene_count
 
         self._ensure_story_scene_for_grv()
-        cmd = f"grv {self.grv_profile} {self.grv_variant}"
+        grv_idx, _grv_label = self._choose_grv_profile()
+        cmd = f"grv {grv_idx} {self.grv_variant}"
         self.log(f"开始 {cmd}（可能 5–15 分钟）", telegram=True)
         ok, msg = self.cli(cmd)
         if not ok:
             if "没有封面" in msg:
                 raise PipelineError(f"grv 没有封面图: {msg}")
             raise PipelineError(f"grv failed: {msg}")
-        expected = story_scene_count() or 4
+        expected = story_scene_count()
+        if expected < 1:
+            raise PipelineError("grv：当前条没有 scene_content，请先 scnsave。")
         deadline = time.monotonic() + _GRV_DOWNLOAD_WAIT_S
         while time.monotonic() < deadline:
             clips = load_grok_scene_videos()
@@ -1006,6 +1039,37 @@ class HermesTelegramClient:
         from cli.video_choice_queue import first_pending_story_index
 
         return bool(first_pending_story_index())
+
+    def _finish_story_window_after_item(self, *, skip_close_on_exit: bool) -> None:
+        from cli.gui_session import is_manual_gui_session
+        from cli.queue_gui_nav import (
+            close_ai_composer_session,
+            retreat_to_list_window,
+            sync_gui_window_path_from_hwnds,
+        )
+
+        if is_manual_gui_session() or skip_close_on_exit:
+            return
+        if self._queue_has_pending():
+            self.log("队列还有下一条 — 退回 LIST，保持 AIComposer 不关", telegram=True)
+            try:
+                ok, msg = retreat_to_list_window(run_cx=lambda: self.cli("cx"))
+                self.log(msg)
+                if not ok:
+                    self.log("退回 LIST 失败，尝试只关 STORY/SCENE", telegram=True)
+                    self._close_current_story()
+                sync_gui_window_path_from_hwnds()
+            except Exception as exc:
+                self.log(f"退回 LIST 失败: {exc}")
+            return
+        self.log("队列已全部完成 — 关闭 AIComposer 会话", telegram=True)
+        try:
+            ok, msg = close_ai_composer_session(run_cx=lambda: self.cli("cx"))
+            self.log(msg)
+            if not ok:
+                self._close_current_story()
+        except Exception as exc:
+            self.log(f"关窗失败: {exc}")
 
     def run_one_story(self, *, resume_from_nbif: bool = False) -> bool:
         from cli.gui_session import is_manual_gui_session
@@ -1053,10 +1117,13 @@ class HermesTelegramClient:
             self.log("步骤 10 等待人工选封面", telegram=True)
             self._wait_human_cover_pick()
             self.log(
-                f"步骤 11 确认 SCENE + grv {self.grv_profile} {self.grv_variant}",
+                f"步骤 11 确认 SCENE + grv（变体 {self.grv_variant}，profile 自动轮换）",
                 telegram=True,
             )
             self._grok_video()
+            from cli.video_choice_queue import mark_active_item_done
+
+            mark_active_item_done()
             self.log("本条故事流水线完成。", telegram=True)
         except NbifTimeoutError as exc:
             skip_close_on_exit = True
@@ -1075,11 +1142,10 @@ class HermesTelegramClient:
             raise
         finally:
             if not is_manual_gui_session() and not skip_close_on_exit:
-                self.log("关闭当前 STORY/SCENE", telegram=True)
                 try:
-                    self._close_current_story()
+                    self._finish_story_window_after_item(skip_close_on_exit=skip_close_on_exit)
                 except Exception as exc:
-                    self.log(f"关窗失败: {exc}")
+                    self.log(f"收尾关窗失败: {exc}")
         return True
 
     def run_resume_nbif(self) -> int:
@@ -1141,7 +1207,7 @@ class HermesTelegramClient:
             "Hermes Telegram client 启动\n"
             f"pick={self.pick_arg}  lm={self.lm}  "
             f"{last_note} → 本次 nbi {nbi_idx} ({nbi_label or '?'})  "
-            f"grv {self.grv_profile} {self.grv_variant}\n"
+            f"grv 变体 {self.grv_variant}（profile 在 ocreativeteen / bjtombj 间自动轮换）\n"
             "封面必须由你在 Telegram 回 1/2/3。发 stop 可在本条结束后停。",
             telegram=True,
         )
@@ -1206,7 +1272,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="强制本次 nbi Chrome 号；默认读 aiagent/notebooklm_last_profile.json 后切到下一个",
     )
-    p.add_argument("--grv-profile", type=int, default=1, dest="grv_profile", help="grv Chrome 号，默认 1")
+    p.add_argument(
+        "--grv-profile",
+        type=int,
+        default=None,
+        dest="grv_profile",
+        help="强制本次 grv Chrome 号；默认在 ocreativeteen(1) / bjtombj2023(6) 间轮换",
+    )
     p.add_argument(
         "--grv-variant",
         type=int,
@@ -1241,7 +1313,7 @@ def main(argv: list[str] | None = None) -> int:
         once=args.once,
         lm=str(args.lm),
         nbi=args.nbi,
-        grv_profile=int(args.grv_profile),
+        grv_profile=args.grv_profile,
         grv_variant=int(args.grv_variant),
         telegram=not args.no_telegram,
         telegram_inbox=bool(args.telegram_inbox),

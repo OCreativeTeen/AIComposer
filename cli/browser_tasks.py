@@ -1179,7 +1179,8 @@ def validate_scene_json(value: Any, expected: int | None = None) -> list[Any]:
     exp = int(expected) if expected is not None and int(expected) >= 1 else _expected_scene_count()
     if exp < 1:
         raise ValueError(
-            "还没有记下 LM 场景数。先在 SCENE 发 lm（如 lm 4），再跑 gem。"
+            "还没有 scene_content。请先 lm → gem → scnsave；"
+            "或 gem 前从 LM 长 prompt 解析期望场数。"
         )
     if len(value) != exp:
         raise ValueError(f"Expected {exp} scenes, received {len(value)}")
@@ -1234,7 +1235,7 @@ def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
     exp = int(expected) if expected is not None and int(expected) >= 1 else _expected_scene_count()
     if exp < 1:
         raise RuntimeError(
-            "还没有记下 LM 场景数。先在 SCENE 发 lm（如 lm 4），再跑 gem。"
+            "还没有 scene_content，且剪贴板 LM prompt 未能解析场数。先在 SCENE 发 lm（如 lm 4），再跑 gem。"
         )
     deadline = time.monotonic() + GENERATION_TIMEOUT_MS / 1000
     stable: list[Any] | None = None
@@ -5790,17 +5791,14 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
     """Open N ``grok.com/imagine`` tabs and prepare each for scene image generation."""
     import config_prompt
     from utility.telegram_session import (
-        load_story_scene_prompt_choice,
         save_grok_scene_video_nb_index,
+        story_scene_count,
     )
 
-    choice = load_story_scene_prompt_choice()
-    label = (choice.get("label") or "").strip()
-    n = int(choice.get("tabs") or 0)
-    if not label or n < 1:
+    n = story_scene_count()
+    if n < 1:
         raise RuntimeError(
-            "还没有记录 story_scene_prompt_choice。"
-            "先在 SCENE 选 LM：lm 4。"
+            "还没有 scene_content。请先 lm → gem → scnsave 把分镜 JSON 写回频道列表。"
         )
     if video_nb_index is not None:
         save_grok_scene_video_nb_index(video_nb_index)
@@ -5818,7 +5816,7 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
     profile_label = (getattr(config, "GEMINI_CHROME_PROFILE", "") or profile_dir).strip()
     user_data = _chrome_cdp_user_data_dir()
     log(
-        f"Grok Imagine × {n} ({label}) cdp_port={grok_port} "
+        f"Grok Imagine × {n} (scene_content) cdp_port={grok_port} "
         f"account={profile_label!r} profile={profile_dir} user-data={user_data}"
     )
     cover_png = _grok_resolve_cover_png()
@@ -7416,10 +7414,9 @@ def _find_grok_chrome_hwnd() -> Optional[int]:
 
 
 def _grok_recorded_tab_count() -> int:
-    from utility.telegram_session import load_story_scene_prompt_choice
+    from utility.telegram_session import story_scene_count
 
-    n = int(load_story_scene_prompt_choice().get("tabs") or 0)
-    return max(0, n)
+    return max(0, story_scene_count())
 
 
 def _focus_grok_window() -> int:

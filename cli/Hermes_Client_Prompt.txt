@@ -67,9 +67,9 @@ PRE-TASK (launch Telegram Bot):
 - **等待**：直到收到 `ok [...] Nbp 1`。
 
 ### 步骤 7：触发 NotebookLM 生成 (NotebookLM Infographic Trigger)
-- **动作**：发送 `nbi 1` … `nbi 5`（按 Chrome 账号轮换）
+- **动作**：发送 `nbi 1` … `nbi 6`（按 Chrome 账号轮换）
 - **等待**：长任务（约 165 秒），直到收到 `ok [...] Nbi 1`。
-- FYI :   `nbi 1` … `nbi 5` 对应以不同 Profile 打开 HermesChromeCDP（1. `ocreativeteen@gmail.com`   2. `creative4teen@gmail.com`   3. `triumphdt777@gmail.com`   4. `myhomefun@gmail.com`   5. `mindstoryroom@gmail.com`）以此来突破每一个账户对 NotebookLM 使用的限制  
+- FYI :   `nbi 1` … `nbi 6` 对应以不同 Profile 打开 HermesChromeCDP（1. `ocreativeteen@gmail.com`   2. `creative4teen@gmail.com`   3. `triumphdt777@gmail.com`   4. `myhomefun@gmail.com`   5. `mindstoryroom@gmail.com`   6. `bjtombj2023@gmail.com`）以此来突破每一个账户对 NotebookLM 使用的限制  
 
 ### 步骤 8：轮询检查生成状态 (Poll Infographic Status)
 - **循环动作**：
@@ -89,7 +89,7 @@ PRE-TASK (launch Telegram Bot):
 - **恢复条件**：人类发送选择后，收到 Bot 的 `ok [...] itc ok — 已选 #N`（如 `selected_path=...`）。
 
 ### 步骤 11：生成 Grok 场景图与视频 (Grok Video Generation)
-- **动作**：发送 `grv 1 3`
+- **动作**：发送 `grv 3`（profile 在 ocreativeteen / bjtombj2023 间自动轮换；`3` 为 video 变体）
 - **等待**：超长任务（约 300~900 秒），中途忽略超时警告，直到收到 `ok [...] Grv 1 3`，且确认所有场景 `grok_scene_*.mp4` 下载完成。
 
 ### 步骤 12：循环处理 (Next Story)

@@ -7040,14 +7040,6 @@ class MediaGUIManager:
 
             if nb_prompt_choices:
                 def on_prompt_combo_selected(_event=None):
-                    sel = (prompt_combo_var.get() or "").strip()
-                    if sel:
-                        try:
-                            from utility.telegram_session import save_story_scene_prompt_choice
-
-                            save_story_scene_prompt_choice(sel)
-                        except Exception:
-                            pass
                     refresh_scene_prompt()
 
                 prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
@@ -7079,12 +7071,6 @@ class MediaGUIManager:
                 _apply_scene_lm_combo(
                     prompt_combo, prompt_combo_var, labels, matched, host=dlg
                 )
-                try:
-                    from utility.telegram_session import save_story_scene_prompt_choice
-
-                    save_story_scene_prompt_choice(matched)
-                except Exception:
-                    pass
                 _after_scene_lm_changed(dlg, prompt_combo, prompt_tx, refresh_scene_prompt)
                 return True, f"{matched} — 选LM提示下拉已切换。"
 
@@ -7219,15 +7205,7 @@ class MediaGUIManager:
 
                 def _scene_count() -> int:
                     scenes = _scene_list_from_editor()
-                    n = len(scenes) if scenes else 0
-                    if n <= 0:
-                        try:
-                            from utility.telegram_session import load_story_scene_prompt_choice
-
-                            n = int(load_story_scene_prompt_choice().get("tabs") or 0)
-                        except Exception:
-                            n = 0
-                    return max(0, n)
+                    return len(scenes) if scenes else 0
 
                 def _scene_choice_labels():
                     n = _scene_count()
@@ -7419,12 +7397,6 @@ class MediaGUIManager:
                     _apply_scene_lm_combo(
                         prompt_combo, prompt_combo_var, labels, matched, host=dlg
                     )
-                    try:
-                        from utility.telegram_session import save_story_scene_prompt_choice
-
-                        save_story_scene_prompt_choice(matched)
-                    except Exception:
-                        pass
                     _after_scene_lm_changed(dlg, prompt_combo, prompt_tx, refresh_scene_prompt)
                     return True, (
                         f"{matched} — 选LM提示下拉已切换；"
@@ -10190,10 +10162,10 @@ class MediaGUIManager:
             _bind_ctrl_arrow_nav(dialog)
             dialog._summary_nav_tree_bound = True
 
-        def _auto_open_summary_for_row_keys():
-            keys = {str(k).strip() for k in (auto_open_summary_row_keys or []) if str(k).strip()}
+        def _open_summary_for_row_keys(row_keys: list[str] | set[str]) -> bool:
+            keys = {str(k).strip() for k in (row_keys or []) if str(k).strip()}
             if not keys:
-                return
+                return False
             for item in tree.get_children():
                 t = _treeview_item_tags_safe(tree, item)
                 if not t:
@@ -10204,7 +10176,7 @@ class MediaGUIManager:
                     tree.see(item)
                     tree.focus(item)
                     on_focus(_SummaryNavFakeEvt(), low_priority=True)
-                    return
+                    return True
             for item in tree.get_children():
                 t = _treeview_item_tags_safe(tree, item)
                 if not t:
@@ -10223,7 +10195,54 @@ class MediaGUIManager:
                     tree.see(item)
                     tree.focus(item)
                     on_focus(_SummaryNavFakeEvt(), low_priority=True)
-                    return
+                    return True
+            return False
+
+        def _auto_open_summary_for_row_keys():
+            _open_summary_for_row_keys(auto_open_summary_row_keys or [])
+
+        from gui.cli_bridge import bind_screen, unbind_screen
+
+        def _cli_open_row(value: str):
+            raw = (value or "").strip()
+            if not raw:
+                return False, "open_row: empty value"
+            keys: list[str]
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    keys = [str(k).strip() for k in parsed if str(k).strip()]
+                else:
+                    keys = [str(parsed).strip()]
+            except json.JSONDecodeError:
+                keys = [k.strip() for k in raw.split(",") if k.strip()]
+            if not keys:
+                return False, "open_row: no keys"
+
+            def _do_open():
+                if not _open_summary_for_row_keys(keys):
+                    pass
+
+            dialog.after(0, _do_open)
+            return True, f"open_row scheduled — {keys[0][:60]}"
+
+        def _unbind_video_list(event=None):
+            if event is not None and getattr(event, "widget", None) is not dialog:
+                return
+            unbind_screen(config.SCREEN_VIDEO_LIST)
+
+        bind_screen(
+            config.SCREEN_VIDEO_LIST,
+            dialog,
+            {
+                "open_row": {"set": _cli_open_row},
+            },
+        )
+        dialog.bind("<Destroy>", _unbind_video_list)
+        try:
+            config.set_gui_window_path([config.GUI_WINDOW_LEVEL_LIST])
+        except Exception:
+            pass
 
         if auto_open_summary_row_keys:
             dialog.after(250, _auto_open_summary_for_row_keys)

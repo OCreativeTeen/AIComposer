@@ -521,7 +521,7 @@ def cmd_gemini() -> tuple[bool, str]:
         n = len(parsed) if isinstance(parsed, list) else "?"
         if isinstance(parsed, list) and len(parsed) != expected:
             return False, (
-                f"gem 返回 {len(parsed)} 场，但 LM 记录是 {expected} 场。"
+                f"gem 返回 {len(parsed)} 场，但 LM prompt 期望 {expected} 场。"
                 "请检查 SCENE「选LM提示」是否与 gem 一致。"
             )
     except Exception:
@@ -589,13 +589,13 @@ def _scene_json_from_clipboard() -> tuple[list | None, str, str]:
                     None,
                     "",
                     (
-                        f"剪贴板有 {len(value)} 场 JSON，但 LM 记录是 {expected} 场。"
+                        f"剪贴板有 {len(value)} 场 JSON，但当前记录期望 {expected} 场。"
                         "请先 lm 选对步数，再 gem / scnsave。"
                     ),
                 )
             parsed = value
     if parsed is None:
-        hint = f"（LM 记录 {expected} 场）" if expected >= 1 else ""
+        hint = f"（期望 {expected} 场）" if expected >= 1 else ""
         return (
             None,
             "",
@@ -731,13 +731,6 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
             ok, msg = fb
     if ok:
         if public_cmd == "prompt_choice":
-            try:
-                from utility.telegram_session import save_story_scene_prompt_choice
-
-                label = (msg or "").split("—", 1)[0].strip() or msg
-                save_story_scene_prompt_choice(label)
-            except Exception:
-                pass
             got_ok, got = send_bridge_command(
                 screen=SCREEN_STORY_SCENE,
                 op="get",
@@ -1218,18 +1211,19 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
     import config
     import config_prompt
     from utility.telegram_session import (
+        load_grok_imagine_last_profile,
         load_grok_scene_video_nb_index,
-        load_story_scene_prompt_choice,
+        next_grok_imagine_profile_index,
+        save_grok_imagine_last_profile,
         save_grok_scene_video_nb_index,
+        story_scene_count,
     )
 
     shown = short_cli("grok_image")
-    choice = load_story_scene_prompt_choice()
-    label = (choice.get("label") or "").strip()
-    tabs = int(choice.get("tabs") or 0)
-    if not label or tabs < 1:
+    tabs = story_scene_count()
+    if tabs < 1:
         return False, (
-            "还没有记下 LM。先在 SCENE 发 lm 4。"
+            "还没有 scene_content。请先 lm → gem → scnsave 把分镜 JSON 写回频道列表。"
         )
 
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
@@ -1241,34 +1235,41 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
         except Exception as exc:
             return False, f"{shown} prep failed: {exc}"
         return True, f"{shown} prep ok — {detail}"
-    parts = [p for p in want.split() if p]
-    video_nb_index: int | None = None
-    profile_want = ""
-    if len(parts) >= 2 and parts[-1].isdigit():
-        vi = int(parts[-1])
-        n_var = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
-        if 1 <= vi <= n_var:
-            video_nb_index = vi
-            profile_want = parts[0]
-    elif parts:
-        profile_want = parts[0]
-    if not profile_want:
+    if want.lower() in ("list", "?"):
         cur_v = load_grok_scene_video_nb_index()
+        last = load_grok_imagine_last_profile()
+        nxt_i, nxt_label = next_grok_imagine_profile_index()
+        ring = config.list_grok_imagine_profile_indices()
         return True, (
             _format_chrome_profile_choices(
-                f"{shown} 先选 Chrome profile（将开 {tabs} 个 Imagine 标签，LM={label}）：",
+                f"{shown} Grok 轮换环 {ring}（将开 {tabs} 个 Imagine 标签）：",
                 shown,
                 "grok",
             )
+            + f"\n上次 grv：{last.get('index') or '—'} ({last.get('profile') or '无'})"
+            + f"\n下次默认：{nxt_i} ({nxt_label})"
             + "\n\n"
             + config_prompt.format_grok_scene_video_nb_choices()
             + f"\n当前 video 变体：{cur_v}（"
             + config_prompt.grok_scene_video_nb_choice_label(cur_v)
             + "）\n"
-            f"例：{shown} 1 {cur_v}  或  {shown} 1 5"
+            f"例：{shown}  或  {shown} 6 3  或  {shown} 1 5"
         )
+    parts = [p for p in want.split() if p]
+    video_nb_index: int | None = None
+    profile_override: int | None = None
+    if len(parts) >= 2 and parts[-1].isdigit():
+        vi = int(parts[-1])
+        n_var = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
+        if 1 <= vi <= n_var:
+            video_nb_index = vi
+            if parts[0].isdigit():
+                profile_override = int(parts[0])
+    elif parts and parts[0].isdigit():
+        profile_override = int(parts[0])
+    grv_idx, grv_label = next_grok_imagine_profile_index(override=profile_override)
     try:
-        selected = config.set_gemini_chrome_profile(profile_want)
+        selected = config.set_gemini_chrome_profile(grv_idx)
     except ValueError as exc:
         return False, str(exc) + "\n\n" + _format_chrome_profile_choices(
             f"{shown} 选项：", shown, "grok"
@@ -1286,8 +1287,15 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
         detail = handle_grok_imagine_tabs(video_nb_index=v_idx)
     except Exception as exc:
         return False, f"{shown} failed ({selected['label']}): {exc}"
+    try:
+        save_grok_imagine_last_profile(
+            profile=selected.get("label") or grv_label,
+            index=grv_idx,
+        )
+    except Exception:
+        pass
     return True, (
-        f"{shown} ok — profile={selected['label']}  LM={label}  tabs={tabs}  "
+        f"{shown} ok — profile #{grv_idx} {selected['label']}  scenes={tabs}  "
         f"video_nb={v_idx} ({v_label})\n{detail}"
     )
 
@@ -1295,7 +1303,7 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
 def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
     """Deprecated: scene image prompts are applied by ``grv`` automatically."""
     import config_prompt
-    from utility.telegram_session import load_story_scene_prompt_choice
+    from utility.telegram_session import story_scene_count
 
     shown = short_cli("grok_image_prompt")
     grv = short_cli("grok_image")
@@ -1307,17 +1315,15 @@ def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
     if not rows:
         return False, "DIRECT_VIDEO_PROMPT_CHOICES 为空"
 
-    rec = load_story_scene_prompt_choice()
-    n = int(rec.get("tabs") or rec.get("scenes") or 0)
-    lm_label = (rec.get("label") or "").strip()
+    n = story_scene_count()
     image_rows = rows[:4]
     video_rows = rows[4:]
     if n < 1:
         active_rows = rows
-        lm_note = f"还没记下 LM；先发 lm 再 {grv}。"
+        lm_note = f"还没有 scene_content；请先 lm → gem → scnsave，再 {grv}。"
     else:
         active_rows = image_rows[:n] + video_rows
-        lm_note = f"LM={lm_label} → 场景图已并入 {grv}（{grv} 1 自动贴封面 + Image 1…{n} 提示词）"
+        lm_note = f"scene_content={n} 场 → 场景图已并入 {grv}（{grv} 1 自动贴封面 + Image 1…{n} 提示词）"
 
     labels = [lbl for lbl, _ in active_rows]
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
@@ -1463,7 +1469,7 @@ def cmd_video_publish(value: str = "") -> tuple[bool, str]:
                 f"队列里还有未处理的故事。发 pick 看全部；"
                 f"建议下一步 pick {suggest}。"
             )
-            lines.append("要停就发 pick exit。换下一条前先关掉当前 STORY/SCENE。")
+            lines.append("要停就发 pick exit。下一条会自动退回 LIST 再打开，无需手动关窗。")
         else:
             lines.append("没有未处理的了，但都可以再选。发 pick 看 1/2/3…，不要发 pick next。")
     except Exception as exc:

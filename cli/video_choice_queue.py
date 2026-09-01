@@ -672,6 +672,36 @@ def resolve_video_detail_from_queue_item(item: dict) -> dict | None:
     return _match_row_in_list(arr, item)
 
 
+def parse_scene_content_field(value) -> list | None:
+    """把 ``video_detail.scene_content`` 规范成非空 list，否则 ``None``。"""
+    if isinstance(value, list):
+        return value if value else None
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(parsed, list) and parsed:
+            return parsed
+    return None
+
+
+def active_video_detail_scene_content() -> list | None:
+    """当前队列条对应频道 list 行上的 ``scene_content``（已 scnsave 后为准）。"""
+    item = current_taken_queue_item()
+    if not item:
+        return None
+    vd = resolve_video_detail_from_queue_item(item)
+    if not vd:
+        return None
+    return parse_scene_content_field(vd.get("scene_content"))
+
+
+def active_video_detail_scene_count() -> int:
+    sc = active_video_detail_scene_content()
+    return len(sc) if sc else 0
+
+
 def resolve_queue_item_by_id(choice_id: str) -> dict | None:
     data = load_queue()
     it = _find_item_by_choice_id(data, choice_id)

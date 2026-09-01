@@ -358,6 +358,26 @@ def _set_foreground_blocking(hwnd: int) -> None:
         log(f"warning: could not foreground hwnd={hwnd}: {exc}")
 
 
+def post_close_window(hwnd: int, *, wait_s: float = 8.0) -> None:
+    """Send WM_CLOSE to a top-level window and wait until it disappears."""
+    if not hwnd or win32gui is None or win32con is None:
+        return
+    try:
+        if not win32gui.IsWindow(hwnd):
+            return
+        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    except Exception:
+        return
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            if not win32gui.IsWindow(hwnd):
+                return
+        except Exception:
+            return
+        time.sleep(0.35)
+
+
 def flash_window(hwnd: int, *, until_foreground: bool = True) -> None:
     """Flash taskbar button so the user notices SCENE/STORY behind other apps."""
     if not hwnd:

@@ -328,38 +328,8 @@ def save_grok_scene_videos(items: list[dict] | list[str]) -> list[dict]:
     return files
 
 
-def grok_tab_count_for_prompt_choice(label: str) -> int:
-    """Map LM 提示选项 → 场景数 / Grok Imagine 标签数。
-
-    N Step Story → N（2–6）；其它（Short / Mini / Long…）→ 1。
-    """
-    raw = (label or "").strip()
-    if not raw:
-        return 0
-    low = raw.lower().replace("–", "-").replace("—", "-")
-    for n, patterns in (
-        (6, (r"(^|[^\d])6\s*[-_]?\s*step\b", "六步", "6步")),
-        (5, (r"(^|[^\d])5\s*[-_]?\s*step\b", "五步", "5步")),
-        (4, (r"(^|[^\d])4\s*[-_]?\s*step\b", "四步", "4步")),
-        (3, (r"(^|[^\d])3\s*[-_]?\s*step\b", "三步", "3步")),
-        (
-            2,
-            (
-                r"(^|[^\d])2\s*[-_]?\s*step\b",
-                "两步",
-                "二步",
-                "2步",
-            ),
-        ),
-    ):
-        pat, *zh = patterns
-        if re.search(pat, low) or any(z in raw for z in zh):
-            return n
-    return 1
-
-
 def scene_count_from_prompt_text(prompt: str) -> int:
-    """从 LM 长提示里解析 ``has N scene(s)``。"""
+    """从 LM 长提示里解析 ``has N scene(s)``（仅 ``gem`` 前、尚无 scene_content 时用）。"""
     text = (prompt or "").strip()
     if not text:
         return 0
@@ -367,6 +337,7 @@ def scene_count_from_prompt_text(prompt: str) -> int:
     for pat in (
         r"has\s+(\d+)\s+scenes?\b",
         r"the\s+whole\s+(?:\(one\)\s+)?story\s+has\s+(\d+)\s+scenes?",
+        r"has\s+(\d+)\s+scene\s*\(\s*\d+\s+json",
         r"output\s*\(\s*(\d+)\s+scenes?\s*\)",
         r"(\d+)\s+scenes?\s*\(\s*\d+\s+json",
     ):
@@ -380,46 +351,24 @@ def scene_count_from_prompt_text(prompt: str) -> int:
 
 
 def story_scene_count(*, prompt_text: str = "") -> int:
-    """当前故事应有几场：优先 ``story_scene_prompt_choice``，否则从 prompt 解析。"""
-    rec = load_story_scene_prompt_choice()
+    """当前故事场景数。
+
+  1. 已 scnsave：读当前 ``video_detail.scene_content`` 数组长度（唯一真源）
+  2. 尚无 scene_content（仅 ``gem`` 校验）：从剪贴板 LM 长 prompt 解析期望条数
+    """
     try:
-        n = int(rec.get("scenes") or rec.get("tabs") or 0)
-    except (TypeError, ValueError):
+        from cli.video_choice_queue import active_video_detail_scene_count
+
+        n = int(active_video_detail_scene_count() or 0)
+    except Exception:
         n = 0
     if n >= 1:
         return n
-    label = (rec.get("label") or "").strip()
-    if label:
-        mapped = grok_tab_count_for_prompt_choice(label)
-        if mapped >= 1:
-            return mapped
     return scene_count_from_prompt_text(prompt_text)
 
 
-def load_story_scene_prompt_choice() -> dict:
-    """Last LM prompt picked on the 分镜窗 (``story_scene_prompt_choice``)."""
-    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
-    empty = {"label": "", "tabs": 0, "scenes": 0}
-    if not path or not os.path.isfile(path):
-        return dict(empty)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return dict(empty)
-    if not isinstance(data, dict):
-        return dict(empty)
-    label = str(data.get("label") or "").strip()
-    tabs = data.get("tabs")
-    try:
-        tabs_i = int(tabs)
-    except (TypeError, ValueError):
-        tabs_i = grok_tab_count_for_prompt_choice(label)
-    if not label:
-        return dict(empty)
-    if tabs_i < 1:
-        tabs_i = grok_tab_count_for_prompt_choice(label) or 1
-    return {"label": label, "tabs": tabs_i, "scenes": tabs_i, "video_nb_index": _video_nb_index_from(data)}
+def _grok_scene_video_nb_path() -> str:
+    return getattr(config, "GROK_SCENE_VIDEO_NB_JSON", "") or ""
 
 
 def _video_nb_index_from(data: dict) -> int:
@@ -438,23 +387,18 @@ def _video_nb_index_from(data: dict) -> int:
 
 def load_grok_scene_video_nb_index() -> int:
     """Grok scene video NotebookLM variant index 1…8 (see ``GROK_SCENE_VIDEO_NB_VARIANTS``)."""
-    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
-    if not path or not os.path.isfile(path):
-        import config_prompt
+    import config_prompt
 
-        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        import config_prompt
-
-        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
-    if not isinstance(data, dict):
-        import config_prompt
-
-        return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
-    return _video_nb_index_from(data)
+    path = _grok_scene_video_nb_path()
+    if path and os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return _video_nb_index_from(data)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return config_prompt.GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
 
 
 def save_grok_scene_video_nb_index(index: int) -> dict:
@@ -465,44 +409,14 @@ def save_grok_scene_video_nb_index(index: int) -> dict:
     n = len(config_prompt.GROK_SCENE_VIDEO_NB_VARIANTS) or 8
     if i < 1 or i > n:
         raise ValueError(f"video_nb_index must be 1…{n}, got {index!r}")
-    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
-    payload: dict = {}
-    if path and os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                existing = json.load(f)
-            if isinstance(existing, dict):
-                payload = existing
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-    payload["video_nb_index"] = i
-    payload["video_nb_label"] = config_prompt.grok_scene_video_nb_choice_label(i)
-    payload["video_nb_updated_at"] = datetime.now(timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
-    if path:
-        try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, path)
-        except OSError:
-            pass
-    return payload
-
-
-def save_story_scene_prompt_choice(label: str) -> dict:
-    """Remember 分镜窗 LM 提示选择，供 ``grok_image`` 决定场景数。"""
-    text = (label or "").strip()
-    tabs = grok_tab_count_for_prompt_choice(text)
     payload = {
-        "label": text,
-        "tabs": tabs,
-        "scenes": tabs,
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "video_nb_index": i,
+        "video_nb_label": config_prompt.grok_scene_video_nb_choice_label(i),
+        "video_nb_updated_at": datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
     }
-    path = getattr(config, "STORY_SCENE_PROMPT_CHOICE_JSON", "") or ""
+    path = _grok_scene_video_nb_path()
     if path:
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -520,8 +434,8 @@ def _chrome_profiles_used_path() -> str:
 
 
 def load_chrome_profiles_used() -> dict:
-    """本轮（跨多条故事）已用过的 Chrome 账号，用来建议换号避开额度。"""
-    empty = {"used": [], "by_kind": {}}
+    """跨次运行 Chrome 账号记录：本轮已用 + Grok Imagine 上次成功 profile。"""
+    empty = {"used": [], "by_kind": {}, "grok_last": {"profile": "", "index": 0}}
     path = _chrome_profiles_used_path()
     if not path or not os.path.isfile(path):
         return dict(empty)
@@ -538,12 +452,24 @@ def load_chrome_profiles_used() -> dict:
     by_kind = data.get("by_kind")
     if not isinstance(by_kind, dict):
         by_kind = {}
+    grok_last = data.get("grok_last")
+    if not isinstance(grok_last, dict):
+        grok_last = {}
+    try:
+        grok_index = int(grok_last.get("index") or 0)
+    except (TypeError, ValueError):
+        grok_index = 0
     return {
         "used": [str(x).strip() for x in used if str(x).strip()],
         "by_kind": {
             str(k): [str(x).strip() for x in (v or []) if str(x).strip()]
             for k, v in by_kind.items()
             if isinstance(v, list)
+        },
+        "grok_last": {
+            "profile": str(grok_last.get("profile") or "").strip(),
+            "index": max(0, grok_index),
+            "launched_at": str(grok_last.get("launched_at") or ""),
         },
         "updated_at": data.get("updated_at") or "",
     }
@@ -562,9 +488,11 @@ def record_chrome_profile_used(kind: str, label: str) -> dict:
     if text and text not in bucket:
         bucket.append(text)
     by_kind[key] = bucket
+    grok_last = data.get("grok_last") if isinstance(data.get("grok_last"), dict) else {}
     payload = {
         "used": used,
         "by_kind": by_kind,
+        "grok_last": grok_last,
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     path = _chrome_profiles_used_path()
@@ -578,6 +506,82 @@ def record_chrome_profile_used(kind: str, label: str) -> dict:
         except OSError:
             pass
     return payload
+
+
+def _grok_imagine_profile_ring() -> list[int]:
+    return list(config.list_grok_imagine_profile_indices() or [1])
+
+
+def load_grok_imagine_last_profile() -> dict:
+    """上次成功 ``grv`` 的 Chrome profile（存在 ``chrome_profiles_used.json``）。"""
+    data = load_chrome_profiles_used()
+    grok = data.get("grok_last") if isinstance(data.get("grok_last"), dict) else {}
+    try:
+        index = int(grok.get("index") or 0)
+    except (TypeError, ValueError):
+        index = 0
+    return {
+        "profile": str(grok.get("profile") or "").strip(),
+        "index": max(0, index),
+        "launched_at": str(grok.get("launched_at") or ""),
+    }
+
+
+def save_grok_imagine_last_profile(*, profile: str = "", index: int = 0) -> dict:
+    """记下本次成功 grv 的 profile，供下一条故事切到轮换环里的下一个。"""
+    profiles = list(config.list_gemini_chrome_profiles() or [])
+    label = (profile or "").strip()
+    idx = int(index or 0)
+    if idx < 1 and label:
+        idx = _index_for_notebooklm_label(label, profiles)
+    if idx < 1:
+        idx = _grok_imagine_profile_ring()[0]
+    if not label and 1 <= idx <= len(profiles):
+        label = str(profiles[idx - 1].get("label") or "").strip()
+    data = load_chrome_profiles_used()
+    payload = {
+        "used": list(data.get("used") or []),
+        "by_kind": dict(data.get("by_kind") or {}),
+        "grok_last": {
+            "profile": label,
+            "index": idx,
+            "launched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    path = _chrome_profiles_used_path()
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return payload
+
+
+def next_grok_imagine_profile_index(*, override: int | None = None) -> tuple[int, str]:
+    """本次 grv 该用的号：显式 override，否则在上次成功号的下一个（仅 GROK 轮换环）。"""
+    ring = _grok_imagine_profile_ring()
+    profiles = list(config.list_gemini_chrome_profiles() or [])
+    n = len(profiles) or 1
+    if override is not None:
+        i = max(1, min(int(override), n))
+    else:
+        rec = load_grok_imagine_last_profile()
+        last_i = int(rec.get("index") or 0)
+        if last_i not in ring:
+            i = ring[0]
+        else:
+            i = ring[(ring.index(last_i) + 1) % len(ring)]
+    label = (
+        str(profiles[i - 1].get("label") or "").strip()
+        if 1 <= i <= len(profiles)
+        else ""
+    )
+    return i, label
 
 
 def _notebooklm_last_profile_path() -> str:

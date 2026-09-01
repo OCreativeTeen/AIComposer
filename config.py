@@ -608,6 +608,13 @@ SCREEN_VIDEO_LIST = "video_list"
 SCREEN_YT_TOOLS = "yt_tools"
 ACTIVE_SCREEN = SCREEN_NONE
 ACTIVE_SCREEN_JSON = os.path.join(BASE_AIAGENT_PATH, "active_screen.json")
+
+# GUI 窗口层级路径（跨进程）：如 list → list.story_root → list.story_root.scene
+GUI_WINDOW_LEVEL_LIST = "list"
+GUI_WINDOW_LEVEL_STORY = "story_root"
+GUI_WINDOW_LEVEL_SCENE = "scene"
+GUI_WINDOW_PATH_JSON = os.path.join(BASE_AIAGENT_PATH, "gui_window_path.json")
+_gui_window_path: list[str] = []
 GUI_LAUNCH_SOURCE_JSON = os.path.join(BASE_AIAGENT_PATH, "gui_launch_source.json")
 GUI_LAUNCH_MANUAL = "manual"
 GUI_LAUNCH_QUEUE = "queue"
@@ -616,10 +623,9 @@ CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_reply.json")
 # GUI 写心跳，CLI 读：区分「GUI 没跑」与「GUI 主线程卡住」
 CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_heartbeat.json")
 WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_AIAGENT_PATH, "whole_story_images.json")
-STORY_SCENE_PROMPT_CHOICE_JSON = os.path.join(
-    BASE_AIAGENT_PATH, "story_scene_prompt_choice.json"
-)
 GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_videos.json")
+# grv / nbv 用的 Grok video 提示词变体序号（1…8），与场景数无关
+GROK_SCENE_VIDEO_NB_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_video_nb.json")
 CHROME_PROFILES_USED_JSON = os.path.join(BASE_AIAGENT_PATH, "chrome_profiles_used.json")
 # nbi 上次成功 launch 的 Chrome profile；下次 Hermes client 自动切到下一个
 NOTEBOOKLM_LAST_PROFILE_JSON = os.path.join(
@@ -639,13 +645,14 @@ _AIAGENT_RUNTIME_FILES_FROM_PROGRAM = (
     "YT_tools_prefs.json",
     "video_choice_queue.json",
     "active_screen.json",
+    "gui_window_path.json",
     "gui_launch_source.json",
     "cli_bridge_request.json",
     "cli_bridge_reply.json",
     "cli_bridge_heartbeat.json",
     "whole_story_images.json",
-    "story_scene_prompt_choice.json",
     "grok_scene_videos.json",
+    "grok_scene_video_nb.json",
     "chrome_profiles_used.json",
     "notebooklm_last_profile.json",
     "hermes_cdp_active_profile.json",
@@ -735,6 +742,103 @@ def get_active_screen() -> str:
     return ACTIVE_SCREEN or SCREEN_NONE
 
 
+def _normalize_gui_window_path(parts: list[str] | tuple[str, ...] | None) -> list[str]:
+    allowed = {
+        GUI_WINDOW_LEVEL_LIST,
+        GUI_WINDOW_LEVEL_STORY,
+        GUI_WINDOW_LEVEL_SCENE,
+    }
+    out: list[str] = []
+    for raw in parts or []:
+        level = (raw or "").strip()
+        if not level or level not in allowed:
+            continue
+        if out and out[-1] == level:
+            continue
+        out.append(level)
+    return out
+
+
+def load_gui_window_path() -> list[str]:
+    """从 ``gui_window_path.json`` 读窗口层级路径。"""
+    global _gui_window_path
+    path = GUI_WINDOW_PATH_JSON
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                parts = data.get("path")
+                if isinstance(parts, list):
+                    _gui_window_path = _normalize_gui_window_path(parts)
+                    return list(_gui_window_path)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return list(_gui_window_path)
+
+
+def save_gui_window_path(parts: list[str] | tuple[str, ...] | None) -> str:
+    """写窗口层级路径到 JSON，返回点分字符串如 ``list.story_root``。"""
+    global _gui_window_path
+    _gui_window_path = _normalize_gui_window_path(parts)
+    try:
+        ensure_aiagent_path()
+        with open(GUI_WINDOW_PATH_JSON, "w", encoding="utf-8") as f:
+            json.dump({"path": _gui_window_path}, f, ensure_ascii=False)
+    except OSError:
+        pass
+    return get_gui_window_path_str()
+
+
+def get_gui_window_path() -> list[str]:
+    """当前窗口层级（内存优先，否则读盘）。"""
+    if _gui_window_path:
+        return list(_gui_window_path)
+    return load_gui_window_path()
+
+
+def get_gui_window_path_str() -> str:
+    return ".".join(get_gui_window_path())
+
+
+def set_gui_window_path(parts: list[str] | tuple[str, ...] | None) -> str:
+    return save_gui_window_path(parts)
+
+
+def push_gui_window_level(level: str) -> str:
+    parts = get_gui_window_path()
+    level = (level or "").strip()
+    if not level:
+        return get_gui_window_path_str()
+    if parts and parts[-1] == level:
+        return get_gui_window_path_str()
+    parts.append(level)
+    return save_gui_window_path(parts)
+
+
+def pop_gui_window_level(*, to_level: str = "") -> str:
+    parts = get_gui_window_path()
+    target = (to_level or "").strip()
+    if target:
+        while parts and parts[-1] != target:
+            parts.pop()
+        if parts and parts[-1] == target:
+            parts = parts[: parts.index(target) + 1]
+        else:
+            parts = [target] if target in {
+                GUI_WINDOW_LEVEL_LIST,
+                GUI_WINDOW_LEVEL_STORY,
+                GUI_WINDOW_LEVEL_SCENE,
+            } else []
+    elif parts:
+        parts.pop()
+    return save_gui_window_path(parts)
+
+
+def reset_gui_window_path() -> str:
+    return save_gui_window_path([])
+
+
 # Chrome / Gemini（CLI ``gemini``）。Playwright 经 CDP 连接，不需要管理员权限。
 CHROME_EXE = (os.environ.get("CHROME_EXE") or r"C:\Program Files\Google\Chrome\Application\chrome.exe").strip()
 CHROME_REMOTE_DEBUGGING_PORT = int(os.environ.get("CHROME_REMOTE_DEBUGGING_PORT") or "9222")
@@ -750,8 +854,8 @@ CHROME_CDP_USER_DATA_DIR = (
     os.environ.get("CHROME_CDP_USER_DATA_DIR")
     or os.path.join(os.environ.get("LOCALAPPDATA") or "", "HermesChromeCDP")
 ).strip()
-# Telegram 询问 owner 时按此列表编号（回复 1/2/3/4/5）
-# CLI 编号 1–5 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
+# Telegram 询问 owner 时按此列表编号（回复 1/2/3/4/5/6）
+# CLI 编号 1–6 → 邮箱；directory 为 HermesChromeCDP 内文件夹名（与日常 Chrome 无关）。
 # 若 directory 与 Local State 不一致，browser_tasks 会按已登录邮箱自动纠正。
 GEMINI_CHROME_PROFILES = [
     {"label": "ocreativeteen@gmail.com", "directory": "Profile 2"},
@@ -759,7 +863,10 @@ GEMINI_CHROME_PROFILES = [
     {"label": "triumphdt777@gmail.com", "directory": "Default"},
     {"label": "myhomefun@gmail.com", "directory": "Profile 4"},
     {"label": "mindstoryroom@gmail.com", "directory": "Profile 5"},
+    {"label": "bjtombj2023@gmail.com", "directory": "Profile 6"},
 ]
+# Grok Imagine（``grv``）轮换账号：GEMINI_CHROME_PROFILES 的 1-based 编号（非 Chrome 文件夹名）
+GROK_IMAGINE_PROFILE_INDICES = [1, 6]  # ocreativeteen, bjtombj2023
 # 当前选中的账号（交互选号后会改这个值）
 GEMINI_CHROME_PROFILE = GEMINI_CHROME_PROFILES[0]["label"]
 GEMINI_CHROME_PROFILE_DIRECTORY = (
@@ -793,6 +900,21 @@ def list_gemini_chrome_profiles() -> list[dict]:
             }
         )
     return out
+
+
+def list_grok_imagine_profile_indices() -> list[int]:
+    """``grv`` 轮换用的 profile 编号（``GEMINI_CHROME_PROFILES`` 下标 1-based）。"""
+    raw = GROK_IMAGINE_PROFILE_INDICES or [1]
+    out: list[int] = []
+    n = len(list_gemini_chrome_profiles())
+    for item in raw:
+        try:
+            i = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= max(n, 1) and i not in out:
+            out.append(i)
+    return out or [1]
 
 
 def set_gemini_chrome_profile(label_or_index) -> dict:

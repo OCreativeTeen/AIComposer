@@ -165,10 +165,16 @@ def ensure_gui_from_queue(*, timeout_s: float = 75.0) -> tuple[bool, str]:
 
 def ensure_gui_for_queue_item(item: dict, *, timeout_s: float = 75.0) -> tuple[bool, str]:
     """打开指定队列故事。GUI 已开时不启动第二个 AIComposer。"""
+    from cli.queue_gui_nav import (
+        list_session_alive,
+        open_queue_item_from_list,
+        retreat_to_list_window,
+    )
     from cli.video_choice_queue import (
         activate_queue_item,
         current_taken_queue_item,
     )
+    from cli.win_gui_tasks import find_video_list_window
 
     if not isinstance(item, dict):
         return False, "无效的 queue item"
@@ -187,6 +193,8 @@ def ensure_gui_for_queue_item(item: dict, *, timeout_s: float = 75.0) -> tuple[b
     prev = current_taken_queue_item()
     prev_cid = ((prev.get("choice_id") or "").strip() if prev else "")
 
+    list_hwnd = find_video_list_window()
+
     if gui_windows_open():
         if prev_cid == cid:
             try:
@@ -198,12 +206,25 @@ def ensure_gui_for_queue_item(item: dict, *, timeout_s: float = 75.0) -> tuple[b
                 f"choice_id={cid}\n"
                 "直接发 scene 继续。"
             )
+        if list_hwnd or list_session_alive():
+            ok, msg = retreat_to_list_window()
+            if not ok:
+                return False, (
+                    "摘要/分镜还开着另一条故事，且无法退回 LIST。\n"
+                    f"退回失败：{msg}\n"
+                    f"当前 GUI 对应：{prev_cid or '未知'}\n"
+                    f"想打开：{cid}  {title}"
+                )
+            return open_queue_item_from_list(item, timeout_s=timeout_s)
         return False, (
             "摘要/分镜还开着另一条故事。不要开第二个 AIComposer。\n"
             f"当前 GUI 对应：{prev_cid or '未知'}\n"
             f"想打开：{cid}  {title}\n"
             "请先关掉 SCENE 和 STORY（SCENE 可发 cx），等 win=none，再发一次 pick N。"
         )
+
+    if list_hwnd:
+        return open_queue_item_from_list(item, timeout_s=timeout_s)
 
     try:
         activate_queue_item(cid)
