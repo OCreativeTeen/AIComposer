@@ -6214,34 +6214,176 @@ _GROK_DROP_FILE_JS = """
 """
 
 
-_GROK_ASPECT_916_JS = """
+_GROK_VERIFY_ASPECT_916_JS = """
 () => {
-  const norm = (s) => (s || '').trim();
-  const txt = (el) => norm(el.innerText || el.textContent);
-  const aria = (el) => norm(el.getAttribute('aria-label') || el.getAttribute('title') || '');
+  const norm = (s) => (s || '').trim().replace(/\\s+/g, ' ');
+  const has916 = (t) => /\\b9\\s*:\\s*16\\b/.test(norm(t));
 
-  const btns = [...document.querySelectorAll('button, [role="button"]')];
-  const isRatioPill = (b) => /^\\d+:\\d+$/.test(txt(b));
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (input) {
+    let card = input;
+    for (let up = 0; up < 14; up++) {
+      card = card.parentElement;
+      if (!card) break;
+      for (const b of card.querySelectorAll('button, [role="button"]')) {
+        const blob = [
+          b.innerText,
+          b.textContent,
+          b.getAttribute('aria-label'),
+          b.getAttribute('title'),
+        ].map(norm).join(' ');
+        if (has916(blob)) return true;
+      }
+    }
+  }
+
+  for (const el of document.querySelectorAll(
+    '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"]'
+  )) {
+    const selected =
+      el.getAttribute('aria-selected') === 'true'
+      || el.getAttribute('aria-checked') === 'true'
+      || el.getAttribute('data-state') === 'checked';
+    if (!selected) continue;
+    const blob = [
+      el.innerText,
+      el.textContent,
+      el.getAttribute('data-value'),
+      el.getAttribute('value'),
+      el.getAttribute('name'),
+      el.getAttribute('aria-label'),
+    ].map(norm).join(' ');
+    if (has916(blob)) return true;
+  }
+  return false;
+}
+"""
+
+
+_GROK_FIND_ASPECT_RATIO_BUTTON_JS = """
+() => {
+  function btnMeta(btn, method) {
+    const br = btn.getBoundingClientRect();
+    return {
+      method,
+      x: br.left + br.width / 2,
+      y: br.top + br.height / 2,
+      aria: (btn.getAttribute('aria-label') || '').trim(),
+      text: (btn.innerText || '').trim(),
+    };
+  }
+  const norm = (s) => (s || '').trim();
+  const blob = (el) => (
+    norm(el.innerText) + ' ' + norm(el.textContent) + ' '
+    + norm(el.getAttribute('aria-label')) + ' ' + norm(el.getAttribute('title'))
+  ).toLowerCase();
+
+  const isPlusBtn = (b) => {
+    const t = blob(b);
+    return norm(b.innerText) === '+' || /add|attach|upload|上传/.test(t);
+  };
+  const isImageModeBtn = (b) => {
+    const t = blob(b);
+    if (/video|motion|视频|摄像|camera/.test(t)) return false;
+    return t === 'image' || t === '图片' || /\\bimage\\b/.test(t);
+  };
+  const isVideoModeBtn = (b) => {
+    const t = blob(b);
+    if (/720|480|1080|6s|10s|15s|resolution|duration/.test(t)) return false;
+    return /video|motion|视频|摄像|camera/.test(t);
+  };
   const isAspectBtn = (b) => {
-    const blob = (txt(b) + ' ' + aria(b)).toLowerCase();
-    return isRatioPill(b)
-      || /纵横比|aspect\\s*ratio|方比例/.test(blob);
+    const t = blob(b);
+    if (isPlusBtn(b) || isImageModeBtn(b) || isVideoModeBtn(b)) return false;
+    if (/\\d+\\s*:\\s*\\d+/.test(t)) return true;
+    return /纵横比|aspect\\s*ratio|宽高比|aspect ratio|比例|方比例/.test(t);
   };
 
-  let pill = btns.find((b) => txt(b) === '9:16');
-  if (!pill) pill = btns.find(isAspectBtn);
-  if (!pill) pill = btns.find(isRatioPill);
-  if (!pill) return null;
-  pill.click();
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (!input) return null;
+  const ir = input.getBoundingClientRect();
+  let card = input;
+  for (let up = 0; up < 14; up++) {
+    card = card.parentElement;
+    if (!card) break;
+    const cr = card.getBoundingClientRect();
+    if (cr.width < 260) continue;
+    const toolbar = [...card.querySelectorAll('button, [role="button"]')]
+      .filter((b) => {
+        if (b.disabled) return false;
+        const br = b.getBoundingClientRect();
+        if (br.width < 16 || br.height < 16 || br.width > 96) return false;
+        const inFooter = br.top >= ir.top + ir.height * 0.12 && br.bottom <= cr.bottom + 8;
+        const inCardX = br.left >= cr.left - 4 && br.right <= cr.right + 4;
+        return inFooter && inCardX;
+      })
+      .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
 
-  const items = [...document.querySelectorAll(
-    '[role="menuitem"], [role="option"], [role="menuitemradio"], button, div, span, li'
-  )];
-  for (const el of items) {
-    const t = txt(el);
-    if (/^9:16/.test(t)) {
+    for (const b of toolbar) {
+      if (isAspectBtn(b)) return btnMeta(b, 'aspect-btn');
+    }
+    const nonPlus = toolbar.filter((b) => !isPlusBtn(b));
+    if (nonPlus.length >= 3) {
+      const cand = nonPlus[2];
+      if (!isImageModeBtn(cand) && !isVideoModeBtn(cand)) {
+        return btnMeta(cand, 'toolbar-index-2');
+      }
+    }
+  }
+  return null;
+}
+"""
+
+
+_GROK_CLICK_ASPECT_916_OPTION_JS = """
+() => {
+  const norm = (s) => (s || '').trim().replace(/\\s+/g, ' ');
+  const has916 = (t) => /\\b9\\s*:\\s*16\\b/.test(norm(t));
+
+  function collectText(el) {
+    return [
+      el.innerText,
+      el.textContent,
+      el.getAttribute('aria-label'),
+      el.getAttribute('title'),
+      el.getAttribute('data-value'),
+      el.getAttribute('value'),
+      el.getAttribute('name'),
+    ].map(norm).filter(Boolean).join(' ');
+  }
+
+  const popups = [...document.querySelectorAll(
+    '[role="listbox"], [role="menu"], [data-radix-popper-content-wrapper], [data-state="open"]'
+  )].filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 48 && r.height > 48;
+  });
+  const roots = popups.length ? popups : [document.body];
+
+  const candidates = [];
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(
+      '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], button, li, div, span'
+    )) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 24 || r.height < 14 || r.width > 520) continue;
+      const t = collectText(el);
+      if (!has916(t)) continue;
+      const rest = t.replace(/9\\s*:\\s*16/gi, '');
+      if (/\\b16\\s*:\\s*9\\b|\\b2\\s*:\\s*3\\b|\\b3\\s*:\\s*2\\b|\\b1\\s*:\\s*1\\b/.test(rest)) {
+        continue;
+      }
+      candidates.push({ el, t, area: r.width * r.height });
+    }
+  }
+
+  candidates.sort((a, b) => a.area - b.area);
+  for (const { el, t } of candidates) {
+    try {
       el.click();
-      return t;
+      return t.slice(0, 120);
+    } catch (e) {
+      continue;
     }
   }
   return null;
@@ -7162,14 +7304,40 @@ def _grok_paste_image_cdp(page: Page) -> bool:
 
 
 def _grok_set_aspect_916_cdp(page: Page) -> bool:
-    for attempt in range(1, 4):
+    """Open composer aspect-ratio menu and select 9:16 (language-agnostic token match)."""
+    _grok_awaken_composer_toolbar_cdp(page, deep_image=False)
+    for attempt in range(1, 5):
         try:
-            label = page.evaluate(_GROK_ASPECT_916_JS)
-            if label:
-                log(f"Grok CDP aspect 9:16 selected: {label!r}")
-                time.sleep(0.35)
+            if page.evaluate(_GROK_VERIFY_ASPECT_916_JS):
+                log("Grok CDP aspect 9:16 already selected")
                 return True
-            log(f"Grok CDP aspect 9:16 attempt {attempt}: menu item not found")
+
+            btn = page.evaluate(_GROK_FIND_ASPECT_RATIO_BUTTON_JS)
+            if isinstance(btn, dict) and btn.get("x") and btn.get("y"):
+                _grok_mouse_click_point(
+                    page,
+                    float(btn["x"]),
+                    float(btn["y"]),
+                    label="aspect-ratio-open",
+                )
+                log(
+                    f"Grok CDP: opened aspect menu via {btn.get('method')!r} "
+                    f"aria={btn.get('aria')!r} text={btn.get('text')!r}"
+                )
+            else:
+                log(f"Grok CDP aspect attempt {attempt}: aspect button not found ({btn!r})")
+
+            time.sleep(0.55)
+            picked = page.evaluate(_GROK_CLICK_ASPECT_916_OPTION_JS)
+            if picked:
+                log(f"Grok CDP aspect 9:16 clicked option: {picked!r}")
+                time.sleep(0.4)
+                if page.evaluate(_GROK_VERIFY_ASPECT_916_JS):
+                    log("Grok CDP aspect 9:16 verified")
+                    return True
+                log(f"Grok CDP aspect attempt {attempt}: clicked but verify failed")
+            else:
+                log(f"Grok CDP aspect 9:16 attempt {attempt}: menu option not found")
             time.sleep(0.45)
         except Exception as exc:
             log(f"Grok CDP aspect attempt {attempt}: {exc}")
@@ -7182,7 +7350,10 @@ def _grok_ensure_image_mode_and_aspect_916_cdp(page: Page) -> bool:
     """图片模式 + 9:16（贴封面后、点生成前都要设）。"""
     _grok_click_image_mode_cdp(page)
     time.sleep(0.3)
-    return _grok_set_aspect_916_cdp(page)
+    ok = _grok_set_aspect_916_cdp(page)
+    if not ok:
+        log("Grok CDP: 9:16 aspect ratio NOT verified — generation may use wrong ratio")
+    return ok
 
 
 def _grok_prepare_tab_cdp(page: Page, *, paste_image: bool) -> bool:
@@ -7576,13 +7747,20 @@ def _click_grok_image_mode(hwnd: int) -> None:
 
 
 def _click_grok_aspect_ratio_916(hwnd: int) -> None:
-    """Toolbar 纵横比 / 9:16 → dropdown → 9:16."""
+    """Toolbar 纵横比 → dropdown → 9:16（UIA 回退；主路径用 CDP）。"""
+    if cdp_ready(_grok_cdp_port()):
+        try:
+            if _grok_run_on_tab(1, _grok_set_aspect_916_cdp):
+                return
+        except Exception as exc:
+            log(f"Grok aspect CDP via hwnd path failed: {exc}")
+
     _left, top, _w, height = _chrome_window_rect(hwnd)
     toolbar_y = top + int(height * 0.50)
 
     toolbar_btn = None
     best_y = -1
-    for label in ("纵横比", "Aspect ratio", "Aspect Ratio", "9:16"):
+    for label in ("纵横比", "Aspect ratio", "Aspect Ratio", "宽高比", "9:16"):
         for ctrl in _uia_named_all(
             hwnd,
             label,
@@ -7606,17 +7784,18 @@ def _click_grok_aspect_ratio_916(hwnd: int) -> None:
     else:
         log("ratio-click toolbar aspect-ratio pill")
         _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_TOOLBAR_Y, pause=0.35)
-    time.sleep(0.45)
+    time.sleep(0.55)
 
-    if _click_named(
-        hwnd,
-        "9:16",
-        ["MenuItemControl", "ButtonControl", "TextControl", "ListItemControl"],
-        search_depth=16,
-    ):
-        log("selected aspect ratio 9:16")
-        time.sleep(0.2)
-        return
+    for menu_label in ("9:16", "9:16 纵向", "9:16 Vertical", "纵向", "Vertical"):
+        if _click_named(
+            hwnd,
+            menu_label,
+            ["MenuItemControl", "ButtonControl", "TextControl", "ListItemControl"],
+            search_depth=18,
+        ):
+            log(f"selected aspect ratio via UIA {menu_label!r}")
+            time.sleep(0.2)
+            return
 
     log("ratio-click dropdown item 9:16")
     _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_ASPECT_MENU_Y, pause=0.25)
