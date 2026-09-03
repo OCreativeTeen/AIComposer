@@ -245,9 +245,132 @@ def whole_story_pick_pending() -> bool:
         return False
     if int(rec.get("selected") or 0) >= 1:
         return False
+    return bool(rec.get("pending_pick"))
+
+
+def dismiss_whole_story_pick_pending() -> None:
+    """Stop treating stray digits as cover picks (e.g. during scnlm/scnvs)."""
+    rec = load_whole_story_image_record()
+    if not rec.get("pending_pick"):
+        return
+    files = list(rec.get("files") or [])
+    _write_whole_story_image_record(
+        files,
+        selected=int(rec.get("selected") or 0),
+        pending_pick=False,
+    )
+
+
+def _scene_choice_pick_path() -> str:
+    return getattr(config, "SCENE_CHOICE_PICK_JSON", "") or ""
+
+
+def load_scene_choice_pick() -> dict:
+    """Hermes 等待 scnlm/scnvs 时：kind / max_n / pending_pick / picked。"""
+    empty = {
+        "kind": "",
+        "max_n": 0,
+        "pending_pick": False,
+        "picked": 0,
+        "updated_at": "",
+    }
+    path = _scene_choice_pick_path()
+    if not path or not os.path.isfile(path):
+        return dict(empty)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return dict(empty)
+    if not isinstance(data, dict):
+        return dict(empty)
+    out = dict(empty)
+    out["kind"] = str(data.get("kind") or "").strip().lower()
+    try:
+        out["max_n"] = max(0, int(data.get("max_n") or 0))
+    except (TypeError, ValueError):
+        out["max_n"] = 0
+    out["pending_pick"] = bool(data.get("pending_pick"))
+    try:
+        out["picked"] = max(0, int(data.get("picked") or 0))
+    except (TypeError, ValueError):
+        out["picked"] = 0
+    out["updated_at"] = str(data.get("updated_at") or "").strip()
+    return out
+
+
+def _write_scene_choice_pick(payload: dict) -> dict:
+    path = _scene_choice_pick_path()
+    if not path:
+        return payload
+    payload = dict(payload or {})
+    payload["updated_at"] = datetime.now(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return payload
+
+
+def start_scene_choice_pick(kind: str, max_n: int) -> dict:
+    """开始等待 Telegram 序号（``kind`` = ``lm`` | ``vs``）。"""
+    k = (kind or "").strip().lower()
+    payload = {
+        "kind": k,
+        "max_n": max(0, int(max_n)),
+        "pending_pick": bool(k and max_n > 0),
+        "picked": 0,
+    }
+    _write_scene_choice_pick(payload)
+    return load_scene_choice_pick()
+
+
+def clear_scene_choice_pick() -> None:
+    _write_scene_choice_pick(
+        {"kind": "", "max_n": 0, "pending_pick": False, "picked": 0}
+    )
+
+
+def scene_choice_pick_pending() -> bool:
+    rec = load_scene_choice_pick()
+    return bool(rec.get("pending_pick")) and int(rec.get("max_n") or 0) > 0
+
+
+def record_scene_choice_pick(index: int) -> dict:
+    """听筒 / client 收到序号后写入 JSON。"""
+    rec = load_scene_choice_pick()
+    if not rec.get("pending_pick"):
+        return rec
+    max_n = int(rec.get("max_n") or 0)
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        return rec
+    if not (1 <= idx <= max_n):
+        return rec
+    rec["picked"] = idx
+    rec["pending_pick"] = False
+    _write_scene_choice_pick(rec)
+    return load_scene_choice_pick()
+
+
+def take_scene_choice_pick(kind: str) -> int:
+    """若 ``kind`` 匹配且已选，返回序号并清空记录；否则 0。"""
+    want = (kind or "").strip().lower()
+    rec = load_scene_choice_pick()
+    if rec.get("kind") != want:
+        return 0
     if rec.get("pending_pick"):
-        return True
-    return bool(str(rec.get("telegram_sent_at") or "").strip())
+        return 0
+    idx = int(rec.get("picked") or 0)
+    clear_scene_choice_pick()
+    return idx if idx >= 1 else 0
 
 
 def load_grok_scene_videos() -> list[dict]:
@@ -325,11 +448,17 @@ def save_grok_scene_videos(items: list[dict] | list[str]) -> list[dict]:
             os.replace(tmp, path)
         except OSError:
             pass
+    try:
+        from cli.video_choice_queue import save_grok_clips_to_active_video_detail
+
+        save_grok_clips_to_active_video_detail(files)
+    except Exception:
+        pass
     return files
 
 
 def scene_count_from_prompt_text(prompt: str) -> int:
-    """从 LM 长提示里解析 ``has N scene(s)``（仅 ``gem`` 前、尚无 scene_content 时用）。"""
+    """从 LM 长提示里解析 ``has N scene(s)``（仅 ``scnge`` 前、尚无 scene_content 时用）。"""
     text = (prompt or "").strip()
     if not text:
         return 0
@@ -340,6 +469,7 @@ def scene_count_from_prompt_text(prompt: str) -> int:
         r"has\s+(\d+)\s+scene\s*\(\s*\d+\s+json",
         r"output\s*\(\s*(\d+)\s+scenes?\s*\)",
         r"(\d+)\s+scenes?\s*\(\s*\d+\s+json",
+        r"the\s+story\s+has\s+(\d+)\s+scenes?",
     ):
         m = re.search(pat, low)
         if m:
@@ -350,11 +480,48 @@ def scene_count_from_prompt_text(prompt: str) -> int:
     return 0
 
 
-def story_scene_count(*, prompt_text: str = "") -> int:
+def grok_tab_count_for_prompt_choice(label: str) -> int:
+    """Map LM 提示选项 → 场景数 / Grok Imagine 标签数。
+
+    ``N Step Story`` → N（2–6）；其它（Short / Mini / Long / Talk …）→ 1。
+    ``scnlm`` 选完即可用，不必等长 prompt 刷新或解析剪贴板。
+    """
+    raw = (label or "").strip()
+    if not raw:
+        return 0
+    low = raw.lower().replace("–", "-").replace("—", "-")
+    for n, patterns in (
+        (6, (r"(^|[^\d])6\s*[-_]?\s*step\b", "六步", "6步")),
+        (5, (r"(^|[^\d])5\s*[-_]?\s*step\b", "五步", "5步")),
+        (4, (r"(^|[^\d])4\s*[-_]?\s*step\b", "四步", "4步")),
+        (3, (r"(^|[^\d])3\s*[-_]?\s*step\b", "三步", "3步")),
+        (
+            2,
+            (
+                r"(^|[^\d])2\s*[-_]?\s*step\b",
+                "两步",
+                "二步",
+                "2步",
+            ),
+        ),
+    ):
+        pat, *zh = patterns
+        if re.search(pat, low) or any(z in raw for z in zh):
+            return n
+    return 1
+
+
+def scene_count_from_lm_label(label: str) -> int:
+    """``grok_tab_count_for_prompt_choice`` 的别名。"""
+    return grok_tab_count_for_prompt_choice(label)
+
+
+def story_scene_count(*, prompt_text: str = "", lm_label: str = "") -> int:
     """当前故事场景数。
 
   1. 已 scnsave：读当前 ``video_detail.scene_content`` 数组长度（唯一真源）
-  2. 尚无 scene_content（仅 ``gem`` 校验）：从剪贴板 LM 长 prompt 解析期望条数
+  2. 尚无 scene_content（``scnge`` 前）：``scnlm`` 选的 LM 标签 → ``grok_tab_count_for_prompt_choice``
+  3. 再不行：从 LM 长 prompt 解析 ``has N scenes``
     """
     try:
         from cli.video_choice_queue import active_video_detail_scene_count
@@ -364,7 +531,33 @@ def story_scene_count(*, prompt_text: str = "") -> int:
         n = 0
     if n >= 1:
         return n
+    label = (lm_label or "").strip()
+    if not label:
+        label = _active_scene_lm_label()
+    if label:
+        mapped = grok_tab_count_for_prompt_choice(label)
+        if mapped >= 1:
+            return mapped
     return scene_count_from_prompt_text(prompt_text)
+
+
+def _active_scene_lm_label() -> str:
+    """读 SCENE bridge 当前「选LM提示」文案（第一行）。"""
+    try:
+        from cli.bridge import send_bridge_command
+        from cli.screens import SCREEN_STORY_SCENE
+
+        ok, got = send_bridge_command(
+            screen=SCREEN_STORY_SCENE,
+            op="get",
+            field="lm",
+            timeout_s=4.0,
+        )
+        if ok:
+            return (got or "").split("\n", 1)[0].strip()
+    except Exception:
+        pass
+    return ""
 
 
 def _grok_scene_video_nb_path() -> str:
@@ -727,10 +920,19 @@ class TelegramCliSession:
         raw = (text or "").strip()
         if not raw:
             return False, "empty command"
+        if scene_choice_pick_pending():
+            digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+            if digit.isdigit() and " " not in raw and len(digit) <= 2:
+                record_scene_choice_pick(int(digit))
+                return True, f"已记录 SCENE 选项 #{int(digit)}，Hermes 将继续。"
         if whole_story_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
-                return dispatch(f"{short_cli('whole_story_pick')} {digit}")
+                try:
+                    record_whole_story_pick(int(digit))
+                except ValueError as exc:
+                    return False, str(exc)
+                return True, f"已记录封面 #{int(digit)}，Hermes 将继续。"
         cmd, _ = split_command(raw)
         if cmd in ("sync", "where", "here"):
             return True, self.announce_sync()
@@ -741,7 +943,7 @@ def welcome_text(mode: str | None = None) -> str:
     del mode
     return (
         "Telegram 听筒已就绪（人 / Hermes 当操作员）。\n"
-        "长命令（nbi / gem / grv …）后台执行：立刻回 ⏳，完成后再发 ok/error [任务号]。\n"
+        "长命令（nbi / scnge / grv …）后台执行：立刻回 ⏳，完成后再发 ok/error [任务号]。\n"
         "发 busy 可看当前队列。\n"
         "若电脑上还没有 STORY/SCENE，我会用队列启动：\n"
         "python -m cli.pick_video_choice next --with-detail --json\n"

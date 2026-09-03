@@ -10,14 +10,15 @@ echo.
 echo  Hermes Telegram client — RESUME nbif
 echo  Finds nbif-timeout item, connects to OPEN Chrome (no kill/relaunch), downloads 3 covers.
 echo  Then: cover pick 1/2/3 -^> auto scn if needed -^> grv
+echo  This client polls Telegram for 1/2/3 — do NOT also run run_bot.bat.
 echo.
 
 if exist "venv\Scripts\python.exe" (
-    "venv\Scripts\python.exe" -m cli.telegram_bot_client --resume --once %*
+    "venv\Scripts\python.exe" -m cli.telegram_bot_client --resume --once --telegram-inbox %*
 ) else if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -m cli.telegram_bot_client --resume --once %*
+    ".venv\Scripts\python.exe" -m cli.telegram_bot_client --resume --once --telegram-inbox %*
 ) else (
-    python -m cli.telegram_bot_client --resume --once %*
+    python -m cli.telegram_bot_client --resume --once --telegram-inbox %*
 )
 
 set RC=%ERRORLEVEL%

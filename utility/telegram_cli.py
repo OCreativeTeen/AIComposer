@@ -49,10 +49,13 @@ _FAST_INLINE_CMDS = frozenset(
 )
 
 # 只跟 GUI bridge 打交道的命令：几秒内返回，走独立「界面车道」，
-# 这样 lm 不会排在 nbi / gem 这种十几分钟的浏览器任务后面。
+# 这样 scnlm / scnvs 不会排在 nbi / scnge 这种十几分钟的浏览器任务后面。
 _UI_LANE_CMDS = frozenset(
     {
         "scene",
+        "scene_choices",
+        "scene_lm",
+        "scene_visual_style",
         "prompt_choice",
         "style",
         "instruction",
@@ -125,8 +128,8 @@ class _AsyncCliWorker:
 
     两条独立车道：
 
-    * ``ui``  — 只跟 GUI bridge 打交道（lm / save …），秒级返回。
-    * ``job`` — 浏览器自动化（gem / nbi / grv …），可能跑十几分钟。
+    * ``ui``  — 只跟 GUI bridge 打交道（scnlm / scnvs / save …），秒级返回。
+    * ``job`` — 浏览器自动化（scnge / nbi / grv …），可能跑十几分钟。
 
     分开跑，长任务就不会堵住界面命令。
     """
@@ -173,15 +176,19 @@ class _AsyncCliWorker:
                     lines.append(f"[{label}] ▶ 空闲")
                 for i, item in enumerate(self._pending(lane), 1):
                     lines.append(f"    {i}. {item}")
-        lines.append("界面命令（lm / save …）不会排在长任务后面。")
+        lines.append("界面命令（scnlm / scnvs / save …）不会排在长任务后面。")
         return "\n".join(lines)
 
     def submit(self, text: str) -> tuple[bool, str]:
         raw = (text or "").strip()
         if not raw:
             return False, "empty command"
-        from utility.telegram_session import whole_story_pick_pending
+        from utility.telegram_session import scene_choice_pick_pending, whole_story_pick_pending
 
+        if scene_choice_pick_pending():
+            digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+            if digit.isdigit() and " " not in raw and len(digit) <= 2:
+                return self._session.handle(raw)
         if whole_story_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
@@ -334,6 +341,19 @@ def cli_bot_mutex_held() -> bool:
 
 def _cli_bot_process_running() -> bool:
     """Slow fallback: scan for ``python -m cli bot``. Prefer ``cli_bot_mutex_held``."""
+    return bool(_telegram_poll_holder_pids(cli_bot_only=True))
+
+
+def _telegram_poll_holder_pids(*, cli_bot_only: bool = False) -> list[int]:
+    """Local python processes that may hold Telegram getUpdates."""
+    flag = (
+        "$_.CommandLine -like '*-m cli bot*'"
+        if cli_bot_only
+        else (
+            "($_.CommandLine -like '*-m cli bot*' -or "
+            "$_.CommandLine -like '*telegram_bot_client*')"
+        )
+    )
     try:
         completed = subprocess.run(
             [
@@ -341,18 +361,42 @@ def _cli_bot_process_running() -> bool:
                 "-NoProfile",
                 "-Command",
                 "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-                "Where-Object { $_.CommandLine -and $_.CommandLine -like '*-m cli bot*' } | "
-                "Measure-Object | Select-Object -ExpandProperty Count",
+                f"Where-Object {{ $_.CommandLine -and {flag} }} | "
+                "ForEach-Object { $_.ProcessId }",
             ],
             capture_output=True,
             text=True,
-            timeout=4,
+            timeout=6,
         )
     except Exception:
+        return []
+    out: list[int] = []
+    for line in (completed.stdout or "").splitlines():
+        line = line.strip()
+        if line.isdigit():
+            out.append(int(line))
+    return out
+
+
+def list_telegram_poll_holder_pids(*, exclude_pid: int | None = None) -> list[int]:
+    """PIDs for local cli bot / Hermes client (may compete for getUpdates)."""
+    skip = exclude_pid if exclude_pid is not None else os.getpid()
+    return [pid for pid in _telegram_poll_holder_pids() if pid != skip]
+
+
+def spawn_cli_bot_detached() -> bool:
+    """Start ``python -m cli bot`` in a new console when the 听筒 is not running."""
+    if cli_bot_already_running():
         return False
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     try:
-        return int((completed.stdout or "0").strip() or "0") > 0
-    except ValueError:
+        subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-m", "cli", "bot"],
+            cwd=repo,
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+        return True
+    except Exception:
         return False
 
 
@@ -360,7 +404,7 @@ def cli_bot_already_running() -> bool:
     """True if a live 听筒 is polling Telegram."""
     if cli_bot_mutex_held():
         return True
-    return False
+    return _cli_bot_process_running()
 
 
 def _acquire_cli_bot_mutex() -> bool:
@@ -538,6 +582,7 @@ def run_cli_bot(handle_text=None, mode: str | None = None) -> int:
     threading.Thread(target=_watch_screens, name="cli-screen-watch", daemon=True).start()
 
     offset = 0
+    conflict_streak = 0
     try:
         for upd in get_updates(ROLE_CLI, offset=0, timeout=0, request_timeout=30):
             uid = upd.get("update_id")
@@ -554,14 +599,27 @@ def run_cli_bot(handle_text=None, mode: str | None = None) -> int:
                 timeout=25,
                 request_timeout=45,
             )
+            conflict_streak = 0
         except KeyboardInterrupt:
             stop_watch.set()
             print("[cli] stopped", flush=True)
             return 0
         except Exception as exc:
             msg = _safe_updates_error(exc)
+            if "409" in msg:
+                conflict_streak += 1
+                print(f"[cli] getUpdates error: {msg}", flush=True)
+                if conflict_streak >= 3:
+                    print(
+                        "[cli] 连续 409 — 已有 Hermes client 或其它听筒在轮询。"
+                        "请只留一个窗口（run_bot 或 run_telegram_client，不要两个）。",
+                        flush=True,
+                    )
+                    return 4
+                time.sleep(2.0)
+                continue
             print(f"[cli] getUpdates error: {msg}", flush=True)
-            time.sleep(1.5 if "409" in msg else 2)
+            time.sleep(1.5)
             continue
 
         for upd in updates:

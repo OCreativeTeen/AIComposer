@@ -98,7 +98,7 @@ def listen_clis_for_screen(screen: str) -> list[str]:
             "sty",
             "snp",
             "prf",
-            "gem",
+            "scnge",
             "scnsave",
             "nb",
             "nbp",
@@ -168,7 +168,7 @@ def format_listen_sync(info: dict) -> str:
     elif screen == "yt_tools":
         lines.append("继续开到 LIST 或 STORY 后我会再同步。")
     elif screen == "story_scene":
-        lines.append("choice 先发短名看选项，再发 lm 4。")
+        lines.append("choice 先发 scnlm / scnvs 看选项，再发 scnlm 4 / scnvs 2。")
     if is_manual_gui_session():
         lines.append("手工会话：pick 已关掉。")
     elif is_queue_gui_session():

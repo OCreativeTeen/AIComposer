@@ -44,6 +44,7 @@ STATUS_DONE = "done"
 WORKFLOW_STATUS_NBIF_TIMEOUT = "nbif_timeout"
 WORKFLOW_STEP_NBIF_POLL = "nbif_poll"
 WORKFLOW_STEP_ITC = "itc"
+WORKFLOW_STEP_VC_REVIEW = "vc_review"
 
 
 def _utc_now_iso() -> str:
@@ -700,6 +701,139 @@ def active_video_detail_scene_content() -> list | None:
 def active_video_detail_scene_count() -> int:
     sc = active_video_detail_scene_content()
     return len(sc) if sc else 0
+
+
+SCENE_GROK_CLIP_KEY = "grok_clip"
+
+
+def grok_clip_paths_from_scene_content(scene_content) -> list[str]:
+    """从 ``scene_content`` 各条 ``grok_clip`` 按场景顺序收集 mp4 路径。"""
+    if not isinstance(scene_content, list):
+        return []
+    out: list[str] = []
+    for item in scene_content:
+        if not isinstance(item, dict):
+            continue
+        p = (item.get(SCENE_GROK_CLIP_KEY) or "").strip()
+        if not p:
+            continue
+        p = os.path.normpath(os.path.abspath(p))
+        if os.path.isfile(p) and p.lower().endswith(".mp4"):
+            out.append(p)
+    return out
+
+
+def apply_grok_clips_to_scene_content(
+    scene_content: list, clips: list[dict]
+) -> list:
+    """把 ``[{scene, path}, ...]`` 写回 ``scene_content[i].grok_clip``（1-based scene）。"""
+    out = copy.deepcopy(scene_content)
+    by_scene: dict[int, str] = {}
+    for item in clips or []:
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            continue
+        p = os.path.normpath(os.path.abspath((item.get("path") or "").strip()))
+        if not p:
+            continue
+        try:
+            scene = int(item.get("scene") or 0)
+        except (TypeError, ValueError):
+            scene = 0
+        if scene > 0:
+            by_scene[scene] = p
+    for i, item in enumerate(out, 1):
+        if not isinstance(item, dict):
+            continue
+        if i in by_scene:
+            item[SCENE_GROK_CLIP_KEY] = by_scene[i]
+    return out
+
+
+def persist_active_video_detail_row(video_detail: dict) -> tuple[bool, str]:
+    """把内存中的 video_detail 整行写回当前队列条对应的频道 list。"""
+    item = current_taken_queue_item()
+    if not item:
+        return False, "队列无当前条"
+    if not isinstance(video_detail, dict):
+        return False, "video_detail 无效"
+    list_path = (item.get("list_json_path") or "").strip()
+    if not list_path or not os.path.isfile(list_path):
+        return False, f"频道列表不存在: {list_path or '?'}"
+    try:
+        with open(list_path, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"读取列表失败: {exc}"
+    if not isinstance(arr, list):
+        return False, "列表格式无效"
+    row = _match_row_in_list(arr, item)
+    if not isinstance(row, dict):
+        return False, "未在列表中找到当前故事行"
+    row.clear()
+    row.update(copy.deepcopy(video_detail))
+    try:
+        config.write_channel_list_json(list_path, arr)
+    except OSError as exc:
+        return False, f"写入列表失败: {exc}"
+    return True, "saved video_detail row"
+
+
+def persist_active_video_detail_field(field: str, value) -> tuple[bool, str]:
+    """把单个字段写回当前队列条对应的频道 list 行。"""
+    item = current_taken_queue_item()
+    if not item:
+        return False, "队列无当前条"
+    list_path = (item.get("list_json_path") or "").strip()
+    if not list_path or not os.path.isfile(list_path):
+        return False, f"频道列表不存在: {list_path or '?'}"
+    try:
+        with open(list_path, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"读取列表失败: {exc}"
+    if not isinstance(arr, list):
+        return False, "列表格式无效"
+    row = _match_row_in_list(arr, item)
+    if not isinstance(row, dict):
+        return False, "未在列表中找到当前故事行"
+    row[field] = copy.deepcopy(value)
+    try:
+        config.write_channel_list_json(list_path, arr)
+    except OSError as exc:
+        return False, f"写入列表失败: {exc}"
+    return True, f"saved {field}"
+
+
+def save_grok_clips_to_active_video_detail(clips: list[dict]) -> tuple[bool, str]:
+    """grv 下载后：把各场景 mp4 路径写入 ``video_detail.scene_content``。"""
+    sc = active_video_detail_scene_content()
+    if not sc:
+        return False, "尚无 scene_content（先 scnsave）"
+    updated = apply_grok_clips_to_scene_content(sc, clips)
+    ok, msg = persist_active_video_detail_field("scene_content", updated)
+    if ok:
+        vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
+        if isinstance(vd, dict):
+            vd["scene_content"] = updated
+    return ok, msg
+
+
+def collect_scene_grok_clip_paths() -> list[str]:
+    """当前故事场景 clip 路径：优先 ``scene_content.grok_clip``，否则 grok_scene_videos.json。"""
+    paths = grok_clip_paths_from_scene_content(active_video_detail_scene_content())
+    if paths:
+        return paths
+    from utility.telegram_session import load_grok_scene_videos
+
+    clips = load_grok_scene_videos()
+    out: list[str] = []
+    for item in clips:
+        p = os.path.normpath(os.path.abspath((item.get("path") or "").strip()))
+        if p and os.path.isfile(p):
+            out.append(p)
+    return out
 
 
 def resolve_queue_item_by_id(choice_id: str) -> dict | None:

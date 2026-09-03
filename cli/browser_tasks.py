@@ -776,12 +776,12 @@ def _gemini_profile_index() -> int:
 
 
 def _ensure_gemini_chrome_profile() -> str:
-    """Pin Gemini to profile 1 so ``nbi 2`` does not leave ``gem`` on another account."""
+    """Pin Gemini to profile 1 so ``nbi 2`` does not leave ``scnge`` on another account."""
     import config
 
     selected = config.set_gemini_chrome_profile(_gemini_profile_index())
     label = (selected.get("label") or "").strip()
-    log(f"gem profile → {_gemini_profile_index()} ({label})")
+    log(f"scnge profile → {_gemini_profile_index()} ({label})")
     return label
 
 
@@ -795,7 +795,7 @@ def _gemini_login_help(profile_label: str = "") -> str:
         f"user-data-dir={user_data}\n"
         f"profile-directory={profile_dir}\n"
         f"账号={profile_label or getattr(config, 'GEMINI_CHROME_PROFILE', '')}\n"
-        "请在 **gem 刚弹出的那个窗口** 里登录一次；登录会保存在 HermesChromeCDP。\n"
+        "请在 **scnge 刚弹出的那个窗口** 里登录一次；登录会保存在 HermesChromeCDP。\n"
         "日常 Chrome 里登过不算。nbi 换号会重启 HermesChromeCDP，但各 Profile 的登录各自保留。"
     )
 
@@ -1043,7 +1043,7 @@ def _click_send_button(page: Page) -> bool:
             loc = page.locator(selector).last
             if loc.count() and loc.is_visible() and loc.is_enabled():
                 loc.click(timeout=3000)
-                log(f"gem: clicked send via {selector}")
+                log(f"scnge: clicked send via {selector}")
                 return True
         except Exception:
             continue
@@ -1073,7 +1073,7 @@ def submit_gemini_prompt(page: Page, prompt: str) -> None:
     if not filled:
         raise RuntimeError("提示词没能写进 Gemini 输入框（DOM 层）。")
 
-    log(f"gem: prompt in editor ({len(prompt)} chars)")
+    log(f"scnge: prompt in editor ({len(prompt)} chars)")
 
     # Sent == the editor clears. Try Enter, then the send button, then Enter again.
     for attempt in range(3):
@@ -1081,16 +1081,16 @@ def submit_gemini_prompt(page: Page, prompt: str) -> None:
             _click_send_button(page)
         else:
             editor.press("Enter")
-            log(f"gem: pressed Enter (try {attempt + 1})")
+            log(f"scnge: pressed Enter (try {attempt + 1})")
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline:
             if len(_editor_text(editor)) < 20:
-                log("gem: prompt submitted (editor cleared)")
+                log("scnge: prompt submitted (editor cleared)")
                 return
             time.sleep(0.25)
 
     raise RuntimeError(
-        "提示词已贴进输入框，但 Gemini 没有开始生成。请手工按一次回车，再发 gem_copy。"
+        "提示词已贴进输入框，但 Gemini 没有开始生成。请手工按一次回车，再发 fetch。"
     )
 
 
@@ -1179,8 +1179,8 @@ def validate_scene_json(value: Any, expected: int | None = None) -> list[Any]:
     exp = int(expected) if expected is not None and int(expected) >= 1 else _expected_scene_count()
     if exp < 1:
         raise ValueError(
-            "还没有 scene_content。请先 lm → gem → scnsave；"
-            "或 gem 前从 LM 长 prompt 解析期望场数。"
+            "还没有 scene_content。请先 scnlm → scnvs → scnge → scnsave；"
+            "或 scnge 前从 LM 长 prompt 解析期望场数。"
         )
     if len(value) != exp:
         raise ValueError(f"Expected {exp} scenes, received {len(value)}")
@@ -1235,7 +1235,7 @@ def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
     exp = int(expected) if expected is not None and int(expected) >= 1 else _expected_scene_count()
     if exp < 1:
         raise RuntimeError(
-            "还没有 scene_content，且剪贴板 LM prompt 未能解析场数。先在 SCENE 发 lm（如 lm 4），再跑 gem。"
+            "还没有 scene_content，且剪贴板 LM prompt 未能解析场数。先在 SCENE 发 scnlm + scnvs（如 scnlm 4、scnvs 2），再跑 scnge。"
         )
     deadline = time.monotonic() + GENERATION_TIMEOUT_MS / 1000
     stable: list[Any] | None = None
@@ -1262,14 +1262,14 @@ def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
                 stable, ensure_ascii=False, sort_keys=True
             ) == json.dumps(parsed, ensure_ascii=False, sort_keys=True):
                 if time.monotonic() - stable_since >= 1.5:
-                    log(f"gem: JSON ready — {len(parsed)} scenes (DOM)")
+                    log(f"scnge: JSON ready — {len(parsed)} scenes (DOM)")
                     return parsed
             else:
                 stable = parsed
                 stable_since = time.monotonic()
         else:
             state = "generating" if _gemini_is_generating(page) else "no valid JSON yet"
-            log(f"gem: waiting — {state}")
+            log(f"scnge: waiting — {state}")
 
         time.sleep(1.2)
 
@@ -1456,7 +1456,7 @@ def _foreground_gemini(hwnd: int) -> None:
 
 
 def _prepare_gemini_window(hwnd: int) -> None:
-    """Once per gem run: foreground + expand sidebar if collapsed."""
+    """Once per scnge run: foreground + expand sidebar if collapsed."""
     _foreground_gemini(hwnd)
     _ensure_gemini_sidebar_expanded(hwnd)
 
@@ -1487,13 +1487,13 @@ def _ensure_gemini_sidebar_expanded(hwnd: int) -> None:
         return
     if _gemini_sidebar_expanded(hwnd):
         _GEMINI_SIDEBAR_DONE = True
-        log("gem step1: sidebar already open")
+        log("scnge step1: sidebar already open")
         return
     cw, ch = _gemini_client_size(hwnd)
     cx = max(28, int(cw * 0.015))
     cy = max(72, int(ch * 0.10))
     x, y = _gemini_client_to_screen(hwnd, cx, cy)
-    log(f"gem step1: expand sidebar star ({x},{y})")
+    log(f"scnge step1: expand sidebar star ({x},{y})")
     _instant_click(x, y)
     time.sleep(0.45)
     _GEMINI_SIDEBAR_DONE = True
@@ -1537,7 +1537,7 @@ def _paste_and_submit_gemini(prompt_text: str, x: int, y: int) -> None:
     time.sleep(0.12)
     _force_english_ime()
     pyautogui.press("enter")
-    log(f"gem step2: pasted {len(prompt_text)} chars + Enter")
+    log(f"scnge step2: pasted {len(prompt_text)} chars + Enter")
 
 
 def _scroll_gemini_to_response(hwnd: int) -> None:
@@ -1567,7 +1567,7 @@ def paste_prompt_into_gemini_window(prompt_text: str) -> None:
     _prepare_gemini_window(hwnd)
 
     x, y = _ask_gemini_pill_point(hwnd, y_ratio=0.58)
-    log(f"gem step2: Ask Gemini ({x},{y})")
+    log(f"scnge step2: Ask Gemini ({x},{y})")
     _paste_and_submit_gemini(prompt_text, x, y)
 
 
@@ -1694,7 +1694,7 @@ def _click_json_copy_icon(hwnd: int | None = None, *, idx: int = 0) -> None:
         return
     points = _json_copy_icon_points(hwnd)
     x, y = points[idx % len(points)]
-    log(f"gem step3: copy JSON ({x},{y})")
+    log(f"scnge step3: copy JSON ({x},{y})")
     _instant_click(x, y)
 
 
@@ -1798,7 +1798,7 @@ def _open_gemini_new_chat(page: Page) -> None:
             loc = page.locator(selector).first
             if loc.count() and loc.is_visible():
                 loc.click(timeout=3000)
-                log("gem: opened New chat")
+                log("scnge: opened New chat")
                 time.sleep(1.2)
                 return
         except Exception:
@@ -1859,7 +1859,7 @@ GEMINI_PASTED_MARK = "__GEMINI_PASTED__"
 
 
 def handle_gemini(prompt_text: str) -> str:
-    """gem: CDP 直连 DOM —— 精确定位输入框、回车生成、直接读回 JSON。"""
+    """scnge: CDP 直连 DOM —— 精确定位输入框、回车生成、直接读回 JSON。"""
     write_windows_clipboard(prompt_text)
     try:
         scene_json = _handle_gemini_cdp(prompt_text)
@@ -1877,7 +1877,7 @@ def handle_gemini(prompt_text: str) -> str:
 
 
 def copy_existing_gemini_json() -> str:
-    """gem_copy: read the JSON already on screen out of the DOM. No re-send."""
+    """fetch: read the JSON already on screen out of the DOM. No re-send."""
     try:
         _ensure_gemini_chrome_profile()
         port = ensure_gemini_cdp()
@@ -1927,7 +1927,7 @@ def _handle_gemini_mouse(prompt_text: str) -> str:
             log(f"HermesChromeCDP launch failed: {exc}")
         if not _wait_for_gemini_hwnd(20.0):
             raise RuntimeError(
-                "找不到 Gemini 窗口。请在 HermesChromeCDP 打开 gemini.google.com 并登录，再发 gem。\n"
+                "找不到 Gemini 窗口。请在 HermesChromeCDP 打开 gemini.google.com 并登录，再发 scnge。\n"
                 + _gemini_login_help()
             )
     paste_prompt_into_gemini_window(prompt_text)
@@ -2203,7 +2203,7 @@ def _uia_value(ctrl) -> str:
 
 
 def _paste_text_verified(expected: str, actual: str, *, field_label: str = "field") -> None:
-    """Raise if pasted text does not look like *expected* (gem-style read-back)."""
+    """Raise if pasted text does not look like *expected* (scnge-style read-back)."""
     exp = (expected or "").strip()
     got = (actual or "").strip()
     if not exp:
@@ -5798,7 +5798,7 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
     n = story_scene_count()
     if n < 1:
         raise RuntimeError(
-            "还没有 scene_content。请先 lm → gem → scnsave 把分镜 JSON 写回频道列表。"
+            "还没有 scene_content。请先 scnlm → scnvs → scnge → scnsave 把分镜 JSON 写回频道列表。"
         )
     if video_nb_index is not None:
         save_grok_scene_video_nb_index(video_nb_index)
@@ -5861,7 +5861,7 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
         )
         download_note = f"; downloaded {len(downloads)} video clip(s) ({names})"
     return (
-        f"opened {n} Grok Imagine tab(s) for {label!r} "
+        f"opened {n} Grok Imagine tab(s) for {profile_label!r} "
         f"({GROK_IMAGINE_URL}) account={profile_label} "
         f"profile_dir={profile_dir} cdp={grok_port}; "
         f"video_nb={v_idx} ({v_label}); "
@@ -6868,7 +6868,21 @@ _GROK_CLICK_SUBMIT_NEAR_INPUT_JS = """() => {
 
 _GROK_IS_GENERATING_JS = """() => {
   const t = document.body.innerText || '';
-  return /generating|正在生成|生成中|creating image|creating video/i.test(t);
+  const generatingText = /generating|正在生成|生成中|creating image|creating video|processing|queued|排队/i.test(t);
+  const hasProgress = !!document.querySelector(
+    '[role="progressbar"], [class*="progress"], [class*="shimmer"]'
+  );
+  if (!generatingText && !hasProgress) return false;
+  const composer = document.querySelector('[data-testid="chat-input"]');
+  const playable = [...document.querySelectorAll('video')].some((v) => {
+    if (composer && composer.contains(v)) return false;
+    const r = v.getBoundingClientRect();
+    if (r.width < 80 || r.height < 80) return false;
+    const src = v.currentSrc || v.src || '';
+    return (v.readyState >= 2 || v.duration > 0) && !v.error
+      && (/\\.mp4(\\?|$)/i.test(src) || /^blob:/i.test(src));
+  });
+  return !playable;
 }"""
 
 
@@ -6886,12 +6900,21 @@ _GROK_HAS_OUTPUT_IMAGE_JS = """() => {
 
 _GROK_HAS_OUTPUT_VIDEO_JS = """() => {
   const composer = document.querySelector('[data-testid="chat-input"]');
-  const videos = [...document.querySelectorAll('video')].filter((v) => {
-    if (composer && composer.contains(v)) return false;
+  const isPlayable = (v) => {
+    if (!v) return false;
     const r = v.getBoundingClientRect();
-    return r.width > 120 && r.height > 120;
-  });
-  return videos.length > 0;
+    if (r.width < 80 || r.height < 80) return false;
+    if (composer && composer.contains(v)) return false;
+    const src = v.currentSrc || v.src || '';
+    const fromSource = (v.querySelector('source') && v.querySelector('source').src) || '';
+    const url = src || fromSource;
+    const hostOk = /assets\\.grok\\.com|imagine-public\\.x\\.ai|data\\.x\\.ai/i.test(url);
+    const mp4Ok = /\\.mp4(\\?|$)/i.test(url);
+    const blobOk = /^blob:/i.test(url) && (v.duration > 0 || v.readyState >= 2);
+    const playable = (v.readyState >= 2 || v.duration > 0) && !v.error;
+    return playable && (mp4Ok || hostOk || blobOk);
+  };
+  return [...document.querySelectorAll('video')].some(isPlayable);
 }"""
 
 _GROK_OUTPUT_VIDEO_SRC_JS = """() => {

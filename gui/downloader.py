@@ -1181,12 +1181,23 @@ def _apply_titles_to_scene_content_first_entry(video_detail: dict, title: str) -
     return True
 
 
-def _cover_save_default_video_title(video_detail: dict) -> str:
-    """封面前对话框默认成片名：project_profile.video_title > scene 首条 caption。"""
-    proj = _youtube_row_project_title(video_detail)
-    if proj:
-        return proj
-    return _youtube_row_scene_meta_title(video_detail)
+def _title_from_cover_image_path(image_path: str) -> str:
+    """封面图路径 → 成片名默认（文件名去扩展名）。"""
+    base = os.path.basename((image_path or "").strip())
+    stem, _ = os.path.splitext(base)
+    return (stem or base).strip()
+
+
+def _cover_save_default_video_title(
+    video_detail: dict,
+    *,
+    image_path: str = "",
+) -> str:
+    """封面前对话框默认成片名：拖入图片时用文件名（无扩展名）。"""
+    stem = _title_from_cover_image_path(image_path)
+    if stem:
+        return stem
+    return _youtube_row_source_title(video_detail)
 
 
 def _apply_video_title_before_cover_save(
@@ -1209,6 +1220,8 @@ def _apply_video_title_before_cover_save(
 def _ask_video_title_before_cover_save_dialog(
     parent,
     video_detail: dict,
+    *,
+    image_path: str = "",
 ) -> dict | None:
     """保存封面前让用户确认/修改成片名；取消则放弃本次粘贴/拖放。"""
     if not isinstance(video_detail, dict):
@@ -1233,7 +1246,8 @@ def _ask_video_title_before_cover_save_dialog(
     frm.pack(fill=tk.BOTH, expand=True)
 
     hint = (
-        "请确认或修改成片名后再保存封面。"
+        "请确认或修改成片名后再保存封面；默认使用拖入图片的文件名（无扩展名）。"
+        "若清空成片名则保持故事原标题不变。"
         "不会修改原视频标题（YouTube 下载名）。"
         "若本条已有 scene_content，首条的 caption 将同步为下方成片名。"
     )
@@ -1256,7 +1270,9 @@ def _ask_video_title_before_cover_save_dialog(
 
     title_box = ttk.LabelFrame(frm, text="成片名", padding=8)
     title_box.pack(fill=tk.X, pady=(0, 10))
-    title_var = tk.StringVar(value=_cover_save_default_video_title(video_detail))
+    title_var = tk.StringVar(
+        value=_cover_save_default_video_title(video_detail, image_path=image_path)
+    )
     title_entry = ttk.Entry(title_box, textvariable=title_var, width=90)
     title_entry.pack(fill=tk.X)
     title_entry.focus_set()
@@ -1268,10 +1284,7 @@ def _ask_video_title_before_cover_save_dialog(
     def on_confirm():
         nonlocal result_holder
         vt = (title_var.get() or "").strip()
-        if not vt:
-            messagebox.showwarning("提示", "成片名不能为空。", parent=dlg)
-            return
-        result_holder = {"video_title": vt}
+        result_holder = {"video_title": vt, "skip_title_update": not vt}
         dlg.destroy()
 
     def on_cancel():
@@ -1358,11 +1371,12 @@ def accept_summary_cover_image(
     async_ui: bool = True,
     refresh_ui: bool = True,
     cleanup_source: bool = False,
+    title_override: str | None = None,
 ) -> tuple[bool, str]:
     """接受一张图片作为当前 STORY 的 gen_video 封面。
 
-  * ``interactive=True``（拖放）：弹窗确认成片名并写回列表。
-  * ``interactive=False``（``itc N`` / Telegram）：不弹窗、不改标题，只写 webp。
+  * ``interactive=True``（拖放）：弹窗确认成片名并写回列表；默认成片名为图片文件名。
+  * ``interactive=False``（``itc N`` / Telegram）：不弹窗；``title_override`` 非空时用图片名覆盖成片名。
     """
     mgr = ctx.get("mgr")
     vd = ctx.get("vd")
@@ -1371,11 +1385,42 @@ def accept_summary_cover_image(
     if not image_path or not os.path.isfile(image_path):
         return False, "封面图片路径无效"
 
+    def _apply_cover_title_and_refresh_ui(video_title: str) -> None:
+        vt = (video_title or "").strip()
+        if not vt:
+            return
+        ch_path = getattr(mgr, "channel_path", "") or ""
+        _apply_video_title_before_cover_save(
+            vd,
+            video_title=vt,
+            channel_path=ch_path,
+        )
+        if not _persist_channel_videos(mgr):
+            return
+        if not refresh_ui:
+            return
+        rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
+        if callable(rfn_title):
+            try:
+                rfn_title()
+            except Exception:
+                _refresh_summary_window_title(summary_window, vd)
+        else:
+            _refresh_summary_window_title(summary_window, vd)
+        refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
+        if callable(refresh_tree):
+            try:
+                refresh_tree()
+            except Exception:
+                pass
+
     if interactive:
         par = summary_window if summary_window.winfo_exists() else (
             getattr(mgr, "root", None) or summary_window.winfo_toplevel()
         )
-        title_choice = _ask_video_title_before_cover_save_dialog(par, vd)
+        title_choice = _ask_video_title_before_cover_save_dialog(
+            par, vd, image_path=image_path
+        )
         if title_choice is None:
             if cleanup_source and image_path and os.path.isfile(image_path):
                 try:
@@ -1383,28 +1428,10 @@ def accept_summary_cover_image(
                 except Exception:
                     pass
             return False, "已取消保存封面"
-        ch_path = getattr(mgr, "channel_path", "") or ""
-        _apply_video_title_before_cover_save(
-            vd,
-            video_title=title_choice.get("video_title", ""),
-            channel_path=ch_path,
-        )
-        if _persist_channel_videos(mgr):
-            if refresh_ui:
-                rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
-                if callable(rfn_title):
-                    try:
-                        rfn_title()
-                    except Exception:
-                        _refresh_summary_window_title(summary_window, vd)
-                else:
-                    _refresh_summary_window_title(summary_window, vd)
-                refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
-                if callable(refresh_tree):
-                    try:
-                        refresh_tree()
-                    except Exception:
-                        pass
+        if not title_choice.get("skip_title_update"):
+            _apply_cover_title_and_refresh_ui(title_choice.get("video_title", ""))
+    elif title_override is not None:
+        _apply_cover_title_and_refresh_ui(title_override)
 
     channel = getattr(mgr, "channel", "") or ""
     pid = getattr(mgr, "pid", "") or "yt_img"
@@ -1505,7 +1532,9 @@ def _start_summary_slide_pdf_save(
     par = summary_window if summary_window.winfo_exists() else (
         getattr(mgr, "root", None) or summary_window.winfo_toplevel()
     )
-    title_choice = _ask_video_title_before_cover_save_dialog(par, vd)
+    title_choice = _ask_video_title_before_cover_save_dialog(
+        par, vd, image_path=pdf_path
+    )
     if title_choice is None:
         if cleanup_source and pdf_path and os.path.isfile(pdf_path):
             try:
@@ -1514,12 +1543,13 @@ def _start_summary_slide_pdf_save(
                 pass
         return
 
-    ch_path = getattr(mgr, "channel_path", "") or ""
-    _apply_video_title_before_cover_save(
-        vd,
-        video_title=title_choice.get("video_title", ""),
-        channel_path=ch_path,
-    )
+    if not title_choice.get("skip_title_update"):
+        ch_path = getattr(mgr, "channel_path", "") or ""
+        _apply_video_title_before_cover_save(
+            vd,
+            video_title=title_choice.get("video_title", ""),
+            channel_path=ch_path,
+        )
     if _persist_channel_videos(mgr):
         rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
         if callable(rfn_title):
@@ -1584,6 +1614,32 @@ def _start_summary_slide_pdf_save(
         root.after(0, _done_ui)
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def schedule_summary_gen_video_clip_review(
+    summary_window: tk.Toplevel,
+    *,
+    mgr,
+    vd: dict,
+    ctx: dict,
+    mp4_paths: list[str] | None = None,
+    initial_segments: list[dict] | None = None,
+) -> None:
+    """非阻塞：下一 Tk tick 打开审阅窗（供 CLI ``vc`` bridge 调用）。"""
+
+    def _open():
+        if not summary_window.winfo_exists():
+            return
+        _run_summary_gen_video_clip_review(
+            summary_window,
+            mgr=mgr,
+            vd=vd,
+            ctx=ctx,
+            mp4_paths=mp4_paths,
+            initial_segments=initial_segments,
+        )
+
+    summary_window.after(0, _open)
 
 
 def _run_summary_gen_video_clip_review(
@@ -1691,9 +1747,22 @@ def _on_summary_reopen_gen_video_clip_review(summary_window: tk.Toplevel) -> Non
         return
     segments = _get_gen_video_clip_segments(vd)
     if not segments:
+        from cli.video_choice_queue import collect_scene_grok_clip_paths
+
+        grok_paths = collect_scene_grok_clip_paths()
+        if grok_paths:
+            _run_summary_gen_video_clip_review(
+                summary_window,
+                mgr=mgr,
+                vd=vd,
+                ctx=ctx,
+                mp4_paths=grok_paths,
+            )
+            return
         messagebox.showinfo(
             "编辑成片片段",
-            "尚无已保存的片段配置。\n请先拖入 MP4 并完成审阅，或从资源管理器一次拖入多个相同文件。",
+            "尚无已保存的片段配置，也没有 scene_content.grok_clip。\n"
+            "请先 grv 下载各场景 video，或拖入 MP4 完成审阅。",
             parent=summary_window,
         )
         return
@@ -3439,6 +3508,28 @@ def _copy_feature_media_to_clipboard(parent, video_detail: dict) -> bool:
             f"已复制到剪贴板：\n{picked_label}",
         )
     return ok
+
+
+def _open_cover_image_for_row(parent, video_detail: dict) -> bool:
+    """用 Windows 默认看图程序（如「照片」）打开 gen_video 封面。"""
+    cover_path = _find_gen_video_webp_for_row(video_detail)
+    if not cover_path or not os.path.isfile(cover_path):
+        messagebox.showwarning(
+            "提示",
+            "尚无封面图。\n请拖入图片到本窗口生成封面（.webp）。",
+            parent=parent,
+        )
+        return False
+    try:
+        os.startfile(cover_path)
+    except OSError as exc:
+        messagebox.showerror(
+            "打开失败",
+            f"无法打开封面：\n{cover_path}\n\n{exc}",
+            parent=parent,
+        )
+        return False
+    return True
 
 
 def _scene_content_nonempty_value(scene_content) -> bool:
@@ -7018,21 +7109,57 @@ class MediaGUIManager:
             )
             prompt_tx.pack(fill=tk.X, pady=(0, 8))
 
+            _refresh_prompt_gen = [0]
+
             def refresh_scene_prompt(*_args):
                 sel = (prompt_combo_var.get() or "").strip()
                 if not sel or not nb_prompt_choices:
-                    prompt_tx.delete("1.0", tk.END)
+                    try:
+                        prompt_tx.delete("1.0", tk.END)
+                    except tk.TclError:
+                        pass
                     return
                 instr = (instruction_tx.get("1.0", tk.END) or "").strip()
-                _, prompt = self._combined_prompt_text_for_label(
-                    video_detail, sel, instruction=instr
-                )
-                prompt_tx.delete("1.0", tk.END)
-                if prompt:
-                    prompt_tx.insert("1.0", prompt)
-                    dlg.after_idle(
-                        lambda p=prompt: _copy_text_to_clipboard(dlg, p)
-                    )
+                _refresh_prompt_gen[0] += 1
+                gen = _refresh_prompt_gen[0]
+                vd = video_detail
+                mgr = self
+
+                def _apply_prompt(prompt: str) -> None:
+                    if gen != _refresh_prompt_gen[0]:
+                        return
+                    try:
+                        if not dlg.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    try:
+                        prompt_tx.delete("1.0", tk.END)
+                        if prompt:
+                            prompt_tx.insert("1.0", prompt)
+                            dlg.after_idle(
+                                lambda p=prompt: _copy_text_to_clipboard(dlg, p)
+                            )
+                    except tk.TclError:
+                        pass
+
+                def _worker() -> None:
+                    try:
+                        _, prompt = mgr._combined_prompt_text_for_label(
+                            vd, sel, instruction=instr
+                        )
+                    except Exception:
+                        prompt = ""
+                    try:
+                        dlg.after(0, lambda p=prompt: _apply_prompt(p))
+                    except tk.TclError:
+                        pass
+
+                import threading
+
+                threading.Thread(
+                    target=_worker, daemon=True, name="scene-prompt-refresh"
+                ).start()
 
             snippet_handle = _build_instruction_snippet_combo(
                 instruction_frm, channel_key, instruction_tx, on_changed=refresh_scene_prompt
@@ -7097,7 +7224,7 @@ class MediaGUIManager:
                     return False, f"failed to insert snippet {matched}"
                 return True, f"inserted {matched}"
 
-            # ready=True as soon as the top half exists — scn / lm must not wait
+            # ready=True as soon as the top half exists — scn / scnlm / scnvs must not wait
             # for the large JSON editor + button row to finish building.
             _raise_scene_dialog()
             bind_screen(
@@ -9493,12 +9620,12 @@ class MediaGUIManager:
                 width=14,
             )
             edit_clip_segments_btn.pack(side=tk.LEFT, padx=(0, 6))
-            copy_cover_clipboard_btn = ttk.Button(
+            open_cover_btn = ttk.Button(
                 media_actions_row,
-                text="封面复制",
+                text="打开封面",
                 width=14,
             )
-            copy_cover_clipboard_btn.pack(side=tk.LEFT, padx=(0, 6))
+            open_cover_btn.pack(side=tk.LEFT, padx=(0, 6))
             prompt_picker_btn = ttk.Button(
                 media_actions_row,
                 text="封面提示",
@@ -9543,10 +9670,8 @@ class MediaGUIManager:
                         f"（拖入 MP4、图片、PDF 或 .json 到本窗，保存至 {gen_hint}）"
                     )
                 try:
-                    copy_cover_clipboard_btn.config(
-                        state=tk.NORMAL
-                        if (webp_p or slide_p or mp4_p)
-                        else tk.DISABLED
+                    open_cover_btn.config(
+                        state=tk.NORMAL if webp_p else tk.DISABLED
                     )
                 except tk.TclError:
                     pass
@@ -9583,14 +9708,14 @@ class MediaGUIManager:
                 slide_p = _find_gen_video_slide_for_row(video_detail)
                 _open_feature_media_in_explorer(mp4_p, webp_p, slide_p)
 
-            def on_copy_cover_to_clipboard():
-                _copy_feature_media_to_clipboard(summary_window, video_detail)
+            def on_open_cover_image():
+                _open_cover_image_for_row(summary_window, video_detail)
 
             open_feature_folder_btn.config(command=on_open_feature_media_folder)
             edit_clip_segments_btn.config(
                 command=lambda: _on_summary_reopen_gen_video_clip_review(summary_window)
             )
-            copy_cover_clipboard_btn.config(command=on_copy_cover_to_clipboard)
+            open_cover_btn.config(command=on_open_cover_image)
             refresh_feature_media_row()
             if isinstance(summary_window._summary_drop_ctx, dict):
                 summary_window._summary_drop_ctx[
@@ -9952,13 +10077,64 @@ class MediaGUIManager:
                 drop_ctx = getattr(summary_window, "_summary_drop_ctx", None)
                 if not isinstance(drop_ctx, dict):
                     return False, "STORY context missing"
+                path = (image_path or "").strip()
                 return accept_summary_cover_image(
-                    (image_path or "").strip(),
+                    path,
                     summary_window,
                     drop_ctx,
                     interactive=False,
                     async_ui=False,
-                    refresh_ui=False,
+                    refresh_ui=True,
+                    title_override=_title_from_cover_image_path(path),
+                )
+
+            def _cli_open_clip_review(value: str):
+                drop_ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                if not isinstance(drop_ctx, dict):
+                    return False, "STORY context missing"
+                mgr_local = drop_ctx.get("mgr")
+                vd_local = drop_ctx.get("vd")
+                if mgr_local is None or not isinstance(vd_local, dict):
+                    return False, "STORY video_detail missing"
+                paths: list[str] = []
+                raw = (value or "").strip()
+                if raw:
+                    try:
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, list):
+                            for p in parsed:
+                                if not isinstance(p, str) or not p.strip():
+                                    continue
+                                np = os.path.normpath(os.path.abspath(p.strip()))
+                                if os.path.isfile(np) and np.lower().endswith(".mp4"):
+                                    paths.append(np)
+                    except (json.JSONDecodeError, TypeError):
+                        np = os.path.normpath(os.path.abspath(raw))
+                        if os.path.isfile(np) and np.lower().endswith(".mp4"):
+                            paths = [np]
+                if not paths:
+                    from cli.video_choice_queue import collect_scene_grok_clip_paths
+
+                    paths = collect_scene_grok_clip_paths()
+                if not paths:
+                    return False, (
+                        "没有可审阅的场景 clip。"
+                        "先 grv 下载各场景 video（会写入 scene_content.grok_clip）。"
+                    )
+                schedule_summary_gen_video_clip_review(
+                    summary_window,
+                    mgr=mgr_local,
+                    vd=vd_local,
+                    ctx=drop_ctx,
+                    mp4_paths=paths,
+                )
+                preview = "\n".join(
+                    f"  {i}. {os.path.basename(p)}" for i, p in enumerate(paths, 1)
+                )
+                return (
+                    True,
+                    f"已打开审阅窗（{len(paths)} 段，按场景顺序）。"
+                    f"请在窗口内调整并确认生成成片。\n{preview}",
                 )
 
             def _unbind_story_root(event=None):
@@ -9977,6 +10153,7 @@ class MediaGUIManager:
                     "poem": {"click": do_poem_view},
                     "script": {"click": do_review_script},
                     "cover_image": {"set": _cli_set_story_cover},
+                    "clip_review": {"set": _cli_open_clip_review},
                 },
             )
             summary_window.bind("<Destroy>", _unbind_story_root)

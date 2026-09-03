@@ -7,7 +7,8 @@ title AIComposer Telegram CLI bot
 cd /d "%~dp0\.."
 
 echo.
-echo  Telegram CLI listener
+echo  Telegram CLI listener (manual remote control)
+echo  Do NOT run this if run_telegram_client.bat is already open (409 conflict).
 echo  Close this window to stop remote control.
 echo.
 

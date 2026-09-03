@@ -34,7 +34,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 听筒同步里常见：
 
-`lm` `sty` `snp` `prf` `gem` `scnsave` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
+`scnlm` `scnvs` `sty` `snp` `prf` `scnge` `scnsave` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
 
 ### STORY（`story_root`）
 
@@ -55,8 +55,9 @@ python -m cli bot           # 启动 Telegram 听筒
 ```
 pick next          # 或 pick 3；队列里取下一条
 scn                # STORY → 打开 SCENE
-lm 4               # 选「4 Step Story」，长 prompt 上剪贴板
-gem                # Gemini 生成 4 场 JSON → 剪贴板
+scnlm              # 无参：列出 LM 提示词；再 scnlm 4 选中
+scnvs              # 无参：列出 Visual Style；再 scnvs 2 选中
+scnge              # Gemini 生成 4 场 JSON → 剪贴板
 scnsave             # 剪贴板 JSON → scene_content + 保存到频道列表（不关窗）
 nbp 1              # 选 NotebookLM 导出类型（先无参看列表）
 nbi 1              # 选 Chrome 号，开 NotebookLM，Generate ×3 后立刻返回（不等待）
@@ -128,21 +129,22 @@ pick next          # 下一条
 
 ---
 
-### 4.4 SCENE — 选 LM / 字段
+### 4.4 SCENE — 选 LM / Visual Style / 字段
 
 | 短名 | 长名 | GUI 字段 | 参数 | 作用 |
 |------|------|----------|------|------|
-| `lm` | `prompt_choice`, `pc`, `prompt` | 选LM提示 | 见下 | 切换 LM 模板；**成功时长 prompt 上剪贴板** |
-| `sty` | `style`, `visual` | Visual Style | 序号或名称 | 画面风格 |
+| `scnlm` | `scene_lm`, `prompt_choice`, `pc`, `lm` | 选LM提示 | 见下 | 选 LM 模板；**成功时长 prompt 上剪贴板** |
+| `scnvs` | `scene_visual_style`, `scenevs` | Visual Style | 见下 | 选画面风格（与 LM 分开两步） |
+| `sty` | `style`, `visual` | Visual Style | 序号或名称 | 仅改画面风格（单独调试用） |
 | `snp` | `snippet` | 插入片段 | 序号或名称 | 插入导向片段 |
 | `instruction` | `guide`, `导向说明` | 导向说明 | 文本 | 读/写 `{instruction}` |
 | `content` | `scene_content`, `json` | scene_content | JSON 文本 | 读/写场景 JSON |
 | `gen` | `generate` | 智能生成 | 无 | 用当前 LM 在 GUI 内生成（本地 LLM） |
 | `cx` | `cancel` | 取消 | 无 | 关闭 SCENE（不保存） |
 
-#### `lm` 常见选项（频道配置，以 `lm` 无参列表为准）
+#### `scnlm` — LM 提示词
 
-典型编号（心理咨询频道示例）：
+典型编号（心理咨询频道示例，以 `scnlm` 无参列表为准）：
 
 | 序号 | 名称 | 常用 |
 |------|------|------|
@@ -156,11 +158,11 @@ pick next          # 下一条
 | 8 | Talk | |
 | 9 | Conversation | |
 
-**用法：** 先 `lm` 看列表，再 `lm 4` 或 `lm 4 Step Story`。
+**用法：** 先 `scnlm` 看列表，再 `scnlm 4`。Hermes 全自动时会先发列表、等你 Telegram 回序号后再执行 `scnlm N`。
 
-**成功标志：** SCENE 里「选LM提示」变成该项，「提示词预览」变长（约 400+ 字），剪贴板同步更新。**没变不要发 `gem`。**
+**成功标志：** SCENE 里「选LM提示」已变对，「提示词预览」变长（约 400+ 字），剪贴板同步更新。**没变不要发 `scnge`。**
 
-#### `sty` 常见选项（`config.VISUAL_STYLE_OPTIONS`）
+#### `scnvs` — Visual Style（`config.VISUAL_STYLE_OPTIONS`）
 
 1. pixar-art cartoon + realistic  
 2. pixar-art cartoon  
@@ -170,7 +172,7 @@ pick next          # 下一条
 6. pixar-art cartoon + 中国画(水墨/花鸟/山水)  
 7. realistic + 中国画(水墨/花鸟/山水)  
 
-**用法：** `sty` → `sty 1` 或 `sty realistic`
+**用法：** 先 `scnvs` 看列表，再 `scnvs 2`（或 `sty` → `sty 1` 单独调试）。
 
 ---
 
@@ -178,13 +180,13 @@ pick next          # 下一条
 
 | 短名 | 长名 | 窗口 | 参数 | 作用 |
 |------|------|------|------|------|
-| `gem` | `gemini` | SCENE（逻辑上） | 无 | 剪贴板长 prompt → CDP 开 Gemini → 生成 → **4 场 JSON 写回剪贴板** |
+| `scnge` | `gemini` | SCENE（逻辑上） | 无 | 剪贴板长 prompt → CDP 开 Gemini → 生成 → **4 场 JSON 写回剪贴板** |
 | `fetch` | `gemini_copy`, `copyjson` | 同左 | 无 | 不重新生成；从当前 Gemini 页读已有 JSON → 剪贴板 |
 | `scnsave` | `scene_save` | SCENE | 无 | 剪贴板 JSON → scene_content → 写入 video_detail（不关窗） |
 
-**`gem` 前置：** 已 `lm 4`，剪贴板或「提示词预览」有长 prompt。
+**`scnge` 前置：** 已 `scnlm 4` + `scnvs 2`（或你选的序号），剪贴板或「提示词预览」有长 prompt。
 
-**`gem` 成功后：** 回复 `gem ok — 4 scenes on clipboard` → 发 `scnsave`。
+**`scnge` 成功后：** 回复 `scnge ok — 4 scenes on clipboard` → 发 `scnsave`。
 
 **Chrome：** 使用专用 CDP 配置（`HermesChromeCDP`），与日常 Chrome 可并存；首次需在该窗口登录 Google。
 
@@ -207,7 +209,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
-| `prf` | `profile` | 序号或邮箱 | 选 Gemini 用 Chrome 账号（`gem`/`nbi`/`grv` 前常选） |
+| `prf` | `profile` | 序号或邮箱 | 选 Gemini 用 Chrome 账号（`scnge`/`nbi`/`grv` 前常选） |
 
 ---
 
@@ -261,7 +263,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 ### 4.7 Grok Imagine（分镜视频）
 
-**Grok 账号轮换：** 每条故事默认在 **#1 `ocreativeteen`** 与 **#6 `bjtombj2023`** 间切换（`aiagent/chrome_profiles_used.json` → `grok_last`）。`gem` 仍固定 #1。无参 `grv` 自动选下一个；`grv list` 看上次/下次；`grv 6 3` 强制 profile + 变体。
+**Grok 账号轮换：** 每条故事默认在 **#1 `ocreativeteen`** 与 **#6 `bjtombj2023`** 间切换（`aiagent/chrome_profiles_used.json` → `grok_last`）。`scnge` 仍固定 #1。无参 `grv` 自动选下一个；`grv list` 看上次/下次；`grv 6 3` 强制 profile + 变体。
 
 | 短名 | 长名 | 参数 | 作用 |
 |------|------|------|------|
@@ -280,7 +282,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | Round 3 | 贴 **video** 提示词 → Video Submit → 等出片 |
 | Round 4 | CDP 读 ``<video>.src`` + cookie 直拉 mp4 → Downloads（与 `gvd` 共用代码） |
 
-**前置：** 已 `lm 4`（或对应步数）；`scene_content` 有效；封面已 `itc pick`（或剪贴板有图）。
+**前置：** 已 `scnlm` + `scnvs` 选好；`scene_content` 有效；封面已 `itc pick`（或剪贴板有图）。
 
 **Chrome：** 日常 Chrome + 所选 Profile（与 Gemini CDP 分离）；贴图用 Ctrl+V；改代码后重启 `open_listener.bat`。
 
@@ -295,7 +297,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 **示例：** `grv`（自动 #1↔#6 轮换 + 变体 3） / `grv 6 5` 强制 bjtombj + 变体 5
 
-**场景数：** `scnsave` 之后以当前条 **`video_detail.scene_content`** 数组长度为准（`grv` / `nbv` 开几个标签都看这个）。`gem` 之前尚无 scene_content 时，从 LM 长 prompt 解析期望条数校验。
+**场景数：** `scnsave` 之后以当前条 **`video_detail.scene_content`** 数组长度为准（`grv` / `nbv` 开几个标签都看这个）。`scnge` 之前尚无 scene_content 时，从 LM 长 prompt 解析期望条数校验。
 
 #### Video 提示词变体 1…8（`GROK_SCENE_VIDEO_NB_VARIANTS`）
 
@@ -330,7 +332,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 | 短名 | 长名 | 窗口 | 参数 | 作用 |
 |------|------|------|------|------|
-| `vc` | `video_concat` | STORY/SCENE | 无 | 按 `gvd` 记录的 clip 拼接 + 水印 → gen_video |
+| `vc` | `video_concat` | STORY | 无 | 按 `scene_content.grok_clip`（或 `grok_scene_videos.json`）场景顺序打开审阅窗；用户确认后再拼接+水印 |
 | `vp` | `video_publish` | STORY/SCENE | 见下 | 上传 YouTube（立即 unlisted） |
 
 **`vp` 参数：** `vp` 列描述来源 → `vp 1` 或 `vp default`（用对话框默认素材）。
@@ -343,11 +345,12 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 | 短名 | 长名 |
 |------|------|
-| `lm` | `prompt_choice` |
+| `scnlm` | `scene_lm`（`lm`/`prompt_choice`/`pc` 仍可用） |
+| `scnvs` | `scene_visual_style` |
 | `sty` | `style` |
 | `snp` | `snippet` |
 | `prf` | `profile` |
-| `gem` | `gemini` |
+| `scnge` | `gemini`（`gem` 仍可用作别名） |
 | `fetch` | `gemini_copy` |
 | `scnsave` | `scene_save` |
 | `nbp` | `notebooklm` |
@@ -378,7 +381,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 ## 6. Choice 命令通用规则
 
-适用于：`lm` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `grv` `igp` `nbv` `vp` `pick`
+适用于：`scnlm` `scnvs` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `grv` `igp` `nbv` `vp` `pick`
 
 **`grv` 特例：** 第二个数字是 **video 变体 1…8**，不是 Chrome profile 列表项。例：`grv 1 5` = profile 1 + 变体 5。
 
@@ -393,13 +396,13 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 | 现象 | 处理 |
 |------|------|
-| `lm` bridge timeout | 关 SCENE 重开；或重启 GUI 后再 `scn` → `lm 4` |
-| `lm` 成功但下拉没变 | 没选上，**不要 `gem`** |
-| `gem` prompt too short | 先 `lm 4` |
-| `scnsave` 不是 JSON | 先 `gem` 或 `fetch` |
+| `scnlm` / `scnvs` bridge timeout | 关 SCENE 重开；或重启 GUI 后再 `scn` → `scnlm` / `scnvs` |
+| `scnlm` / `scnvs` 成功但下拉没变 | 没选上，**不要 `scnge`** |
+| `scnge` prompt too short | 先 `scnlm` + `scnvs` 选好 |
+| `scnsave` 不是 JSON | 先 `scnge` 或 `fetch` |
 | `pick` 已关掉 | 手工 GUI 会话；直接 `scn` 继续 |
 | `scn` 打不开 | STORY 要在；勿挡 GUI；再发一次 `scn` |
-| `grv` 没有 LM | 先 `lm 4` |
+| `grv` 没有 LM | 先 `scnlm` + `scnvs` 选好 |
 | `grv` 没有封面图 | 先 `itc pick`（或 Copy image 到剪贴板） |
 | `grv` video 提示词为空 | 确认 `scnsave` 后 `scene_content` 为有效 JSON；**SCENE 须打开**（client/resume 会在 grv 前自动 `scn`；若 STORY 也关了会从队列重开） |
 | `gri` 提示已合并 | 改发 `grv 1`（或 `grv 1 3` 指定变体） |

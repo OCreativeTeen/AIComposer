@@ -1,4 +1,4 @@
-"""Manual helper: launch Gemini on HermesChromeCDP (same as ``python -m cli gem``)."""
+"""Manual helper: launch Gemini on HermesChromeCDP (same as ``python -m cli scnge``)."""
 
 from __future__ import annotations
 

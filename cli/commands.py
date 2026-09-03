@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 import time
 
-from cli.bridge import bridge_screen_bound, send_bridge_command
+from cli.bridge import (
+    bridge_screen_bound,
+    gui_heartbeat,
+    send_bridge_command,
+)
 from cli.screens import (
     SCREEN_STORY_ROOT,
     SCREEN_STORY_SCENE,
@@ -24,7 +28,7 @@ STORY_ROOT_BUTTONS: dict[str, str] = {
     "script": "脚本",
     "folder": "打开成片文件夹",
     "clips": "编辑成片片段",
-    "cover_copy": "封面复制",
+    "cover_copy": "打开封面",
     "cover": "封面提示",
     "project": "打开项目",
 }
@@ -45,7 +49,6 @@ STORY_SCENE_CLICKS: dict[str, str] = {
 
 # Public CLI name → GUI bridge field (None = handled locally, e.g. profile).
 CHOICE_CLIS: dict[str, str | None] = {
-    "prompt_choice": "lm",
     "style": "style",
     "snippet": "snippet",
     "notebooklm": "notebooklm",
@@ -54,11 +57,13 @@ CHOICE_CLIS: dict[str, str | None] = {
 
 # Telegram / Hermes 对外短名（长名仍可用）
 _SHORT_CLI: dict[str, str] = {
-    "prompt_choice": "lm",
+    "scene_lm": "scnlm",
+    "prompt_choice": "scnlm",
+    "scene_visual_style": "scnvs",
     "style": "sty",
     "snippet": "snp",
     "profile": "prf",
-    "gemini": "gem",
+    "gemini": "scnge",
     "scene_save": "scnsave",
     "notebooklm": "nbp",
     "open_notebooklm": "nbi",
@@ -99,22 +104,36 @@ def _wait_screen_ready(screen: str, timeout_s: float = 25.0) -> bool:
     return False
 
 
-def _lm_bridge_retry(want: str, *, timeout_s: float = 15.0) -> tuple[bool, str] | None:
-    """Retry bridge ``lm`` set while SCENE is still finishing its async UI build."""
+def _bridge_field_retry(
+    field: str,
+    want: str,
+    *,
+    timeout_s: float = 60.0,
+    per_try_timeout_s: float = 8.0,
+) -> tuple[bool, str] | None:
+    """Retry bridge set while SCENE pump is busy (e.g. after scnlm refreshes prompt)."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if bridge_screen_bound(SCREEN_STORY_SCENE, timeout_s=1.0):
+        beat = gui_heartbeat()
+        if beat and beat.get("pump_alive") and bridge_screen_bound(
+            SCREEN_STORY_SCENE, timeout_s=1.0
+        ):
             ok, msg = send_bridge_command(
                 screen=SCREEN_STORY_SCENE,
                 op="set",
-                field="lm",
+                field=field,
                 value=want,
-                timeout_s=6.0,
+                timeout_s=per_try_timeout_s,
             )
             if ok:
                 return True, msg
-        time.sleep(0.25)
+        time.sleep(0.35)
     return None
+
+
+def _lm_bridge_retry(want: str, *, timeout_s: float = 15.0) -> tuple[bool, str] | None:
+    """Retry bridge LM set while SCENE is still finishing its async UI build."""
+    return _bridge_field_retry("lm", want, timeout_s=timeout_s, per_try_timeout_s=6.0)
 
 _ALIASES: dict[str, str] = {
     "审阅发布": "publish",
@@ -126,6 +145,7 @@ _ALIASES: dict[str, str] = {
     "脚本": "script",
     "打开成片文件夹": "folder",
     "编辑成片片段": "clips",
+    "打开封面": "cover_copy",
     "封面复制": "cover_copy",
     "封面提示": "cover",
     "打开项目": "project",
@@ -133,16 +153,24 @@ _ALIASES: dict[str, str] = {
     "poetry": "poem",
     "review": "publish",
     "cover_prompt": "cover",
-    "lm": "prompt_choice",
-    "pc": "prompt_choice",
-    "prompt": "prompt_choice",
-    "promptchoice": "prompt_choice",
-    "prompts": "prompt_choice",
-    "选lm提示": "prompt_choice",
-    "选LM提示": "prompt_choice",
+    "lm": "scene_lm",
+    "scnlm": "scene_lm",
+    "pc": "scene_lm",
+    "prompt": "scene_lm",
+    "promptchoice": "scene_lm",
+    "prompts": "scene_lm",
+    "选lm提示": "scene_lm",
+    "选LM提示": "scene_lm",
+    "scnvs": "scene_visual_style",
+    "scenevs": "scene_visual_style",
+    "scene_vs": "scene_visual_style",
+    "scnc": "scene_lm",
+    "scenechoices": "scene_lm",
+    "scene_choices": "scene_lm",
     "sty": "style",
     "snp": "snippet",
     "prf": "profile",
+    "scnge": "gemini",
     "gem": "gemini",
     "scnsave": "scene_save",
     "ssave": "scene_save",
@@ -328,12 +356,12 @@ def cmd_help() -> tuple[bool, str]:
         f"win={public_screen_name(screen)}  (story=STORY  scene=SCENE  list=LIST  yt=YT)",
         "sync  — 再同步一次",
         "",
-        "SCENE:  lm 4  sty  snp  prf  gem  scnsave  nbp  nbi  nbif  itc  grv  gvd  vc  vp  nbv  gen  cx  sync",
+        "SCENE:  scnlm  scnvs  sty  snp  prf  scnge  scnsave  nbp  nbi  nbif  itc  grv  gvd  vc  vp  nbv  gen  cx  sync",
         "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
-        "lm 4 = 4 Step Story   grv 1 [1…8] = 开标签+出图+出片+下载(全自动)   nbv = video变体   gvd = 补下载   nbp 1 = 封面单图",
-        "长名仍可用（prompt_choice / gemini / scene_save …）",
+        "scnlm / scnvs = 先无参看列表，再 scnlm N / scnvs N   grv 1 [1…8] = 开标签+出图+出片+下载   vc = 审阅窗   gvd = 补下载",
+        "长名仍可用（scene_lm / scene_visual_style / gemini / scene_save …）",
         "",
         "bot:  python -m cli bot",
     ]
@@ -444,7 +472,7 @@ def cmd_go() -> tuple[bool, str]:
         return False, (
             "SCENE 窗口已出现，但编辑器还没加载完（30 秒内未就绪）。\n"
             f"bridge: {bridge_msg}\n"
-            "稍等几秒直接发 lm；一直不行就关 SCENE 再发 scn。"
+            "稍等几秒直接发 scnlm / scnvs；一直不行就关 SCENE 再发 scn。"
         )
     return False, (
         "未能打开 SCENE。\n"
@@ -466,23 +494,32 @@ def _foreground_story_scene() -> None:
 
 def _load_gemini_prompt() -> str:
     from cli.browser_tasks import read_windows_clipboard
+    from utility.telegram_session import scene_count_from_prompt_text
 
-    try:
-        prompt = read_windows_clipboard()
-    except Exception:
-        prompt = ""
-    if len((prompt or "").strip()) >= 400:
-        return prompt.strip()
-
+    bridge_prompt = ""
     ok, preview = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="get",
         field="prompt",
-        timeout_s=6.0,
+        timeout_s=8.0,
     )
-    if ok and len((preview or "").strip()) >= 400:
-        return preview.strip()
-    return (prompt or "").strip()
+    if ok:
+        bridge_prompt = (preview or "").strip()
+
+    try:
+        clip = (read_windows_clipboard() or "").strip()
+    except Exception:
+        clip = ""
+
+    # 剪贴板里常常是 analyzed_content（也 >400 字），不能优先于 SCENE 预览里的 LM 模板。
+    for text in (bridge_prompt, clip):
+        if len(text) >= 400 and scene_count_from_prompt_text(text) >= 1:
+            return text
+    if len(bridge_prompt) >= 400:
+        return bridge_prompt
+    if len(clip) >= 400:
+        return clip
+    return bridge_prompt or clip
 
 
 def cmd_gemini() -> tuple[bool, str]:
@@ -497,11 +534,11 @@ def cmd_gemini() -> tuple[bool, str]:
     if len(prompt) < 400:
         return False, (
             "Gemini prompt is missing or too short. "
-            "On SCENE run `lm` first (e.g. lm 4), then `gem`."
+            "On SCENE run `scnlm` then `scnvs` (list → pick), then `scnge`."
         )
     if expected < 1:
         return False, (
-            "还不知道要生成几个场景。先在 SCENE 发 lm（如 lm 4），再 gem。"
+            "还不知道要生成几个场景。请先在 SCENE 发 scnlm 选好 LM（如 4 Step Story），再 scnge。"
         )
 
     try:
@@ -521,8 +558,8 @@ def cmd_gemini() -> tuple[bool, str]:
         n = len(parsed) if isinstance(parsed, list) else "?"
         if isinstance(parsed, list) and len(parsed) != expected:
             return False, (
-                f"gem 返回 {len(parsed)} 场，但 LM prompt 期望 {expected} 场。"
-                "请检查 SCENE「选LM提示」是否与 gem 一致。"
+                f"scnge 返回 {len(parsed)} 场，但 LM prompt 期望 {expected} 场。"
+                "请检查 SCENE「选LM提示」是否与 scnge 一致。"
             )
     except Exception:
         pretty = raw
@@ -532,7 +569,7 @@ def cmd_gemini() -> tuple[bool, str]:
     except Exception:
         pass
     return True, (
-        f"gem ok — {n} scenes on clipboard (LM={expected}).\n"
+        f"{short_cli('gemini')} ok — {n} scenes on clipboard (LM={expected}).\n"
         "下一步发 scnsave，写入 SCENE 并保存到频道列表。"
     )
 
@@ -590,7 +627,7 @@ def _scene_json_from_clipboard() -> tuple[list | None, str, str]:
                     "",
                     (
                         f"剪贴板有 {len(value)} 场 JSON，但当前记录期望 {expected} 场。"
-                        "请先 lm 选对步数，再 gem / scnsave。"
+                        "请先 scnlm + scnvs 选好，再 scnge / scnsave。"
                     ),
                 )
             parsed = value
@@ -601,7 +638,7 @@ def _scene_json_from_clipboard() -> tuple[list | None, str, str]:
             "",
             (
                 f"剪贴板里不是有效的 SCENE JSON{hint}。"
-                "请先跑 gem（或 gemini_copy），再发 scnsave。"
+                "请先跑 scnge（或 gemini_copy），再发 scnsave。"
             ),
         )
     pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -655,6 +692,65 @@ def _format_numbered_choices(title: str, labels: list[str], cmd: str) -> str:
     return "\n".join(lines)
 
 
+def _numbered_choice_count(msg: str, cmd: str) -> int:
+    """Count ``cmd N:`` lines in a list message from ``scnlm`` / ``scnvs``."""
+    head = f"{(cmd or '').strip()} "
+    n = 0
+    for line in (msg or "").splitlines():
+        s = line.strip()
+        if s.startswith(head) and ":" in s:
+            n += 1
+    return n
+
+
+def scene_lm_choice_labels_fallback() -> list[str]:
+    """LM 选项后备列表（bridge 忙时仍可在 Telegram 展示序号）。"""
+    import config
+
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    channel_cfg = getattr(config, "CHANNEL_CONFIG", {}) or {}
+    for cfg in channel_cfg.values():
+        if not isinstance(cfg, dict):
+            continue
+        for item in cfg.get("scenes_prompt_choices") or []:
+            if not item:
+                continue
+            lbl = str(item[0] or "").strip()
+            if lbl and lbl not in seen_set:
+                seen_set.add(lbl)
+                seen.append(lbl)
+    if seen:
+        return seen
+    return [
+        "Short Story",
+        "2 Step Story",
+        "3 Step Story",
+        "4 Step Story",
+        "Mini Story",
+        "Long Story",
+        "Content to Scenes",
+        "Talk",
+        "Conversation",
+    ]
+
+
+def scene_lm_choice_labels_resolved() -> list[str]:
+    """Bridge 列表优先；读不到时用 config 后备（与 SCENE 下拉常见项一致）。"""
+    labels = scene_lm_choice_labels()
+    return labels if labels else scene_lm_choice_labels_fallback()
+
+
+def scene_lm_list_message() -> tuple[bool, str]:
+    """Format scnlm 无参列表（总能给出 Telegram 可选项）。"""
+    shown = short_cli("scene_lm")
+    labels = scene_lm_choice_labels_resolved()
+    if not labels:
+        return False, f"{shown} 没有 LM 提示词选项。"
+    body = _format_numbered_choices("请选择 LM 提示词", labels, shown)
+    return True, f"{body}\n\n请回复序号 1…{len(labels)}，或发 {shown} N"
+
+
 def _format_chrome_profile_choices(title: str, cmd: str, kind: str) -> str:
     from utility.telegram_session import chrome_profile_choice_labels
 
@@ -674,13 +770,195 @@ def _record_chrome_profile(kind: str, selected: dict) -> None:
         pass
 
 
-def _lm_gui_fallback(want: str) -> tuple[bool, str] | None:
-    """Bridge-only retry — never click the screen (coords lie, UIA needs COM)."""
-    return _lm_bridge_retry(want)
+def _set_scene_lm(want: str) -> tuple[bool, str]:
+    """在 SCENE 设置「选LM提示」并校验下拉已切换。"""
+    import project_manager
+
+    want = (want or "").strip().translate(_FULLWIDTH_DIGITS)
+    if not want:
+        return False, "缺少 LM 序号"
+    if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
+        return False, "SCENE 窗还没就绪。先发 scn 打开场景编辑窗。"
+    ok, msg = send_bridge_command(
+        screen=SCREEN_STORY_SCENE,
+        op="set",
+        field="lm",
+        value=want,
+        timeout_s=20.0,
+    )
+    if not ok:
+        fb = _lm_bridge_retry(want)
+        if fb:
+            ok, msg = fb
+    if not ok:
+        return False, (
+            f"{msg}\n"
+            f"LM {want} 没有作用到 SCENE（下拉不会变、剪贴板也不会换）。"
+            "先 scn 打开 SCENE 并等 bridge ready，再重发。"
+        )
+    got_ok, got = send_bridge_command(
+        screen=SCREEN_STORY_SCENE,
+        op="get",
+        field="lm",
+        timeout_s=4.0,
+    )
+    if got_ok:
+        got_val = (got or "").split("\n", 1)[0].strip()
+        want_label = ""
+        if want.isdigit():
+            ch_ok, ch_msg = send_bridge_command(
+                screen=SCREEN_STORY_SCENE,
+                op="choices",
+                field="lm",
+                timeout_s=4.0,
+            )
+            if ch_ok:
+                labels = [
+                    ln.strip() for ln in (ch_msg or "").splitlines() if ln.strip()
+                ]
+                idx = int(want)
+                if 1 <= idx <= len(labels):
+                    want_label = labels[idx - 1]
+        if want_label and want_label not in got_val:
+            return False, (
+                f"LM set 回了 ok，但 SCENE 下拉仍是 {got_val!r}，"
+                f"不是 {want_label!r}。请重发 scnlm {want}。"
+            )
+    _ = project_manager  # LM 成功时剪贴板由 GUI refresh_scene_prompt 更新
+    return True, (msg or want).strip()
+
+
+def _set_scene_visual_style(want: str) -> tuple[bool, str]:
+    """在 SCENE 设置 Visual Style 下拉，并同步 ``LAST_VISUAL_STYLE``。"""
+    import config
+    import project_manager
+
+    want = (want or "").strip().translate(_FULLWIDTH_DIGITS)
+    if not want:
+        return False, "缺少 Visual Style 序号"
+    if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
+        return False, "SCENE 窗还没就绪。先发 scn 打开场景编辑窗。"
+    ok, msg = send_bridge_command(
+        screen=SCREEN_STORY_SCENE,
+        op="set",
+        field="style",
+        value=want,
+        timeout_s=20.0,
+    )
+    if not ok:
+        fb = _bridge_field_retry("style", want, timeout_s=60.0)
+        if fb:
+            ok, msg = fb
+    if not ok:
+        return False, (
+            f"{msg}\n"
+            f"Visual Style {want} 没有作用到 SCENE。"
+            "scnlm 后 GUI 可能在刷新提示词，请等几秒再发 scnvs，或重启 GUI。"
+        )
+    got_ok, got = send_bridge_command(
+        screen=SCREEN_STORY_SCENE,
+        op="get",
+        field="style",
+        timeout_s=4.0,
+    )
+    labels = list(config.VISUAL_STYLE_OPTIONS)
+    want_label = ""
+    if want.isdigit():
+        idx = int(want)
+        if 1 <= idx <= len(labels):
+            want_label = labels[idx - 1]
+    else:
+        from gui.cli_bridge import match_choice
+
+        want_label = match_choice(want, labels)
+    if got_ok and want_label:
+        got_val = (got or "").split("\n", 1)[0].strip()
+        if want_label not in got_val:
+            return False, (
+                f"Visual Style set 回了 ok，但 SCENE 下拉仍是 {got_val!r}，"
+                f"不是 {want_label!r}。请重发 scnvs {want}。"
+            )
+    if want_label:
+        project_manager.LAST_VISUAL_STYLE = want_label
+    return True, want_label or (msg or want).strip()
+
+
+def scene_lm_choice_labels() -> list[str]:
+    """当前 SCENE 上可选的 LM 提示词列表（与下拉一致）。"""
+    import time
+
+    for attempt in range(4):
+        if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=12.0):
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        ok, msg = send_bridge_command(
+            screen=SCREEN_STORY_SCENE,
+            op="choices",
+            field="lm",
+            timeout_s=20.0,
+        )
+        if ok:
+            labels = [ln.strip() for ln in (msg or "").splitlines() if ln.strip()]
+            if labels:
+                return labels
+        time.sleep(0.5 * (attempt + 1))
+    return []
+
+
+def scene_visual_style_choice_labels() -> list[str]:
+    """Visual Style 固定列表（与 SCENE 下拉一致）。"""
+    import config
+
+    return list(config.VISUAL_STYLE_OPTIONS)
+
+
+def cmd_scene_lm(value: str = "") -> tuple[bool, str]:
+    """SCENE 窗：列出或设置「选LM提示」。"""
+    shown = short_cli("scene_lm")
+    want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
+    if not want:
+        ok, msg = scene_lm_list_message()
+        return ok, msg
+    lm_ok, lm_msg = _set_scene_lm(want)
+    if not lm_ok:
+        return False, f"LM 失败：{lm_msg}"
+    _foreground_story_scene()
+    from utility.telegram_session import grok_tab_count_for_prompt_choice
+
+    lm_label = (lm_msg or "").split("—", 1)[0].strip()
+    n_scenes = grok_tab_count_for_prompt_choice(lm_label)
+    scenes_note = f"期望 {n_scenes} 场。" if n_scenes >= 1 else ""
+    return True, (
+        f"{shown} ok — {lm_msg}\n"
+        f"{scenes_note}"
+        "请看 SCENE「选LM提示」已变对，「提示词预览」应变长。下一步发 scnge。"
+    )
+
+
+def cmd_scene_visual_style(value: str = "") -> tuple[bool, str]:
+    """SCENE 窗：列出或设置 Visual Style。"""
+    shown = short_cli("scene_visual_style")
+    want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
+    if not want:
+        labels = scene_visual_style_choice_labels()
+        if not labels:
+            return False, f"{shown} 没有 Visual Style 选项。"
+        body = _format_numbered_choices("请选择 Visual Style", labels, shown)
+        return True, (
+            f"{body}\n\n请回复序号 1…{len(labels)}，或发 {shown} N"
+        )
+    style_ok, style_msg = _set_scene_visual_style(want)
+    if not style_ok:
+        return False, f"Visual Style 失败：{style_msg}"
+    _foreground_story_scene()
+    return True, (
+        f"{shown} ok — {style_msg}\n"
+        "请看 SCENE「Visual Style」已变对。下一步发 scnlm 选 LM 提示词。"
+    )
 
 
 def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
-    """List numbered options, or set by index / name. Used by lm / sty / snp / nb."""
+    """List numbered options, or set by index / name. Used by sty / snp / nb."""
     shown = short_cli(public_cmd)
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
     if not want:
@@ -725,52 +1003,26 @@ def _choice_cli(public_cmd: str, field: str, value: str) -> tuple[bool, str]:
         value=want,
         timeout_s=20.0,
     )
-    if not ok and public_cmd == "prompt_choice" and want:
-        fb = _lm_gui_fallback(want)
-        if fb:
-            ok, msg = fb
     if ok:
-        if public_cmd == "prompt_choice":
+        if field == "style":
+            import project_manager
+
             got_ok, got = send_bridge_command(
                 screen=SCREEN_STORY_SCENE,
                 op="get",
-                field="lm",
+                field="style",
                 timeout_s=4.0,
             )
             if got_ok:
                 got_val = (got or "").split("\n", 1)[0].strip()
-                want_label = ""
-                if want.isdigit():
-                    ch_ok, ch_msg = send_bridge_command(
-                        screen=SCREEN_STORY_SCENE,
-                        op="choices",
-                        field="lm",
-                        timeout_s=4.0,
-                    )
-                    if ch_ok:
-                        labels = [
-                            ln.strip() for ln in (ch_msg or "").splitlines() if ln.strip()
-                        ]
-                        idx = int(want)
-                        if 1 <= idx <= len(labels):
-                            want_label = labels[idx - 1]
-                if want_label and want_label not in got_val:
-                    return False, (
-                        f"lm set 回了 ok，但 SCENE 下拉仍是 {got_val!r}，"
-                        f"不是 {want_label!r}。请重发 lm {want}。"
-                    )
-            _foreground_story_scene()
-            return True, (
-                f"{shown} ok — {msg}\n"
-                "请看 SCENE「选LM提示」：必须已变成这一项，"
-                "「提示词预览」应变长。没变就是没选上，不要发 gem。"
-            )
+                if got_val:
+                    project_manager.LAST_VISUAL_STYLE = got_val
         return True, f"{shown} ok — {msg}"
     return False, (
         f"{msg}\n"
         f"{shown} {want} 没有作用到 SCENE（下拉不会变、剪贴板也不会换）。"
         "先 scn 打开 SCENE 并等 bridge ready，再重发。"
-        "不要发 gem。"
+        "不要发 scnge。"
     )
 
 
@@ -938,7 +1190,11 @@ def install_story_cover_from_image(image_path: str) -> tuple[bool, str]:
         current_taken_queue_item,
         resolve_video_detail_from_queue_item,
     )
-    from gui.downloader import save_cover_image_as_gen_video_webp
+    from gui.downloader import (
+        _apply_video_title_before_cover_save,
+        _title_from_cover_image_path,
+        save_cover_image_as_gen_video_webp,
+    )
 
     item = current_taken_queue_item()
     vd = resolve_video_detail_from_queue_item(item) if item else None
@@ -961,6 +1217,17 @@ def install_story_cover_from_image(image_path: str) -> tuple[bool, str]:
         lang=lang,
     )
     if ok:
+        stem = _title_from_cover_image_path(path)
+        if stem:
+            ch_path = (item.get("list_json_path") or "").strip()
+            _apply_video_title_before_cover_save(
+                vd,
+                video_title=stem,
+                channel_path=ch_path,
+            )
+            from cli.video_choice_queue import persist_active_video_detail_row
+
+            persist_active_video_detail_row(vd)
         return True, f"封面已保存: {dest}"
     return False, err or "保存封面失败"
 
@@ -1223,7 +1490,7 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
     tabs = story_scene_count()
     if tabs < 1:
         return False, (
-            "还没有 scene_content。请先 lm → gem → scnsave 把分镜 JSON 写回频道列表。"
+            "还没有 scene_content。请先 scnlm → scnvs → scnge → scnsave 把分镜 JSON 写回频道列表。"
         )
 
     want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
@@ -1320,7 +1587,7 @@ def cmd_grok_image_prompt(value: str = "") -> tuple[bool, str]:
     video_rows = rows[4:]
     if n < 1:
         active_rows = rows
-        lm_note = f"还没有 scene_content；请先 lm → gem → scnsave，再 {grv}。"
+        lm_note = f"还没有 scene_content；请先 scnlm → scnvs → scnge → scnsave，再 {grv}。"
     else:
         active_rows = image_rows[:n] + video_rows
         lm_note = f"scene_content={n} 场 → 场景图已并入 {grv}（{grv} 1 自动贴封面 + Image 1…{n} 提示词）"
@@ -1359,28 +1626,40 @@ def cmd_grok_download(value: str = "") -> tuple[bool, str]:
 
 
 def cmd_video_concat(value: str = "") -> tuple[bool, str]:
-    """末帧延长 + 水印 + 按场景顺序拼接，写入 publish/gen_video（不做手工裁剪）。"""
-    _ = value
-    from utility.telegram_session import load_grok_scene_videos
+    """按场景顺序打开 STORY 审阅窗（预载各场景 grok clip）；用户确认后再拼接+水印。"""
+    import json
 
-    clips = load_grok_scene_videos()
-    if not clips:
+    from cli.video_choice_queue import collect_scene_grok_clip_paths
+
+    _ = value
+    paths = collect_scene_grok_clip_paths()
+    if not paths:
         return False, (
-            "还没有记录 grok 场景 video。\n"
-            "先 grv（已含每场景下载），或各标签出片后 gvd。"
+            "还没有场景 clip 路径。\n"
+            "先 grv（含各场景下载，会写入 scene_content.grok_clip），"
+            "或各标签出片后 gvd。"
         )
     preview = "\n".join(
-        f"  {item.get('scene')}: {os.path.basename(item.get('path') or '')}"
-        for item in clips
+        f"  {i}. {os.path.basename(p)}" for i, p in enumerate(paths, 1)
     )
-    try:
-        from gui.story_video_concat import concat_recorded_scene_clips
-
-        dest = concat_recorded_scene_clips(clips)
-    except Exception as exc:
-        return False, f"vc failed: {exc}\n已记录的 clip：\n{preview}"
+    if not bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=3.0):
+        return False, (
+            "STORY 窗未打开。请先从 LIST 打开故事（或 pick 后保持 STORY 在前台），再发 vc。\n"
+            f"已准备的 clip：\n{preview}"
+        )
+    ok, msg = send_bridge_command(
+        screen=SCREEN_STORY_ROOT,
+        op="set",
+        field="clip_review",
+        value=json.dumps(paths, ensure_ascii=False),
+        timeout_s=30.0,
+    )
+    if not ok:
+        return False, f"vc failed: {msg}\n已准备的 clip：\n{preview}"
     return True, (
-        f"vc ok — {len(clips)} clip(s) → {dest}\n{preview}"
+        f"vc ok — 已打开审阅窗（{len(paths)} 段，场景 1→{len(paths)} 顺序）。\n"
+        f"请在窗口内裁剪/排序后点确认，才会拼接并加水印生成成片。\n{preview}"
+        + (f"\n{msg}" if msg else "")
     )
 
 
@@ -1573,7 +1852,9 @@ def cmd_story_pickup(value: str = "") -> tuple[bool, str]:
 
 def _scene_field(field: str, value: str) -> tuple[bool, str]:
     if field in ("lm", "style", "snippet", "notebooklm"):
-        public = "prompt_choice" if field == "lm" else field
+        if field == "lm":
+            return cmd_scene_lm(value)
+        public = field
         return _choice_cli(public, field, value)
     if value:
         return send_bridge_command(
@@ -1648,6 +1929,10 @@ def dispatch(raw: str) -> tuple[bool, str]:
         from cli.ensure_gui import ensure_gui_from_queue
 
         return ensure_gui_from_queue()
+    if cmd in ("scene_lm", "prompt_choice"):
+        return cmd_scene_lm(value)
+    if cmd == "scene_visual_style":
+        return cmd_scene_visual_style(value)
     if cmd in CHOICE_CLIS:
         field = CHOICE_CLIS[cmd]
         if field is None:

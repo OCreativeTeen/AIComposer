@@ -45,6 +45,7 @@ _STOP_WORDS = frozenset(
 )
 _SKIP_WORDS = frozenset({"skip", "跳过", "next"})
 _COVER_WAIT_REMIND_S = 180.0
+_SCENE_PICK_REMIND_S = 180.0
 _NBIF_INTERVAL_S = 60.0
 _NBIF_MIN_DURATION_S = 300.0  # 至少轮询 5 分钟才允许因超时而退出
 _NBIF_MAX_DURATION_S = 2400.0  # 上限约 40 分钟
@@ -101,7 +102,6 @@ class HermesTelegramClient:
         *,
         pick: str = "next",
         once: bool = False,
-        lm: str = "4",
         nbi: int | None = None,
         grv_profile: int | None = None,
         grv_variant: int = 3,
@@ -111,7 +111,6 @@ class HermesTelegramClient:
     ) -> None:
         self.pick_arg = (pick or "next").strip() or "next"
         self.once = bool(once)
-        self.lm = (lm or "4").strip() or "4"
         self.nbi_override = int(nbi) if nbi is not None else None
         self.grv_profile = int(grv_profile) if grv_profile is not None else None
         self.grv_variant = max(1, int(grv_variant))
@@ -123,11 +122,17 @@ class HermesTelegramClient:
         self._stop_requested = False
         self._skip_requested = False
         self._tg_offset = 0
-        self._tg_thread: threading.Thread | None = None
+        self._tg_409_streak = 0
+        self._tg_poll_ready = False
         self._listener_owns_inbox = True
+        self._tg_poll_conflict_logged_at = 0.0
         self._nbi_used = 0
         self._cover_lock = threading.Lock()
-        self._cover_tg_offset = 0
+        self._scene_pick_lock = threading.Lock()
+        self._scene_pick_kind: str = ""
+        self._scene_pick_max = 0
+        self._scene_pick_digit = 0
+        self._scene_pick_event = threading.Event()
         self._last_tg = 0.0
 
     # ------------------------------------------------------------------ logging
@@ -313,76 +318,43 @@ class HermesTelegramClient:
             return False
 
     def _start_telegram_inbox(self) -> None:
-        """Outbound status is always OK. Never steal getUpdates from the 听筒.
-
-        Telegram allows only one getUpdates poller per bot. This client used to
-        long-poll as well, which caused 409 Conflict and made ``python -m cli bot``
-        sit idle for seconds between retries.
-        """
+        """Configure Telegram inbound mode. Polling happens only during human-pick waits."""
         self._listener_owns_inbox = True
         if not self.telegram_enabled:
             return
         if not self.telegram_inbox:
             self.log(
-                "Telegram：只发进度，不轮询。封面 1/2/3 由听筒 (cli bot) 接收。",
+                "Telegram：只发进度，不轮询。请用 --telegram-inbox 或单独开 run_bot 收 1/2/3。",
             )
             return
         if self._listener_running():
             self.log(
-                "听筒已在跑：本 client 不抢 getUpdates，封面选图走 JSON。",
+                "听筒已在跑：本 client 不抢 getUpdates，人工选图走 JSON。",
                 telegram=True,
             )
             self.log(
                 "⚠️ 听筒与 client 共用同一 GUI bridge：跑 client 时不要在 Telegram "
-                "发 gem / lm / scn / nbi 等命令（只回封面 1/2/3），否则会出现 "
-                "GUI stuck / lm 假失败。",
+                "发 scnge / scnlm / scnvs / scn / nbi 等命令（选封面时只回 1/2/3），否则会出现 "
+                "GUI stuck / scnlm 假失败。",
                 telegram=True,
             )
             return
         self._listener_owns_inbox = False
-        self._tg_thread = threading.Thread(
-            target=self._telegram_loop, name="hermes-tg", daemon=True
+        self.log(
+            "Telegram：人工选 scnlm/scnvs/封面时由本 client 轮询。不要同时开 run_bot。",
+            telegram=True,
         )
-        self._tg_thread.start()
 
-    def _telegram_loop(self) -> None:
-        from utility.telegram import ROLE_CLI, get_updates
-        from utility.telegram_cli import cli_allowed_chat_id
+    def _prepare_telegram_poll(self) -> None:
+        if self._tg_poll_ready or not self._client_owns_telegram_poll():
+            return
+        try:
+            from utility.telegram import ROLE_CLI, delete_webhook
 
-        allowed = cli_allowed_chat_id()
-        while not self._stop.wait(0.2):
-            try:
-                updates = get_updates(
-                    ROLE_CLI,
-                    offset=self._tg_offset,
-                    timeout=25,
-                    request_timeout=45,
-                )
-            except KeyboardInterrupt:
-                return
-            except Exception as exc:
-                msg = str(exc)
-                self.log(f"getUpdates: {msg}")
-                if "409" in msg:
-                    self._listener_owns_inbox = True
-                    self.log("409：改由听筒收消息，本 client 不再轮询。", telegram=True)
-                    return
-                time.sleep(4.0)
-                continue
-            for upd in updates:
-                uid = upd.get("update_id")
-                if isinstance(uid, int):
-                    self._tg_offset = uid + 1
-                msg = upd.get("message") or upd.get("edited_message") or {}
-                text = (msg.get("text") or "").strip()
-                chat = msg.get("chat") or {}
-                chat_id = str(chat.get("id") or "").strip()
-                if not text:
-                    continue
-                if allowed and chat_id and chat_id != allowed:
-                    continue
-                self.log(f"telegram << {text}")
-                self._on_telegram_text(text)
+            delete_webhook(ROLE_CLI, drop_pending_updates=False)
+        except Exception as exc:
+            self.log(f"Telegram deleteWebhook: {exc}")
+        self._tg_poll_ready = True
 
     def _on_telegram_text(self, raw: str) -> None:
         text = (raw or "").strip()
@@ -397,80 +369,125 @@ class HermesTelegramClient:
             self._skip_requested = True
             self.log("收到 skip。", telegram=True)
             return
-        from utility.telegram_session import whole_story_pick_pending
+
+        compact = text.translate(_FULLWIDTH_DIGITS).lower()
+        from utility.telegram_session import (
+            load_scene_choice_pick,
+            record_scene_choice_pick,
+            record_whole_story_pick,
+            scene_choice_pick_pending,
+            whole_story_pick_pending,
+        )
+
+        if self._scene_pick_kind or scene_choice_pick_pending():
+            want_kind = self._scene_pick_kind or ""
+            if not want_kind and scene_choice_pick_pending():
+                want_kind = str(load_scene_choice_pick().get("kind") or "").strip()
+            want_cmd = "scnlm" if want_kind == "lm" else "scnvs"
+            pick_max = self._scene_pick_max
+            if pick_max < 1 and scene_choice_pick_pending():
+                pick_max = int(load_scene_choice_pick().get("max_n") or 0)
+            digit = text.translate(_FULLWIDTH_DIGITS).strip()
+            if digit.isdigit() and " " not in digit:
+                idx = int(digit)
+                if 1 <= idx <= pick_max:
+                    record_scene_choice_pick(idx)
+                    with self._scene_pick_lock:
+                        self._scene_pick_digit = idx
+                    self._scene_pick_event.set()
+                    return
+            if want_cmd and compact.startswith(f"{want_cmd} "):
+                parts = compact.split()
+                if len(parts) == 2 and parts[1].isdigit():
+                    idx = int(parts[1])
+                    if 1 <= idx <= pick_max:
+                        record_scene_choice_pick(idx)
+                        with self._scene_pick_lock:
+                            self._scene_pick_digit = idx
+                        self._scene_pick_event.set()
+            return
 
         if not whole_story_pick_pending():
             return
         digit = text.translate(_FULLWIDTH_DIGITS)
         if digit.isdigit() and " " not in text and 1 <= int(digit) <= 9:
-            self._apply_cover_pick(int(digit))
+            try:
+                picked = record_whole_story_pick(int(digit))
+                path = picked.get("path") or ""
+                self.log(
+                    f"封面已记录 #{digit}"
+                    + (f" {os.path.basename(path)}" if path else ""),
+                    telegram=True,
+                )
+            except ValueError as exc:
+                self.log(f"封面选择无效：{exc}", telegram=True)
             return
         compact = text.translate(_FULLWIDTH_DIGITS).lower()
         if compact.startswith("itc "):
             parts = compact.split()
             if len(parts) == 2 and parts[1].isdigit():
-                self._apply_cover_pick(int(parts[1]))
+                try:
+                    picked = record_whole_story_pick(int(parts[1]))
+                    path = picked.get("path") or ""
+                    self.log(
+                        f"封面已记录 #{parts[1]}"
+                        + (f" {os.path.basename(path)}" if path else ""),
+                        telegram=True,
+                    )
+                except ValueError as exc:
+                    self.log(f"封面选择无效：{exc}", telegram=True)
                 return
             if len(parts) >= 3 and parts[1] == "pick" and parts[2].isdigit():
-                self._apply_cover_pick(int(parts[2]))
+                try:
+                    picked = record_whole_story_pick(int(parts[2]))
+                    path = picked.get("path") or ""
+                    self.log(
+                        f"封面已记录 #{parts[2]}"
+                        + (f" {os.path.basename(path)}" if path else ""),
+                        telegram=True,
+                    )
+                except ValueError as exc:
+                    self.log(f"封面选择无效：{exc}", telegram=True)
                 return
 
-    def _apply_cover_pick(self, index: int) -> None:
-        with self._cover_lock:
-            ok, msg = self.cli(f"itc {index}")
-        if ok:
-            self.log(f"封面已选 #{index}\n{msg}", telegram=True)
+    def _client_owns_telegram_poll(self) -> bool:
+        if not self.telegram_enabled:
+            return False
+        if self._listener_running():
+            return False
+        return bool(self.telegram_inbox)
+
+    def _should_client_poll_telegram(self) -> bool:
+        return self._client_owns_telegram_poll()
+
+    def _log_pick_wait_telegram_mode(self, *, what: str) -> None:
+        if not self.telegram_enabled:
+            return
+        if self._listener_running():
+            self.log(
+                f"听筒在跑：请在 Telegram 回{what}（听筒写入 JSON，client 自动继续）。"
+                "请关掉 run_bot，只留本 client，避免 409。",
+                telegram=True,
+            )
+        elif self.telegram_inbox:
+            self.log(
+                f"本 client 轮询 Telegram，请直接回{what}。",
+                telegram=True,
+            )
         else:
-            self.log(f"封面选择失败 #{index}\n{msg}", telegram=True)
+            self.log(
+                f"本 client 不轮询：请开 run_bot 回{what}，或用 --telegram-inbox 重启本 client。",
+                telegram=True,
+            )
 
-    def _sync_cover_telegram_offset(self) -> None:
-        """Ignore Telegram messages sent before itc posted the 3 covers."""
-        if not self.telegram_enabled or self._listener_running():
-            return
-        from utility.telegram import ROLE_CLI, get_updates
-
-        try:
-            for upd in get_updates(
-                ROLE_CLI,
-                offset=self._cover_tg_offset,
-                timeout=0,
-                request_timeout=20,
-            ):
-                uid = upd.get("update_id")
-                if isinstance(uid, int):
-                    self._cover_tg_offset = max(self._cover_tg_offset, uid + 1)
-        except Exception as exc:
-            self.log(f"封面选图：同步 Telegram offset 失败：{exc}")
-
-    def _poll_telegram_cover_replies(self) -> None:
-        """When 听筒 is off, client polls 1/2/3 itself (outbound-only mode)."""
-        if not self.telegram_enabled or self._listener_running():
-            return
-        from utility.telegram import ROLE_CLI, get_updates
+    def _process_telegram_updates(self, updates: list[dict]) -> None:
         from utility.telegram_cli import cli_allowed_chat_id
 
         allowed = cli_allowed_chat_id()
-        try:
-            updates = get_updates(
-                ROLE_CLI,
-                offset=self._cover_tg_offset,
-                timeout=8,
-                request_timeout=20,
-            )
-        except Exception as exc:
-            msg = str(exc)
-            if "409" in msg:
-                self.log(
-                    "封面选图：听筒也在轮询 Telegram，本 client 改读 JSON。"
-                    "若 1/2/3 无反应请只留 run_bot 或只留 client。",
-                    telegram=True,
-                )
-                self._listener_owns_inbox = True
-            return
         for upd in updates:
             uid = upd.get("update_id")
             if isinstance(uid, int):
-                self._cover_tg_offset = uid + 1
+                self._tg_offset = uid + 1
             msg = upd.get("message") or upd.get("edited_message") or {}
             text = (msg.get("text") or "").strip()
             chat = msg.get("chat") or {}
@@ -481,6 +498,86 @@ class HermesTelegramClient:
                 continue
             self.log(f"telegram << {text}")
             self._on_telegram_text(text)
+
+    def _log_telegram_409_help(self) -> None:
+        from utility.telegram_cli import list_telegram_poll_holder_pids
+
+        now = time.monotonic()
+        if now - self._tg_poll_conflict_logged_at < 45.0:
+            return
+        self._tg_poll_conflict_logged_at = now
+        others = list_telegram_poll_holder_pids()
+        extra = ""
+        if others:
+            extra = f" 本机可疑 PID：{', '.join(map(str, others))}。"
+        self.log(
+            "Telegram 409：另有进程在轮询同一 bot（run_bot / 其它 Hermes / Cursor Cloud Agent）。"
+            f"请只留 run_telegram_client 一个窗口。{extra}"
+            "仍会重试；也可在本机终端：python -m cli scnlm N",
+            telegram=True,
+        )
+
+    def _apply_cover_pick(self, index: int) -> None:
+        with self._cover_lock:
+            ok, msg = self.cli(f"itc {index}")
+        if ok:
+            self.log(f"封面已选 #{index}\n{msg}", telegram=True)
+        else:
+            self.log(f"封面选择失败 #{index}\n{msg}", telegram=True)
+
+    def _sync_inbox_telegram_offset(self) -> None:
+        """Drain pending updates when this client owns polling."""
+        if not self._should_client_poll_telegram():
+            return
+        self._prepare_telegram_poll()
+        from utility.telegram import ROLE_CLI, get_updates
+
+        try:
+            updates = get_updates(
+                ROLE_CLI,
+                offset=self._tg_offset,
+                timeout=0,
+                request_timeout=20,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "409" in msg:
+                self._log_telegram_409_help()
+            else:
+                self.log(f"Telegram inbox 同步 offset 失败：{exc}")
+            return
+        self._tg_409_streak = 0
+        self._process_telegram_updates(updates)
+
+    def _poll_telegram_inbox(self) -> None:
+        """Poll Telegram during human-pick waits (single-threaded, retries on 409)."""
+        if not self._should_client_poll_telegram():
+            return
+        self._prepare_telegram_poll()
+        from utility.telegram import ROLE_CLI, get_updates
+
+        try:
+            updates = get_updates(
+                ROLE_CLI,
+                offset=self._tg_offset,
+                timeout=8,
+                request_timeout=20,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "409" in msg:
+                self._tg_409_streak += 1
+                self._log_telegram_409_help()
+            return
+        self._tg_409_streak = 0
+        self._process_telegram_updates(updates)
+
+    def _sync_cover_telegram_offset(self) -> None:
+        """Ignore Telegram messages sent before itc posted the 3 covers."""
+        self._sync_inbox_telegram_offset()
+
+    def _poll_telegram_cover_replies(self) -> None:
+        self._poll_telegram_inbox()
 
     # ------------------------------------------------------------------ steps
 
@@ -576,11 +673,11 @@ class HermesTelegramClient:
         # commands.py 失败文案（勿用宽泛子串如「没变」——成功 ok 里也含「没变就是没选上」）
         if "没有作用到 scene" in blob:
             return False
-        if "lm set 回了 ok，但" in raw or "下拉仍是" in raw:
+        if "LM set 回了 ok，但" in raw or "下拉仍是" in raw:
             return False
 
-        # 成功：lm ok — 4 Step Story …
-        if "lm ok" in blob and "4 step" in blob:
+        # 成功：scnlm ok — 4 Step Story …
+        if ("scnlm ok" in blob or "scnc ok" in blob or "lm ok" in blob) and "4 step" in blob:
             return True
 
         try:
@@ -599,27 +696,210 @@ class HermesTelegramClient:
             pass
         return False
 
-    def _select_lm(self) -> None:
-        last = ""
-        for _ in range(4):
-            self._wait_gui_if_stuck()
-            ok, msg = self.cli(f"lm {self.lm}")
-            last = msg
-            if ok and self._lm_dropdown_is_4step(msg):
+    def _ensure_scene_bridge_ready(self) -> None:
+        import config
+        from cli.bridge import bridge_screen_bound
+
+        if bridge_screen_bound(config.SCREEN_STORY_SCENE, timeout_s=2.0):
+            return
+        self.log("SCENE bridge 未就绪，自动发 scn…", telegram=True)
+        ok, msg = self.cli("scn")
+        if not ok:
+            raise PipelineError(f"scn failed: {msg}")
+        deadline = time.monotonic() + 25.0
+        while time.monotonic() < deadline:
+            if bridge_screen_bound(config.SCREEN_STORY_SCENE, timeout_s=1.5):
                 return
-            time.sleep(2.5)
-        raise PipelineError(f"lm {self.lm} 下拉未切到 4 Step Story: {last}")
+            time.sleep(0.3)
+        raise PipelineError("SCENE bridge 超时。请确认 SCENE 窗口仍打开。")
+
+    def _pause_after_scene_lm(self, seconds: float = 5.0) -> None:
+        """Fixed pause after scnlm — GUI refreshes prompt async (~1s); no bridge polling."""
+        seconds = max(1.0, float(seconds))
+        self.log(
+            f"scnlm 后固定等待 {seconds:.0f} 秒（提示词预览刷新）…",
+            telegram=True,
+        )
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not self._stop.is_set():
+            time.sleep(0.2)
+
+    def _skip_stale_telegram_updates(self) -> None:
+        """Advance Telegram offset without handling old digits (before a new pick step)."""
+        if not self._should_client_poll_telegram():
+            return
+        from utility.telegram import ROLE_CLI, get_updates
+
+        try:
+            for upd in get_updates(
+                ROLE_CLI,
+                offset=self._tg_offset,
+                timeout=0,
+                request_timeout=15,
+            ):
+                uid = upd.get("update_id")
+                if isinstance(uid, int):
+                    self._tg_offset = uid + 1
+        except Exception:
+            pass
+
+    def _try_take_scene_pick(self, kind: str) -> int:
+        from utility.telegram_session import take_scene_choice_pick
+
+        idx = take_scene_choice_pick(kind)
+        if idx < 1 and self._scene_pick_event.is_set():
+            with self._scene_pick_lock:
+                idx = self._scene_pick_digit
+            self._scene_pick_event.clear()
+        return idx
+
+    def _wait_human_scene_pick(self, kind: str) -> None:
+        """``kind`` = ``lm`` | ``vs``：发 scnlm/scnvs 列表到 Telegram，等序号，再执行。"""
+        from cli.commands import (
+            _numbered_choice_count,
+            scene_lm_choice_labels_resolved,
+            scene_lm_list_message,
+            scene_visual_style_choice_labels,
+        )
+        from utility.telegram_session import (
+            clear_scene_choice_pick,
+            start_scene_choice_pick,
+        )
+
+        cmd = "scnlm" if kind == "lm" else "scnvs"
+        title = "LM 提示词" if kind == "lm" else "Visual Style"
+        if kind == "vs":
+            self._wait_gui_if_stuck()
+        self._ensure_scene_bridge_ready()
+        self._skip_stale_telegram_updates()
+
+        if kind == "vs":
+            max_n = len(scene_visual_style_choice_labels())
+        else:
+            max_n = len(scene_lm_choice_labels_resolved())
+        if max_n < 1:
+            raise PipelineError(f"{cmd} 没有可选项。")
+
+        clear_scene_choice_pick()
+        start_scene_choice_pick(kind, max_n)
+        self._scene_pick_kind = kind
+        self._scene_pick_max = max_n
+        self._scene_pick_digit = 0
+        self._scene_pick_event.clear()
+
+        self.log(
+            f"【人工选{title}】下面会发 {cmd} 列表；请只回序号或 {cmd} N。",
+            telegram=True,
+        )
+
+        list_msg = ""
+        list_ok = False
+        for attempt in range(4):
+            ok, msg = self.cli(cmd)
+            if ok:
+                list_ok = True
+                list_msg = msg
+                break
+            self.log(msg, telegram=True)
+            if kind == "lm" and (
+                "需要 SCENE" in msg or "SCENE 未" in msg or "bridge" in msg.lower()
+            ):
+                self.log("scnlm 列表未读出，重试 scn + bridge…", telegram=True)
+                self._ensure_scene_bridge_ready()
+                time.sleep(1.0)
+                continue
+            if kind == "lm":
+                break
+            raise PipelineError(f"{cmd} failed: {msg}")
+
+        if not list_ok and kind == "lm":
+            fb_ok, fb_msg = scene_lm_list_message()
+            if not fb_ok:
+                raise PipelineError(fb_msg)
+            list_msg = fb_msg
+            list_ok = True
+            self.log(
+                "SCENE bridge 暂忙，已用配置里的 LM 列表发 Telegram（选序号仍有效）。",
+                telegram=True,
+            )
+        elif not list_ok:
+            raise PipelineError(f"{cmd} failed")
+
+        self.log(list_msg, telegram=True)
+        listed = _numbered_choice_count(list_msg, cmd)
+        if listed > max_n:
+            max_n = listed
+            start_scene_choice_pick(kind, max_n)
+            self._scene_pick_max = max_n
+
+        self._log_pick_wait_telegram_mode(what=f" 1…{max_n}")
+        self.log(
+            f"【{title}】请回复 1…{max_n}，或发 {cmd} N。",
+            telegram=True,
+        )
+
+        def _apply_pick(idx: int) -> None:
+            self._scene_pick_kind = ""
+            clear_scene_choice_pick()
+            ok, apply_msg = self.cli(f"{cmd} {idx}")
+            if not ok:
+                raise PipelineError(f"{cmd} {idx} failed: {apply_msg}")
+            self.log(f"{title} 已选 #{idx}\n{apply_msg}", telegram=True)
+
+        last_remind = time.monotonic()
+        try:
+            for _ in range(12):
+                self._poll_telegram_inbox()
+                idx = self._try_take_scene_pick(kind)
+                if idx >= 1:
+                    _apply_pick(idx)
+                    return
+                time.sleep(0.25)
+
+            while not self._stop.is_set():
+                self._poll_telegram_inbox()
+                idx = self._try_take_scene_pick(kind)
+                if idx >= 1:
+                    _apply_pick(idx)
+                    return
+                if self._stop_requested:
+                    raise PipelineError(f"stopped while waiting for {cmd}")
+                if self._skip_requested:
+                    self._skip_requested = False
+                    raise PipelineError(f"skip while waiting for {cmd}")
+                if time.monotonic() - last_remind >= _SCENE_PICK_REMIND_S:
+                    last_remind = time.monotonic()
+                    self.log(
+                        f"仍在等选{title}（共 {max_n} 项）。请回序号或 {cmd} N。",
+                        telegram=True,
+                    )
+                time.sleep(2.0)
+            raise PipelineError("stopped")
+        finally:
+            self._scene_pick_kind = ""
+            clear_scene_choice_pick()
+
+    def _interactive_scene_setup(self) -> None:
+        from utility.telegram_session import dismiss_whole_story_pick_pending
+
+        dismiss_whole_story_pick_pending()
+        self._ensure_scene_bridge_ready()
+        self.log("步骤 3a scnvs — 选 Visual Style", telegram=True)
+        self._wait_human_scene_pick("vs")
+        self.log("步骤 3b scnlm — 选 LM 提示词", telegram=True)
+        self._wait_human_scene_pick("lm")
+        self._pause_after_scene_lm(5.0)
 
     def _generate_scenes(self) -> None:
         last = ""
         for attempt in range(3):
             self._wait_gui_if_stuck()
-            ok, msg = self.cli("gem")
+            ok, msg = self.cli("scnge")
             last = msg
             if ok and "scenes on clipboard" in msg.lower():
                 return
             if ok and "已粘贴提示词" in msg:
-                self.log("gem 已粘贴，等待生成后 fetch")
+                self.log("scnge 已粘贴，等待生成后 fetch")
                 time.sleep(25.0)
                 for _ in range(8):
                     fok, fmsg = self.cli("fetch")
@@ -629,13 +909,18 @@ class HermesTelegramClient:
                     time.sleep(15.0)
                 continue
             if "prompt too short" in msg.lower() or "too short" in msg.lower():
-                self.log("gem prompt too short — 重做 lm", telegram=True)
+                self.log("scnge prompt too short — 重做 scnlm", telegram=True)
+                self._wait_human_scene_pick("lm")
                 self._select_lm()
+                continue
+            if "还不知道要生成几个场景" in msg or "missing or too short" in msg.lower():
+                self.log("scnge 读不到 LM 长提示 — 再等 5 秒后重试", telegram=True)
+                self._pause_after_scene_lm(5.0)
                 continue
             if not ok and attempt < 2:
                 time.sleep(5.0)
                 continue
-        raise PipelineError(f"gem failed: {last}")
+        raise PipelineError(f"scnge failed: {last}")
 
     def _scnsave_ok(self, msg: str) -> bool:
         low = (msg or "").lower()
@@ -654,7 +939,7 @@ class HermesTelegramClient:
             if ok and self._scnsave_ok(msg):
                 return
             if "不是 JSON" in msg or "不是有效的 SCENE JSON" in msg:
-                self.log("scnsave 不是 JSON — 重做 gem", telegram=True)
+                self.log("scnsave 不是 JSON — 重做 scnge", telegram=True)
                 self._generate_scenes()
                 continue
             if "unknown command" in (msg or "").lower() and "scnsave" in (msg or "").lower():
@@ -892,16 +1177,7 @@ class HermesTelegramClient:
         )
 
         self._sync_cover_telegram_offset()
-        if self.telegram_enabled and not self._listener_running():
-            self.log(
-                "听筒未运行：本 client 会直接收 Telegram 的 1 / 2 / 3。",
-                telegram=True,
-            )
-        elif self.telegram_enabled and self._listener_running():
-            self.log(
-                "听筒在跑：请在 Telegram 回 1/2/3（听筒写入 JSON，client 自动继续）。",
-                telegram=True,
-            )
+        self._log_pick_wait_telegram_mode(what=" 1 / 2 / 3")
 
         self.log(
             "【人工选封面】请在 Telegram 回复 1 / 2 / 3。Agent 不会代选。",
@@ -932,6 +1208,18 @@ class HermesTelegramClient:
                 )
             time.sleep(2.0)
         raise PipelineError("stopped")
+
+    def _install_story_cover_after_pick(self, cover_path: str) -> None:
+        path = (cover_path or "").strip()
+        if not path or not os.path.isfile(path):
+            return
+        from cli.commands import install_story_cover_from_image
+
+        ok, msg = install_story_cover_from_image(path)
+        if ok:
+            self.log(f"STORY 封面已写入：{msg}", telegram=True)
+        else:
+            self.log(f"STORY 封面写入失败（grv 仍用文件路径）：{msg}", telegram=True)
 
     def _ensure_story_scene_for_grv(self) -> None:
         """``grv`` 需要 SCENE 窗口已绑定；没有则 ``scn``，全无则从队列重开 GUI。"""
@@ -1035,6 +1323,68 @@ class HermesTelegramClient:
         self.log("grv ok 但还没看到 mp4，试 gvd", telegram=True)
         self.cli("gvd")
 
+    def _ensure_story_for_vc(self) -> None:
+        """``vc`` 需要 STORY 详情窗 + bridge；grv 后通常仍在 SCENE。"""
+        from cli.bridge import bridge_screen_bound
+        from cli.ensure_gui import ensure_gui_for_queue_item
+        from cli.queue_gui_nav import sync_gui_window_path_from_hwnds
+        from cli.screens import SCREEN_STORY_ROOT
+        from cli.video_choice_queue import current_taken_queue_item
+        from cli.win_gui_tasks import find_detail_window, set_foreground
+
+        win = self._public_win()
+        if win == "scene":
+            self.log("关闭 SCENE，回到 STORY 以打开审阅窗", telegram=True)
+            ok, msg = self.cli("cx")
+            self.log(msg)
+            time.sleep(0.8)
+
+        if bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=4.0):
+            detail = find_detail_window()
+            if detail:
+                set_foreground(detail)
+            sync_gui_window_path_from_hwnds()
+            return
+
+        item = current_taken_queue_item()
+        if item:
+            ok, msg = ensure_gui_for_queue_item(item)
+            if ok and bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=8.0):
+                detail = find_detail_window()
+                if detail:
+                    set_foreground(detail)
+                sync_gui_window_path_from_hwnds()
+                return
+            raise PipelineError(f"vc 需要 STORY 窗：{msg}")
+
+        raise PipelineError(
+            "vc 需要 STORY 详情窗已打开（bridge 已绑定）。"
+            "请保持 pick 后的故事窗在前台。"
+        )
+
+    def _open_vc_review(self) -> None:
+        from cli.video_choice_queue import collect_scene_grok_clip_paths
+
+        self._ensure_story_for_vc()
+        paths = collect_scene_grok_clip_paths()
+        if not paths:
+            raise PipelineError(
+                "vc：还没有场景 clip 路径。"
+                "请确认 grv 已下载各场景 mp4（写入 scene_content.grok_clip）。"
+            )
+        preview = "\n".join(
+            f"  {i}. {os.path.basename(p)}"
+            for i, p in enumerate(paths, 1)
+        )
+        self.log(
+            f"步骤 12 vc — 打开审阅窗（{len(paths)} 段，场景顺序）\n{preview}",
+            telegram=True,
+        )
+        ok, msg = self.cli("vc")
+        if not ok:
+            raise PipelineError(f"vc failed: {msg}")
+        self.log(msg, telegram=True)
+
     def _queue_has_pending(self) -> bool:
         from cli.video_choice_queue import first_pending_story_index
 
@@ -1096,9 +1446,9 @@ class HermesTelegramClient:
                 self._ensure_single_instance()
                 self.log("步骤 2 scn", telegram=True)
                 self._open_scene()
-                self.log(f"步骤 3 lm {self.lm}", telegram=True)
-                self._select_lm()
-                self.log("步骤 4 gem", telegram=True)
+                self.log("步骤 3 scnvs + scnlm（Telegram 人工选）", telegram=True)
+                self._interactive_scene_setup()
+                self.log("步骤 4 scnge", telegram=True)
                 self._generate_scenes()
                 self.log("步骤 5 scnsave", telegram=True)
                 self._scene_save()
@@ -1115,16 +1465,29 @@ class HermesTelegramClient:
                 self.log("步骤 9 itc", telegram=True)
                 self._download_covers(nbi_acc, attach_only=False)
             self.log("步骤 10 等待人工选封面", telegram=True)
-            self._wait_human_cover_pick()
+            cover_path = self._wait_human_cover_pick()
+            self._install_story_cover_after_pick(cover_path)
             self.log(
                 f"步骤 11 确认 SCENE + grv（变体 {self.grv_variant}，profile 自动轮换）",
                 telegram=True,
             )
             self._grok_video()
-            from cli.video_choice_queue import mark_active_item_done
+            self._open_vc_review()
+            from cli.video_choice_queue import (
+                WORKFLOW_STEP_VC_REVIEW,
+                mark_active_item_workflow_step,
+            )
 
-            mark_active_item_done()
-            self.log("本条故事流水线完成。", telegram=True)
+            mark_active_item_workflow_step(workflow_step=WORKFLOW_STEP_VC_REVIEW)
+            skip_close_on_exit = True
+            self._paused_for_vc_review = True
+            self.log(
+                "【人工审阅成片】审阅窗已打开，各场景 clip 已按顺序载入。\n"
+                "请在窗口内裁剪/排序后点「确认」生成成片（拼接+水印）。\n"
+                "完成后可发 vp 发布，或重新运行 client 并 pick 下一条。",
+                telegram=True,
+            )
+            self.log("本条自动化流水线在 vc 处暂停（未标为完成）。", telegram=True)
         except NbifTimeoutError as exc:
             skip_close_on_exit = True
             self._mark_nbif_timeout(exc, nbi_acc=nbi_acc)
@@ -1205,16 +1568,18 @@ class HermesTelegramClient:
         )
         self.log(
             "Hermes Telegram client 启动\n"
-            f"pick={self.pick_arg}  lm={self.lm}  "
+            f"pick={self.pick_arg}  "
             f"{last_note} → 本次 nbi {nbi_idx} ({nbi_label or '?'})  "
             f"grv 变体 {self.grv_variant}（profile 在 ocreativeteen / bjtombj 间自动轮换）\n"
+            "步骤 3 会发 scnlm / scnvs 列表，请在 Telegram 回复序号（不会自动代选）。\n"
+            "grv 后会自动 vc 打开审阅窗并暂停，等你手工确认成片。\n"
             "封面必须由你在 Telegram 回 1/2/3。发 stop 可在本条结束后停。",
             telegram=True,
         )
         if self._listener_running():
             self.log(
                 "⚠️ 检测到 run_bot 听筒也在跑：流水线由本 client 自动驱动，"
-                "Telegram 上请勿再发 gem/lm/scn/nbi（只回 1/2/3 选封面）。",
+                "Telegram 上请只回 scnlm/scnvs 序号与封面 1/2/3，勿手发 scnge/scn/nbi。",
                 telegram=True,
             )
 
@@ -1237,6 +1602,12 @@ class HermesTelegramClient:
                 if not ran:
                     break
                 stories += 1
+                if getattr(self, "_paused_for_vc_review", False):
+                    self.log(
+                        "Hermes 已在 vc 审阅处暂停；请手工确认成片后再 pick 下一条。",
+                        telegram=True,
+                    )
+                    break
                 if self.once:
                     break
                 if self._stop_requested:
@@ -1265,7 +1636,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="next（默认：下一条未处理；无未处理时自动 pick 1 重做）或队列序号如 1。已有 STORY/SCENE 时忽略。",
     )
     p.add_argument("--once", action="store_true", help="只做当前/下一条，做完退出")
-    p.add_argument("--lm", default="4", help="LM 提示序号，默认 4 = 4 Step Story")
     p.add_argument(
         "--nbi",
         type=int,
@@ -1311,7 +1681,6 @@ def main(argv: list[str] | None = None) -> int:
     client = HermesTelegramClient(
         pick=args.pick,
         once=args.once,
-        lm=str(args.lm),
         nbi=args.nbi,
         grv_profile=args.grv_profile,
         grv_variant=int(args.grv_variant),

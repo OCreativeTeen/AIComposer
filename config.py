@@ -623,6 +623,7 @@ CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_reply.json")
 # GUI 写心跳，CLI 读：区分「GUI 没跑」与「GUI 主线程卡住」
 CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_heartbeat.json")
 WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_AIAGENT_PATH, "whole_story_images.json")
+SCENE_CHOICE_PICK_JSON = os.path.join(BASE_AIAGENT_PATH, "scene_choice_pick.json")
 GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_videos.json")
 # grv / nbv 用的 Grok video 提示词变体序号（1…8），与场景数无关
 GROK_SCENE_VIDEO_NB_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_video_nb.json")
@@ -631,7 +632,7 @@ CHROME_PROFILES_USED_JSON = os.path.join(BASE_AIAGENT_PATH, "chrome_profiles_use
 NOTEBOOKLM_LAST_PROFILE_JSON = os.path.join(
     BASE_AIAGENT_PATH, "notebooklm_last_profile.json"
 )
-# HermesChromeCDP 当前占着 9222 的 profile（nbi/grv/gem 换号依据）
+# HermesChromeCDP 当前占着 9222 的 profile（nbi/grv/scnge 换号依据）
 HERMES_CDP_ACTIVE_PROFILE_JSON = os.path.join(
     BASE_AIAGENT_PATH, "hermes_cdp_active_profile.json"
 )
@@ -651,6 +652,7 @@ _AIAGENT_RUNTIME_FILES_FROM_PROGRAM = (
     "cli_bridge_reply.json",
     "cli_bridge_heartbeat.json",
     "whole_story_images.json",
+    "scene_choice_pick.json",
     "grok_scene_videos.json",
     "grok_scene_video_nb.json",
     "chrome_profiles_used.json",
@@ -848,7 +850,7 @@ CHROME_USER_DATA_DIR = os.path.join(
     "Chrome",
     "User Data",
 )
-# Hermes CLI（gem / nbi / grv / itc）专用 Chrome 数据目录；与日常 Chrome 隔离。
+# Hermes CLI（scnge / nbi / grv / itc）专用 Chrome 数据目录；与日常 Chrome 隔离。
 # 默认：%LOCALAPPDATA%\\HermesChromeCDP\\Profile 1…4
 CHROME_CDP_USER_DATA_DIR = (
     os.environ.get("CHROME_CDP_USER_DATA_DIR")

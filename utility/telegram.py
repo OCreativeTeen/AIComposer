@@ -133,6 +133,22 @@ def send_video(
         raise RuntimeError(payload.get("description") or str(payload))
 
 
+def delete_webhook(role: str, *, drop_pending_updates: bool = False) -> None:
+    """Clear webhook so getUpdates long-poll can work (ROLE_CLI only)."""
+    if role != ROLE_CLI:
+        raise ValueError("deleteWebhook is only allowed on the CLI bot (ROLE_CLI)")
+    r = api_post(
+        role,
+        "deleteWebhook",
+        data={"drop_pending_updates": bool(drop_pending_updates)},
+        timeout=30,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    if not payload.get("ok"):
+        raise RuntimeError(payload.get("description") or str(payload))
+
+
 def get_updates(
     role: str,
     *,
