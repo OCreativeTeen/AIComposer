@@ -405,7 +405,8 @@ def infer_stage(video_detail: dict | None) -> str:
         return STAGE_INFOGRAPHIC_DONE
     if info == INFO_SUBMITTED or declared == STAGE_INFOGRAPHIC_PENDING:
         return STAGE_INFOGRAPHIC_PENDING
-    if has_scenes or declared == STAGE_GEMINI_DONE:
+    # ``workflow.stage=GEMINI_DONE`` alone is not enough — scene_content must exist.
+    if has_scenes:
         return STAGE_GEMINI_DONE
     return STAGE_INIT
 

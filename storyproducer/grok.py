@@ -58,8 +58,14 @@ def run_grok_imagine(
         visual_style=visual_style,
         host_narrator=host_narrator,
     )
+    from utility.gen_video_store import save_clip_prompt_for_scene
+
     for i, (_lbl, text) in enumerate(video_prompts, 1):
-        log(f"[storyproducer] Grok scene {i} video prompt ready ({len(text)} chars)")
+        prompt_path = save_clip_prompt_for_scene(i, text)
+        log(
+            f"[storyproducer] Grok scene {i} video prompt ready ({len(text)} chars) "
+            f"→ {prompt_path}"
+        )
     pasted_n, prompt_n, _downloads, video_results = _grok_prepare_all_tabs_cdp(
         n,
         cover_png=cover_png,

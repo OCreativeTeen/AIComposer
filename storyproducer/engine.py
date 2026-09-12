@@ -162,6 +162,56 @@ class StoryEngine:
     def inferred_stage(self) -> str:
         return wfstore.infer_stage(self.session.video_detail)
 
+    def _load_scene_json_for_save(
+        self, *, prefer_session: bool = False
+    ) -> tuple[list | None, str]:
+        """Gemini pick 文件优先，其次内存 ``scene_content``。返回 ``(parsed, source)``。"""
+        from pathlib import Path
+
+        if prefer_session:
+            sc = self.session.scene_content()
+            if sc:
+                return sc, "session"
+
+        gem = self.workflow()
+        gemini_path = str(gem.get("gemini_picked_path") or "").strip()
+        if not gemini_path:
+            picked = int(gem.get("gemini_picked") or 0)
+            files = [str(p) for p in (gem.get("gemini_files") or []) if str(p).strip()]
+            if picked and 1 <= picked <= len(files):
+                gemini_path = files[picked - 1]
+        if gemini_path and os.path.isfile(gemini_path):
+            try:
+                value = json.loads(Path(gemini_path).read_text(encoding="utf-8"))
+            except Exception as exc:
+                return None, f"读取 {gemini_path} 失败：{exc}"
+            if isinstance(value, list) and value:
+                return value, f"disk:{os.path.basename(gemini_path)}"
+        sc = self.session.scene_content()
+        if sc:
+            return sc, "session"
+        return None, ""
+
+    def _persist_scene_content_from_picked(
+        self, *, prefer_session: bool = False
+    ) -> tuple[bool, str]:
+        """把已选 Gemini JSON 写入当前故事的 ``video_detail.scene_content``。"""
+        parsed, source = self._load_scene_json_for_save(prefer_session=prefer_session)
+        if not parsed:
+            return False, "没有可保存的 scene JSON。请先 scnge 并 pick 1/2/3。"
+        parsed = wfstore.normalize_scene_content(parsed)
+        ok, msg = self._persist_field("scene_content", parsed)
+        if not ok:
+            return False, f"scnsave failed: {msg}"
+        self._reload_video_detail()
+        self._patch_wf(
+            {
+                "step": "scnsave",
+                "stage": wfstore.STAGE_GEMINI_DONE,
+            }
+        )
+        return True, f"scnsave ok — {len(parsed)} scenes saved ({source})"
+
     # ------------------------------------------------------------------ pick
 
     def cmd_story_pickup(self, value: str = "") -> tuple[bool, str]:
@@ -391,9 +441,16 @@ class StoryEngine:
                 "gemini_regen_or_reuse": "use",
             }
         )
+        ok_save, msg_save = self._persist_scene_content_from_picked(
+            prefer_session=True
+        )
+        if ok_save:
+            return True, (
+                f"scnge ok — 已用已有 {len(sc)} 场 scene_content。\n{msg_save}"
+            )
         return True, (
             f"scnge ok — 已用已有 {len(sc)} 场 scene_content。\n"
-            "下一步发 scnsave（若尚未写入频道列表则再写一次）。"
+            f"警告：写入频道列表失败：{msg_save}\n请手动发 scnsave。"
         )
 
     def _run_gemini(self) -> tuple[bool, str]:
@@ -433,7 +490,7 @@ class StoryEngine:
         return True, (
             f"scnge ok — 已生成 {len(paths)} 份场景 JSON：\n{lines}\n"
             "请打开对比后，在 Telegram 回复 1 / 2 / 3（或 scnge pick N）。\n"
-            "选定后发 scnsave。"
+            "选定后会自动 scnsave 写入频道列表。"
         )
 
     def cmd_gemini_pick(self, value: str = "") -> tuple[bool, str]:
@@ -446,7 +503,15 @@ class StoryEngine:
         if not gem.get("gemini_pending_pick") and int(gem.get("gemini_picked") or 0) == index:
             path = str(gem.get("gemini_picked_path") or "")
             if path:
-                return True, f"scnge pick ok — 已选 {os.path.basename(path)}。下一步 scnsave。"
+                ok_save, msg_save = self._persist_scene_content_from_picked()
+                if ok_save:
+                    return True, (
+                        f"scnge pick ok — 已选 {os.path.basename(path)}。\n{msg_save}"
+                    )
+                return True, (
+                    f"scnge pick ok — 已选 {os.path.basename(path)}。\n"
+                    f"警告：自动 scnsave 失败：{msg_save}\n请手动发 scnsave。"
+                )
         if not files:
             return False, "当前没有待选的场景 JSON（先发 scnge）。"
         if index < 1 or index > len(files):
@@ -470,48 +535,26 @@ class StoryEngine:
             n = len(parsed) if isinstance(parsed, list) else "?"
         except Exception:
             pass
+        ok_save, msg_save = self._persist_scene_content_from_picked()
+        base = (
+            f"scnge pick ok — #{index}（{os.path.basename(path)}） — {n} scenes。"
+        )
+        if ok_save:
+            return True, f"{base}\n{msg_save}"
         return True, (
-            f"scnge pick ok — #{index}（{os.path.basename(path)}） — {n} scenes。\n"
-            "下一步发 scnsave。"
+            f"{base}\n"
+            f"警告：自动 scnsave 失败：{msg_save}\n"
+            "请手动发 scnsave。"
         )
 
     def cmd_scene_save(self, _value: str = "") -> tuple[bool, str]:
         miss = self._need_story()
         if miss:
             return miss
-        from pathlib import Path
-
-        gem = self.workflow()
-        gemini_path = str(gem.get("gemini_picked_path") or "").strip()
-        parsed = None
-        source = ""
-        if gemini_path and os.path.isfile(gemini_path):
-            try:
-                text = Path(gemini_path).read_text(encoding="utf-8")
-                value = json.loads(text)
-            except Exception as exc:
-                return False, f"读取 {gemini_path} 失败：{exc}"
-            if isinstance(value, list) and value:
-                parsed = value
-                source = f"disk:{os.path.basename(gemini_path)}"
-        if parsed is None:
-            sc = self.session.scene_content()
-            if sc:
-                parsed = sc
-                source = "session"
-        if parsed is None:
-            return False, "没有可保存的 scene JSON。请先 scnge 并 pick 1/2/3。"
-        parsed = wfstore.normalize_scene_content(parsed)
-        ok, msg = self._persist_field("scene_content", parsed)
+        ok, msg = self._persist_scene_content_from_picked()
         if not ok:
-            return False, f"scnsave failed: {msg}"
-        self._patch_wf(
-            {
-                "step": "scnsave",
-                "stage": wfstore.STAGE_GEMINI_DONE,
-            }
-        )
-        return True, f"scnsave ok — {len(parsed)} scenes saved ({source})"
+            return False, msg
+        return True, msg
 
     # ------------------------------------------------------------------ notebooklm / covers
 
@@ -778,6 +821,12 @@ class StoryEngine:
         if n < 1:
             self._reload_video_detail()
             n = self.session.scene_count()
+        if n < 1:
+            ok_save, msg_save = self._persist_scene_content_from_picked()
+            if ok_save:
+                n = self.session.scene_count()
+            elif msg_save:
+                self.log(f"grv: auto scnsave before grok — {msg_save}")
         if n < 1:
             return False, "还没有 scene_content。请先 scnge → scnsave。"
         want = (value or "").strip().translate(_FULLWIDTH)

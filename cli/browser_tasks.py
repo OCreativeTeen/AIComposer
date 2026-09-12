@@ -36,6 +36,8 @@ NOTEBOOKLM_URL = getattr(config, "NOTEBOOKLM_URL", None) or "https://notebooklm.
 GROK_IMAGINE_URL = getattr(config, "GROK_IMAGINE_URL", None) or "https://grok.com/imagine"
 DEFAULT_TIMEOUT_MS = 30_000
 GENERATION_TIMEOUT_MS = 180_000
+GEMINI_JSON_INVALID_RETRY_S = 6.0
+MAX_GEMINI_JSON_ATTEMPTS = 3
 NOTEBOOKLM_COVER_TIMES = 3
 NOTEBOOKLM_PROMPT_MIN_CHARS = 200
 NOTEBOOKLM_READY_MIN_S = 45
@@ -45,6 +47,10 @@ INFOGRAPHIC_POPUP_OPEN_TIMEOUT_S = 12.0
 
 # Per ``handle_gemini`` run: sidebar star only once at open.
 _GEMINI_SIDEBAR_DONE = False
+
+
+class GeminiInvalidJsonError(RuntimeError):
+    """Gemini finished answering but the DOM/clipboard has no valid scene JSON."""
 
 
 def log(message: str) -> None:
@@ -1227,10 +1233,44 @@ def _gemini_code_block_texts(page: Page) -> list[str]:
     return [str(t) for t in out]
 
 
+def _try_parse_scene_candidates(
+    candidates: list[str], expected: int
+) -> list[Any] | None:
+    for text in reversed(candidates):
+        found = extract_json_array(text)
+        if found is None:
+            continue
+        try:
+            return validate_scene_json(found, expected)
+        except ValueError:
+            continue
+    return None
+
+
+def _gemini_response_invalid(candidates: list[str], expected: int) -> bool:
+    """True when the model answer looks finished but is not valid scene JSON."""
+    for text in reversed(candidates):
+        body = (text or "").strip()
+        if len(body) < 40:
+            continue
+        found = extract_json_array(body)
+        if found is not None:
+            try:
+                validate_scene_json(found, expected)
+                return False
+            except ValueError:
+                return True
+        if len(body) >= 80:
+            return True
+    return False
+
+
 def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
     """Poll the DOM until a valid N-scene JSON array is fully rendered.
 
     Reads the code block text directly, so no Copy icon click is needed.
+    If Gemini finishes with prose / invalid JSON, raises ``GeminiInvalidJsonError``
+    so the caller can open a new chat and resubmit instead of waiting 3 minutes.
     """
     exp = int(expected) if expected is not None and int(expected) >= 1 else _expected_scene_count()
     if exp < 1:
@@ -1240,24 +1280,19 @@ def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
     deadline = time.monotonic() + GENERATION_TIMEOUT_MS / 1000
     stable: list[Any] | None = None
     stable_since = 0.0
+    invalid_since = 0.0
+    last_state = ""
+    last_log = 0.0
 
     while time.monotonic() < deadline:
         candidates = _gemini_code_block_texts(page)
         if not candidates:
             candidates = response_texts(page)
 
-        parsed: list[Any] | None = None
-        for text in reversed(candidates):
-            found = extract_json_array(text)
-            if found is None:
-                continue
-            try:
-                parsed = validate_scene_json(found, exp)
-                break
-            except ValueError:
-                continue
+        generating = _gemini_is_generating(page)
+        parsed = _try_parse_scene_candidates(candidates, exp)
 
-        if parsed is not None and not _gemini_is_generating(page):
+        if parsed is not None and not generating:
             if stable is not None and json.dumps(
                 stable, ensure_ascii=False, sort_keys=True
             ) == json.dumps(parsed, ensure_ascii=False, sort_keys=True):
@@ -1267,9 +1302,30 @@ def wait_for_gemini_json(page: Page, expected: int | None = None) -> list[Any]:
             else:
                 stable = parsed
                 stable_since = time.monotonic()
+                invalid_since = 0.0
+        elif generating:
+            invalid_since = 0.0
+            state = "generating"
+        elif _gemini_response_invalid(candidates, exp):
+            if invalid_since <= 0.0:
+                invalid_since = time.monotonic()
+                log(
+                    "scnge: answer finished but not valid scene JSON — "
+                    f"will retry after {GEMINI_JSON_INVALID_RETRY_S:.0f}s if unchanged"
+                )
+            elif time.monotonic() - invalid_since >= GEMINI_JSON_INVALID_RETRY_S:
+                raise GeminiInvalidJsonError(
+                    f"Gemini 回答已完成，但不是有效的 {exp} 场 scene JSON。"
+                )
+            state = "invalid JSON (waiting to confirm)"
         else:
-            state = "generating" if _gemini_is_generating(page) else "no valid JSON yet"
+            invalid_since = 0.0
+            state = "no valid JSON yet"
+
+        if state != last_state or time.monotonic() - last_log >= 5.0:
             log(f"scnge: waiting — {state}")
+            last_state = state
+            last_log = time.monotonic()
 
         time.sleep(1.2)
 
@@ -1843,10 +1899,27 @@ def _handle_gemini_cdp(prompt_text: str) -> str:
             if is_login_page(page):
                 raise RuntimeError(_gemini_login_help(profile_label))
 
-            _open_gemini_new_chat(page)
-            submit_gemini_prompt(page, prompt_text)
             exp = _expected_scene_count(prompt_text)
-            scenes = wait_for_gemini_json(page, expected=exp or None)
+            scenes = None
+            for attempt in range(1, MAX_GEMINI_JSON_ATTEMPTS + 1):
+                _open_gemini_new_chat(page)
+                submit_gemini_prompt(page, prompt_text)
+                try:
+                    scenes = wait_for_gemini_json(page, expected=exp or None)
+                    break
+                except GeminiInvalidJsonError as exc:
+                    log(
+                        f"scnge: attempt {attempt}/{MAX_GEMINI_JSON_ATTEMPTS} — "
+                        f"{exc}; opening new chat to regenerate…"
+                    )
+                    if attempt >= MAX_GEMINI_JSON_ATTEMPTS:
+                        raise RuntimeError(
+                            f"Gemini 连续 {MAX_GEMINI_JSON_ATTEMPTS} 次未返回有效 "
+                            f"{exp or '?'} 场 JSON。请检查 LM prompt 或稍后重试 scnge。"
+                        ) from exc
+                    time.sleep(1.0)
+            if scenes is None:
+                raise RuntimeError("Gemini scene JSON generation failed")
             return json.dumps(scenes, ensure_ascii=False, indent=2)
         finally:
             try:
@@ -5930,7 +6003,13 @@ def _grok_scene_video_prompts(n: int, *, video_nb_index: int | None = None) -> l
                 "请确认 scene_content 是有效 JSON 数组。"
             )
         out.append((f"场景{i} {tag}", text))
-        log(f"Grok scene {i} video prompt ready ({base}/{var}, {len(text)} chars)")
+        from utility.gen_video_store import save_clip_prompt_for_scene
+
+        prompt_path = save_clip_prompt_for_scene(i, text)
+        log(
+            f"Grok scene {i} video prompt ready ({base}/{var}, {len(text)} chars) "
+            f"→ {prompt_path}"
+        )
     return out
 
 
@@ -6039,6 +6118,8 @@ GROK_ASPECT_MENU_Y = 0.468
 GROK_IMAGE_ICON_X = 0.395
 GROK_VIDEO_ICON_X = 0.418
 GROK_GENERATE_X = 0.93
+GROK_VIDEO_SUBMIT_READY_TIMEOUT_S = 30.0
+GROK_VIDEO_SUBMIT_POLL_S = 0.8
 
 # Stable Grok Imagine DOM selectors (from page outerHTML analysis).
 GROK_EDITOR_SEL = (
@@ -6752,6 +6833,57 @@ _GROK_FIND_CHAT_TOOLBAR_SUBMIT_JS = """() => {
   }
   if (!best || bestScore < 250) return null;
   return btnMeta(best, 'chat-toolbar-up-arrow');
+}"""
+
+
+_GROK_CHAT_TOOLBAR_SUBMIT_STATE_JS = """() => {
+  function btnMeta(btn, method) {
+    const br = btn.getBoundingClientRect();
+    const ariaDis = (btn.getAttribute('aria-disabled') || '').toLowerCase();
+    return {
+      method,
+      x: br.left + br.width / 2,
+      y: br.top + br.height / 2,
+      aria: (btn.getAttribute('aria-label') || '').trim(),
+      disabled: !!btn.disabled || ariaDis === 'true' || ariaDis === 'disabled',
+      busy: btn.getAttribute('aria-busy') === 'true',
+    };
+  }
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  if (!chat) return null;
+  const cr = chat.getBoundingClientRect();
+  const footerMinY = cr.top + cr.height * 0.52;
+
+  for (const sel of [
+    'button[aria-label="生成视频"]',
+    'button[aria-label="Generate video"]',
+    'button[aria-label="Submit"]',
+    'button[aria-label="Send"]',
+    'button[aria-label="生成"]',
+  ]) {
+    const el = chat.querySelector(sel);
+    if (el) return btnMeta(el, 'chat-aria-submit');
+  }
+
+  let best = null;
+  let bestScore = -1;
+  for (const b of chat.querySelectorAll('button, [role="button"]')) {
+    const br = b.getBoundingClientRect();
+    if (br.top < footerMinY) continue;
+    if (br.width < 22 || br.height < 22) continue;
+    const aria = ((b.getAttribute('aria-label') || '') + (b.getAttribute('title') || '')).toLowerCase();
+    let score = br.right;
+    const hasSvg = !!b.querySelector('svg');
+    const round = Math.abs(br.width - br.height) < 18;
+    if (round && hasSvg) score += 500;
+    if (br.right >= cr.right - 14) score += 300;
+    if (/submit|send|generate|生成|生成视频|generate video/.test(aria)) score += 800;
+    const meta = btnMeta(b, 'chat-toolbar-up-arrow');
+    if (!meta.disabled && !meta.busy) score += 2500;
+    if (score > bestScore) { best = meta; bestScore = score; }
+  }
+  if (!best || bestScore < 250) return null;
+  return best;
 }"""
 
 
@@ -7734,18 +7866,21 @@ def _grok_click_video_generate_cdp(page: Page) -> None:
     for attempt in range(1, 4):
         _grok_ensure_video_mode_cdp(page)
         time.sleep(0.25)
-        if _grok_click_video_submit_cdp(page):
+        if _grok_click_video_submit_cdp(page, wait_ready=True):
             time.sleep(0.65)
             if _generating():
                 log(f"Grok CDP: video generation started (attempt {attempt})")
                 return
             log("Grok CDP: 生成视频 clicked but generating not detected; retry")
         else:
-            log(f"Grok CDP: 生成视频 button not found (attempt {attempt})")
+            log(
+                f"Grok CDP: 生成视频 Submit 未就绪或点击失败 (attempt {attempt})"
+            )
         time.sleep(0.35)
 
     raise RuntimeError(
-        "Grok 生成视频 Submit 未成功。请确认已切 Video 模式（720p/10s）且提示词已填入。"
+        "Grok 生成视频 Submit 未成功。请确认已切 Video 模式（720p/10s）、"
+        "提示词已填入，且 Submit 已从 disabled 变为可点。"
     )
 
 
@@ -7885,21 +8020,69 @@ def _grok_click_video_settings_cdp(page: Page) -> None:
     log("Grok CDP: skip video duration change; using default (10s)")
 
 
-def _grok_click_video_submit_cdp(page: Page) -> bool:
-    """Click bottom toolbar up-arrow only — never buttons on the generated image."""
-    pt = page.evaluate(_GROK_FIND_CHAT_TOOLBAR_SUBMIT_JS)
-    if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
-        if pt.get("disabled"):
-            log(f"Grok CDP: chat toolbar submit disabled aria={pt.get('aria')!r}")
-        else:
-            _grok_mouse_click_point(
-                page, float(pt["x"]), float(pt["y"]), label="video-submit-arrow"
-            )
+def _grok_submit_meta_disabled(meta: dict | None) -> bool:
+    if not isinstance(meta, dict):
+        return True
+    return bool(meta.get("disabled") or meta.get("busy"))
+
+
+def _grok_wait_video_submit_ready_cdp(
+    page: Page, *, timeout_s: float = GROK_VIDEO_SUBMIT_READY_TIMEOUT_S
+) -> dict:
+    """Wait until Grok finishes optimizing the video prompt and Submit is clickable."""
+    deadline = time.monotonic() + max(1.0, float(timeout_s))
+    last_log = 0.0
+    while time.monotonic() < deadline:
+        pt = page.evaluate(_GROK_CHAT_TOOLBAR_SUBMIT_STATE_JS)
+        if isinstance(pt, dict) and pt.get("x") and not _grok_submit_meta_disabled(pt):
             log(
-                f"Grok CDP: video submit via {pt.get('method')!r} "
-                f"aria={pt.get('aria')!r}"
+                f"Grok CDP: video submit ready aria={pt.get('aria')!r} "
+                f"via {pt.get('method')!r}"
             )
-            return True
+            return pt
+        now = time.monotonic()
+        if now - last_log >= 4.0:
+            if isinstance(pt, dict) and pt.get("x"):
+                log(
+                    "Grok CDP: waiting for video Submit to enable "
+                    f"(Grok may be optimizing prompt) aria={pt.get('aria')!r} "
+                    f"disabled={pt.get('disabled')} busy={pt.get('busy')}"
+                )
+            else:
+                log("Grok CDP: waiting for video Submit button in toolbar…")
+            last_log = now
+        time.sleep(GROK_VIDEO_SUBMIT_POLL_S)
+    raise RuntimeError(
+        f"Grok 视频 Submit 在 {timeout_s:.0f}s 内仍未就绪（可能仍在优化提示词）。"
+    )
+
+
+def _grok_click_video_submit_cdp(page: Page, *, wait_ready: bool = True) -> bool:
+    """Click bottom toolbar up-arrow only — never buttons on the generated image."""
+    page.evaluate(_GROK_FOCUS_CHAT_INPUT_JS)
+    time.sleep(0.1)
+
+    pt: dict | None = None
+    if wait_ready:
+        try:
+            pt = _grok_wait_video_submit_ready_cdp(page)
+        except RuntimeError as exc:
+            log(f"Grok CDP: {exc}")
+            return False
+    else:
+        raw = page.evaluate(_GROK_CHAT_TOOLBAR_SUBMIT_STATE_JS)
+        if isinstance(raw, dict) and raw.get("x") and not _grok_submit_meta_disabled(raw):
+            pt = raw
+
+    if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
+        _grok_mouse_click_point(
+            page, float(pt["x"]), float(pt["y"]), label="video-submit-arrow"
+        )
+        log(
+            f"Grok CDP: video submit via {pt.get('method')!r} "
+            f"aria={pt.get('aria')!r}"
+        )
+        return True
 
     chat = page.locator('[data-testid="chat-input"]')
     for sel in (
@@ -7912,7 +8095,10 @@ def _grok_click_video_submit_cdp(page: Page) -> bool:
         if loc.count() == 0:
             continue
         try:
-            loc.click(timeout=5000, force=True)
+            if not loc.is_enabled():
+                log(f"Grok CDP: video submit {sel} still disabled")
+                continue
+            loc.click(timeout=5000)
             log(f"Grok CDP: clicked video submit via chat {sel}")
             return True
         except Exception as exc:
@@ -7922,8 +8108,7 @@ def _grok_click_video_submit_cdp(page: Page) -> bool:
     if _grok_click_js_target(page, pt, kind="video-submit-fallback"):
         return True
 
-    _grok_viewport_click(page, GROK_GENERATE_X, GROK_TOOLBAR_Y, label="video-submit-ratio")
-    return True
+    return False
 
 
 def _grok_click_generate_cdp(page: Page, *, deep_image: bool = False) -> None:
@@ -8272,6 +8457,7 @@ def _grok_generate_video_on_tab_cdp(page: Page, prompt: str) -> None:
     time.sleep(0.2)
     # Video icon is a toggle — only click when not already in video mode.
     _grok_ensure_video_mode_cdp(page)
+    # After paste, Grok may optimize the video prompt 10–20s before Submit enables.
     _grok_click_video_generate_cdp(page)
     time.sleep(0.6)
     _grok_wait_video_ready_cdp(page)

@@ -74,6 +74,25 @@ def copy_into_gen_video(
     return os.path.abspath(copied)
 
 
+def clip_prompt_path(scene: int) -> str:
+    """``gen_video/clip_prompt_{scene}.txt`` for grv video prompt monitoring."""
+    folder = gen_video_dir()
+    if not folder:
+        raise RuntimeError("未配置 INPUT_MEDIA_GEN_VIDEO_PATH（publish/gen_video）")
+    return os.path.abspath(os.path.join(folder, f"clip_prompt_{int(scene)}.txt"))
+
+
+def save_clip_prompt_for_scene(scene: int, text: str) -> str:
+    """Write grv video prompt for *scene* (1-based) to ``clip_prompt_N.txt``."""
+    path = clip_prompt_path(scene)
+    body = (text or "").strip()
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+        if body:
+            f.write("\n")
+    return path
+
+
 def copy_clip_records(clips: list[dict] | list[str] | None) -> list[dict]:
     """Copy each clip file into gen_video; keep ``scene`` / ``path`` records."""
     out: list[dict] = []
