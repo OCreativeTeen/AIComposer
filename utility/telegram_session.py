@@ -8,6 +8,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import config
 from cli.commands import dispatch, short_cli, split_command
@@ -90,7 +91,7 @@ def load_whole_story_image_record() -> dict:
 
 
 def load_whole_story_images() -> list[str]:
-    """NotebookLM 整篇故事 infographic 下载路径（Windows Downloads）。"""
+    """NotebookLM infographic 封面路径（``aiagent/Infographic_N.png``）。"""
     return list(load_whole_story_image_record().get("files") or [])
 
 
@@ -172,12 +173,21 @@ def mark_notebooklm_generate_started(times: int) -> dict:
 
 
 def save_whole_story_images(paths: list[str]) -> list[str]:
-    """记住本轮 itc 下载到 Windows Downloads 的封面路径（whole_story_images.json）。"""
-    files: list[str] = []
-    for item in paths or []:
-        p = os.path.normpath(os.path.abspath((item or "").strip()))
-        if p and os.path.isfile(p) and p not in files:
-            files.append(p)
+    """记住本轮 itc 封面路径（固定 ``aiagent/Infographic_1…3`` 槽位顺序）。"""
+    import config
+
+    expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
+    slots = config.infographic_slot_files_for_pick(expected)
+    if len(slots) >= expected:
+        files = slots
+    else:
+        files: list[str] = []
+        for item in paths or []:
+            p = os.path.normpath(os.path.abspath((item or "").strip()))
+            if p and os.path.isfile(p) and p not in files:
+                files.append(p)
+        if not files:
+            files = slots
     return _write_whole_story_image_record(
         files,
         selected=0,
@@ -204,6 +214,8 @@ def mark_whole_story_telegram_sent() -> dict:
 
 def record_whole_story_pick(index: int) -> dict:
     """记下用户选中的封面序号（1-based），不贴进 Grok。"""
+    import config
+
     rec = load_whole_story_image_record()
     files = list(rec.get("files") or [])
     idx = int(index)
@@ -217,7 +229,10 @@ def record_whole_story_pick(index: int) -> dict:
         picked_at=stamp,
     )
     out = load_whole_story_image_record()
-    return {"index": idx, "path": out.get("selected_path") or files[idx - 1]}
+    path = config.resolve_infographic_cover_path(idx)
+    if not os.path.isfile(path) and 1 <= idx <= len(files):
+        path = files[idx - 1]
+    return {"index": idx, "path": path}
 
 
 def select_whole_story_image(index: int) -> dict:
@@ -226,11 +241,17 @@ def select_whole_story_image(index: int) -> dict:
 
 
 def selected_whole_story_image_path() -> str:
+    import config
+
     rec = load_whole_story_image_record()
+    idx = int(rec.get("selected") or 0)
+    if idx >= 1:
+        slot = config.resolve_infographic_cover_path(idx)
+        if os.path.isfile(slot):
+            return slot
     p = str(rec.get("selected_path") or "").strip()
     if p and os.path.isfile(p):
         return p
-    idx = int(rec.get("selected") or 0)
     files = list(rec.get("files") or [])
     if 1 <= idx <= len(files):
         return files[idx - 1]
@@ -259,6 +280,234 @@ def dismiss_whole_story_pick_pending() -> None:
         selected=int(rec.get("selected") or 0),
         pending_pick=False,
     )
+
+
+def _cover_generation_choice_path() -> str:
+    return getattr(config, "COVER_GENERATION_CHOICE_JSON", "") or ""
+
+
+def load_cover_generation_choice() -> dict:
+    empty = {
+        "pending_pick": False,
+        "choice": "",
+        "existing_count": 0,
+        "expected": 0,
+        "updated_at": "",
+    }
+    path = _cover_generation_choice_path()
+    if not path or not os.path.isfile(path):
+        return dict(empty)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return dict(empty)
+    if not isinstance(data, dict):
+        return dict(empty)
+    out = dict(empty)
+    out["pending_pick"] = bool(data.get("pending_pick"))
+    out["choice"] = str(data.get("choice") or "").strip().lower()
+    try:
+        out["existing_count"] = max(0, int(data.get("existing_count") or 0))
+    except (TypeError, ValueError):
+        out["existing_count"] = 0
+    try:
+        out["expected"] = max(0, int(data.get("expected") or 0))
+    except (TypeError, ValueError):
+        out["expected"] = 0
+    out["updated_at"] = str(data.get("updated_at") or "")
+    return out
+
+
+def _write_cover_generation_choice(payload: dict) -> dict:
+    path = _cover_generation_choice_path()
+    payload = dict(payload or {})
+    payload["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return load_cover_generation_choice()
+
+
+def start_cover_generation_choice(
+    *,
+    existing_count: int = 0,
+    expected: int | None = None,
+) -> dict:
+    exp = max(1, int(expected or getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3))
+    payload = {
+        "pending_pick": True,
+        "choice": "",
+        "existing_count": max(0, int(existing_count or 0)),
+        "expected": exp,
+    }
+    _write_cover_generation_choice(payload)
+    return load_cover_generation_choice()
+
+
+def clear_cover_generation_choice() -> None:
+    _write_cover_generation_choice(
+        {
+            "pending_pick": False,
+            "choice": "",
+            "existing_count": 0,
+            "expected": 0,
+        }
+    )
+
+
+def cover_generation_choice_pending() -> bool:
+    rec = load_cover_generation_choice()
+    return bool(rec.get("pending_pick")) and not str(rec.get("choice") or "").strip()
+
+
+def record_cover_generation_choice(choice: str) -> dict:
+    raw = (choice or "").strip().lower()
+    if raw in ("1", "gen", "generate", "yes", "y", "生成", "nbp", "new"):
+        norm = "generate"
+    elif raw in ("2", "skip", "no", "n", "跳过", "itcs", "use", "已有"):
+        norm = "skip"
+    else:
+        raise ValueError("请回复 1=生成新封面，或 2=跳过（用已有 Infographic 图）")
+    rec = load_cover_generation_choice()
+    if not rec.get("pending_pick"):
+        raise ValueError("当前不在等待封面生成选择")
+    _write_cover_generation_choice(
+        {
+            "pending_pick": False,
+            "choice": norm,
+            "existing_count": int(rec.get("existing_count") or 0),
+            "expected": int(rec.get("expected") or 0),
+        }
+    )
+    return load_cover_generation_choice()
+
+
+def take_cover_generation_choice() -> str:
+    rec = load_cover_generation_choice()
+    choice = str(rec.get("choice") or "").strip().lower()
+    if choice:
+        clear_cover_generation_choice()
+        return choice
+    return ""
+
+
+def _scene_generation_choice_path() -> str:
+    return getattr(config, "SCENE_GENERATION_CHOICE_JSON", "") or ""
+
+
+def load_scene_generation_choice() -> dict:
+    empty = {
+        "pending_pick": False,
+        "choice": "",
+        "scene_count": 0,
+        "source": "",
+        "updated_at": "",
+    }
+    path = _scene_generation_choice_path()
+    if not path or not os.path.isfile(path):
+        return dict(empty)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return dict(empty)
+    if not isinstance(data, dict):
+        return dict(empty)
+    out = dict(empty)
+    out["pending_pick"] = bool(data.get("pending_pick"))
+    out["choice"] = str(data.get("choice") or "").strip().lower()
+    try:
+        out["scene_count"] = max(0, int(data.get("scene_count") or 0))
+    except (TypeError, ValueError):
+        out["scene_count"] = 0
+    out["source"] = str(data.get("source") or "").strip()
+    out["updated_at"] = str(data.get("updated_at") or "")
+    return out
+
+
+def _write_scene_generation_choice(payload: dict) -> dict:
+    path = _scene_generation_choice_path()
+    payload = dict(payload or {})
+    payload["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return load_scene_generation_choice()
+
+
+def start_scene_generation_choice(
+    scene_count: int,
+    *,
+    source: str = "",
+) -> dict:
+    payload = {
+        "pending_pick": True,
+        "choice": "",
+        "scene_count": max(0, int(scene_count or 0)),
+        "source": (source or "").strip(),
+    }
+    _write_scene_generation_choice(payload)
+    return load_scene_generation_choice()
+
+
+def clear_scene_generation_choice() -> None:
+    _write_scene_generation_choice(
+        {
+            "pending_pick": False,
+            "choice": "",
+            "scene_count": 0,
+            "source": "",
+        }
+    )
+
+
+def scene_generation_choice_pending() -> bool:
+    rec = load_scene_generation_choice()
+    return bool(rec.get("pending_pick")) and not str(rec.get("choice") or "").strip()
+
+
+def record_scene_generation_choice(choice: str) -> dict:
+    raw = (choice or "").strip().lower()
+    if raw in ("1", "gen", "generate", "regen", "force", "new", "yes", "y", "生成", "重新"):
+        norm = "generate"
+    elif raw in ("2", "use", "copy", "existing", "skip", "no", "n", "已有", "跳过", "reuse"):
+        norm = "use"
+    else:
+        raise ValueError("请回复 1=Gemini 重新生成，或 2=用已有 scene_content 拷到剪贴板")
+    rec = load_scene_generation_choice()
+    if not rec.get("pending_pick"):
+        raise ValueError("当前不在等待场景生成选择")
+    _write_scene_generation_choice(
+        {
+            "pending_pick": False,
+            "choice": norm,
+            "scene_count": int(rec.get("scene_count") or 0),
+            "source": str(rec.get("source") or ""),
+        }
+    )
+    return load_scene_generation_choice()
+
+
+def take_scene_generation_choice() -> str:
+    rec = load_scene_generation_choice()
+    choice = str(rec.get("choice") or "").strip().lower()
+    if choice:
+        clear_scene_generation_choice()
+        return choice
+    return ""
 
 
 def _scene_choice_pick_path() -> str:
@@ -371,6 +620,135 @@ def take_scene_choice_pick(kind: str) -> int:
     idx = int(rec.get("picked") or 0)
     clear_scene_choice_pick()
     return idx if idx >= 1 else 0
+
+
+def _gemini_scenes_pick_path() -> str:
+    return getattr(config, "GEMINI_SCENES_PICK_JSON", "") or ""
+
+
+def load_gemini_scenes_pick() -> dict:
+    """Hermes 等待 scnge 三选一：files / pending_pick / picked。"""
+    empty = {
+        "files": [],
+        "pending_pick": False,
+        "picked": 0,
+        "updated_at": "",
+    }
+    path = _gemini_scenes_pick_path()
+    if not path or not os.path.isfile(path):
+        return dict(empty)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return dict(empty)
+    if not isinstance(data, dict):
+        return dict(empty)
+    out = dict(empty)
+    files = data.get("files")
+    out["files"] = [str(p).strip() for p in files if isinstance(p, str) and p.strip()]
+    out["pending_pick"] = bool(data.get("pending_pick"))
+    try:
+        out["picked"] = max(0, int(data.get("picked") or 0))
+    except (TypeError, ValueError):
+        out["picked"] = 0
+    out["updated_at"] = str(data.get("updated_at") or "").strip()
+    return out
+
+
+def _write_gemini_scenes_pick(payload: dict) -> dict:
+    path = _gemini_scenes_pick_path()
+    if not path:
+        return payload
+    payload = dict(payload or {})
+    payload["updated_at"] = datetime.now(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return payload
+
+
+def clear_gemini_scenes_pick() -> None:
+    _write_gemini_scenes_pick({"files": [], "pending_pick": False, "picked": 0})
+
+
+def start_gemini_scenes_pick(files: list[str]) -> dict:
+    """scnge 生成多份 JSON 后，等待 Telegram 回复 1/2/3。"""
+    paths = [os.path.normpath(os.path.abspath(str(p).strip())) for p in files if str(p).strip()]
+    payload = {
+        "files": paths,
+        "pending_pick": bool(paths),
+        "picked": 0,
+    }
+    _write_gemini_scenes_pick(payload)
+    return load_gemini_scenes_pick()
+
+
+def gemini_scenes_pick_pending() -> bool:
+    rec = load_gemini_scenes_pick()
+    files = list(rec.get("files") or [])
+    if not files:
+        return False
+    if int(rec.get("picked") or 0) >= 1:
+        return False
+    return bool(rec.get("pending_pick"))
+
+
+def dismiss_gemini_scenes_pick_pending() -> None:
+    rec = load_gemini_scenes_pick()
+    if not rec.get("pending_pick"):
+        return
+    _write_gemini_scenes_pick(
+        {
+            "files": list(rec.get("files") or []),
+            "pending_pick": False,
+            "picked": int(rec.get("picked") or 0),
+        }
+    )
+
+
+def record_gemini_scenes_pick(index: int) -> dict:
+    """记下用户选中的 JSON 序号（1-based），并写入剪贴板。"""
+    from cli.browser_tasks import write_windows_clipboard
+
+    rec = load_gemini_scenes_pick()
+    files = list(rec.get("files") or [])
+    idx = int(index)
+    if idx < 1 or idx > len(files):
+        raise ValueError(f"没有第 {idx} 份场景 JSON（共 {len(files)} 份）")
+    path = files[idx - 1]
+    if not os.path.isfile(path):
+        raise ValueError(f"文件不存在: {path}")
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"读取失败: {path} ({exc})") from exc
+    try:
+        write_windows_clipboard(text)
+    except Exception:
+        pass
+    _write_gemini_scenes_pick(
+        {"files": files, "pending_pick": False, "picked": idx}
+    )
+    return {"index": idx, "path": path}
+
+
+def selected_gemini_scenes_json_path() -> str:
+    rec = load_gemini_scenes_pick()
+    idx = int(rec.get("picked") or 0)
+    files = list(rec.get("files") or [])
+    if 1 <= idx <= len(files):
+        p = files[idx - 1]
+        if os.path.isfile(p):
+            return p
+    return ""
 
 
 def load_grok_scene_videos() -> list[dict]:
@@ -925,6 +1303,62 @@ class TelegramCliSession:
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
                 record_scene_choice_pick(int(digit))
                 return True, f"已记录 SCENE 选项 #{int(digit)}，Hermes 将继续。"
+        if cover_generation_choice_pending():
+            compact = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789")).strip().lower()
+            try:
+                if compact.isdigit() and " " not in raw:
+                    record_cover_generation_choice(compact)
+                elif compact in ("skip", "itcs", "跳过", "已有", "use", "生成", "gen", "generate", "yes", "no"):
+                    record_cover_generation_choice(compact)
+                else:
+                    return False, "请回复 1=生成新封面，或 2=跳过（itcs，用已有 Infographic 图）。"
+            except ValueError as exc:
+                return False, str(exc)
+            rec = load_cover_generation_choice()
+            label = "生成新封面" if rec.get("choice") == "generate" else "跳过，用已有封面"
+            return True, f"已记录：{label}，Hermes 将继续。"
+        if scene_generation_choice_pending():
+            compact = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789")).strip().lower()
+            try:
+                if compact.isdigit() and " " not in raw:
+                    rec = record_scene_generation_choice(compact)
+                elif compact in (
+                    "use",
+                    "copy",
+                    "skip",
+                    "已有",
+                    "跳过",
+                    "force",
+                    "regen",
+                    "gen",
+                    "generate",
+                    "生成",
+                    "yes",
+                    "no",
+                ):
+                    rec = record_scene_generation_choice(compact)
+                else:
+                    return False, (
+                        "请回复 1=Gemini 重新生成，或 2=用已有 scene_content 拷到剪贴板。"
+                    )
+            except ValueError as exc:
+                return False, str(exc)
+            if rec.get("choice") == "use":
+                return dispatch("scnge use")
+            if rec.get("choice") == "generate":
+                return dispatch("scnge force")
+            return True, "已记录场景生成选择，Hermes 将继续。"
+        if gemini_scenes_pick_pending():
+            digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+            if digit.isdigit() and " " not in raw and len(digit) <= 2:
+                try:
+                    picked = record_gemini_scenes_pick(int(digit))
+                except ValueError as exc:
+                    return False, str(exc)
+                return True, (
+                    f"已记录场景 JSON #{int(digit)}"
+                    f"（{os.path.basename(picked.get('path') or '')}），已写入剪贴板。"
+                )
         if whole_story_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:

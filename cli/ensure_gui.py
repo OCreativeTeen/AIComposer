@@ -111,6 +111,93 @@ def _spawn_pick_video_choice(
     )
 
 
+def _terminate_gui_proc(*, wait_s: float = 10.0) -> str:
+    """Stop the queue-spawned pick_video_choice subprocess if still running."""
+    global _gui_proc
+
+    proc = _gui_proc
+    if proc is None or proc.poll() is not None:
+        _gui_proc = None
+        return ""
+    pid = proc.pid
+    try:
+        proc.terminate()
+        proc.wait(timeout=wait_s)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=3.0)
+        except Exception:
+            pass
+    _gui_proc = None
+    return f"已终止 GUI 子进程 pid={pid}"
+
+
+def shutdown_queue_gui_session(
+    *,
+    run_cx=None,
+    wait_pump_s: float = 30.0,
+    timeout_s: float = 45.0,
+) -> tuple[bool, str]:
+    """关 LIST/STORY/SCENE 并结束队列拉起的 GUI 进程，便于下一条全新打开。"""
+    from cli.bridge import gui_heartbeat, wait_bridge_pump_alive
+    from cli.gui_session import clear_gui_launch_source, gui_session_open
+    from cli.queue_gui_nav import close_ai_composer_session
+    from cli.win_gui_tasks import (
+        find_detail_window,
+        find_panel_window,
+        find_video_list_window,
+        find_yt_tools_window,
+        post_close_window,
+    )
+
+    notes: list[str] = []
+    beat = gui_heartbeat()
+    if beat is not None and not beat.get("pump_alive"):
+        wait_bridge_pump_alive(timeout_s=wait_pump_s)
+
+    ok, msg = close_ai_composer_session(run_cx=run_cx, timeout_s=timeout_s * 0.7)
+    notes.append(msg if ok else f"close: {msg}")
+
+    for finder in (
+        find_panel_window,
+        find_detail_window,
+        find_video_list_window,
+        find_yt_tools_window,
+    ):
+        hwnd = finder()
+        if hwnd:
+            post_close_window(hwnd)
+
+    term = _terminate_gui_proc()
+    if term:
+        notes.append(term)
+    clear_gui_launch_source()
+    try:
+        config.reset_gui_window_path()
+    except Exception:
+        pass
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not gui_session_open() and gui_heartbeat() is None:
+            return True, "；".join(n for n in notes if n)
+        for finder in (
+            find_panel_window,
+            find_detail_window,
+            find_video_list_window,
+            find_yt_tools_window,
+        ):
+            hwnd = finder()
+            if hwnd:
+                post_close_window(hwnd)
+        time.sleep(0.4)
+
+    if gui_session_open() or gui_heartbeat() is not None:
+        return False, "；".join(notes) + "；仍有 GUI 窗/进程未完全退出"
+    return True, "；".join(n for n in notes if n)
+
+
 def ensure_gui_from_queue(*, timeout_s: float = 75.0) -> tuple[bool, str]:
     """If 摘要/分镜 is missing, run pick_video_choice next --with-detail --json."""
     global _gui_proc

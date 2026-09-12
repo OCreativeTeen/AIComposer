@@ -148,6 +148,17 @@ def bind_screen(
     _arm_pump()
 
 
+def set_screen_ready(name: str, ready: bool = True) -> None:
+    """Mark a registered screen finished (or still building)."""
+    key = (name or "").strip()
+    with _LOCK:
+        if key in _BOUND:
+            _BOUND[key]["ready"] = bool(ready)
+        if key in _BOUND_STATE:
+            _BOUND_STATE[key] = bool(ready)
+    _arm_pump()
+
+
 def unbind_screen(name: str) -> None:
     with _LOCK:
         _BOUND.pop(name, None)
@@ -407,8 +418,8 @@ def _pump() -> None:
     global _PUMP_ARMED, _LAST_PUMP_TS
     _LAST_PUMP_TS = time.monotonic()
 
-    # Drain a few requests per tick so a long UI build cannot starve the queue.
-    for _ in range(4):
+    # Drain more requests per tick when JSON sync competes with bridge commands.
+    for _ in range(12):
         try:
             req = _INBOX.get_nowait()
         except queue.Empty:

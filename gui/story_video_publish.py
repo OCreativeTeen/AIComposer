@@ -60,6 +60,9 @@ def resolve_current_publish_context() -> dict:
 
 
 def _resolve_mp4(video_detail: dict) -> str:
+    stored = (video_detail.get("video") or "").strip() if isinstance(video_detail, dict) else ""
+    if stored and os.path.isfile(stored):
+        return os.path.abspath(stored)
     from gui.story_video_concat import gen_video_dest_filename
 
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""

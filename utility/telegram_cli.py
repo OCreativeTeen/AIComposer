@@ -183,9 +183,17 @@ class _AsyncCliWorker:
         raw = (text or "").strip()
         if not raw:
             return False, "empty command"
-        from utility.telegram_session import scene_choice_pick_pending, whole_story_pick_pending
+        from utility.telegram_session import (
+            gemini_scenes_pick_pending,
+            scene_choice_pick_pending,
+            whole_story_pick_pending,
+        )
 
         if scene_choice_pick_pending():
+            digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+            if digit.isdigit() and " " not in raw and len(digit) <= 2:
+                return self._session.handle(raw)
+        if gemini_scenes_pick_pending():
             digit = raw.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
             if digit.isdigit() and " " not in raw and len(digit) <= 2:
                 return self._session.handle(raw)

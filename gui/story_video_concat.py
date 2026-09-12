@@ -274,13 +274,22 @@ def concat_recorded_scene_clips(clips: list[dict] | list[str] | None = None) -> 
         pid = str(item.get("workflow_pid") or item.get("row_id") or "yt_wm")
     lang = str(item.get("yt_language") or "zh").strip() or "zh"
     channel = str(item.get("channel_id") or item.get("channel_path") or "").strip()
-    return concat_scene_clips(
+    out = concat_scene_clips(
         paths,
         pid=pid,
         lang=lang,
         channel_key=channel,
         video_detail=vd if isinstance(vd, dict) else None,
     )
+    if out and isinstance(vd, dict):
+        vd["video"] = out
+        try:
+            from cli.video_choice_queue import persist_active_video_detail_field
+
+            persist_active_video_detail_field("video", out)
+        except Exception:
+            pass
+    return out
 
 
 def run_concat_worker(

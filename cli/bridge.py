@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import uuid
+from typing import Callable
 
 import config
 
@@ -45,6 +46,32 @@ def gui_heartbeat() -> dict | None:
     except (TypeError, ValueError):
         return None
     return data
+
+
+def wait_bridge_pump_alive(
+    *,
+    timeout_s: float = 120.0,
+    poll_s: float = 0.5,
+    on_wait: Callable[[float, float], None] | None = None,
+) -> bool:
+    """Block until Tk main loop is processing bridge work, or ``timeout_s`` elapses."""
+    start = time.monotonic()
+    last_cb = 0.0
+    while time.monotonic() - start < timeout_s:
+        beat = gui_heartbeat()
+        if beat is None:
+            return False
+        if beat.get("pump_alive"):
+            return True
+        if on_wait and time.monotonic() - last_cb >= 15.0:
+            try:
+                age = float(beat.get("pump_age_s") or 0)
+                on_wait(age, time.monotonic() - start)
+            except Exception:
+                pass
+            last_cb = time.monotonic()
+        time.sleep(poll_s)
+    return False
 
 
 def _timeout_hint(screen: str) -> str:

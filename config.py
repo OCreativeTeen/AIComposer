@@ -623,7 +623,15 @@ CLI_BRIDGE_REPLY_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_reply.json")
 # GUI 写心跳，CLI 读：区分「GUI 没跑」与「GUI 主线程卡住」
 CLI_BRIDGE_HEARTBEAT_JSON = os.path.join(BASE_AIAGENT_PATH, "cli_bridge_heartbeat.json")
 WHOLE_STORY_IMAGES_JSON = os.path.join(BASE_AIAGENT_PATH, "whole_story_images.json")
+COVER_GENERATION_CHOICE_JSON = os.path.join(
+    BASE_AIAGENT_PATH, "cover_generation_choice.json"
+)
+SCENE_GENERATION_CHOICE_JSON = os.path.join(
+    BASE_AIAGENT_PATH, "scene_generation_choice.json"
+)
 SCENE_CHOICE_PICK_JSON = os.path.join(BASE_AIAGENT_PATH, "scene_choice_pick.json")
+GEMINI_SCENES_PICK_JSON = os.path.join(BASE_AIAGENT_PATH, "gemini_scenes_pick.json")
+GEMINI_SCENES_VARIANT_COUNT = 3
 GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_videos.json")
 # grv / nbv 用的 Grok video 提示词变体序号（1…8），与场景数无关
 GROK_SCENE_VIDEO_NB_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_video_nb.json")
@@ -653,6 +661,7 @@ _AIAGENT_RUNTIME_FILES_FROM_PROGRAM = (
     "cli_bridge_heartbeat.json",
     "whole_story_images.json",
     "scene_choice_pick.json",
+    "gemini_scenes_pick.json",
     "grok_scene_videos.json",
     "grok_scene_video_nb.json",
     "chrome_profiles_used.json",
@@ -671,6 +680,69 @@ def ensure_aiagent_path() -> str:
     except OSError:
         pass
     return BASE_AIAGENT_PATH
+
+
+def gemini_scenes_json_path(index: int) -> str:
+    """``Gemini_Scenes_1.json`` … 保存在 ``aiagent/``。"""
+    ensure_aiagent_path()
+    i = max(1, int(index))
+    return os.path.join(BASE_AIAGENT_PATH, f"Gemini_Scenes_{i}.json")
+
+
+INFOGRAPHIC_COVER_COUNT = 3
+
+
+def infographic_cover_path(index: int) -> str:
+    """``itc`` 封面固定槽位：``aiagent/Infographic_1.png`` …"""
+    ensure_aiagent_path()
+    i = max(1, int(index))
+    return os.path.join(BASE_AIAGENT_PATH, f"Infographic_{i}.png")
+
+
+def infographic_cover_paths(count: int | None = None) -> list[str]:
+    n = max(1, int(count or INFOGRAPHIC_COVER_COUNT))
+    return [infographic_cover_path(i) for i in range(1, n + 1)]
+
+
+def resolve_infographic_cover_path(index: int) -> str:
+    """选封面时从磁盘读槽位文件（支持手动覆盖 ``Infographic_N.*``）。"""
+    canonical = infographic_cover_path(index)
+    if os.path.isfile(canonical):
+        return os.path.normpath(os.path.abspath(canonical))
+    parent = os.path.dirname(canonical)
+    stem = f"Infographic_{max(1, int(index))}"
+    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+        cand = os.path.join(parent, stem + ext)
+        if os.path.isfile(cand):
+            return os.path.normpath(os.path.abspath(cand))
+    return os.path.normpath(os.path.abspath(canonical))
+
+
+def existing_infographic_cover_paths(count: int | None = None) -> list[str]:
+    """``itcs``：磁盘上已存在的封面槽位（按序号 1…N）。"""
+    n = max(1, int(count or INFOGRAPHIC_COVER_COUNT))
+    out: list[str] = []
+    for i in range(1, n + 1):
+        p = resolve_infographic_cover_path(i)
+        if os.path.isfile(p):
+            out.append(os.path.normpath(os.path.abspath(p)))
+    return out
+
+
+def infographic_covers_complete(count: int | None = None) -> bool:
+    n = max(1, int(count or INFOGRAPHIC_COVER_COUNT))
+    return len(existing_infographic_cover_paths(n)) >= n
+
+
+def infographic_slot_files_for_pick(count: int | None = None) -> list[str]:
+    """``itc`` / ``itcs`` Telegram 选图：固定 ``Infographic_1…N`` 槽位顺序。"""
+    n = max(1, int(count or INFOGRAPHIC_COVER_COUNT))
+    out: list[str] = []
+    for i in range(1, n + 1):
+        p = resolve_infographic_cover_path(i)
+        if os.path.isfile(p):
+            out.append(os.path.normpath(os.path.abspath(p)))
+    return out
 
 
 def migrate_aiagent_runtime_files_from_program() -> None:

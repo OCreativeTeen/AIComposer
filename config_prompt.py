@@ -253,9 +253,9 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
         ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
     ],
     "speaking": [
-        ("script", "念 speaking · 第一人称口播"),
-        ("acting", "只演不讲 · 神态/肢体/思考"),
-        ("visual_keypoints", "讲解画面要点 · 非念图内文字"),
+        ("script", "主人公 speaking + 画外旁白 voiceover（旁白不出镜）"),
+        ("speaking", "仅主人公 speaking（无旁白）"),
+        ("acting", "只演不讲 + 画外旁白 voiceover"),
     ],
     "voiceover": [
         ("narration", "旁白讲述 · 第三人叙述"),
@@ -291,7 +291,10 @@ def normalize_nb_export_mode(mode: str, variant: str = "") -> tuple[str, str]:
         var = _NB_EXPORT_DEFAULT_VARIANT[base]
     valid = {v for v, _ in NOTEBOOKLM_EXPORT_VARIANTS[base]}
     if var not in valid:
-        raise ValueError(f"Unknown variant {var!r} for mode {base!r}")
+        if base == "speaking" and var == "visual_keypoints":
+            var = "speaking"
+        else:
+            raise ValueError(f"Unknown variant {var!r} for mode {base!r}")
     return base, var
 
 
@@ -333,15 +336,37 @@ _NB_EXPORT_CHOICE_ALIASES = {
     "speaking/script": ("speaking", "script"),
     "speaking_script": ("speaking", "script"),
     "speaking/念speaking": ("speaking", "script"),
+    "仅speaking": ("speaking", "speaking"),
+    "仅 speaking": ("speaking", "speaking"),
+    "speaking/speaking": ("speaking", "speaking"),
+    "只演不讲": ("speaking", "acting"),
+    "speaking/acting": ("speaking", "acting"),
+    "visual_keypoints": ("speaking", "speaking"),
+    "speaking/visual_keypoints": ("speaking", "speaking"),
 }
 
 # Grok 场景 video：NotebookLM 提示词 1…8（video + speaking + voiceover，不含 image）
 GROK_SCENE_VIDEO_NB_VARIANTS: list[tuple[str, str, str]] = [
     ("video", "motion", "纯画面 · 动作/表情/场景演进（无口播）"),
     ("video", "word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
-    ("speaking", "script", "念 speaking · 第一人称口播"),
-    ("speaking", "acting", "只演不讲 · 神态/肢体/思考"),
-    ("speaking", "visual_keypoints", "讲解画面要点 · 非念图内文字"),
+    # 主人公说 speaking；按需在其前/后加 voiceover（旁白声）；主人公不得对口型旁白
+    (
+        "speaking",
+        "script",
+        "主人公说 speaking (仅 actor 口型) + 画外旁白 voiceover (不出镜、无人对口型)",
+    ),
+    # 仅主人公说 speaking；无旁白 / voiceover
+    (
+        "speaking",
+        "speaking",
+        "主人公表演和说 speaking (第一人称口播)；无旁白和 voiceover",
+    ),
+    # 主人公只演不讲；画外旁白说 voiceover（主人公不对口型）
+    (
+        "speaking",
+        "acting",
+        "只演不讲 (神态/肢体/思考) + 旁白者(不出现在画面中) voiceover",
+    ),
     ("voiceover", "narration", "旁白讲述 · 第三人叙述"),
     ("voiceover", "narration_with_speakingavatar", "旁白讲述 · 主持人说话"),
     ("voiceover", "supplement", "补充/总结 · 衔接与点评"),
@@ -535,9 +560,29 @@ def scene_payload_for_notebooklm_export(
             new_scenes.append(slim)
             continue
         elif base == "speaking":
-            sp_keys: tuple[str, ...] = ("speaking", "actor", "visual")
-            slim = _slim_scene_fields(new_scene, sp_keys)
-            slim["act_and_natual_talk___not_rephrase"] = new_scene.pop("speaking", "")
+            if var == "script":
+                slim = _slim_scene_fields(
+                    new_scene,
+                    ("speaking", "voiceover", "actor", "visual"),
+                )
+            elif var == "speaking":
+                slim = _slim_scene_fields(
+                    new_scene,
+                    ("speaking", "actor", "visual"),
+                )
+            elif var == "acting":
+                slim = _slim_scene_fields(
+                    new_scene,
+                    ("visual", "actor", "voiceover"),
+                )
+                sp = (new_scene.get("speaking") or "").strip()
+                if sp:
+                    slim["acting_subtext_from_speaking"] = sp
+            else:
+                slim = _slim_scene_fields(
+                    new_scene,
+                    ("speaking", "actor", "visual"),
+                )
             new_scenes.append(slim)
             continue
 
@@ -605,26 +650,39 @@ NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR = """
 """
 
 
+NOTEBOOKLM_NARRATOR_AUDIO_ONLY = """
+** Narrator/Host = OFF-SCREEN AUDIO ONLY — never visible, never in frame, never as talking-head/avatar.
+** ``voiceover`` is delivered by narrator voice in the background; everyone on screen only ACTS (emotion, reaction, movement) while voiceover plays — mouths stay closed to voiceover.
+** CRITICAL — ZERO lip-sync to ``voiceover``: not the protagonist, not supporting characters, not anyone in the frame. No on-screen person becomes the narrator.
+** ONLY the scene protagonist (``actor`` field) lip-syncs ``speaking`` — the one and only lip-sync track in this video.
+"""
+
 NOTEBOOKLM_SPEAKING_SCRIPT = """
-** Protagonist (``actor``) speaking as 1st person — deliver the ``speaking`` field in subjective, in-the-moment tone.
-** Subjective, in-the-moment experience; may not draw conclusions or lecture.
-** Lip-sync: story character (``actor``) talking-avatar when shown in the scene image.
+** Protagonist = scene ``actor`` field (1st-person story character). Delivers ``speaking`` as lip-synced dialogue.
+** If no global protagonist is configured, use each scene's ``actor`` from Story_Scene_Content — do not substitute another speaker.
+** ``voiceover`` may play BEFORE or AFTER the protagonist ``speaking`` line as the scene needs.
+""" + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
+** Subjective, in-the-moment tone for ``speaking``; ``voiceover`` stays third-person narrator tone.
+** Do NOT read text printed in the image aloud.
+"""
+
+NOTEBOOKLM_SPEAKING_ONLY = """
+** Protagonist (scene ``actor`` field) performs AND delivers ONLY the ``speaking`` field as 1st-person lip-synced dialogue.
+** NO narrator/host voiceover track — do not speak ``voiceover`` (it may inform staging only).
+** ONLY the protagonist lip-syncs — no other visible character lip-syncs.
 ** Do NOT read text printed in the image aloud.
 """
 
 NOTEBOOKLM_SPEAKING_ACTING_SILENT = """
-** Protagonist (``actor``) NOT talking — no lip-sync, no spoken dialogue.
-** Use ``speaking`` field only as emotional/subtext reference: acting, wondering, reacting, hesitating, processing.
-** Express inner state through facial expression, posture, gesture, and subtle movement — as if thinking or wondering about the scene.
+** Protagonist (scene ``actor`` field) acts silently — NO lip-sync, NO spoken ``speaking`` dialogue on screen.
+** Use ``speaking`` / ``acting_subtext_from_speaking`` only as emotional/subtext reference: acting, wondering, reacting, hesitating, processing.
+** Express inner state through facial expression, posture, gesture, and subtle movement.
+""" + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
 ** May reference ``visual`` composition for what to react to; do NOT read words printed in the image aloud.
 """
 
-NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = """
-** speaking about the Word-in-image ~ naturally talk through the key points (not reading text in image), while speaking about a point/element, animate it to attract audience's attention.
-** Protagonist (``actor``) explains the scene visually — walk through composition, symbols, character state, and story beats implied by ``visual``.
-** Use ``speaking`` field as emotional tone reference; do NOT literally read words printed in the image.
-** Lip-sync allowed when protagonist (``actor``) appears as talking-avatar in the scene image.
-"""
+# 旧变体 visual_keypoints 已并入 speaking/speaking；保留常量供旧剪贴板/脚本引用
+NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = NOTEBOOKLM_SPEAKING_ONLY
 
 NOTEBOOKLM_SPEAKING_INSTRUCTION = NOTEBOOKLM_SPEAKING_SCRIPT
 
@@ -1021,14 +1079,22 @@ def build_notebooklm_gen_instruction_clipbody(
         parts["Story_Scene_Content"] = json_content
 
     elif base == "speaking":
-        parts["Voice"] = (
-            f"{main_character} ~ Protagonist/actor (1st person)"
-            if main_character
-            else "Protagonist not set — use each scene's actor field"
-        )
+        if main_character:
+            parts["Voice"] = f"{main_character} ~ Protagonist/actor (1st person)"
+        if var in ("script", "acting"):
+            if host_narrator:
+                parts["Narrator_audio"] = (
+                    f"{host_narrator} ~ off-screen narrator voice for ``voiceover`` "
+                    f"(never on screen; no visible lip-sync)"
+                )
+            else:
+                parts["Narrator_audio"] = (
+                    "Off-screen narrator voice for ``voiceover`` only "
+                    "(never visible in frame; no on-screen lip-sync)"
+                )
         sp_instr = (
-            NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS
-            if var == "visual_keypoints"
+            NOTEBOOKLM_SPEAKING_ONLY
+            if var == "speaking"
             else NOTEBOOKLM_SPEAKING_ACTING_SILENT
             if var == "acting"
             else NOTEBOOKLM_SPEAKING_SCRIPT

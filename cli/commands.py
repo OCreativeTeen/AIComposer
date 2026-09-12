@@ -70,6 +70,7 @@ _SHORT_CLI: dict[str, str] = {
     "notebooklm_ready": "nbif",
     "whole_story_image": "igp",
     "whole_story_pick": "itc",
+    "whole_story_pick_skip": "itcs",
     "grok_image": "grv",
     "grok_image_prompt": "gri",
     "grok_download": "gvd",
@@ -131,9 +132,9 @@ def _bridge_field_retry(
     return None
 
 
-def _lm_bridge_retry(want: str, *, timeout_s: float = 15.0) -> tuple[bool, str] | None:
+def _lm_bridge_retry(want: str, *, timeout_s: float = 90.0) -> tuple[bool, str] | None:
     """Retry bridge LM set while SCENE is still finishing its async UI build."""
-    return _bridge_field_retry("lm", want, timeout_s=timeout_s, per_try_timeout_s=6.0)
+    return _bridge_field_retry("lm", want, timeout_s=timeout_s, per_try_timeout_s=8.0)
 
 _ALIASES: dict[str, str] = {
     "审阅发布": "publish",
@@ -228,9 +229,12 @@ _ALIASES: dict[str, str] = {
     "image_grok_paste": "whole_story_image",
     "wsi": "whole_story_image",
     "itc": "whole_story_pick",
+    "itcs": "whole_story_pick_skip",
     "image_telegram_choosing": "whole_story_pick",
     "wsp": "whole_story_pick",
     "cover_pick": "whole_story_pick",
+    "cover_pick_skip": "whole_story_pick_skip",
+    "wsp_skip": "whole_story_pick_skip",
     "grok_image": "grok_image",
     "gork_image": "grok_image",
     "grok": "grok_image",
@@ -356,7 +360,7 @@ def cmd_help() -> tuple[bool, str]:
         f"win={public_screen_name(screen)}  (story=STORY  scene=SCENE  list=LIST  yt=YT)",
         "sync  — 再同步一次",
         "",
-        "SCENE:  scnlm  scnvs  sty  snp  prf  scnge  scnsave  nbp  nbi  nbif  itc  grv  gvd  vc  vp  nbv  gen  cx  sync",
+        "SCENE:  scnlm  scnvs  sty  snp  prf  scnge  scnsave  nbp  nbi  nbif  itc  itcs  grv  gvd  vc  vp  nbv  gen  cx  sync",
         "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
@@ -522,12 +526,66 @@ def _load_gemini_prompt() -> str:
     return bridge_prompt or clip
 
 
-def cmd_gemini() -> tuple[bool, str]:
-    """Clipboard prompt → Gemini chat → wait → copy finished JSON back to clipboard."""
+def load_existing_scene_content() -> tuple[list | None, str]:
+    """读取已有 ``scene_content``：优先 SCENE 编辑器，其次频道 list 行。"""
+    from cli.bridge import bridge_screen_bound
+    from cli.video_choice_queue import (
+        active_video_detail_scene_content,
+        parse_scene_content_field,
+    )
+
+    if bridge_screen_bound(SCREEN_STORY_SCENE, timeout_s=2.0):
+        ok, raw = send_bridge_command(
+            screen=SCREEN_STORY_SCENE,
+            op="get",
+            field="content",
+            timeout_s=8.0,
+        )
+        if ok:
+            parsed = parse_scene_content_field(raw)
+            if parsed:
+                return parsed, "SCENE 编辑器"
+
+    sc = active_video_detail_scene_content()
+    if sc:
+        return sc, "频道列表 video_detail"
+    return None, ""
+
+
+def copy_existing_scene_content_to_clipboard() -> tuple[bool, str]:
+    """把已有 ``scene_content`` 格式化后写入 Windows 剪贴板。"""
     import json
 
-    from cli.browser_tasks import GEMINI_PASTED_MARK, handle_gemini, write_windows_clipboard
-    from utility.telegram_session import story_scene_count
+    from cli.browser_tasks import write_windows_clipboard
+    from utility.telegram_session import clear_gemini_scenes_pick
+
+    sc, source = load_existing_scene_content()
+    if not sc:
+        return False, (
+            "还没有 scene_content。"
+            "请先 scnge 生成，或 scnsave 保存到频道列表。"
+        )
+    pretty = json.dumps(sc, ensure_ascii=False, indent=2)
+    try:
+        write_windows_clipboard(pretty)
+    except Exception as exc:
+        return False, f"写入剪贴板失败：{exc}"
+    clear_gemini_scenes_pick()
+    shown = short_cli("gemini")
+    return True, (
+        f"{shown} ok — 已用已有 {len(sc)} 场 scene_content（{source}）写入剪贴板。\n"
+        "下一步发 scnsave（若尚未保存到频道列表）。"
+    )
+
+
+def _run_gemini_scene_generation() -> tuple[bool, str]:
+    """Gemini ×3 → 保存 JSON → 等待 pick。"""
+    from cli.browser_tasks import generate_gemini_scene_variants
+    from utility.telegram_session import (
+        clear_gemini_scenes_pick,
+        start_gemini_scenes_pick,
+        story_scene_count,
+    )
 
     prompt = _load_gemini_prompt()
     expected = story_scene_count(prompt_text=prompt)
@@ -541,35 +599,90 @@ def cmd_gemini() -> tuple[bool, str]:
             "还不知道要生成几个场景。请先在 SCENE 发 scnlm 选好 LM（如 4 Step Story），再 scnge。"
         )
 
+    clear_gemini_scenes_pick()
     try:
-        raw = handle_gemini(prompt)
+        paths = generate_gemini_scene_variants(prompt)
     except Exception as exc:
         return False, f"gemini failed: {exc}"
 
-    if raw == GEMINI_PASTED_MARK:
+    start_gemini_scenes_pick(paths)
+    lines = "\n".join(f"  {i}. {p}" for i, p in enumerate(paths, 1))
+    return True, (
+        f"{short_cli('gemini')} ok — 已生成 {len(paths)} 份场景 JSON：\n"
+        f"{lines}\n"
+        "请打开文件对比后，在 Telegram 回复 1 / 2 / 3（或 scnge pick N）。\n"
+        "选定后将写入剪贴板，再发 scnsave。"
+    )
+
+
+def cmd_gemini(value: str = "") -> tuple[bool, str]:
+    """Clipboard prompt → Gemini ×3 → save JSON files → wait for pick → clipboard."""
+    from utility.telegram_session import (
+        gemini_scenes_pick_pending,
+        start_scene_generation_choice,
+    )
+
+    want = (value or "").strip().translate(_FULLWIDTH_DIGITS).lower()
+    if want.startswith("pick"):
+        parts = want.split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            return cmd_gemini_pick(int(parts[1]))
+        if gemini_scenes_pick_pending():
+            return False, "用法：scnge pick 1  或直接在 Telegram 回复 1 / 2 / 3。"
+        return False, "当前没有待选的场景 JSON（先发 scnge）。"
+    if want.isdigit() and gemini_scenes_pick_pending():
+        return cmd_gemini_pick(int(want))
+
+    if want in ("use", "copy", "existing", "skip", "reuse", "已有"):
+        return copy_existing_scene_content_to_clipboard()
+    if want in ("force", "regen", "generate", "new", "生成", "重新"):
+        return _run_gemini_scene_generation()
+
+    existing, source = load_existing_scene_content()
+    if existing:
+        start_scene_generation_choice(len(existing), source=source)
+        shown = short_cli("gemini")
         return True, (
-            "已粘贴提示词并回车。等生成结束后再发 gemini_copy，把 JSON 拷回剪贴板；"
-            "然后发 scnsave 写入 SCENE 并保存到频道列表。"
+            f"已有 {len(existing)} 场 scene_content（{source}）。\n"
+            f"1 = 用 Gemini 重新生成 ×3（{shown} force）\n"
+            f"2 = 用已有数据拷到剪贴板（{shown} use）\n"
+            "请 Telegram 回复 1 或 2（也可发 生成 / 已有）。"
         )
 
-    try:
-        parsed = json.loads(raw)
-        pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
-        n = len(parsed) if isinstance(parsed, list) else "?"
-        if isinstance(parsed, list) and len(parsed) != expected:
-            return False, (
-                f"scnge 返回 {len(parsed)} 场，但 LM prompt 期望 {expected} 场。"
-                "请检查 SCENE「选LM提示」是否与 scnge 一致。"
+    return _run_gemini_scene_generation()
+
+
+def cmd_gemini_pick(index: int) -> tuple[bool, str]:
+    """``scnge pick N`` — 把第 N 份 Gemini_Scenes_N.json 写入剪贴板。"""
+    import json
+
+    from utility.telegram_session import (
+        gemini_scenes_pick_pending,
+        record_gemini_scenes_pick,
+        selected_gemini_scenes_json_path,
+    )
+
+    if not gemini_scenes_pick_pending():
+        path = selected_gemini_scenes_json_path()
+        if path:
+            return True, (
+                f"scnge pick ok — 已选 {os.path.basename(path)}（剪贴板已就绪）。\n"
+                "下一步发 scnsave。"
             )
-    except Exception:
-        pretty = raw
-        n = "?"
+        return False, "当前没有待选的场景 JSON（先发 scnge）。"
     try:
-        write_windows_clipboard(pretty)
+        picked = record_gemini_scenes_pick(index)
+    except ValueError as exc:
+        return False, str(exc)
+    try:
+        with open(picked["path"], "r", encoding="utf-8") as f:
+            parsed = json.load(f)
+        n = len(parsed) if isinstance(parsed, list) else "?"
     except Exception:
-        pass
+        n = "?"
     return True, (
-        f"{short_cli('gemini')} ok — {n} scenes on clipboard (LM={expected}).\n"
+        f"scnge pick ok — #{index}（{os.path.basename(picked.get('path') or '')}）"
+        f" — {n} scenes on clipboard.\n"
         "下一步发 scnsave，写入 SCENE 并保存到频道列表。"
     )
 
@@ -601,82 +714,178 @@ def cmd_gemini_copy() -> tuple[bool, str]:
     )
 
 
-def _scene_json_from_clipboard() -> tuple[list | None, str, str]:
-    """Return ``(parsed, pretty_json, error_message)`` from Windows clipboard."""
+def _parse_scene_json_list(text: str) -> list | None:
+    """Parse scene_content array from raw JSON text (no stale count guard)."""
     import json
 
-    from cli.browser_tasks import parse_ready_scene_json, read_windows_clipboard
-    from utility.telegram_session import story_scene_count
+    from cli.browser_tasks import parse_ready_scene_json
 
-    expected = story_scene_count()
+    parsed = parse_ready_scene_json(text, expected=None)
+    if parsed is not None:
+        return parsed
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(value, list) and value:
+        return value
+    return None
+
+
+def _scene_json_for_save() -> tuple[list | None, str, str, str]:
+    """Load scene JSON for ``scnsave``.
+
+    Priority (disk overrides clipboard / stale memory):
+    1. Selected ``Gemini_Scenes_N.json`` on disk (after scnge pick)
+    2. Windows clipboard
+
+    Returns ``(parsed, pretty_json, error_message, source_label)``.
+    """
+    import json
+    from pathlib import Path
+
+    from cli.browser_tasks import read_windows_clipboard
+    from utility.telegram_session import selected_gemini_scenes_json_path
+
+    gemini_path = (selected_gemini_scenes_json_path() or "").strip()
+    if gemini_path and os.path.isfile(gemini_path):
+        try:
+            text = Path(gemini_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            return None, "", f"读取 {gemini_path} 失败：{exc}", ""
+        parsed = _parse_scene_json_list(text)
+        if not parsed:
+            return (
+                None,
+                "",
+                f"{os.path.basename(gemini_path)} 不是有效的 scene_content JSON 数组。",
+                "",
+            )
+        pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
+        return parsed, pretty, "", f"disk:{os.path.basename(gemini_path)}"
+
     try:
         text = read_windows_clipboard()
     except Exception as exc:
-        return None, "", f"clipboard empty/unreadable: {exc}"
+        return None, "", f"clipboard empty/unreadable: {exc}", ""
 
-    parsed = parse_ready_scene_json(text, expected=expected or None)
+    parsed = _parse_scene_json_list(text)
     if parsed is None:
-        try:
-            value = json.loads(text)
-        except Exception:
-            value = None
-        if isinstance(value, list) and value:
-            if expected >= 1 and len(value) != expected:
-                return (
-                    None,
-                    "",
-                    (
-                        f"剪贴板有 {len(value)} 场 JSON，但当前记录期望 {expected} 场。"
-                        "请先 scnlm + scnvs 选好，再 scnge / scnsave。"
-                    ),
-                )
-            parsed = value
-    if parsed is None:
-        hint = f"（期望 {expected} 场）" if expected >= 1 else ""
         return (
             None,
             "",
-            (
-                f"剪贴板里不是有效的 SCENE JSON{hint}。"
-                "请先跑 scnge（或 gemini_copy），再发 scnsave。"
-            ),
+            "剪贴板里不是有效的 SCENE JSON 数组。请先 scnge（或 gemini_copy），再发 scnsave。",
+            "",
         )
     pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
-    return parsed, pretty, ""
+    return parsed, pretty, "", "clipboard"
+
+
+def _scnsave_bridge_retryable(msg: str) -> bool:
+    low = (msg or "").lower()
+    return any(
+        token in low or token in (msg or "")
+        for token in (
+            "unknown field",
+            "仍在加载",
+            "pump",
+            "卡住",
+            "无响应",
+            "timeout",
+            "not ready",
+            "编辑区仍在加载",
+        )
+    )
+
+
+def _scnsave_sync_scene_editor(pretty: str) -> None:
+    """Push saved JSON into SCENE editor text area (best-effort)."""
+    if not (pretty or "").strip():
+        return
+    if not bridge_screen_bound(SCREEN_STORY_SCENE, timeout_s=2.0):
+        return
+    send_bridge_command(
+        screen=SCREEN_STORY_SCENE,
+        op="set",
+        field="content",
+        value=pretty,
+        timeout_s=12.0,
+    )
+
+
+def _scnsave_direct_to_list(parsed: list, *, pretty: str = "") -> tuple[bool, str]:
+    """Fallback: write scene_content to channel list without SCENE editor bridge."""
+    from cli.video_choice_queue import (
+        current_taken_queue_item,
+        persist_active_video_detail_field,
+        resolve_video_detail_from_queue_item,
+    )
+
+    ok, msg = persist_active_video_detail_field("scene_content", parsed)
+    if not ok:
+        return False, f"scnsave direct persist failed: {msg}"
+    vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
+    if isinstance(vd, dict):
+        vd["scene_content"] = parsed
+    if pretty:
+        _scnsave_sync_scene_editor(pretty)
+    return True, (
+        f"scnsave ok — {len(parsed)} scenes saved to video_detail "
+        f"(direct write; SCENE editor synced)"
+    )
 
 
 def cmd_scene_save() -> tuple[bool, str]:
-    """Clipboard JSON → scene_content 文本框 → 写入 video_detail / 频道列表（不关窗）。"""
-    parsed, pretty, err = _scene_json_from_clipboard()
+    """Gemini 磁盘文件或剪贴板 JSON → scene_content → 写入 video_detail（不关窗）。
+
+    已选的 ``Gemini_Scenes_N.json`` 优先于剪贴板；与频道 list 里旧数据不同则覆盖。
+    """
+    from cli.bridge import wait_bridge_pump_alive
+
+    parsed, pretty, err, source = _scene_json_for_save()
     if err:
         return False, err
 
+    source_note = f" from {source}" if source else ""
+
     if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
+        ok, msg = _scnsave_direct_to_list(parsed, pretty=pretty)
+        if ok:
+            return True, msg + source_note
         return False, "SCENE 窗还没就绪。先发 scn 打开场景编辑窗。"
 
     _foreground_story_scene()
+    wait_bridge_pump_alive(timeout_s=45.0)
     set_ok, set_msg = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="set",
         field="content",
         value=pretty,
-        timeout_s=8.0,
+        timeout_s=12.0,
     )
     if not set_ok:
+        if _scnsave_bridge_retryable(set_msg):
+            ok, msg = _scnsave_direct_to_list(parsed, pretty=pretty)
+            if ok:
+                return True, msg + source_note
         return False, f"scnsave failed setting scene_content: {set_msg}"
 
     persist_ok, persist_msg = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="persist",
         field="content",
-        timeout_s=12.0,
+        timeout_s=15.0,
     )
     if not persist_ok:
+        if _scnsave_bridge_retryable(persist_msg):
+            ok, msg = _scnsave_direct_to_list(parsed, pretty=pretty)
+            if ok:
+                return True, msg + source_note
         return False, f"scnsave persist failed: {persist_msg}"
 
     return True, (
-        f"scnsave ok — {len(parsed)} scenes saved to video_detail "
-        f"(SCENE window kept open; clipboard unchanged)"
+        f"scnsave ok — {len(parsed)} scenes saved to video_detail"
+        f"{source_note} (SCENE window kept open; clipboard unchanged)"
     )
 
 
@@ -741,10 +950,17 @@ def scene_lm_choice_labels_resolved() -> list[str]:
     return labels if labels else scene_lm_choice_labels_fallback()
 
 
-def scene_lm_list_message() -> tuple[bool, str]:
-    """Format scnlm 无参列表（总能给出 Telegram 可选项）。"""
+def scene_lm_list_message(*, fast: bool = False) -> tuple[bool, str]:
+    """Format scnlm 无参列表（总能给出 Telegram 可选项）。
+
+    ``fast=True``：只用 config 后备列表，不读 SCENE bridge（Hermes 发 Telegram 用）。
+    """
     shown = short_cli("scene_lm")
-    labels = scene_lm_choice_labels_resolved()
+    labels = (
+        scene_lm_choice_labels_fallback()
+        if fast
+        else scene_lm_choice_labels_resolved()
+    )
     if not labels:
         return False, f"{shown} 没有 LM 提示词选项。"
     body = _format_numbered_choices("请选择 LM 提示词", labels, shown)
@@ -773,21 +989,23 @@ def _record_chrome_profile(kind: str, selected: dict) -> None:
 def _set_scene_lm(want: str) -> tuple[bool, str]:
     """在 SCENE 设置「选LM提示」并校验下拉已切换。"""
     import project_manager
+    from cli.bridge import wait_bridge_pump_alive
 
     want = (want or "").strip().translate(_FULLWIDTH_DIGITS)
     if not want:
         return False, "缺少 LM 序号"
     if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
         return False, "SCENE 窗还没就绪。先发 scn 打开场景编辑窗。"
+    wait_bridge_pump_alive(timeout_s=12.0)
     ok, msg = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="set",
         field="lm",
         value=want,
-        timeout_s=20.0,
+        timeout_s=12.0,
     )
     if not ok:
-        fb = _lm_bridge_retry(want)
+        fb = _lm_bridge_retry(want, timeout_s=90.0)
         if fb:
             ok, msg = fb
     if not ok:
@@ -832,21 +1050,23 @@ def _set_scene_visual_style(want: str) -> tuple[bool, str]:
     """在 SCENE 设置 Visual Style 下拉，并同步 ``LAST_VISUAL_STYLE``。"""
     import config
     import project_manager
+    from cli.bridge import wait_bridge_pump_alive
 
     want = (want or "").strip().translate(_FULLWIDTH_DIGITS)
     if not want:
         return False, "缺少 Visual Style 序号"
     if not _wait_screen_ready(SCREEN_STORY_SCENE, timeout_s=25.0):
         return False, "SCENE 窗还没就绪。先发 scn 打开场景编辑窗。"
+    wait_bridge_pump_alive(timeout_s=90.0)
     ok, msg = send_bridge_command(
         screen=SCREEN_STORY_SCENE,
         op="set",
         field="style",
         value=want,
-        timeout_s=20.0,
+        timeout_s=25.0,
     )
     if not ok:
-        fb = _bridge_field_retry("style", want, timeout_s=60.0)
+        fb = _bridge_field_retry("style", want, timeout_s=90.0)
         if fb:
             ok, msg = fb
     if not ok:
@@ -1103,7 +1323,7 @@ def cmd_notebooklm_ready(value: str = "") -> tuple[bool, str]:
             f"{shown} — 三个新的 infographic 已经 ready。\n"
             f"Studio 右侧列表无 Generating 项"
             f"{f'（共 {total} 个 artifact）' if total else ''}。\n"
-            f"下一步发 {itc}：打开这三张、下载到 Windows Downloads，再 Telegram 发给你选一张。"
+            f"下一步发 {itc}：下载三张到 aiagent/Infographic_1…3.png，再 Telegram 发给你选一张。"
         )
     if st.get("uncertain"):
         return True, (
@@ -1190,11 +1410,7 @@ def install_story_cover_from_image(image_path: str) -> tuple[bool, str]:
         current_taken_queue_item,
         resolve_video_detail_from_queue_item,
     )
-    from gui.downloader import (
-        _apply_video_title_before_cover_save,
-        _title_from_cover_image_path,
-        save_cover_image_as_gen_video_webp,
-    )
+    from gui.downloader import save_cover_image_as_gen_video_webp
 
     item = current_taken_queue_item()
     vd = resolve_video_detail_from_queue_item(item) if item else None
@@ -1217,17 +1433,10 @@ def install_story_cover_from_image(image_path: str) -> tuple[bool, str]:
         lang=lang,
     )
     if ok:
-        stem = _title_from_cover_image_path(path)
-        if stem:
-            ch_path = (item.get("list_json_path") or "").strip()
-            _apply_video_title_before_cover_save(
-                vd,
-                video_title=stem,
-                channel_path=ch_path,
-            )
-            from cli.video_choice_queue import persist_active_video_detail_row
+        vd["cover_image"] = dest
+        from cli.video_choice_queue import persist_active_video_detail_row
 
-            persist_active_video_detail_row(vd)
+        persist_active_video_detail_row(vd)
         return True, f"封面已保存: {dest}"
     return False, err or "保存封面失败"
 
@@ -1247,29 +1456,89 @@ def _itc_parse_cover_index(want: str) -> int | None:
     return None
 
 
-def _itc_send_covers(files: list[str], shown: str, igp: str) -> tuple[bool, str]:
-    from utility.telegram_cli import notify_whole_story_covers_for_pick
-    from utility.telegram_session import mark_whole_story_telegram_sent
+def _itc_cover_slot_files(files: list[str] | None = None) -> list[str]:
+    """Telegram 选封面：优先 ``aiagent/Infographic_1…3`` 固定槽位。"""
+    import config
 
+    expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
+    slots = config.infographic_slot_files_for_pick(expected)
+    if len(slots) >= expected:
+        return slots
+    out: list[str] = []
+    for item in files or []:
+        p = os.path.normpath(os.path.abspath((item or "").strip()))
+        if p and os.path.isfile(p) and p not in out:
+            out.append(p)
+    return out
+
+
+def _itc_send_covers(
+    files: list[str],
+    shown: str,
+    igp: str,
+    *,
+    from_disk: bool = False,
+) -> tuple[bool, str]:
+    from utility.telegram_cli import notify_whole_story_covers_for_pick
+    from utility.telegram_session import mark_whole_story_telegram_sent, save_whole_story_images
+
+    files = _itc_cover_slot_files(files)
     if not files:
-        return False, f"{shown} 没有拷到 infographic 图。"
+        return False, f"{shown} 没有封面图。"
+    save_whole_story_images(files)
     tg_lines = notify_whole_story_covers_for_pick(files)
     mark_whole_story_telegram_sent()
     extra = "\n".join(tg_lines) if tg_lines else ""
-    listed = _format_numbered_choices(
-        f"已拷 {len(files)} 张封面到 working：",
-        [os.path.basename(p) for p in files],
-        "封面",
-    )
+    if from_disk:
+        listed = _format_numbered_choices(
+            f"已从 aiagent 读取 {len(files)} 张封面：",
+            [os.path.basename(p) for p in files],
+            "封面",
+        )
+        mode_hint = (
+            f"（{shown} = 跳过 NotebookLM 下载；可手动覆盖 Infographic_N 后再选）\n"
+        )
+    else:
+        listed = _format_numbered_choices(
+            f"已拷 {len(files)} 张封面：",
+            [os.path.basename(p) for p in files],
+            "封面",
+        )
+        mode_hint = (
+            f"（{shown} N 在等选图时表示选第 N 张；窗口已关、还没图时用 nbi N 再 {shown}。）\n"
+        )
     msg = (
         f"{shown} ok — 已发 Telegram 请选封面。\n{listed}\n"
         f"Telegram 直接回复 1…{len(files)}，或发 {shown} 1…{len(files)} 选定。\n"
-        f"（{shown} N 在等选图时表示选第 N 张；窗口已关、还没图时用 nbi N 再 {shown}。）\n"
+        f"{mode_hint}"
         f"选定后会记下并拷到剪贴板；再发 {igp} 贴进 Grok。"
     )
     if extra:
         msg += f"\n{extra}"
     return True, msg
+
+
+def send_existing_infographic_covers_for_pick() -> tuple[bool, str]:
+    """``itcs``：不发 NotebookLM，直接从 aiagent/Infographic_N 发 Telegram 请选。"""
+    import config
+
+    shown = short_cli("whole_story_pick_skip")
+    igp = short_cli("whole_story_image")
+    expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
+    files = config.infographic_slot_files_for_pick(expected)
+    if len(files) < expected:
+        missing = []
+        for i in range(1, expected + 1):
+            p = config.resolve_infographic_cover_path(i)
+            if not os.path.isfile(p):
+                missing.append(os.path.basename(config.infographic_cover_path(i)))
+        base = os.path.dirname(config.infographic_cover_path(1)) or "aiagent"
+        return False, (
+            f"{shown} 需要 {expected} 张封面，当前只有 {len(files)} 张。\n"
+            f"缺少：{', '.join(missing) or '?'}\n"
+            f"请把图放到 {base}\\Infographic_1…{expected}，或走 nbp→nbi→itc 重新生成。"
+        )
+    return _itc_send_covers(files, shown, igp, from_disk=True)
 
 
 def download_notebooklm_covers_and_notify(
@@ -1383,6 +1652,44 @@ def cmd_whole_story_pick(value: str = "") -> tuple[bool, str]:
         f"{shown} N = 选第 N 张封面（Telegram 也可直接回 1/2/3）；\n"
         f"还没图时 {shown} N 仍可用 Chrome 号 N 重开 notebook（建议 nbi N 再 {shown}）。"
     )
+
+
+def cmd_whole_story_pick_skip(value: str = "") -> tuple[bool, str]:
+    """``itcs`` — 跳过 NotebookLM 下载，从 aiagent/Infographic_N 发 Telegram 请选。
+
+    ``itcs`` — 读取已有三张封面并发 Telegram。
+    ``itcs N`` / ``itcs pick N`` — 选第 N 张（与 ``itc N`` 相同）。
+    """
+    from utility.telegram_session import (
+        load_whole_story_images,
+        whole_story_pick_pending,
+    )
+
+    shown = short_cli("whole_story_pick_skip")
+    igp = short_cli("whole_story_image")
+    want = (value or "").strip().translate(_FULLWIDTH_DIGITS)
+    pick_idx = _itc_parse_cover_index(want)
+    files = load_whole_story_images()
+
+    if pick_idx is not None:
+        if files and 1 <= pick_idx <= len(files):
+            return _itc_do_cover_pick(pick_idx, shown, igp)
+        if whole_story_pick_pending():
+            return False, (
+                f"请选 1…{len(files) or 3}。"
+                f"Telegram 直接回复数字，或 {shown} 1…{len(files) or 3}。"
+            )
+        if not want.isdigit():
+            return False, f"还没有封面图。请先 {shown}，再 {shown} {pick_idx}。"
+
+    if want:
+        return False, (
+            f"unknown {shown}: {value}\n"
+            f"无参 = 从 aiagent/Infographic_1…3 发 Telegram 请选（不下载）；\n"
+            f"{shown} N = 选第 N 张封面。"
+        )
+
+    return send_existing_infographic_covers_for_pick()
 
 
 def _paste_whole_story_image_to_grok(picked: str, picked_idx: int) -> tuple[bool, str]:
@@ -1629,18 +1936,19 @@ def cmd_video_concat(value: str = "") -> tuple[bool, str]:
     """按场景顺序打开 STORY 审阅窗（预载各场景 grok clip）；用户确认后再拼接+水印。"""
     import json
 
-    from cli.video_choice_queue import collect_scene_grok_clip_paths
+    from cli.video_choice_queue import collect_scene_grok_clip_segments
 
     _ = value
-    paths = collect_scene_grok_clip_paths()
-    if not paths:
+    segments = collect_scene_grok_clip_segments()
+    if not segments:
         return False, (
             "还没有场景 clip 路径。\n"
-            "先 grv（含各场景下载，会写入 scene_content.grok_clip），"
+            "先 grv（含各场景下载，会写入 scene_content[].clip），"
             "或各标签出片后 gvd。"
         )
     preview = "\n".join(
-        f"  {i}. {os.path.basename(p)}" for i, p in enumerate(paths, 1)
+        f"  场景 {i}. {os.path.basename(seg.get('path') or '')}"
+        for i, seg in enumerate(segments, 1)
     )
     if not bridge_screen_bound(SCREEN_STORY_ROOT, timeout_s=3.0):
         return False, (
@@ -1651,13 +1959,13 @@ def cmd_video_concat(value: str = "") -> tuple[bool, str]:
         screen=SCREEN_STORY_ROOT,
         op="set",
         field="clip_review",
-        value=json.dumps(paths, ensure_ascii=False),
+        value=json.dumps(segments, ensure_ascii=False),
         timeout_s=30.0,
     )
     if not ok:
         return False, f"vc failed: {msg}\n已准备的 clip：\n{preview}"
     return True, (
-        f"vc ok — 已打开审阅窗（{len(paths)} 段，场景 1→{len(paths)} 顺序）。\n"
+        f"vc ok — 已打开审阅窗（{len(segments)} 段，scene_content 场景 1→{len(segments)} 顺序）。\n"
         f"请在窗口内裁剪/排序后点确认，才会拼接并加水印生成成片。\n{preview}"
         + (f"\n{msg}" if msg else "")
     )
@@ -1939,7 +2247,7 @@ def dispatch(raw: str) -> tuple[bool, str]:
             return cmd_profile(value)
         return _choice_cli(cmd, field, value)
     if cmd == "gemini":
-        return cmd_gemini()
+        return cmd_gemini(value)
     if cmd in ("gemini_copy", "copyjson", "fetch"):
         return cmd_gemini_copy()
     if cmd in ("scene_save", "scnsave", "ssave", "s_save", "paste_scene", "pst"):
@@ -1950,6 +2258,8 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_notebooklm_ready(value)
     if cmd == "whole_story_pick":
         return cmd_whole_story_pick(value)
+    if cmd == "whole_story_pick_skip":
+        return cmd_whole_story_pick_skip(value)
     if cmd == "whole_story_image":
         return cmd_whole_story_image(value)
     if cmd == "grok_image":

@@ -1858,17 +1858,56 @@ def _handle_gemini_cdp(prompt_text: str) -> str:
 GEMINI_PASTED_MARK = "__GEMINI_PASTED__"
 
 
-def handle_gemini(prompt_text: str) -> str:
-    """scnge: CDP 直连 DOM —— 精确定位输入框、回车生成、直接读回 JSON。"""
-    write_windows_clipboard(prompt_text)
+def _run_gemini_generation_once(prompt_text: str) -> str:
+    """单次 Gemini 生成 → JSON 字符串（不写剪贴板）。"""
     try:
-        scene_json = _handle_gemini_cdp(prompt_text)
+        return _handle_gemini_cdp(prompt_text)
     except Exception as exc:
         msg = str(exc)
         if "还没登录 Google" in msg or "HermesChromeCDP" in msg:
             raise
         log(f"CDP path failed: {exc}")
         return _handle_gemini_mouse(prompt_text)
+
+
+def generate_gemini_scene_variants(
+    prompt_text: str,
+    *,
+    count: int | None = None,
+) -> list[str]:
+    """连续跑 Gemini ``count`` 次，各存 ``aiagent/Gemini_Scenes_N.json``。"""
+    import config
+
+    n = int(count or getattr(config, "GEMINI_SCENES_VARIANT_COUNT", 3) or 3)
+    n = max(1, n)
+    config.ensure_aiagent_path()
+    expected = _expected_scene_count(prompt_text)
+    paths: list[str] = []
+
+    for i in range(1, n + 1):
+        log(f"scnge variant {i}/{n}: generating…")
+        raw = _run_gemini_generation_once(prompt_text)
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"scnge variant {i}/{n} 不是有效 JSON: {exc}") from exc
+        if isinstance(parsed, list) and expected and len(parsed) != expected:
+            raise RuntimeError(
+                f"scnge variant {i}/{n} 返回 {len(parsed)} 场，但 LM prompt 期望 {expected} 场。"
+            )
+        pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
+        out_path = config.gemini_scenes_json_path(i)
+        Path(out_path).write_text(pretty, encoding="utf-8")
+        paths.append(out_path)
+        log(f"scnge variant {i}/{n}: saved {out_path}")
+
+    return paths
+
+
+def handle_gemini(prompt_text: str) -> str:
+    """scnge 兼容：单次生成并写剪贴板（主流程请用 ``generate_gemini_scene_variants``）。"""
+    write_windows_clipboard(prompt_text)
+    scene_json = _run_gemini_generation_once(prompt_text)
     try:
         write_windows_clipboard(scene_json)
     except Exception as exc:
@@ -2928,12 +2967,65 @@ def _paste_infographic_prompt(hwnd: int, prompt: str) -> None:
         )
 
 
+def _infographic_button_label(ctrl) -> str:
+    try:
+        return (ctrl.Name or "").strip()
+    except Exception:
+        return ""
+
+
+def _norm_infographic_btn_label(text: str) -> str:
+    """Lowercase + collapse fullwidth spaces for Generate now/later matching."""
+    s = (text or "").strip().translate(str.maketrans("ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"))
+    return " ".join(s.lower().split())
+
+
 def _click_generate(hwnd: int) -> None:
-    if not _click_named(
-        hwnd, "Generate", ["ButtonControl"], search_depth=22
-    ):
-        log("Generate button not found by name; ratio-click modal bottom-right")
-        _click_ratio(hwnd, 0.58, 0.825, pause=0.55)
+    """Click **Generate now** on Customize Infographic (not Generate later)."""
+    prefer_names = (
+        "Generate now",
+        "Generate Now",
+        "立即生成",
+        "现在生成",
+    )
+    for name in prefer_names:
+        if _click_named(hwnd, name, ["ButtonControl"], search_depth=22):
+            time.sleep(1.2)
+            return
+
+    buttons = _uia_named_all(
+        hwnd, "Generate", ["ButtonControl"], search_depth=22, limit=8
+    )
+    chosen = None
+    for ctrl in buttons:
+        low = _norm_infographic_btn_label(_infographic_button_label(ctrl))
+        if "later" in low:
+            continue
+        if "now" in low:
+            chosen = ctrl
+            break
+
+    if chosen is None:
+        candidates: list[tuple[int, object]] = []
+        for ctrl in buttons:
+            low = _norm_infographic_btn_label(_infographic_button_label(ctrl))
+            if "later" in low:
+                continue
+            box = _ctrl_box(ctrl)
+            if box:
+                candidates.append((box[2], ctrl))
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            chosen = candidates[0][1]
+
+    if chosen is not None:
+        log(f"UIA click infographic generate: {_infographic_button_label(chosen)!r}")
+        _click_rect_center(chosen.BoundingRectangle)
+        time.sleep(1.2)
+        return
+
+    log("Generate now not found by UIA; ratio-click bottom-right (Generate now)")
+    _click_ratio(hwnd, 0.86, 0.90, pause=0.55)
     time.sleep(1.2)
 
 
@@ -5063,25 +5155,64 @@ def _download_one_infographic_via_menu(hwnd: int, index: int, dest: Path) -> boo
     return False
 
 
+def _itc_infographic_slot_path(index: int) -> Path:
+    """Fixed cover slot: ``D:\\AI_MEDIA\\aiagent\\Infographic_N.png``."""
+    return Path(config.infographic_cover_path(index))
+
+
+def _finalize_itc_cover_slot(index: int, src: Path) -> str | None:
+    """Persist a downloaded image into ``Infographic_{index}.png`` (overwrite)."""
+    dest = _itc_infographic_slot_path(index)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src = Path(src)
+    if not src.is_file():
+        return None
+    try:
+        if src.resolve() == dest.resolve():
+            return str(dest) if dest.stat().st_size > 2000 else None
+    except OSError:
+        pass
+    if _save_download_as_png(src, dest):
+        if src.resolve() != dest.resolve():
+            try:
+                src.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return str(dest)
+    try:
+        from shutil import copy2
+
+        copy2(src, dest)
+        if dest.is_file() and dest.stat().st_size > 2000:
+            return str(dest)
+    except Exception as exc:
+        log(f"itc finalize Infographic_{index} failed: {exc}")
+    return None
+
+
 def _download_whole_story_images(hwnd: int, times: int) -> list[str]:
-    """Open each Studio infographic, ⋮ → Download, save into Windows Downloads."""
+    """Open each Studio infographic, ⋮ → Download, save into aiagent/Infographic_N.png."""
     from cli.win_gui_tasks import set_foreground
 
     downloads = windows_downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d_%H%M%S")
     saved: list[str] = []
     n = max(1, int(times or NOTEBOOKLM_COVER_TIMES))
     for i in range(1, n + 1):
         hwnd = _find_notebooklm_hwnd() or hwnd
         set_foreground(hwnd)
         time.sleep(0.5)
-        dest = downloads / f"whole_story_image_{i}_{stamp}.jpg"
-        if _download_one_infographic_via_menu(hwnd, i, dest):
-            saved.append(str(dest))
-            log(f"saved {dest} ({dest.stat().st_size} bytes)")
+        slot = _itc_infographic_slot_path(i)
+        tmp = downloads / f"_itc_menu_{i}_{int(time.time())}.bin"
+        if _download_one_infographic_via_menu(hwnd, i, tmp):
+            finalized = _finalize_itc_cover_slot(i, tmp)
+            if finalized:
+                saved.append(finalized)
+                log(f"saved {finalized} ({Path(finalized).stat().st_size} bytes)")
+            else:
+                log(f"failed to finalize Infographic_{i}")
         else:
-            log(f"failed to save whole_story_image_{i}")
+            log(f"failed to save Infographic_{i}")
         time.sleep(0.8)
     from utility.telegram_session import save_whole_story_images
 
@@ -5382,17 +5513,16 @@ def _nb_itc_download_via_menu(page, dest: Path) -> bool:
 
 
 def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
-    """Download top N NotebookLM infographics → Windows Downloads (Hermes-style)."""
+    """Download top N NotebookLM infographics → aiagent/Infographic_N.png."""
     downloads = windows_downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d_%H%M%S")
     titles = _nb_itc_list_artifact_titles(page, n)
     log(f"itc artifact titles ({len(titles)}): {titles!r}")
     saved: list[str] = []
     for i in range(1, n + 1):
         title = titles[i - 1] if i <= len(titles) else ""
-        dest = downloads / f"whole_story_image_{i}_{stamp}.png"
-        log(f"itc item {i}/{n} title={title!r} → {dest}")
+        slot = _itc_infographic_slot_path(i)
+        log(f"itc item {i}/{n} title={title!r} → {slot}")
 
         opened = _nb_itc_open_artifact(page, title) if title else False
         if not opened:
@@ -5406,25 +5536,42 @@ def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
             continue
 
         ok = False
+        tmp = downloads / f"_itc_dl_{i}_{int(time.time())}.bin"
         try:
-            ok = _nb_itc_download_via_menu(page, dest)
+            ok = _nb_itc_download_via_menu(page, tmp)
             if ok:
-                log(f"itc item {i} saved via menu → {dest} ({dest.stat().st_size} bytes)")
+                finalized = _finalize_itc_cover_slot(i, tmp)
+                if finalized:
+                    saved.append(finalized)
+                    log(
+                        f"itc item {i} saved via menu → {finalized} "
+                        f"({Path(finalized).stat().st_size} bytes)"
+                    )
+                    ok = True
+                else:
+                    ok = False
         except Exception as exc:
             log(f"itc item {i} menu download failed: {exc}")
 
         if not ok:
             try:
-                ok = _save_png_from_src(page, src, dest)
-                if ok:
-                    log(f"itc item {i} saved via URL → {dest} ({dest.stat().st_size} bytes)")
+                url_tmp = downloads / f"_itc_url_{i}.png"
+                if _save_png_from_src(page, src, url_tmp):
+                    finalized = _finalize_itc_cover_slot(i, url_tmp)
+                    if finalized:
+                        saved.append(finalized)
+                        log(
+                            f"itc item {i} saved via URL → {finalized} "
+                            f"({Path(finalized).stat().st_size} bytes)"
+                        )
+                        ok = True
             except Exception as exc2:
                 log(f"itc item {i} URL fallback failed: {exc2}")
 
         _nb_itc_close_viewer(page)
         page.wait_for_timeout(800)
-        if ok:
-            saved.append(str(dest))
+        if ok and len(saved) < i:
+            pass
     return saved
 
 
@@ -5468,7 +5615,7 @@ def capture_notebooklm_infographics(
     attach_only: bool = False,
     close_chrome: bool = False,
 ) -> list[str]:
-    """Open each Studio infographic via artifact-viewer, download PNGs to Downloads."""
+    """Open each Studio infographic via artifact-viewer, download to aiagent/Infographic_N.png."""
     from cli.win_gui_tasks import ensure_uia_com
     from utility.telegram_session import save_whole_story_images
 
@@ -5826,7 +5973,7 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
         )
     scene_prompts = _grok_scene_image_prompts(n)
     video_prompts = _grok_scene_video_prompts(n, video_nb_index=v_idx)
-    pasted_n, prompt_n, downloads = _grok_prepare_all_tabs_cdp(
+    pasted_n, prompt_n, downloads, video_results = _grok_prepare_all_tabs_cdp(
         n,
         cover_png=cover_png,
         port=grok_port,
@@ -5835,7 +5982,7 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
         auto_generate=True,
         video_prompts=video_prompts,
         auto_generate_video=True,
-        auto_download_video=True,
+        auto_download_video=False,
     )
     if pasted_n < n:
         raise RuntimeError(
@@ -5850,25 +5997,16 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
         )
     prompt_labels = ", ".join(lbl for lbl, _ in scene_prompts)
     video_labels = ", ".join(lbl for lbl, _ in video_prompts)
-    download_note = ""
-    if downloads:
-        from utility.telegram_session import save_grok_scene_videos
-
-        save_grok_scene_videos(downloads)
-        names = ", ".join(
-            f"scene {d.get('scene')}: {Path(d.get('path') or '').name}"
-            for d in downloads
-        )
-        download_note = f"; downloaded {len(downloads)} video clip(s) ({names})"
+    video_note = format_grok_video_results_summary(video_results, n=n)
     return (
         f"opened {n} Grok Imagine tab(s) for {profile_label!r} "
         f"({GROK_IMAGINE_URL}) account={profile_label} "
         f"profile_dir={profile_dir} cdp={grok_port}; "
         f"video_nb={v_idx} ({v_label}); "
-        f"prepared image + 9:16 竖屏 + scene prompts + Submit generate image "
-        f"+ Video mode + scene video prompts + Submit generate video "
-        f"+ download each scene mp4 on each tab{paste_note}{download_note}; "
-        f"image prompts: {prompt_labels}; video prompts: {video_labels}"
+        f"prepared image + scene prompts + video clip generation "
+        f"(failures left on tab for review; reply continue/grvc to download){paste_note}; "
+        f"image prompts: {prompt_labels}; video prompts: {video_labels}\n"
+        f"{video_note}"
     )
 
 
@@ -5877,7 +6015,7 @@ def prepare_open_grok_imagine_tabs(*, paste_image: bool = True) -> str:
     n = _grok_recorded_tab_count() or 1
     port = _grok_resolve_cdp_port()
     cover_png = _grok_resolve_cover_png() if paste_image else None
-    pasted_n, _prompt_n, _downloads = _grok_prepare_all_tabs_cdp(
+    pasted_n, _prompt_n, _downloads, _video_results = _grok_prepare_all_tabs_cdp(
         n, cover_png=cover_png, port=port, fresh_tabs=False
     )
     if cover_png:
@@ -5896,11 +6034,11 @@ def prepare_open_grok_imagine_tabs(*, paste_image: bool = True) -> str:
 GROK_PROMPT_X = 0.52
 GROK_PROMPT_Y = 0.52
 GROK_TOOLBAR_Y = 0.575
-GROK_ASPECT_BTN_X = 0.595
+GROK_ASPECT_BTN_X = 0.652
 GROK_ASPECT_MENU_Y = 0.468
 GROK_IMAGE_ICON_X = 0.395
 GROK_VIDEO_ICON_X = 0.418
-GROK_GENERATE_X = 0.665
+GROK_GENERATE_X = 0.93
 
 # Stable Grok Imagine DOM selectors (from page outerHTML analysis).
 GROK_EDITOR_SEL = (
@@ -5914,8 +6052,12 @@ GROK_IMAGE_ATTACH_TIMEOUT_S = 20.0
 GROK_IMAGE_READY_MIN_S = 6
 GROK_IMAGE_READY_TIMEOUT_S = 6 * 60
 GROK_VIDEO_READY_MIN_S = 8
-GROK_VIDEO_READY_TIMEOUT_S = 8 * 60
+GROK_VIDEO_READY_TIMEOUT_S = 3 * 60
 GROK_DOWNLOAD_TIMEOUT_S = 120
+
+
+class GrokVideoTimeoutError(RuntimeError):
+    """Grok video clip did not become ready within ``GROK_VIDEO_READY_TIMEOUT_S``."""
 
 
 _GROK_FOCUS_COMPOSER_JS = """() => {
@@ -5953,8 +6095,10 @@ _GROK_FIND_BOTTOM_PROMPT_BAR_JS = """() => {
     const r = el.getBoundingClientRect();
     const text = (el.innerText || el.textContent || '');
     if (/描述你想修改|describe what you want to change/i.test(text) && r.width < 320) return true;
+    if (el.closest('video, img, picture, canvas, [role="img"]')) return true;
     if (r.top < minTop) return true;
     if (r.width < 120 || r.height < 14) return true;
+    if (r.top < vh * 0.55 && r.width > 280 && r.height < 100) return true;
     return false;
   }
 
@@ -6135,46 +6279,139 @@ def _clipboard_image_to_temp_png() -> Path | None:
     return None
 
 
-def _grok_resolve_cover_png() -> Path | None:
-    """Cover for grv round 1: clipboard first, else itc-selected whole_story image."""
-    png = _clipboard_image_to_temp_png()
-    if png and png.is_file():
-        log(f"Grok cover image from clipboard → {png}")
-        return png
+def _grok_active_story_cover_source() -> str:
+    """grv 封面源：gen_video webp（STORY 已写入）> itc 所选 Infographic_N。"""
+    try:
+        from cli.video_choice_queue import (
+            current_taken_queue_item,
+            resolve_video_detail_from_queue_item,
+        )
+        from gui.downloader import _find_gen_video_webp_for_row
+
+        item = current_taken_queue_item()
+        if item:
+            vd = resolve_video_detail_from_queue_item(item)
+            if isinstance(vd, dict):
+                webp = (_find_gen_video_webp_for_row(vd) or "").strip()
+                if webp and Path(webp).is_file():
+                    return webp
+    except Exception as exc:
+        log(f"Grok cover gen_video lookup: {exc}")
     try:
         from utility.telegram_session import selected_whole_story_image_path
 
         picked = (selected_whole_story_image_path() or "").strip()
         if picked and Path(picked).is_file():
-            import tempfile
-
-            from PIL import Image
-
-            path = Path(tempfile.gettempdir()) / f"grok_cover_{int(time.time() * 1000)}.png"
-            Image.open(picked).convert("RGB").save(path, "PNG")
-            copy_image_file_to_clipboard(picked)
-            log(f"Grok cover image from itc record → {picked}")
-            return path
+            return picked
     except Exception as exc:
-        log(f"Grok cover from itc/session failed: {exc}")
+        log(f"Grok cover itc lookup: {exc}")
+    return ""
+
+
+def _grok_path_to_temp_png(src: str) -> Path:
+    import tempfile
+
+    from PIL import Image
+
+    path = Path(tempfile.gettempdir()) / f"grok_cover_{int(time.time() * 1000)}.png"
+    Image.open(src).convert("RGB").save(path, "PNG")
+    return path
+
+
+def _grok_resolve_cover_png() -> Path | None:
+    """Cover for grv round 1: gen_video webp / itc pick first, else clipboard image."""
+    src = _grok_active_story_cover_source()
+    if src:
+        try:
+            copy_image_file_to_clipboard(src)
+        except Exception as exc:
+            log(f"Grok cover clipboard copy failed: {exc}")
+        png = _grok_path_to_temp_png(src)
+        log(f"Grok cover image from story → {src}")
+        return png
+    png = _clipboard_image_to_temp_png()
+    if png and png.is_file():
+        log(f"Grok cover image from clipboard → {png}")
+        return png
     return None
 
 
 _GROK_COMPOSER_HAS_IMAGE_JS = """
 () => {
-  if (document.querySelector('button[aria-label="Remove image"]')) return true;
-  if (document.querySelector('button[aria-label*="Remove"]')) return true;
-  if (document.querySelector('img[src^="blob:https://grok.com/"]')) return true;
-  if (document.querySelector('img[src^="blob:"]')) return true;
-  const root = document.querySelector('[data-testid="chat-input"]');
-  if (root && root.querySelector('.group\\/current-files img')) return true;
-  if (root && root.querySelector('img')) return true;
-  const n = document.querySelectorAll(
-    'img[src^="blob:"], [data-testid*="attach"], [class*="attachment"], [class*="thumb"], [class*="preview"]'
-  ).length;
-  return n > 0;
+  const hasImg = (root) => {
+    if (!root) return false;
+    const trySel = (sel) => {
+      try { return !!root.querySelector(sel); } catch (e) { return false; }
+    };
+    if (trySel('button[aria-label="Remove image"]')) return true;
+    if (trySel('button[aria-label*="Remove"]')) return true;
+    if (trySel('[class*="current-files"] img')) return true;
+    if (trySel('[class*="attachment"] img')) return true;
+    if (trySel('img[src^="blob:"]')) return true;
+    if (trySel('img[src^="data:image"]')) return true;
+    for (const img of root.querySelectorAll('img')) {
+      try {
+        const r = img.getBoundingClientRect();
+        if (r.width >= 24 && r.height >= 24) return true;
+      } catch (e) { /* ignore */ }
+    }
+    return false;
+  };
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  if (hasImg(chat)) return true;
+  let el = chat;
+  for (let up = 0; up < 8 && el; up++) {
+    el = el.parentElement;
+    if (hasImg(el)) return true;
+  }
+  for (const img of document.querySelectorAll('img')) {
+    try {
+      const src = img.currentSrc || img.src || '';
+      if (!/^(blob:|data:image)/i.test(src)) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width >= 28 && r.height >= 28 && r.top > 60 && r.bottom < window.innerHeight - 30)
+        return true;
+    } catch (e) { /* ignore */ }
+  }
+  return false;
 }
 """
+
+
+_GROK_APPEND_PROMPT_JS = """(text) => {
+  function isOverlay(el) {
+    const r = el.getBoundingClientRect();
+    const t = (el.innerText || el.textContent || '');
+    return /描述你想修改|describe what you want to change/i.test(t) && r.width < 320;
+  }
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  let el = null;
+  if (chat) {
+    el = chat.querySelector('.ProseMirror, [contenteditable="true"][role="textbox"], [contenteditable="true"]');
+    if (el && isOverlay(el)) el = null;
+  }
+  if (!el) {
+    let best = null;
+    let bestW = 0;
+    for (const cand of document.querySelectorAll('.ProseMirror[contenteditable="true"], [contenteditable="true"][role="textbox"]')) {
+      if (isOverlay(cand)) continue;
+      const r = cand.getBoundingClientRect();
+      if (r.width > bestW) { bestW = r.width; best = cand; }
+    }
+    el = best;
+  }
+  if (!el) return 'no-editor';
+  el.focus();
+  el.click();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  document.execCommand('insertText', false, text);
+  return (el.innerText || el.textContent || '').slice(0, 120);
+}"""
 
 
 _GROK_INJECT_FILE_INPUT_JS = """
@@ -6292,11 +6529,22 @@ _GROK_FIND_ASPECT_RATIO_BUTTON_JS = """
     if (/720|480|1080|6s|10s|15s|resolution|duration/.test(t)) return false;
     return /video|motion|视频|摄像|camera/.test(t);
   };
+  const isSubmitBtn = (b, ir, cr) => {
+    const aria = blob(b);
+    if (/submit|send|generate|生成|发送|start/.test(aria)) return true;
+    if ((b.getAttribute('type') || '').toLowerCase() === 'submit') return true;
+    const br = b.getBoundingClientRect();
+    const round = Math.abs(br.width - br.height) < 16;
+    const hasSvg = !!b.querySelector('svg');
+    const farRight = br.right >= cr.right - 40;
+    const inFooter = br.top >= ir.top + ir.height * 0.12 && br.bottom <= cr.bottom + 8;
+    return inFooter && farRight && round && br.width >= 28 && hasSvg;
+  };
   const isAspectBtn = (b) => {
     const t = blob(b);
     if (isPlusBtn(b) || isImageModeBtn(b) || isVideoModeBtn(b)) return false;
     if (/\\d+\\s*:\\s*\\d+/.test(t)) return true;
-    return /纵横比|aspect\\s*ratio|宽高比|aspect ratio|比例|方比例/.test(t);
+    return /纵横比|aspect\\s*ratio|宽高比|aspect ratio|比例|方比例|自由模式|free\\s*mode|auto\\s*mode|模式|竖屏|横屏|人像|正方形|宽屏|电影|极宽/.test(t);
   };
 
   const input = document.querySelector('[data-testid="chat-input"]');
@@ -6312,21 +6560,34 @@ _GROK_FIND_ASPECT_RATIO_BUTTON_JS = """
       .filter((b) => {
         if (b.disabled) return false;
         const br = b.getBoundingClientRect();
-        if (br.width < 16 || br.height < 16 || br.width > 96) return false;
+        if (br.width < 16 || br.height < 16) return false;
         const inFooter = br.top >= ir.top + ir.height * 0.12 && br.bottom <= cr.bottom + 8;
         const inCardX = br.left >= cr.left - 4 && br.right <= cr.right + 4;
         return inFooter && inCardX;
       })
       .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
 
-    for (const b of toolbar) {
-      if (isAspectBtn(b)) return btnMeta(b, 'aspect-btn');
+    const aspectBtns = toolbar.filter((b) => isAspectBtn(b) && !isSubmitBtn(b, ir, cr));
+    if (aspectBtns.length) {
+      const rightmost = aspectBtns.sort(
+        (a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right
+      )[0];
+      return btnMeta(rightmost, 'toolbar-right-aspect');
     }
-    const nonPlus = toolbar.filter((b) => !isPlusBtn(b));
-    if (nonPlus.length >= 3) {
-      const cand = nonPlus[2];
-      if (!isImageModeBtn(cand) && !isVideoModeBtn(cand)) {
-        return btnMeta(cand, 'toolbar-index-2');
+
+    const submit = toolbar.find((b) => isSubmitBtn(b, ir, cr));
+    if (submit) {
+      const submitLeft = submit.getBoundingClientRect().left;
+      const beforeSubmit = toolbar.filter((b) => {
+        if (b === submit || isPlusBtn(b) || isImageModeBtn(b) || isVideoModeBtn(b)) return false;
+        const br = b.getBoundingClientRect();
+        return br.right <= submitLeft + 6 && br.left >= submitLeft - 220;
+      });
+      if (beforeSubmit.length) {
+        const rightmost = beforeSubmit.sort(
+          (a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right
+        )[0];
+        return btnMeta(rightmost, 'before-submit');
       }
     }
   }
@@ -6446,6 +6707,65 @@ _GROK_CLICK_IMAGE_MODE_JS = """() => {
 }"""
 
 
+_GROK_FIND_CHAT_TOOLBAR_SUBMIT_JS = """() => {
+  function btnMeta(btn, method) {
+    const br = btn.getBoundingClientRect();
+    return {
+      method,
+      x: br.left + br.width / 2,
+      y: br.top + br.height / 2,
+      aria: (btn.getAttribute('aria-label') || '').trim(),
+      disabled: !!btn.disabled,
+    };
+  }
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  if (!chat) return null;
+  const cr = chat.getBoundingClientRect();
+  const footerMinY = cr.top + cr.height * 0.52;
+
+  for (const sel of [
+    'button[aria-label="生成视频"]',
+    'button[aria-label="Generate video"]',
+    'button[aria-label="Submit"]',
+    'button[aria-label="Send"]',
+    'button[aria-label="生成"]',
+  ]) {
+    const el = chat.querySelector(sel);
+    if (el && !el.disabled) return btnMeta(el, 'chat-aria-submit');
+  }
+
+  let best = null;
+  let bestScore = -1;
+  for (const b of chat.querySelectorAll('button, [role="button"]')) {
+    if (b.disabled) continue;
+    const br = b.getBoundingClientRect();
+    if (br.top < footerMinY) continue;
+    if (br.width < 22 || br.height < 22) continue;
+    const aria = ((b.getAttribute('aria-label') || '') + (b.getAttribute('title') || '')).toLowerCase();
+    let score = br.right;
+    const hasSvg = !!b.querySelector('svg');
+    const round = Math.abs(br.width - br.height) < 18;
+    if (round && hasSvg) score += 500;
+    if (br.right >= cr.right - 14) score += 300;
+    if (/submit|send|generate|生成|生成视频|generate video/.test(aria)) score += 800;
+    if (score > bestScore) { best = b; bestScore = score; }
+  }
+  if (!best || bestScore < 250) return null;
+  return btnMeta(best, 'chat-toolbar-up-arrow');
+}"""
+
+
+_GROK_FOCUS_CHAT_INPUT_JS = """() => {
+  const chat = document.querySelector('[data-testid="chat-input"]');
+  if (!chat) return false;
+  const ed = chat.querySelector(
+    '.ProseMirror, [contenteditable="true"][role="textbox"], [contenteditable="true"]'
+  );
+  if (ed) { ed.focus(); return true; }
+  return false;
+}"""
+
+
 _GROK_FIND_VIDEO_MODE_BUTTON_JS = """() => {
   function btnMeta(btn, method) {
     const br = btn.getBoundingClientRect();
@@ -6469,7 +6789,7 @@ _GROK_FIND_VIDEO_MODE_BUTTON_JS = """() => {
   }
   function isAspectPill(b) {
     const t = ((b.innerText || '') + (b.getAttribute('aria-label') || '')).trim();
-    return /\\d+:\\d+|方比例|aspect|比例|竖屏|横屏/i.test(t);
+    return /\\d+:\\d+|方比例|aspect|比例|竖屏|横屏|自由模式|模式|mode/i.test(t);
   }
   function isVideoModeBtn(b) {
     const aria = ((b.getAttribute('aria-label') || '') + (b.getAttribute('title') || '')).toLowerCase();
@@ -6518,47 +6838,90 @@ _GROK_FIND_SUBMIT_BUTTON_JS = """() => {
       x: br.left + br.width / 2,
       y: br.top + br.height / 2,
       aria: (btn.getAttribute('aria-label') || '').trim(),
+      title: (btn.getAttribute('title') || '').trim(),
     };
   }
-  function isSubmitBtn(b, ir, cr) {
-    const aria = ((b.getAttribute('aria-label') || '') + (b.getAttribute('title') || '')).toLowerCase();
-    if (/submit|send|generate|生成|发送|start/.test(aria)) return true;
-    if ((b.getAttribute('type') || '').toLowerCase() === 'submit') return true;
-    const br = b.getBoundingClientRect();
-    const round = Math.abs(br.width - br.height) < 16;
-    const hasSvg = !!b.querySelector('svg');
-    const farRight = br.right >= cr.right - 40;
-    const inFooter = br.top >= ir.top + ir.height * 0.2 && br.bottom <= cr.bottom + 4;
-    return inFooter && farRight && round && br.width >= 28 && hasSvg;
-  }
+  const norm = (s) => (s || '').trim();
+  const blob = (el) => (
+    norm(el.innerText) + ' ' + norm(el.textContent) + ' '
+    + norm(el.getAttribute('aria-label')) + ' ' + norm(el.getAttribute('title'))
+  ).toLowerCase();
+  const isPlusBtn = (b) => norm(b.innerText) === '+' || /add|attach|upload|上传/.test(blob(b));
+  const isImageModeBtn = (b) => {
+    const t = blob(b);
+    if (/video|motion|视频|摄像/.test(t)) return false;
+    return t === 'image' || t === '图片' || /\\bimage\\b/.test(t);
+  };
+  const isVideoModeBtn = (b) => /video|motion|视频|摄像|camera/.test(blob(b));
+  const isAspectBtn = (b) => {
+    const t = blob(b);
+    if (isPlusBtn(b) || isImageModeBtn(b) || isVideoModeBtn(b)) return false;
+    return /\\d+\\s*:\\s*\\d+/.test(t)
+      || /方比例|aspect|宽高比|比例|竖屏|横屏|自由模式|模式|mode/.test(t);
+  };
+  const isResolutionOrDurationBtn = (b) => {
+    const t = norm(b.innerText) || norm(b.getAttribute('aria-label'));
+    return /^(720p|480p|1080p|5s|6s|10s|15s|5 s|6 s|10 s|15 s|5秒|6秒|10秒|15秒)$/i.test(t);
+  };
+  const isExcluded = (b) => (
+    isPlusBtn(b) || isImageModeBtn(b) || isVideoModeBtn(b) || isAspectBtn(b)
+    || isResolutionOrDurationBtn(b)
+  );
 
   const input = document.querySelector('[data-testid="chat-input"]');
   if (!input) return null;
   const ir = input.getBoundingClientRect();
+
+  for (const sel of [
+    'button[aria-label="生成视频"]',
+    'button[aria-label="Generate video"]',
+    'button[aria-label="Submit"]',
+    'button[aria-label="Send"]',
+    'button[aria-label="Generate"]',
+    'button[aria-label="生成"]',
+    'button[aria-label="发送"]',
+  ]) {
+    const el = document.querySelector(sel);
+    if (el && !el.disabled && !isExcluded(el)) return btnMeta(el, 'aria-exact');
+  }
+
   const form = input.closest('form');
   if (form) {
-    const submit = form.querySelector('button[type="submit"], input[type="submit"]');
-    if (submit && !submit.disabled) return btnMeta(submit, 'form-submit');
+    const submit = form.querySelector('button[type="submit"]:not([disabled])');
+    if (submit) return btnMeta(submit, 'form-submit');
   }
+
   let card = input;
-  for (let up = 0; up < 12; up++) {
+  for (let up = 0; up < 14; up++) {
     card = card.parentElement;
     if (!card) break;
     const cr = card.getBoundingClientRect();
     if (cr.width < 260) continue;
-    const band = [...card.querySelectorAll('button, [role="button"]')].filter((b) => !b.disabled);
+    const toolbar = [...card.querySelectorAll('button, [role="button"]')]
+      .filter((b) => {
+        if (b.disabled || isExcluded(b)) return false;
+        const br = b.getBoundingClientRect();
+        if (br.width < 22 || br.height < 22) return false;
+        const inFooter = br.top >= ir.top + ir.height * 0.05 && br.bottom <= cr.bottom + 8;
+        const inCardX = br.left >= cr.left - 4 && br.right <= cr.right + 4;
+        return inFooter && inCardX;
+      });
+
     let best = null;
     let bestScore = -1;
-    for (const b of band) {
+    for (const b of toolbar) {
       const br = b.getBoundingClientRect();
-      let score = 0;
-      if (isSubmitBtn(b, ir, cr)) score += 200;
-      if (b.querySelector('svg')) score += 30;
-      if (Math.abs(br.width - br.height) < 16) score += 25;
-      score += br.right / 10;
+      const aria = blob(b);
+      let score = br.right;
+      if (/submit|send|generate|生成|发送|start/.test(aria)) score += 1000;
+      const round = Math.abs(br.width - br.height) < 18;
+      const hasSvg = !!b.querySelector('svg');
+      if (round && hasSvg) score += 500;
+      if (br.width >= 28 && br.width <= 56) score += 100;
+      if (br.right >= cr.right - 12) score += 200;
       if (score > bestScore) { best = b; bestScore = score; }
     }
-    if (best && bestScore >= 120) return btnMeta(best, 'composer-submit');
+    if (best && bestScore >= 300) return btnMeta(best, 'composer-right-arrow');
   }
   return null;
 }"""
@@ -6698,22 +7061,181 @@ _GROK_CLICK_CONVERT_TO_VIDEO_SIDEBAR_JS = """() => {
 }"""
 
 
-_GROK_CLICK_VIDEO_SETTINGS_JS = """() => {
-  const names720 = ['720p', '720P', '720'];
-  const names10 = ['10s', '10 s', '10sec', '10 sec', '10 seconds', '10秒'];
-  const clicked = [];
-  for (const b of document.querySelectorAll('button')) {
-    const t = (b.getAttribute('aria-label') || b.innerText || '').trim();
-    if (!clicked.includes('720') && names720.some((n) => t === n || t.includes(n))) {
-      b.click();
-      clicked.push('720');
+_GROK_IS_VIDEO_DURATION_15S_JS = """() => {
+  const input = document.querySelector('[data-testid="chat-input"]');
+  const minTop = input
+    ? input.getBoundingClientRect().top + input.getBoundingClientRect().height * 0.02
+    : window.innerHeight * 0.52;
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    const t = (b.innerText || b.textContent || '').replace(/\\s+/g, '');
+    if (!/^15s$/i.test(t)) continue;
+    const br = b.getBoundingClientRect();
+    if (br.top >= minTop && br.width > 0 && br.height > 0) return true;
+  }
+  return false;
+}"""
+
+
+_GROK_FIND_DURATION_TRIGGER_JS = """() => {
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (!input) return null;
+  const ir = input.getBoundingClientRect();
+  const minTop = ir.top + ir.height * 0.02;
+
+  function meta(btn, method) {
+    const br = btn.getBoundingClientRect();
+    return {
+      method,
+      x: br.left + br.width / 2,
+      y: br.top + br.height / 2,
+      text: (btn.innerText || '').trim(),
+      aria: (btn.getAttribute('aria-label') || '').trim(),
+    };
+  }
+
+  function normDur(t) {
+    return (t || '').replace(/\\s+/g, '');
+  }
+
+  function hasClockSvg(btn) {
+    for (const svg of btn.querySelectorAll('svg')) {
+      const html = svg.innerHTML || '';
+      if (/M12 6v6/i.test(html)) return true;
+      if (svg.querySelector('path[d*="M12 6"]')) return true;
     }
-    if (!clicked.includes('10') && names10.some((n) => t === n || t.includes(n))) {
-      b.click();
-      clicked.push('10');
+    return false;
+  }
+
+  function isDurationBtn(b) {
+    const raw = (b.innerText || b.textContent || '').trim();
+    const t = normDur(raw);
+    if (!/^(5|6|10|15)s$/i.test(t)) return false;
+    if (/720|480|1080/i.test(t)) return false;
+    const br = b.getBoundingClientRect();
+    if (br.top < minTop || br.width < 18 || br.height < 18) return false;
+    if (!b.querySelector('svg')) return false;
+    return hasClockSvg(b) || /^(5|6|10|15)s$/i.test(t);
+  }
+
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    if (/^15s$/i.test(normDur(b.innerText || b.textContent || ''))) {
+      const br = b.getBoundingClientRect();
+      if (br.top >= minTop) return { already: true, ...meta(b, 'already-15s') };
     }
   }
-  return clicked;
+
+  const candidates = [...document.querySelectorAll('button, [role="button"]')].filter(isDurationBtn);
+  if (!candidates.length) {
+    for (const b of document.querySelectorAll('button, [role="button"]')) {
+      const t = normDur(b.innerText || b.textContent || '');
+      if (!/^(5|6|10|15)s$/i.test(t)) continue;
+      const br = b.getBoundingClientRect();
+      if (br.top >= minTop && br.width >= 18 && br.height >= 18) candidates.push(b);
+    }
+  }
+  if (!candidates.length) return null;
+
+  let best = null;
+  let bestScore = -1;
+  for (const b of candidates) {
+    const br = b.getBoundingClientRect();
+    const t = normDur(b.innerText || b.textContent || '');
+    let score = br.right;
+    if (/10s/i.test(t)) score += 200;
+    if (hasClockSvg(b)) score += 150;
+    if (b.getAttribute('aria-haspopup') === 'menu') score += 80;
+    if (br.top >= ir.bottom - 8) score += 100;
+    if (score > bestScore) { best = b; bestScore = score; }
+  }
+  return meta(best, 'duration-clock-btn');
+}"""
+
+
+_GROK_CLICK_MENU_15S_JS = """() => {
+  function norm(t) { return (t || '').replace(/\\s+/g, ''); }
+  function is15(t) { return /^15s$/i.test(norm(t)); }
+
+  const roots = document.querySelectorAll(
+    '[role="menu"], [data-radix-menu-content], [data-radix-popper-content-wrapper], [role="listbox"]'
+  );
+  const scan = roots.length ? [...roots] : [document.body];
+  for (const root of scan) {
+    for (const el of root.querySelectorAll(
+      '[role="menuitem"], [role="option"], button, li, div[role="menuitem"], div, span'
+    )) {
+      const t = (el.innerText || el.textContent || '').trim();
+      if (!is15(t)) continue;
+      const clickEl = el.closest(
+        '[role="menuitem"], [role="option"], button, li, div[role="menuitem"]'
+      ) || el;
+      clickEl.click();
+      const br = clickEl.getBoundingClientRect();
+      return {
+        method: 'menu-15s',
+        x: br.left + br.width / 2,
+        y: br.top + br.height / 2,
+        text: t,
+      };
+    }
+  }
+  return null;
+}"""
+
+
+_GROK_CLICK_VIDEO_SETTINGS_JS = """() => {
+  const norm = (s) => (s || '').trim();
+  const textOf = (el) => norm(el.innerText) || norm(el.textContent) || norm(el.getAttribute('aria-label'));
+  const is15s = (t) => /^15s$|^15 s$|^15sec$|^15秒$/i.test(t);
+  const isDuration = (t) => /^(5s|6s|10s|15s|5 s|6 s|10 s|15 s|5秒|6秒|10秒|15秒)$/i.test(t);
+
+  const actions = [];
+  const input = document.querySelector('[data-testid="chat-input"]');
+  const ir = input ? input.getBoundingClientRect() : null;
+  const minTop = window.innerHeight * 0.52;
+
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    const t = textOf(b);
+    if (!isDuration(t)) continue;
+    const br = b.getBoundingClientRect();
+    if (br.top < minTop) continue;
+    if (is15s(t)) return ['already-15s'];
+  }
+
+  let durationBtn = null;
+  let bestScore = -1;
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    const t = textOf(b);
+    if (!isDuration(t) || is15s(t)) continue;
+    const br = b.getBoundingClientRect();
+    if (br.top < minTop) continue;
+    let score = br.right;
+    if (ir && br.top >= ir.top + ir.height * 0.02) score += 200;
+    if (/10s|10 s|10秒/i.test(t)) score += 80;
+    if (score > bestScore) { durationBtn = b; bestScore = score; }
+  }
+  if (!durationBtn) return ['no-duration-trigger'];
+
+  durationBtn.click();
+  actions.push('opened-duration-menu');
+
+  const menuSelectors = 'button, [role="menuitem"], [role="option"], [role="radio"], li, div[role="menuitem"]';
+  for (const el of document.querySelectorAll(menuSelectors)) {
+    const t = textOf(el);
+    if (is15s(t)) {
+      (el.closest('button, [role="menuitem"], [role="option"], li') || el).click();
+      actions.push('selected-15s');
+      return actions;
+    }
+  }
+  for (const el of document.querySelectorAll('*')) {
+    const t = norm(el.textContent);
+    if (t === '15s' || t === '15秒') {
+      (el.closest('[role="menuitem"], [role="option"], button, li') || el).click();
+      actions.push('selected-15s-fallback');
+      return actions;
+    }
+  }
+  return actions;
 }"""
 
 
@@ -6932,23 +7454,43 @@ _GROK_OUTPUT_VIDEO_SRC_JS = """() => {
 }"""
 
 
-def _grok_paste_prompt_cdp(page: Page, prompt: str, *, bottom_bar: bool = False) -> None:
-    """Replace composer text. ``bottom_bar=True`` prefers post-image bottom bar, else main."""
+def _grok_video_prompt_shape_ok(text: str) -> bool:
+    """Video clip prompt should be NotebookLM export (speaking/voiceover), not scene image."""
+    low = (text or "").lower()
+    if "detailed-single-step-image" in low:
+        return False
+    if "instruction_for_image_generation" in low:
+        return False
+    return any(
+        key in text
+        for key in (
+            "Instruction_for_speaking_audio",
+            "Instruction_for_video_generation",
+            "Instruction_for_voiceover_audio",
+            "Export_variant",
+            "Story_Scene_Content",
+        )
+    )
+
+
+def _grok_paste_prompt_cdp(page: Page, prompt: str, *, bottom_bar: bool = False, append: bool = False) -> None:
+    """Replace or append composer text. ``append=True`` keeps existing image attachments."""
     text = (prompt or "").strip()
     if not text:
         raise RuntimeError("Grok composer: empty prompt")
     page.wait_for_load_state("domcontentloaded", timeout=20_000)
     read_js = _GROK_READ_COMPOSER_TEXT_JS
     snippet = None
+    replace_js = _GROK_APPEND_PROMPT_JS if append else _GROK_REPLACE_PROMPT_JS
     if bottom_bar:
         snippet = page.evaluate(_GROK_REPLACE_BOTTOM_PROMPT_JS, text)
         if snippet and snippet != "no-editor":
             read_js = _GROK_READ_BOTTOM_COMPOSER_TEXT_JS
         else:
             log("Grok CDP: bottom bar not found for video prompt; fallback main composer")
-            snippet = page.evaluate(_GROK_REPLACE_PROMPT_JS, text)
+            snippet = page.evaluate(replace_js, text)
     else:
-        snippet = page.evaluate(_GROK_REPLACE_PROMPT_JS, text)
+        snippet = page.evaluate(replace_js, text)
     if not snippet or snippet == "no-editor":
         where = "composer" if bottom_bar else "main composer"
         raise RuntimeError(f"Grok {where} editor not found for prompt replace")
@@ -6957,8 +7499,70 @@ def _grok_paste_prompt_cdp(page: Page, prompt: str, *, bottom_bar: bool = False)
     _paste_text_verified(text, actual, field_label="Grok composer")
     log(
         f"Grok CDP: prompt set ({len(text)} chars)"
+        f"{' [append]' if append and not bottom_bar else ''}"
         f"{' [bottom bar]' if bottom_bar and read_js == _GROK_READ_BOTTOM_COMPOSER_TEXT_JS else ' [main composer]'}"
     )
+
+
+def _grok_inject_cover_file_cdp(page: Page, cover_png: Path) -> bool:
+    """Attach cover once via file input (never chain methods — avoids duplicate thumbnails)."""
+    import base64
+
+    if _grok_composer_has_image_page(page):
+        log("Grok CDP: cover already in composer (skip inject)")
+        return True
+
+    path_str = str(cover_png)
+    for sel in (GROK_FILE_INPUT_SEL, 'input[type="file"]'):
+        try:
+            loc = page.locator(sel)
+            if loc.count() < 1:
+                continue
+            loc.first.set_input_files(path_str, timeout=20_000)
+            log(f"Grok CDP: cover via set_input_files ({sel})")
+            time.sleep(2.0)
+            if _grok_wait_image_attached(page, 12.0):
+                return True
+            if _grok_composer_has_image_page(page):
+                return True
+            log("Grok CDP: set_input_files dispatched (probe slow; treat as ok)")
+            return True
+        except Exception as exc:
+            log(f"Grok CDP cover set_input_files ({sel}): {exc}")
+
+    try:
+        raw = cover_png.read_bytes()
+    except OSError as exc:
+        log(f"Grok CDP cover read failed: {exc}")
+        return False
+    b64 = base64.b64encode(raw).decode("ascii")
+    mime = "image/png"
+    name = cover_png.name or "cover.png"
+    try:
+        result = page.evaluate(
+            _GROK_INJECT_FILE_INPUT_JS,
+            {"b64": b64, "mime": mime, "name": name},
+        )
+        log(f"Grok CDP: inject file-input → {result}")
+        if result and result != "no-file-input":
+            time.sleep(2.0)
+            if _grok_wait_image_attached(page, 12.0):
+                return True
+            if _grok_composer_has_image_page(page):
+                return True
+            log("Grok CDP: file-input-events dispatched (probe slow; treat as ok)")
+            return True
+    except Exception as exc:
+        log(f"Grok CDP inject file-input: {exc}")
+
+    return _grok_composer_has_image_page(page)
+
+
+def _grok_ensure_cover_attached_cdp(page: Page, cover_png: Path) -> bool:
+    if _grok_composer_has_image_page(page):
+        return True
+    log("Grok CDP: composer missing cover — re-attaching")
+    return _grok_paste_cover_image_cdp(page, cover_png)
 
 
 def _grok_scroll_composer_into_view(page: Page) -> None:
@@ -7015,13 +7619,12 @@ def _grok_click_bottom_prompt_bar_cdp(page: Page, *, required: bool = False) -> 
 
 
 def _grok_focus_composer_toolbar_once_cdp(page: Page, *, deep_image: bool = False) -> None:
-    """One click inside the prompt text area — keeps toolbar open, avoids image clicks."""
+    """Focus bottom chat-input — never mouse-click the generated image (hidden buttons)."""
     _grok_scroll_composer_into_view(page)
-    pt = None
-    if deep_image:
-        pt = page.evaluate(_GROK_FIND_BOTTOM_PROMPT_BAR_JS)
-    if not isinstance(pt, dict) or not pt.get("x"):
-        pt = page.evaluate(_GROK_FIND_MAIN_COMPOSER_CLICK_JS)
+    if deep_image and page.evaluate(_GROK_FOCUS_CHAT_INPUT_JS):
+        time.sleep(0.2)
+        return
+    pt = page.evaluate(_GROK_FIND_MAIN_COMPOSER_CLICK_JS)
     if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
         _grok_mouse_click_point(
             page, float(pt["x"]), float(pt["y"]), label="composer-focus-once"
@@ -7077,7 +7680,10 @@ def _grok_click_image_mode_cdp(page: Page) -> bool:
 
 
 def _grok_click_video_mode_cdp(page: Page) -> bool:
-    _grok_focus_composer_toolbar_once_cdp(page, deep_image=True)
+    """Click Video icon in bottom chat-input toolbar — never the image canvas."""
+    _grok_scroll_composer_into_view(page)
+    page.evaluate(_GROK_FOCUS_CHAT_INPUT_JS)
+    time.sleep(0.15)
     vid = page.evaluate(_GROK_FIND_VIDEO_MODE_BUTTON_JS)
     if not (isinstance(vid, dict) and vid.get("x") and vid.get("y")):
         log(f"Grok CDP: video mode button not found in composer toolbar: {vid!r}")
@@ -7091,58 +7697,279 @@ def _grok_click_video_mode_cdp(page: Page) -> bool:
     )
     time.sleep(0.4)
     if page.evaluate(_GROK_IS_VIDEO_MODE_JS):
-        log("Grok CDP: video mode confirmed (720p/10s visible)")
+        log("Grok CDP: video mode confirmed (720p/duration visible)")
     else:
         log("Grok CDP: video icon clicked; toolbar kept open")
     return True
 
 
-def _grok_click_video_settings_cdp(page: Page) -> None:
+def _grok_ensure_video_mode_cdp(page: Page) -> None:
+    """Enter Video mode if needed. Never re-click when already active (toggle → image)."""
+    if page.evaluate(_GROK_IS_VIDEO_MODE_JS):
+        log("Grok CDP: video mode already active (720p/duration)")
+        return
+    log("Grok CDP: not in video mode — clicking Video icon once")
+    if not _grok_click_video_mode_cdp(page):
+        raise RuntimeError(
+            "Grok 视频模式未切换成功。请先点击输入框展开工具栏，"
+            "再点 + 旁摄像机 icon（或右侧「转换为视频」）。"
+        )
+    if not page.evaluate(_GROK_IS_VIDEO_MODE_JS):
+        raise RuntimeError(
+            "Grok 视频模式仍未确认（工具栏应出现 720p / 时长）。"
+        )
+
+
+def _grok_click_video_generate_cdp(page: Page) -> None:
+    """Submit clip via bottom toolbar up-arrow — do not move mouse over image canvas."""
+    page.evaluate(_GROK_FOCUS_CHAT_INPUT_JS)
+    time.sleep(0.1)
+
+    def _generating() -> bool:
+        try:
+            return bool(page.evaluate(_GROK_IS_GENERATING_JS))
+        except Exception:
+            return False
+
+    for attempt in range(1, 4):
+        _grok_ensure_video_mode_cdp(page)
+        time.sleep(0.25)
+        if _grok_click_video_submit_cdp(page):
+            time.sleep(0.65)
+            if _generating():
+                log(f"Grok CDP: video generation started (attempt {attempt})")
+                return
+            log("Grok CDP: 生成视频 clicked but generating not detected; retry")
+        else:
+            log(f"Grok CDP: 生成视频 button not found (attempt {attempt})")
+        time.sleep(0.35)
+
+    raise RuntimeError(
+        "Grok 生成视频 Submit 未成功。请确认已切 Video 模式（720p/10s）且提示词已填入。"
+    )
+
+
+def _grok_open_duration_menu_cdp(page: Page, *, attempt: int) -> bool:
+    """Click the clock/duration toolbar button (svg + Ns text)."""
+    pt = page.evaluate(_GROK_FIND_DURATION_TRIGGER_JS)
+    if isinstance(pt, dict) and pt.get("already"):
+        log("Grok CDP: duration toolbar already shows 15s")
+        return True
+    if _grok_click_js_target(page, pt, kind=f"duration-trigger-{attempt}"):
+        log(
+            f"Grok CDP: duration trigger via JS "
+            f"text={pt.get('text')!r} aria={pt.get('aria')!r}"
+        )
+        return True
+
+    duration_re = re.compile(r"\d+\s*s", re.I)
+    trigger = page.locator("button").filter(
+        has=page.locator("svg")
+    ).filter(has_text=duration_re)
+    if trigger.count() == 0:
+        trigger = page.locator('button:has(svg):has-text("s")')
+    if trigger.count() == 0:
+        return False
+
+    btn = trigger.last
     try:
-        picked = page.evaluate(_GROK_CLICK_VIDEO_SETTINGS_JS)
-        if picked:
-            log(f"Grok CDP: video settings {picked!r}")
+        btn.click(timeout=8000, force=True)
+        log(
+            f"Grok CDP: duration trigger via Playwright "
+            f"(count={trigger.count()}, attempt {attempt})"
+        )
+        return True
     except Exception as exc:
-        log(f"Grok CDP: video settings skipped: {exc}")
-    time.sleep(0.15)
+        log(f"Grok CDP: duration Playwright click failed: {exc}")
+        return False
+
+
+def _grok_pick_duration_15s_from_menu_cdp(page: Page, *, attempt: int) -> bool:
+    """Pick 15s from the open Radix menu portal."""
+    menu_sel = (
+        '[role="menu"], [data-radix-menu-content], [data-radix-popper-content-wrapper], '
+        '[role="listbox"], [data-state="open"][role="menu"]'
+    )
+
+    opt15 = page.get_by_role("menuitem", name=re.compile(r"15\s*s", re.I))
+    if opt15.count() == 0:
+        opt15 = page.locator(f"{menu_sel} *").filter(
+            has_text=re.compile(r"^15s$", re.I)
+        )
+    if opt15.count() == 0:
+        opt15 = page.get_by_text("15s", exact=True)
+
+    if opt15.count() > 0:
+        try:
+            opt15.first.click(timeout=8000, force=True)
+            log(f"Grok CDP: clicked 15s via Playwright (attempt {attempt})")
+            return True
+        except Exception as exc:
+            log(f"Grok CDP: Playwright 15s click failed: {exc}")
+
+    pt = page.evaluate(_GROK_CLICK_MENU_15S_JS)
+    if _grok_click_js_target(page, pt, kind=f"menu-15s-{attempt}"):
+        log(f"Grok CDP: clicked 15s via JS menu text={pt.get('text')!r}")
+        return True
+    return False
+
+
+def _grok_click_video_duration_15s_cdp(page: Page) -> None:
+    """Open Radix duration menu (portal) and pick 15s — must be multi-step."""
+    if page.evaluate(_GROK_IS_VIDEO_DURATION_15S_JS):
+        log("Grok CDP: video duration already 15s")
+        return
+
+    menu_sel = (
+        '[role="menu"], [data-radix-menu-content], [data-radix-popper-content-wrapper], '
+        '[role="listbox"]'
+    )
+
+    for attempt in range(1, 4):
+        if page.evaluate(_GROK_IS_VIDEO_DURATION_15S_JS):
+            log("Grok CDP: video duration already 15s")
+            return
+
+        probe = page.evaluate(_GROK_FIND_DURATION_TRIGGER_JS)
+        if isinstance(probe, dict) and probe.get("already"):
+            log("Grok CDP: video duration already 15s (toolbar probe)")
+            return
+
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+        if not _grok_open_duration_menu_cdp(page, attempt=attempt):
+            dbg = page.evaluate(_GROK_FIND_DURATION_TRIGGER_JS)
+            log(
+                f"Grok CDP: duration trigger not found (attempt {attempt}); "
+                f"probe={dbg!r}"
+            )
+            time.sleep(0.35)
+            continue
+
+        if page.evaluate(_GROK_IS_VIDEO_DURATION_15S_JS):
+            log("Grok CDP: video duration set to 15s (no menu needed)")
+            return
+
+        try:
+            page.locator(menu_sel).first.wait_for(state="visible", timeout=8000)
+        except Exception as exc:
+            log(f"Grok CDP: duration menu not visible: {exc}")
+            time.sleep(0.25)
+            continue
+
+        if not _grok_pick_duration_15s_from_menu_cdp(page, attempt=attempt):
+            log(f"Grok CDP: 15s menuitem not found (attempt {attempt})")
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            time.sleep(0.25)
+            continue
+
+        time.sleep(0.45)
+        if page.evaluate(_GROK_IS_VIDEO_DURATION_15S_JS):
+            log("Grok CDP: video duration set to 15s")
+            return
+
+    raise RuntimeError(
+        "Grok 视频时长未切到 15s。请手动点 10s → 选 15s 后再发 grv。"
+    )
+
+
+def _grok_click_video_settings_cdp(page: Page) -> None:
+    """Keep Grok default video duration (10s); do not open the duration menu."""
+    log("Grok CDP: skip video duration change; using default (10s)")
+
+
+def _grok_click_video_submit_cdp(page: Page) -> bool:
+    """Click bottom toolbar up-arrow only — never buttons on the generated image."""
+    pt = page.evaluate(_GROK_FIND_CHAT_TOOLBAR_SUBMIT_JS)
+    if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
+        if pt.get("disabled"):
+            log(f"Grok CDP: chat toolbar submit disabled aria={pt.get('aria')!r}")
+        else:
+            _grok_mouse_click_point(
+                page, float(pt["x"]), float(pt["y"]), label="video-submit-arrow"
+            )
+            log(
+                f"Grok CDP: video submit via {pt.get('method')!r} "
+                f"aria={pt.get('aria')!r}"
+            )
+            return True
+
+    chat = page.locator('[data-testid="chat-input"]')
+    for sel in (
+        'button[aria-label="生成视频"]',
+        'button[aria-label="Generate video"]',
+        'button[aria-label="Submit"]',
+        'button[aria-label="Send"]',
+    ):
+        loc = chat.locator(sel).first
+        if loc.count() == 0:
+            continue
+        try:
+            loc.click(timeout=5000, force=True)
+            log(f"Grok CDP: clicked video submit via chat {sel}")
+            return True
+        except Exception as exc:
+            log(f"Grok CDP: video submit {sel} failed: {exc}")
+
+    pt = page.evaluate(_GROK_FIND_SUBMIT_BUTTON_JS)
+    if _grok_click_js_target(page, pt, kind="video-submit-fallback"):
+        return True
+
+    _grok_viewport_click(page, GROK_GENERATE_X, GROK_TOOLBAR_Y, label="video-submit-ratio")
+    return True
 
 
 def _grok_click_generate_cdp(page: Page, *, deep_image: bool = False) -> None:
+    """Click Submit — image: blue up-arrow; video: ``aria-label=\"生成视频\"``."""
     _grok_scroll_composer_into_view(page)
     if deep_image:
         _grok_focus_composer_toolbar_once_cdp(page, deep_image=True)
     else:
         _grok_awaken_composer_toolbar_cdp(page, deep_image=False)
-    time.sleep(0.15)
-    if deep_image:
+    time.sleep(0.2)
+
+    def _generating() -> bool:
+        try:
+            return bool(page.evaluate(_GROK_IS_GENERATING_JS))
+        except Exception:
+            return False
+
+    if deep_image and _grok_click_video_submit_cdp(page):
+        time.sleep(0.65)
+        if _generating():
+            return
+        log("Grok CDP: video submit clicked but generating not detected; retry fallbacks")
+
+    for attempt in range(1, 4):
         pt = page.evaluate(_GROK_FIND_SUBMIT_BUTTON_JS)
-        if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
-            _grok_mouse_click_point(
-                page, float(pt["x"]), float(pt["y"]), label="submit-icon"
-            )
-            log(
-                f"Grok CDP: submit via {pt.get('method')!r} "
-                f"at ({pt['x']:.0f},{pt['y']:.0f}) aria={pt.get('aria')!r}"
-            )
-            time.sleep(0.5)
-            if page.evaluate(_GROK_IS_GENERATING_JS):
+        if _grok_click_js_target(page, pt, kind=f"submit-arrow-{attempt}"):
+            time.sleep(0.65)
+            if _generating():
                 return
-    pt = page.evaluate(_GROK_CLICK_SUBMIT_TOOLBAR_JS)
-    if _grok_click_js_target(page, pt, kind="submit"):
-        time.sleep(0.5)
-        if page.evaluate(_GROK_IS_GENERATING_JS):
-            return
-        log("Grok CDP: submit click sent but generating not detected; retry")
-    if not deep_image:
-        _grok_viewport_click(page, GROK_GENERATE_X, GROK_TOOLBAR_Y, label="submit-ratio")
-        time.sleep(0.5)
-        if page.evaluate(_GROK_IS_GENERATING_JS):
-            return
+            log("Grok CDP: submit click sent but generating not detected; retry")
+
     clicked = page.evaluate(_GROK_CLICK_SUBMIT_NEAR_INPUT_JS)
     if clicked:
-        log(f"Grok CDP: clicked Submit near input ({clicked!r})")
+        time.sleep(0.5)
+        if _generating():
+            log(f"Grok CDP: clicked Submit near input ({clicked!r})")
+            return
+
+    _grok_viewport_click(page, GROK_GENERATE_X, GROK_TOOLBAR_Y, label="submit-ratio")
+    time.sleep(0.5)
+    if _generating():
         return
+
     for sel in (
+        'button[aria-label="生成视频"]',
+        'button[aria-label="Generate video"]',
         'button[aria-label="Submit"]',
         'button[aria-label="Send"]',
         'button[aria-label="生成"]',
@@ -7151,12 +7978,20 @@ def _grok_click_generate_cdp(page: Page, *, deep_image: bool = False) -> None:
         if loc.count() > 0:
             loc.first.click(timeout=5000, force=True)
             log(f"Grok CDP: clicked generate via {sel}")
-            return
+            time.sleep(0.5)
+            if _generating():
+                return
+
     label = page.evaluate(_GROK_CLICK_GENERATE_JS)
     if label:
         log(f"Grok CDP: clicked generate {label!r}")
-        return
-    raise RuntimeError("Grok Submit 按钮未找到（右下角蓝色上箭头）")
+        time.sleep(0.5)
+        if _generating():
+            return
+
+    raise RuntimeError(
+        "Grok Submit 按钮未找到（图片：右下角蓝色上箭头；视频：生成视频）"
+    )
 
 
 def _grok_wait_image_ready_cdp(
@@ -7202,6 +8037,7 @@ def _grok_wait_video_ready_cdp(
     page: Page, timeout_s: float = GROK_VIDEO_READY_TIMEOUT_S
 ) -> None:
     started = time.monotonic()
+    last_log_s = -1.0
     log(f"waiting for Grok video via CDP (up to {int(timeout_s)}s)…")
     while time.monotonic() - started < timeout_s:
         elapsed = time.monotonic() - started
@@ -7212,10 +8048,17 @@ def _grok_wait_video_ready_cdp(
             log(f"Grok CDP video wait probe failed: {exc}")
             generating = False
             has_output = False
-        log(
-            f"grok video CDP wait {elapsed:.0f}s "
-            f"generating={generating} output={has_output}"
-        )
+        if (
+            last_log_s < 0
+            or elapsed - last_log_s >= 20
+            or generating
+            or has_output
+        ):
+            log(
+                f"grok video CDP wait {elapsed:.0f}s "
+                f"generating={generating} output={has_output}"
+            )
+            last_log_s = elapsed
         if (
             elapsed >= GROK_VIDEO_READY_MIN_S
             and not generating
@@ -7232,8 +8075,8 @@ def _grok_wait_video_ready_cdp(
                 log("Grok video looks ready (CDP)")
                 return
         time.sleep(4.0)
-    raise RuntimeError(
-        f"等了 {int(timeout_s // 60)} 分钟 Grok video 仍在生成。请看该标签是否卡住。"
+    raise GrokVideoTimeoutError(
+        f"Grok video 超过 {int(timeout_s // 60)} 分钟仍未生成完成，跳过本条 story。"
     )
 
 
@@ -7247,9 +8090,15 @@ def _grok_composer_has_image_page(page: Page) -> bool:
 
 def _grok_wait_image_attached(page: Page, timeout_s: float = GROK_IMAGE_ATTACH_TIMEOUT_S) -> bool:
     deadline = time.monotonic() + timeout_s
+    probe_err_logged = False
     while time.monotonic() < deadline:
-        if _grok_composer_has_image_page(page):
-            return True
+        try:
+            if bool(page.evaluate(_GROK_COMPOSER_HAS_IMAGE_JS)):
+                return True
+        except Exception as exc:
+            if not probe_err_logged:
+                log(f"Grok composer image probe failed: {exc}")
+                probe_err_logged = True
         time.sleep(0.35)
     return False
 
@@ -7265,8 +8114,7 @@ def _grok_focus_editor(page: Page):
 
 
 def _grok_paste_cover_image_cdp(page: Page, cover_png: Path) -> bool:
-    """Paste cover via Ctrl+V (Hermes), file-input fallback if needed."""
-    path_str = str(cover_png)
+    """Attach cover once per tab — file input first; at most one Ctrl+V fallback."""
     page.bring_to_front()
     try:
         page.locator('[data-testid="chat-input"]').wait_for(
@@ -7275,46 +8123,39 @@ def _grok_paste_cover_image_cdp(page: Page, cover_png: Path) -> bool:
     except Exception as exc:
         log(f"Grok CDP: chat-input wait failed: {exc}")
     page.wait_for_load_state("domcontentloaded", timeout=20_000)
-    time.sleep(2.0)
+    time.sleep(1.5)
+
+    if _grok_composer_has_image_page(page):
+        log("Grok CDP: cover already attached on this tab")
+        return True
+
+    if _grok_inject_cover_file_cdp(page, cover_png):
+        return True
+
+    if _grok_composer_has_image_page(page):
+        return True
 
     _restore_windows_clipboard_image_from_png(cover_png)
-    for attempt in range(1, 4):
-        try:
-            editor = page.locator(GROK_EDITOR_SEL).first
-            if editor.count() > 0:
-                editor.click(timeout=8000)
-            else:
-                page.evaluate(_GROK_FOCUS_COMPOSER_JS)
-            time.sleep(0.4)
-            page.keyboard.press("Control+V")
-            log(f"Grok CDP: Control+V cover attempt {attempt}")
-            if _grok_wait_image_attached(page, 10.0):
-                return True
-            time.sleep(1.0)
-        except Exception as exc:
-            log(f"Grok CDP cover Ctrl+V attempt {attempt}: {exc}")
-
     try:
-        file_input = page.locator(GROK_FILE_INPUT_SEL)
-        if file_input.count() > 0:
-            file_input.set_input_files(path_str)
-            log("Grok CDP: cover via set_input_files fallback")
-            if _grok_wait_image_attached(page, 15.0):
-                return True
-    except Exception as exc:
-        log(f"Grok CDP cover file-input fallback: {exc}")
-
-    try:
-        with page.expect_file_chooser(timeout=10_000) as fc_info:
-            page.evaluate(_GROK_OPEN_FILE_CHOOSER_JS)
-        fc_info.value.set_files(path_str)
-        log("Grok CDP: cover via file chooser fallback")
-        if _grok_wait_image_attached(page, 15.0):
+        editor = page.locator(GROK_EDITOR_SEL).first
+        if editor.count() > 0:
+            editor.click(timeout=8000)
+        else:
+            page.evaluate(_GROK_FOCUS_COMPOSER_JS)
+        time.sleep(0.4)
+        page.keyboard.press("Control+V")
+        log("Grok CDP: Control+V cover (last resort, once)")
+        time.sleep(2.0)
+        if _grok_wait_image_attached(page, 10.0):
             return True
+        if _grok_composer_has_image_page(page):
+            return True
+        log("Grok CDP: Control+V dispatched (probe slow; treat as ok)")
+        return True
     except Exception as exc:
-        log(f"Grok CDP cover file chooser fallback: {exc}")
+        log(f"Grok CDP cover Ctrl+V: {exc}")
 
-    return False
+    return _grok_composer_has_image_page(page)
 
 
 def _grok_paste_image_clipboard_cdp(page: Page) -> bool:
@@ -7393,8 +8234,11 @@ def _grok_prepare_tab_cdp(page: Page, *, paste_image: bool) -> bool:
     return pasted or not paste_image
 
 
-def _grok_generate_image_on_tab_cdp(page: Page) -> None:
+def _grok_generate_image_on_tab_cdp(page: Page, *, cover_png: Path | None = None) -> None:
     """Switch to 图片 mode, set 9:16, click Submit, wait until image ready."""
+    if cover_png is not None and cover_png.is_file():
+        if not _grok_ensure_cover_attached_cdp(page, cover_png):
+            raise RuntimeError("提交前封面图仍未附在输入框。")
     _grok_ensure_image_mode_and_aspect_916_cdp(page)
     time.sleep(0.2)
     _grok_click_generate_cdp(page, deep_image=False)
@@ -7403,17 +8247,32 @@ def _grok_generate_image_on_tab_cdp(page: Page) -> None:
 
 
 def _grok_generate_video_on_tab_cdp(page: Page, prompt: str) -> None:
-    """Paste video prompt, Video mode icon, Submit, wait."""
-    _grok_paste_prompt_cdp(page, prompt, bottom_bar=True)
-    if not _grok_click_video_mode_cdp(page):
+    """Paste per-scene video prompt (speaking + voiceover), Video mode, Submit, wait."""
+    text = (prompt or "").strip()
+    if not _grok_video_prompt_shape_ok(text):
+        head = text[:160].replace("\n", " ")
         raise RuntimeError(
-            "Grok 视频模式未切换成功。请先点击输入框展开工具栏，"
-            "再点 + 旁摄像机 icon（或右侧「转换为视频」）。"
+            "Grok video 轮提示词不对：应为当前场景的 speaking/voiceover 导出，"
+            f"不是场景图提示词。开头: {head!r}"
         )
-    time.sleep(0.3)
-    _grok_click_video_settings_cdp(page)
+    log(f"Grok CDP: video prompt head: {text[:120]!r}...")
+
+    # Paste first — focusing the composer can reset toolbar back to Image mode.
+    _grok_paste_prompt_cdp(page, text, bottom_bar=False, append=False)
+    actual = str(page.evaluate(_GROK_READ_COMPOSER_TEXT_JS) or "")
+    if "detailed-single-step-image" in actual.lower():
+        raise RuntimeError(
+            "Grok video 轮输入框仍是场景图提示词（Generate detailed-single-step-image）。"
+            "video 提示词未写入主输入框。"
+        )
+    if not _grok_video_prompt_shape_ok(actual):
+        raise RuntimeError(
+            "Grok video 轮读回内容不像 speaking/voiceover 提示词，请检查 nbv 变体。"
+        )
     time.sleep(0.2)
-    _grok_click_generate_cdp(page, deep_image=True)
+    # Video icon is a toggle — only click when not already in video mode.
+    _grok_ensure_video_mode_cdp(page)
+    _grok_click_video_generate_cdp(page)
     time.sleep(0.6)
     _grok_wait_video_ready_cdp(page)
 
@@ -7429,11 +8288,12 @@ def _grok_prepare_all_tabs_cdp(
     video_prompts: list[tuple[str, str]] | None = None,
     auto_generate_video: bool = False,
     auto_download_video: bool = False,
-) -> tuple[int, int, list[dict]]:
+) -> tuple[int, int, list[dict], list[dict]]:
     """Prepare N Grok Imagine tabs.
 
-    Returns ``(image_paste_ok_count, prompt_paste_ok_count, downloaded_clips)``.
-    When ``auto_download_video``, each tab is saved right after Round 3 video gen.
+    Returns ``(image_paste_ok, prompt_paste_ok, downloaded_clips, video_results)``.
+    ``video_results`` items: ``{scene, status: ok|failed|timeout, error?}``.
+    Video failures leave the tab untouched for manual review.
     """
     port = int(port or _grok_cdp_port())
     if not cdp_ready(port):
@@ -7441,6 +8301,7 @@ def _grok_prepare_all_tabs_cdp(
     pasted = 0
     prompts_done = 0
     downloads: list[dict] = []
+    video_results: list[dict] = []
     download_stamp = ""
     download_cookies: dict[str, str] = {}
     if cover_png is None or not cover_png.is_file():
@@ -7454,24 +8315,52 @@ def _grok_prepare_all_tabs_cdp(
             ctx = browser.contexts[0]
             pages: list[Page] = []
             if fresh_tabs:
-                # Hermes model: open tab → wait → paste cover → 9:16 (one tab at a time)
+                # Reuse existing imagine tabs when possible — closing the only tab
+                # kills HermesChromeCDP (BrowserContext.new_page then fails).
+                old_pages = _grok_imagine_pages(ctx)
+                if old_pages:
+                    log(
+                        f"Grok round 1: reset imagine tabs "
+                        f"(have {len(old_pages)}, need {n})"
+                    )
                 log(f"Grok round 1: open + paste cover on {n} tab(s)")
                 for i in range(n):
                     tab_no = i + 1
-                    pg = ctx.new_page()
-                    pg.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=60_000)
-                    pages.append(pg)
-                    log(f"Grok round 1 tab {tab_no}/{n} opened {pg.url}")
+                    if i < len(old_pages):
+                        pg = old_pages[i]
+                        pg.bring_to_front()
+                        pg.goto(
+                            GROK_IMAGINE_URL,
+                            wait_until="domcontentloaded",
+                            timeout=60_000,
+                        )
+                        pages.append(pg)
+                        log(f"Grok round 1 tab {tab_no}/{n} reused {pg.url}")
+                    else:
+                        pg = ctx.new_page()
+                        pg.bring_to_front()
+                        pg.goto(
+                            GROK_IMAGINE_URL,
+                            wait_until="domcontentloaded",
+                            timeout=60_000,
+                        )
+                        pages.append(pg)
+                        log(f"Grok round 1 tab {tab_no}/{n} opened {pg.url}")
                     if paste_image and cover_png:
                         if _grok_paste_cover_image_cdp(pg, cover_png):
                             pasted += 1
-                            log(f"Grok tab {tab_no}: cover pasted")
+                            log(f"Grok tab {tab_no}: cover attached")
                         else:
                             raise RuntimeError(
                                 f"第一轮：标签 {tab_no} 封面图粘贴失败。"
                             )
                         _grok_ensure_image_mode_and_aspect_916_cdp(pg)
-                        time.sleep(0.25)
+                        time.sleep(0.6)
+                for j in range(n, len(old_pages)):
+                    try:
+                        old_pages[j].close()
+                    except Exception:
+                        pass
                 log(f"Grok round 1 done: {pasted}/{n} tabs have cover")
             else:
                 pages = _grok_imagine_pages(ctx)
@@ -7519,21 +8408,58 @@ def _grok_prepare_all_tabs_cdp(
                     page.bring_to_front()
                     page.wait_for_load_state("domcontentloaded", timeout=20_000)
                     time.sleep(0.8)
-                    _grok_paste_prompt_cdp(page, prompt)
+                    if paste_image and cover_png:
+                        if not _grok_ensure_cover_attached_cdp(page, cover_png):
+                            raise RuntimeError(
+                                f"第二轮：标签 {tab_no} 封面图未附在输入框。"
+                            )
+                    _grok_paste_prompt_cdp(page, prompt, append=True)
                     prompts_done += 1
                     log(f"Grok tab {tab_no}: scene prompt set")
                     if auto_generate:
                         log(f"Grok tab {tab_no}: clicking Submit…")
-                        _grok_generate_image_on_tab_cdp(page)
+                        _grok_generate_image_on_tab_cdp(
+                            page, cover_png=cover_png if paste_image else None
+                        )
                         log(f"Grok tab {tab_no}: image generation complete")
                         if auto_generate_video and video_prompts and i < len(video_prompts):
                             vlbl, vprompt = video_prompts[i]
                             log(
                                 f"Grok round 3 tab {tab_no}/{n} ({vlbl}) "
-                                "→ Video mode + Submit"
+                                f"→ video prompt {len(vprompt)} chars → Video mode + Submit"
                             )
-                            _grok_generate_video_on_tab_cdp(page, vprompt)
-                            log(f"Grok tab {tab_no}: video generation complete")
+                            try:
+                                _grok_generate_video_on_tab_cdp(page, vprompt)
+                                video_results.append(
+                                    {"scene": tab_no, "status": "ok", "label": vlbl}
+                                )
+                                log(f"Grok tab {tab_no}: video generation complete")
+                            except GrokVideoTimeoutError as exc:
+                                video_results.append(
+                                    {
+                                        "scene": tab_no,
+                                        "status": "timeout",
+                                        "label": vlbl,
+                                        "error": str(exc),
+                                    }
+                                )
+                                log(
+                                    f"Grok tab {tab_no}: video timeout — "
+                                    f"leave tab for manual review ({exc})"
+                                )
+                            except Exception as exc:
+                                video_results.append(
+                                    {
+                                        "scene": tab_no,
+                                        "status": "failed",
+                                        "label": vlbl,
+                                        "error": str(exc),
+                                    }
+                                )
+                                log(
+                                    f"Grok tab {tab_no}: video failed — "
+                                    f"leave tab for manual review ({exc})"
+                                )
                             if auto_download_video:
                                 log(
                                     f"Grok round 4 tab {tab_no}/{n}: download video "
@@ -7555,7 +8481,35 @@ def _grok_prepare_all_tabs_cdp(
                 cover_png.unlink(missing_ok=True)
             except OSError:
                 pass
-    return pasted, prompts_done, downloads
+    return pasted, prompts_done, downloads, video_results
+
+
+def format_grok_video_results_summary(
+    results: list[dict], *, n: int | None = None
+) -> str:
+    """Human-readable per-scene video generation outcome for Telegram review."""
+    rows = list(results or [])
+    total = int(n or 0) or len(rows)
+    ok = [r for r in rows if r.get("status") == "ok"]
+    bad = [r for r in rows if r.get("status") != "ok"]
+    lines = [
+        f"Grok video clip 已全部走过：{len(ok)}/{total} 场景生成成功。",
+    ]
+    if bad:
+        lines.append("以下场景未成功（标签保持不动，可手动 Submit 重试）：")
+        for r in bad:
+            scene = r.get("scene") or "?"
+            st = r.get("status") or "failed"
+            err = str(r.get("error") or "").strip()
+            if len(err) > 120:
+                err = err[:117] + "..."
+            lines.append(f"  场景 {scene}: {st}" + (f" — {err}" if err else ""))
+    else:
+        lines.append("全部场景 video 已生成，请在各 Grok 标签检查效果。")
+    lines.append(
+        "Review 完成后回复 continue 或 grvc，将逐标签下载 clip 并写入 scene_content。"
+    )
+    return "\n".join(lines)
 
 
 def _grok_run_on_tab(tab_index: int, fn, *, port: int | None = None) -> Any:
@@ -7783,7 +8737,7 @@ def _click_grok_aspect_ratio_916(hwnd: int) -> None:
 
     toolbar_btn = None
     best_y = -1
-    for label in ("纵横比", "Aspect ratio", "Aspect Ratio", "宽高比", "9:16"):
+    for label in ("自由模式", "9:16", "纵横比", "Aspect ratio", "Aspect Ratio", "宽高比", "模式"):
         for ctrl in _uia_named_all(
             hwnd,
             label,
@@ -7809,7 +8763,7 @@ def _click_grok_aspect_ratio_916(hwnd: int) -> None:
         _click_ratio(hwnd, GROK_ASPECT_BTN_X, GROK_TOOLBAR_Y, pause=0.35)
     time.sleep(0.55)
 
-    for menu_label in ("9:16", "9:16 纵向", "9:16 Vertical", "纵向", "Vertical"):
+    for menu_label in ("9:16 竖屏", "9:16", "9:16 纵向", "9:16 Vertical", "纵向", "Vertical"):
         if _click_named(
             hwnd,
             menu_label,
@@ -7864,25 +8818,8 @@ def _click_grok_video_mode(hwnd: int) -> None:
 
 
 def _click_grok_video_settings(hwnd: int) -> None:
-    """Best-effort 720p / 10s after Video mode. Skip quietly if the UI has no names."""
-    for name in ("720p", "720P", "720"):
-        if _click_named(
-            hwnd,
-            name,
-            ["ButtonControl", "RadioButtonControl", "ComboBoxControl", "TextControl"],
-            search_depth=14,
-        ):
-            time.sleep(0.15)
-            break
-    for name in ("10s", "10 s", "10sec", "10 sec", "10 seconds", "10秒"):
-        if _click_named(
-            hwnd,
-            name,
-            ["ButtonControl", "RadioButtonControl", "ComboBoxControl", "TextControl"],
-            search_depth=14,
-        ):
-            time.sleep(0.15)
-            break
+    """Keep default video duration; no UI interaction."""
+    return
 
 
 def _click_grok_generate(hwnd: int) -> None:
@@ -7900,7 +8837,7 @@ def paste_image_into_all_grok_tabs() -> str:
     n = _grok_recorded_tab_count() or 1
     port = _grok_resolve_cdp_port()
     cover_png = _grok_resolve_cover_png()
-    pasted_n, _prompt_n, _downloads = _grok_prepare_all_tabs_cdp(
+    pasted_n, _prompt_n, _downloads, _video_results = _grok_prepare_all_tabs_cdp(
         n, cover_png=cover_png, port=port, fresh_tabs=False
     )
     if pasted_n < n:
@@ -8162,6 +9099,7 @@ def _grok_download_scene_videos_cdp(
     stamp: str | None = None,
     wait_ready: bool = True,
     log_prefix: str = "gvd",
+    continue_on_error: bool = False,
 ) -> list[dict]:
     """Download scene 1…N from open Imagine tabs (shared by ``grv`` and ``gvd``)."""
     if not pages:
@@ -8185,8 +9123,8 @@ def _grok_download_scene_videos_cdp(
     for i in range(1, n + 1):
         page = pages[i - 1]
         log(f"{log_prefix} CDP tab {i}/{n} url={page.url}")
-        recorded.append(
-            _grok_download_tab_video_cdp(
+        try:
+            item = _grok_download_tab_video_cdp(
                 page,
                 i,
                 cookies,
@@ -8194,11 +9132,17 @@ def _grok_download_scene_videos_cdp(
                 wait_ready=wait_ready,
                 log_prefix=log_prefix,
             )
-        )
+            item["status"] = "ok"
+            recorded.append(item)
+        except Exception as exc:
+            if not continue_on_error:
+                raise
+            log(f"{log_prefix} tab {i}: download failed — {exc}")
+            recorded.append({"scene": i, "status": "failed", "error": str(exc)})
     return recorded
 
 
-def download_grok_scene_videos() -> list[dict]:
+def download_grok_scene_videos(*, continue_on_error: bool = True) -> list[dict]:
     """Download each Grok Imagine tab's video via CDP ``video.src`` + cookies.
 
     Matches the reliable path in ``D:\\Hermes\\cdp_download.py`` (no UI download click).
@@ -8214,12 +9158,20 @@ def download_grok_scene_videos() -> list[dict]:
         ctx = browser.contexts[0]
         pages = _grok_imagine_pages(ctx)
         recorded = _grok_download_scene_videos_cdp(
-            ctx, pages, n, wait_ready=True, log_prefix="gvd"
+            ctx,
+            pages,
+            n,
+            wait_ready=True,
+            log_prefix="gvd",
+            continue_on_error=continue_on_error,
         )
 
     from utility.telegram_session import save_grok_scene_videos
 
-    return save_grok_scene_videos(recorded)
+    ok_items = [r for r in recorded if r.get("path")]
+    if ok_items:
+        save_grok_scene_videos(ok_items)
+    return recorded
 
 
 def main() -> int:

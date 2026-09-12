@@ -132,21 +132,17 @@ class SummaryMp4ReviewDialog:
                 if not p or not os.path.isfile(p) or not p.lower().endswith(".mp4"):
                     print(f"⚠️ 审阅窗跳过无效片段: {p or seg}")
                     continue
-                dur, fps, fc = _probe_video_meta(p, self.ff)
-                c = _ClipState(p, dur, fps, fc)
                 try:
-                    c.start = float(seg.get("start", 0.0))
-                    c.end = float(seg.get("end", c.duration))
-                    c.speed = round(float(seg.get("speed") or 1.0), 1)
+                    start = float(seg.get("start", 0.0))
+                    end = float(seg.get("end", 10.0))
+                    speed = round(float(seg.get("speed") or 1.0), 1)
                 except (TypeError, ValueError):
-                    c.start = 0.0
-                    c.end = c.duration
-                    c.speed = 1.0
-                c.start = self._snap_time(c, c.start)
-                c.end = self._snap_time(c, c.end)
-                if c.end <= c.start + self._MIN_CLIP_SEC:
-                    c.end = self._snap_time(c, min(c.duration, c.start + self._MIN_CLIP_SEC))
-                c.speed = max(SPEED_MIN, min(SPEED_MAX, c.speed))
+                    start, end, speed = 0.0, 10.0, 1.0
+                dur_guess = max(0.01, end, start + self._MIN_CLIP_SEC)
+                c = _ClipState(p, dur_guess, 24.0, max(1, int(dur_guess * 24)))
+                c.start = start
+                c.end = end
+                c.speed = max(SPEED_MIN, min(SPEED_MAX, speed))
                 self.clips.append(c)
             print(f"📎 审阅窗从配置载入 {len(self.clips)} 个片段")
         else:
@@ -158,8 +154,7 @@ class SummaryMp4ReviewDialog:
             if not paths:
                 raise ValueError("无有效 MP4")
             for p in paths:
-                dur, fps, fc = _probe_video_meta(p, self.ff)
-                self.clips.append(_ClipState(p, dur, fps, fc))
+                self.clips.append(_ClipState(p, 15.0, 24.0, 360))
             print(f"📎 审阅窗载入 {len(self.clips)} 个 MP4（输入 {len(mp4_paths or [])} 项）")
 
         if not self.clips:
@@ -199,6 +194,7 @@ class SummaryMp4ReviewDialog:
 
         self._build_ui()
         self._select_clip(0)
+        self.dlg.after_idle(self._probe_clips_async)
         self.dlg.update_idletasks()
         sw = self.dlg.winfo_screenwidth()
         sh = self.dlg.winfo_screenheight()
@@ -331,7 +327,7 @@ class SummaryMp4ReviewDialog:
     def _clip_label(self, idx: int, c: _ClipState) -> str:
         name = os.path.basename(c.path)
         spd = f" @{c.speed:.1f}×" if abs(c.speed - 1.0) > 0.001 else ""
-        return f"{idx + 1}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}{spd}]"
+        return f"场景 {idx + 1}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}{spd}]"
 
     def _refresh_listbox(self) -> None:
         sel = self._sel
@@ -389,6 +385,46 @@ class SummaryMp4ReviewDialog:
         self._play_audio_key = None
         self._apply_clip_to_ui(c)
         self._refresh_listbox()
+
+    def _probe_clips_async(self) -> None:
+        """ffprobe 放后台，避免打开审阅窗时卡住 STORY 的 Tk 主线程。"""
+        if not self.clips:
+            return
+        clips = list(self.clips)
+        ff = self.ff
+        saved_ends = [c.end for c in clips]
+        saved_starts = [c.start for c in clips]
+
+        def _worker():
+            updates: list[tuple[int, float, float, int]] = []
+            for i, c in enumerate(clips):
+                try:
+                    dur, fps, fc = _probe_video_meta(c.path, ff)
+                    updates.append((i, dur, fps, fc))
+                except Exception:
+                    continue
+
+            def _apply():
+                if not self.dlg.winfo_exists():
+                    return
+                for i, dur, fps, fc in updates:
+                    if not (0 <= i < len(self.clips)):
+                        continue
+                    c = self.clips[i]
+                    c.duration = dur
+                    c.fps = fps
+                    c.frame_count = fc
+                    c.end = min(max(saved_ends[i], c.start + self._MIN_CLIP_SEC), dur)
+                    c.start = min(saved_starts[i], c.end - self._MIN_CLIP_SEC)
+                    c.start = self._snap_time(c, c.start)
+                    c.end = self._snap_time(c, c.end)
+                if 0 <= self._sel < len(self.clips):
+                    self._apply_clip_to_ui(self.clips[self._sel])
+                self._refresh_listbox()
+
+            self.dlg.after(0, _apply)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _select_clip(self, idx: int) -> None:
         if not (0 <= idx < len(self.clips)):

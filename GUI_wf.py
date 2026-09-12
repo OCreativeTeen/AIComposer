@@ -6345,8 +6345,6 @@ class WorkflowGUI:
         main_char = ""
         if cur:
             main_char = (cur.get("actor") or self.scene_speaker.get() or "").strip()
-        if not main_char:
-            main_char = (pc.get("narrator") or "").strip()
         host_nar = (pc.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
         if not host_nar and cur:
             host_nar = WorkflowGUI._strip_narrator_export_markup(cur.get("narrator") or "")

@@ -133,6 +133,9 @@ class HermesTelegramClient:
         self._scene_pick_max = 0
         self._scene_pick_digit = 0
         self._scene_pick_event = threading.Event()
+        self._cover_gen_pending = False
+        self._cover_gen_event = threading.Event()
+        self._scene_gen_pending = False
         self._last_tg = 0.0
 
     # ------------------------------------------------------------------ logging
@@ -211,10 +214,11 @@ class HermesTelegramClient:
 
         return public_screen_name(current_screen())
 
-    def _wait_gui_if_stuck(self) -> None:
+    def _wait_gui_if_stuck(self, *, telegram: bool = False) -> None:
         from cli.bridge import gui_heartbeat
 
         start = time.monotonic()
+        last_tg = 0.0
         while not self._stop.is_set():
             beat = gui_heartbeat()
             if beat is None:
@@ -224,13 +228,37 @@ class HermesTelegramClient:
             age = float(beat.get("pump_age_s") or 0)
             waited = time.monotonic() - start
             self.log(f"GUI pump_alive=false (age={age:.0f}s) — wait {waited:.0f}s")
+            if telegram and waited - last_tg >= 20.0:
+                last_tg = waited
+                self.log(
+                    f"GUI 主线程忙（pump {age:.0f}s），继续等 SCENE bridge…",
+                    telegram=True,
+                )
             if waited > _HEARTBEAT_STUCK_S:
                 self.log(
                     f"GUI still stuck after {waited:.0f}s; continuing anyway",
                     telegram=True,
                 )
                 return
-            time.sleep(15.0)
+            time.sleep(5.0)
+
+    def _bridge_apply_retryable(self, msg: str) -> bool:
+        low = (msg or "").lower()
+        return any(
+            token in low or token in (msg or "")
+            for token in (
+                "pump",
+                "卡住",
+                "无响应",
+                "timeout",
+                "bridge",
+                "还没就绪",
+                "not ready",
+                "仍在加载",
+                "unknown field",
+                "编辑区仍在加载",
+            )
+        )
 
     def _ensure_single_instance(self) -> None:
         stories, scenes = self._story_scene_windows()
@@ -372,10 +400,17 @@ class HermesTelegramClient:
 
         compact = text.translate(_FULLWIDTH_DIGITS).lower()
         from utility.telegram_session import (
+            cover_generation_choice_pending,
+            gemini_scenes_pick_pending,
+            load_gemini_scenes_pick,
             load_scene_choice_pick,
+            record_cover_generation_choice,
+            record_gemini_scenes_pick,
             record_scene_choice_pick,
+            record_scene_generation_choice,
             record_whole_story_pick,
             scene_choice_pick_pending,
+            scene_generation_choice_pending,
             whole_story_pick_pending,
         )
 
@@ -407,6 +442,89 @@ class HermesTelegramClient:
                         self._scene_pick_event.set()
             return
 
+        if gemini_scenes_pick_pending():
+            digit = text.translate(_FULLWIDTH_DIGITS).strip()
+            if digit.isdigit() and " " not in digit:
+                idx = int(digit)
+                rec = load_gemini_scenes_pick()
+                pick_max = len(list(rec.get("files") or []))
+                if 1 <= idx <= pick_max:
+                    try:
+                        picked = record_gemini_scenes_pick(idx)
+                        self.log(
+                            f"场景 JSON 已记录 #{idx}"
+                            f" {os.path.basename(picked.get('path') or '')}（已写入剪贴板）",
+                            telegram=True,
+                        )
+                    except ValueError as exc:
+                        self.log(f"场景 JSON 选择无效：{exc}", telegram=True)
+                    return
+            compact_ge = text.translate(_FULLWIDTH_DIGITS).lower()
+            if compact_ge.startswith("scnge pick "):
+                parts = compact_ge.split()
+                if len(parts) == 3 and parts[2].isdigit():
+                    try:
+                        picked = record_gemini_scenes_pick(int(parts[2]))
+                        self.log(
+                            f"场景 JSON 已记录 #{parts[2]}"
+                            f" {os.path.basename(picked.get('path') or '')}（已写入剪贴板）",
+                            telegram=True,
+                        )
+                    except ValueError as exc:
+                        self.log(f"场景 JSON 选择无效：{exc}", telegram=True)
+            return
+
+        if self._scene_gen_pending or scene_generation_choice_pending():
+            digit = text.translate(_FULLWIDTH_DIGITS).strip()
+            try:
+                if digit in ("1", "2") and " " not in text.strip():
+                    record_scene_generation_choice(digit)
+                    label = (
+                        "Gemini 重新生成 ×3"
+                        if digit == "1"
+                        else "用已有 scene_content 拷到剪贴板"
+                    )
+                    self.log(f"场景生成已选：{label}", telegram=True)
+                    return
+                if compact in ("use", "copy", "已有", "skip", "reuse"):
+                    record_scene_generation_choice("use")
+                    self.log("场景生成已选：用已有 scene_content", telegram=True)
+                    return
+                if compact in ("force", "regen", "gen", "generate", "生成", "yes"):
+                    record_scene_generation_choice("generate")
+                    self.log("场景生成已选：Gemini 重新生成", telegram=True)
+                    return
+            except ValueError as exc:
+                self.log(str(exc), telegram=True)
+            return
+
+        if self._cover_gen_pending or cover_generation_choice_pending():
+            digit = text.translate(_FULLWIDTH_DIGITS).strip()
+            try:
+                if digit in ("1", "2") and " " not in text.strip():
+                    record_cover_generation_choice(digit)
+                    label = (
+                        "生成新封面（nbp→nbi→itc）"
+                        if digit == "1"
+                        else "跳过，用已有 Infographic（itcs）"
+                    )
+                    self.log(f"封面生成已选：{label}", telegram=True)
+                    self._cover_gen_event.set()
+                    return
+                if compact in ("skip", "itcs", "已有", "use", "跳过"):
+                    record_cover_generation_choice("skip")
+                    self.log("封面生成已选：跳过，用已有 Infographic（itcs）", telegram=True)
+                    self._cover_gen_event.set()
+                    return
+                if compact in ("gen", "generate", "nbp", "生成", "yes"):
+                    record_cover_generation_choice("generate")
+                    self.log("封面生成已选：生成新封面（nbp→nbi→itc）", telegram=True)
+                    self._cover_gen_event.set()
+                    return
+            except ValueError as exc:
+                self.log(str(exc), telegram=True)
+            return
+
         if not whole_story_pick_pending():
             return
         digit = text.translate(_FULLWIDTH_DIGITS)
@@ -424,6 +542,32 @@ class HermesTelegramClient:
             return
         compact = text.translate(_FULLWIDTH_DIGITS).lower()
         if compact.startswith("itc "):
+            parts = compact.split()
+            if len(parts) == 2 and parts[1].isdigit():
+                try:
+                    picked = record_whole_story_pick(int(parts[1]))
+                    path = picked.get("path") or ""
+                    self.log(
+                        f"封面已记录 #{parts[1]}"
+                        + (f" {os.path.basename(path)}" if path else ""),
+                        telegram=True,
+                    )
+                except ValueError as exc:
+                    self.log(f"封面选择无效：{exc}", telegram=True)
+                return
+            if len(parts) >= 3 and parts[1] == "pick" and parts[2].isdigit():
+                try:
+                    picked = record_whole_story_pick(int(parts[2]))
+                    path = picked.get("path") or ""
+                    self.log(
+                        f"封面已记录 #{parts[2]}"
+                        + (f" {os.path.basename(path)}" if path else ""),
+                        telegram=True,
+                    )
+                except ValueError as exc:
+                    self.log(f"封面选择无效：{exc}", telegram=True)
+                return
+        if compact.startswith("itcs "):
             parts = compact.split()
             if len(parts) == 2 and parts[1].isdigit():
                 try:
@@ -757,7 +901,7 @@ class HermesTelegramClient:
         """``kind`` = ``lm`` | ``vs``：发 scnlm/scnvs 列表到 Telegram，等序号，再执行。"""
         from cli.commands import (
             _numbered_choice_count,
-            scene_lm_choice_labels_resolved,
+            scene_lm_choice_labels_fallback,
             scene_lm_list_message,
             scene_visual_style_choice_labels,
         )
@@ -768,25 +912,9 @@ class HermesTelegramClient:
 
         cmd = "scnlm" if kind == "lm" else "scnvs"
         title = "LM 提示词" if kind == "lm" else "Visual Style"
-        if kind == "vs":
-            self._wait_gui_if_stuck()
-        self._ensure_scene_bridge_ready()
         self._skip_stale_telegram_updates()
 
-        if kind == "vs":
-            max_n = len(scene_visual_style_choice_labels())
-        else:
-            max_n = len(scene_lm_choice_labels_resolved())
-        if max_n < 1:
-            raise PipelineError(f"{cmd} 没有可选项。")
-
-        clear_scene_choice_pick()
-        start_scene_choice_pick(kind, max_n)
-        self._scene_pick_kind = kind
-        self._scene_pick_max = max_n
-        self._scene_pick_digit = 0
-        self._scene_pick_event.clear()
-
+        # 立刻通知（scnvs 刚改完 GUI 时 bridge 可能忙，不要等读下拉再发第一条）
         self.log(
             f"【人工选{title}】下面会发 {cmd} 列表；请只回序号或 {cmd} N。",
             telegram=True,
@@ -794,36 +922,37 @@ class HermesTelegramClient:
 
         list_msg = ""
         list_ok = False
-        for attempt in range(4):
-            ok, msg = self.cli(cmd)
-            if ok:
-                list_ok = True
-                list_msg = msg
-                break
-            self.log(msg, telegram=True)
-            if kind == "lm" and (
-                "需要 SCENE" in msg or "SCENE 未" in msg or "bridge" in msg.lower()
-            ):
-                self.log("scnlm 列表未读出，重试 scn + bridge…", telegram=True)
-                self._ensure_scene_bridge_ready()
-                time.sleep(1.0)
-                continue
-            if kind == "lm":
-                break
-            raise PipelineError(f"{cmd} failed: {msg}")
+        if kind == "lm":
+            max_n = len(scene_lm_choice_labels_fallback())
+            if max_n < 1:
+                raise PipelineError(f"{cmd} 没有可选项。")
+            list_ok, list_msg = scene_lm_list_message(fast=True)
+            if not list_ok:
+                raise PipelineError(list_msg or f"{cmd} 没有可选项。")
+        else:
+            self._wait_gui_if_stuck()
+            self._ensure_scene_bridge_ready()
+            max_n = len(scene_visual_style_choice_labels())
+            if max_n < 1:
+                raise PipelineError(f"{cmd} 没有可选项。")
+            for attempt in range(4):
+                ok, msg = self.cli(cmd)
+                if ok:
+                    list_ok = True
+                    list_msg = msg
+                    break
+                self.log(msg, telegram=True)
+                if attempt < 3:
+                    time.sleep(1.0)
+                    continue
+                raise PipelineError(f"{cmd} failed: {msg}")
 
-        if not list_ok and kind == "lm":
-            fb_ok, fb_msg = scene_lm_list_message()
-            if not fb_ok:
-                raise PipelineError(fb_msg)
-            list_msg = fb_msg
-            list_ok = True
-            self.log(
-                "SCENE bridge 暂忙，已用配置里的 LM 列表发 Telegram（选序号仍有效）。",
-                telegram=True,
-            )
-        elif not list_ok:
-            raise PipelineError(f"{cmd} failed")
+        clear_scene_choice_pick()
+        start_scene_choice_pick(kind, max_n)
+        self._scene_pick_kind = kind
+        self._scene_pick_max = max_n
+        self._scene_pick_digit = 0
+        self._scene_pick_event.clear()
 
         self.log(list_msg, telegram=True)
         listed = _numbered_choice_count(list_msg, cmd)
@@ -841,10 +970,27 @@ class HermesTelegramClient:
         def _apply_pick(idx: int) -> None:
             self._scene_pick_kind = ""
             clear_scene_choice_pick()
-            ok, apply_msg = self.cli(f"{cmd} {idx}")
-            if not ok:
+            last_err = ""
+            for attempt in range(6):
+                if attempt > 0:
+                    self._wait_gui_if_stuck(telegram=True)
+                if kind == "lm" and attempt > 0:
+                    self._ensure_scene_bridge_ready()
+                ok, apply_msg = self.cli(f"{cmd} {idx}")
+                if ok:
+                    self.log(f"{title} 已选 #{idx}\n{apply_msg}", telegram=True)
+                    return
+                last_err = apply_msg
+                if self._bridge_apply_retryable(apply_msg) and attempt < 5:
+                    self.log(
+                        f"{cmd} {idx} 暂失败（{attempt + 1}/6）："
+                        "SCENE 可能仍在加载，15s 后重试…",
+                        telegram=True,
+                    )
+                    time.sleep(15.0)
+                    continue
                 raise PipelineError(f"{cmd} {idx} failed: {apply_msg}")
-            self.log(f"{title} 已选 #{idx}\n{apply_msg}", telegram=True)
+            raise PipelineError(f"{cmd} {idx} failed: {last_err}")
 
         last_remind = time.monotonic()
         try:
@@ -890,28 +1036,126 @@ class HermesTelegramClient:
         self._wait_human_scene_pick("lm")
         self._pause_after_scene_lm(5.0)
 
+    def _wait_human_gemini_scenes_pick(self) -> None:
+        from utility.telegram_session import (
+            gemini_scenes_pick_pending,
+            load_gemini_scenes_pick,
+            selected_gemini_scenes_json_path,
+        )
+
+        self._skip_stale_telegram_updates()
+        rec = load_gemini_scenes_pick()
+        files = list(rec.get("files") or [])
+        lines = "\n".join(f"  {i}. {p}" for i, p in enumerate(files, 1))
+        self.log(
+            f"【人工选场景 JSON】已生成 {len(files)} 份，请打开对比：\n{lines}\n"
+            "请在 Telegram 回复 1 / 2 / 3。选定后写入剪贴板。",
+            telegram=True,
+        )
+        last_remind = time.monotonic()
+        while not self._stop.is_set():
+            self._poll_telegram_inbox()
+            path = selected_gemini_scenes_json_path()
+            if path and not gemini_scenes_pick_pending():
+                self.log(
+                    f"场景 JSON 已选定 path={path}",
+                    telegram=True,
+                )
+                return
+            if self._stop_requested:
+                raise PipelineError("stopped while waiting for gemini scenes pick")
+            if self._skip_requested:
+                self._skip_requested = False
+                raise PipelineError("skip while waiting for gemini scenes pick")
+            if time.monotonic() - last_remind >= _SCENE_PICK_REMIND_S:
+                last_remind = time.monotonic()
+                pending = gemini_scenes_pick_pending()
+                self.log(
+                    f"仍在等选场景 JSON（共 {len(files)} 份；pending={pending}）。"
+                    "请回 1 / 2 / 3。",
+                    telegram=True,
+                )
+            time.sleep(2.0)
+        raise PipelineError("stopped")
+
+    def _wait_human_scene_generation_choice(self, scene_count: int, source: str) -> bool:
+        """True = 用已有 scene_content（拷剪贴板）；False = Gemini 重新生成。"""
+        from utility.telegram_session import (
+            clear_scene_generation_choice,
+            start_scene_generation_choice,
+            take_scene_generation_choice,
+        )
+
+        clear_scene_generation_choice()
+        start_scene_generation_choice(scene_count, source=source)
+        self._scene_gen_pending = True
+
+        lines = [
+            "【场景 JSON】当前故事已有分镜数据。",
+            f"已有 {scene_count} 场 scene_content（{source}）。",
+            "",
+            "1 = 用 Gemini 重新生成 ×3（scnge force）",
+            "2 = 用已有数据拷到剪贴板（scnge use，不打开 Gemini）",
+            "",
+            "请回复 1 或 2（也可发 生成 / 已有）。",
+        ]
+        self._skip_stale_telegram_updates()
+        self.log("\n".join(lines), telegram=True)
+        self._log_pick_wait_telegram_mode(what=" 1 或 2")
+
+        last_remind = time.monotonic()
+        try:
+            while not self._stop.is_set():
+                self._poll_telegram_inbox()
+                choice = take_scene_generation_choice()
+                if choice == "generate":
+                    self.log("继续：Gemini 重新生成场景 JSON。", telegram=True)
+                    return False
+                if choice == "use":
+                    self.log("跳过 Gemini，使用已有 scene_content。", telegram=True)
+                    return True
+                if self._stop_requested:
+                    raise PipelineError("stopped while waiting for scene generation choice")
+                if self._skip_requested:
+                    self._skip_requested = False
+                    raise PipelineError("skip while waiting for scene generation choice")
+                if time.monotonic() - last_remind >= _COVER_WAIT_REMIND_S:
+                    last_remind = time.monotonic()
+                    self.log("仍在等场景生成选择：回 1=重新生成  2=用已有。", telegram=True)
+                time.sleep(1.0)
+        finally:
+            self._scene_gen_pending = False
+            clear_scene_generation_choice()
+        raise PipelineError("stopped")
+
     def _generate_scenes(self) -> None:
+        from cli.commands import load_existing_scene_content
+
+        existing, source = load_existing_scene_content()
+        if existing:
+            if self._wait_human_scene_generation_choice(len(existing), source):
+                ok, msg = self.cli("scnge use")
+                if ok and ("剪贴板" in msg or "clipboard" in msg.lower()):
+                    self.log(msg)
+                    return
+                raise PipelineError(f"scnge use failed: {msg}")
+        self._generate_scenes_via_gemini()
+
+    def _generate_scenes_via_gemini(self) -> None:
         last = ""
         for attempt in range(3):
             self._wait_gui_if_stuck()
-            ok, msg = self.cli("scnge")
+            ok, msg = self.cli("scnge force")
             last = msg
-            if ok and "scenes on clipboard" in msg.lower():
+            if ok and "Gemini_Scenes" in msg:
+                self._wait_human_gemini_scenes_pick()
                 return
-            if ok and "已粘贴提示词" in msg:
-                self.log("scnge 已粘贴，等待生成后 fetch")
-                time.sleep(25.0)
-                for _ in range(8):
-                    fok, fmsg = self.cli("fetch")
-                    last = fmsg
-                    if fok and "scenes on clipboard" in fmsg.lower():
-                        return
-                    time.sleep(15.0)
-                continue
+            if ok and "已生成" in msg and "份场景 JSON" in msg:
+                self._wait_human_gemini_scenes_pick()
+                return
             if "prompt too short" in msg.lower() or "too short" in msg.lower():
                 self.log("scnge prompt too short — 重做 scnlm", telegram=True)
                 self._wait_human_scene_pick("lm")
-                self._select_lm()
                 continue
             if "还不知道要生成几个场景" in msg or "missing or too short" in msg.lower():
                 self.log("scnge 读不到 LM 长提示 — 再等 5 秒后重试", telegram=True)
@@ -928,15 +1172,17 @@ class HermesTelegramClient:
             "scnsave ok" in low
             or "s_save ok" in low
             or "scenes saved to video_detail" in low
+            or "already on disk" in low
         )
 
     def _scene_save(self) -> None:
         last = ""
         for attempt in range(3):
-            self._wait_gui_if_stuck()
+            self._wait_gui_if_stuck(telegram=True)
             ok, msg = self.cli("scnsave")
             last = msg
             if ok and self._scnsave_ok(msg):
+                self.log("scnsave 完成，继续封面步骤（1=nbp 生成 / 2=itcs）…", telegram=True)
                 return
             if "不是 JSON" in msg or "不是有效的 SCENE JSON" in msg:
                 self.log("scnsave 不是 JSON — 重做 scnge", telegram=True)
@@ -946,9 +1192,115 @@ class HermesTelegramClient:
                 raise PipelineError(
                     "scnsave 命令未注册 — 请更新 AIComposer 并重启 GUI / client。"
                 )
+            if self._bridge_apply_retryable(msg) and attempt < 2:
+                self.log(
+                    f"scnsave 暂失败（{attempt + 1}/3）：SCENE 可能仍在加载，15s 后重试…",
+                    telegram=True,
+                )
+                time.sleep(15.0)
+                continue
             if attempt < 2:
                 time.sleep(2.0)
+        self.log(f"scnsave 失败：{last}", telegram=True)
         raise PipelineError(f"scnsave failed: {last}")
+
+    def _wait_human_cover_generation_choice(self) -> bool:
+        """Ask whether to run NotebookLM cover generation. True = skip (itcs)."""
+        import config
+        from utility.telegram_session import (
+            clear_cover_generation_choice,
+            load_cover_generation_choice,
+            start_cover_generation_choice,
+            take_cover_generation_choice,
+        )
+
+        expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
+        existing = config.existing_infographic_cover_paths(expected)
+        have_all = len(existing) >= expected
+        base = os.path.dirname(config.infographic_cover_path(1)) or "aiagent"
+
+        self._skip_stale_telegram_updates()
+        clear_cover_generation_choice()
+        start_cover_generation_choice(
+            existing_count=len(existing),
+            expected=expected,
+        )
+        self._cover_gen_pending = True
+        self._cover_gen_event.clear()
+
+        lines = [
+            "【封面生成】scnsave 完成。要为当前分镜生成新的 NotebookLM 封面图吗？",
+            f"磁盘已有 {len(existing)}/{expected} 张"
+            + (
+                "："
+                + ", ".join(os.path.basename(p) for p in existing)
+                if existing
+                else "。"
+            ),
+            f"路径：{base}\\Infographic_1…{expected}",
+            "",
+            "1 = 生成新封面（nbp → nbi → nbif → itc，从 NotebookLM 下载）",
+        ]
+        if have_all:
+            lines.append(
+                "2 = 跳过生成，用已有图选封面（itcs，不打开 NotebookLM）"
+            )
+        else:
+            lines.append(
+                "2 = 跳过生成（需先放好 Infographic_1…3；缺图时 itcs 会报错）"
+            )
+        lines.append("")
+        lines.append("请回复 1 或 2（也可发 生成 / 跳过 / itcs）。")
+        self.log("\n".join(lines), telegram=True)
+        self._log_pick_wait_telegram_mode(what=" 1 或 2")
+
+        last_remind = time.monotonic()
+        try:
+            while not self._stop.is_set():
+                self._poll_telegram_inbox()
+                choice = take_cover_generation_choice()
+                if choice == "generate":
+                    self.log("继续：生成新 NotebookLM 封面。", telegram=True)
+                    return False
+                if choice == "skip":
+                    if not have_all:
+                        self.log(
+                            f"itcs 需要 {expected} 张封面，当前只有 {len(existing)} 张。"
+                            "请回复 1 生成，或先放好 Infographic 图再回 2。",
+                            telegram=True,
+                        )
+                        start_cover_generation_choice(
+                            existing_count=len(existing),
+                            expected=expected,
+                        )
+                        self._cover_gen_event.clear()
+                        choice = ""
+                    else:
+                        self.log("跳过 NotebookLM 封面生成，改用已有 Infographic。", telegram=True)
+                        return True
+                if self._stop_requested:
+                    raise PipelineError("stopped while waiting for cover generation choice")
+                if self._skip_requested:
+                    self._skip_requested = False
+                    raise PipelineError("skip while waiting for cover generation choice")
+                if time.monotonic() - last_remind >= _COVER_WAIT_REMIND_S:
+                    last_remind = time.monotonic()
+                    self.log("仍在等封面生成选择：回 1=生成  2=跳过（itcs）。", telegram=True)
+                time.sleep(1.0)
+        finally:
+            self._cover_gen_pending = False
+            self._cover_gen_event.clear()
+            clear_cover_generation_choice()
+        raise PipelineError("stopped")
+
+    def _send_existing_covers(self) -> None:
+        from cli.commands import send_existing_infographic_covers_for_pick
+
+        ok, msg = send_existing_infographic_covers_for_pick()
+        if ok and "已发 Telegram" in msg:
+            self.log(msg)
+            return
+        raise PipelineError(f"itcs failed: {msg}")
 
     def _nbp_preset(self) -> None:
         self.cli_ok("nbp 1", contain="nbp ok", tries=3, pause_s=2.0)
@@ -1218,6 +1570,20 @@ class HermesTelegramClient:
         ok, msg = install_story_cover_from_image(path)
         if ok:
             self.log(f"STORY 封面已写入：{msg}", telegram=True)
+            try:
+                from cli.browser_tasks import (
+                    _grok_active_story_cover_source,
+                    copy_image_file_to_clipboard,
+                )
+
+                clip_src = _grok_active_story_cover_source() or path
+                copy_image_file_to_clipboard(clip_src)
+                self.log(
+                    f"封面已拷到剪贴板：{os.path.basename(clip_src)}",
+                    telegram=True,
+                )
+            except Exception as exc:
+                self.log(f"封面拷到剪贴板失败（grv 仍从文件读）：{exc}", telegram=True)
         else:
             self.log(f"STORY 封面写入失败（grv 仍用文件路径）：{msg}", telegram=True)
 
@@ -1370,7 +1736,7 @@ class HermesTelegramClient:
         if not paths:
             raise PipelineError(
                 "vc：还没有场景 clip 路径。"
-                "请确认 grv 已下载各场景 mp4（写入 scene_content.grok_clip）。"
+                "请确认 grv 已下载各场景 mp4（写入 scene_content[].clip）。"
             )
         preview = "\n".join(
             f"  {i}. {os.path.basename(p)}"
@@ -1450,20 +1816,33 @@ class HermesTelegramClient:
                 self._interactive_scene_setup()
                 self.log("步骤 4 scnge", telegram=True)
                 self._generate_scenes()
+                self._skip_stale_telegram_updates()
+                time.sleep(0.5)
                 self.log("步骤 5 scnsave", telegram=True)
                 self._scene_save()
-                self.log("步骤 6 nbp 1", telegram=True)
-                self._nbp_preset()
-                self.log("步骤 7 nbi", telegram=True)
-                nbi_acc = self._trigger_notebooklm()
-                mark_active_item_workflow_step(
-                    workflow_step="nbif_poll",
-                    nbi_profile_index=nbi_acc,
-                )
-                self.log("步骤 8 nbif 轮询", telegram=True)
-                self._poll_notebooklm_ready()
-                self.log("步骤 9 itc", telegram=True)
-                self._download_covers(nbi_acc, attach_only=False)
+                skip_cover_gen = self._wait_human_cover_generation_choice()
+                if skip_cover_gen:
+                    from cli.video_choice_queue import (
+                        WORKFLOW_STEP_ITC,
+                        mark_active_item_workflow_step,
+                    )
+
+                    self.log("步骤 6 itcs（跳过 NotebookLM，用已有封面）", telegram=True)
+                    self._send_existing_covers()
+                    mark_active_item_workflow_step(workflow_step=WORKFLOW_STEP_ITC)
+                else:
+                    self.log("步骤 6 nbp 1", telegram=True)
+                    self._nbp_preset()
+                    self.log("步骤 7 nbi", telegram=True)
+                    nbi_acc = self._trigger_notebooklm()
+                    mark_active_item_workflow_step(
+                        workflow_step="nbif_poll",
+                        nbi_profile_index=nbi_acc,
+                    )
+                    self.log("步骤 8 nbif 轮询", telegram=True)
+                    self._poll_notebooklm_ready()
+                    self.log("步骤 9 itc", telegram=True)
+                    self._download_covers(nbi_acc, attach_only=False)
             self.log("步骤 10 等待人工选封面", telegram=True)
             cover_path = self._wait_human_cover_pick()
             self._install_story_cover_after_pick(cover_path)

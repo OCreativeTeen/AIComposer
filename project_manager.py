@@ -662,9 +662,15 @@ def resolve_video_detail_cover_media(video_detail: dict) -> dict:
     except Exception as e:
         print(f"⚠️ resolve_video_detail_cover_media: {e}")
         cover = slide = video = ""
+        stored_cover = (video_detail.get("cover_image") or "").strip()
         stored_slide = (video_detail.get("slide") or "").strip()
+        stored_video = (video_detail.get("video") or "").strip()
+        if stored_cover and os.path.isfile(stored_cover):
+            cover = os.path.abspath(stored_cover)
         if stored_slide and os.path.isfile(stored_slide):
             slide = os.path.abspath(stored_slide)
+        if stored_video and os.path.isfile(stored_video):
+            video = os.path.abspath(stored_video)
     if cover and os.path.isfile(cover):
         out["cover_image"] = os.path.abspath(cover)
     if slide and os.path.isfile(slide):

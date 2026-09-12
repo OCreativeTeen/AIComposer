@@ -34,7 +34,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 听筒同步里常见：
 
-`scnlm` `scnvs` `sty` `snp` `prf` `scnge` `scnsave` `nbp` `nbi` `nbif` `itc` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
+`scnlm` `scnvs` `sty` `snp` `prf` `scnge` `scnsave` `nbp` `nbi` `nbif` `itc` `itcs` `igp` `grv` `gvd` `nbv` `vc` `vp` `sync`
 
 ### STORY（`story_root`）
 
@@ -57,12 +57,16 @@ pick next          # 或 pick 3；队列里取下一条
 scn                # STORY → 打开 SCENE
 scnlm              # 无参：列出 LM 提示词；再 scnlm 4 选中
 scnvs              # 无参：列出 Visual Style；再 scnvs 2 选中
-scnge              # Gemini 生成 4 场 JSON → 剪贴板
+scnge              # 无已有 scene_content：Gemini ×3 生成；有则 Telegram 问 1=重生成 2=用已有
+scnge force        # 强制 Gemini ×3 重新生成
+scnge use          # 跳过 Gemini，把已有 scene_content 拷到剪贴板
 scnsave             # 剪贴板 JSON → scene_content + 保存到频道列表（不关窗）
+# Hermes：scnsave 后问 1=新封面(nbp…)  2=itcs；scnge 前若有 scene_content 问 1=重生成 2=用已有
 nbp 1              # 选 NotebookLM 导出类型（先无参看列表）
 nbi 1              # 选 Chrome 号，开 NotebookLM，Generate ×3 后立刻返回（不等待）
 nbif               # 查询三张新 infographic 是否 ready
-itc                # 拷最上边三张并发 Telegram 请选
+itc                # 从 NotebookLM 下载最上边三张 → aiagent/Infographic_1…3，Telegram 请选
+itcs               # 跳过下载：直接从 aiagent/Infographic_1…3 发 Telegram 请选
 itc 2              # 选第 2 张封面（Telegram 直接回 2 也可以）
 grv 1 3             # 选 Chrome 号 + video 变体 3；全自动出图+出片+每场景下载
                    # 省略变体时用 session 已存值（默认 3）
@@ -180,13 +184,15 @@ pick next          # 下一条
 
 | 短名 | 长名 | 窗口 | 参数 | 作用 |
 |------|------|------|------|------|
-| `scnge` | `gemini` | SCENE（逻辑上） | 无 | 剪贴板长 prompt → CDP 开 Gemini → 生成 → **4 场 JSON 写回剪贴板** |
+| `scnge` | `gemini` | SCENE（逻辑上） | 无 / `force` / `use` / `pick N` | 无已有数据：Gemini ×3 → `Gemini_Scenes_1…3.json` → Telegram 选 1/2/3 → 剪贴板；**已有 scene_content** 时先问 1=重生成 2=用已有拷剪贴板 |
 | `fetch` | `gemini_copy`, `copyjson` | 同左 | 无 | 不重新生成；从当前 Gemini 页读已有 JSON → 剪贴板 |
 | `scnsave` | `scene_save` | SCENE | 无 | 剪贴板 JSON → scene_content → 写入 video_detail（不关窗） |
 
 **`scnge` 前置：** 已 `scnlm 4` + `scnvs 2`（或你选的序号），剪贴板或「提示词预览」有长 prompt。
 
-**`scnge` 成功后：** 回复 `scnge ok — 4 scenes on clipboard` → 发 `scnsave`。
+**已有 scene_content：** 故事在 SCENE 编辑器或频道 list 里已有分镜 JSON 时，`scnge` 不会立刻开 Gemini，而是 Telegram 问：`1` = `scnge force` 重新生成 ×3；`2` = `scnge use` 把已有数据拷到剪贴板（可再 `scnsave`）。
+
+**`scnge` 生成成功后：** 回复含 `Gemini_Scenes` / `已生成 3 份` → Telegram 选 1/2/3 → 剪贴板就绪 → 发 `scnsave`。
 
 **Chrome：** 使用专用 CDP 配置（`HermesChromeCDP`），与日常 Chrome 可并存；首次需在该窗口登录 Google。
 
@@ -221,6 +227,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | `nbi` | `open_notebooklm` | Chrome 序号 | 开 NotebookLM，Generate ×3，立刻返回（不等待、不拷图） |
 | `nbif` | `notebooklm_ready` | 无 | 查询 Studio：三张新 infographic ready 还是仍在 Generating |
 | `itc` | `whole_story_pick` | 无参 / Chrome 号 / `pick N` | 无参：当前窗口拷最上边三张并发 Telegram；`itc N`：用 Chrome 号 N 重开 notebook 再拷图；选封面用 Telegram `1/2/3` 或 `itc pick N` |
+| `itcs` | `whole_story_pick_skip` | 无参 / `pick N` | 不下载：从 `aiagent/Infographic_1…3` 发 Telegram 请选；`itcs N` 选第 N 张 |
 
 
 #### `nbp` 选项结构（先 `nbp` 看编号）
@@ -233,9 +240,9 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | Image 幻灯片 | 幻灯片 | `slideshow`, `image/slideshow` |
 | Video 视频 | 纯画面 | `纯画面`, `video/motion` |
 | Video 视频 | 文字动画 | `video/word_in_image` |
-| Speaking 主人公 | 念 speaking | `speaking/script` |
-| Speaking 主人公 | 只演不讲 | `speaking/acting` |
-| Speaking 主人公 | 讲解画面要点 | `speaking/visual_keypoints` |
+| Speaking 主人公 | speaking + 旁白 voiceover | `speaking/script`, `念speaking` |
+| Speaking 主人公 | 仅 speaking（无旁白） | `speaking/speaking`, `仅speaking` |
+| Speaking 主人公 | 只演不讲 + 画外旁白 | `speaking/acting`, `只演不讲` |
 | Voiceover 旁白 | 旁白讲述 | `voiceover/narration` |
 | Voiceover 旁白 | 旁白+主持人 | `voiceover/narration_with_speakingavatar` |
 | Voiceover 旁白 | 补充/总结 | `voiceover/supplement` |
@@ -257,7 +264,11 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 人工确认 NotebookLM 三张图 ready 后，双击 **`cli\run_telegram_client_resume.bat`**：**不重开/关闭 Chrome**，**不验证 profile**，只要 9222 能连上就直连下载三张 → 选封面 → grv …
 
-**`itc`：** 须 infographic 已做好。与 **`grv` 同一 HermesChromeCDP（9222）**：已开则直接连，否则自动启动。无参 → 在当前 NotebookLM 逐张打开最上边 3 张，⋮ → Download（失败则拉 lh3 URL），存到 `%USERPROFILE%\\Downloads\\whole_story_image_N_*.png`，Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开 notebook 再下载。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
+**`itc`：** 须 infographic 已做好。与 **`grv` 同一 HermesChromeCDP（9222）**：已开则直接连，否则自动启动。无参 → 在当前 NotebookLM 逐张打开最上边 3 张，⋮ → Download（失败则拉 lh3 URL），存到 `D:\AI_MEDIA\aiagent\Infographic_1.png` … `Infographic_3.png`（可手动覆盖后再选 1/2/3），Telegram 发 3 张请选。窗口已关掉就发 `itc N`（N 与 `nbi N` 相同的 Chrome 号）重新打开 notebook 再下载。选封面：Telegram 直接回 `1/2/3`，或 CLI 发 `itc pick 2`。选定后记下并拷到剪贴板。（旧别名 `wsp`）
+
+**`itcs`：** 跳过 NotebookLM 下载。直接从 `D:\AI_MEDIA\aiagent\Infographic_1.png` … `Infographic_3.png` 读盘并发 Telegram 请选（可事先手动覆盖替换）。Hermes 在 `scnsave` 后若你回 `2` 跳过封面生成，会自动走 `itcs`。单独用时发 `itcs`；选封面同 `itc`（Telegram `1/2/3` 或 `itcs 2`）。
+
+**Hermes `scnsave` 后：** Telegram 会问「是否生成新 NotebookLM 封面？」— `1` = nbp→nbi→nbif→itc；`2` = itcs（用已有 Infographic，不打开 NotebookLM）。
 
 ---
 
@@ -307,9 +318,9 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 |---|-----|------|------|
 | 1 | Video | `motion` | 纯画面 · 动作/表情/场景演进（无口播） |
 | 2 | Video | `word_in_image` | 文字动画 · 关键词/思想泡泡（无口播） |
-| 3 | Speaking | `script` | 念 speaking · 第一人称口播 **（默认）** |
-| 4 | Speaking | `acting` | 只演不讲 · 神态/肢体/思考 |
-| 5 | Speaking | `visual_keypoints` | 讲解画面要点 · 非念图内文字 |
+| 3 | Speaking | `script` | 主人公 speaking + 旁白 voiceover（主人公不对口型旁白） **（默认）** |
+| 4 | Speaking | `speaking` | 仅主人公 speaking（无旁白 / voiceover） |
+| 5 | Speaking | `acting` | 只演不讲 + 画外旁白 voiceover（主人公不对口型） |
 | 6 | Voiceover | `narration` | 旁白讲述 · 第三人叙述 |
 | 7 | Voiceover | `narration_with_speakingavatar` | 旁白讲述 · 主持人说话 |
 | 8 | Voiceover | `supplement` | 补充/总结 · 衔接与点评 |
@@ -357,6 +368,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | `nbi` | `open_notebooklm` |
 | `nbif` | `notebooklm_ready` |
 | `itc` | `whole_story_pick` |
+| `itcs` | `whole_story_pick_skip` |
 | `igp` | `whole_story_image` |
 | `grv` | `grok_image` |
 | `gri` | `grok_image_prompt`（已并入 `grv`） |
@@ -381,7 +393,7 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 
 ## 6. Choice 命令通用规则
 
-适用于：`scnlm` `scnvs` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `grv` `igp` `nbv` `vp` `pick`
+适用于：`scnlm` `scnvs` `sty` `snp` `nbp` `prf` `nbi` `nbif` `itc` `itcs` `grv` `igp` `nbv` `vp` `pick`
 
 **`grv` 特例：** 第二个数字是 **video 变体 1…8**，不是 Chrome profile 列表项。例：`grv 1 5` = profile 1 + 变体 5。
 
