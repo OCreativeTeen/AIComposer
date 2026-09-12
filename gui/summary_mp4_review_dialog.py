@@ -31,6 +31,7 @@ except ImportError:
 from PIL import Image, ImageTk
 
 import config
+from utility.clip_trim import clip_end_means_full_length
 from utility.ffmpeg_audio_processor import FfmpegAudioProcessor
 from utility.ffmpeg_processor import FfmpegProcessor, ffmpeg_path
 
@@ -54,9 +55,26 @@ def _parse_dnd_mp4_paths(widget, raw) -> list[str]:
 
 
 class _ClipState:
-    __slots__ = ("path", "duration", "fps", "frame_count", "start", "end", "speed")
+    __slots__ = (
+        "path",
+        "duration",
+        "fps",
+        "frame_count",
+        "start",
+        "end",
+        "speed",
+        "prefer_full_end",
+    )
 
-    def __init__(self, path: str, duration: float, fps: float, frame_count: int):
+    def __init__(
+        self,
+        path: str,
+        duration: float,
+        fps: float,
+        frame_count: int,
+        *,
+        prefer_full_end: bool = False,
+    ):
         self.path = os.path.normpath(path)
         self.fps = max(1.0, float(fps))
         self.frame_count = max(1, int(frame_count))
@@ -65,6 +83,7 @@ class _ClipState:
         self.start = 0.0
         self.end = self.duration
         self.speed = 1.0
+        self.prefer_full_end = bool(prefer_full_end)
 
 
 SPEED_MIN = 0.7
@@ -134,14 +153,30 @@ class SummaryMp4ReviewDialog:
                     continue
                 try:
                     start = float(seg.get("start", 0.0))
-                    end = float(seg.get("end", 10.0))
                     speed = round(float(seg.get("speed") or 1.0), 1)
                 except (TypeError, ValueError):
-                    start, end, speed = 0.0, 10.0, 1.0
-                dur_guess = max(0.01, end, start + self._MIN_CLIP_SEC)
-                c = _ClipState(p, dur_guess, 24.0, max(1, int(dur_guess * 24)))
+                    start, speed = 0.0, 1.0
+                prefer_full = clip_end_means_full_length(seg.get("end"))
+                end = None
+                if not prefer_full:
+                    try:
+                        end = float(seg.get("end"))
+                    except (TypeError, ValueError):
+                        prefer_full = True
+                dur_guess = max(
+                    0.01,
+                    float(end or 15.0),
+                    start + self._MIN_CLIP_SEC,
+                )
+                c = _ClipState(
+                    p,
+                    dur_guess,
+                    24.0,
+                    max(1, int(dur_guess * 24)),
+                    prefer_full_end=prefer_full,
+                )
                 c.start = start
-                c.end = end
+                c.end = float(end) if end is not None else c.duration
                 c.speed = max(SPEED_MIN, min(SPEED_MAX, speed))
                 self.clips.append(c)
             print(f"📎 审阅窗从配置载入 {len(self.clips)} 个片段")
@@ -414,7 +449,12 @@ class SummaryMp4ReviewDialog:
                     c.duration = dur
                     c.fps = fps
                     c.frame_count = fc
-                    c.end = min(max(saved_ends[i], c.start + self._MIN_CLIP_SEC), dur)
+                    if c.prefer_full_end:
+                        c.end = dur
+                    else:
+                        c.end = min(
+                            max(saved_ends[i], c.start + self._MIN_CLIP_SEC), dur
+                        )
                     c.start = min(saved_starts[i], c.end - self._MIN_CLIP_SEC)
                     c.start = self._snap_time(c, c.start)
                     c.end = self._snap_time(c, c.end)

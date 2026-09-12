@@ -369,7 +369,7 @@ def apply_scene_clips(scene_content: list, clips: list[dict] | None) -> list:
         if item.get("clip_start") in (None, ""):
             item["clip_start"] = DEFAULT_CLIP_START
         if item.get("clip_end") in (None, ""):
-            item["clip_end"] = DEFAULT_CLIP_END
+            item.pop("clip_end", None)
         if item.get("clip_speed") in (None, ""):
             item["clip_speed"] = DEFAULT_CLIP_SPEED
     return out

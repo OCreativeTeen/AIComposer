@@ -2,7 +2,7 @@
 
 对应摘要窗「审阅发布」→「发布到 YouTube」里的上传，但：
 
-- 标题用对话框默认（scene 首条 caption / 原标题）
+- 标题用对话框默认（故事名 / scene caption 兜底）
 - 描述素材来源可问 1/2/3（与对话框单选相同）；``default`` 走对话框默认优先级
 - **不问定时**：一律立即上传（unlisted），不弹日历
 """
@@ -119,7 +119,7 @@ def build_publish_metadata(ctx: dict, source_key: str | None = None) -> dict:
     if not title:
         title = (vd.get("title") or vd.get("video_title") or "").strip()
     if not title:
-        raise RuntimeError("没有可用的 YouTube 标题（scene caption / 原标题都空）。")
+        raise RuntimeError("没有可用的 YouTube 标题（故事名 / scene caption / 原标题都空）。")
     title = config.chinese_convert(title, lang)
     desc = description_text_for_source(
         key,

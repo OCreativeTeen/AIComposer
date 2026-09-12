@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import config
+from utility.clip_trim import clip_end_means_full_length
 import project_manager
 
 VIDEO_CHOICE_QUEUE_JSON = config.VIDEO_CHOICE_QUEUE_JSON
@@ -730,7 +731,7 @@ def active_video_detail_scene_count() -> int:
 SCENE_GROK_CLIP_KEY = "grok_clip"
 SCENE_CLIP_KEY = "clip"
 DEFAULT_CLIP_START = 0.0
-DEFAULT_CLIP_END = 10.0
+DEFAULT_CLIP_END = 10.0  # legacy Grok 10s default; treat as "full length" when reading
 DEFAULT_CLIP_SPEED = 1.0
 
 
@@ -750,12 +751,12 @@ def grok_clip_segments_from_scene_content(scene_content) -> list[dict]:
             continue
         try:
             start = float(item.get("clip_start", DEFAULT_CLIP_START))
-            end = float(item.get("clip_end", DEFAULT_CLIP_END))
             speed = float(item.get("clip_speed", DEFAULT_CLIP_SPEED))
         except (TypeError, ValueError):
             start = DEFAULT_CLIP_START
-            end = DEFAULT_CLIP_END
             speed = DEFAULT_CLIP_SPEED
+        end_raw = item.get("clip_end")
+        end = None if clip_end_means_full_length(end_raw) else float(end_raw)
         out.append(
             {
                 "path": p,
@@ -840,7 +841,10 @@ def apply_grok_clips_to_scene_content(
         item["clip_start"] = (
             DEFAULT_CLIP_START if start in (None, "") else float(start)
         )
-        item["clip_end"] = DEFAULT_CLIP_END if end in (None, "") else float(end)
+        if end in (None, "") or clip_end_means_full_length(end):
+            item.pop("clip_end", None)
+        else:
+            item["clip_end"] = float(end)
         item["clip_speed"] = (
             DEFAULT_CLIP_SPEED if speed in (None, "") else float(speed)
         )
@@ -945,7 +949,7 @@ def collect_scene_grok_clip_segments(
             {
                 "path": p,
                 "start": DEFAULT_CLIP_START,
-                "end": DEFAULT_CLIP_END,
+                "end": None,
                 "speed": DEFAULT_CLIP_SPEED,
             }
         )

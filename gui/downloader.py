@@ -612,7 +612,7 @@ def _set_gen_video_clip_segments(video_detail: dict, segments: list[dict]) -> No
             scene["clip"] = dest
             scene["grok_clip"] = dest
             scene["clip_start"] = float(seg.get("start") or 0.0)
-            scene["clip_end"] = float(seg.get("end") or 10.0)
+            scene["clip_end"] = float(seg["end"])
             scene["clip_speed"] = float(seg.get("speed") or 1.0)
         else:
             scene["clip"] = None
@@ -6387,21 +6387,15 @@ class MediaGUIManager:
     def _youtube_story_title_from_video_detail(self, video_detail) -> str:
         if not isinstance(video_detail, dict):
             return ""
-        story_title = project_manager.video_detail_narrative_heading(video_detail)
-        if story_title:
-            return story_title
-        source = _youtube_row_source_title(video_detail)
-        if source:
-            return source
-        sc = video_detail.get("scene_content")
-        scenes = sc if isinstance(sc, list) else []
-        if scenes:
-            first = scenes[0]
-            if isinstance(first, dict):
-                cap = project_manager.caption_from_scene_content_item(first)
-                if cap:
-                    return cap
-        return ""
+        from gui.publish_metadata_dialog import resolve_story_title_for_publish
+
+        t = resolve_story_title_for_publish(video_detail)
+        if t:
+            return t
+        cap = project_manager.video_detail_narrative_heading(video_detail)
+        if cap:
+            return cap
+        return _youtube_row_source_title(video_detail)
 
 
 

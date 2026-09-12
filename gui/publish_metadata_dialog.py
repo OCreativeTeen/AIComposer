@@ -22,31 +22,50 @@ SOURCE_ANALYZED = "analyzed"
 SOURCE_REVIEW_SCRIPT = "review_script"
 
 
+def resolve_story_title_for_publish(
+    video_detail: dict | None = None, *, default_title: str = ""
+) -> str:
+    """成片故事名：``project_profile.video_title`` → 列表行 ``title`` → ``default_title``。"""
+    if isinstance(video_detail, dict):
+        prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+        if isinstance(prof, dict):
+            t = (prof.get("video_title") or "").strip()
+            if t:
+                return t
+        t = (
+            video_detail.get("title") or video_detail.get("video_title") or ""
+        ).strip()
+        if t:
+            return t
+    return (default_title or "").strip()
+
+
 def resolve_publish_default_title(
     *,
     language: str,
     default_title: str = "",
     video_detail: dict | None = None,
 ) -> str:
-    """YouTube 默认标题：scene 首条 caption → 列表行 title → ``default_title``。"""
+    """YouTube 默认标题：故事名 → scene 首条 caption（兜底）→ ``default_title``。"""
     lang = language or "zh"
-    t = ""
-    if isinstance(video_detail, dict):
+    t = resolve_story_title_for_publish(video_detail, default_title=default_title)
+    if not t and isinstance(video_detail, dict):
         t = project_manager.video_detail_narrative_heading(video_detail)
-        if not t:
-            t = (
-                video_detail.get("title") or video_detail.get("video_title") or ""
-            ).strip()
-    if not t:
-        t = (default_title or "").strip()
     return config.chinese_convert(t, lang) if t else ""
 
 
 def build_caption_choices_from_scenes(
-    scenes: list, *, max_n: int = 5
+    scenes: list, *, max_n: int = 5, story_title: str = ""
 ) -> tuple[list[str], list[str | None]]:
-    labels = ["— 从场景字幕选择（可选）—"]
-    payloads: list[str | None] = [None]
+    labels: list[str] = []
+    payloads: list[str | None] = []
+    st = (story_title or "").strip()
+    if st:
+        short = st if len(st) <= 48 else st[:45] + "…"
+        labels.append(f"故事标题: {short}")
+        payloads.append(st)
+    labels.append("— 从场景字幕选择（可选）—")
+    payloads.append(None)
     for idx in range(min(max_n, len(scenes or []))):
         sc = scenes[idx]
         if not isinstance(sc, dict):
@@ -249,7 +268,12 @@ def ask_publish_metadata_then_schedule(
     成功返回 ``{"title", "description", "mode", "publish_at"}``；任一步取消返回 ``None``。
     """
     cap_source = caption_scenes if caption_scenes is not None else scene_content_list
-    cap_labels, cap_payloads = build_caption_choices_from_scenes(cap_source)
+    story_title = resolve_story_title_for_publish(
+        video_detail, default_title=default_title
+    )
+    cap_labels, cap_payloads = build_caption_choices_from_scenes(
+        cap_source, story_title=story_title
+    )
 
     meta = ask_publish_title_and_description(
         parent,
@@ -329,14 +353,22 @@ def ask_publish_title_and_description(
     review_script = config.chinese_convert((review_script_text or "").strip(), lang)
     scene_sv = all_scene_speaking_voiceover_text(scenes, lang)
 
+    story_title = resolve_story_title_for_publish(
+        video_detail, default_title=default_title
+    )
     resolved_title = resolve_publish_default_title(
         language=lang,
         default_title=default_title,
         video_detail=video_detail,
     )
 
-    cap_labels = caption_labels or ["— 从场景字幕选择（可选）—"]
-    cap_payloads = caption_payloads if caption_payloads is not None else [None]
+    if caption_labels is None:
+        cap_labels, cap_payloads = build_caption_choices_from_scenes(
+            scenes, story_title=story_title
+        )
+    else:
+        cap_labels = caption_labels
+        cap_payloads = caption_payloads if caption_payloads is not None else [None]
 
     result_holder: dict | None = None
     dlg = tk.Toplevel(parent)
@@ -357,7 +389,7 @@ def ask_publish_title_and_description(
     title_box.pack(fill=tk.X, pady=(0, 10))
     ttk.Label(
         title_box,
-        text="可直接编辑；默认取 scene 首条 caption，否则用原视频标题；也可从场景字幕下拉填入。",
+        text="可直接编辑；默认用故事标题（project 名 / 列表行 title）；也可从下拉选故事名或各场景 caption。",
         wraplength=800,
     ).pack(anchor=tk.W, pady=(0, 6))
 
@@ -372,7 +404,7 @@ def ask_publish_title_and_description(
     title_entry.focus_set()
 
     if len(cap_labels) > 1:
-        ttk.Label(title_box, text="从场景字幕填入：").pack(anchor=tk.W)
+        ttk.Label(title_box, text="选择标题来源：").pack(anchor=tk.W)
         cb = ttk.Combobox(title_box, values=cap_labels, state="readonly", width=86)
         cb.pack(fill=tk.X, pady=(2, 0))
         cb.set(cap_labels[0])
