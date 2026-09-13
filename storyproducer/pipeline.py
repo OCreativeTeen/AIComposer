@@ -699,6 +699,7 @@ class StoryProducerClient:
             pending_action = "check" if choice == 1 else "regen"
 
         run_gemini = False
+        force_cover_generate = pending_action == "regen"
         if pending_action:
             run_gemini = False
         elif stage == wfstore.STAGE_INIT:
@@ -712,10 +713,13 @@ class StoryProducerClient:
                 "2 = 重新生成场景描述",
             )
             run_gemini = choice == 2
+            if choice == 2:
+                force_cover_generate = True
 
         if run_gemini:
             self._run_stage_gemini()
             stage = wfstore.STAGE_GEMINI_DONE
+            force_cover_generate = True
 
         if target == wfstore.TARGET_GEMINI_ONLY:
             self.log("目标 GEMINI_ONLY：本条停在阶段一。", telegram=True)
@@ -726,7 +730,13 @@ class StoryProducerClient:
                 if pending_action == "check":
                     self._check_pending_infographic()
                 else:
-                    self._run_stage_infographic(force_generate=(pending_action == "regen"))
+                    if force_cover_generate:
+                        self.log(
+                            "场景已重新生成，自动进入 NotebookLM 封面生成"
+                            "（nbp → nbi → nbif → itc）。",
+                            telegram=True,
+                        )
+                    self._run_stage_infographic(force_generate=force_cover_generate)
             except NbifTimeoutError as exc:
                 self.engine.mark_stage(
                     wfstore.STAGE_INFOGRAPHIC_PENDING,
