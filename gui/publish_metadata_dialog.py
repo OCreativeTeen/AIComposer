@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import tkinter as tk
 import tkinter.messagebox as messagebox
@@ -40,6 +41,17 @@ def resolve_story_title_for_publish(
     return (default_title or "").strip()
 
 
+def cover_image_title_for_publish(video_detail: dict | None) -> str:
+    """封面图文件名（无扩展名），来自 ``cover_image`` 路径（NotebookLM artifact 标题）。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    path = (video_detail.get("cover_image") or "").strip()
+    if not path:
+        return ""
+    stem, _ = os.path.splitext(os.path.basename(path))
+    return (stem or os.path.basename(path)).strip()
+
+
 def resolve_publish_default_title(
     *,
     language: str,
@@ -55,7 +67,11 @@ def resolve_publish_default_title(
 
 
 def build_caption_choices_from_scenes(
-    scenes: list, *, max_n: int = 5, story_title: str = ""
+    scenes: list,
+    *,
+    max_n: int = 5,
+    story_title: str = "",
+    cover_title: str = "",
 ) -> tuple[list[str], list[str | None]]:
     labels: list[str] = []
     payloads: list[str | None] = []
@@ -64,6 +80,11 @@ def build_caption_choices_from_scenes(
         short = st if len(st) <= 48 else st[:45] + "…"
         labels.append(f"故事标题: {short}")
         payloads.append(st)
+    ct = (cover_title or "").strip()
+    if ct:
+        short = ct if len(ct) <= 48 else ct[:45] + "…"
+        labels.append(f"封面图: {short}")
+        payloads.append(ct)
     labels.append("— 从场景字幕选择（可选）—")
     payloads.append(None)
     for idx in range(min(max_n, len(scenes or []))):
@@ -271,8 +292,9 @@ def ask_publish_metadata_then_schedule(
     story_title = resolve_story_title_for_publish(
         video_detail, default_title=default_title
     )
+    cover_title = cover_image_title_for_publish(video_detail)
     cap_labels, cap_payloads = build_caption_choices_from_scenes(
-        cap_source, story_title=story_title
+        cap_source, story_title=story_title, cover_title=cover_title
     )
 
     meta = ask_publish_title_and_description(
@@ -356,6 +378,7 @@ def ask_publish_title_and_description(
     story_title = resolve_story_title_for_publish(
         video_detail, default_title=default_title
     )
+    cover_title = cover_image_title_for_publish(video_detail)
     resolved_title = resolve_publish_default_title(
         language=lang,
         default_title=default_title,
@@ -364,7 +387,7 @@ def ask_publish_title_and_description(
 
     if caption_labels is None:
         cap_labels, cap_payloads = build_caption_choices_from_scenes(
-            scenes, story_title=story_title
+            scenes, story_title=story_title, cover_title=cover_title
         )
     else:
         cap_labels = caption_labels
@@ -389,7 +412,7 @@ def ask_publish_title_and_description(
     title_box.pack(fill=tk.X, pady=(0, 10))
     ttk.Label(
         title_box,
-        text="可直接编辑；默认用故事标题（project 名 / 列表行 title）；也可从下拉选故事名或各场景 caption。",
+        text="可直接编辑；默认用故事标题；下拉可选故事名、封面图文件名、各场景 caption。",
         wraplength=800,
     ).pack(anchor=tk.W, pady=(0, 6))
 

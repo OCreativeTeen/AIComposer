@@ -173,21 +173,17 @@ def mark_notebooklm_generate_started(times: int) -> dict:
 
 
 def save_whole_story_images(paths: list[str]) -> list[str]:
-    """记住本轮 itc 封面路径（固定 ``aiagent/Infographic_1…3`` 槽位顺序）。"""
+    """记住本轮 itc 封面路径（保留 NotebookLM artifact 原名，按下载顺序）。"""
     import config
 
     expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
-    slots = config.infographic_slot_files_for_pick(expected)
-    if len(slots) >= expected:
-        files = slots
-    else:
-        files: list[str] = []
-        for item in paths or []:
-            p = os.path.normpath(os.path.abspath((item or "").strip()))
-            if p and os.path.isfile(p) and p not in files:
-                files.append(p)
-        if not files:
-            files = slots
+    files: list[str] = []
+    for item in paths or []:
+        p = os.path.normpath(os.path.abspath((item or "").strip()))
+        if p and os.path.isfile(p) and p not in files:
+            files.append(p)
+    if not files:
+        files = config.infographic_slot_files_for_pick(expected)
     return _write_whole_story_image_record(
         files,
         selected=0,

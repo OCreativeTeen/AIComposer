@@ -525,12 +525,19 @@ def _gen_video_watermark_dest_filename(video_detail: dict | None) -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S") + ".mp4"
 
 
-def _gen_video_cover_webp_dest_filename(video_detail: dict | None) -> str:
-    """封面/配图 webp：与成片 mp4 同 stem，扩展名为 ``.webp``（``gen_video/<id>.webp``）。"""
+def _gen_video_cover_webp_dest_filename(
+    video_detail: dict | None = None,
+    *,
+    source_image_path: str = "",
+) -> str:
+    """封面 webp 目标名：保留源图文件名（NotebookLM artifact 标题），否则回退 id stem。"""
+    stem = _title_from_cover_image_path(source_image_path)
+    if stem and not stem.startswith("_itc"):
+        return stem + ".webp"
     if isinstance(video_detail, dict):
-        for stem in _gen_video_id_stem_candidates_for_row(video_detail):
-            if stem:
-                return stem + ".webp"
+        for cand in _gen_video_id_stem_candidates_for_row(video_detail):
+            if cand:
+                return cand + ".webp"
     return datetime.now().strftime("%Y%m%d_%H%M%S") + ".webp"
 
 
@@ -1430,7 +1437,7 @@ def save_cover_image_as_gen_video_webp(
     lang: str = "zh",
     cleanup_source: bool = False,
 ) -> tuple[bool, str, str]:
-    """加水印并写入 ``gen_video/<id>.webp``（同步；不弹窗、不改标题）。
+    """加水印并写入 ``gen_video/<源图文件名>.webp``（保留如 ``Infographic_2.webp``；同步；不弹窗）。
 
     Returns ``(ok, dest_abs, error_msg)``.
     """
@@ -1449,7 +1456,9 @@ def save_cover_image_as_gen_video_webp(
         )
 
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
-    dest_name = _gen_video_cover_webp_dest_filename(video_detail)
+    dest_name = _gen_video_cover_webp_dest_filename(
+        video_detail, source_image_path=src
+    )
     wm_webp = ""
     webp_tmp = ""
     out_ok = ""

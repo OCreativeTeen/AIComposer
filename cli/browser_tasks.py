@@ -5229,13 +5229,41 @@ def _download_one_infographic_via_menu(hwnd: int, index: int, dest: Path) -> boo
 
 
 def _itc_infographic_slot_path(index: int) -> Path:
-    """Fixed cover slot: ``D:\\AI_MEDIA\\aiagent\\Infographic_N.png``."""
+    """Legacy slot: ``D:\\AI_MEDIA\\aiagent\\Infographic_N.png``."""
     return Path(config.infographic_cover_path(index))
 
 
-def _finalize_itc_cover_slot(index: int, src: Path) -> str | None:
-    """Persist a downloaded image into ``Infographic_{index}.png`` (overwrite)."""
-    dest = _itc_infographic_slot_path(index)
+def _itc_cover_dest_path(
+    index: int,
+    title: str = "",
+    *,
+    used_stems: set[str] | None = None,
+) -> Path:
+    """目标路径：优先 NotebookLM artifact 标题，否则回退 ``Infographic_N``。"""
+    base = _itc_infographic_slot_path(1).parent
+    base.mkdir(parents=True, exist_ok=True)
+    stem = config.sanitize_cover_filename_stem(title)
+    if stem:
+        if used_stems is not None:
+            base_stem = stem
+            n = 2
+            while stem in used_stems:
+                stem = f"{base_stem}_{n}"
+                n += 1
+            used_stems.add(stem)
+        return base / f"{stem}.png"
+    return _itc_infographic_slot_path(index)
+
+
+def _finalize_itc_cover_slot(
+    index: int,
+    src: Path,
+    *,
+    title: str = "",
+    used_stems: set[str] | None = None,
+) -> str | None:
+    """保存下载图到 aiagent，保留 artifact 标题作文件名（不改成 Infographic_N）。"""
+    dest = _itc_cover_dest_path(index, title, used_stems=used_stems)
     dest.parent.mkdir(parents=True, exist_ok=True)
     src = Path(src)
     if not src.is_file():
@@ -5259,7 +5287,7 @@ def _finalize_itc_cover_slot(index: int, src: Path) -> str | None:
         if dest.is_file() and dest.stat().st_size > 2000:
             return str(dest)
     except Exception as exc:
-        log(f"itc finalize Infographic_{index} failed: {exc}")
+        log(f"itc finalize cover #{index} failed: {exc}")
     return None
 
 
@@ -5544,9 +5572,13 @@ def _nb_itc_viewer_img_src(page) -> str:
         return ""
 
 
-def _nb_itc_download_via_menu(page, dest: Path) -> bool:
-    """More options → Download on the visible artifact-viewer (coordinate click)."""
+def _nb_itc_download_via_menu(page, dest: Path) -> tuple[bool, str]:
+    """More options → Download on the visible artifact-viewer (coordinate click).
+
+    Returns ``(ok, suggested_stem)`` from browser download filename.
+    """
     dest = Path(dest)
+    suggested_stem = ""
     page.bring_to_front()
     more_js = '() => [...document.querySelectorAll(\'button[aria-label="More options"]\')]'
     pt = None
@@ -5577,25 +5609,35 @@ def _nb_itc_download_via_menu(page, dest: Path) -> bool:
     with page.expect_download(timeout=25000) as dl_info:
         page.mouse.click(pt2["x"], pt2["y"])
     dl = dl_info.value
+    try:
+        raw_name = (dl.suggested_filename or "").strip()
+        if raw_name:
+            suggested_stem = config.sanitize_cover_filename_stem(
+                os.path.splitext(raw_name)[0]
+            )
+    except Exception:
+        suggested_stem = ""
     dl.save_as(str(dest))
     for _ in range(25):
         if dest.is_file() and dest.stat().st_size > 0:
             break
         time.sleep(0.3)
-    return dest.is_file() and dest.stat().st_size > 2000
+    ok = dest.is_file() and dest.stat().st_size > 2000
+    return ok, suggested_stem
 
 
 def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
-    """Download top N NotebookLM infographics → aiagent/Infographic_N.png."""
+    """Download top N NotebookLM infographics → aiagent/<artifact标题>.png。"""
     downloads = windows_downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
     titles = _nb_itc_list_artifact_titles(page, n)
     log(f"itc artifact titles ({len(titles)}): {titles!r}")
     saved: list[str] = []
+    used_stems: set[str] = set()
     for i in range(1, n + 1):
         title = titles[i - 1] if i <= len(titles) else ""
-        slot = _itc_infographic_slot_path(i)
-        log(f"itc item {i}/{n} title={title!r} → {slot}")
+        dest_preview = _itc_cover_dest_path(i, title, used_stems=set())
+        log(f"itc item {i}/{n} title={title!r} → {dest_preview}")
 
         opened = _nb_itc_open_artifact(page, title) if title else False
         if not opened:
@@ -5609,11 +5651,16 @@ def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
             continue
 
         ok = False
+        cover_title = title
         tmp = downloads / f"_itc_dl_{i}_{int(time.time())}.bin"
         try:
-            ok = _nb_itc_download_via_menu(page, tmp)
-            if ok:
-                finalized = _finalize_itc_cover_slot(i, tmp)
+            dl_ok, suggested = _nb_itc_download_via_menu(page, tmp)
+            if dl_ok:
+                if not cover_title and suggested:
+                    cover_title = suggested
+                finalized = _finalize_itc_cover_slot(
+                    i, tmp, title=cover_title, used_stems=used_stems
+                )
                 if finalized:
                     saved.append(finalized)
                     log(
@@ -5623,6 +5670,8 @@ def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
                     ok = True
                 else:
                     ok = False
+            else:
+                ok = False
         except Exception as exc:
             log(f"itc item {i} menu download failed: {exc}")
 
@@ -5630,7 +5679,9 @@ def _capture_infographics_via_artifact_viewer(page, n: int) -> list[str]:
             try:
                 url_tmp = downloads / f"_itc_url_{i}.png"
                 if _save_png_from_src(page, src, url_tmp):
-                    finalized = _finalize_itc_cover_slot(i, url_tmp)
+                    finalized = _finalize_itc_cover_slot(
+                        i, url_tmp, title=cover_title, used_stems=used_stems
+                    )
                     if finalized:
                         saved.append(finalized)
                         log(
@@ -6118,8 +6169,8 @@ GROK_ASPECT_MENU_Y = 0.468
 GROK_IMAGE_ICON_X = 0.395
 GROK_VIDEO_ICON_X = 0.418
 GROK_GENERATE_X = 0.93
-GROK_VIDEO_SUBMIT_READY_TIMEOUT_S = 30.0
-GROK_VIDEO_SUBMIT_POLL_S = 0.8
+GROK_VIDEO_SUBMIT_READY_TIMEOUT_S = 10.0
+GROK_VIDEO_SUBMIT_POLL_S = 0.5
 
 # Stable Grok Imagine DOM selectors (from page outerHTML analysis).
 GROK_EDITOR_SEL = (
@@ -7096,6 +7147,8 @@ _GROK_CLICK_SUBMIT_TOOLBAR_JS = """() => {
   }
 
   for (const sel of [
+    'button[aria-label="生成视频"]',
+    'button[aria-label="Generate video"]',
     'button[aria-label="Submit"]',
     'button[aria-label="Send"]',
     'button[aria-label="Generate"]',
@@ -7372,7 +7425,7 @@ _GROK_CLICK_VIDEO_SETTINGS_JS = """() => {
 
 
 _GROK_CLICK_GENERATE_JS = """() => {
-  const labels = ['Submit', 'Send', '生成', 'Generate', 'Start'];
+  const labels = ['Submit', 'Send', '生成', 'Generate', 'Start', '生成视频', 'Generate video'];
   for (const b of document.querySelectorAll('button')) {
     const lab = (b.getAttribute('aria-label') || '').trim();
     if (labels.some((x) => lab.toLowerCase() === x.toLowerCase())) {
@@ -7853,9 +7906,10 @@ def _grok_ensure_video_mode_cdp(page: Page) -> None:
 
 
 def _grok_click_video_generate_cdp(page: Page) -> None:
-    """Submit clip via bottom toolbar up-arrow — do not move mouse over image canvas."""
-    page.evaluate(_GROK_FOCUS_CHAT_INPUT_JS)
-    time.sleep(0.1)
+    """Submit clip via bottom toolbar up-arrow — same fallbacks as scene-image Submit."""
+    _grok_scroll_composer_into_view(page)
+    _grok_focus_composer_toolbar_once_cdp(page, deep_image=True)
+    time.sleep(0.15)
 
     def _generating() -> bool:
         try:
@@ -7866,21 +7920,55 @@ def _grok_click_video_generate_cdp(page: Page) -> None:
     for attempt in range(1, 4):
         _grok_ensure_video_mode_cdp(page)
         time.sleep(0.25)
-        if _grok_click_video_submit_cdp(page, wait_ready=True):
+
+        if attempt == 1:
+            try:
+                _grok_wait_video_submit_ready_cdp(
+                    page, timeout_s=GROK_VIDEO_SUBMIT_READY_TIMEOUT_S
+                )
+            except RuntimeError as exc:
+                log(f"Grok CDP: {exc}")
+
+        clicked = False
+        if _grok_click_video_submit_cdp(page, wait_ready=False):
+            clicked = True
+        else:
+            for sub in range(1, 4):
+                pt = page.evaluate(_GROK_FIND_SUBMIT_BUTTON_JS)
+                if _grok_click_js_target(
+                    page, pt, kind=f"video-submit-{attempt}-{sub}"
+                ):
+                    clicked = True
+                    break
+            if not clicked:
+                near = page.evaluate(_GROK_CLICK_SUBMIT_NEAR_INPUT_JS)
+                if near:
+                    clicked = True
+                    log(f"Grok CDP: clicked Submit near input ({near!r})")
+            if not clicked:
+                label = page.evaluate(_GROK_CLICK_GENERATE_JS)
+                if label:
+                    clicked = True
+                    log(f"Grok CDP: clicked generate {label!r}")
+            if not clicked:
+                _grok_viewport_click(
+                    page, GROK_GENERATE_X, GROK_TOOLBAR_Y, label="video-submit-ratio"
+                )
+                clicked = True
+
+        if clicked:
             time.sleep(0.65)
             if _generating():
                 log(f"Grok CDP: video generation started (attempt {attempt})")
                 return
-            log("Grok CDP: 生成视频 clicked but generating not detected; retry")
+            log("Grok CDP: video submit clicked but generating not detected; retry")
         else:
-            log(
-                f"Grok CDP: 生成视频 Submit 未就绪或点击失败 (attempt {attempt})"
-            )
+            log(f"Grok CDP: video Submit click failed (attempt {attempt})")
         time.sleep(0.35)
 
     raise RuntimeError(
-        "Grok 生成视频 Submit 未成功。请确认已切 Video 模式（720p/10s）、"
-        "提示词已填入，且 Submit 已从 disabled 变为可点。"
+        "Grok 生成视频 Submit 未成功。请确认已切 Video 模式（720p/15s）、"
+        "提示词已填入，且右下角蓝色向上箭头可点。"
     )
 
 
@@ -8067,14 +8155,26 @@ def _grok_click_video_submit_cdp(page: Page, *, wait_ready: bool = True) -> bool
         try:
             pt = _grok_wait_video_submit_ready_cdp(page)
         except RuntimeError as exc:
-            log(f"Grok CDP: {exc}")
-            return False
-    else:
+            log(f"Grok CDP: {exc} — will try submit click anyway")
+    if pt is None:
         raw = page.evaluate(_GROK_CHAT_TOOLBAR_SUBMIT_STATE_JS)
-        if isinstance(raw, dict) and raw.get("x") and not _grok_submit_meta_disabled(raw):
+        if isinstance(raw, dict) and raw.get("x"):
             pt = raw
 
+    meta = page.evaluate(_GROK_CLICK_SUBMIT_TOOLBAR_JS)
+    if isinstance(meta, dict) and meta.get("method"):
+        log(
+            f"Grok CDP: video submit JS click via {meta.get('method')!r} "
+            f"aria={meta.get('aria')!r}"
+        )
+        return True
+
     if isinstance(pt, dict) and pt.get("x") and pt.get("y"):
+        if _grok_submit_meta_disabled(pt):
+            log(
+                "Grok CDP: video submit still marked disabled — force mouse click "
+                f"aria={pt.get('aria')!r}"
+            )
         _grok_mouse_click_point(
             page, float(pt["x"]), float(pt["y"]), label="video-submit-arrow"
         )
@@ -8095,10 +8195,7 @@ def _grok_click_video_submit_cdp(page: Page, *, wait_ready: bool = True) -> bool
         if loc.count() == 0:
             continue
         try:
-            if not loc.is_enabled():
-                log(f"Grok CDP: video submit {sel} still disabled")
-                continue
-            loc.click(timeout=5000)
+            loc.click(timeout=5000, force=True)
             log(f"Grok CDP: clicked video submit via chat {sel}")
             return True
         except Exception as exc:

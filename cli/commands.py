@@ -1457,19 +1457,18 @@ def _itc_parse_cover_index(want: str) -> int | None:
 
 
 def _itc_cover_slot_files(files: list[str] | None = None) -> list[str]:
-    """Telegram 选封面：优先 ``aiagent/Infographic_1…3`` 固定槽位。"""
+    """Telegram 选封面：优先本轮下载路径，再 session / ``Infographic_1…3``。"""
     import config
 
     expected = int(getattr(config, "INFOGRAPHIC_COVER_COUNT", 3) or 3)
-    slots = config.infographic_slot_files_for_pick(expected)
-    if len(slots) >= expected:
-        return slots
     out: list[str] = []
     for item in files or []:
         p = os.path.normpath(os.path.abspath((item or "").strip()))
         if p and os.path.isfile(p) and p not in out:
             out.append(p)
-    return out
+    if out:
+        return out
+    return config.infographic_slot_files_for_pick(expected)
 
 
 def _itc_send_covers(

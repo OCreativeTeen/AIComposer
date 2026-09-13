@@ -692,6 +692,19 @@ def gemini_scenes_json_path(index: int) -> str:
 INFOGRAPHIC_COVER_COUNT = 3
 
 
+def sanitize_cover_filename_stem(title: str) -> str:
+    """NotebookLM artifact 标题 → 安全文件名 stem（无扩展名）。"""
+    t = unicodedata.normalize("NFKC", (title or "").strip())
+    if not t:
+        return ""
+    bad = '\\/:*?"<>|\r\n\t'
+    s = "".join(c if c not in bad else "_" for c in t)
+    s = re.sub(r"_+", "_", s).strip("._ ")
+    if len(s) > 180:
+        s = s[:180].rstrip("._ ")
+    return s
+
+
 def infographic_cover_path(index: int) -> str:
     """``itc`` 封面固定槽位：``aiagent/Infographic_1.png`` …"""
     ensure_aiagent_path()
@@ -735,8 +748,20 @@ def infographic_covers_complete(count: int | None = None) -> bool:
 
 
 def infographic_slot_files_for_pick(count: int | None = None) -> list[str]:
-    """``itc`` / ``itcs`` Telegram 选图：固定 ``Infographic_1…N`` 槽位顺序。"""
+    """``itc`` / ``itcs`` Telegram 选图：优先 session 记录，再 ``Infographic_1…N``。"""
     n = max(1, int(count or INFOGRAPHIC_COVER_COUNT))
+    try:
+        from utility.telegram_session import load_whole_story_images
+
+        session = [
+            os.path.normpath(os.path.abspath(p))
+            for p in (load_whole_story_images() or [])
+            if p and os.path.isfile(p)
+        ]
+        if len(session) >= n:
+            return session[:n]
+    except Exception:
+        pass
     out: list[str] = []
     for i in range(1, n + 1):
         p = resolve_infographic_cover_path(i)
