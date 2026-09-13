@@ -540,17 +540,31 @@ GEN_VIDEO_CLIP_SEGMENTS_KEY = "gen_video_clip_segments"
 def _normalize_gen_video_clip_segment(seg) -> dict | None:
     if not isinstance(seg, dict):
         return None
+    from utility.clip_trim import clip_end_means_full_length
+
     p = (seg.get("path") or "").strip()
     if not p:
         return None
     p = os.path.normpath(p)
+    if not os.path.isfile(p):
+        return None
     try:
         start = float(seg.get("start", 0.0))
-        end = float(seg.get("end", 0.0))
         speed = round(float(seg.get("speed") or 1.0), 1)
     except (TypeError, ValueError):
         return None
-    return {"path": p, "start": start, "end": end, "speed": speed}
+    end_raw = seg.get("end")
+    out: dict = {"path": p, "start": start, "speed": speed}
+    if end_raw not in (None, "") and not clip_end_means_full_length(end_raw):
+        try:
+            out["end"] = float(end_raw)
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _story_has_reviewable_clips(video_detail: dict) -> bool:
+    return bool(_get_gen_video_clip_segments(video_detail))
 
 
 def _get_gen_video_clip_segments(video_detail: dict) -> list[dict]:
@@ -1863,22 +1877,10 @@ def _on_summary_reopen_gen_video_clip_review(summary_window: tk.Toplevel) -> Non
         return
     segments = _get_gen_video_clip_segments(vd)
     if not segments:
-        from cli.video_choice_queue import grok_clip_segments_from_scene_content
-
-        segments = grok_clip_segments_from_scene_content(vd.get("scene_content"))
-        if segments:
-            _run_summary_gen_video_clip_review(
-                summary_window,
-                mgr=mgr,
-                vd=vd,
-                ctx=ctx,
-                initial_segments=segments,
-            )
-            return
         messagebox.showinfo(
-            "编辑成片片段",
-            "尚无已保存的场景 clip，也没有 scene_content[].clip。\n"
-            "请先 grv 下载各场景 video，或拖入 MP4 完成审阅。",
+            "审阅片段",
+            "尚无场景 clip（scene_content[].clip）。\n"
+            "请先 grv → grvc 下载各场景 video，或拖入 MP4 完成审阅。",
             parent=summary_window,
         )
         return
@@ -10090,7 +10092,9 @@ class MediaGUIManager:
                     pass
                 try:
                     edit_clip_segments_btn.config(
-                        state=tk.NORMAL if seg_n else tk.DISABLED
+                        state=tk.NORMAL
+                        if _story_has_reviewable_clips(video_detail)
+                        else tk.DISABLED
                     )
                 except tk.TclError:
                     pass
@@ -10349,6 +10353,24 @@ class MediaGUIManager:
             pub_btn = ttk.Button(right_btns, text="审阅发布", command=on_review_publish)
             pub_btn.pack(side=tk.LEFT, padx=(0, 6))
 
+            def on_review_story_clips():
+                _on_summary_reopen_gen_video_clip_review(summary_window)
+
+            review_clips_btn = ttk.Button(
+                right_btns, text="审阅片段", command=on_review_story_clips
+            )
+            review_clips_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+            def _refresh_review_clips_btn():
+                try:
+                    review_clips_btn.config(
+                        state=tk.NORMAL
+                        if _story_has_reviewable_clips(video_detail)
+                        else tk.DISABLED
+                    )
+                except tk.TclError:
+                    pass
+
             def refresh_publish_row():
                 if not summary_window.winfo_exists():
                     return
@@ -10382,6 +10404,7 @@ class MediaGUIManager:
                     pub_btn.config(state=btn_state)
                 except tk.TclError:
                     pass
+                _refresh_review_clips_btn()
                 try:
                     refresh_feature_media_row()
                 except Exception:
