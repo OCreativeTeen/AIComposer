@@ -92,6 +92,7 @@ class StoryProducerClient:
         self._batch_vs_idx: int | None = None
         self._batch_lm_idx: int | None = None
         self._batch_nar_idx: int | None = None
+        self._batch_prefs_from_queue = False
         self._grv_review_pending = False
         self._grv_continue_event = threading.Event()
 
@@ -284,22 +285,54 @@ class StoryProducerClient:
             self.target_stage or wfstore.TARGET_FULL,
             skip_ids=self._deferred_ids,
         )
-        self.log(
-            "本批队列统一选项（整轮只问一次，后续故事复用）：",
-            telegram=True,
+        item = self.engine.session.queue_item if isinstance(
+            self.engine.session.queue_item, dict
+        ) else {}
+        q_vs = (item.get("visual_style") or self.engine.session.visual_style or "").strip()
+        q_nar = (item.get("narrator") or self.engine.session.narrator or "").strip()
+        q_lang = (
+            item.get("yt_language") or item.get("language") or self.engine.session.language()
         )
+        self._batch_prefs_from_queue = bool(q_vs or q_nar)
+        if q_lang:
+            self.log(
+                f"场景生成语言：{q_lang} → {self._language_label(q_lang)} "
+                f"(tw=Traditional Chinese, zh=Simplified Chinese, en=English)",
+                telegram=True,
+            )
+        if self._batch_prefs_from_queue:
+            self.log(
+                "本批队列已含 visual_style / narrator，跳过手动选择。",
+                telegram=True,
+            )
+            if q_vs:
+                ok, msg = self.engine.cmd_scene_visual_style(q_vs)
+                self.log(msg, telegram=True)
+                if not ok:
+                    raise PipelineError(f"队列 visual_style 无效: {msg}")
+            if q_nar:
+                ok, msg = self.engine.cmd_narrator(q_nar)
+                self.log(msg, telegram=True)
+                if not ok:
+                    raise PipelineError(f"队列 narrator 无效: {msg}")
+        else:
+            self.log(
+                "本批队列统一选项（整轮只问一次，后续故事复用）：",
+                telegram=True,
+            )
 
-        ok, msg = self.cli("scnvs")
-        self.log(msg, telegram=True)
-        n = _count_cmd_lines(msg, "scnvs")
-        if n < 1:
-            raise PipelineError("scnvs 没有选项")
-        self._batch_vs_idx = self._wait_digit(
-            "scnvs",
-            n,
-            "请选 Visual Style（本批所有故事共用）。",
-        )
-        self.cli_ok(f"scnvs {self._batch_vs_idx}", contain="scnvs ok")
+        if not q_vs:
+            ok, msg = self.cli("scnvs")
+            self.log(msg, telegram=True)
+            n = _count_cmd_lines(msg, "scnvs")
+            if n < 1:
+                raise PipelineError("scnvs 没有选项")
+            self._batch_vs_idx = self._wait_digit(
+                "scnvs",
+                n,
+                "请选 Visual Style（本批所有故事共用）。",
+            )
+            self.cli_ok(f"scnvs {self._batch_vs_idx}", contain="scnvs ok")
 
         if needs_lm:
             ok, msg = self.cli("scnlm")
@@ -319,17 +352,18 @@ class StoryProducerClient:
                 telegram=True,
             )
 
-        ok, msg = self.cli("nar")
-        if ok and ("nar：" in msg or msg.startswith("nar")):
-            n = _count_cmd_lines(msg, "nar")
-            if n >= 1:
-                self.log(msg, telegram=True)
-                self._batch_nar_idx = self._wait_digit(
-                    "nar",
-                    n,
-                    "请选 narrator（画外旁白，本批共用）。",
-                )
-                self.cli_ok(f"nar {self._batch_nar_idx}", contain="nar ok")
+        if not q_nar:
+            ok, msg = self.cli("nar")
+            if ok and ("nar：" in msg or msg.startswith("nar")):
+                n = _count_cmd_lines(msg, "nar")
+                if n >= 1:
+                    self.log(msg, telegram=True)
+                    self._batch_nar_idx = self._wait_digit(
+                        "nar",
+                        n,
+                        "请选 narrator（画外旁白，本批共用）。",
+                    )
+                    self.cli_ok(f"nar {self._batch_nar_idx}", contain="nar ok")
 
         self._batch_setup_done = True
         vs = self.engine.session.visual_style or "?"
@@ -340,15 +374,33 @@ class StoryProducerClient:
             telegram=True,
         )
 
+    @staticmethod
+    def _language_label(lang_key: str) -> str:
+        try:
+            import config
+
+            return config.llm_language_label(lang_key)
+        except Exception:
+            return str(lang_key or "tw")
+
     def _apply_batch_scene_setup(self) -> None:
         """Write batch choices onto the current story without re-prompting."""
         if not self._batch_setup_done:
             self._ensure_batch_scene_setup()
-        if self._batch_vs_idx is not None:
+        item = self.engine.session.queue_item if isinstance(
+            self.engine.session.queue_item, dict
+        ) else {}
+        q_vs = (item.get("visual_style") or "").strip()
+        q_nar = (item.get("narrator") or "").strip()
+        if q_vs:
+            self.engine.cmd_scene_visual_style(q_vs)
+        elif self._batch_vs_idx is not None:
             self.cli_ok(f"scnvs {self._batch_vs_idx}", contain="scnvs ok")
         if self._batch_lm_idx is not None:
             self.cli_ok(f"scnlm {self._batch_lm_idx}", contain="scnlm ok")
-        if self._batch_nar_idx is not None:
+        if q_nar:
+            self.engine.cmd_narrator(q_nar)
+        elif self._batch_nar_idx is not None:
             self.cli_ok(f"nar {self._batch_nar_idx}", contain="nar ok")
 
     def _generate_scenes(self) -> None:
@@ -652,7 +704,7 @@ class StoryProducerClient:
                 "警告：未能将本条标为 done，若循环重复处理请检查 video_choice_queue.json。",
                 telegram=True,
             )
-        self.log("clip 已下载并写入 scene_content[].clip", telegram=True)
+        self.log("clip 已下载并写入 workflow.grok_video_results", telegram=True)
 
     def _next_story_index(self, *, first: bool = False) -> int | None:
         want = (self.pick_arg or "").strip()

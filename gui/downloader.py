@@ -562,6 +562,12 @@ def _normalize_gen_video_clip_segment(seg) -> dict | None:
         return None
     end_raw = seg.get("end")
     out: dict = {"path": p, "start": start, "speed": speed}
+    try:
+        scene = int(seg.get("scene") or 0)
+        if scene >= 1:
+            out["scene"] = scene
+    except (TypeError, ValueError):
+        pass
     if end_raw not in (None, "") and not clip_end_means_full_length(end_raw):
         try:
             out["end"] = float(end_raw)
@@ -575,19 +581,18 @@ def _story_has_reviewable_clips(video_detail: dict) -> bool:
 
 
 def _get_gen_video_clip_segments(video_detail: dict) -> list[dict]:
-    """审阅窗片段：优先 ``scene_content[].clip``，旧数据回退 ``gen_video_clip_segments``。"""
+    """审阅窗片段：``workflow.grok_video_results``，旧数据回退 ``gen_video_clip_segments``。"""
     if not isinstance(video_detail, dict):
         return []
-    from cli.video_choice_queue import grok_clip_segments_from_scene_content
+    from utility.grok_video_results import grok_clip_segments_from_video_detail
 
-    from_scenes: list[dict] = []
-    sc = video_detail.get("scene_content")
-    for seg in grok_clip_segments_from_scene_content(sc if isinstance(sc, list) else []):
+    from_results: list[dict] = []
+    for seg in grok_clip_segments_from_video_detail(video_detail):
         n = _normalize_gen_video_clip_segment(seg)
         if n:
-            from_scenes.append(n)
-    if from_scenes:
-        return from_scenes
+            from_results.append(n)
+    if from_results:
+        return from_results
     raw = video_detail.get(GEN_VIDEO_CLIP_SEGMENTS_KEY)
     if not isinstance(raw, list):
         return []
@@ -600,10 +605,17 @@ def _get_gen_video_clip_segments(video_detail: dict) -> list[dict]:
 
 
 def _set_gen_video_clip_segments(video_detail: dict, segments: list[dict]) -> None:
-    """把审阅结果写入各场景 ``clip`` / ``clip_start`` / ``clip_end`` / ``clip_speed``。"""
+    """把审阅结果写入 ``workflow.grok_video_results``（含 path / clip_start / clip_end）。"""
     if not isinstance(video_detail, dict):
         return
+    from storyproducer.workflow import WORKFLOW_KEY, get_workflow
     from utility.gen_video_store import copy_into_gen_video
+    from utility.grok_video_results import (
+        apply_review_segments,
+        build_grok_video_results_from_legacy,
+        strip_scene_content_clip_fields,
+        strip_workflow_clip_legacy,
+    )
 
     normalized: list[dict] = []
     for seg in segments or []:
@@ -617,29 +629,14 @@ def _set_gen_video_clip_segments(video_detail: dict, segments: list[dict]) -> No
             print(f"copy clip to gen_video failed: {exc}")
         normalized.append(n)
 
+    existing = build_grok_video_results_from_legacy(video_detail)
+    merged = apply_review_segments(existing, normalized)
+    wf = strip_workflow_clip_legacy(get_workflow(video_detail))
+    wf["grok_video_results"] = merged
+    video_detail[WORKFLOW_KEY] = wf
     sc = video_detail.get("scene_content")
-    if not isinstance(sc, list):
-        sc = []
-    sc = [copy.deepcopy(x) if isinstance(x, dict) else {} for x in sc]
-    while len(sc) < len(normalized):
-        sc.append({})
-    for i, scene in enumerate(sc):
-        if not isinstance(scene, dict):
-            scene = {}
-            sc[i] = scene
-        if i < len(normalized):
-            seg = normalized[i]
-            dest = seg["path"]
-            scene["clip"] = dest
-            scene["grok_clip"] = dest
-            scene["clip_start"] = float(seg.get("start") or 0.0)
-            scene["clip_end"] = float(seg["end"])
-            scene["clip_speed"] = float(seg.get("speed") or 1.0)
-        else:
-            scene["clip"] = None
-            scene.pop("grok_clip", None)
-    if sc:
-        video_detail["scene_content"] = sc
+    if isinstance(sc, list):
+        video_detail["scene_content"] = strip_scene_content_clip_fields(sc)
     video_detail.pop(GEN_VIDEO_CLIP_SEGMENTS_KEY, None)
 
 
@@ -1888,7 +1885,7 @@ def _on_summary_reopen_gen_video_clip_review(summary_window: tk.Toplevel) -> Non
     if not segments:
         messagebox.showinfo(
             "审阅片段",
-            "尚无场景 clip（scene_content[].clip）。\n"
+            "尚无场景 clip（workflow.grok_video_results）。\n"
             "请先 grv → grvc 下载各场景 video，或拖入 MP4 完成审阅。",
             parent=summary_window,
         )
@@ -6896,6 +6893,7 @@ class MediaGUIManager:
             visual_style=(visual_style or "").strip() or project_manager.LAST_VISUAL_STYLE,
             main_character=(main_character or "").strip(),
             host_narrator=(project_manager.LAST_NARRATOR or "").strip(),
+            language=getattr(self, "language", "") or project_manager.LAST_YT_LANGUAGE,
         )
 
         _copy_text_to_clipboard(parent, clip_body)
@@ -10520,10 +10518,8 @@ class MediaGUIManager:
                 vd_local = drop_ctx.get("vd")
                 if mgr_local is None or not isinstance(vd_local, dict):
                     return False, "STORY video_detail missing"
-                from cli.video_choice_queue import (
-                    align_clip_paths_to_scene_content,
-                    grok_clip_segments_from_scene_content,
-                )
+                from cli.video_choice_queue import align_clip_paths_to_scene_content
+                from utility.grok_video_results import grok_clip_segments_from_video_detail
 
                 segments = _get_gen_video_clip_segments(vd_local)
                 paths: list[str] = []
@@ -10552,15 +10548,13 @@ class MediaGUIManager:
                             paths = [np]
                 if not segments:
                     if not paths:
-                        segments = grok_clip_segments_from_scene_content(
-                            vd_local.get("scene_content")
-                        )
+                        segments = grok_clip_segments_from_video_detail(vd_local)
                     elif paths:
                         paths = align_clip_paths_to_scene_content(vd_local, paths)
                 if not segments and not paths:
                     return False, (
                         "没有可审阅的场景 clip。"
-                        "先 grv 下载各场景 video（会写入 scene_content[].clip）。"
+                        "先 grv 下载各场景 video（会写入 workflow.grok_video_results）。"
                     )
                 if segments:
                     schedule_summary_gen_video_clip_review(

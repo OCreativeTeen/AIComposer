@@ -22,7 +22,7 @@ echo  逐条打开 STORY，自动载入各场景 clip 审阅窗（等同 vc）�
 
 echo  在窗口内裁剪/确认生成成片，可发 vp 发布。
 
-echo  启动后 Telegram 回复 1/2/3 选故事；审阅完发 next；再选下一条（可重复）。
+echo  启动后 Telegram 回复 1/2/3 选故事；审阅完发 n；再选下一条（可重复）。
 
 echo  Do NOT run cli\run_telegram_client.bat at the same time.
 

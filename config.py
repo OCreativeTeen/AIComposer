@@ -43,9 +43,74 @@ LANGUAGES = {
 }
 
 
+# scnge / Gemini ``{language}``、Grok audio、NotebookLM 封面共用
+SCENE_GENERATION_LANGUAGE_LABELS = {
+    "tw": "Traditional Chinese",
+    "zh": "Simplified Chinese",
+    "en": "English",
+}
+
+
+def normalize_yt_language(ui_language_key: str) -> str:
+    """队列 ``yt_language`` / ``language`` → ``tw`` | ``zh`` | ``en``。"""
+    k = str(ui_language_key or "tw").strip().lower().replace("_", "-")
+    if not k:
+        return "tw"
+    if k == "english" or k.startswith("en"):
+        return "en"
+    if k in ("zh", "zh-cn", "cn", "sc", "simp", "simplified"):
+        return "zh"
+    if k in ("tw", "zh-tw", "tc", "trad", "traditional"):
+        return "tw"
+    if k in LANGUAGES:
+        val = LANGUAGES[k]
+        if val == "english":
+            return "en"
+        if k == "zh":
+            return "zh"
+        if val == "chinese":
+            if "tw" in k:
+                return "tw"
+            if k in ("zh", "zh-cn"):
+                return "zh"
+            return "tw"
+    return "tw"
+
+
 def llm_language_label(ui_language_key: str) -> str:
-    """UI 语种码 → LLM 提示词语言名：``en`` → ``English``，其余 → ``Chinese``。"""
-    return "English" if str(ui_language_key or "tw").strip().lower() == "en" else "Chinese"
+    """UI 语种码 → scnge/Gemini ``{language}`` 等提示词语言名。
+
+    ``tw`` → Traditional Chinese；``zh`` → Simplified Chinese；``en`` → English。
+    """
+    k = normalize_yt_language(ui_language_key)
+    return SCENE_GENERATION_LANGUAGE_LABELS.get(k, "Traditional Chinese")
+
+
+def audio_language_label(ui_language_key: str) -> str:
+    """Grok / NotebookLM 口播与旁白的目标语言（与 ``llm_language_label`` 一致）。"""
+    return llm_language_label(ui_language_key)
+
+
+def notebooklm_infographic_language_click_names(ui_language_key: str) -> list[str]:
+    """NotebookLM Customize Infographic 语言下拉可点击项（按优先级）。"""
+    k = normalize_yt_language(ui_language_key)
+    if k == "zh":
+        return [
+            "中文 (简体)",
+            "中文（简体）",
+            "Simplified Chinese",
+            "简体中文",
+            "Chinese (Simplified)",
+        ]
+    if k == "en":
+        return ["English", "英语", "英文"]
+    return [
+        "中文 (繁體)",
+        "中文（繁體）",
+        "Traditional Chinese",
+        "繁體中文",
+        "Chinese (Traditional)",
+    ]
 
 
 def chinese_convert(text, language):

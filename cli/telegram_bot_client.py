@@ -1736,7 +1736,7 @@ class HermesTelegramClient:
         if not paths:
             raise PipelineError(
                 "vc：还没有场景 clip 路径。"
-                "请确认 grv 已下载各场景 mp4（写入 scene_content[].clip）。"
+                "请确认 grv 已下载各场景 mp4（写入 workflow.grok_video_results）。"
             )
         preview = "\n".join(
             f"  {i}. {os.path.basename(p)}"

@@ -607,6 +607,7 @@ class StoryEngine:
                 main_character=actor,
                 host_narrator=self.session.narrator,
                 scene_index=-1,
+                language=self.session.language(),
             )
         except Exception as exc:
             return False, f"nbp failed: {exc}"
@@ -640,7 +641,9 @@ class StoryEngine:
         except ValueError as exc:
             return False, str(exc)
         try:
-            detail = handle_notebooklm_covers(times=3)
+            detail = handle_notebooklm_covers(
+                times=3, language=self.session.language()
+            )
         except Exception as exc:
             return False, f"nbi failed: {exc}"
         idx = int(want) if want.isdigit() else 0
@@ -874,6 +877,7 @@ class StoryEngine:
                 video_nb_index=v_idx,
                 visual_style=self.session.visual_style,
                 host_narrator=self.session.narrator,
+                language=self.session.language(),
             )
         except Exception as exc:
             return False, f"grv failed ({selected.get('label')}): {exc}"
@@ -927,23 +931,17 @@ class StoryEngine:
             ).strip()
         wfstore.persist_scene_clips(ok_files)
         self._reload_video_detail()
-        clips = []
+        vd = self.session.video_detail if isinstance(self.session.video_detail, dict) else {}
         sc = self.session.scene_content() or []
-        for i, scene in enumerate(sc, 1):
-            p = wfstore.scene_clip_path(scene) if isinstance(scene, dict) else ""
-            if p:
-                clips.append({"scene": i, "path": p})
         patch: dict = {
             "step": step,
             "grv_review_pending": False,
-            "grok_clips": clips,
-            "grok_download_results": list(files or []),
         }
-        if sc and all(wfstore.scene_has_clip(s) for s in sc):
+        if sc and wfstore.story_has_all_clips(vd):
             patch["stage"] = wfstore.STAGE_COMPLETED
         self._patch_wf(patch)
         failed = [f for f in (files or []) if f.get("status") != "ok"]
-        lines = [f"{step} ok — 已下载 {len(ok_files)} clip(s)，写入 scene_content"]
+        lines = [f"{step} ok — 已下载 {len(ok_files)} clip(s)，写入 grok_video_results"]
         for item in ok_files:
             lines.append(
                 f"  scene {item.get('scene')}: {os.path.basename(item.get('path') or '')}"

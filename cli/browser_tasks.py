@@ -2974,8 +2974,93 @@ def _open_customize_infographic(hwnd: int) -> None:
     )
 
 
-def _set_infographic_options(hwnd: int) -> None:
-    """Portrait + Concise (UIA first, ratio fallback for Chrome modal)."""
+def _current_yt_language_for_notebooklm() -> str:
+    try:
+        from cli.video_choice_queue import current_taken_queue_item
+
+        item = current_taken_queue_item()
+        if isinstance(item, dict):
+            lang = (item.get("yt_language") or item.get("language") or "").strip()
+            if lang:
+                return lang
+    except Exception:
+        pass
+    try:
+        import project_manager
+
+        return (project_manager.LAST_YT_LANGUAGE or "tw").strip() or "tw"
+    except Exception:
+        return "tw"
+
+
+def _set_infographic_language(hwnd: int, language_key: str = "") -> None:
+    """Customize Infographic → Choose language（tw=繁體，zh=简体）。"""
+    import config
+
+    names = config.notebooklm_infographic_language_click_names(language_key)
+    if not names:
+        return
+    target = names[0]
+    for name in names:
+        if _named_exists(
+            hwnd,
+            name,
+            ["TextControl", "ComboBoxControl", "ButtonControl"],
+            search_depth=22,
+            timeout_s=0.2,
+        ):
+            log(f"infographic language already {name!r}")
+            return
+
+    opened = False
+    for ctype in ("ComboBoxControl", "ButtonControl"):
+        ctrl = _uia_named(
+            hwnd,
+            "Choose language",
+            [ctype],
+            search_depth=22,
+            timeout_s=0.35,
+        )
+        if ctrl:
+            try:
+                _click_rect_center(ctrl.BoundingRectangle)
+                opened = True
+                break
+            except Exception:
+                pass
+    if not opened:
+        for name in names:
+            if _click_named(
+                hwnd, name, ["ComboBoxControl", "ButtonControl"], search_depth=22
+            ):
+                opened = True
+                break
+    if not opened:
+        log(f"ratio-click language dropdown for {target!r}")
+        _click_ratio(hwnd, 0.43, 0.395, pause=0.45)
+    time.sleep(0.35)
+
+    for name in names:
+        for ctype in (
+            "ListItemControl",
+            "MenuItemControl",
+            "ButtonControl",
+            "TextControl",
+            "HyperlinkControl",
+        ):
+            if _click_named(hwnd, name, [ctype], search_depth=28):
+                log(f"infographic language → {name!r}")
+                time.sleep(0.3)
+                return
+    log(f"infographic language not set (wanted {target!r}); continuing")
+
+
+def _set_infographic_options(hwnd: int, *, language: str = "") -> None:
+    """Language + Portrait + Concise (UIA first, ratio fallback for Chrome modal)."""
+    lang = (language or _current_yt_language_for_notebooklm()).strip()
+    if lang:
+        _set_infographic_language(hwnd, lang)
+        time.sleep(0.25)
     _click_infographic_option(
         hwnd,
         "Portrait",
@@ -5885,7 +5970,9 @@ def reopen_notebooklm_and_capture(
     return capture_notebooklm_infographics(times=times, require_ready=False)
 
 
-def handle_notebooklm_covers(times: int = NOTEBOOKLM_COVER_TIMES) -> str:
+def handle_notebooklm_covers(
+    times: int = NOTEBOOKLM_COVER_TIMES, *, language: str = ""
+) -> str:
     """Open NotebookLM with the current Chrome profile and Generate infographic N times.
 
     Clipboard must already hold the NotebookLM cover prompt (``notebooklm 1``).
@@ -5927,12 +6014,16 @@ def handle_notebooklm_covers(times: int = NOTEBOOKLM_COVER_TIMES) -> str:
         time.sleep(0.6)
         _open_customize_infographic(hwnd)
         time.sleep(0.4)
-        _set_infographic_options(hwnd)
+        _set_infographic_options(hwnd, language=language)
         _paste_infographic_prompt(hwnd, prompt)
         _click_generate(hwnd)
         closed = _wait_customize_closed(hwnd, timeout_s=16.0)
         started += 1
-        log(f"Generate {i + 1} clicked; dialog_closed={closed}")
+        lang_note = (language or _current_yt_language_for_notebooklm()).strip()
+        log(
+            f"Generate {i + 1} clicked; dialog_closed={closed} "
+            f"language={lang_note or 'default'}"
+        )
         time.sleep(2.4)
 
     from utility.telegram_session import mark_notebooklm_generate_started

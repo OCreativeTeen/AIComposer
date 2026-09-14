@@ -50,8 +50,6 @@ TARGET_RANK = {
     TARGET_FULL: 3,
 }
 
-SCENE_CLIP_KEY = "clip"
-SCENE_GROK_CLIP_KEY = "grok_clip"
 DEFAULT_CLIP_START = 0.0
 DEFAULT_CLIP_END = 10.0
 DEFAULT_CLIP_SPEED = 1.0
@@ -94,7 +92,6 @@ def empty_workflow() -> dict[str, Any]:
         "grv_variant": 3,
         "grv_profile_index": 0,
         "grv_profile": "",
-        "grok_clips": [],
         "grok_video_results": [],
         "grv_review_pending": False,
     }
@@ -188,10 +185,23 @@ def persist_workflow(item: dict, patch: dict | None = None) -> dict[str, Any]:
     """Merge *patch* into the story item's top-level ``workflow`` node and write the list row."""
     from cli.video_choice_queue import persist_active_video_detail_field
 
+    from utility.grok_video_results import (
+        build_grok_video_results_from_legacy,
+        strip_workflow_clip_legacy,
+    )
+
     wf = get_workflow(item)
     if patch:
         wf = _deep_merge(wf, patch)
     wf = _deep_merge(empty_workflow(), flatten_workflow(wf))
+    row = item if isinstance(item, dict) else {}
+    merged = build_grok_video_results_from_legacy({**row, "workflow": wf})
+    if merged:
+        wf["grok_video_results"] = merged
+    wf = strip_workflow_clip_legacy(wf)
+    if isinstance(row.get("scene_content"), list):
+        row["scene_content"] = normalize_scene_content(row.get("scene_content"))
+        item["scene_content"] = row["scene_content"]
     wf["updated_at"] = _utc_now()
     if isinstance(item, dict):
         item[WORKFLOW_KEY] = wf
@@ -315,68 +325,30 @@ def parse_target_stage(raw: str) -> str:
     return ""
 
 
-def scene_clip_path(scene: dict | None) -> str:
-    if not isinstance(scene, dict):
+def scene_clip_path(video_detail: dict | None, scene: int) -> str:
+    from utility.grok_video_results import grok_video_result_for_scene
+
+    rec = grok_video_result_for_scene(video_detail, scene)
+    if not rec:
         return ""
-    return str(scene.get(SCENE_CLIP_KEY) or scene.get(SCENE_GROK_CLIP_KEY) or "").strip()
+    return str(rec.get("path") or "").strip()
 
 
-def scene_has_clip(scene: dict | None) -> bool:
-    return bool(scene_clip_path(scene))
+def scene_has_clip(video_detail: dict | None, scene: int) -> bool:
+    from utility.grok_video_results import scene_has_grok_clip
+
+    return scene_has_grok_clip(video_detail, scene)
 
 
 def normalize_scene_content(scenes: list | None) -> list:
-    """Ensure each scene has a ``clip`` field (null until Grok writes a path)."""
-    out: list = []
-    for raw in scenes or []:
-        if not isinstance(raw, dict):
-            continue
-        item = copy.deepcopy(raw)
-        if SCENE_CLIP_KEY not in item:
-            item[SCENE_CLIP_KEY] = None
-        out.append(item)
-    return out
+    """Strip legacy per-scene clip fields; clips live in ``workflow.grok_video_results``."""
+    from utility.grok_video_results import strip_scene_content_clip_fields
 
-
-def apply_scene_clips(scene_content: list, clips: list[dict] | None) -> list:
-    """Write ``clip`` (+ legacy ``grok_clip``) and default trim fields."""
-    out = copy.deepcopy(scene_content) if isinstance(scene_content, list) else []
-    by_scene: dict[int, str] = {}
-    for item in clips or []:
-        if isinstance(item, str):
-            continue
-        if not isinstance(item, dict):
-            continue
-        p = os.path.normpath(os.path.abspath((item.get("path") or "").strip()))
-        if not p:
-            continue
-        try:
-            scene = int(item.get("scene") or 0)
-        except (TypeError, ValueError):
-            scene = 0
-        if scene > 0:
-            by_scene[scene] = p
-    for i, item in enumerate(out, 1):
-        if not isinstance(item, dict):
-            continue
-        if i not in by_scene:
-            if SCENE_CLIP_KEY not in item:
-                item[SCENE_CLIP_KEY] = None
-            continue
-        path = by_scene[i]
-        item[SCENE_CLIP_KEY] = path
-        item[SCENE_GROK_CLIP_KEY] = path
-        if item.get("clip_start") in (None, ""):
-            item["clip_start"] = DEFAULT_CLIP_START
-        if item.get("clip_end") in (None, ""):
-            item.pop("clip_end", None)
-        if item.get("clip_speed") in (None, ""):
-            item["clip_speed"] = DEFAULT_CLIP_SPEED
-    return out
+    return strip_scene_content_clip_fields(scenes if isinstance(scenes, list) else [])
 
 
 def persist_scene_clips(clips: list[dict] | None) -> tuple[bool, str]:
-    """Copy clips into gen_video and write ``scene_content[].clip``."""
+    """Copy clips into gen_video and write ``workflow.grok_video_results``."""
     from cli.video_choice_queue import save_grok_clips_to_active_video_detail
 
     return save_grok_clips_to_active_video_detail(list(clips or []))
@@ -392,7 +364,9 @@ def infer_stage(video_detail: dict | None) -> str:
 
     scenes = row.get("scene_content")
     has_scenes = isinstance(scenes, list) and bool(scenes)
-    clips_all = bool(has_scenes) and all(scene_has_clip(s) for s in scenes)
+    clips_all = bool(has_scenes) and all(
+        scene_has_clip(row, i) for i, s in enumerate(scenes, 1) if isinstance(s, dict)
+    )
 
     cover = str(
         row.get("cover_image") or wf.get("selected_infographic_image") or ""
@@ -507,33 +481,29 @@ def any_unfinished_needs_gemini(
 
 
 def story_clip_paths(video_detail: dict | None) -> list[str]:
-    """Ordered mp4 paths from ``scene_content[].clip`` (scene 1→N)."""
-    return [
-        str(seg.get("path") or "")
-        for seg in story_clip_segments(video_detail)
-        if str(seg.get("path") or "").strip()
-    ]
+    """Ordered mp4 paths from ``workflow.grok_video_results`` (scene 1→N)."""
+    from utility.grok_video_results import grok_clip_paths_from_video_detail
+
+    return grok_clip_paths_from_video_detail(video_detail)
 
 
 def story_clip_segments(video_detail: dict | None) -> list[dict]:
-    """Ordered clip segments from ``scene_content`` (scene 1→N)."""
-    from cli.video_choice_queue import grok_clip_segments_from_scene_content
+    """Ordered clip segments from ``workflow.grok_video_results``."""
+    from utility.grok_video_results import grok_clip_segments_from_video_detail
 
-    row = video_detail if isinstance(video_detail, dict) else {}
-    sc = row.get("scene_content")
-    return grok_clip_segments_from_scene_content(sc if isinstance(sc, list) else [])
+    return grok_clip_segments_from_video_detail(video_detail)
 
 
 def story_has_all_clips(video_detail: dict | None) -> bool:
-    row = video_detail if isinstance(video_detail, dict) else {}
-    scenes = row.get("scene_content")
-    if not isinstance(scenes, list) or not scenes:
-        return False
-    return all(scene_has_clip(s) for s in scenes if isinstance(s, dict))
+    from utility.grok_video_results import story_has_all_clips as _all
+
+    return _all(video_detail)
 
 
 def story_has_any_clips(video_detail: dict | None) -> bool:
-    return bool(story_clip_paths(video_detail))
+    from utility.grok_video_results import story_has_any_clips as _any
+
+    return _any(video_detail)
 
 
 def find_next_clip_ready_index(

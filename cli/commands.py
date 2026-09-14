@@ -1269,7 +1269,20 @@ def cmd_open_notebooklm(value: str = "") -> tuple[bool, str]:
     from cli.browser_tasks import handle_notebooklm_covers
 
     try:
-        detail = handle_notebooklm_covers(times=3)
+        lang = "tw"
+        try:
+            from cli.video_choice_queue import (
+                apply_queue_item_yt_prefs,
+                current_taken_queue_item,
+            )
+
+            item = current_taken_queue_item()
+            if item:
+                prefs = apply_queue_item_yt_prefs(item)
+                lang = (prefs.get("language") or "tw").strip() or "tw"
+        except Exception:
+            pass
+        detail = handle_notebooklm_covers(times=3, language=lang)
     except Exception as exc:
         return False, (
             f"{shown} failed ({selected['label']}): {exc}\n"
@@ -1942,7 +1955,7 @@ def cmd_video_concat(value: str = "") -> tuple[bool, str]:
     if not segments:
         return False, (
             "还没有场景 clip 路径。\n"
-            "先 grv（含各场景下载，会写入 scene_content[].clip），"
+            "先 grv（含各场景下载，会写入 workflow.grok_video_results），"
             "或各标签出片后 gvd。"
         )
     preview = "\n".join(

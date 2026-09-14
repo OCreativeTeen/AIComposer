@@ -21,6 +21,7 @@ _FULLWIDTH = str.maketrans("０１２３４５６７８９", "0123456789")
 _STOP_WORDS = frozenset({"stop", "exit", "quit", "结束", "停", "halt", "abort"})
 _NEXT_WORDS = frozenset(
     {
+        "n",
         "next",
         "continue",
         "ok",
@@ -422,7 +423,7 @@ class StoryProducerGuiClient:
             f"【人工审阅】{title}\n"
             "审阅窗已打开，各场景 clip 已按顺序载入。\n"
             "请在 GUI 内裁剪/排序 → 确认生成成片；可发 vp 发布。\n"
-            "完成后发 next / continue / 完成 — 将关闭 GUI 并回到选单。",
+            "完成后发 n — 将关闭 GUI 并回到选单。",
             telegram=True,
         )
         try:
@@ -450,10 +451,8 @@ class StoryProducerGuiClient:
         )
 
     def run_one_story(self, index: int) -> str:
-        from cli.video_choice_queue import (
-            grok_clip_segments_from_scene_content,
-            resolve_video_detail_from_queue_item,
-        )
+        from cli.video_choice_queue import resolve_video_detail_from_queue_item
+        from utility.grok_video_results import grok_clip_segments_from_video_detail
 
         item = self._queue_item_at(index)
         cid = (item.get("choice_id") or "").strip()
@@ -468,14 +467,14 @@ class StoryProducerGuiClient:
             self.log(f"跳过 #{index} {title}：已有成片（--skip-published）。", telegram=True)
             return "skip"
 
-        clip_segments = grok_clip_segments_from_scene_content(row.get("scene_content"))
+        clip_segments = grok_clip_segments_from_video_detail(row)
         scenes = row.get("scene_content")
         n_sc = len(scenes) if isinstance(scenes, list) else 0
 
         if not clip_segments:
             self.log(
                 f"#{index} {title}：没有 clip 路径，无法打开审阅窗。\n"
-                "请先对该故事跑 run_client（grv + grvc）生成 scene_content[].clip。",
+                "请先对该故事跑 run_client（grv + grvc）生成 workflow.grok_video_results。",
                 telegram=True,
             )
             return "skip"
@@ -532,7 +531,7 @@ class StoryProducerGuiClient:
         self.log(
             "StoryProducer GUI 审阅启动（交互选故事）\n"
             f"clip 策略={clip_mode}  once={self.once}\n"
-            "流程：选序号 → 打开 STORY + clip 审阅窗 → 成片/发布 → next → 关 GUI → 再选\n"
+            "流程：选序号 → 打开 STORY + clip 审阅窗 → 成片/发布 → n → 关 GUI → 再选\n"
             "Telegram：回复 1/2/3 选故事；list 刷新；exit 结束。可重复选。\n"
             "审阅中可发 vc / vp / cx 等 CLI。\n"
             "不要同时跑 cli\\run_telegram_client.bat（同一 token 会 409）。",
@@ -602,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
         "--telegram-inbox",
         action="store_true",
         default=True,
-        help="Telegram 收选单/next 等（默认开）",
+        help="Telegram 收选单/n 等（默认开）",
     )
     args = p.parse_args(argv)
     client = StoryProducerGuiClient(

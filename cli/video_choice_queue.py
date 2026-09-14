@@ -736,50 +736,25 @@ DEFAULT_CLIP_SPEED = 1.0
 
 
 def grok_clip_segments_from_scene_content(scene_content) -> list[dict]:
-    """从 ``scene_content`` 按场景 1→N 顺序收集 clip 片段（含 trim 元数据）。"""
-    if not isinstance(scene_content, list):
-        return []
-    out: list[dict] = []
-    for item in scene_content:
-        if not isinstance(item, dict):
-            continue
-        p = (item.get(SCENE_CLIP_KEY) or item.get(SCENE_GROK_CLIP_KEY) or "").strip()
-        if not p:
-            continue
-        p = os.path.normpath(os.path.abspath(p))
-        if not os.path.isfile(p) or not p.lower().endswith(".mp4"):
-            continue
-        try:
-            start = float(item.get("clip_start", DEFAULT_CLIP_START))
-            speed = float(item.get("clip_speed", DEFAULT_CLIP_SPEED))
-        except (TypeError, ValueError):
-            start = DEFAULT_CLIP_START
-            speed = DEFAULT_CLIP_SPEED
-        end_raw = item.get("clip_end")
-        end = None if clip_end_means_full_length(end_raw) else float(end_raw)
-        out.append(
-            {
-                "path": p,
-                "start": start,
-                "end": end,
-                "speed": speed,
-            }
-        )
-    return out
+    """Legacy name — prefer ``workflow.grok_video_results`` via video_detail."""
+    _ = scene_content
+    return []
 
 
 def grok_clip_paths_from_scene_content(scene_content) -> list[str]:
-    """从 ``scene_content`` 各条 ``clip`` / ``grok_clip`` 按场景顺序收集 mp4 路径。"""
-    return [str(seg.get("path") or "") for seg in grok_clip_segments_from_scene_content(scene_content)]
+    _ = scene_content
+    return []
 
 
 def align_clip_paths_to_scene_content(
     video_detail: dict | None,
     paths: list[str],
 ) -> list[str]:
-    """把任意路径列表重排为 ``scene_content`` 场景 1→N 顺序。"""
+    """把任意路径列表重排为 ``grok_video_results`` 场景 1→N 顺序。"""
+    from utility.grok_video_results import grok_clip_paths_from_video_detail
+
     row = video_detail if isinstance(video_detail, dict) else {}
-    ordered = grok_clip_paths_from_scene_content(row.get("scene_content"))
+    ordered = grok_clip_paths_from_video_detail(row)
     if not ordered or not paths:
         return list(paths or [])
     by_key = {
@@ -802,53 +777,25 @@ def align_clip_paths_to_scene_content(
     return out
 
 
-def apply_grok_clips_to_scene_content(
-    scene_content: list, clips: list[dict]
-) -> list:
-    """把 ``[{scene, path}, ...]`` 写回 ``scene_content[i].clip``（兼写 ``grok_clip``）。"""
-    out = copy.deepcopy(scene_content)
-    by_scene: dict[int, str] = {}
-    by_meta: dict[int, dict] = {}
-    for item in clips or []:
-        if isinstance(item, str):
-            continue
-        if not isinstance(item, dict):
-            continue
-        p = os.path.normpath(os.path.abspath((item.get("path") or "").strip()))
-        if not p:
-            continue
-        try:
-            scene = int(item.get("scene") or 0)
-        except (TypeError, ValueError):
-            scene = 0
-        if scene > 0:
-            by_scene[scene] = p
-            by_meta[scene] = item
-    for i, item in enumerate(out, 1):
-        if not isinstance(item, dict):
-            continue
-        if i not in by_scene:
-            if SCENE_CLIP_KEY not in item:
-                item[SCENE_CLIP_KEY] = None
-            continue
-        path = by_scene[i]
-        meta = by_meta.get(i) or {}
-        item[SCENE_CLIP_KEY] = path
-        item[SCENE_GROK_CLIP_KEY] = path
-        start = meta.get("start", meta.get("clip_start", item.get("clip_start")))
-        end = meta.get("end", meta.get("clip_end", item.get("clip_end")))
-        speed = meta.get("speed", meta.get("clip_speed", item.get("clip_speed")))
-        item["clip_start"] = (
-            DEFAULT_CLIP_START if start in (None, "") else float(start)
-        )
-        if end in (None, "") or clip_end_means_full_length(end):
-            item.pop("clip_end", None)
-        else:
-            item["clip_end"] = float(end)
-        item["clip_speed"] = (
-            DEFAULT_CLIP_SPEED if speed in (None, "") else float(speed)
-        )
-    return out
+def apply_grok_clips_to_workflow_results(
+    video_detail: dict, clips: list[dict]
+) -> list[dict]:
+    """把下载/拷贝结果写入 ``workflow.grok_video_results``（唯一 clip 存储）。"""
+    from storyproducer.workflow import get_workflow
+    from utility.grok_video_results import (
+        build_grok_video_results_from_legacy,
+        merge_download_clips,
+        strip_workflow_clip_legacy,
+    )
+
+    row = video_detail if isinstance(video_detail, dict) else {}
+    wf = get_workflow(row)
+    existing = build_grok_video_results_from_legacy(row)
+    merged = merge_download_clips(existing, clips)
+    wf = strip_workflow_clip_legacy(wf)
+    wf["grok_video_results"] = merged
+    row["workflow"] = wf
+    return merged
 
 
 def persist_active_video_detail_row(video_detail: dict) -> tuple[bool, str]:
@@ -907,35 +854,35 @@ def persist_active_video_detail_field(field: str, value) -> tuple[bool, str]:
 
 
 def save_grok_clips_to_active_video_detail(clips: list[dict]) -> tuple[bool, str]:
-    """grv 下载后：拷贝到 gen_video，再把各场景 mp4 写入 ``scene_content[].clip``。"""
+    """grv 下载后：拷贝到 gen_video，写入 ``workflow.grok_video_results``。"""
     sc = active_video_detail_scene_content()
     if not sc:
         return False, "尚无 scene_content（先 scnsave）"
     from utility.gen_video_store import copy_clip_records
+    from utility.grok_video_results import strip_scene_content_clip_fields
 
+    vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
+    if not isinstance(vd, dict):
+        return False, "无法解析当前 video_detail"
     copied = copy_clip_records(clips)
-    updated = apply_grok_clips_to_scene_content(sc, copied)
-    ok, msg = persist_active_video_detail_field("scene_content", updated)
-    if ok:
-        vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
-        if isinstance(vd, dict):
-            vd["scene_content"] = updated
+    apply_grok_clips_to_workflow_results(vd, copied)
+    cleaned_sc = strip_scene_content_clip_fields(vd.get("scene_content") or sc)
+    vd["scene_content"] = cleaned_sc
+    ok, msg = persist_active_video_detail_row(vd)
     return ok, msg
 
 
 def collect_scene_grok_clip_segments(
     video_detail: dict | None = None,
 ) -> list[dict]:
-    """当前故事场景 clip 片段：优先 ``scene_content`` 场景顺序，否则 grok_scene_videos.json。"""
+    """当前故事场景 clip 片段：``workflow.grok_video_results``，否则 grok_scene_videos.json。"""
+    from utility.grok_video_results import grok_clip_segments_from_video_detail
+
     if video_detail is None:
-        sc = active_video_detail_scene_content()
+        vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
     else:
-        sc = (
-            video_detail.get("scene_content")
-            if isinstance(video_detail, dict)
-            else None
-        )
-    segs = grok_clip_segments_from_scene_content(sc)
+        vd = video_detail
+    segs = grok_clip_segments_from_video_detail(vd if isinstance(vd, dict) else None)
     if segs:
         return segs
     from utility.telegram_session import load_grok_scene_videos
@@ -957,10 +904,19 @@ def collect_scene_grok_clip_segments(
 
 
 def collect_scene_grok_clip_paths(video_detail: dict | None = None) -> list[str]:
-    """当前故事场景 clip 路径：优先 ``scene_content.clip``，否则 grok_scene_videos.json。"""
+    """当前故事场景 clip 路径：``workflow.grok_video_results``。"""
+    from utility.grok_video_results import grok_clip_paths_from_video_detail
+
+    if video_detail is None:
+        vd = resolve_video_detail_from_queue_item(current_taken_queue_item() or {})
+    else:
+        vd = video_detail
+    paths = grok_clip_paths_from_video_detail(vd if isinstance(vd, dict) else None)
+    if paths:
+        return paths
     return [
         str(seg.get("path") or "")
-        for seg in collect_scene_grok_clip_segments(video_detail)
+        for seg in collect_scene_grok_clip_segments(vd)
         if str(seg.get("path") or "").strip()
     ]
 

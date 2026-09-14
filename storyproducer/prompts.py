@@ -151,6 +151,7 @@ def build_notebooklm_clipbody(
     main_character: str = "",
     host_narrator: str = "",
     scene_index: int = -1,
+    language: str = "",
 ) -> str:
     """Same clip body as SCENE ``nbp`` / ``scene_choice``, without Tk."""
     import config_prompt
@@ -172,6 +173,7 @@ def build_notebooklm_clipbody(
         visual_style=vs,
         main_character=(main_character or "").strip(),
         host_narrator=(host_narrator or "").strip(),
+        language=(language or "").strip(),
     )
 
 
@@ -182,6 +184,7 @@ def build_grok_video_prompts(
     video_nb_index: int,
     visual_style: str = "",
     host_narrator: str = "",
+    language: str = "",
 ) -> list[tuple[str, str]]:
     import config_prompt
     import project_manager
@@ -209,6 +212,7 @@ def build_grok_video_prompts(
             visual_style=vs,
             main_character=actor,
             host_narrator=(host_narrator or "").strip(),
+            language=(language or "").strip(),
         ).strip()
         if len(text) < 12:
             raise RuntimeError(f"场景 {i + 1} video 提示词为空或太短（{base}/{var}）。")

@@ -64,6 +64,7 @@ class _ClipState:
         "end",
         "speed",
         "prefer_full_end",
+        "scene",
     )
 
     def __init__(
@@ -74,6 +75,7 @@ class _ClipState:
         frame_count: int,
         *,
         prefer_full_end: bool = False,
+        scene: int = 0,
     ):
         self.path = os.path.normpath(path)
         self.fps = max(1.0, float(fps))
@@ -84,6 +86,7 @@ class _ClipState:
         self.end = self.duration
         self.speed = 1.0
         self.prefer_full_end = bool(prefer_full_end)
+        self.scene = max(0, int(scene or 0))
 
 
 SPEED_MIN = 0.7
@@ -144,7 +147,7 @@ class SummaryMp4ReviewDialog:
 
         self.clips: list[_ClipState] = []
         if initial_segments:
-            for seg in initial_segments:
+            for i, seg in enumerate(initial_segments, 1):
                 if not isinstance(seg, dict):
                     continue
                 p = os.path.normpath((seg.get("path") or "").strip())
@@ -156,6 +159,10 @@ class SummaryMp4ReviewDialog:
                     speed = round(float(seg.get("speed") or 1.0), 1)
                 except (TypeError, ValueError):
                     start, speed = 0.0, 1.0
+                try:
+                    scene = int(seg.get("scene") or i)
+                except (TypeError, ValueError):
+                    scene = i
                 prefer_full = clip_end_means_full_length(seg.get("end"))
                 end = None
                 if not prefer_full:
@@ -174,6 +181,7 @@ class SummaryMp4ReviewDialog:
                     24.0,
                     max(1, int(dur_guess * 24)),
                     prefer_full_end=prefer_full,
+                    scene=scene,
                 )
                 c.start = start
                 c.end = float(end) if end is not None else c.duration
@@ -188,8 +196,8 @@ class SummaryMp4ReviewDialog:
             ]
             if not paths:
                 raise ValueError("无有效 MP4")
-            for p in paths:
-                self.clips.append(_ClipState(p, 15.0, 24.0, 360))
+            for i, p in enumerate(paths, 1):
+                self.clips.append(_ClipState(p, 15.0, 24.0, 360, scene=i))
             print(f"📎 审阅窗载入 {len(self.clips)} 个 MP4（输入 {len(mp4_paths or [])} 项）")
 
         if not self.clips:
@@ -249,7 +257,7 @@ class SummaryMp4ReviewDialog:
             root,
             text="片段自上而下为拼接顺序；拖动左侧列表项可调整顺序；"
             "拖放 .mp4 到列表可追加片段（同一文件可出现多次，各段独立裁剪）；"
-            "选中后按 Delete 可删除。"
+            "选中后按 C 复制当前片段（同场景、同视频，可设不同起止点），Delete 删除。"
             "单击预览区播放/暂停；双击预览区按选中区间播放（含速度）。"
             "拖动时间轴两端把手设定起止；◀/▶ 调整区间速度（0.7–1.2）。",
             wraplength=1000,
@@ -273,8 +281,12 @@ class SummaryMp4ReviewDialog:
         self.listbox.bind("<ButtonRelease-1>", self._on_list_release, add="+")
         self.listbox.bind("<Delete>", self._on_delete_key)
         self.listbox.bind("<KP_Delete>", self._on_delete_key)
+        self.listbox.bind("<c>", self._on_copy_key)
+        self.listbox.bind("<C>", self._on_copy_key)
         self.dlg.bind("<Delete>", self._on_delete_key)
         self.dlg.bind("<KP_Delete>", self._on_delete_key)
+        self.dlg.bind("<c>", self._on_copy_key)
+        self.dlg.bind("<C>", self._on_copy_key)
         if DND_AVAILABLE:
             self._setup_clip_drop_targets(left, self.listbox)
 
@@ -362,7 +374,11 @@ class SummaryMp4ReviewDialog:
     def _clip_label(self, idx: int, c: _ClipState) -> str:
         name = os.path.basename(c.path)
         spd = f" @{c.speed:.1f}×" if abs(c.speed - 1.0) > 0.001 else ""
-        return f"场景 {idx + 1}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}{spd}]"
+        scene_no = c.scene if c.scene >= 1 else idx + 1
+        dup = ""
+        if idx > 0 and self.clips[idx - 1].scene == c.scene and self.clips[idx - 1].path == c.path:
+            dup = " (副本)"
+        return f"场景 {scene_no}{dup}. {name}  [{_fmt_time(c.start)} – {_fmt_time(c.end)}{spd}]"
 
     def _refresh_listbox(self) -> None:
         sel = self._sel
@@ -564,6 +580,33 @@ class SummaryMp4ReviewDialog:
         self.clips.pop(idx)
         self._select_clip(min(idx, len(self.clips) - 1))
 
+    def _on_copy_key(self, _event=None) -> str:
+        focus = self.dlg.focus_get()
+        if focus in (self.start_spin, self.end_spin):
+            return
+        self._copy_selected_clip()
+        return "break"
+
+    def _copy_selected_clip(self) -> None:
+        if not (0 <= self._sel < len(self.clips)):
+            return
+        self._save_trim_to_clip()
+        src = self.clips[self._sel]
+        dup = _ClipState(
+            src.path,
+            src.duration,
+            src.fps,
+            src.frame_count,
+            prefer_full_end=src.prefer_full_end,
+            scene=src.scene,
+        )
+        dup.start = src.start
+        dup.end = src.end
+        dup.speed = src.speed
+        insert_at = self._sel + 1
+        self.clips.insert(insert_at, dup)
+        self._select_clip(insert_at)
+
     def _setup_clip_drop_targets(self, *widgets) -> None:
         for w in widgets:
             try:
@@ -579,10 +622,13 @@ class SummaryMp4ReviewDialog:
 
     def _add_clips_from_paths(self, paths: list[str]) -> None:
         self._save_trim_to_clip()
+        default_scene = self.clips[self._sel].scene if self.clips else 1
+        if default_scene < 1:
+            default_scene = 1
         added = 0
         for p in paths:
             dur, fps, fc = _probe_video_meta(p, self.ff)
-            self.clips.append(_ClipState(p, dur, fps, fc))
+            self.clips.append(_ClipState(p, dur, fps, fc, scene=default_scene))
             added += 1
         if not added:
             return
@@ -959,12 +1005,13 @@ class SummaryMp4ReviewDialog:
                 return
         self.confirmed = [
             {
+                "scene": c.scene if c.scene >= 1 else i,
                 "path": c.path,
                 "start": c.start,
                 "end": c.end,
                 "speed": round(float(c.speed), 1),
             }
-            for c in self.clips
+            for i, c in enumerate(self.clips, 1)
         ]
         self._stop_play()
         self.dlg.destroy()
@@ -983,7 +1030,7 @@ def ask_summary_mp4_review_segments(
     pid: str,
     lang: str,
 ) -> list[dict] | None:
-    """审阅并返回 ``[{path, start, end, speed}, ...]``；取消返回 ``None``。"""
+    """审阅并返回 ``[{scene, path, start, end, speed}, ...]``；取消返回 ``None``。"""
     dlg = SummaryMp4ReviewDialog(
         parent,
         mp4_paths,

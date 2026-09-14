@@ -985,6 +985,19 @@ def build_slide_analysis_clipbody(
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
+def _audio_language_instruction(language: str) -> str:
+    import config
+
+    label = config.audio_language_label(language)
+    if not label:
+        return ""
+    return (
+        f"** Audio / spoken language: {label}.\n"
+        f"** All lip-sync dialogue, protagonist ``speaking`` lines, and "
+        f"narrator/host ``voiceover`` MUST be delivered in {label}."
+    )
+
+
 def build_notebooklm_gen_instruction_clipbody(
     *,
     mode: str,
@@ -994,6 +1007,7 @@ def build_notebooklm_gen_instruction_clipbody(
     main_character: str = "",
     host_narrator: str = "",
     variant: str = "",
+    language: str = "",
 ) -> str:
     """组装 NotebookLM 导出指令剪贴板正文。
 
@@ -1059,8 +1073,10 @@ def build_notebooklm_gen_instruction_clipbody(
             else NOTEBOOKLM_VIDEO_MOTION_SILENT
         )
         parts["Instruction_for_video_generation"] = vid_instr.strip()
+        audio_instr = NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
+        lang_note = _audio_language_instruction(language)
         parts["Instruction_for_audio_generation"] = (
-            NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION.strip()
+            (audio_instr + "\n" + lang_note).strip() if lang_note else audio_instr
         )
         parts["Story_Scene_Content"] = json_content
 
@@ -1075,7 +1091,11 @@ def build_notebooklm_gen_instruction_clipbody(
             if var == "narration_with_speakingavatar"
             else NOTEBOOKLM_VOICEOVER_NARRATION
         )
-        parts["Instruction_for_voiceover_audio"] = vo_instr.strip()
+        vo_block = vo_instr.strip()
+        lang_note = _audio_language_instruction(language)
+        if lang_note:
+            vo_block = (vo_block + "\n" + lang_note).strip()
+        parts["Instruction_for_voiceover_audio"] = vo_block
         parts["Story_Scene_Content"] = json_content
 
     elif base == "speaking":
@@ -1099,7 +1119,11 @@ def build_notebooklm_gen_instruction_clipbody(
             if var == "acting"
             else NOTEBOOKLM_SPEAKING_SCRIPT
         )
-        parts["Instruction_for_speaking_audio"] = sp_instr.strip()
+        sp_block = sp_instr.strip()
+        lang_note = _audio_language_instruction(language)
+        if lang_note:
+            sp_block = (sp_block + "\n" + lang_note).strip()
+        parts["Instruction_for_speaking_audio"] = sp_block
         parts["Story_Scene_Content"] = json_content
     else:
         raise ValueError(f"Unknown NotebookLM export mode: {mode!r}")
