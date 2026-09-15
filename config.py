@@ -1081,6 +1081,40 @@ def list_grok_imagine_profile_indices() -> list[int]:
     return out or [1]
 
 
+def grok_profile_label(profile_index: int) -> str:
+    """Human label for a ``GEMINI_CHROME_PROFILES`` 1-based index."""
+    profiles = list_gemini_chrome_profiles()
+    i = int(profile_index or 0)
+    if 1 <= i <= len(profiles):
+        return str(profiles[i - 1].get("label") or "").strip()
+    return ""
+
+
+def list_grv_pick_profile_indices() -> list[int]:
+    """``run_client`` 启动时可选的全部 grv 账户（``GEMINI_CHROME_PROFILES`` 1-based）。"""
+    n = len(list_gemini_chrome_profiles())
+    return list(range(1, n + 1)) if n else [1]
+
+
+def format_grok_profile_pick_menu() -> tuple[str, list[int]]:
+    """Telegram menu: reply 1/2… to pick grv account for this run_client session."""
+    ring = list_grv_pick_profile_indices()
+    profiles = list_gemini_chrome_profiles()
+    lines = [
+        "本次 grv 用哪个 Grok 账户？（整批故事共用，不自动轮换）",
+        "请回复序号：",
+    ]
+    for menu_i, idx in enumerate(ring, 1):
+        label = grok_profile_label(idx) or f"profile {idx}"
+        short = label.split("@")[0] if "@" in label else label
+        directory = ""
+        if 1 <= idx <= len(profiles):
+            directory = (profiles[idx - 1].get("directory") or "").strip()
+        extra = f" · {directory}" if directory else ""
+        lines.append(f"{menu_i} = #{idx} {short}{extra}")
+    return "\n".join(lines), ring
+
+
 def set_gemini_chrome_profile(label_or_index) -> dict:
     """Set current Gemini Chrome profile; returns the selected ``{label, directory}``."""
     global GEMINI_CHROME_PROFILE, GEMINI_CHROME_PROFILE_DIRECTORY

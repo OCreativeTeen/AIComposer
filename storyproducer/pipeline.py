@@ -59,6 +59,7 @@ class StoryProducerClient:
         once: bool = False,
         nbi: int | None = None,
         grv_variant: int = 3,
+        grv_profile: int | None = None,
         telegram: bool = True,
         telegram_inbox: bool = True,
         engine: StoryEngine | None = None,
@@ -68,6 +69,7 @@ class StoryProducerClient:
         self.once = bool(once)
         self.nbi_override = int(nbi) if nbi is not None else None
         self.grv_variant = max(1, int(grv_variant))
+        self.grv_profile = int(grv_profile) if grv_profile is not None else None
         self.telegram_enabled = bool(telegram)
         self.telegram_inbox = bool(telegram_inbox)
         self.engine = engine or StoryEngine()
@@ -606,6 +608,35 @@ class StoryProducerClient:
         self.target_stage = mapping[n]
         return self.target_stage
 
+    def _ask_grv_profile(self) -> int | None:
+        """Pick Grok Chrome account for this run (no auto-rotation between stories)."""
+        if self.grv_profile is not None:
+            return self.grv_profile
+        import config
+
+        ring = config.list_grv_pick_profile_indices()
+        if not ring:
+            return None
+        if len(ring) == 1:
+            self.grv_profile = int(ring[0])
+            return self.grv_profile
+        if not self.telegram_enabled:
+            self.grv_profile = int(ring[0])
+            self.log(
+                f"无 Telegram：grv 默认 profile #{self.grv_profile} "
+                f"({config.grok_profile_label(self.grv_profile)})",
+            )
+            return self.grv_profile
+        prompt, ring = config.format_grok_profile_pick_menu()
+        pick = self._wait_digit("grv_account", len(ring), prompt)
+        self.grv_profile = int(ring[pick - 1])
+        label = config.grok_profile_label(self.grv_profile)
+        self.log(
+            f"本次 grv 账户：#{self.grv_profile} {label or '?'}（整批共用）",
+            telegram=True,
+        )
+        return self.grv_profile
+
     def _run_stage_gemini(self) -> None:
         self.log("阶段一：Gemini 场景描述", telegram=True)
         self._apply_batch_scene_setup()
@@ -675,12 +706,19 @@ class StoryProducerClient:
     def _run_stage_grok(self) -> None:
         from cli.video_choice_queue import mark_active_item_done
 
+        grv_prof = self.grv_profile
+        prof_note = ""
+        if grv_prof:
+            import config
+
+            prof_note = f" 账户 #{grv_prof} {config.grok_profile_label(grv_prof)}"
         self.log(
-            f"阶段三：Grok 场景图 + Video Clip（变体 {self.grv_variant}）",
+            f"阶段三：Grok 场景图 + Video Clip（变体 {self.grv_variant}{prof_note}）",
             telegram=True,
         )
         self.cli(f"nbv {self.grv_variant}")
-        ok, msg = self.cli("grv")
+        grv_cmd = f"grv {grv_prof}" if grv_prof else "grv"
+        ok, msg = self.cli(grv_cmd)
         if not ok:
             raise PipelineError(f"grv failed: {msg}")
         self.log(msg, telegram=True)
@@ -837,10 +875,26 @@ class StoryProducerClient:
             self._stop.set()
             self.log("启动时未选定目标阶段，退出。", telegram=True)
             return 1
+        if target == wfstore.TARGET_FULL:
+            try:
+                self._ask_grv_profile()
+            except PipelineError:
+                self._stop.set()
+                self.log("启动时未选定 grv 账户，退出。", telegram=True)
+                return 1
+        grv_prof_line = ""
+        if self.grv_profile:
+            import config
+
+            grv_prof_line = (
+                f"  grv 账户 #{self.grv_profile} "
+                f"{config.grok_profile_label(self.grv_profile)}\n"
+            )
         self.log(
             "StoryProducer 启动（无 GUI）\n"
             f"target={target}  pick={self.pick_arg}  grv 变体 {self.grv_variant}\n"
-            "选 target 后统一选一次 Visual Style / Narrator / LM（整批共用）。\n"
+            + grv_prof_line
+            + "选 target 后统一选一次 Visual Style / Narrator / LM（整批共用）。\n"
             "Queue 里各 Story 进度可以不同；封面生成中的条目可暂存后处理下一条。\n"
             "不要同时跑 cli\\run_bot.bat 或 cli\\run_telegram_client.bat（同一 token 会 409）。\n"
             + wfstore.format_queue_progress(target),
@@ -931,6 +985,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--nbi", type=int, default=None)
     p.add_argument("--grv-variant", type=int, default=3)
     p.add_argument(
+        "--grv-profile",
+        type=int,
+        default=None,
+        help="强制本次 grv Chrome 号（GEMINI_CHROME_PROFILES 1-based，如 1 或 6）；"
+        "不填且目标含阶段三时 Telegram 询问",
+    )
+    p.add_argument(
         "--target",
         default="",
         help="GEMINI_ONLY / INFOGRAPHIC_ONLY / FULL_PROCESS（不填则 Telegram 询问）",
@@ -942,6 +1003,7 @@ def main(argv: list[str] | None = None) -> int:
         once=args.once,
         nbi=args.nbi,
         grv_variant=args.grv_variant,
+        grv_profile=args.grv_profile,
         telegram=not args.no_telegram,
         telegram_inbox=not args.no_telegram,
         target_stage=args.target,

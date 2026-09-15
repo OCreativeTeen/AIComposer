@@ -13,6 +13,7 @@ def run_grok_imagine(
     visual_style: str = "",
     host_narrator: str = "",
     language: str = "",
+    cdp_port: int | None = None,
 ) -> tuple[str, list[dict]]:
     """Open N Imagine tabs, paste cover, generate image then video (no auto-download).
 
@@ -27,7 +28,6 @@ def run_grok_imagine(
         _grok_prepare_all_tabs_cdp,
         _grok_resolve_cover_png,
         _grok_scene_image_prompts,
-        ensure_grok_cdp,
         format_grok_video_results_summary,
         log,
         resolve_chrome_profile_directory,
@@ -38,7 +38,11 @@ def run_grok_imagine(
         raise RuntimeError("还没有 scene_content。请先 scnge → scnsave。")
     v_idx = int(video_nb_index)
     v_label = config_prompt.grok_scene_video_nb_choice_label(v_idx)
-    grok_port = ensure_grok_cdp(GROK_IMAGINE_URL)
+    grok_port = int(cdp_port) if cdp_port else 0
+    if grok_port <= 0:
+        from cli.browser_tasks import ensure_grok_cdp
+
+        grok_port = ensure_grok_cdp(GROK_IMAGINE_URL)
     profile_dir = resolve_chrome_profile_directory(
         getattr(config, "GEMINI_CHROME_PROFILE", "")
     )

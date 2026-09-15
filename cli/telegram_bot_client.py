@@ -1659,8 +1659,12 @@ class HermesTelegramClient:
         from utility.telegram_session import load_grok_scene_videos, story_scene_count
 
         self._ensure_story_scene_for_grv()
-        grv_idx, _grv_label = self._choose_grv_profile()
+        grv_idx, grv_label = self._choose_grv_profile()
         cmd = f"grv {grv_idx} {self.grv_variant}"
+        self.log(
+            f"grv profile #{grv_idx} ({grv_label or '?'})",
+            telegram=True,
+        )
         self.log(f"开始 {cmd}（可能 5–15 分钟）", telegram=True)
         ok, msg = self.cli(cmd)
         if not ok:

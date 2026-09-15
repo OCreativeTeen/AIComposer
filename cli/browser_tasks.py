@@ -623,17 +623,27 @@ def ensure_hermes_cdp_chrome(
             _hermes_cdp_open_urls(port, list(urls))
         return port
 
+    session = load_hermes_cdp_session()
+    session_label = (session.get("profile") or "").strip().lower()
+    want_label = profile_label.lower()
     if live_port and _profile_dirs_match(active_dir, profile_dir):
-        log(
-            f"HermesChromeCDP reuse on {live_port} "
-            f"profile={profile_dir} ({profile_label})"
-        )
-        if live_dir:
-            save_hermes_cdp_session(profile_dir=profile_dir, profile=profile_label)
-        if urls:
-            _hermes_cdp_open_urls(live_port, list(urls))
-        return live_port
-    if live_port:
+        if session_label and want_label and session_label != want_label:
+            log(
+                f"HermesChromeCDP on {live_port} is {session_label!r}, "
+                f"but grv/nbi wants {profile_label!r} — restarting"
+            )
+            _kill_hermes_cdp_chrome(user_data)
+        else:
+            log(
+                f"HermesChromeCDP reuse on {live_port} "
+                f"profile={profile_dir} ({profile_label})"
+            )
+            if live_dir:
+                save_hermes_cdp_session(profile_dir=profile_dir, profile=profile_label)
+            if urls:
+                _hermes_cdp_open_urls(live_port, list(urls))
+            return live_port
+    elif live_port:
         log(
             f"HermesChromeCDP is {active_dir or 'unknown'} on {live_port}, "
             f"but this command wants {profile_dir} ({profile_label}) — restarting"
@@ -686,6 +696,35 @@ def ensure_hermes_cdp_chrome(
 def ensure_grok_cdp(*urls: str, timeout_s: float = 30.0) -> int:
     """Launch HermesChromeCDP Chrome with CDP (same model as D:\\Hermes\\grok_paste)."""
     return ensure_hermes_cdp_chrome(*urls, timeout_s=timeout_s)
+
+
+def prepare_grok_imagine_session(
+    *, profile_override: int | None = None
+) -> tuple[int, str, dict, int]:
+    """Pick grv profile (``GROK_IMAGINE_PROFILE_INDICES`` ring), persist, launch Chrome.
+
+    Saves ``grok_last`` immediately so the next story alternates even if the
+    current grv run fails partway through.
+    """
+    from utility.telegram_session import (
+        next_grok_imagine_profile_index,
+        save_grok_imagine_last_profile,
+    )
+
+    idx, ring_label = next_grok_imagine_profile_index(override=profile_override)
+    selected = config.set_gemini_chrome_profile(idx)
+    label = (selected.get("label") or ring_label or "").strip()
+    if profile_override is None:
+        save_grok_imagine_last_profile(profile=label, index=idx)
+    port = ensure_grok_cdp(GROK_IMAGINE_URL)
+    profile_dir = resolve_chrome_profile_directory(label)
+    user_data = _chrome_cdp_user_data_dir()
+    ring = list(config.list_grok_imagine_profile_indices() or [])
+    log(
+        f"grv session ready: profile #{idx} {label!r} "
+        f"(ring {ring}) dir={profile_dir} port={port} user-data={user_data}"
+    )
+    return idx, label, selected, port
 
 
 def _grok_attach_cdp_port(*, allow_launch: bool = False) -> int:

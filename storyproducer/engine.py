@@ -845,18 +845,16 @@ class StoryEngine:
                     profile_override = int(parts[0])
         elif parts and parts[0].isdigit():
             profile_override = int(parts[0])
-        from utility.telegram_session import (
-            next_grok_imagine_profile_index,
-            save_grok_imagine_last_profile,
-        )
+        from cli.browser_tasks import prepare_grok_imagine_session
 
-        grv_idx, grv_label = next_grok_imagine_profile_index(
-            override=profile_override
-        )
         try:
-            selected = config.set_gemini_chrome_profile(grv_idx)
+            grv_idx, grv_label, selected, grok_port = prepare_grok_imagine_session(
+                profile_override=profile_override
+            )
         except ValueError as exc:
             return False, str(exc)
+        except Exception as exc:
+            return False, f"grv Chrome failed: {exc}"
         if video_nb_index is not None:
             self.session.grv_variant = video_nb_index
         v_idx = video_nb_index if video_nb_index is not None else int(
@@ -878,16 +876,10 @@ class StoryEngine:
                 visual_style=self.session.visual_style,
                 host_narrator=self.session.narrator,
                 language=self.session.language(),
+                cdp_port=grok_port,
             )
         except Exception as exc:
             return False, f"grv failed ({selected.get('label')}): {exc}"
-        try:
-            save_grok_imagine_last_profile(
-                profile=selected.get("label") or grv_label,
-                index=grv_idx,
-            )
-        except Exception:
-            pass
         self._patch_wf(
             {
                 "step": "grv_review",

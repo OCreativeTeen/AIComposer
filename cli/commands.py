@@ -1853,13 +1853,18 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
                 profile_override = int(parts[0])
     elif parts and parts[0].isdigit():
         profile_override = int(parts[0])
-    grv_idx, grv_label = next_grok_imagine_profile_index(override=profile_override)
+    from cli.browser_tasks import prepare_grok_imagine_session
+
     try:
-        selected = config.set_gemini_chrome_profile(grv_idx)
+        grv_idx, grv_label, selected, _grok_port = prepare_grok_imagine_session(
+            profile_override=profile_override
+        )
     except ValueError as exc:
         return False, str(exc) + "\n\n" + _format_chrome_profile_choices(
             f"{shown} 选项：", shown, "grok"
         )
+    except Exception as exc:
+        return False, f"{shown} Chrome failed: {exc}"
     _record_chrome_profile("grok", selected)
 
     if video_nb_index is not None:
@@ -1873,13 +1878,6 @@ def cmd_grok_image(value: str = "") -> tuple[bool, str]:
         detail = handle_grok_imagine_tabs(video_nb_index=v_idx)
     except Exception as exc:
         return False, f"{shown} failed ({selected['label']}): {exc}"
-    try:
-        save_grok_imagine_last_profile(
-            profile=selected.get("label") or grv_label,
-            index=grv_idx,
-        )
-    except Exception:
-        pass
     return True, (
         f"{shown} ok — profile #{grv_idx} {selected['label']}  scenes={tabs}  "
         f"video_nb={v_idx} ({v_label})\n{detail}"

@@ -9,6 +9,7 @@ cd /d "%~dp0\.."
 echo.
 echo  StoryProducer 流水线（无 GUI）
 echo  启动时 Telegram 选目标：1=仅场景  2=到封面  3=全程 clips
+echo  选全程时还会问 grv 账户（1-6 对应 GEMINI_CHROME_PROFILES，整批共用）
 echo  断点续传：workflow.stage；封面生成中可跳过本条处理下一条。
 echo  Do NOT run cli\run_bot.bat or cli\run_telegram_client.bat at the same time.
 echo.
