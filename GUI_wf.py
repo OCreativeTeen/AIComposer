@@ -2910,6 +2910,8 @@ class WorkflowGUI:
         ch_name = config.get_channel_config(self.workflow.channel)["channel_name"]
         default_title = ch_name + "：" + (gui_title or wf_title)
 
+        list_row = project_manager.load_video_detail_row_for_config(pc) or {}
+        item_summary = (list_row.get("summary") or pc.get("summary") or "")
         flow = ask_publish_metadata_then_schedule(
             self.root,
             language=lang,
@@ -2920,6 +2922,7 @@ class WorkflowGUI:
                 workflow_scenes=scenes,
             ),
             analyzed_content=pc.get("analyzed_content"),
+            summary_text=item_summary if isinstance(item_summary, str) else str(item_summary or ""),
             poem_text=(
                 (pc.get("poem") or "").strip()
                 or (
@@ -2929,7 +2932,7 @@ class WorkflowGUI:
                     or ""
                 ).strip()
             ),
-            video_detail=project_manager.load_video_detail_row_for_config(pc),
+            video_detail=list_row or None,
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             caption_scenes=scenes,

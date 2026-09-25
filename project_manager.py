@@ -21,7 +21,7 @@ import config_prompt
 import utility.llm_api as llm_api
 from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
-from utility.tags_text import merge_tag_pick, parse_tags_list
+from utility.tags_text import parse_tags_list
 from gui.downloader import MediaGUIManager
 
 def _story_value_nonempty(sv) -> bool:
@@ -437,12 +437,18 @@ _LIST_REF_PREFIX = "chanlist:"
 
 
 def iter_channel_list_json_files():
-    """扫描各频道 program/*/list/*.json。"""
+    """打开/保存项目时只扫描各频道 ``list_by_topic/*.json``。``list/`` 仅保留原始下载。"""
+    seen: set[str] = set()
     for cid in list(config.CHANNEL_CONFIG.keys()):
-        list_dir = config.channel_list_json_dir_abs(config.get_channel_path(cid))
+        ch_path = config.get_channel_path(cid)
+        list_dir = config.channel_list_by_topic_dir_abs(ch_path)
         if not os.path.isdir(list_dir):
             continue
         for fp in sorted(glob.glob(os.path.join(list_dir, "*.json"))):
+            key = os.path.normcase(os.path.normpath(fp))
+            if key in seen:
+                continue
+            seen.add(key)
             yield fp
 
 
@@ -742,7 +748,7 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
 
 
 def load_project_config_by_pid(wanted_pid: str):
-    """按 pid 在各频道 ``list/*.json`` 中查找；优先匹配 ``list/<topic_category>.json`` 分表行。"""
+    """按 pid 在各频道 ``list_by_topic/*.json`` 中查找；优先匹配对应 ``topic_category`` 分表行。"""
     wanted_pid = (wanted_pid or "").strip()
     if not wanted_pid:
         return None
@@ -910,7 +916,7 @@ class ProjectConfigManager:
 
 
     def list_projects(self):
-        """列出项目：扫描各频道 ``list/*.json``（热门 + topic 分表）；行内 pid 优先 ``project_profile.pid``。"""
+        """列出项目：只扫描各频道 ``list_by_topic/*.json``；行内 pid 优先 ``project_profile.pid``。"""
         seen_pid = set()
         projects = []
 
@@ -1025,7 +1031,7 @@ class ProjectConfigManager:
 
 
 def save_project_config(parent=None):
-    """写回 ``project_profile`` 到 ``list/<topic_category>.json``（由 profile 内 channel + topic_category 定位）。
+    """写回 ``project_profile`` 到 ``list_by_topic/<topic_category>.json``（由 profile 内 channel + topic_category 定位）。
 
     不再使用 ``PROJECT_DATA_PATH/config/{pid}.config``。若无 ``topic_category``，在有 ``parent`` 时弹窗请求。
     """
@@ -1417,18 +1423,6 @@ class ProjectSelectionDialog:
         tags_row.grid(row=row, column=1, padx=(10, 0), pady=5, sticky='ew')
         tags_entry = ttk.Entry(tags_row, textvariable=tags_var, width=72)
         tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        def _on_tag_pick_pm(feature: str, option: str):
-            merged = merge_tag_pick(parse_tags_list(tags_var.get() or ""), feature, option)
-            tags_var.set(", ".join(merged))
-
-        def _open_tag_menu_pm():
-            from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
-            m = build_tag_cascade_menu(new_project_dialog, self.tag_features_map, _on_tag_pick_pm)
-            post_menu_below_widget(m, tags_add_btn_pm)
-
-        tags_add_btn_pm = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu_pm)
-        tags_add_btn_pm.pack(side=tk.LEFT, padx=(8, 0))
         row += 1
         
         # 显示说明文本的标签（支持多行）
@@ -1852,6 +1846,7 @@ def launch_yt_media_tool(
     visual_style: str,
     yt_method: str,
     yt_method_args: tuple = (),
+    content_mode: bool = False,
 ):
     """独立 YT 入口：不再创建额外的「YT 管理」占位窗。
 
@@ -1886,7 +1881,9 @@ def launch_yt_media_tool(
         except Exception:
             pass
 
-    yt_gui = MediaGUIManager(parent, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang)
+    yt_gui = MediaGUIManager(
+        parent, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang, content_mode=content_mode
+    )
 
     def _poll_standalone_exit():
         try:
@@ -1910,7 +1907,31 @@ def launch_yt_media_tool(
     parent.after(0, _run_yt_job)
 
 
-def show_initial_choice_dialog(parent):
+def _topic_list_entries(channel_id: str) -> list:
+    """``list_by_topic/*.json``：name、file、video_count。"""
+    ch_path = config.get_channel_path(channel_id)
+    topic_dir = config.channel_list_by_topic_dir_abs(ch_path)
+    entries = []
+    if not os.path.isdir(topic_dir):
+        return entries
+    for json_file in sorted(glob.glob(os.path.join(topic_dir, "*.json"))):
+        name = os.path.splitext(os.path.basename(json_file))[0]
+        video_count = 0
+        for encoding in ("utf-8", "gbk", "gb2312", "latin-1"):
+            try:
+                with open(json_file, "r", encoding=encoding) as f:
+                    videos = json.load(f)
+                video_count = len(videos) if isinstance(videos, list) else 0
+                break
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            except Exception:
+                break
+        entries.append({"name": name, "file": json_file, "video_count": video_count})
+    return entries
+
+
+def show_initial_choice_dialog(parent, *, content_only: bool = False):
     """``GUI_pm.py`` 独立入口：频道/语言、风格/预留、旁白；四个 YT 功能按钮。
 
     视频/字幕语言在欢迎屏选择（``config.LANGUAGES``），不再在「项目管理」内二次弹窗。
@@ -2096,46 +2117,82 @@ def show_initial_choice_dialog(parent):
             visual_style=visual_style_var.get(),
             yt_method=yt_method,
             yt_method_args=method_args,
+            content_mode=content_only,
         )
 
     _btn_row_gap = (0, 10)
-    tk.Button(
-        opts_grid,
-        text="频道列表项目管理",
-        font=('TkDefaultFont', 14, 'bold'),
-        command=lambda: _run_yt_tool("manage_hot_videos"),
-    ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(15, 10))
+    if content_only:
+        dialog.title("主题内容")
+        topic_frame = ttk.Frame(main_frame)
+        topic_frame.pack(fill=tk.X, pady=(6, 0))
 
-    ttk.Button(
-        opts_grid,
-        text="媒体文字转译",
-        command=lambda: _run_yt_tool("transcribe_media", True),
-    ).grid(row=4, column=1, sticky="ew", padx=(0, 16), pady=_btn_row_gap)
-    ttk.Button(
-        opts_grid,
-        text="Download YT文字",
-        command=lambda: _run_yt_tool("download_youtube", True, True),
-    ).grid(row=4, column=3, sticky="ew", pady=_btn_row_gap)
+        def _place_content_dialog():
+            dialog.update_idletasks()
+            sw = dialog.winfo_screenwidth()
+            sh = dialog.winfo_screenheight()
+            w = min(max(dialog.winfo_reqwidth(), 560), int(sw * 0.9))
+            h = min(dialog.winfo_reqheight() + 12, int(sh * 0.9))
+            x = max(0, (sw - w) // 2)
+            y = max(0, (sh - h) // 2)
+            dialog.geometry(f"{w}x{h}+{x}+{y}")
 
-    ttk.Button(
-        opts_grid,
-        text="Download YT視頻",
-        command=lambda: _run_yt_tool("download_youtube", False, False),
-    ).grid(row=5, column=1, sticky="ew", padx=(0, 16))
-    ttk.Button(
-        opts_grid,
-        text="取消",
-        command=on_cancel,
-    ).grid(row=5, column=3, sticky="ew")
+        def _refresh_topics(*_args):
+            for child in topic_frame.winfo_children():
+                child.destroy()
+            entries = _topic_list_entries(_resolve_welcome_channel_id())
+            if not entries:
+                ttk.Label(topic_frame, text="这个频道还没有主题列表").pack(anchor="w", pady=8)
+            else:
+                for ent in entries:
+                    label = f"{ent['name']} ({ent['video_count']} 个视频)"
+                    ttk.Button(
+                        topic_frame,
+                        text=label,
+                        command=lambda p=ent["file"]: _run_yt_tool("open_topic_list_file", p),
+                    ).pack(fill=tk.X, pady=3)
+            _place_content_dialog()
+    else:
+        tk.Button(
+            opts_grid,
+            text="频道列表项目管理",
+            font=('TkDefaultFont', 14, 'bold'),
+            command=lambda: _run_yt_tool("manage_hot_videos"),
+        ).grid(row=3, column=0, columnspan=4, sticky="ew", pady=(15, 10))
+
+        ttk.Button(
+            opts_grid,
+            text="媒体文字转译",
+            command=lambda: _run_yt_tool("transcribe_media", True),
+        ).grid(row=4, column=1, sticky="ew", padx=(0, 16), pady=_btn_row_gap)
+        ttk.Button(
+            opts_grid,
+            text="Download YT文字",
+            command=lambda: _run_yt_tool("download_youtube", True, True),
+        ).grid(row=4, column=3, sticky="ew", pady=_btn_row_gap)
+
+        ttk.Button(
+            opts_grid,
+            text="Download YT視頻",
+            command=lambda: _run_yt_tool("download_youtube", False, False),
+        ).grid(row=5, column=1, sticky="ew", padx=(0, 16))
+        ttk.Button(
+            opts_grid,
+            text="取消",
+            command=on_cancel,
+        ).grid(row=5, column=3, sticky="ew")
 
     for _combo in (channel_combo, language_combo, visual_style_combo, narrator_combo):
         _combo.bind("<<ComboboxSelected>>", lambda _e: _persist_yt_welcome_prefs())
+    if content_only:
+        channel_combo.bind("<<ComboboxSelected>>", _refresh_topics, add="+")
+        _refresh_topics()
 
-    dialog.update_idletasks()
-    w, h = 520, 520
-    x = (dialog.winfo_screenwidth() - w) // 2
-    y = (dialog.winfo_screenheight() - h) // 2
-    dialog.geometry(f"{w}x{h}+{x}+{y}")
+    if not content_only:
+        dialog.update_idletasks()
+        w, h = 520, 520
+        x = (dialog.winfo_screenwidth() - w) // 2
+        y = (dialog.winfo_screenheight() - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
 
     dialog.protocol("WM_DELETE_WINDOW", on_cancel)
     dialog.wait_window()

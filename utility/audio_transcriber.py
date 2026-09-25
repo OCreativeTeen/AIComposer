@@ -107,27 +107,3 @@ class AudioTranscriber:
             print(f"⚠️ WhisperX 转录失败，回退 HTTP API：{type(e).__name__}: {e}")
 
         return []
-
-    def translate_text(self, text, source_language, target_language):
-        if source_language == target_language:
-            return config.chinese_convert(text, target_language)
-
-        if (source_language == "zh" or source_language == "tw") and (
-            target_language == "zh" or target_language == "tw"
-        ):
-            return config.chinese_convert(text, target_language)
-
-        system_prompt = config_prompt.TRANSLATION_SYSTEM_PROMPT.format(
-            source_language=config.LANGUAGES[source_language],
-            target_language=config.LANGUAGES[target_language],
-        )
-        prompt = config_prompt.TRANSLATION_USER_PROMPT.format(
-            source_language=config.LANGUAGES[source_language],
-            target_language=config.LANGUAGES[target_language],
-            text=text,
-        )
-
-        content = self.llm_api.generate_text(system_prompt, prompt)
-        if content:
-            return content.strip()
-        return text

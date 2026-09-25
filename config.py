@@ -1319,10 +1319,29 @@ def _channel_id_from_program_path(channel: str) -> str:
     return ch
 
 
+def configured_program_channel_ids() -> set[str]:
+    """``CHANNEL_CONFIG`` 里真正的 ``channel_id``（多个 config key 可共用同一个）。"""
+    out: set[str] = set()
+    for cfg in CHANNEL_CONFIG.values():
+        if not isinstance(cfg, dict):
+            continue
+        cid = (cfg.get("channel_id") or "").strip()
+        if cid:
+            out.add(cid)
+    return out
+
+
 def get_channel_path(channel: str) -> str:
-    slug = _channel_id_from_program_path(channel)
+    """``program/<channel_id>``。config key 会先映射到 ``channel_id``。
+
+    只为 ``CHANNEL_CONFIG`` 里已声明的 ``channel_id`` 创建目录。
+    未知名字（YouTube 频道名、config key 本身）只返回路径，不 ``mkdir``。
+    """
+    raw = _channel_id_from_program_path(channel)
+    slug = get_channel_id(raw) or raw
     path = f"{BASE_PROGRAM_PATH}/{slug}"
-    os.makedirs(path, exist_ok=True)
+    if slug in configured_program_channel_ids():
+        os.makedirs(path, exist_ok=True)
     return path
 
 
@@ -1398,12 +1417,23 @@ def channel_track_media_dir(channel: str, track: str) -> str:
 
 
 def channel_list_json_dir_abs(channel_path: str) -> str:
-    """频道下所有热门/主题 list JSON 根目录：``program/<channel_id>/list``（与 ``Download`` 等媒体子目录并列）。"""
+    """原始下载列表：``program/<channel_id>/list``（按来源频道，不按主题拆分）。"""
     return os.path.join(channel_path, "list")
+
+
+def channel_list_by_topic_dir_abs(channel_path: str) -> str:
+    """按 ``topic_category`` 汇总的列表：``program/<channel_id>/list_by_topic``。"""
+    return os.path.join(channel_path, "list_by_topic")
 
 
 def ensure_channel_list_json_dir(channel_path: str) -> str:
     d = channel_list_json_dir_abs(channel_path)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def ensure_channel_list_by_topic_dir(channel_path: str) -> str:
+    d = channel_list_by_topic_dir_abs(channel_path)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -1424,7 +1454,8 @@ def is_channel_list_json_path(path: str) -> bool:
         return False
     program_seg = f"{os.sep}program{os.sep}"
     list_seg = f"{os.sep}list{os.sep}"
-    return program_seg in norm and list_seg in norm
+    topic_seg = f"{os.sep}list_by_topic{os.sep}"
+    return program_seg in norm and (list_seg in norm or topic_seg in norm)
 
 
 def channel_list_json_backup_dir(list_json_path: str) -> str:
@@ -1515,14 +1546,14 @@ def topic_category_list_file_basename(topic_category) -> str:
 
 
 def topic_category_list_json_abspath(channel_field: str, topic_category: str) -> str:
-    """``program/<channel>/list/<basename>``，与 ``gui.downloader`` 主题列表一致。"""
+    """``program/<channel>/list_by_topic/<basename>``，与 ``gui.downloader`` 主题列表一致。"""
     ch_key = (channel_field or "").strip()
     ch_id = get_channel_id(ch_key) if ch_key else None
     if not ch_id:
         keys = list(CHANNEL_CONFIG.keys())
         ch_id = ch_key or (keys[0] if keys else "default")
     base = get_channel_path(ch_id)
-    d = ensure_channel_list_json_dir(base)
+    d = ensure_channel_list_by_topic_dir(base)
     return os.path.join(d, topic_category_list_file_basename(topic_category))
 
 
@@ -2023,6 +2054,10 @@ CHANNEL_CONFIG = {
             ("Content to Scenes", config_channel.COUNSELING_CONTENT_SCENES),
             ("Talk", config_channel.COUNSELING_TALK_SCENES),
             ("Conversation", config_channel.COUNSELING_CONVERSATION_SCENES),
+            ("Series · Counselor Frame", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
+            ("Series · Episodes", config_channel.COUNSELING_SERIES_EPISODES),
+            ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
+            ("Series · Case Study", config_channel.COUNSELING_SERIES_CASE_STUDY),
         ],
 
         "channel_prompt": {
@@ -2107,45 +2142,6 @@ CHANNEL_CONFIG = {
             "init_multiple": config_channel.MV_STORY_DEVELOPMENT,
             "init_single": config_channel.MV_SIMPLE_REORGANIZE
         },
-    },
-
-
-    "counseling_talk": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
-        "channel_id": "counseling",
-        # NotebookLM Prompt 类型选择（可扩展）
-        "scenes_prompt_choices": [
-            ("Talk", config_channel.COUNSELING_TALK_SCENES)
-        ],
-        "channel_prompt": {
-            "raw_single": config_channel.COUNSELING_CASE_SUMMARY,
-        },
-        "channel_key": "config/client_secret_creative4teen.json"
-    },
-
-
-    "counseling_story": {
-        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
-        "channel_name": "心理故事馆",
-        "channel_id": "counseling",
-        "scenes_prompt_choices": [
-            ("Short Story", config_channel.COUNSELING_STORY_SHORT),
-            ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
-            ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
-            ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
-            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
-            ("Long Story", config_channel.COUNSELING_STORY_LONG),
-            ("Message", config_channel.COUNSELING_STORY_MINI),
-            ("Full Story", config_channel.COUNSELING_CONTENT_SCENES),
-            ("Talk", config_channel.COUNSELING_TALK_SCENES),
-        ],
-        "channel_prompt": {
-            "init_single": config_channel.COUNSELING_INTRO,
-            "init_multiple": config_channel.COUNSELING_STORY_DEVELOPMENT,
-            "debut_multiple": config_channel.COUNSELING_ANALYSIS_DEVELOPMENT,
-        },
-        "channel_key": "config/client_secret_creative4teen.json"
     },
 
 

@@ -1270,6 +1270,187 @@ INPUT
 """
 
 
+COUNSELING_SERIES_COUNSELOR_FRAME = """
+*** ROLE: Senior Psychological Counselor & Series Storyteller
+    ** You host a single long program built from one rich analysis (possibly woven from many related cases).
+    ** The counselor appears only at the opening and the closing. The middle is one continuous human story.
+
+*** STRUCTURE (one program, no episode labels)
+    ** Scene 1 — Counselor opens
+        * Host speaks to camera. Name the lived question in everyday language. Do not diagnose. Do not preview the ending.
+        * actor: counselor (calm, direct gaze). visual: quiet room, no on-screen text.
+        * speaking: the counselor's opening, about 20–40 seconds.
+        * voiceover: empty or one short breath, not a second lecture.
+    ** Middle scenes — one story, many faces of the SAME knot
+        * 8–16 scenes. One protagonist (or one relationship). Different daily situations show different facets from the analysis.
+        * Facets must feel like the same life, not a montage of unrelated people.
+        * Show, don't teach. No DSM labels. No "the lesson is".
+        * Each scene: caption, visual film-still, speaking (protagonist), voiceover (inner sigh, 2–3 short lines), actor.
+    ** Last scene — Counselor closes
+        * Host returns. Speak only about what the audience just watched. One gentle truth. No worksheet, no slogan.
+        * Hook nothing further; this program ends here.
+
+*** OUTPUT
+    * JSON array. All text in {language}.
+    * Scene 1 caption is the program title. Do not prefix captions with 第N集.
+
+[
+    {{
+        "caption": "Program title on scene 1; later scenes are beat titles. In {language}.",
+        "voiceover": "Inner sigh or empty on counselor scenes. In {language}.",
+        "visual": "Film-still, no on-image words. In {language}.",
+        "speaking": "Counselor on scene 1 and the last scene; protagonist in the middle. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+COUNSELING_SERIES_EPISODES = """
+*** ROLE: Senior Psychological Counselor & Series Storyteller
+    ** Turn one analysis into a multi-episode series about ONE psychological problem.
+    ** Each episode is a short unit the audience can watch alone, and the episodes still belong to one series.
+
+*** EPISODE SHAPE (default)
+    ** 5 scenes = 1 episode, unless Instruction says otherwise (for example "6 scenes per episode" or "4 episodes").
+    ** Use as many episodes as the material truly has distinct facets (usually 3–8). Do not pad empty episodes.
+    ** Inside each episode:
+        * Scene A — Counselor opens this episode's one facet. To camera. No diagnosis.
+        * Scenes B–D — a short story of that facet only (same protagonist across the whole series).
+        * Scene E — Counselor closes this episode: only what was just shown, then one soft bridge to the next facet. The final episode's close does not tease another episode.
+    ** caption of the counselor-open scene must start with "第N集 · ".
+    ** Story scenes in that episode continue the number in the caption only if helpful; the open scene must carry 第N集.
+
+*** CONTINUITY
+    ** Same person, same wound, different rooms of the same house.
+    ** Episode 2+ counselor may recall one concrete image from the previous episode, then turn to the new facet.
+    ** Do not restart the biography. Do not swap protagonists.
+
+*** OUTPUT
+    * One JSON array of all scenes in watch order. All text in {language}.
+    * Fields: caption, voiceover, visual, speaking, actor.
+    * visual is a film-still with no words painted on the image.
+    * speaking on counselor scenes is the host; on story scenes it is the protagonist.
+
+[
+    {{
+        "caption": "第1集 · title. In {language}.",
+        "voiceover": "Short inner line, or empty on pure counselor beats. In {language}.",
+        "visual": "Film-still, no on-image text. In {language}.",
+        "speaking": "Spoken line. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+COUNSELING_SERIES_STORY_ONLY = """
+*** ROLE: Psychological storyteller (no counselor, no host-to-camera)
+    ** Turn the analysis into one long continuous story. The therapist must not appear, and nobody explains the theory.
+    ** Length: 12–24 scenes when the analysis has several facets; fewer only if the material is genuinely thin.
+
+*** STORY
+    ** One protagonist, one relationship or one life pattern.
+    ** Early scenes: the behavior the audience can see.
+    ** Middle scenes: the same pattern in other rooms (work, partner, parent, night). Each facet from the analysis gets at least one concrete scene. Do not drop a facet by averaging it away.
+    ** Late scenes: the pattern costs something, then one small different choice. Not a cure. Not a speech.
+    ** voiceover is the protagonist's private sigh (2–3 short sentences), never a counselor's summary.
+    ** speaking is daily-life dialogue or a thought spoken as the self.
+
+*** OUTPUT
+    * JSON array. All text in {language}. No "第N集". Scene 1 caption is the story title.
+
+[
+    {{
+        "caption": "Beat title; scene 1 is the story title. In {language}.",
+        "voiceover": "Protagonist's private sigh. In {language}.",
+        "visual": "Film-still, no on-image text. In {language}.",
+        "speaking": "Dialogue or first-person thought. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+COUNSELING_SERIES_CASE_STUDY = """
+*** ROLE: Senior Psychological Counselor running a case-study series
+    ** Each episode studies ONE face of the same problem, then the counselor returns.
+    ** Shape of every episode (default 5 scenes; Instruction may change the count):
+        * Counselor poses one plain question (not a diagnosis).
+        * Two to three story scenes answer it with one situation.
+        * Counselor closes only that situation.
+    ** After the facet episodes, add ONE final counselor scene (not a full extra story) that gathers the facets already shown. Caption: "终集 · ".
+    ** Episode open captions start with "第N集 · ".
+    ** Same protagonist throughout. A new facet is a new week of the same life, not a new client.
+    ** Counselor never speaks the moral in the story scenes. Story scenes show; counselor scenes name only what was just visible.
+
+*** OUTPUT
+    * JSON array in watch order. All text in {language}.
+    * visual: film-still, no on-image words.
+
+[
+    {{
+        "caption": "第1集 · title, or 终集 · title. In {language}.",
+        "voiceover": "Short, or empty when the counselor is already speaking. In {language}.",
+        "visual": "Film-still, no on-image text. In {language}.",
+        "speaking": "Counselor or protagonist. In {language}.",
+        "actor": "gender/age/race | mood | actions"
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
 
 COUNSELING_CASE_SUMMARY = """
 ROLE: Senior Psychological Counselor & TV Host

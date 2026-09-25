@@ -17,6 +17,7 @@ import project_manager
 
 DESCRIPTION_STORY_SEPARATOR = "────────────────"
 
+SOURCE_SUMMARY = "summary"
 SOURCE_VOICEOVER = "voiceover"
 SOURCE_SCENE_FULL = "scene_full"
 SOURCE_ANALYZED = "analyzed"
@@ -169,6 +170,7 @@ def append_poem_to_description(body: str, poem: str) -> str:
 
 # 与发布对话框单选顺序一致（分析 → 场景 JSON → speaking/voiceover → 审阅文稿）
 DESCRIPTION_SOURCE_CHOICES: list[tuple[str, str]] = [
+    (SOURCE_SUMMARY, "summary"),
     (SOURCE_ANALYZED, "分析内容"),
     (SOURCE_SCENE_FULL, "场景内容（全部）"),
     (SOURCE_VOICEOVER, "场景 speaking & voiceover（全部）"),
@@ -183,9 +185,12 @@ def description_text_for_source(
     scene_content_list: list | None = None,
     analyzed_content: str = "",
     review_script_text: str = "",
+    summary_text: str = "",
 ) -> str:
     lang = language or "zh"
     scenes = scene_content_list or []
+    if source == SOURCE_SUMMARY:
+        return config.chinese_convert((summary_text or "").strip(), lang)
     if source == SOURCE_VOICEOVER:
         return all_scene_speaking_voiceover_text(scenes, lang)
     if source == SOURCE_SCENE_FULL:
@@ -203,6 +208,7 @@ def list_available_description_sources(
     scene_content_list: list | None = None,
     analyzed_content: str = "",
     review_script_text: str = "",
+    summary_text: str = "",
 ) -> list[tuple[str, str]]:
     """只返回当前故事有内容的描述素材选项（与对话框可点的单选一致）。"""
     out: list[tuple[str, str]] = []
@@ -213,6 +219,7 @@ def list_available_description_sources(
             scene_content_list=scene_content_list,
             analyzed_content=analyzed_content,
             review_script_text=review_script_text,
+            summary_text=summary_text,
         )
         if (text or "").strip():
             out.append((key, label))
@@ -221,12 +228,15 @@ def list_available_description_sources(
 
 def default_publish_description_source(
     *,
+    summary: str = "",
     analyzed: str = "",
     scenes: list | None = None,
     review_script: str = "",
     language: str = "",
 ) -> str:
-    """描述素材默认来源：审阅文稿 → 场景 speaking/voiceover → 分析内容 → 场景 JSON。"""
+    """描述素材默认来源：条目 summary → 审阅文稿 → speaking/voiceover → 分析内容 → 场景 JSON。"""
+    if (summary or "").strip():
+        return SOURCE_SUMMARY
     if (review_script or "").strip():
         return SOURCE_REVIEW_SCRIPT
     if all_scene_speaking_voiceover_text(scenes or [], language or "zh"):
@@ -235,7 +245,7 @@ def default_publish_description_source(
         return SOURCE_ANALYZED
     if scenes:
         return SOURCE_SCENE_FULL
-    return SOURCE_VOICEOVER
+    return SOURCE_SUMMARY
 
 
 def scene_content_list_for_publish(
@@ -279,6 +289,7 @@ def ask_publish_metadata_then_schedule(
     caption_scenes: list | None = None,
     mp4_path_hint: str | None = None,
     review_script_text: str = "",
+    summary_text: str = "",
     video_detail: dict | None = None,
     metadata_dialog_title: str = "上传视频 — 标题与描述",
     metadata_confirm_label: str = "确定",
@@ -307,6 +318,7 @@ def ask_publish_metadata_then_schedule(
         analyzed_content=analyzed_content,
         poem_text=poem_text,
         review_script_text=review_script_text,
+        summary_text=summary_text,
         video_detail=video_detail,
         generate_text_fn=generate_text_fn,
         dialog_title=metadata_dialog_title,
@@ -362,6 +374,7 @@ def ask_publish_title_and_description(
     analyzed_content: str = "",
     poem_text: str = "",
     review_script_text: str = "",
+    summary_text: str = "",
     video_detail: dict | None = None,
     generate_text_fn: Callable[[str, str], str],
     dialog_title: str = "上传视频 — 标题与描述",
@@ -370,6 +383,13 @@ def ask_publish_title_and_description(
     """返回 ``{"title": str, "description": str}``；取消返回 ``None``。"""
     lang = language or "zh"
     scenes = scene_content_list or []
+    item_summary = config.chinese_convert((summary_text or "").strip(), lang)
+    if not item_summary and isinstance(video_detail, dict):
+        raw_summary = video_detail.get("summary")
+        item_summary = config.chinese_convert(
+            raw_summary.strip() if isinstance(raw_summary, str) else str(raw_summary or "").strip(),
+            lang,
+        )
     analyzed = config.chinese_convert((analyzed_content or "").strip(), lang)
     poem = config.chinese_convert((poem_text or "").strip(), lang)
     review_script = config.chinese_convert((review_script_text or "").strip(), lang)
@@ -450,6 +470,8 @@ def ask_publish_title_and_description(
             return scene_sv
         if source == SOURCE_SCENE_FULL:
             return full_scene_content_text(scenes)
+        if source == SOURCE_SUMMARY:
+            return item_summary
         if source == SOURCE_ANALYZED:
             return analyzed
         if source == SOURCE_REVIEW_SCRIPT:
@@ -473,6 +495,10 @@ def ask_publish_title_and_description(
                     messagebox.showwarning(
                         "提示", "审阅文稿 / 转写内容为空。", parent=dlg
                     )
+                elif src == SOURCE_SUMMARY:
+                    messagebox.showwarning(
+                        "提示", "本条 summary 为空。", parent=dlg
+                    )
                 else:
                     messagebox.showwarning(
                         "提示", "分析内容为空。", parent=dlg
@@ -483,6 +509,7 @@ def ask_publish_title_and_description(
         return True
 
     default_source = default_publish_description_source(
+        summary=item_summary,
         analyzed=analyzed,
         scenes=scenes,
         review_script=review_script,
@@ -494,6 +521,14 @@ def ask_publish_title_and_description(
 
     ttk.Label(src_row, text="素材来源：").pack(side=tk.LEFT, padx=(0, 8))
 
+    rb_summary = ttk.Radiobutton(
+        src_row,
+        text="summary",
+        variable=source_var,
+        value=SOURCE_SUMMARY,
+        command=lambda: _load_source_raw(show_empty_warning=True),
+    )
+    rb_summary.pack(side=tk.LEFT, padx=(0, 10))
     rb_analyzed = ttk.Radiobutton(
         src_row,
         text="分析内容",
@@ -527,6 +562,8 @@ def ask_publish_title_and_description(
     )
     rb_review.pack(side=tk.LEFT)
 
+    if not item_summary:
+        rb_summary.state(["disabled"])
     if not analyzed:
         rb_analyzed.state(["disabled"])
     if not scenes:
@@ -537,7 +574,7 @@ def ask_publish_title_and_description(
     if not review_script:
         rb_review.state(["disabled"])
 
-    append_poem_var = tk.BooleanVar(value=False)
+    append_poem_var = tk.BooleanVar(value=bool(poem))
     poem_chk = ttk.Checkbutton(
         desc_box,
         text="在描述下方附加 poem / 诗歌（空两行 + 分隔线；需本条有 poem 内容）",
@@ -549,7 +586,7 @@ def ask_publish_title_and_description(
 
     ttk.Label(
         desc_box,
-        text="默认优先：场景 speaking/voiceover → 分析内容 → 场景 JSON；"
+        text="默认填本条 summary；没有 summary 时再按审阅文稿 → 场景 speaking/voiceover → 分析内容 → 场景 JSON；"
         "选定来源后编辑区显示原始素材（可改）。"
         "点「生成描述概述」由 LLM 根据编辑区内容生成简短 YouTube 描述；"
         "双击编辑区可用剪贴板替换全文。勾选 poem 时，确认发布前会自动在描述下方追加诗歌。",

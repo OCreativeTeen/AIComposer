@@ -146,6 +146,7 @@ def log(message: str) -> None:
 _SUMMARY_TITLE_SKIP = (
     "热门视频管理",
     "LIST |",
+    "TOPIC",
     "分镜 /",
     "SCENE |",
     "YT 工具",
@@ -270,7 +271,7 @@ def find_panel_window() -> Optional[int]:
 
 
 def find_video_list_window() -> Optional[int]:
-    for marker in ("LIST |", "热门视频管理"):
+    for marker in ("LIST |", "TOPIC", "热门视频管理"):
         candidates = enum_windows_safe(sub=marker)
         if candidates:
             return candidates[0][0]

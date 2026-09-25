@@ -1,0 +1,39 @@
+
+    "counseling_talk": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_id": "counseling",
+        # NotebookLM Prompt 类型选择（可扩展）
+        "scenes_prompt_choices": [
+            ("Talk", config_channel.COUNSELING_TALK_SCENES)
+        ],
+        "channel_prompt": {
+            "raw_single": config_channel.COUNSELING_CASE_SUMMARY,
+        },
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
+
+
+    "counseling_story": {
+        "topic": "Story & Case Analysis of Psychological Counseling, Life Reflections",
+        "channel_name": "心理故事馆",
+        "channel_id": "counseling",
+        "scenes_prompt_choices": [
+            ("Short Story", config_channel.COUNSELING_STORY_SHORT),
+            ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
+            ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
+            ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
+            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
+            ("Long Story", config_channel.COUNSELING_STORY_LONG),
+            ("Message", config_channel.COUNSELING_STORY_MINI),
+            ("Full Story", config_channel.COUNSELING_CONTENT_SCENES),
+            ("Talk", config_channel.COUNSELING_TALK_SCENES),
+        ],
+        "channel_prompt": {
+            "init_single": config_channel.COUNSELING_INTRO,
+            "init_multiple": config_channel.COUNSELING_STORY_DEVELOPMENT,
+            "debut_multiple": config_channel.COUNSELING_ANALYSIS_DEVELOPMENT,
+        },
+        "channel_key": "config/client_secret_creative4teen.json"
+    },
+

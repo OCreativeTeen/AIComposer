@@ -20,7 +20,7 @@ LM_STUDIO = "qwen/qwen3.5-9b"
 #OLLAMA = "qwen3.5:9b"
 OLLAMA = "gemma4:26b"
 
-GPT_MINI = "deepseek-v4-flash" #"gpt-5-nano"
+GPT_MINI = "deepseek-flash" #"gpt-5-nano"
 
 #GPT_MINI = "gpt-4o-mini"
 GEMINI_2_0_FLASH = "gemini-2.0-flash"  # 免费

@@ -92,6 +92,7 @@ def list_publish_description_choices(ctx: dict | None = None) -> list[tuple[str,
         scene_content_list=scenes,
         analyzed_content=vd.get("analyzed_content") or "",
         review_script_text=review,
+        summary_text=vd.get("summary") or "",
     )
 
 
@@ -102,6 +103,7 @@ def default_publish_source_key(ctx: dict | None = None) -> str:
     scenes = scene_content_list_for_publish(language=lang, video_detail=vd)
     review = project_manager.publish_description_source_text(vd)
     return default_publish_description_source(
+        summary=vd.get("summary") or "",
         analyzed=vd.get("analyzed_content") or "",
         scenes=scenes,
         review_script=review,
@@ -127,10 +129,16 @@ def build_publish_metadata(ctx: dict, source_key: str | None = None) -> dict:
         scene_content_list=scenes,
         analyzed_content=vd.get("analyzed_content") or "",
         review_script_text=review,
+        summary_text=vd.get("summary") or "",
     ).strip()
     if not desc:
         raise RuntimeError(f"描述素材「{key}」为空，换一个来源。")
     desc = config.chinese_convert(desc, lang)
+    poem = (vd.get("poem") or "").strip()
+    if poem:
+        from gui.publish_metadata_dialog import append_poem_to_description
+
+        desc = append_poem_to_description(desc, config.chinese_convert(poem, lang))
     return {"title": title, "description": desc, "source": key}
 
 

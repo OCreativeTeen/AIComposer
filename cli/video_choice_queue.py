@@ -1006,9 +1006,7 @@ def launch_queue_item_gui(item: dict) -> int:
         return 1
 
     lang = prefs.get("language") or "tw"
-    list_path = (item.get("list_json_path") or "").strip()
-    if not list_path:
-        list_path = config.yt_text_download_list_json_path(ch)
+    list_path = _topic_list_path_for_queue_item(item)
 
     row_keys = [
         k
@@ -1031,6 +1029,26 @@ def launch_queue_item_gui(item: dict) -> int:
         clear_gui_launch_source()
 
 
+def _topic_list_path_for_queue_item(item: dict) -> str:
+    """内容处理打开 ``list_by_topic/<topic_category>.json``，不打开原始下载 list。"""
+    from gui.downloader import _topic_category_program_list_path
+
+    ch_path = (item.get("channel_path") or "").strip()
+    tc = (item.get("topic_category") or "").strip()
+    if ch_path and tc:
+        topic_path = _topic_category_program_list_path(ch_path, tc)
+        if os.path.isfile(topic_path):
+            return topic_path
+    raw = (item.get("list_json_path") or "").strip()
+    norm = os.path.normpath(raw) if raw else ""
+    if norm and f"{os.sep}list_by_topic{os.sep}" in norm and os.path.isfile(norm):
+        return norm
+    ch = (item.get("channel_id") or "").strip()
+    if not raw and ch:
+        return config.yt_text_download_list_json_path(ch)
+    return raw
+
+
 def _run_queue_item_gui(root, tk, ch, lang, list_path, row_keys) -> int:
     from gui.downloader import MediaGUIManager
 
@@ -1042,7 +1060,9 @@ def _run_queue_item_gui(root, tk, ch, lang, list_path, row_keys) -> int:
         except Exception:
             pass
 
-    yt_gui = MediaGUIManager(root, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang)
+    yt_gui = MediaGUIManager(
+        root, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang, content_mode=True
+    )
 
     def _poll_standalone_exit():
         try:

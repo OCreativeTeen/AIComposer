@@ -42,8 +42,8 @@ from gui.summary_mp4_review_dialog import (
     ask_summary_mp4_review_segments,
     run_trim_concat_watermark_worker,
 )
-from gui.tag_picker_menu import build_tag_cascade_menu, post_menu_below_widget
-from utility.tags_text import merge_tag_pick, parse_tags_list
+from gui.tag_picker_menu import post_menu_below_widget
+from utility.tags_text import parse_tags_list
 import project_manager
 
 try:
@@ -232,6 +232,26 @@ def _notebooklm_row_topic_fields(video_detail: dict) -> tuple[str, str, str]:
             sub = (prof.get("topic_subtype") or "").strip()
     topic = f"{cat}-{sub}" if cat or sub else ""
     return cat, sub, topic
+
+
+def _plain_item_tags(video: dict) -> list[str]:
+    """条目上的分组 tag（纯名称）。预设的「特征=选项」不参与筛选。"""
+    if not isinstance(video, dict):
+        return []
+    raw = video.get("tags")
+    if isinstance(raw, list):
+        parts = [str(t).strip() for t in raw]
+    elif isinstance(raw, str):
+        parts = parse_tags_list(raw)
+    else:
+        return []
+    out = []
+    for part in parts:
+        name = part.strip()
+        if not name or "=" in name or name in out:
+            continue
+        out.append(name)
+    return out
 
 
 def _notebooklm_row_tags_text(video_detail: dict) -> str:
@@ -1977,6 +1997,7 @@ def _treeview_item_tags_safe(tree, item):
 
 def _configure_channel_list_treeview(tree: ttk.Treeview) -> None:
     """频道视频列表：固定列不拉伸（默认 stretch=True 会在宽窗口撑出列间空白）。"""
+    present = set(tree["columns"])
     for col, width, anchor in (
         ("#0", 46, "center"),
         ("views", 66, "e"),
@@ -1988,6 +2009,8 @@ def _configure_channel_list_treeview(tree: ttk.Treeview) -> None:
         ("topic_subtype", 200, "w"),
         ("tags", 200, "w"),
     ):
+        if col != "#0" and col not in present:
+            continue
         tree.column(col, width=width, minwidth=width, stretch=False, anchor=anchor)
     tree.column("title", width=350, minwidth=200, stretch=True, anchor="w")
 
@@ -2024,7 +2047,7 @@ def _downloader_aux_dir(youtube_dir: str) -> str:
 
 
 def _topic_category_program_list_path(channel_path: str, topic_category: str) -> str:
-    d = config.ensure_channel_list_json_dir(channel_path)
+    d = config.ensure_channel_list_by_topic_dir(channel_path)
     return os.path.join(d, config.topic_category_list_file_basename(topic_category))
 
 
@@ -2920,7 +2943,7 @@ def _remove_pid_from_topic_category_lists(channel_path: str, pid: str) -> None:
     ch = (channel_path or "").strip()
     if not pid or not ch:
         return
-    list_dir = config.channel_list_json_dir_abs(ch)
+    list_dir = config.channel_list_by_topic_dir_abs(ch)
     if not os.path.isdir(list_dir):
         return
     for name in os.listdir(list_dir):
@@ -2957,7 +2980,7 @@ def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> None
 
 
 def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> None:
-    """为 topics.json 中每个 topic_category 在频道 program 下放空列表 JSON（尚无文件时）。"""
+    """为 topics.json 中每个 topic_category 在 ``list_by_topic`` 下放空列表 JSON（尚无文件时）。"""
     if not channel_path or not os.path.isdir(channel_path):
         return
     seen = set()
@@ -3036,7 +3059,7 @@ def _topic_split_list_find_pid_for_channel(
     topic_categories,
     pid: str,
 ):
-    """在频道 ``list/<主题>.json`` 分表中查找 ``pid``；优先 ``preferred_topic_category``，再遍历 ``topic_categories``。"""
+    """在频道 ``list_by_topic/<主题>.json`` 分表中查找 ``pid``；优先 ``preferred_topic_category``，再遍历 ``topic_categories``。"""
     pid = (pid or "").strip()
     if not pid or not channel_path:
         return None, None
@@ -3072,7 +3095,7 @@ def _topic_split_list_find_pid_for_channel(
 def _is_viewing_topic_category_program_list(
     channel_path: str, list_json_path: str, topic_category: str
 ) -> bool:
-    """当前打开的 ``channel_list_json`` 是否即为某主题分表（``list/<topic>.json``）。"""
+    """当前打开的 ``channel_list_json`` 是否即为某主题分表（``list_by_topic/<topic>.json``）。"""
     list_json_path = (list_json_path or "").strip()
     topic_category = (topic_category or "").strip()
     if not list_json_path or not topic_category:
@@ -6143,9 +6166,22 @@ class MediaDownloader:
 class MediaGUIManager:
     """YouTube GUI管理器 - 处理所有YouTube相关的GUI对话框"""
     
-    def __init__(self, root, channel, pid, tasks, log_to_output_func, download_output, language, workflow_gui=None):
+    def __init__(
+        self,
+        root,
+        channel,
+        pid,
+        tasks,
+        log_to_output_func,
+        download_output,
+        language,
+        workflow_gui=None,
+        *,
+        content_mode: bool = False,
+    ):
         self.root = root
         self.workflow_gui = workflow_gui
+        self.content_mode = bool(content_mode)
 
         self.channel = channel
         channel_path = config.get_channel_path(config.get_channel_id(channel))
@@ -6170,6 +6206,10 @@ class MediaGUIManager:
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, self.youtube_dir, _dl_lang)
+        if self.content_mode:
+            self.downloader.channel_list_dir = config.ensure_channel_list_by_topic_dir(
+                self.channel_path
+            )
         
         # 跟踪活跃的摘要生成线程，确保对话框关闭时不会丢失数据
         self.active_summary_threads = []
@@ -6370,6 +6410,100 @@ class MediaGUIManager:
         # 获取选中的频道
         channel = choice_to_channel[selected_choice]
         if not self._load_channel_list_json_into_downloader(channel["file"]):
+            return
+        self._show_channel_videos_dialog()
+
+
+    def manage_topic_lists(self):
+        """打开 ``list_by_topic`` 里已按 topic_category 整理好的列表（无下载、无频道更新）。"""
+        self.downloader.language = "en" if self.language == "en" else "zh"
+        topic_dir = config.channel_list_by_topic_dir_abs(self.channel_path)
+        json_files = glob.glob(os.path.join(topic_dir, "*.json")) if os.path.isdir(topic_dir) else []
+        if not json_files:
+            messagebox.showinfo(
+                "主题列表",
+                f"还没有整理好的主题列表。\n{topic_dir}",
+                parent=self.root,
+            )
+            return
+
+        channel_data = []
+        for json_file in sorted(json_files):
+            filename = os.path.basename(json_file)
+            match = re.match(r"(.+?)\.json", filename)
+            if not match:
+                continue
+            video_count = 0
+            for encoding in ("utf-8", "gbk", "gb2312", "latin-1"):
+                try:
+                    with open(json_file, "r", encoding=encoding) as f:
+                        videos = json.load(f)
+                    video_count = len(videos) if isinstance(videos, list) else 0
+                    break
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                except Exception as exc:
+                    print(f"❌ 读取主题列表失败: {exc}")
+                    break
+            channel_data.append({
+                "name": match.group(1),
+                "file": json_file,
+                "video_count": video_count,
+            })
+        if not channel_data:
+            messagebox.showwarning("提示", "未找到有效的主题列表", parent=self.root)
+            return
+
+        choices = []
+        choice_to_channel = {}
+        for channel in channel_data:
+            text = f"{channel['name']} ({channel['video_count']} 个视频)"
+            choices.append(text)
+            choice_to_channel[text] = channel
+        picked = askchoice("选择主题", choices, parent=self.root)
+        if not picked:
+            return
+        _, selected_choice = picked
+        channel = choice_to_channel.get(selected_choice)
+        if not channel:
+            return
+        if not self._load_channel_list_json_into_downloader(channel["file"]):
+            return
+        self._show_channel_videos_dialog()
+
+
+    def _topic_subtype_filter_names(self) -> list:
+        """当前这份 topic 列表里可选的子类型，前面加「全部」。"""
+        cat = (self.downloader.channel_name or "").strip()
+        names = []
+        for item in self.topic_choices or []:
+            if not isinstance(item, dict):
+                continue
+            item_cat = (item.get("topic_category") or item.get("category") or "").strip()
+            if item_cat != cat:
+                continue
+            for sub in item.get("topic_subtypes") or []:
+                if isinstance(sub, dict):
+                    name = (sub.get("topic_subtype") or "").strip()
+                else:
+                    name = str(sub or "").strip()
+                if name and name not in names:
+                    names.append(name)
+        for video in self.downloader.channel_videos or []:
+            name = (video.get("topic_subtype") or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return ["全部"] + names
+
+
+    def open_topic_list_file(self, json_path: str):
+        """直接打开 ``list_by_topic`` 里指定的一份列表。"""
+        self.downloader.language = "en" if self.language == "en" else "zh"
+        path = (json_path or "").strip()
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning("提示", "主题列表不存在", parent=self.root)
+            return
+        if not self._load_channel_list_json_into_downloader(path):
             return
         self._show_channel_videos_dialog()
 
@@ -7194,7 +7328,7 @@ class MediaGUIManager:
                 textvariable=prompt_combo_var,
                 values=[opt[0] for opt in nb_prompt_choices],
                 state="readonly" if nb_prompt_choices else "disabled",
-                width=22,
+                width=28,
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
 
@@ -8545,13 +8679,6 @@ class MediaGUIManager:
                 video_detail.pop('topic_type', None)
             if result.get('topic_category', '') and result.get('topic_category', '').strip():
                 video_detail['topic_category'] = result.get('topic_category', '')
-            raw_tags = result.get('tags')
-            if isinstance(raw_tags, list):
-                tags_list = [str(t).strip() for t in raw_tags if t and str(t).strip()]
-                if tags_list:
-                    video_detail['tags'] = tags_list
-            elif isinstance(raw_tags, str) and raw_tags.strip():
-                video_detail["tags"] = parse_tags_list(raw_tags)
             # 保存到文件（在锁内，确保数据一致性）
             try:
                 _write_channel_list_json_file(
@@ -8597,6 +8724,12 @@ class MediaGUIManager:
                 video_detail=video_detail if isinstance(video_detail, dict) else None,
             ),
             analyzed_content=video_detail.get("analyzed_content"),
+            summary_text=(
+                video_detail.get("summary")
+                if isinstance(video_detail, dict)
+                else ""
+            )
+            or "",
             poem_text=poem_text,
             review_script_text=review_script_text,
             video_detail=video_detail if isinstance(video_detail, dict) else None,
@@ -8728,7 +8861,10 @@ class MediaGUIManager:
     def _show_channel_videos_dialog(self, *, auto_open_summary_row_keys: list[str] | None = None):
         # 创建视频管理对话框
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"LIST | {self.downloader.channel_name}")
+        if self.content_mode:
+            dialog.title(f"TOPIC | {self.downloader.channel_name}")
+        else:
+            dialog.title(f"LIST | {self.downloader.channel_name}")
         dialog.geometry("2100x1000")
         dialog.transient(self.root)
         
@@ -8740,7 +8876,10 @@ class MediaGUIManager:
         info_frame = ttk.Frame(top_frame)
         info_frame.pack(fill=tk.X, pady=(0, 5))
         
-        info_text = f"频道: {self.downloader.channel_name} | 共 {len(self.downloader.channel_videos)} 个视频"
+        if self.content_mode:
+            info_text = f"{self.downloader.channel_name} | 共 {len(self.downloader.channel_videos)} 个视频"
+        else:
+            info_text = f"频道: {self.downloader.channel_name} | 共 {len(self.downloader.channel_videos)} 个视频"
         info_label = ttk.Label(info_frame, text=info_text, font=("Arial", 12, "bold"))
         info_label.pack(side=tk.LEFT)
         
@@ -8821,20 +8960,47 @@ class MediaGUIManager:
         smart_select_entry = ttk.Entry(control_frame, textvariable=smart_select_var, width=20)
         smart_select_entry.pack(side=tk.LEFT, padx=(0, 5))
         
-        # 添加主题类型选择
-        # 从 self.topic_choices 中提取 topic_category 字段并去重
-        
-        topic_category_var = tk.StringVar()
-        topic_category_combo = ttk.Combobox(control_frame, textvariable=topic_category_var, values=self.topic_categories, state="readonly", width=20)
-        topic_category_combo.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # 绑定选择事件，将选中的值保存到 self.main_topic_category
-        def on_topic_category_selected(event=None):
-            selected_value = topic_category_var.get()
-            if selected_value:
-                self.main_topic_category = selected_value
-        
-        topic_category_combo.bind('<<ComboboxSelected>>', on_topic_category_selected)
+        topic_subtype_var = tk.StringVar(value="全部")
+        if self.content_mode:
+            ttk.Label(control_frame, text="子类型:").pack(side=tk.LEFT, padx=(10, 5))
+            subtype_names = self._topic_subtype_filter_names()
+            topic_subtype_combo = ttk.Combobox(
+                control_frame,
+                textvariable=topic_subtype_var,
+                values=subtype_names,
+                state="readonly",
+                width=36,
+            )
+            topic_subtype_combo.pack(side=tk.LEFT, padx=(0, 5))
+            topic_subtype_combo.bind("<<ComboboxSelected>>", lambda _e: _on_subtype_filter())
+            ttk.Label(control_frame, text="标签:").pack(side=tk.LEFT, padx=(10, 5))
+            topic_tag_var = tk.StringVar(value="全部")
+            topic_tag_combo = ttk.Combobox(
+                control_frame,
+                textvariable=topic_tag_var,
+                values=["全部"],
+                state="readonly",
+                width=18,
+            )
+            topic_tag_combo.pack(side=tk.LEFT, padx=(0, 5))
+            topic_tag_combo.bind("<<ComboboxSelected>>", lambda _e: populate_tree())
+        else:
+            topic_category_var = tk.StringVar()
+            topic_category_combo = ttk.Combobox(
+                control_frame,
+                textvariable=topic_category_var,
+                values=self.topic_categories,
+                state="readonly",
+                width=20,
+            )
+            topic_category_combo.pack(side=tk.LEFT, padx=(0, 5))
+
+            def on_topic_category_selected(event=None):
+                selected_value = topic_category_var.get()
+                if selected_value:
+                    self.main_topic_category = selected_value
+
+            topic_category_combo.bind("<<ComboboxSelected>>", on_topic_category_selected)
 
         # 画面风格：与欢迎屏一致，只读展示（LAST_VISUAL_STYLE）
         ttk.Label(control_frame, text="画面风格:").pack(side=tk.LEFT, padx=(10, 5))
@@ -8904,6 +9070,8 @@ class MediaGUIManager:
         
         # 创建Treeview显示视频列表
         columns = ("title", "views", "duration", "upload_date", "status", "analyzed", "topic_category", "topic_subtype", "tags")
+        if self.content_mode:
+            columns = ("title", "source_channel") + tuple(c for c in columns[1:] if c != "topic_category")
         tree_frame = ttk.Frame(dialog)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -8919,6 +9087,8 @@ class MediaGUIManager:
         # 设置列标题和宽度
         tree.heading("#0", text="序号")
         tree.heading("title", text="标题")
+        if "source_channel" in columns:
+            tree.heading("source_channel", text="频道")
         tree.heading("views", text="观看次数")
         tree.heading("duration", text="时长")
         tree.heading("upload_date", text="上传日期")
@@ -8927,11 +9097,15 @@ class MediaGUIManager:
             "analyzed",
             text="分析/场景/成片",
         )
-        tree.heading("topic_category", text="主题分类")
+        if "topic_category" in columns:
+            tree.heading("topic_category", text="主题分类")
         tree.heading("topic_subtype", text="主题子类型")
         tree.heading("tags", text="标签")
 
         _configure_channel_list_treeview(tree)
+        if self.content_mode:
+            tree.column("source_channel", width=128, minwidth=88, stretch=False, anchor="w")
+            tree.column("topic_subtype", width=260, minwidth=160, stretch=False, anchor="w")
         
 
         def _scene_content_nonempty(v):
@@ -8951,8 +9125,31 @@ class MediaGUIManager:
                     return bool(t)
             return False
 
+        def _refresh_tag_filter_choices():
+            if not self.content_mode:
+                return
+            picked_sub = (topic_subtype_var.get() or "").strip()
+            names = []
+            for video in self.downloader.channel_videos:
+                if picked_sub and picked_sub != "全部":
+                    if (video.get("topic_subtype") or "").strip() != picked_sub:
+                        continue
+                for name in _plain_item_tags(video):
+                    if name not in names:
+                        names.append(name)
+            values = ["全部"] + names
+            topic_tag_combo["values"] = values
+            if (topic_tag_var.get() or "全部") not in values:
+                topic_tag_var.set("全部")
+
+        def _on_subtype_filter(_event=None):
+            if self.content_mode:
+                topic_tag_var.set("全部")
+            populate_tree()
+
         def populate_tree():
             """填充或刷新树视图"""
+            _refresh_tag_filter_choices()
             # 清空现有项目
             for item in tree.get_children():
                 tree.delete(item)
@@ -8964,11 +9161,20 @@ class MediaGUIManager:
                 min_view_count = 0
             
             # 过滤视频：只显示观看次数大于等于最小值的视频
+            picked_subtype = (topic_subtype_var.get() or "").strip() if self.content_mode else ""
+            picked_tag = (topic_tag_var.get() or "").strip() if self.content_mode else ""
             filtered_videos = []
             for video in self.downloader.channel_videos:
                 view_count = video.get('view_count', 0)
-                if view_count >= min_view_count:
-                    filtered_videos.append(video)
+                if view_count < min_view_count:
+                    continue
+                if picked_subtype and picked_subtype != "全部":
+                    if (video.get("topic_subtype") or "").strip() != picked_subtype:
+                        continue
+                if picked_tag and picked_tag != "全部":
+                    if picked_tag not in _plain_item_tags(video):
+                        continue
+                filtered_videos.append(video)
             
             # 排序视频
             sort_mode = sort_mode_var.get()
@@ -9087,18 +9293,25 @@ class MediaGUIManager:
                     video, max_src_chars=_CHANNEL_LIST_TREE_TITLE_MAX_SRC_CHARS
                 )
                 row_title_full = _youtube_row_list_display_title(video)
+                source_channel = (video.get("channel") or video.get("uploader") or "").strip()
+                row_values = [
+                    row_title,
+                    view_str,
+                    duration_str,
+                    upload_date_str,
+                    status_str,
+                    analyzed_mark,
+                ]
+                if self.content_mode:
+                    row_values.insert(1, source_channel)
+                else:
+                    row_values.append(topic_category[:30] if topic_category else "")
+                row_values.extend((
+                    topic_subtype[:30] if topic_subtype else "",
+                    tag_cell,
+                ))
                 tree.insert("", tk.END, text=str(idx), 
-                           values=(
-                               row_title,
-                               view_str,
-                               duration_str,
-                               upload_date_str,
-                               status_str,
-                               analyzed_mark,
-                               topic_category[:30] if topic_category else '',
-                               topic_subtype[:30] if topic_subtype else "",
-                               tag_cell,
-                           ),
+                           values=tuple(row_values),
                            tags=(   _channel_list_row_tree_key(video), 
                                     row_title_full, 
                                     video_file or '', 
@@ -9116,7 +9329,15 @@ class MediaGUIManager:
             )
 
             # 更新顶部信息标签
-            info_text = f"频道: {self.downloader.channel_name} | 共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | 已下载: {downloaded_count} | 已转录: {transcribed_count} | 已摘要: {summarized_count} | 热度: {hottest_degree:.2f}"
+            counts = (
+                f"共 {len(filtered_videos)}/{len(self.downloader.channel_videos)} 个视频 | "
+                f"已下载: {downloaded_count} | 已转录: {transcribed_count} | "
+                f"已摘要: {summarized_count} | 热度: {hottest_degree:.2f}"
+            )
+            if self.content_mode:
+                info_text = f"{self.downloader.channel_name} | {counts}"
+            else:
+                info_text = f"频道: {self.downloader.channel_name} | {counts}"
             info_label.config(text=info_text)
         
 
@@ -9490,7 +9711,7 @@ class MediaGUIManager:
                 if target_ix < 0 and not topic_list_path:
                     yn_fix = messagebox.askyesno(
                         "主题分表缺少该项目",
-                        f"list/{config.topic_category_list_file_basename(tc)} 中未找到 pid「{cfg_pid}」。\n\n"
+                        f"list_by_topic/{config.topic_category_list_file_basename(tc)} 中未找到 pid「{cfg_pid}」。\n\n"
                         "是否写入主题分表？",
                         parent=parent,
                     )
@@ -9566,7 +9787,7 @@ class MediaGUIManager:
                 if not tc:
                     messagebox.showwarning(
                         "项目已创建",
-                        f"PID：{_pid}\n\n缺少 topic_category，未写入主题分表。\n"
+                        f"PID：{_pid}\n\n缺少 topic_category，未写入 list_by_topic。\n"
                         "请先保存主题分类后再打开工作流。",
                         parent=parent,
                     )
@@ -10167,21 +10388,6 @@ class MediaGUIManager:
             tags_entry = ttk.Entry(tags_row, textvariable=tags_var)
             tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-            def _on_tag_pick(feature: str, option: str):
-                merged = merge_tag_pick(parse_tags_list(tags_var.get() or ""), feature, option)
-                tags_var.set(", ".join(merged))
-
-            def _open_tag_menu():
-                m = build_tag_cascade_menu(
-                    summary_window,
-                    getattr(self, "tag_features_map", None) or {},
-                    _on_tag_pick,
-                )
-                post_menu_below_widget(m, tags_add_btn)
-
-            tags_add_btn = ttk.Button(tags_row, text="添加标签", command=_open_tag_menu)
-            tags_add_btn.pack(side=tk.LEFT, padx=(6, 0))
-            
             def update_subtypes(*args):
                 """根据选择的分类更新子类型选项"""
                 selected_category = category_var.get()
@@ -11504,7 +11710,246 @@ class MediaGUIManager:
             populate_tree()
 
 
+        def group_items_by_tag():
+            """用当前筛选结果里的 analyzed_content，让便宜模型打上更细的分组 tag。"""
+            if not self.content_mode:
+                return
+            picked_sub = (topic_subtype_var.get() or "").strip()
+            batch = []
+            for video in self.downloader.channel_videos:
+                if picked_sub and picked_sub != "全部":
+                    if (video.get("topic_subtype") or "").strip() != picked_sub:
+                        continue
+                body = (video.get("analyzed_content") or "").strip()
+                if not body:
+                    continue
+                item_id = (video.get("id") or "").strip()
+                if not item_id:
+                    continue
+                batch.append(video)
+            if len(batch) < 2:
+                messagebox.showwarning(
+                    "分组标签",
+                    "当前筛选里至少要有 2 条带分析内容、并且有 id 的视频。",
+                    parent=dialog,
+                )
+                return
+            scope = picked_sub if picked_sub and picked_sub != "全部" else "当前列表"
+            if not messagebox.askyesno(
+                "分组标签",
+                f"按「{scope}」里的 {len(batch)} 条分析，分成更细的小组并写回每条的 tag。\n"
+                "一条可以落在两个小组里，但会尽量分开。\n"
+                "原来从预设标签里选的 tag 会被这批结果替换。",
+                parent=dialog,
+            ):
+                return
+
+            lines = []
+            id_to_video = {}
+            for video in batch:
+                item_id = (video.get("id") or "").strip()
+                id_to_video[item_id] = video
+                title = _youtube_row_display_title(video) or item_id
+                excerpt = (video.get("analyzed_content") or "").strip()
+                if len(excerpt) > 700:
+                    excerpt = excerpt[:700] + "…"
+                lines.append(f"id={item_id}\n标题: {title}\n{excerpt}")
+            lang_label = config.llm_language_label(self.language)
+            system_prompt = config_prompt.GROUP_ITEM_TAGS_PROMPT.format(language=lang_label)
+            user_prompt = "\n\n".join(lines)
+
+            def work():
+                err = ""
+                parsed = None
+                try:
+                    parsed = self.llm_api_local.generate_json(
+                        system_prompt, user_prompt, expect_list=False
+                    )
+                except Exception as exc:
+                    err = str(exc)
+
+                def apply():
+                    if err:
+                        show_auto_close_popup(dialog, "分组失败", err, kind="error")
+                        return
+                    groups = parsed.get("groups") if isinstance(parsed, dict) else None
+                    if not isinstance(groups, list) or not groups:
+                        messagebox.showwarning(
+                            "分组标签", "模型没有返回分组。", parent=dialog
+                        )
+                        return
+                    assigned: dict[str, list[str]] = {item_id: [] for item_id in id_to_video}
+                    for group in groups:
+                        if not isinstance(group, dict):
+                            continue
+                        tag = str(group.get("tag") or "").strip()
+                        if not tag or "=" in tag:
+                            continue
+                        raw_ids = group.get("ids") or []
+                        if isinstance(raw_ids, str):
+                            raw_ids = [raw_ids]
+                        for raw_id in raw_ids:
+                            item_id = str(raw_id or "").strip()
+                            if item_id not in assigned:
+                                continue
+                            if tag not in assigned[item_id]:
+                                assigned[item_id].append(tag)
+                    for item_id, tags in assigned.items():
+                        id_to_video[item_id]["tags"] = tags
+                    try:
+                        _write_channel_list_json_file(
+                            self.downloader.channel_list_json,
+                            self.downloader.channel_videos,
+                        )
+                    except Exception as exc:
+                        show_auto_close_popup(dialog, "写入失败", str(exc), kind="error")
+                        return
+                    topic_tag_var.set("全部")
+                    populate_tree()
+                    used = sorted({tag for tags in assigned.values() for tag in tags})
+                    show_auto_close_popup(
+                        dialog,
+                        "已分组",
+                        "写出的标签：\n" + ("、".join(used) if used else "（无）"),
+                    )
+
+                self.root.after(0, apply)
+
+            threading.Thread(target=work, daemon=True).start()
+            show_auto_close_popup(dialog, "分组标签", "正在按分析内容分组，请稍等。")
+
+
+        def create_combo_project():
+            """把多选条目的 analyzed_content 收成一条新的组合分析，写入当前主题列表。"""
+            if not self.content_mode:
+                return
+            details = _unique_video_details_from_tree_selection()
+            usable = []
+            skipped = []
+            for vd in details:
+                text = (vd.get("analyzed_content") or "").strip()
+                title = _youtube_row_display_title(vd) or vd.get("id") or "未命名"
+                if text:
+                    usable.append((title, vd, text))
+                else:
+                    skipped.append(title)
+            if len(usable) < 2:
+                messagebox.showwarning(
+                    "合成项目",
+                    "请至少选择 2 条已经有分析内容（analyzed_content）的视频。",
+                    parent=dialog,
+                )
+                return
+            lines = "\n".join(f"· {title}" for title, _, _ in usable)
+            extra = ""
+            if skipped:
+                extra = "\n\n以下条目没有分析内容，不会放进合成：\n" + "\n".join(
+                    f"· {name}" for name in skipped
+                )
+            if not messagebox.askyesno(
+                "合成项目",
+                f"将把下面 {len(usable)} 条的分析收成一条新的组合分析，加到当前列表末尾。\n"
+                "场景和分集在打开这条之后，用场景里的 Series 提示再生成。\n\n"
+                f"{lines}{extra}",
+                parent=dialog,
+            ):
+                return
+
+            blocks = []
+            for i, (title, vd, text) in enumerate(usable, 1):
+                sub = (vd.get("topic_subtype") or "").strip()
+                blocks.append(
+                    f"=== {i}. {title}"
+                    + (f"\n子类型: {sub}" if sub else "")
+                    + f"\n{text}"
+                )
+            user_prompt = "\n\n".join(blocks)
+            lang_label = config.llm_language_label(self.language)
+            system_prompt = config_prompt.COMBO_ANALYZE_PROMPT.format(language=lang_label)
+            first = usable[0][1]
+
+            def work():
+                err = ""
+                parsed = None
+                try:
+                    parsed = self.llm_api_local.generate_json(
+                        system_prompt, user_prompt, expect_list=False
+                    )
+                except Exception as exc:
+                    err = str(exc)
+
+                def apply():
+                    if err:
+                        show_auto_close_popup(dialog, "合成失败", err, kind="error")
+                        return
+                    if not isinstance(parsed, dict):
+                        messagebox.showwarning(
+                            "合成项目", "模型没有返回可用的分析。", parent=dialog
+                        )
+                        return
+                    body = (parsed.get("analyzed_content") or "").strip()
+                    title = (parsed.get("title") or "").strip() or "组合分析"
+                    if not body:
+                        messagebox.showwarning(
+                            "合成项目", "模型没有写出 analyzed_content。", parent=dialog
+                        )
+                        return
+                    import uuid
+
+                    new_id = "combo_" + uuid.uuid4().hex[:12]
+                    tags = []
+                    seen_tags = set()
+                    for _, vd, _ in usable:
+                        raw_tags = vd.get("tags") or []
+                        if isinstance(raw_tags, str):
+                            raw_tags = [raw_tags]
+                        for tag in raw_tags:
+                            t = str(tag).strip()
+                            if t and t not in seen_tags:
+                                seen_tags.add(t)
+                                tags.append(t)
+                    row = {
+                        "id": new_id,
+                        "title": title,
+                        "channel": "组合",
+                        "analyzed_content": body,
+                        "topic_category": (first.get("topic_category") or "").strip(),
+                        "topic_subtype": (first.get("topic_subtype") or "").strip(),
+                        "tags": tags,
+                        "view_count": 0,
+                        "duration": 0,
+                        "upload_date": datetime.now().strftime("%Y%m%d"),
+                        "combo_source_ids": [
+                            (vd.get("id") or "").strip() for _, vd, _ in usable if (vd.get("id") or "").strip()
+                        ],
+                    }
+                    self.downloader.channel_videos.append(row)
+                    try:
+                        _write_channel_list_json_file(
+                            self.downloader.channel_list_json,
+                            self.downloader.channel_videos,
+                        )
+                    except Exception as exc:
+                        self.downloader.channel_videos.pop()
+                        show_auto_close_popup(dialog, "写入失败", str(exc), kind="error")
+                        return
+                    populate_tree()
+                    show_auto_close_popup(
+                        dialog,
+                        "已合成",
+                        f"已加入「{title}」。\n打开这条后，在场景里选 Series 提示再生成分集。",
+                    )
+
+                self.root.after(0, apply)
+
+            threading.Thread(target=work, daemon=True).start()
+            show_auto_close_popup(dialog, "合成项目", "正在综合所选分析，请稍等。")
+
+
         # 在所有函数定义后创建按钮
+        if self.content_mode:
+            ttk.Button(bottom_frame, text="分组标签", command=group_items_by_tag).pack(side=tk.LEFT, padx=5)
+            ttk.Button(bottom_frame, text="合成项目", command=create_combo_project).pack(side=tk.LEFT, padx=5)
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
         ttk.Button(bottom_frame, text="输出选择", command=export_selected_choices).pack(side=tk.RIGHT, padx=5)
@@ -11515,9 +11960,10 @@ class MediaGUIManager:
         ttk.Button(bottom_frame, text="分类选择", command=tag_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="转录选择", command=transcribe_selected).pack(side=tk.RIGHT, padx=5)
         ttk.Button(bottom_frame, text="音频转录", command=audio_transcribe_selected).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="下载选择", command=download_selected).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="信息更新", command=fetch_info_selected).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(bottom_frame, text="列表更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)
+        if not self.content_mode:
+            ttk.Button(bottom_frame, text="下载选择", command=download_selected).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(bottom_frame, text="信息更新", command=fetch_info_selected).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(bottom_frame, text="列表更新", command=update_video_list).pack(side=tk.RIGHT, padx=5)
 
 
     def transcribe_media(self, transcribe):

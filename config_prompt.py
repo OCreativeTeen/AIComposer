@@ -1297,6 +1297,29 @@ the merged sentences should be like
 
 
 
+COMBO_ANALYZE_PROMPT = """
+You are a senior psychological counselor and editor.
+The user prompt holds several separate analyses that share one topic. They are related, and they are not the same story.
+
+Write ONE living analysis report in {language} that a series team can film.
+
+Rules:
+- Keep each source recognizable as its own facet. Do not melt them into a vague average.
+- If two sources disagree, say so as two faces of the same pattern. Do not delete either face.
+- Keep concrete moments, relationships, and repeated behaviors. Drop duplicate wording, not duplicate meaning.
+- The report should feel continuous: a reader can see one problem from many rooms of the same house.
+- Use these sections, in {language}: 这个问题长什么样, 几个不同的切面, 反复出现的模式, 人付出的代价, 还能被看见的一点出路.
+- Do not add a diagnosis that none of the sources stated.
+- Do not write scene scripts. This is the analysis, not the film.
+
+Output JSON only:
+{{
+  "title": "a short series title in {language}",
+  "analyzed_content": "the full merged report in {language}"
+}}
+"""
+
+
 SPEAKING_SUMMARY_SYSTEM_PROMPT = """
 You are a professional expert who is good at generating the Summary (in {language}) from a list of speaking content (in json format) given in 'user-prompt'.
 This summary is used as youtube program description, so, at beginning, please give some youtube video tags (like #pychology #心理咨询 etc).
@@ -1973,22 +1996,6 @@ NOTEBOOKLM_OPENING_DIALOGUE_PROMPT = """Generate an opening words (less than 32 
 NOTEBOOKLM_ENDING_DIALOGUE_PROMPT = """Generate an ending words (less than 16 words) to finish the talk for the story (given in user-prompt); [[{location}]]"""
 
 
- 
-# 翻译相关Prompt
-TRANSLATION_SYSTEM_PROMPT = """
-You are a professional translator. 
-Your only task is to translate the text from {source_language} to {target_language}. 
-IMPORTANT INSTRUCTIONS:
-    - Provide ONLY the translated text in {target_language}
-    - Do NOT summarize, analyze, explanations, or comment on the content
-    - Translate sentence by sentence maintaining the original meaning
-    - Do not add any additional information, like 'Here's the English translation:...'
-"""
-
-TRANSLATION_USER_PROMPT = """Translate following text from {source_language} to {target_language}. 
-{text}
-"""
-
 
 
 SRT_REORGANIZATION_SYSTEM_PROMPT = """
@@ -2005,7 +2012,7 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
 
 *** Task Goal
     * Analyze the provided [Psychological Counseling Case-Story Content] in user-prompt, give the analysis_logic and the name for the story (less than 16 words, in original language), then 
-    * Map the story to the most accurate category / sub-type / tags within the "Classification System" :
+    * Map the story to the most accurate category / sub-type within the "Classification System" :
      {topic_choices}
 
 *** Analysis Workflow (Mandatory)
@@ -2020,17 +2027,27 @@ GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
         Do not rely on surface-level keywords like "cycle" or "repetition."
         Distinguish between Intergenerational Cycles (repeating a parent's tragedy) and Relational PTSD/Unfinished Business (repeating a trauma specifically created by this relationship's history).
 
-    * Tag Selection:
-        Problem Tags: Select 1-3 tags from the specific subtype that best capture the story content (). Do not list all available tags.
-
 *** Output JSON Specification
     {{
         "analysis_logic": "Briefly describe the psychological conflict identified (within 100 words)",
         "title": "The name of the story (less than 16 words, in original language)",
         "topic_category": "The primary category from the Classification System",
-        "topic_subtype": "The specific sub-type from the Classification System",
-        "tags": ["1-3 selected tags, provided as a comma-separated string"]
+        "topic_subtype": "The specific sub-type from the Classification System"
     }}
+"""
+
+
+GROUP_ITEM_TAGS_PROMPT = """
+You group psychology items that already share one subtype.
+Each item has an id, a title, and an analysis. Cluster them by what they are actually talking about.
+
+Rules:
+- Prefer separate groups. Put one item in a second group only when it truly sits in both conversations.
+- Every listed id must appear in at least one group.
+- tag is a short name in {language} (about 4–12 Chinese characters) for the shared situation. Not a diagnosis code. Not a generic word like 心理 or 关系.
+- Usually 3–8 groups. Do not make one group per item unless the pieces really share nothing.
+- Output JSON only:
+{{"groups": [{{"tag": "短名称", "ids": ["id1", "id2"]}}]}}
 """
 
 

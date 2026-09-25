@@ -18,6 +18,7 @@ echo.
 
 echo  StoryProducer GUI 审阅（run_client 之后）
 
+echo  内容列表用 GUI_topic（list_by_topic），不含 YouTube 下载/更新。
 echo  逐条打开 STORY，自动载入各场景 clip 审阅窗（等同 vc）。
 
 echo  在窗口内裁剪/确认生成成片，可发 vp 发布。
