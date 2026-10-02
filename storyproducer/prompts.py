@@ -99,6 +99,19 @@ def _story_title(video_detail: dict) -> str:
     return (vd.get("title") or vd.get("video_title") or "").strip()
 
 
+def _prompt_narrator(video_detail: dict) -> str:
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    named = (vd.get("narrator") or "").strip()
+    if named:
+        return named
+    try:
+        import project_manager
+
+        return (getattr(project_manager, "LAST_NARRATOR", None) or "").strip()
+    except Exception:
+        return ""
+
+
 def build_gemini_prompt(
     video_detail: dict,
     *,
@@ -135,11 +148,49 @@ def build_gemini_prompt(
         instruction=(instruction or "").strip(),
         sections=sections,
         visual_style=(visual_style or "").strip(),
+        narrator=_prompt_narrator(vd),
     )
     vs = (visual_style or "").strip()
     if vs and vs.lower() not in body.lower():
         body = body.rstrip() + f"\n\nVisual_Style: {vs}\n"
     return body.strip()
+
+
+def _episode_is_all(episode: str) -> bool:
+    ep = (episode or "").strip().lower()
+    return ep in ("", "all", "全部")
+
+
+def scenes_for_episode(scenes: list | None, episode: str = "") -> list:
+    entries = [item for item in (scenes or []) if isinstance(item, dict)]
+    if _episode_is_all(episode):
+        return entries
+    want = (episode or "").strip()
+    return [item for item in entries if str(item.get("episode") or "").strip() == want]
+
+
+def current_scene_episode() -> str:
+    """SCENE 窗当前集。窗未开或选的是全部时返回空字符串。"""
+    try:
+        import config
+        from cli.bridge import bridge_screen_bound, send_bridge_command
+
+        if not bridge_screen_bound(config.SCREEN_STORY_SCENE, timeout_s=0.4):
+            return ""
+        ok, msg = send_bridge_command(
+            screen=config.SCREEN_STORY_SCENE,
+            op="get",
+            field="episode_choice",
+            timeout_s=2.0,
+        )
+    except Exception:
+        return ""
+    if not ok:
+        return ""
+    label = (msg or "").strip().splitlines()[0].strip() if msg else ""
+    if _episode_is_all(label):
+        return ""
+    return label
 
 
 def build_notebooklm_clipbody(
@@ -152,24 +203,37 @@ def build_notebooklm_clipbody(
     host_narrator: str = "",
     scene_index: int = -1,
     language: str = "",
+    episode: str = "",
 ) -> str:
-    """Same clip body as SCENE ``nbp`` / ``scene_choice``, without Tk."""
+    """Same clip body as SCENE ``nbp`` / ``scene_choice``, without Tk。
+
+    ``episode`` 先过滤场景。单场下标只在 Video 导出时再用。
+    """
     import config_prompt
     import project_manager
 
     scenes = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
     if not isinstance(scenes, list) or not scenes:
         raise ValueError("scene_content 需要有效 JSON 数组")
-    if scene_index >= 0:
-        if scene_index >= len(scenes):
-            raise ValueError(f"场景 {scene_index + 1} 超出范围（共 {len(scenes)}）")
-        scenes = [scenes[scene_index]]
+    picked = scenes_for_episode(scenes, episode)
+    if not picked:
+        raise ValueError(f"第 {episode} 集没有场景")
+    try:
+        base, _var = config_prompt.normalize_nb_export_mode(mode, variant)
+    except ValueError:
+        base = (mode or "").split("/", 1)[0]
+    if scene_index >= 0 and base == "video":
+        if scene_index >= len(picked):
+            raise ValueError(
+                f"场景 {scene_index + 1} 超出范围（当前范围共 {len(picked)}）"
+            )
+        picked = [picked[scene_index]]
     vs = (visual_style or "").strip() or getattr(project_manager, "LAST_VISUAL_STYLE", "") or ""
     return config_prompt.build_notebooklm_gen_instruction_clipbody(
         mode=mode,
         variant=variant,
         video_detail=video_detail if isinstance(video_detail, dict) else {},
-        scene_content=scenes,
+        scene_content=picked,
         visual_style=vs,
         main_character=(main_character or "").strip(),
         host_narrator=(host_narrator or "").strip(),
@@ -185,6 +249,7 @@ def build_grok_video_prompts(
     visual_style: str = "",
     host_narrator: str = "",
     language: str = "",
+    episode: str = "",
 ) -> list[tuple[str, str]]:
     import config_prompt
     import project_manager
@@ -193,7 +258,10 @@ def build_grok_video_prompts(
     base, var, short = config_prompt.grok_scene_video_nb_export(idx)
     tag = f"[{idx}] {short}"
     scenes = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
-    if not isinstance(scenes, list) or len(scenes) < n:
+    scenes = scenes_for_episode(scenes if isinstance(scenes, list) else [], episode)
+    if episode and not _episode_is_all(episode):
+        n = len(scenes)
+    if n < 1 or not scenes or len(scenes) < n:
         raise RuntimeError(
             f"scene_content 需要至少 {n} 场，当前 "
             f"{len(scenes) if isinstance(scenes, list) else 0}。"

@@ -12,6 +12,10 @@
     "flylink": {
       "label": "航迅 FlyLink",
       "list_json_basename": "flylink.json"
+    },
+    "comic": {
+      "label": "连环画",
+      "list_json_basename": "comic.json"
     }
   }
 }

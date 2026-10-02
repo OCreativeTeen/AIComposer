@@ -796,7 +796,7 @@ class MagicWorkflow:
         with Image.open(image_path) as im:
             return int(im.width), int(im.height)
 
-    def _pdf_pages_to_images(self, pdf_path: str) -> list[str]:
+    def _pdf_pages_to_images(self, pdf_path: str, out_dir: str | None = None) -> list[str]:
         """用 PyMuPDF 将 PDF 每页渲成 PNG，返回按页序的绝对路径列表。"""
         import fitz  # PyMuPDF
         import tempfile
@@ -806,7 +806,11 @@ class MagicWorkflow:
             return []
         media_dir = config.get_media_path(self.pid)
         os.makedirs(media_dir, exist_ok=True)
-        out_dir = tempfile.mkdtemp(prefix="slide_pdf_", dir=media_dir)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            dest_dir = out_dir
+        else:
+            dest_dir = tempfile.mkdtemp(prefix="slide_pdf_", dir=media_dir)
         paths: list[str] = []
         try:
             doc = fitz.open(pdf_path)
@@ -818,12 +822,146 @@ class MagicWorkflow:
             for i in range(len(doc)):
                 page = doc.load_page(i)
                 pix = page.get_pixmap(matrix=zoom, alpha=False)
-                out_path = os.path.join(out_dir, f"page_{i:03d}.png")
+                out_path = os.path.join(dest_dir, f"{i + 1}.png")
                 pix.save(out_path)
                 paths.append(os.path.abspath(out_path))
         finally:
             doc.close()
         return paths
+
+    def _episode_number(self, name: str) -> int | None:
+        name = (name or "").strip()
+        if name.isdigit():
+            return int(name)
+        match = re.fullmatch(r"group(\d+)", name, re.I)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def scene_group(self, scene) -> str:
+        """场景所属 episode。没写 episode 的场景算第 1 集。"""
+        if not isinstance(scene, dict):
+            return ""
+        name = str(scene.get("episode") or "").strip()
+        if name:
+            num = self._episode_number(name)
+            return str(num) if num is not None else name
+        legacy = str(scene.get("group") or "").strip()
+        num = self._episode_number(legacy)
+        if num is not None:
+            return str(num)
+        return "1"
+
+    def _used_group_numbers(self) -> set[int]:
+        used: set[int] = set()
+        bare = False
+        for scene in self.scenes or []:
+            if not isinstance(scene, dict):
+                continue
+            episode = str(scene.get("episode") or "").strip()
+            legacy = str(scene.get("group") or "").strip()
+            if not episode and not legacy:
+                bare = True
+                continue
+            num = self._episode_number(episode or legacy)
+            if num is not None:
+                used.add(num)
+        if bare:
+            used.add(1)
+        media_dir = config.get_media_path(self.pid)
+        if os.path.isdir(media_dir):
+            for name in os.listdir(media_dir):
+                if not os.path.isdir(os.path.join(media_dir, name)):
+                    continue
+                num = self._episode_number(name)
+                if num is not None:
+                    used.add(num)
+        return used
+
+    def next_group_name(self) -> str:
+        used = self._used_group_numbers()
+        n = 1
+        while n in used:
+            n += 1
+        return str(n)
+
+    def group_scene_indices(self, group_name: str) -> list[int]:
+        group_name = (group_name or "").strip() or "1"
+        return [
+            i
+            for i, scene in enumerate(self.scenes or [])
+            if isinstance(scene, dict) and self.scene_group(scene) == group_name
+        ]
+
+    def next_scene_id(self) -> int:
+        highest = 0
+        for scene in self.scenes or []:
+            if not isinstance(scene, dict):
+                continue
+            try:
+                highest = max(highest, int(scene.get("id") or 0))
+            except (TypeError, ValueError):
+                continue
+        return highest + 1
+
+    def export_pdf_pages_to_group(self, pdf_path: str, group_name: str) -> tuple[str, list[str]]:
+        """把 PDF 每一页渲成 1.png、2.png…，放进项目 media/<episode>/。"""
+        group_name = (group_name or "").strip() or "1"
+        folder = os.path.join(config.get_media_path(self.pid), group_name)
+        os.makedirs(folder, exist_ok=True)
+        for name in os.listdir(folder):
+            if name.lower().endswith(".png"):
+                try:
+                    os.remove(os.path.join(folder, name))
+                except OSError:
+                    pass
+        pages = self._pdf_pages_to_images(pdf_path, out_dir=folder)
+        return folder, pages
+
+    def fit_group_to_page_count(self, group_name: str, page_count: int, mode: str) -> tuple[int, int]:
+        """按选定页数调整这个 group 的场景数。extend 复制最后一场；trim 删掉多出来的场。"""
+        added = 0
+        removed = 0
+        page_count = max(0, int(page_count))
+        if mode in ("extend", "match"):
+            while len(self.group_scene_indices(group_name)) < page_count:
+                indices = self.group_scene_indices(group_name)
+                if not indices:
+                    break
+                last_i = indices[-1]
+                dup = copy.deepcopy(self.scenes[last_i])
+                dup["id"] = self.next_scene_id()
+                dup.pop("episode_page", None)
+                dup.pop("group_page", None)
+                self.scenes.insert(last_i + 1, dup)
+                added += 1
+        if mode in ("trim", "match") and page_count >= 1:
+            while len(self.group_scene_indices(group_name)) > page_count:
+                indices = self.group_scene_indices(group_name)
+                del self.scenes[indices[-1]]
+                removed += 1
+        return added, removed
+
+    def split_group_at(self, index: int) -> str:
+        """从当前场景起，连续属于同一 episode 的场景划到新的一集。之前的场景保持原集。"""
+        if not self.scenes or index < 0 or index >= len(self.scenes):
+            return ""
+        old_name = self.scene_group(self.scenes[index])
+        new_name = self.next_group_name()
+        i = index
+        while i < len(self.scenes) and self.scene_group(self.scenes[i]) == old_name:
+            self.scenes[i]["episode"] = new_name
+            self.scenes[i].pop("group", None)
+            self.scenes[i].pop("episode_page", None)
+            self.scenes[i].pop("episode_pdf", None)
+            self.scenes[i].pop("group_page", None)
+            self.scenes[i].pop("group_pdf", None)
+            i += 1
+        for scene in self.scenes:
+            if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
+                scene["episode"] = "1"
+                scene.pop("group", None)
+        return new_name
 
     def _apply_project_video_size(self, width: int, height: int) -> None:
         """更新 PROJECT_CONFIG 与 ffmpeg 输出尺寸；尺寸变化时重绑模板底稿。"""
@@ -868,7 +1006,13 @@ class MagicWorkflow:
             if not slide_pdf or not os.path.isfile(slide_pdf):
                 print("⚠️ 多场景但 PROJECT_CONFIG 无可用 slide PDF，跳过封面导入")
                 return
-            page_images = self._pdf_pages_to_images(slide_pdf)
+            group_name = "1"
+            for scene in self.scenes:
+                if isinstance(scene, dict) and str(scene.get("episode") or "").strip():
+                    group_name = self.scene_group(scene)
+                    break
+            pdf_name = os.path.basename(slide_pdf)
+            _folder, page_images = self.export_pdf_pages_to_group(slide_pdf, group_name)
             if not page_images:
                 print(f"⚠️ PDF 未能渲出页面图: {slide_pdf}")
                 return
@@ -879,14 +1023,30 @@ class MagicWorkflow:
                 return
             nw, nh = self._project_size_from_image_dims(iw, ih)
             self._apply_project_video_size(nw, nh)
-            for i, scene in enumerate(self.scenes):
+            for scene in self.scenes:
+                if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
+                    scene["episode"] = group_name
+                    scene.pop("group", None)
+            self.fit_group_to_page_count(group_name, len(page_images), "extend")
+            written = 0
+            for i, scene_i in enumerate(self.group_scene_indices(group_name)):
                 if i >= len(page_images):
                     break
+                scene = self.scenes[scene_i]
                 try:
-                    refresh_scene_media(scene, "clip_image", ".png", page_images[i], make_replacement_copy=True)
+                    file_path = self.ffmpeg_processor.resize_image_smart(page_images[i])
+                    refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
                 except Exception as e:
-                    print(f"⚠️ 场景 {i} 设置 clip_image 失败: {e}")
-            print(f"✅ 已从 slide PDF 为 {min(n_scenes, len(page_images))} 个场景设置 clip_image")
+                    print(f"⚠️ 场景 {scene_i} 设置 clip_image 失败: {e}")
+                    continue
+                scene["episode"] = group_name
+                scene["episode_page"] = i + 1
+                scene["episode_pdf"] = pdf_name
+                scene.pop("group", None)
+                scene.pop("group_page", None)
+                scene.pop("group_pdf", None)
+                written += 1
+            print(f"✅ 已从 slide PDF 为第 {group_name} 集的 {written} 个场景设置 clip_image")
             return
 
         # 单场景：封面图 → clip_image；封面成片 → clip
@@ -1109,18 +1269,16 @@ class MagicWorkflow:
 
 
     def scenes_in_story(self, scene):
-        this_id = scene.get("id", 0)
-        if len(self.scenes) == 0 or scene is None or this_id == 0:
+        """同一 episode 的场景，按列表顺序。集数写在场景的 episode 上。"""
+        if not self.scenes or not isinstance(scene, dict):
             return []
-
-        root_id = int(this_id/10000)
-        scenes = []
-        for s in self.scenes:
-            if int(s["id"]/10000) == root_id:
-                scenes.append(s)
-
-        #scenes.sort(key=lambda x: x["id"])
-        return scenes
+        name = self.scene_group(scene)
+        if not name:
+            return []
+        return [
+            s for s in self.scenes
+            if isinstance(s, dict) and self.scene_group(s) == name
+        ]
 
 
     def next_scene_of_story(self, scene):
@@ -1165,9 +1323,9 @@ class MagicWorkflow:
     def get_previous_story_last_scene(self, index):
         if not self.scenes or index <= 0 or index >= len(self.scenes):
             return None
-        current_id = self.scenes[index]["id"] % 10000
+        current_group = self.scene_group(self.scenes[index])
         for i in range(index - 1, -1, -1):
-            if self.scenes[i]["id"] % 10000 != current_id:
+            if self.scene_group(self.scenes[i]) != current_group:
                 return self.scenes[i]
         return None
 
@@ -1553,6 +1711,10 @@ class MagicWorkflow:
 
     def add_story_scene(self, story_index, story, story_level, is_append):
         self.background_image, self.background_video, background_music = config.make_backgroud_medias(self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor)
+        if not self.background_image or not self.background_video:
+            raise FileNotFoundError(
+                f"频道 {self.channel} 没有画面模板。请在 program/{self.channel}/clip 放入静帧和 MP4。"
+            )
 
         if story_level:
             next_root_id = (int(self.max_id(story)/10000) + 1)*10000
@@ -1564,6 +1726,16 @@ class MagicWorkflow:
         story = story.copy()
         story["id"] = next_root_id
         story["environment"] = ""
+        if story_level:
+            story["episode"] = self.next_group_name()
+            story.pop("group", None)
+            story.pop("episode_page", None)
+            story.pop("episode_pdf", None)
+            story.pop("group_page", None)
+            story.pop("group_pdf", None)
+        elif not str(story.get("episode") or "").strip():
+            story["episode"] = "1"
+            story.pop("group", None)
 
         oldv, zero = refresh_scene_media(story, "zero", ".mp4", self.background_video, True)
         oldi, zero_image = refresh_scene_media(story, "zero_image", ".webp", self.background_image, True)

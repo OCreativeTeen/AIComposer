@@ -6194,6 +6194,27 @@ def _grok_scene_video_prompts(n: int, *, video_nb_index: int | None = None) -> l
     return out
 
 
+def _scene_window_filtered_count() -> int | None:
+    """SCENE 窗当前「场」数量（已按所选集过滤）。窗未打开时返回 None。"""
+    import config
+    from cli.bridge import bridge_screen_bound, send_bridge_command
+
+    if not bridge_screen_bound(config.SCREEN_STORY_SCENE, timeout_s=0.4):
+        return None
+    ok, msg = send_bridge_command(
+        screen=config.SCREEN_STORY_SCENE,
+        op="choices",
+        field="scene_choice",
+        timeout_s=4.0,
+    )
+    if not ok:
+        return None
+    nums = [line.strip() for line in (msg or "").splitlines() if line.strip().isdigit()]
+    if not nums:
+        return None
+    return len(nums)
+
+
 def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
     """Open N ``grok.com/imagine`` tabs and prepare each for scene image generation."""
     import config_prompt
@@ -6203,6 +6224,9 @@ def handle_grok_imagine_tabs(*, video_nb_index: int | None = None) -> str:
     )
 
     n = story_scene_count()
+    filtered = _scene_window_filtered_count()
+    if filtered is not None and filtered >= 1:
+        n = filtered
     if n < 1:
         raise RuntimeError(
             "还没有 scene_content。请先 scnlm → scnvs → scnge → scnsave 把分镜 JSON 写回频道列表。"

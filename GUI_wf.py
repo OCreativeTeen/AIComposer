@@ -2536,6 +2536,18 @@ class WorkflowGUI:
             width=7,
             command=self.select_talking_avatar_to_clipboard,
         ).pack(side=tk.LEFT)
+        ttk.Button(
+            story_tools_frame,
+            text="拆集",
+            width=7,
+            command=self.split_current_group,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            story_tools_frame,
+            text="页图",
+            width=7,
+            command=self.review_episode_pdf_pages,
+        ).pack(side=tk.LEFT)
 
         # 第二行：延长 / 增主轨 / 主动画 / 次动画
         track_tools_frame = ttk.Frame(self.video_edit_frame)
@@ -7295,6 +7307,10 @@ class WorkflowGUI:
             self._on_media_drop_single_clip_image(dropped_file)
             return
 
+        if dropped_file.lower().endswith(".pdf"):
+            self._on_media_drop_pdf(dropped_file)
+            return
+
         can_equal_split = (
             (is_audio_file(dropped_file) and dropped_file.lower().endswith(".wav"))
             or (is_audio_file(dropped_file) and dropped_file.lower().endswith(".mp3"))
@@ -7354,6 +7370,318 @@ class WorkflowGUI:
             return
         self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
         self.refresh_gui_scenes()
+
+    def split_current_group(self):
+        """从当前场景起，把连续的同一集划成新的一集。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("拆集", "请先选中一个场景。", parent=self.root)
+            return
+        new_name = self.workflow.split_group_at(self.current_scene_index)
+        if not new_name:
+            return
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, "拆集", f"从当前场景起为第 {new_name} 集")
+
+    def _on_media_drop_pdf(self, pdf_path: str) -> None:
+        """视频画布拖入 PDF：按当前 episode 拆成 1.png、2.png…，再打开翻页预览。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
+            return
+        group_name = self.workflow.scene_group(scene)
+        if not str(scene.get("episode") or "").strip():
+            scene["episode"] = group_name
+            scene.pop("group", None)
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            folder, pages = self.workflow.export_pdf_pages_to_group(pdf_path, group_name)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("PDF", f"拆分失败：{e}", parent=self.root)
+            return
+        finally:
+            try:
+                self.root.config(cursor="")
+            except tk.TclError:
+                pass
+        if not pages:
+            messagebox.showwarning("PDF", "这份 PDF 没有拆出页面。", parent=self.root)
+            return
+        print(f"✅ PDF 已拆成 {len(pages)} 页：{folder}")
+        self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
+
+    def _episode_page_pngs(self, group_name: str) -> list[str]:
+        """media/<episode>/ 里按页码排好的 1.png、2.png…。"""
+        folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        if not os.path.isdir(folder):
+            return []
+        numbered: list[tuple[int, str]] = []
+        for name in os.listdir(folder):
+            stem, ext = os.path.splitext(name)
+            if ext.lower() != ".png" or not stem.isdigit():
+                continue
+            numbered.append((int(stem), os.path.join(folder, name)))
+        numbered.sort()
+        return [path for _, path in numbered]
+
+    def _resolve_scene_episode_pdf(self, scene: dict) -> str:
+        """当前场景 episode_pdf 指向的文件。找不到就返回空。"""
+        name = str(scene.get("episode_pdf") or "").strip()
+        if not name:
+            return ""
+        if os.path.isfile(name):
+            return os.path.abspath(name)
+        base = os.path.basename(name)
+        group_name = self.workflow.scene_group(scene)
+        media = config.get_media_path(self.workflow.pid)
+        gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+        candidates = [
+            os.path.join(gen_dir, base) if gen_dir else "",
+            os.path.join(media, group_name, base),
+            os.path.join(media, base),
+        ]
+        pc = project_manager.PROJECT_CONFIG
+        slide = (pc.get("slide") or "").strip() if isinstance(pc, dict) else ""
+        if slide and os.path.basename(slide) == base:
+            candidates.append(slide)
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return os.path.abspath(path)
+        return ""
+
+    def review_episode_pdf_pages(self):
+        """当前场景有 episode PDF 时，审阅这一集的页面图，并可重新拆 PDF 再写回场景。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        pdf_name = str(scene.get("episode_pdf") or "").strip()
+        if not pdf_name:
+            return
+        pdf_path = self._resolve_scene_episode_pdf(scene)
+        if not pdf_path:
+            messagebox.showwarning(
+                "页图",
+                f"当前场景记了 {os.path.basename(pdf_name)}，但找不到这个 PDF 文件。",
+                parent=self.root,
+            )
+            return
+        group_name = self.workflow.scene_group(scene)
+        pages = self._episode_page_pngs(group_name)
+        folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        if pages:
+            picked = askchoice(
+                f"第 {group_name} 集已有 {len(pages)} 张页面图",
+                [
+                    ("keep", "直接审阅现有页面图"),
+                    ("extract", "重新拆开这份 PDF，再审阅"),
+                ],
+                self.root,
+            )
+            if not picked:
+                return
+            if picked[1] == "keep":
+                self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
+                return
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            folder, pages = self.workflow.export_pdf_pages_to_group(pdf_path, group_name)
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("页图", f"拆分失败：{e}", parent=self.root)
+            return
+        finally:
+            try:
+                self.root.config(cursor="")
+            except tk.TclError:
+                pass
+        if not pages:
+            messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
+            return
+        self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
+
+    def _assign_scene_clip_image_from_file(self, scene: dict, image_path: str) -> None:
+        fp = self.workflow.ffmpeg_processor
+        file_path = fp.resize_image_smart(image_path)
+        refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
+
+    def _tag_scene_pdf_page(self, scene: dict, group_name: str, page_no: int, pdf_name: str) -> None:
+        scene["episode"] = group_name
+        scene["episode_page"] = int(page_no)
+        scene["episode_pdf"] = pdf_name
+        scene.pop("group", None)
+        scene.pop("group_page", None)
+        scene.pop("group_pdf", None)
+
+    def _open_pdf_page_review(
+        self, folder: str, pages: list[str], group_name: str, pdf_name: str
+    ) -> None:
+        """翻页查看拆出的 PNG。可选页段，再按当前 group 写入 clip_image。"""
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"PDF 页面 · 第 {group_name} 集")
+        dlg.geometry("980x800")
+        dlg.minsize(720, 560)
+        dlg.transient(self.root)
+        idx = [0]
+        photo_holder: list = [None]
+        showing = [False]
+        last_page = len(pages)
+        start_var = tk.IntVar(value=1)
+        end_var = tk.IntVar(value=last_page)
+
+        canvas = tk.Canvas(dlg, bg="#222", highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        status = ttk.Label(dlg, text="", anchor="w")
+        status.pack(fill=tk.X, padx=8, pady=(6, 2))
+        path_lbl = ttk.Label(dlg, text=folder, anchor="w")
+        path_lbl.pack(fill=tk.X, padx=8)
+
+        def _scene_label() -> str:
+            n = len(self.workflow.group_scene_indices(group_name))
+            return f"第 {group_name} 集 · {pdf_name} · 本集 {n} 个场景"
+
+        def _show_page(_event=None):
+            if showing[0] or not dlg.winfo_exists():
+                return
+            showing[0] = True
+            try:
+                _show_page_body()
+            finally:
+                showing[0] = False
+
+        def _show_page_body():
+            i = idx[0]
+            path = pages[i]
+            try:
+                img = Image.open(path).convert("RGB")
+            except Exception as e:  # noqa: BLE001
+                status.config(text=f"无法打开 {os.path.basename(path)}：{e}")
+                return
+            cw = canvas.winfo_width()
+            ch = canvas.winfo_height()
+            if cw < 80 or ch < 80:
+                cw, ch = 900, 560
+            iw, ih = img.size
+            scale = min(cw / iw, ch / ih)
+            nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
+            img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            photo_holder[0] = photo
+            canvas.delete("all")
+            canvas.create_image(cw // 2, ch // 2, image=photo)
+            status.config(text=f"第 {i + 1} / {len(pages)} 页   {os.path.basename(path)}    {_scene_label()}")
+
+        def _step(delta: int):
+            idx[0] = (idx[0] + delta) % len(pages)
+            _show_page()
+
+        def _selected_range() -> tuple[list[str], list[int]] | None:
+            try:
+                start = int(start_var.get())
+                end = int(end_var.get())
+            except (TypeError, ValueError, tk.TclError):
+                messagebox.showwarning("PDF", "页码请填数字。", parent=dlg)
+                return None
+            if start > end:
+                start, end = end, start
+            start = max(1, min(start, last_page))
+            end = max(1, min(end, last_page))
+            start_var.set(start)
+            end_var.set(end)
+            return pages[start - 1 : end], list(range(start, end + 1))
+
+        def _assign_current():
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not scene:
+                messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
+                return
+            page_no = idx[0] + 1
+            try:
+                self._assign_scene_clip_image_from_file(scene, pages[idx[0]])
+                self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                self.display_image_on_canvas_for_track("clip_image")
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
+                return
+            show_auto_close_popup(
+                dlg, "PDF", f"第 {page_no} 页已写入当前场景（第 {group_name} 集）"
+            )
+            _show_page()
+
+        def _assign_group():
+            picked = askchoice(
+                f"写入第 {group_name} 集",
+                [
+                    ("keep", "场景数不动"),
+                    ("match", "场景数随页数变动：不够补齐，多了删掉"),
+                ],
+                dlg,
+            )
+            if not picked:
+                return
+            mode = picked[1]
+            selected = _selected_range()
+            if not selected:
+                return
+            sel_pages, page_numbers = selected
+            try:
+                added, removed = self.workflow.fit_group_to_page_count(
+                    group_name, len(sel_pages), mode
+                )
+                indices = self.workflow.group_scene_indices(group_name)
+                written = 0
+                for k, scene_i in enumerate(indices):
+                    if k >= len(sel_pages):
+                        break
+                    scene = self.workflow.scenes[scene_i]
+                    self._assign_scene_clip_image_from_file(scene, sel_pages[k])
+                    self._tag_scene_pdf_page(scene, group_name, page_numbers[k], pdf_name)
+                    written += 1
+                if self.current_scene_index >= len(self.workflow.scenes):
+                    self.current_scene_index = max(0, len(self.workflow.scenes) - 1)
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                self.display_image_on_canvas_for_track("clip_image")
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
+                return
+            msg = f"第 {group_name} 集：第 {page_numbers[0]}–{page_numbers[-1]} 页写入了 {written} 个场景"
+            if added:
+                msg += f"，补了 {added} 场"
+            if removed:
+                msg += f"，删了 {removed} 场"
+            left = len(sel_pages) - written
+            if left > 0:
+                msg += f"，还有 {left} 页没有写入"
+            show_auto_close_popup(dlg, "PDF", msg)
+            _show_page()
+
+        range_bar = ttk.Frame(dlg)
+        range_bar.pack(fill=tk.X, padx=8, pady=(8, 0))
+        ttk.Label(range_bar, text="从第").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            range_bar, from_=1, to=last_page, textvariable=start_var, width=5
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Label(range_bar, text="页到第").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            range_bar, from_=1, to=last_page, textvariable=end_var, width=5
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Label(range_bar, text=f"页（共 {last_page} 页）").pack(side=tk.LEFT)
+
+        bar = ttk.Frame(dlg)
+        bar.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Button(bar, text="上一页", command=lambda: _step(-1)).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(bar, text="下一页", command=lambda: _step(1)).pack(side=tk.LEFT, padx=(0, 16))
+        ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(bar, text="写入当前集", command=_assign_group).pack(side=tk.LEFT)
+
+        dlg.bind("<Left>", lambda e: _step(-1))
+        dlg.bind("<Right>", lambda e: _step(1))
+        canvas.bind("<Configure>", _show_page)
+        dlg.after(50, _show_page)
 
     def _on_media_drop_single_clip_image(self, image_path: str) -> None:
         """视频画布拖入单张图：仅更新当前场景 clip_image。"""

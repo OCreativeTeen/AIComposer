@@ -381,13 +381,17 @@ OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
 [
         {{
+            "episode": "1",
             "caption": "Scene title. In {language}.",
-            "voiceover": "Optional heart message or host bridge. In {language}.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
-            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "Story/scene description, including cinematic setting. No on-image text. In {language}.",
+            "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
+
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
 """
 
 
@@ -479,11 +483,12 @@ RULES:
 
 INPUT (the original case+analysis content):
     ** Each scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) voiceover (host/narrator bridge — emotional depth, sonic atmosphere cues)
-        3) story or visual (cinematic scene + musical atmosphere — rhythm, silence, environment)
-        4) speaking (character dialogue; ~10 seconds; early scenes weave background)
-        5) actor (gender/age/race | mood | actions — mood/actions may note music cue)
+        1) episode — "1"
+        2) caption (scene title; 1st scene caption = whole-story title)
+        3) voiceover (second person, or the host when the host is in this scene)
+        4) visual (cinematic scene + musical atmosphere. No on-image text)
+        5) speaking (first person said aloud, or empty on a host-only scene)
+        6) actor — 没主持人, or 主持人（{narrator}，出镜/不出镜）
 
 
 --------------------------------------------------
@@ -491,13 +496,19 @@ OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
 [
         {{
+            "episode": "1",
             "caption": "Scene title capturing the emotional beat. In {language}.",
-            "voiceover": "Host narration bridging scenes; may reference sonic atmosphere. In {language}.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
-            "speaking": "Character dialogue (~10 seconds). In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). No on-image text. In {language}.",
+            "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
+
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
 
 """
 
@@ -512,23 +523,23 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 *** Output format: 
     ** Strictly output ``scene_content`` as a JSON array (all text in {language}):
 
-    Each scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) voiceover (heart message / host narration / analysis — reflective tone)
-        3) visual or story(story/scene description, including cinematic setting (time, weather, architecture, lighting))
-        4) speaking (rephrased 1st-person dialogue from input ``speaking``; ~9 seconds)
-        5) actor (gender/age/race | mood | actions)
+    Each scene includes episode, caption, voiceover, visual, speaking, actor.
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
 --------------------------------------------------
 [
         {{
+            "episode": "1",
             "caption": "Scene title. In {language}.",
-            "voiceover": "Optional heart message or host bridge. In {language}.",
-            "visual": "Visual Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
-            "speaking": "Rephrased first-person dialogue — fluent, natural, spoken. In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "Visual story of this beat. No on-image text. In {language}.",
+            "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
 """
@@ -794,13 +805,19 @@ You are a professional storyteller and creative director. Your task is to create
 
 [
         {{
+            "episode": "1",
             "caption": "title of the story. In {language}.",
-            "speaking": "key points of the story. In {language}.",
-            "visual": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
-            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "the picture of this beat: place, people, what they do. No on-image text. In {language}.",
+            "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
+
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
 
 
 --------------------------------------------------
@@ -913,13 +930,19 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
 
 [
         {{
+            "episode": "1",
             "caption": "title of the story. In {language}.",
-            "speaking": "key points of the story. In {language}.",
-            "story": "the very detailed story to express the lyrics atmosphere / feelings / conflicts / events / etc. In {language}.",
-            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "the picture of this beat, including the A-world or B-world contrast. No on-image text. In {language}.",
+            "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
+
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
 
 --------------------------------------------------
 INPUT
@@ -992,22 +1015,32 @@ You are a psychological counselor and master of high-empathy storytelling.
 			* NO clinical or academic language. NO therapy speeches, counseling notes.
 			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
         * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
+        * If two people are in the life, most scenes are both of them. ``speaking`` is one person saying it aloud. ``voiceover`` is the other answering aloud, not a private thought. Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
 
 ## STEP 3 - (Json structure)
     * (1) **Caption**: poetic, evocative title of the story & scene. 
     * (2) **Voiceover**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
-    * (3) **Visual**: the story visual scene (all scenes (if more than 1) should be connected to express ONE story).
-    * (4) **Speaking**: one powerful line that the poignant 1st-person speaking or think. Use daily life language.
-    * (5) **Actor**: gender/age/race | mood | actions
+        * Host look chosen for this run: {narrator}
+        * Two or more story people: do NOT put the host in this scene. This field is the SECOND person speaking.
+        * Exactly one story person, and you choose to include the host: this field is the host's line.
+        * The scene is only the host: ``speaking`` is the host, and this field is empty.
+    * (3) **Visual**: the story visual scene (all scenes (if more than 1) should be connected to express ONE story). No words painted on the image.
+        * Include the place, and what the people do to each other: a hand, a step back, walking side by side.
+        * When they move or answer, the picture may change — a cut, another angle, a closer shot. Write that change here so the video can cut.
+    * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
+    * (5) **Actor**: story people first, separated by " ; ". Each: gender/age/race | mood | actions
+        * Two or more story people: never add the host. End with ``没主持人``.
+        * Exactly one story person, and the host is in this scene: add the host LAST, ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only.
+        * The scene is only the host: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. Do not also write 有主持人 or 没主持人.
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
         {{
             "caption": "Title in {language}.",
-            "voiceover": "2–3 short rhythmic {language} sentences — to express the psychological insight (As poignant 1st-person speaking, not explaination, not story-telling).",
-            "visual": "the story scene (visual elements & the development of those). about ###LENGTH### {language} char",
-            "speaking": "A poignant 1st-person speaking (express the story as 1st person, not explaination, not story-telling) in {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. Empty when the scene is only the host. In {language}.",
+            "visual": "the story scene, their interaction, and any cut or angle change. about ###LENGTH### {language} char. No on-image text.",
+            "speaking": "The first actor's line, or the host's line when the scene is only the host. In {language}.",
+            "actor": "gender/age/race | mood | actions ; second person gender/age/race | mood | actions ; 没主持人"
         }}
     ]
 
@@ -1030,9 +1063,8 @@ COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–30
 COUNSELING_STORY_5STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "5")
 COUNSELING_STORY_6STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "6")
 
-COUNSELING_STORY_LONG = COUNSELING_STORY_CORE.replace("###LENGTH###",  "500–1000").replace("###STEP###", "1")
 COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
-COUNSELING_STORY_MINI = COUNSELING_STORY_CORE.replace("###LENGTH###",  "150–300").replace("###STEP###", "1")
+
 
 
 # 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
@@ -1133,225 +1165,66 @@ COUNSELING_UNIFIED_NARRATIVE_SPINE = """
 """
 
 
-COUNSELING_CONTENT_SCENES = """
-*** ROLE: Senior Psychological Counselor & Reflective Storyteller
-    ** Trauma-Informed Care, Systemic Family Therapy; cinematic storyteller for counseling/self-healing TV.
-
-*** YOUR TASK
-    ** Input: ``analyzed_content`` only (Reference Content below) — structured case analysis or reorganized raw material.
-    ** Output: ONE continuous film/video as a JSON array of scenes.
-    ** Same protagonist, same problem, same value thread from first frame to last.
-    ** No fixed scene count or per-scene length cap — use as many scenes as the case needs.
-    ** Slideshow rule: each ``visual`` must produce a CLEAN image — story through pictures & people, almost no words on screen.
-
-*** SCENE RULES:
-    ** ONE CASE, ONE THREAD (mandatory)
-        * Every scene advances ONE same case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
-        * SHOW, DON'T TELL: The audience must not feel they are watching a lesson, they must feel they are watching a human being struggle; 
-        * Psychological insight emerges naturally through the story — not DSM labels or theory names in visual/speaking.
-
-    ** Typical Sample - THERAPEUTIC STORY SPINE (across all scenes)
-        * progress:
-            * Surface — concrete daily moment; struggle visible in behavior & environment
-            * Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
-            * Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
-            * Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
-        * sample scenes as reference:
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 1 — THE INVISIBLE PROBLEM
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Make the audience emotionally identify with the protagonist before any explanation appears.
-            ** Requirements:
-                * Begin with a concrete life moment.
-                * Show a problem through behavior, not psychology. Do NOT explain the cause yet. The audience should only see symptoms.
-                * Create curiosity: "Why does this person keep doing this?" | Introduce the protagonist's protective strategy.
-                * Examples: people pleasing / perfectionism / emotional avoidance / rescuing others / overworking / proving self-worth / controlling relationships
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 2 — THE REPEATING PAIN
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Reveal the hidden cost of the survival strategy.
-            ** Requirements:
-                * Same pattern repeats in different situations: Stakes become higher / Relationships become strained / Internal suffering becomes visible
-                * Every new scene must answer: "What price is the protagonist paying?"
-                * Show: disappointment / loneliness / resentment / shame / exhaustion / emotional distance / disappointment
-                * The audience should begin to suspect: "This problem is deeper than today's event."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 3 — THE BREAKING POINT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Create an emotionally unforgettable collision. This is the emotional peak of the story.
-            ** Requirements:
-                * A triggering event forces the protagonist's strategy to fail.
-                * The mask can no longer work.
-                * Examples: relationship crisis / betrayal / public humiliation / panic attack / child mirrors parent's wound / important loss / sudden confrontation
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 4 — THE REVEAL
-            ━━━━━━━━━━━━━━━━━━━━
-
-            ** Goal: Expose the root wound.
-            ** Requirements:
-                * The audience finally understands: WHY the protagonist became this way.
-                * Examples: memory / conversation / mirror moment / therapy session / journal / unexpected realization
-                * This moment should create: "Now everything makes sense."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 5 — THE TURNING POINT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Create hope without becoming unrealistic.
-            ** Requirements:
-                * The protagonist experiments with a new response.
-                * Healing begins through action. Not perfection. Not instant healing.
-                * Only one small courageous choice.
-                * Examples: saying no / expressing a feeling / asking for help / setting a boundary / admitting vulnerability
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 6 — THE NEW ENDING
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Show transformation.
-            ** Requirements:
-                * Create a scene that mirrors Act 1.
-                * Present a similar situation. But now the protagonist responds differently. This proves growth through behavior.
-                * The audience can visibly feel: "Something has changed."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            FINAL REFLECTIVE BEAT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: End with a gentle human truth. 
-            ** Requirements:
-                * The ending should feel like: emotion first, insight second. Never preach. Never lecture. Never diagnose.
-                * The audience should leave with: emotion first, insight second.
-                * Examples: "Maybe she was never trying to be perfect. Maybe she was trying to be loved."
-
-    ** VISUAL
-        * CLEAN STORY IMAGE (slideshow): frozen film-still for a painte.
-            * Slideshow image content : story via scene + character only 
-            * Only show very critical & short info (if absolutely necessary to express the content, less than 10 characters) as huge font in background)
-        * ``caption`` / ``voiceover`` / ``speaking`` = audio/metadata only — never in ``visual`` as words-to-paint.
-
-
-*** SCENE FIELDS (all text in {language})
-    1) caption — beat title (metadata only; NOT text to paint on image); scene 1 = whole-story title
-    2) voiceover — Host: bridge (scene 2+: mandatory) + insight tied ONLY to this beat's visual — audio only, never for image text
-    3) visual — film-still shot list ONLY (see VISUAL rules): who/where/light/action/mood — zero slide copy, zero dialogue written into the shot
-    4) speaking — protagonist dialogue ~9s — audio only; do NOT put this line in visual
-    5) actor — gender/age/race | mood | actions (consistent cast)
-
-INPUT (user prompt bottom):
-    Topic · Instruction · analyzed_content (Reference Content)
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON array)
---------------------------------------------------
-[
-    {{
-        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-        "voiceover": "Host bridge + insight for this beat only. In {language}.",
-        "visual": "Film-still: scene+character only, 2–4 short sensory sentences, NO on-image text/dialogue/analysis. In {language}.",
-        "speaking": "Character dialogue ~9s, reacts to prior beat. In {language}.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-]
-
-
---------------------------------------------------
-INPUT 
-----------------------------------------------------
-** Topic : 
-    {topic} 
-
-** Instruction: 
-    {instruction}
-
-** Reference Content (analyzed_content):
-    {content}
-
-"""
-
-
 COUNSELING_SERIES_COUNSELOR_FRAME = """
-*** ROLE: Senior Psychological Counselor & Series Storyteller
-    ** You host a single long program built from one rich analysis (possibly woven from many related cases).
-    ** The counselor appears only at the opening and the closing. The middle is one continuous human story.
+*** ROLE: Senior Psychological Counselor, one finished program about ONE psychological problem
+    ** Read the analysis first and choose ONE path. Do not mix the paths.
+    ** PATH A — the analysis is one life, one relationship, one timeline.
+    ** PATH B — the analysis holds two or more distinct situations (different people, or clearly separate cases). Do not collapse those into one couple.
+    ** In both paths the audience must see the life in full before any remedy. The remedy is the most important part of the program and must be detailed. It is never one slogan scene.
 
-*** STRUCTURE (one program, no episode labels)
-    ** Scene 1 — Counselor opens
-        * Host speaks to camera. Name the lived question in everyday language. Do not diagnose. Do not preview the ending.
-        * actor: counselor (calm, direct gaze). visual: quiet room, no on-screen text.
-        * speaking: the counselor's opening, about 20–40 seconds.
-        * voiceover: empty or one short breath, not a second lecture.
-    ** Middle scenes — one story, many faces of the SAME knot
-        * 8–16 scenes. One protagonist (or one relationship). Different daily situations show different facets from the analysis.
-        * Facets must feel like the same life, not a montage of unrelated people.
-        * Show, don't teach. No DSM labels. No "the lesson is".
-        * Each scene: caption, visual film-still, speaking (protagonist), voiceover (inner sigh, 2–3 short lines), actor.
-    ** Last scene — Counselor closes
-        * Host returns. Speak only about what the audience just watched. One gentle truth. No worksheet, no slogan.
-        * Hook nothing further; this program ends here.
+*** SHARED RULES
+    ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
+    ** Host look for this run: {narrator}. Every counselor scene in the program is THIS host, the same person. Do not invent another age, gender, or face. ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``speaking`` is the host. ``voiceover`` is empty.
+    ** A life with two people is mostly dialogue, not one person thinking. In those scenes both are in ``actor``, ending ``没主持人``. ``speaking`` is what the first says aloud. ``voiceover`` is what the second says aloud back, not a private thought. Across the story scenes, swap who is first. At most one story scene may be a person alone. Do not make every scene a single actor.
+    ** Exactly one story person, and the host is in that scene: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only. ``speaking`` is that person. ``voiceover`` is the host.
+    ** No DSM labels. No "the lesson is". Do not say 根, 根儿, or 病根 in caption, speaking, or voiceover. Name the problem in ordinary professional language.
+    ** Do not solve a life inside the story scenes. Do not skip from the first quarrel to the ending in one scene.
+    ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it.
+    ** When the remedy returns to those people, echo that opening moment: a similar situation, a different response, so the change is visible. One small step, not a cured life.
+
+*** PATH A — one complete story
+    ** 1. Counselor, 1 scene, to camera. Name the problem: what it is, where it shows up, why it matters. Do not open in someone's kitchen. Do not preview the ending.
+    ** 2. Story, 5 to 8 consecutive scenes. SAME people, ONE timeline.
+        * How this life was, then how the problem is lived in detail (what is said, avoided, repeated, what it costs), until they are stuck.
+        * If two people share this life, most of these scenes are the two of them talking. ``voiceover`` is the second person speaking, not a thought.
+    ** 3. Remedy, after the story is finished. Several scenes, not one.
+        * First 2 to 3 counselor scenes: take the problem apart in order (how it starts, what keeps it going, what it costs), then the response, step by step.
+        * Then 2 to 3 scenes with the SAME people, later: one concrete step per scene, shown in the room, not announced as a list.
+    ** No episode titles. No second case.
+
+*** PATH B — several cases of the same problem
+    ** Each case is one episode that can be played alone: it has a counselor opening and a counselor closing. The remedy is NOT inside the episode. It comes only after every case.
+    ** Between two episodes the counselor speaks TWO scenes in a row. Together they are one continuous turn of speech, so a viewer who watches straight through hears one passage. A cut between those two scenes is allowed: the first scene is a possible end of the episode, the second is a possible start of the next. Do not put a title card, a "previously", or a hard stop in the words. The second scene should sound like the next sentence, not a new program.
+    ** For EACH situation, in the analysis's order. Different people. Do not reuse the same spouse, home, and argument.
+        * Open — 1 counselor scene. Caption "第N集 · ".
+            * Episode 1: name the shared problem, then the first way it usually shows up, and enter this life. No remedy.
+            * Later episodes: pick up the question left by the previous closing scene. Say that the same problem often shows up in another way (a second face, a third face), and enter THIS life. No remedy. No recap of the previous plot.
+        * Story — 4 to 7 consecutive scenes. This case only, from how the life was, through the problem in detail, to where they are stuck. If it is a couple, most of these scenes are the two of them talking. Do not leave the other person only inside a thought.
+        * Close — 1 counselor scene. Still this episode. Caption "第N集 · 承接".
+            * Not a summary of the plot and not an answer. Hold what the audience just saw, turn it into a question, and point toward the problem underneath. Leave them thinking. Do not name a method. Do not say "next episode".
+            * If another case follows, the last sentence should be able to lead into that case's opening scene without a break in thought.
+            * If this is the last case, the question stays open for the remedy block. Do not start the remedy here.
+    ** Only after EVERY case has been told: the remedy block. Caption these "方案 · ", not "第N集". Multiple scenes. This is the detailed answer.
+        * First 2 to 3 counselor scenes: take the shared problem apart (how it starts, what keeps it going, what it costs) across the cases just watched.
+        * Then each response in its own short run. Say which cases it fits. One response may fit only the second and third. Another may fit the first as well, or all of them. Do not cover every life with one sentence.
+        * When a response is shown inside a life, use 2 to 3 scenes with THOSE people, one step per scene.
+        * End with 1 counselor scene: the conclusion. Do not retell the plots. Do not open a new case.
 
 *** OUTPUT
-    * JSON array. All text in {language}.
-    * Scene 1 caption is the program title. Do not prefix captions with 第N集.
+    * One JSON array in watch order. All text in {language}.
+    * Every scene object MUST include "episode": a string "1", "2", "3", … with no other text.
+    * PATH A: scene 1 caption is the program title. No "第N集". Every scene, including the remedy, is "episode": "1".
+    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". Every scene of case N (open, story, close) is "episode": "N".
+    * PATH B remedy scenes are captioned "方案 · " and share the next number after the last case. Three cases → remedy is "episode": "4".
 
 [
     {{
-        "caption": "Program title on scene 1; later scenes are beat titles. In {language}.",
-        "voiceover": "Inner sigh or empty on counselor scenes. In {language}.",
-        "visual": "Film-still, no on-image words. In {language}.",
-        "speaking": "Counselor on scene 1 and the last scene; protagonist in the middle. In {language}.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-]
-
---------------------------------------------------
-INPUT
---------------------------------------------------
-** Topic:
-    {topic}
-
-** Instruction:
-    {instruction}
-
-** Reference Content (analyzed_content):
-    {content}
-
-"""
-
-
-COUNSELING_SERIES_EPISODES = """
-*** ROLE: Senior Psychological Counselor & Series Storyteller
-    ** Turn one analysis into a multi-episode series about ONE psychological problem.
-    ** Each episode is a short unit the audience can watch alone, and the episodes still belong to one series.
-
-*** EPISODE SHAPE (default)
-    ** 5 scenes = 1 episode, unless Instruction says otherwise (for example "6 scenes per episode" or "4 episodes").
-    ** Use as many episodes as the material truly has distinct facets (usually 3–8). Do not pad empty episodes.
-    ** Inside each episode:
-        * Scene A — Counselor opens this episode's one facet. To camera. No diagnosis.
-        * Scenes B–D — a short story of that facet only (same protagonist across the whole series).
-        * Scene E — Counselor closes this episode: only what was just shown, then one soft bridge to the next facet. The final episode's close does not tease another episode.
-    ** caption of the counselor-open scene must start with "第N集 · ".
-    ** Story scenes in that episode continue the number in the caption only if helpful; the open scene must carry 第N集.
-
-*** CONTINUITY
-    ** Same person, same wound, different rooms of the same house.
-    ** Episode 2+ counselor may recall one concrete image from the previous episode, then turn to the new facet.
-    ** Do not restart the biography. Do not swap protagonists.
-
-*** OUTPUT
-    * One JSON array of all scenes in watch order. All text in {language}.
-    * Fields: caption, voiceover, visual, speaking, actor.
-    * visual is a film-still with no words painted on the image.
-    * speaking on counselor scenes is the host; on story scenes it is the protagonist.
-
-[
-    {{
-        "caption": "第1集 · title. In {language}.",
-        "voiceover": "Short inner line, or empty on pure counselor beats. In {language}.",
-        "visual": "Film-still, no on-image text. In {language}.",
-        "speaking": "Spoken line. In {language}.",
-        "actor": "gender/age/race | mood | actions"
+        "episode": "1",
+        "caption": "Title. In {language}.",
+        "voiceover": "Empty when the counselor speaks. In {language}.",
+        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "speaking": "The host, when the scene is only the host; otherwise the first person of this life. In {language}.",
+        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
     }}
 ]
 
@@ -1371,69 +1244,59 @@ INPUT
 
 
 COUNSELING_SERIES_STORY_ONLY = """
-*** ROLE: Psychological storyteller (no counselor, no host-to-camera)
-    ** Turn the analysis into one long continuous story. The therapist must not appear, and nobody explains the theory.
-    ** Length: 12–24 scenes when the analysis has several facets; fewer only if the material is genuinely thin.
+*** ROLE: Story program. No one speaks to camera. A short host voiceover only on the opening scene and the closing scene of each episode.
+    ** Read the analysis and choose ONE path.
+    ** PATH A — one life, one relationship, one timeline. One episode.
+    ** PATH B — two or more distinct situations. Each situation is one episode that can be played alone. Do not merge them into one couple.
+    ** The story is told in full before any remedy. The remedy comes after the story (PATH A) or after every episode (PATH B), and it is detailed.
 
-*** STORY
-    ** One protagonist, one relationship or one life pattern.
-    ** Early scenes: the behavior the audience can see.
-    ** Middle scenes: the same pattern in other rooms (work, partner, parent, night). Each facet from the analysis gets at least one concrete scene. Do not drop a facet by averaging it away.
-    ** Late scenes: the pattern costs something, then one small different choice. Not a cure. Not a speech.
-    ** voiceover is the protagonist's private sigh (2–3 short sentences), never a counselor's summary.
-    ** speaking is daily-life dialogue or a thought spoken as the self.
+*** HOST VOICEOVER
+    ** Host lines live only in voiceover, and only on the start scene and the end scene of an episode, and on the remedy scenes. Short: 2 to 4 sentences.
+    ** Host look for this run: {narrator}. Opening, closing, and remedy scenes are host scenes.
+    ** A host-only scene: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Two or more story people: never add the host. ``speaking`` is the first person said aloud. ``voiceover`` is the second person answering aloud, not a private thought. ``actor`` ends with ``没主持人``. Most life scenes are both people. Swap who is first. At most one scene is a person alone.
+    ** Exactly one story person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means in the picture. 不出镜 means voice only. ``voiceover`` is the host.
+
+*** PATH A — one story. Every scene "episode": "1".
+    ** Start — 1 scene. Caption is the program title. Host voiceover names the problem and enters this life. No remedy.
+    ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to where they are stuck.
+    ** End — 1 scene. Host voiceover holds what we saw and leaves a question. No method yet.
+    ** Remedy — several scenes, still "episode": "1".
+        * 2 to 3 scenes with host voiceover: take the problem apart, then the response, step by step.
+        * Then 2 to 3 scenes with the same people: one concrete step per scene, shown, not announced.
+
+*** PATH B — one episode per situation. Different people. Do not reuse the same spouse, home, and argument.
+    ** An episode is: start, full story, end. A cut between one episode's end scene and the next episode's start scene is allowed. The host's two voiceovers are one continuous passage: the end does not say "next episode"; the start sounds like the next sentence.
+    ** Start — 1 scene. Caption "第N集 · ". "episode": "N".
+        * Episode 1: host names the shared problem, then the first way it shows up.
+        * Later episodes: host picks up the question from the previous end, says this problem often has another face, and enters THIS life. No remedy. No plot recap.
+    ** Story — 4 to 7 consecutive scenes. This case only, until they are stuck. "episode": "N".
+    ** End — 1 scene. Caption "第N集 · 承接". "episode": "N".
+        * Host voiceover: not a plot summary and not an answer. A question that points under the problem. No method. No "next time".
+        * If another case follows, the last line can lead into the next start. If this is the last case, the question stays open for the remedy.
+    ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case (three cases → "4").
+        * 2 to 3 scenes, host voiceover: unpack the shared problem across the lives just shown.
+        * Then each response in its own short run. Say which episodes it fits. One may fit only some; another may fit all.
+        * When a response is shown in a life, 2 to 3 scenes with those people, one step per scene. Host voiceover may be one short line, not a speech.
+        * Last scene: host voiceover, the conclusion. Do not retell the plots.
+
+*** RULES
+    ** visual: film-still, no on-image words. Also the place, how the people act on each other, and a cut or another angle when the picture should move. No DSM labels. Do not say 根, 根儿, or 病根.
+    ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it. Do not fix it there.
+    ** When the remedy returns to those people, echo that opening moment: a similar situation, a different response. One small step, not a cured life.
 
 *** OUTPUT
-    * JSON array. All text in {language}. No "第N集". Scene 1 caption is the story title.
+    * One JSON array in watch order. All text in {language}.
+    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field.
 
 [
     {{
-        "caption": "Beat title; scene 1 is the story title. In {language}.",
-        "voiceover": "Protagonist's private sigh. In {language}.",
-        "visual": "Film-still, no on-image text. In {language}.",
-        "speaking": "Dialogue or first-person thought. In {language}.",
-        "actor": "gender/age/race | mood | actions"
-    }}
-]
-
---------------------------------------------------
-INPUT
---------------------------------------------------
-** Topic:
-    {topic}
-
-** Instruction:
-    {instruction}
-
-** Reference Content (analyzed_content):
-    {content}
-
-"""
-
-
-COUNSELING_SERIES_CASE_STUDY = """
-*** ROLE: Senior Psychological Counselor running a case-study series
-    ** Each episode studies ONE face of the same problem, then the counselor returns.
-    ** Shape of every episode (default 5 scenes; Instruction may change the count):
-        * Counselor poses one plain question (not a diagnosis).
-        * Two to three story scenes answer it with one situation.
-        * Counselor closes only that situation.
-    ** After the facet episodes, add ONE final counselor scene (not a full extra story) that gathers the facets already shown. Caption: "终集 · ".
-    ** Episode open captions start with "第N集 · ".
-    ** Same protagonist throughout. A new facet is a new week of the same life, not a new client.
-    ** Counselor never speaks the moral in the story scenes. Story scenes show; counselor scenes name only what was just visible.
-
-*** OUTPUT
-    * JSON array in watch order. All text in {language}.
-    * visual: film-still, no on-image words.
-
-[
-    {{
-        "caption": "第1集 · title, or 终集 · title. In {language}.",
-        "voiceover": "Short, or empty when the counselor is already speaking. In {language}.",
-        "visual": "Film-still, no on-image text. In {language}.",
-        "speaking": "Counselor or protagonist. In {language}.",
-        "actor": "gender/age/race | mood | actions"
+        "episode": "1",
+        "caption": "第1集 · title, or the program title on PATH A. In {language}.",
+        "voiceover": "The host's line when the host is in this scene; otherwise the second person's line. In {language}.",
+        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "speaking": "The first person of this life, or empty on a host-only scene. In {language}.",
+        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
     }}
 ]
 
@@ -1684,182 +1547,51 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 COUNSELING_TALK_SCENES = """
-You are a professional podcast writer specializing in psychology and human behavior.
+*** ROLE: A psychology conversation that can be filmed. No monologue. No lecture.
+    ** Choose the pair from the material. Do not use both.
+    ** TWO HOSTS when the analysis is a pattern, or several situations. Host A is curious and brings the concrete life. Host B is the counselor: clearer, but does not hand over the answer.
+    ** COUNSELOR AND THE PERSON when the analysis is one lived case. The other speaker is the person in the case, or someone close who watched it. The counselor guides. The person is the one who arrives at what to do.
+    ** Stay with that pair for the whole program.
 
---------------------------------------------------
+*** HOW THE TALK MOVES
+    ** From the surface to what is actually going on, in plain professional language. A listener should be able to follow. Do not open with the conclusion.
+    ** Keep the details that make a scene visible: who, where, what was said, what was avoided. Cut repeated wording and side tracks. Do not shrink a lived moment into one abstract sentence, and do not keep every sentence from the source.
+    ** Do not say 根, 根儿, or 病根. Do not use DSM labels.
+    ** The counselor never announces the answer. They ask, reflect what was just said, and offer one piece at a time. The other person connects it and says the realization in their own words.
+    ** End on a result: what this situation asks for, said by the other person, with the counselor only confirming or sharpening it. Not an open-ended shrug. Not a worksheet.
 
-⚠️ CRITICAL INSTRUCTION (ANTI-SUMMARIZATION RULE)
+*** SCENES (about 10 to 16, one beat each)
+    ** 1–2. A specific surface moment. Host A or the person describes it. The counselor only asks what they noticed.
+    ** Next several. More of the real detail: how it repeats, what it costs, what people say. Each scene is one exchange, not a speech.
+    ** Then the turn. The counselor's question points under the behavior. The other person is the one who names the pattern.
+    ** Last 2–3. They work out what to do, still in dialogue. Come back to the opening moment: the same kind of situation, and what would be different now. One concrete step. The counselor guides; the other person says the step.
 
-The original source material (provided in below 'Input Content' section) MUST NOT be compressed.
-
-You are NOT summarizing.
-You are NOT simplifying by removing detail.
-
-Instead, you MUST:
-• Preserve as much of the original content as possible  
-• Expand the content by adding:
-    - more real-life examples
-    - more micro-situations (very specific moments, behaviors, dialogues)
-    - more emotional layers (inner thoughts, contradictions, hesitation)
-    - more step-by-step psychological unfolding
-
---------------------------------------------------
-
-🎯 YOUR TASK
-
-Transform the source material into a **two-section structured podcast-style output**:
-
---------------------------------------------------
-
-🧩 SECTION 1 — Psychological Key Points (问题骨架提炼)
-
-Before storytelling, you MUST extract and present the core psychological structure of the content.
-
-Requirements:
-
-• Identify 2–4 KEY POINTS ONLY (do NOT over-expand)  
-• Each key point should clearly include:
-
-    1. 核心问题 / Core Conflict  
-       → 本质的心理矛盾是什么？
-
-    2. 表现形式 / Observable Behaviors  
-       → 在现实中是怎么体现出来的？（简要即可）
-
-    3. 心理根源 / Psychological Root  
-       → 可能来自哪里？（依附、创伤、自我价值等）
-
-    4. 影响范围 / Impact  
-       → 对关系 / 自我 / 决策产生什么影响？
-
-    5. 可能的修复方向 / Direction of Resolution  
-       → 给出方向，而不是完整方法论
-
-⚠️ STYLE:
-• Clear, sharp, structured  
-• Concise but insightful  
-• Not storytelling, not emotional expansion  
-• Like a therapist outlining the map before entering the case  
-
---------------------------------------------------
-
-🧠 SECTION 2 — Podcast Narrative (故事展开)
-
-Then transform EVERYTHING into a **podcast-style single host talk**.
-
-The source text may contain:
-- theory
-- analysis
-- fragmented ideas
-- examples
-
-Your job is to:
-→ KEEP ALL ideas
-→ RESTRUCTURE them into a smooth, immersive narrative
-→ DEEPEN them with more detail, not less
-
---------------------------------------------------
-
-🧠 DEPTH EXPANSION RULE (VERY IMPORTANT)
-
-For EVERY key idea in the source:
-
-You MUST:
-1. Restate it in natural spoken language
-2. Add at least ONE concrete real-life scenario
-3. Add internal emotional description (what the person feels but doesn’t say)
-4. Optionally add:
-    - contrast cases
-    - escalation over time
-    - subtle behaviors (tone, pause, micro-reactions)
-
---------------------------------------------------
-
-🎙 PODCAST STYLE
-
-Single host:
-
-    * insightful, analytical, but NEVER lecture-like
-    * feels like thinking out loud with the audience
-    * uses “你有没有发现…”, “有些人其实会…” 等自然表达
-    * builds ideas gradually, layer by layer
-
---------------------------------------------------
-
-🧩 CONVERSATION FLOW (SOFT STRUCTURE)
-
-** Opening Hook**
-    Start with a vivid, highly specific situation
-
-** Real-Life Situations (EXPANDED)**
-    Multiple detailed micro-scenarios
-
-** Emotional Layer (DEEPENED)**
-    Fear, insecurity, attachment anxiety, avoidance, validation need
-
-** Psychological Explanation (GRADUAL)**
-    Let theory emerge naturally
-
-** Micro-Behavior Analysis**
-    Tiny behaviors (delayed replies, tone shifts, testing, push-pull)
-
-** Metaphors & Analogies**
-    Make abstract ideas concrete
-
-** Insight Expansion**
-    Multiple waves of realization (NOT one conclusion)
-
-** Closing Reflection**
-    Open-ended, slightly unresolved
-
---------------------------------------------------
-
-💬 STYLE REQUIREMENTS
-
-Encourage:
-    • layered reasoning  
-    • revisiting ideas from different angles  
-    • emotional vividness  
-    • immersive storytelling  
-
-Avoid:
-    • dry abstraction  
-    • compressed explanations  
-    • bullet-point thinking in Section 2  
-
---------------------------------------------------
-
-📏 LENGTH & DENSITY CONTROL
-
-The podcast section should feel like a REAL 5–10 minute talk.
-
-If short → EXPAND:
-• more scenarios
-• more emotional nuance
-• slower pacing
-
---------------------------------------------------
-📝 OUTPUT FORMAT  (in {language} — 中文):
---------------------------------------------------
+*** OUTPUT
+    * JSON array in watch order. All text in {language}.
+    * Host look for this run: {narrator}
+    * Two or more story people: do not include the host. speaking is what the FIRST person says aloud. voiceover is what the SECOND person says aloud back, not a private thought. actor ends with ``没主持人``. Swap who is first across scenes. Do not make every scene one person thinking.
+    * Exactly one story person and the host is in this scene: add ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）`` last. 出镜 means in the picture. 不出镜 means voice only. speaking is that person. voiceover is the host.
+    * The scene is only the host: actor is only ``主持人（{narrator}，出镜） | mood | actions``, speaking is the host, voiceover is empty.
+    * visual is the room and the people, no words on the image. Include how they face each other, and a cut or a closer angle when the reply lands.
+    * caption: scene 1 is the program title; later scenes are short beat titles.
 
 [
-        {{
-            "caption": "A short title capturing the psychological theme. In {language}.",
-            "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
-            "visual": "Talk: 故事展开 ~ (完整播客式叙述) - in {language}",
-            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-
+    {{
+        "caption": "Program title on scene 1. In {language}.",
+        "voiceover": "The second person's reply, or the host's line when 主持人 is last in actor. In {language}.",
+        "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
+        "speaking": "The first person's line. In {language}.",
+        "actor": "first person | mood | actions ; second person | mood | actions ; 没主持人"
+    }}
+]
 
 --------------------------------------------------
-INPUT 
-----------------------------------------------------
-** Topic : 
-    {topic} 
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
 
-** Instruction: 
+** Instruction:
     {instruction}
 
 ** Reference Content (analyzed_content):
@@ -1867,116 +1599,6 @@ INPUT
 
 """
 
-
-COUNSELING_CONVERSATION_SCENES = """
-You are a professional podcast writer specializing in psychology and human behavior.
-
-Your task is to transform the following source material into a **podcast-style conversation** between two hosts discussing the topic.
-
-The source text may contain theory, analysis, examples, and scattered ideas. Your job is to **restructure the ideas into a smooth, engaging podcast dialogue** that listeners can easily follow.
-
-The final output should feel like a real episode of a thoughtful psychology podcast.
-
---------------------------------
-
-PODCAST FORMAT
-
-Two hosts:
-
-Host A — curious, reflective, often introduces real-life situations or questions.
-
-Host B — insightful, analytical, gradually explains the deeper psychological patterns.
-
-Both hosts should sound natural, thoughtful, and conversational.
-
---------------------------------
-
-CONVERSATION FLOW
-
-Organize the discussion in a clear progression:
-
-1. Opening Hook  
-Start with a relatable observation, story, or everyday situation that captures attention.
-
-Example:
-- a confusing behavior in relationships
-- a common emotional pattern
-- a surprising reaction people have
-
-2. Shared Curiosity  
-The hosts begin exploring the question together.
-
-Host A often says things like:
-"I’ve noticed something interesting..."
-"Why do people do this?"
-
-3. Real-Life Examples  
-Introduce concrete situations or behaviors people experience.
-
-4. Emotional Layer  
-Discuss the feelings behind the behavior (fear, anxiety, attachment, avoidance, validation, etc.)
-
-5. Psychological Explanation  
-Gradually introduce the psychological theory or concept from the source material.
-
-Avoid sounding like a lecture. The explanation should emerge naturally through the conversation.
-
-6. Metaphors and Analogies  
-Use simple metaphors or vivid comparisons to help listeners understand the concept.
-
-7. Insight Moment  
-Lead toward a deeper realization or perspective shift.
-
-8. Closing Reflection  
-End with a thoughtful reflection, question, or takeaway for the listener.
-
---------------------------------
-
-STYLE REQUIREMENTS
-
-The conversation should be:
-
-• natural and conversational  
-• thoughtful and reflective  
-• emotionally engaging  
-• intellectually stimulating  
-• easy to understand for a general audience
-
-Avoid academic language unless it is explained simply.
-
-Use storytelling, examples, and metaphors to make the ideas vivid.
-
-The hosts should sometimes pause, react, or build on each other's ideas.
-
---------------------------------
-OUTPUT FORMAT (in {language}):
---------------------------------
-
-    [
-        {{
-            "caption": "A short title capturing the psychological theme. In {language}.",
-            "key_message": "列出2–4个关键点，每个点结构清晰 - in {language}",
-            "visual": "Podcast Conversation: 播客式对话 (Host A: ... Host B: ... dialogue script, Include natural conversational rhythm.) - in {language}",
-            "voiceover": "A short summary of the content (for youtube program description). In {language}.",
-            "actor": "gender/age/race | mood | actions"
-        }}
-    ]
-
-
---------------------------------------------------
-INPUT 
-----------------------------------------------------
-** Topic : 
-    {topic} 
-
-** Instruction: 
-    {instruction}
-
-** Reference Content (analyzed_content):
-    {content}
-
-
-"""
 
 
 # =============================================================================
@@ -2045,13 +1667,19 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
     Output (###STEP### scene(s)):
     [
         {{
+            "episode": "1",
             "caption": "Title in {language}.",
-            "voiceover": "2–3 short rhythmic {language} sentences — insight as field voice, not lecture.",
-            "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars.",
-            "speaking": "Poignant 1st-person line in {language}.",
-            "actor": "gender/age/race | mood | actions"
+            "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
+            "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars. No on-image text.",
+            "speaking": "The first person's line, or empty on a host-only scene. In {language}.",
+            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
         }}
     ]
+
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
 
 --------------------------------------------------
 INPUT
@@ -2112,11 +1740,16 @@ FLYLINK_CONTENT_SCENES = """
 """ + FLYLINK_UNIFIED_NARRATIVE_SPINE + """
 
 *** SCENE FIELDS (all text in {language})
-    1) caption — scene / program title (metadata only)
-    2) voiceover — host or narrator bridge; accessible industry insight
-    3) visual — clean documentary still; operational detail, lighting, geography
-    4) speaking — operator / engineer / pilot line ~10s
-    5) actor — gender/age/race | mood | actions (e.g., dispatcher, test pilot, line manager)
+    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
+    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    1) episode — "1"
+    2) caption — scene / program title (metadata only)
+    3) voiceover — the second person, or the host when the host is in this scene
+    4) visual — clean documentary still; operational detail, lighting, geography. No on-image text.
+    5) speaking — the first person, or empty on a host-only scene
+    6) actor — people, then 没主持人 or 主持人（{narrator}，出镜/不出镜）
 
 INPUT:
 ** Topic: {topic}
@@ -2124,6 +1757,68 @@ INPUT:
 ** Reference Content (analyzed_content): {content}
 
 OUTPUT: STRICT JSON array of scenes.
+"""
+
+
+COMIC_ANALYZE = """
+Role:
+    - You are an editor for picture stories.
+    - Read the text and put the story in order. Keep the events. Do not add a moral.
+
+Output:
+    - Rewritten story in {language}.
+    - Short sections, in the order of the pictures.
+"""
+
+
+COMIC_STRIP_SCENES = """
+*** ROLE: Picture-story editor.
+    ** The source is a comic: each page is one picture, often with a little text.
+    ** Read it and retell that story as scenes. Keep the same events and the same people.
+    ** If a stretch is too wordy, tighten it into fewer clear scenes.
+    ** If a stretch is too thin, split it and describe the picture more clearly.
+    ** Join the scenes so one leads into the next. Do not jump, and do not invent a different plot.
+
+*** HOST
+    ** Host look for this run: {narrator}.
+    ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
+    ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
+    ** Last scene: host voiceover holds the ending. No new event.
+    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: the people in the pictures. Two or more people: ``speaking`` is the first said aloud, ``voiceover`` is the second answering aloud, ``actor`` ends with ``没主持人``. One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+
+*** STORY
+    ** One comic is one episode. Every scene "episode": "1".
+    ** If the PDF is clearly several separate stories, one episode per story, in order.
+    ** Middle scenes follow the pictures. ``visual`` is that picture: place, people, what they do. No words on the image.
+    ** The short text on a picture becomes ``speaking`` and ``voiceover``, cleaned so it sounds spoken.
+
+*** OUTPUT
+    * One JSON array in watch order. All text in {language}.
+
+[
+    {{
+        "episode": "1",
+        "caption": "Story title on the first scene, then the beat. In {language}.",
+        "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
+        "visual": "This picture: place, people, what they do. No on-image text. In {language}.",
+        "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
+        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
 """
 
 

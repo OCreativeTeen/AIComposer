@@ -14,6 +14,7 @@ def run_grok_imagine(
     host_narrator: str = "",
     language: str = "",
     cdp_port: int | None = None,
+    episode: str = "",
 ) -> tuple[str, list[dict]]:
     """Open N Imagine tabs, paste cover, generate image then video (no auto-download).
 
@@ -63,6 +64,7 @@ def run_grok_imagine(
         visual_style=visual_style,
         host_narrator=host_narrator,
         language=language,
+        episode=episode,
     )
     from utility.gen_video_store import save_clip_prompt_for_scene
 

@@ -953,7 +953,7 @@ def _video_nb_index_from(data: dict) -> int:
 
 
 def load_grok_scene_video_nb_index() -> int:
-    """Grok scene video NotebookLM variant index 1…8 (see ``GROK_SCENE_VIDEO_NB_VARIANTS``)."""
+    """Grok scene video NotebookLM variant index (see ``GROK_SCENE_VIDEO_NB_VARIANTS``)."""
     import config_prompt
 
     path = _grok_scene_video_nb_path()

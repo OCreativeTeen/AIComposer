@@ -223,6 +223,7 @@ Each scene's ``show_this_content`` tells you WHAT to paint — setting, characte
 NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS = """
 ** When ``actor`` / ``speaking`` are present: the protagonist MUST appear with facial expression, posture, gesture, and action that MATCH the emotional state in ``speaking`` and ``actor``.
 ** Use ``speaking`` only to infer mood and body language — NEVER render speaking lines as subtitles, captions, or speech bubbles (unless variant explicitly allows Word-in-image video).
+** ``actor`` may name more than one person, separated by " ; ". Paint each person who is listed. ``speaking`` still must not become words on the image.
 """
 
 NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
@@ -231,6 +232,11 @@ NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
 ** Output = one clean illustration per scene: environment + protagonist emotion + action + lighting tell the story visually.
 ** NEVER add onto the image: subtitles, caption paragraphs, small annotations, spreadsheet labels, or busy speech bubbles.
 ** If VERY CRITICAL highlighted info (very short) is ABSOLUTELY necessary, show as huge sparse background text only (transparent-like font).
+** Read the row as one comic-strip frame: the picture shows what happens in that scene, including a change of angle or an action already written in ``visual``.
+** Two or more story people, ``actor`` ends with ``没主持人``: no host. First person is ``speaking``, second person (a third only sometimes) is ``voiceover``. Sketch both. Do not write the lines.
+** One story person, last part ``主持人（look，出镜）``: paint that host, using the look, while ``voiceover`` plays. Do not write ``speaking``.
+** Last part ``主持人（look，不出镜）``: do not paint the host. The story person stays in the frame.
+** ``actor`` is only ``主持人（look，出镜）``: the frame is the host. No second voice.
 """
 
 NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
@@ -253,7 +259,8 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
         ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
     ],
     "speaking": [
-        ("script", "主人公 speaking + 画外旁白 voiceover（旁白不出镜）"),
+        ("think", "主人公说话 + 自己思考 voiceover（自言自语，嘴巴不动）"),
+        ("script", "主人公说话 + 主持人旁白 voiceover（主持人不入镜）"),
         ("speaking", "仅主人公 speaking（无旁白）"),
         ("acting", "只演不讲 + 画外旁白 voiceover"),
     ],
@@ -331,8 +338,14 @@ _NB_EXPORT_CHOICE_ALIASES = {
     "video/motion": ("video", "motion"),
     "video_motion": ("video", "motion"),
     "motion": ("video", "motion"),
+    "自己思考": ("speaking", "think"),
+    "主人公思考": ("speaking", "think"),
+    "自言自语": ("speaking", "think"),
+    "speaking/think": ("speaking", "think"),
+    "speaking_think": ("speaking", "think"),
     "念speaking": ("speaking", "script"),
     "念 speaking": ("speaking", "script"),
+    "主持人旁白": ("speaking", "script"),
     "speaking/script": ("speaking", "script"),
     "speaking_script": ("speaking", "script"),
     "speaking/念speaking": ("speaking", "script"),
@@ -345,15 +358,19 @@ _NB_EXPORT_CHOICE_ALIASES = {
     "speaking/visual_keypoints": ("speaking", "speaking"),
 }
 
-# Grok 场景 video：NotebookLM 提示词 1…8（video + speaking + voiceover，不含 image）
+# Grok 场景 video：NotebookLM 提示词（video + speaking + voiceover，不含 image）
 GROK_SCENE_VIDEO_NB_VARIANTS: list[tuple[str, str, str]] = [
     ("video", "motion", "纯画面 · 动作/表情/场景演进（无口播）"),
     ("video", "word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
-    # 主人公说 speaking；按需在其前/后加 voiceover（旁白声）；主人公不得对口型旁白
+    (
+        "speaking",
+        "think",
+        "主人公说话 + 自己思考 voiceover（自言自语，嘴巴不动）",
+    ),
     (
         "speaking",
         "script",
-        "主人公说 speaking (仅 actor 口型) + 画外旁白 voiceover (不出镜、无人对口型)",
+        "主人公说话 + 主持人旁白 voiceover（主持人不入镜）",
     ),
     # 仅主人公说 speaking；无旁白 / voiceover
     (
@@ -375,7 +392,7 @@ GROK_SCENE_VIDEO_NB_DEFAULT_INDEX = 3
 
 
 def grok_scene_video_nb_export(index: int | None = None) -> tuple[str, str, str]:
-    """``index`` 1…8 → ``(base, variant, short_label)``."""
+    """``index`` 从 1 到列表长度 → ``(base, variant, short_label)``."""
     rows = GROK_SCENE_VIDEO_NB_VARIANTS
     if not rows:
         return ("speaking", "script", "念 speaking")
@@ -398,7 +415,7 @@ def grok_scene_video_nb_choice_label(index: int | None = None) -> str:
 
 
 def format_grok_scene_video_nb_choices() -> str:
-    lines = ["grv <profile> <1…8>  video 提示词变体："]
+    lines = [f"grv <profile> <1…{len(GROK_SCENE_VIDEO_NB_VARIANTS)}>  video 提示词变体："]
     for i, (base, var, lbl) in enumerate(GROK_SCENE_VIDEO_NB_VARIANTS, start=1):
         cat = _NB_EXPORT_CAT_LABELS.get(base, base)
         lines.append(f"  {i}: {cat} / {lbl}  ({base}/{var})")
@@ -456,6 +473,13 @@ def _image_painting_direction(scene: dict) -> str:
         parts.append(
             "Emotion/subtext from speaking (paint in face, eyes, posture, gesture — NOT as on-image text): "
             + speaking
+        )
+    voiceover = (scene.get("voiceover") or "").strip()
+    if voiceover:
+        parts.append(
+            "Voiceover (second person if actor lists two or more; "
+            "if only one actor, inner thought or the host — see the slideshow instruction): "
+            + voiceover
         )
     return "\n".join(parts)
 
@@ -560,7 +584,7 @@ def scene_payload_for_notebooklm_export(
             new_scenes.append(slim)
             continue
         elif base == "speaking":
-            if var == "script":
+            if var in ("script", "think"):
                 slim = _slim_scene_fields(
                     new_scene,
                     ("speaking", "voiceover", "actor", "visual"),
@@ -657,21 +681,45 @@ NOTEBOOKLM_NARRATOR_AUDIO_ONLY = """
 ** ONLY the scene protagonist (``actor`` field) lip-syncs ``speaking`` — the one and only lip-sync track in this video.
 """
 
+NOTEBOOKLM_ACTOR_HOST_READING = """
+** Read ``actor`` exactly. Parts are separated by " ; ". The scene already says if a host is there. If an earlier line says the host never appears, follow this block instead.
+** Two or more story people: the field ends with ``没主持人``. There is no host. ``speaking`` is the first person, mouth moves. ``voiceover`` is the second person speaking, that mouth moves. A third person only sometimes has one short line in ``voiceover``. Do not add a host.
+** One story person, last part ``主持人（look，出镜）``: ``speaking`` is that person, mouth moves. ``voiceover`` is the host, look inside the parentheses, and the host is in the picture. The story person's mouth stays closed during the host line.
+** Last part ``主持人（look，不出镜）``: same voices, but the host must not appear. Voice only. The story person stays in the picture and keeps acting.
+** ``actor`` is only ``主持人（look，出镜）``: the scene is the host alone. ``speaking`` is the host, mouth moves. ``voiceover`` is empty. Do not invent another voice.
+"""
+
+NOTEBOOKLM_SPEAKING_THINK = """
+** Protagonist = scene ``actor`` field (1st-person story character). Delivers ``speaking`` as lip-synced dialogue.
+** If no global protagonist is configured, use each scene's ``actor`` from Story_Scene_Content — do not substitute another speaker.
+** ``voiceover`` may play BEFORE or AFTER the protagonist ``speaking`` line as the scene needs.
+** ``speaking`` is the line said aloud. The protagonist's mouth moves, and lip-sync covers that line only.
+** ``voiceover`` is the same protagonist thinking — talking to himself — while he acts and interacts in the scene. He keeps the action going; his mouth stays closed for the whole ``voiceover``. It is not a second spoken line, and nobody on screen mouths it.
+** Deliver ``voiceover`` in his own voice, as written. Do not turn it into a host or an outside narrator.
+** Do NOT read text printed in the image aloud.
+** Inner thought, mouth closed, only when one story person is listed and ``actor`` ends with ``没主持人``.
+** Follow cuts and angle changes written in ``visual``. No words on the image.
+""" + NOTEBOOKLM_ACTOR_HOST_READING
+
 NOTEBOOKLM_SPEAKING_SCRIPT = """
 ** Protagonist = scene ``actor`` field (1st-person story character). Delivers ``speaking`` as lip-synced dialogue.
 ** If no global protagonist is configured, use each scene's ``actor`` from Story_Scene_Content — do not substitute another speaker.
 ** ``voiceover`` may play BEFORE or AFTER the protagonist ``speaking`` line as the scene needs.
 """ + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
 ** Subjective, in-the-moment tone for ``speaking``; ``voiceover`` stays third-person narrator tone.
+** This option's ``voiceover`` is the host/narrator off screen, not the protagonist thinking to himself.
 ** Do NOT read text printed in the image aloud.
-"""
+** Follow cuts and angle changes written in ``visual``. No words on the image.
+""" + NOTEBOOKLM_ACTOR_HOST_READING
 
 NOTEBOOKLM_SPEAKING_ONLY = """
 ** Protagonist (scene ``actor`` field) performs AND delivers ONLY the ``speaking`` field as 1st-person lip-synced dialogue.
 ** NO narrator/host voiceover track — do not speak ``voiceover`` (it may inform staging only).
 ** ONLY the protagonist lip-syncs — no other visible character lip-syncs.
 ** Do NOT read text printed in the image aloud.
-"""
+** Follow cuts and angle changes written in ``visual``. No words on the image.
+** In this option do not speak ``voiceover``. If ``actor`` ends with ``没主持人``, the other story people only act. If the scene is only ``主持人（...）``, ``speaking`` is the host.
+""" + NOTEBOOKLM_ACTOR_HOST_READING
 
 NOTEBOOKLM_SPEAKING_ACTING_SILENT = """
 ** Protagonist (scene ``actor`` field) acts silently — NO lip-sync, NO spoken ``speaking`` dialogue on screen.
@@ -679,7 +727,9 @@ NOTEBOOKLM_SPEAKING_ACTING_SILENT = """
 ** Express inner state through facial expression, posture, gesture, and subtle movement.
 """ + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
 ** May reference ``visual`` composition for what to react to; do NOT read words printed in the image aloud.
-"""
+** When ``voiceover`` is present and ``actor`` ends with ``没主持人`` and only one story person is listed, it is that person thinking: mouth closed.
+** Follow cuts and angle changes written in ``visual``. No words on the image.
+""" + NOTEBOOKLM_ACTOR_HOST_READING
 
 # 旧变体 visual_keypoints 已并入 speaking/speaking；保留常量供旧剪贴板/脚本引用
 NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = NOTEBOOKLM_SPEAKING_ONLY
@@ -1064,7 +1114,17 @@ def build_notebooklm_gen_instruction_clipbody(
         parts["Instruction_for_image_generation"] = (
             img_instr.strip() + "\n" + NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS.strip()
         )
-        parts["Story_Scene_Content"] = json_content
+        if var != "single":
+            if host_narrator:
+                parts["Host_for_this_run"] = (
+                    f"{host_narrator} ~ a host was chosen. "
+                    f"In a one-actor scene, show this host speaking the voiceover."
+                )
+            else:
+                parts["Host_for_this_run"] = (
+                    "No host was chosen. Do not add a visible host. "
+                    "A one-actor voiceover is that person's inner thought."
+                )
 
     elif base == "video":
         vid_instr = (
@@ -1101,22 +1161,24 @@ def build_notebooklm_gen_instruction_clipbody(
     elif base == "speaking":
         if main_character:
             parts["Voice"] = f"{main_character} ~ Protagonist/actor (1st person)"
-        if var in ("script", "acting"):
-            if host_narrator:
-                parts["Narrator_audio"] = (
-                    f"{host_narrator} ~ off-screen narrator voice for ``voiceover`` "
-                    f"(never on screen; no visible lip-sync)"
-                )
-            else:
-                parts["Narrator_audio"] = (
-                    "Off-screen narrator voice for ``voiceover`` only "
-                    "(never visible in frame; no on-screen lip-sync)"
-                )
+        if host_narrator:
+            parts["Narrator_audio"] = (
+                f"{host_narrator} ~ host look for this run. "
+                f"Use the host only when ``actor`` says ``主持人``. "
+                f"Two or more story people end with ``没主持人`` and have no host."
+            )
+        else:
+            parts["Narrator_audio"] = (
+                "No host look was chosen. "
+                "If ``actor`` still says ``主持人``, keep that person as written in the scene."
+            )
         sp_instr = (
             NOTEBOOKLM_SPEAKING_ONLY
             if var == "speaking"
             else NOTEBOOKLM_SPEAKING_ACTING_SILENT
             if var == "acting"
+            else NOTEBOOKLM_SPEAKING_THINK
+            if var == "think"
             else NOTEBOOKLM_SPEAKING_SCRIPT
         )
         sp_block = sp_instr.strip()
@@ -1297,27 +1359,79 @@ the merged sentences should be like
 
 
 
-COMBO_ANALYZE_PROMPT = """
-You are a senior psychological counselor and editor.
-The user prompt holds several separate analyses that share one topic. They are related, and they are not the same story.
+COMBO_ANALYZE_SURVEY_PROMPT = """
+You are a senior psychological counselor writing ONE finished analysis in {language}.
+The user prompt numbers several source notes. The report must read as one continuous piece about one matter. It must also stay thick: the scenes, relationships, and analytical detail in those notes are the body of the piece, not raw material to be shortened.
 
-Write ONE living analysis report in {language} that a series team can film.
+Write as a counselor opening a case discussion, not as a literary essay and not as notes stitched together.
+The first sentences name the psychological problem in professional, ordinary language: what keeps happening, in what kind of relationship or life, and why it matters. Do not open inside a scene. Do not open with a contrast such as "这不是某一次争吵，也不是谁变了心".
+Then take the problem apart step by step: how it starts, what maintains it, what it costs.
+Only after that, show it in the concrete lives from the notes. Those lives illustrate the problem. They are not separate chapters pasted in order.
+End as a counselor would close: what this problem asks for, and how a response can begin. The ending belongs to the problem, not to the last scene.
 
-Rules:
-- Keep each source recognizable as its own facet. Do not melt them into a vague average.
-- If two sources disagree, say so as two faces of the same pattern. Do not delete either face.
-- Keep concrete moments, relationships, and repeated behaviors. Drop duplicate wording, not duplicate meaning.
-- The report should feel continuous: a reader can see one problem from many rooms of the same house.
-- Use these sections, in {language}: 这个问题长什么样, 几个不同的切面, 反复出现的模式, 人付出的代价, 还能被看见的一点出路.
-- Do not add a diagnosis that none of the sources stated.
-- Do not write scene scripts. This is the analysis, not the film.
+Do not say "case 1", "the second source", "another facet", or "a different story". Do not number the situations.
 
-Output JSON only:
+Keep the life in the notes:
+- Carry over concrete people, rooms, dialogues, repeated behaviors, and the specific observations already made. A situation that took a page in the note should still be felt on the page here, not reduced to one sentence of "in this situation, the person does X".
+- Do not compress. Length should follow the useful detail you kept. Cutting duplicate sentences is allowed. Cutting a scene, a turn in a relationship, or an insight down to a label is not.
+- Where the notes share a thread, state it once and let the detailed situations show it. Where they differ, write the difference as another fully described moment of the same matter, not as a new essay that starts over.
+- Keep every source. Do not drop one because it fits loosely. Do not invent one hidden cause just to glue them. If a shared problem is really there, name it once in ordinary professional language, then let the situations carry it.
+- You may add sensory and behavioral detail that makes an existing scene clearer, as long as it stays inside what that note already showed. Do not invent a new person or a new event.
+- End with one closing for the whole piece: what this matter comes to, and what kind of response fits. The close is not a recap of each note.
+- Do not add a diagnosis none of the notes stated.
+- Do not write scene scripts. Do not mention that the text was combined.
+- In title and analyzed_content, never use the words 根, 根儿, 病根, or "root". Say the basic problem, the repeating pattern, or the core conflict in words a reader already uses. Do not repeat that phrase in every paragraph.
+
+Output JSON only. Source numbers appear only in kept_indexes, never inside analyzed_content.
 {{
-  "title": "a short series title in {language}",
-  "analyzed_content": "the full merged report in {language}"
+  "title": "a short title in {language} for the one matter",
+  "analyzed_content": "the full report in {language}: one essay, with the original situations still told in detail",
+  "kept_indexes": [1, 2, 3],
+  "ignored": []
 }}
 """
+
+
+COMBO_ANALYZE_ROOT_PROMPT = """
+You are a senior psychological counselor writing ONE finished analysis in {language}.
+The user prompt numbers several cases. Decide whether most of them are driven by the same basic problem: one repeating pattern or core conflict, not a shared headline.
+
+Use only the cases that share that problem. Leave out cases that sit too far away. Do not pull them in to look complete. If only a minority share it, write about that minority. If they do not share one problem, say so in analyzed_content and leave kept_indexes empty. Do not invent one.
+
+Write as a counselor presenting one common psychological problem, then taking it apart. Not as a literary opening, and not as several stories placed side by side.
+Open by naming the problem the way you would begin a case seminar: what this difficulty is, where it usually appears, and what is actually going on. The first sentences must not drop the reader into a marriage scene, and must not start with "不是某一次争吵，也不是谁变了心" or any similar contrast.
+Then unpack it in order: how the pattern gets started, what keeps it going, what it costs the person and the relationship.
+Then show that problem inside the concrete lives from the kept notes. Each life is evidence and illustration, told with its original detail, still inside the same discussion.
+Close by saying how to work with this problem, step by step, including how the work looks different in those different lives. The close is the counselor's conclusion, not a last anecdote.
+
+Do not turn each situation into "this condition produces that result".
+
+The reader must feel each situation, more fully than a summary:
+- For every kept case, write how this problem is actually lived: the people, the room, what is said and avoided, the repeated move, and the cost. Keep the detail and the analysis already in that note.
+- You may add detail that makes those existing scenes sharper and more visible, when it follows from what the note already showed. Do not invent a new person or a new event.
+- Do not compress a case into "under this condition, it appears as X". If the note dwelt on a marriage, a parent, a night, a work habit, those beats stay, and may be written more fully.
+- Do not say "case 1", "source 3", or "another client". One situation follows another as further life of the same problem, inside one account.
+- Then say what would actually change it. The response may look different in each situation, and those differences should be as concrete as the situations.
+- Close on that response for the whole piece. Do not end by summarizing each case in a sentence.
+- Do not add a diagnosis none of the kept cases stated.
+- Do not write scene scripts. Do not mention that cases were selected or discarded.
+- In title and analyzed_content, never use 根, 根儿, 病根, or "root". Do not repeat one keyword in every paragraph.
+
+Output JSON only. Indexes stay in kept_indexes and ignored. They must not appear in title or analyzed_content.
+{{
+  "title": "a short title in {language} that names the one matter, without the word 根",
+  "analyzed_content": "the report in {language}: the basic problem named once, each situation told in full detail, then what addresses it",
+  "kept_indexes": [1, 3, 4],
+  "ignored": [{{"index": 2, "reason": "why this case does not share the problem, in {language}"}}]
+}}
+"""
+
+
+# (按钮文字, 系统提示词)。合成项目时弹出选择，以后在这里加一项即可。
+COMBO_ANALYZE_CHOICES = [
+    ("综合报告", COMBO_ANALYZE_SURVEY_PROMPT),
+    ("找共同病根", COMBO_ANALYZE_ROOT_PROMPT),
+]
 
 
 SPEAKING_SUMMARY_SYSTEM_PROMPT = """

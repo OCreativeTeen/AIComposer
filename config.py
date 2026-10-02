@@ -698,7 +698,7 @@ SCENE_CHOICE_PICK_JSON = os.path.join(BASE_AIAGENT_PATH, "scene_choice_pick.json
 GEMINI_SCENES_PICK_JSON = os.path.join(BASE_AIAGENT_PATH, "gemini_scenes_pick.json")
 GEMINI_SCENES_VARIANT_COUNT = 3
 GROK_SCENE_VIDEOS_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_videos.json")
-# grv / nbv 用的 Grok video 提示词变体序号（1…8），与场景数无关
+# grv / nbv 用的 Grok video 提示词变体序号（见 GROK_SCENE_VIDEO_NB_VARIANTS），与场景数无关
 GROK_SCENE_VIDEO_NB_JSON = os.path.join(BASE_AIAGENT_PATH, "grok_scene_video_nb.json")
 CHROME_PROFILES_USED_JSON = os.path.join(BASE_AIAGENT_PATH, "chrome_profiles_used.json")
 # nbi 上次成功 launch 的 Chrome profile；下次 Hermes client 自动切到下一个
@@ -1178,6 +1178,10 @@ def _builtin_yt_text_download_config() -> dict:
             "music_story": {
                 "label": "心泉旋律",
                 "list_json_basename": "music_story.json",
+            },
+            "comic": {
+                "label": "连环画",
+                "list_json_basename": "comic.json",
             },
         },
     }
@@ -2049,15 +2053,9 @@ CHANNEL_CONFIG = {
             ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
             ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
             ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
-            ("Mini Story", config_channel.COUNSELING_STORY_MINI),
-            ("Long Story", config_channel.COUNSELING_STORY_LONG),
-            ("Content to Scenes", config_channel.COUNSELING_CONTENT_SCENES),
             ("Talk", config_channel.COUNSELING_TALK_SCENES),
-            ("Conversation", config_channel.COUNSELING_CONVERSATION_SCENES),
-            ("Series · Counselor Frame", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
-            ("Series · Episodes", config_channel.COUNSELING_SERIES_EPISODES),
+            ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
             ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
-            ("Series · Case Study", config_channel.COUNSELING_SERIES_CASE_STUDY),
         ],
 
         "channel_prompt": {
@@ -2104,6 +2102,37 @@ CHANNEL_CONFIG = {
 
         "channel_prompt": {
             "analyze_prompt": config_channel.FLYLINK_ANALYZE
+        },
+    },
+
+
+    "comic": {
+        "topic": "Picture-story comics told as connected scenes",
+
+        "channel_name": "连环画",
+        "channel_id": "comic",
+        "channel_category_id": "1",
+        "channel_tags": ["连环画", "漫画故事", "Comic", "Picture Story"],
+        "channel_key": "client_secret_creative4teen.json",
+
+        "scene_min_length": 20,
+        "watermark": {
+            "path": "comic_watermark.png",
+            "margin_x": 10,
+            "margin_y": 10,
+        },
+        "headmark": {
+            "path": "comic_headmark.png",
+            "margin_x": 25,
+            "margin_y": 25,
+        },
+
+        "scenes_prompt_choices": [
+            ("Comic to Scenes", config_channel.COMIC_STRIP_SCENES),
+        ],
+
+        "channel_prompt": {
+            "analyze_prompt": config_channel.COMIC_ANALYZE,
         },
     },
 

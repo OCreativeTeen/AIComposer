@@ -9,6 +9,7 @@ from typing import Callable
 from storyproducer.prompts import (
     build_gemini_prompt,
     build_notebooklm_clipbody,
+    current_scene_episode,
     lm_choices,
     match_choice,
     narrator_choices,
@@ -608,6 +609,7 @@ class StoryEngine:
                 host_narrator=self.session.narrator,
                 scene_index=-1,
                 language=self.session.language(),
+                episode=current_scene_episode(),
             )
         except Exception as exc:
             return False, f"nbp failed: {exc}"
@@ -868,6 +870,13 @@ class StoryEngine:
                 "grv_profile": selected.get("label") or "",
             }
         )
+        episode = current_scene_episode()
+        if episode:
+            from storyproducer.prompts import scenes_for_episode
+
+            n = len(scenes_for_episode(self.session.scene_content(), episode))
+            if n < 1:
+                return False, f"第 {episode} 集没有场景。"
         try:
             detail, video_results = run_grok_imagine(
                 self.session.video_detail,
@@ -877,6 +886,7 @@ class StoryEngine:
                 host_narrator=self.session.narrator,
                 language=self.session.language(),
                 cdp_port=grok_port,
+                episode=episode,
             )
         except Exception as exc:
             return False, f"grv failed ({selected.get('label')}): {exc}"

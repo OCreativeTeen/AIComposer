@@ -262,6 +262,15 @@ def _notebooklm_row_tags_text(video_detail: dict) -> str:
     return ", ".join(parse_tags_list(str(tags_raw or "")))
 
 
+def _scene_prompt_narrator(video_detail: dict) -> str:
+    """本轮已选的主持人。没选则空字符串，提示词里主持人只出声、不进画面。"""
+    vd = video_detail if isinstance(video_detail, dict) else {}
+    named = (vd.get("narrator") or "").strip()
+    if named:
+        return named
+    return (getattr(project_manager, "LAST_NARRATOR", None) or "").strip()
+
+
 def _notebooklm_prompt_context_from_video_detail(
     mgr,
     video_detail: dict,
@@ -282,6 +291,7 @@ def _notebooklm_prompt_context_from_video_detail(
         "language": config.llm_language_label(getattr(mgr, "language", "")),
         "category": cat,
         "subtype": sub,
+        "narrator": _scene_prompt_narrator(vd),
     }
 
 
@@ -320,6 +330,7 @@ def _build_notebooklm_prompt_for_row(
         link=ctx.get("link", ""),
         instruction=ctx.get("instruction", ""),
         sections=sections,
+        narrator=ctx.get("narrator", ""),
     )
 
 
@@ -684,6 +695,56 @@ def _is_summary_pdf_file_path(path: str) -> bool:
 
 
 GEN_VIDEO_SLIDE_KEY = "slide"
+
+
+def _pdf_page_count(pdf_path: str) -> int:
+    """只取页数，不把每页内容写进提示词。"""
+    import fitz
+
+    pdf_path = (pdf_path or "").strip()
+    if not pdf_path or not os.path.isfile(pdf_path):
+        return 0
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return 0
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+def _pdf_pages_as_scene_source(pdf_path: str) -> tuple[str, int, bool]:
+    """{content} 只写文件名和页数。具体画面让模型自己看 PDF。"""
+    n = _pdf_page_count(pdf_path)
+    if n <= 0:
+        return "", 0, False
+    text = (
+        f"PDF file: {os.path.basename(pdf_path)}\n"
+        f"Page count: {n}\n"
+        "Pages may contain pictures and a little text. Read the PDF for the content."
+    )
+    return text, n, False
+
+
+def _prompt_text_for_material(prompt: str, material: str) -> str:
+    """PDF 材料时，提示词里不再把这份材料称作 analyzed_content。"""
+    if (material or "") != "pdf" or not prompt:
+        return prompt
+    return prompt.replace("analyzed_content", "the PDF")
+
+
+def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: str) -> str:
+    """选 PDF 时加在每一条场景提示词上，只说页数和场数，不逐页罗列。"""
+    label = (prompt_label or "").strip()
+    n = max(0, int(page_count))
+    line = (
+        f"The PDF has {n} pages. It may contain pictures and a little text. "
+        "Read the PDF for the content. Use this prompt's scene JSON fields."
+    )
+    if mode == "page" or "series" not in label.lower():
+        return line + f" One scene per page, in order: {n} scenes."
+    return line + " You may add a counselor opening and closing around the story."
 
 
 def _gen_video_slide_pdf_dest_filename(video_detail: dict | None) -> str:
@@ -1196,6 +1257,17 @@ def _normalize_scene_dict_entry(item: dict) -> dict | None:
             out[k] = v
     if not out:
         return None
+    episode = out.get("episode")
+    if isinstance(episode, bool):
+        out.pop("episode", None)
+    elif isinstance(episode, (int, float)):
+        out["episode"] = str(int(episode))
+    elif isinstance(episode, str):
+        episode = episode.strip()
+        if episode:
+            out["episode"] = episode
+        else:
+            out.pop("episode", None)
     project_manager.normalize_scene_content_item_for_workflow(out)
     heading = _scene_entry_heading(out)
     body = (out.get("visual") or out.get("content") or "").strip()
@@ -1205,6 +1277,42 @@ def _normalize_scene_dict_entry(item: dict) -> dict | None:
     if not heading and not body and not speaking and not voiceover and not actor:
         return None
     return out
+
+
+def _episode_choice_is_all(episode: str) -> bool:
+    ep = (episode or "").strip().lower()
+    return ep in ("", "all", "全部")
+
+
+def _episode_choice_label(episode: str) -> str:
+    if _episode_choice_is_all(episode):
+        return "全部"
+    return (episode or "").strip()
+
+
+def _episode_ids_in_scenes(scenes: list | None) -> list[str]:
+    """JSON 里实际出现的 episode，按数字排序。没有任何 episode 时为空。"""
+    seen: list[str] = []
+    for item in scenes or []:
+        if not isinstance(item, dict):
+            continue
+        ep = item.get("episode")
+        if ep is None:
+            continue
+        text = str(ep).strip()
+        if text and text not in seen:
+            seen.append(text)
+    if seen and all(text.isdigit() for text in seen):
+        seen.sort(key=int)
+    return seen
+
+
+def _filter_scenes_by_episode(scenes: list | None, episode: str) -> list:
+    entries = [item for item in (scenes or []) if isinstance(item, dict)]
+    if _episode_choice_is_all(episode):
+        return entries
+    want = (episode or "").strip()
+    return [item for item in entries if str(item.get("episode") or "").strip() == want]
 
 
 def _apply_project_video_title(video_detail: dict, title: str) -> None:
@@ -2996,6 +3104,58 @@ def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> No
             config.write_channel_list_json(p, [])
         except OSError:
             pass
+
+
+_STORY_COPY_PROJECT_KEYS = (
+    "project_profile",
+    "project_id",
+    "project_pid",
+    "pid",
+    "video_title",
+    "gen_video_stem",
+    "cloned_from_id",
+    "cloned_from_url",
+    "youtube_source_id",
+    "youtube_watch_url",
+    "published_watch_url",
+    "publish",
+    "create_date",
+    "status",
+)
+
+
+def _fresh_story_row_id(existing: set) -> str:
+    """列表行新编号，不与已有 ``id`` 重复。"""
+    import uuid
+
+    for _ in range(30):
+        nid = "s" + datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:4]
+        if nid not in existing:
+            existing.add(nid)
+            return nid
+    nid = "s" + uuid.uuid4().hex
+    existing.add(nid)
+    return nid
+
+
+def _copy_story_list_row(src: dict, new_id: str) -> dict:
+    """复制故事材料。新 ``id``；去掉项目信息。幻灯片 PDF 仍指向原来的文件。"""
+    row = copy.deepcopy(src)
+    slide = _find_gen_video_slide_for_row(src)
+    for key in _STORY_COPY_PROJECT_KEYS:
+        row.pop(key, None)
+    row["id"] = new_id
+    row["view_count"] = 0
+    if slide:
+        row[GEN_VIDEO_SLIDE_KEY] = slide
+    stored_video = (row.get("video") or "").strip()
+    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+    if stored_video and gen_dir and os.path.normcase(os.path.abspath(stored_video)).startswith(
+        os.path.normcase(os.path.abspath(gen_dir))
+    ):
+        row.pop("video", None)
+    _normalize_channel_list_item_for_storage(row)
+    return row
 
 
 def _channel_list_row_tree_key(video: dict) -> str:
@@ -6623,12 +6783,17 @@ class MediaGUIManager:
         prompt_label: str,
         *,
         instruction: str = "",
+        content_override: str | None = None,
     ) -> list | None:
-        """用所选 LM 提示生成 scene_content array（须 analyzed_content 作 {content}）。"""
-        if not (video_detail.get("analyzed_content") or "").strip():
+        """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
+        has_override = content_override is not None and str(content_override).strip()
+        if not has_override and not (video_detail.get("analyzed_content") or "").strip():
             return None
         _, prompt = self._combined_prompt_text_for_label(
-            video_detail, prompt_label, instruction=instruction
+            video_detail,
+            prompt_label,
+            instruction=instruction,
+            content_override=content_override,
         )
         if not (prompt or "").strip():
             return None
@@ -6658,12 +6823,14 @@ class MediaGUIManager:
         persist_fn=None,
         on_saved=None,
         on_title_updated=None,
+        content_override: str | None = None,
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         channel_key = self._channel_config_key()
         if not prompt_label:
             prompt_label = _prompt_choice_entries(channel_key)[0][0]
-        if not (video_detail.get("analyzed_content") or "").strip():
+        has_override = content_override is not None and str(content_override).strip()
+        if not has_override and not (video_detail.get("analyzed_content") or "").strip():
             messagebox.showwarning(
                 "提示",
                 "智能生成需要 analyzed_content 作为 {content} 原始材料。\n请先在「分析」中填写或生成内容。",
@@ -6686,7 +6853,10 @@ class MediaGUIManager:
             instr = (get_instruction() or "").strip() if callable(get_instruction) else ""
             try:
                 scenes = self._generate_scene_content_from_notebooklm_prompt(
-                    video_detail, prompt_label, instruction=instr
+                    video_detail,
+                    prompt_label,
+                    instruction=instr,
+                    content_override=content_override,
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -6989,10 +7159,12 @@ class MediaGUIManager:
         scene_index: int = -1,
         visual_style: str = "",
         nb_variant: str = "",
+        episode: str = "",
     ) -> bool:
         """scene_content → NotebookLM 导出指令（含图像/视频/口播各子类型）。
 
-        ``scene_index``：-1 拷贝全部场景；0..N-1 拷贝单条场景（由分镜窗「场景索引」按钮设定）。
+        ``episode``：空 / 全部 = 不过滤；否则只带该集的场景。故事、幻灯片、口播都按集过滤。
+        ``scene_index``：仅 Video 再往下切一场。-1 为该集全部；0..N-1 为该集内的第几场。
         """
         entries = [e for e in (scenes or []) if isinstance(e, dict)]
         if not entries:
@@ -7003,21 +7175,55 @@ class MediaGUIManager:
             )
             return False
 
-        idx = scene_index if scene_index is not None else -1
+        try:
+            export_base, _export_var = config_prompt.normalize_nb_export_mode(
+                nb_mode, nb_variant
+            )
+        except ValueError:
+            export_base = ""
+
+        filtered = _filter_scenes_by_episode(entries, episode)
+        ep_label = _episode_choice_label(episode)
+        if not filtered:
+            messagebox.showwarning(
+                "该集没有场景",
+                f"第 {ep_label} 集在当前 scene_content 里没有场景。\n"
+                "请把集选回「全部」，或改 JSON 里的 episode。",
+                parent=parent,
+            )
+            return False
+
+        image_prompt_only = export_base == "image"
+        use_scene_index = export_base == "video"
+        idx = scene_index if (use_scene_index and scene_index is not None) else -1
         if idx < 0:
-            scene_content = entries
-            status_msg = f"已拷贝全部 {len(entries)} 个场景"
+            scene_content = filtered
+            if _episode_choice_is_all(episode):
+                status_msg = f"已拷贝全部 {len(filtered)} 个场景"
+            else:
+                status_msg = f"已拷贝第 {ep_label} 集的全部 {len(filtered)} 个场景"
         else:
-            if idx >= len(entries):
+            if idx >= len(filtered):
+                scope = (
+                    f"全部场景共 {len(filtered)} 条"
+                    if _episode_choice_is_all(episode)
+                    else f"第 {ep_label} 集共 {len(filtered)} 条"
+                )
                 messagebox.showwarning(
                     "场景索引超出范围",
-                    f"当前索引为第 {idx + 1} 个场景，但仅有 {len(entries)} 条。\n"
-                    "请点击左侧索引按钮调整，或改为 All。",
+                    f"当前要第 {idx + 1} 个场景，但{scope}。\n"
+                    "请点击场按钮调整，或改为 All。",
                     parent=parent,
                 )
                 return False
-            scene_content = [entries[idx]]
-            status_msg = f"已拷贝第 {idx + 1} 个场景（共 {len(entries)} 个）"
+            scene_content = [filtered[idx]]
+            if _episode_choice_is_all(episode):
+                status_msg = f"已拷贝第 {idx + 1} 个场景（共 {len(filtered)} 个）"
+            else:
+                status_msg = (
+                    f"已拷贝第 {ep_label} 集的第 {idx + 1} 个场景"
+                    f"（该集共 {len(filtered)} 个）"
+                )
 
         clip_body = config_prompt.build_notebooklm_gen_instruction_clipbody(
             mode=nb_mode,
@@ -7043,6 +7249,8 @@ class MediaGUIManager:
                 title = config_prompt.nb_export_mode_label(nb_mode, nb_variant)
             except ValueError:
                 title = nb_mode
+            if image_prompt_only:
+                status_msg = "已拷贝提示词（不含场景 JSON）"
             show_auto_close_popup(parent, f"Scene → {title}", status_msg)
         return bool(clip_body)
 
@@ -7309,9 +7517,14 @@ class MediaGUIManager:
                 frm,
                 text=(
                     f"{title}\n"
-                    "选 LM 提示；{content} 固定为 analyzed_content，{instruction} 为下方导向说明。"
-                    "「智能生成」用所选提示生成 scene_content 并自动保存。"
-                    "左侧索引按钮：All / 1 / 2 … 选择拷贝范围；NotebookLM ▼ 菜单按当前索引与子类型拷贝。"
+                    "选 LM 提示。有 PDF 时，材料在 analyzed content 和 PDF 里二选一，只放进 {content}。"
+                    "没有 PDF 时只用 analyzed content。"
+                    "「智能生成」用所选提示和当前材料生成 scene_content 并自动保存。"
+                    "把 PDF 拖进本窗口后，可以把材料改成这份 PDF。PDF 多半是一页一张图，每一张图是一场。"
+                    "「拷贝 PDF」把这份 PDF 文件放进剪贴板，可以粘贴到别的 AI 工具。"
+                    "「集」「场」选定后立刻把对应场景 JSON 拷到剪贴板。"
+                    "Image 单图和幻灯片只拷提示词。"
+                    "Video、Speaking、Voiceover 仍把选定场景写进提示词。"
                 ),
                 wraplength=940,
             ).pack(anchor=tk.W, pady=(0, 8))
@@ -7331,6 +7544,84 @@ class MediaGUIManager:
                 width=28,
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+
+            material_var = tk.StringVar(value="analyzed")
+            pdf_layout_var = tk.StringVar(value="ai")
+            pdf_source_cache = {"path": "", "text": "", "pages": 0, "has_text": False}
+            material_row = ttk.Frame(frm)
+            material_row.pack(fill=tk.X, pady=(0, 6))
+            ttk.Label(material_row, text="材料").pack(side=tk.LEFT, padx=(0, 5))
+            material_combo = ttk.Combobox(
+                material_row,
+                state="disabled",
+                width=22,
+                values=["analyzed content"],
+            )
+            material_combo.pack(side=tk.LEFT, padx=(0, 8))
+            material_combo.set("analyzed content")
+            pdf_layout_combo = ttk.Combobox(
+                material_row,
+                state="readonly",
+                width=28,
+                values=["由 AI 判断场数", "每一页一个场景"],
+            )
+            pdf_layout_combo.set("由 AI 判断场数")
+
+            def _copy_slide_pdf():
+                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                if _copy_file_to_clipboard_hdrop(dlg, slide):
+                    show_auto_close_popup(
+                        dlg,
+                        "已复制",
+                        f"PDF 已复制到剪贴板，可以粘贴到 AI 工具：\n{os.path.basename(slide)}",
+                    )
+
+            copy_pdf_btn = ttk.Button(material_row, text="拷贝 PDF", command=_copy_slide_pdf)
+
+            def _pdf_layout_mode() -> str:
+                shown = (pdf_layout_combo.get() or "").strip()
+                return "page" if shown.startswith("每一页") else "ai"
+
+            def _remember_pdf_source(path: str | None = None) -> dict:
+                slide = (path if path is not None else _find_gen_video_slide_for_row(video_detail) or "").strip()
+                if slide and slide == pdf_source_cache["path"]:
+                    return pdf_source_cache
+                text, pages, has_text = _pdf_pages_as_scene_source(slide) if slide else ("", 0, False)
+                pdf_source_cache["path"] = slide
+                pdf_source_cache["text"] = text
+                pdf_source_cache["pages"] = pages
+                pdf_source_cache["has_text"] = has_text
+                return pdf_source_cache
+
+            def _sync_material_widgets(*_args):
+                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                if slide:
+                    material_combo.config(state="readonly", values=["analyzed content", "PDF"])
+                    material_combo.set("PDF" if material_var.get() == "pdf" else "analyzed content")
+                else:
+                    material_var.set("analyzed")
+                    material_combo.config(state="disabled", values=["analyzed content"])
+                    material_combo.set("analyzed content")
+                series = "series" in (prompt_combo_var.get() or "").lower()
+                pdf_layout_combo.pack_forget()
+                copy_pdf_btn.pack_forget()
+                if material_var.get() == "pdf" and series:
+                    pdf_layout_combo.pack(side=tk.LEFT)
+                    if not (pdf_layout_combo.get() or "").strip():
+                        pdf_layout_combo.set("由 AI 判断场数")
+                if slide:
+                    copy_pdf_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+            def _on_material_selected(_event=None):
+                shown = (material_combo.get() or "").strip()
+                material_var.set("pdf" if shown == "PDF" else "analyzed")
+                _sync_material_widgets()
+                refresh_scene_prompt()
+
+            material_combo.bind("<<ComboboxSelected>>", _on_material_selected)
+            pdf_layout_combo.bind(
+                "<<ComboboxSelected>>", lambda _e: refresh_scene_prompt()
+            )
 
             ttk.Label(frm, text="").pack(anchor=tk.W)
 
@@ -7410,9 +7701,25 @@ class MediaGUIManager:
 
                 def _worker() -> None:
                     try:
+                        use_pdf = material_var.get() == "pdf"
+                        send_instr = instr
+                        override = None
+                        if use_pdf:
+                            cached = _remember_pdf_source()
+                            override = cached.get("text") or ""
+                            extra = _pdf_scene_generation_instruction(
+                                sel,
+                                int(cached.get("pages") or 0),
+                                _pdf_layout_mode() if "series" in sel.lower() else "ai",
+                            )
+                            send_instr = (instr + "\n\n" + extra).strip() if instr else extra
                         _, prompt = mgr._combined_prompt_text_for_label(
-                            vd, sel, instruction=instr
+                            vd,
+                            sel,
+                            instruction=send_instr,
+                            content_override=override,
                         )
+                        prompt = _prompt_text_for_material(prompt, "pdf" if use_pdf else "analyzed")
                     except Exception:
                         prompt = ""
                     try:
@@ -7436,6 +7743,7 @@ class MediaGUIManager:
 
                 prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
             instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
+            _sync_material_widgets()
             if nb_prompt_choices:
                 dlg.after_idle(refresh_scene_prompt)
 
@@ -7538,6 +7846,8 @@ class MediaGUIManager:
 
             _scene_copy_index = [-1]
             scene_ui["_scene_copy_index"] = _scene_copy_index
+            _episode_choice = [""]
+            scene_ui["_episode_choice"] = _episode_choice
 
             def _scene_index_button_label_bridge(idx: int) -> str:
                 return "All" if idx < 0 else str(idx + 1)
@@ -7558,9 +7868,55 @@ class MediaGUIManager:
                     return scenes
                 return None
 
+            def _scenes_in_episode_bridge() -> list:
+                return _filter_scenes_by_episode(
+                    _scene_list_for_bridge() or [], _episode_choice[0]
+                )
+
             def _scene_count_for_bridge() -> int:
-                scenes = _scene_list_for_bridge()
-                return len(scenes) if scenes else 0
+                return len(_scenes_in_episode_bridge())
+
+            def _episode_choice_labels_bridge():
+                ids = _episode_ids_in_scenes(_scene_list_for_bridge())
+                return ["全部"] + ids
+
+            def _sync_episode_button_bridge():
+                btn = scene_ui.get("episode_btn")
+                if btn is None:
+                    return
+                try:
+                    btn.config(text=_episode_choice_label(_episode_choice[0]))
+                except tk.TclError:
+                    pass
+
+            def _set_episode_choice_early(value: str):
+                raw = (value or "").strip().translate(
+                    str.maketrans("０１２３４５６７８９", "0123456789")
+                )
+                if not raw:
+                    return False, "empty episode_choice"
+                ids = _episode_ids_in_scenes(_scene_list_for_bridge())
+                low = raw.lower().replace(" ", "")
+                if low in ("all", "全部", "0", "-1"):
+                    _episode_choice[0] = ""
+                elif not ids:
+                    return False, "当前场景没有 episode，只能选全部"
+                elif raw in ids:
+                    _episode_choice[0] = raw
+                else:
+                    return False, (
+                        "unknown episode_choice: " + value
+                        + "\nchoices: " + " | ".join(_episode_choice_labels_bridge())
+                    )
+                _scene_copy_index[0] = -1
+                _sync_episode_button_bridge()
+                btn = scene_ui.get("scene_index_btn")
+                if btn is not None:
+                    try:
+                        btn.config(text=_scene_index_button_label_bridge(-1))
+                    except tk.TclError:
+                        pass
+                return True, f"episode_choice={_episode_choice_label(_episode_choice[0])}"
 
             def _scene_choice_labels_bridge():
                 n = _scene_count_for_bridge()
@@ -7615,6 +7971,7 @@ class MediaGUIManager:
                         channel_path=channel_path or self.channel_path or "",
                         scene_index=_scene_copy_index[0],
                         visual_style=(visual_style_var.get() or "").strip(),
+                        episode=_episode_choice[0],
                     )
                     if not copied:
                         return False, (
@@ -7678,6 +8035,7 @@ class MediaGUIManager:
                     channel_path=channel_path or self.channel_path or "",
                     scene_index=_scene_copy_index[0],
                     visual_style=(visual_style_var.get() or "").strip(),
+                    episode=_episode_choice[0],
                 )
                 if not copied:
                     return False, (
@@ -7731,6 +8089,11 @@ class MediaGUIManager:
                         "set": _set_scene_choice_early,
                         "choices": _scene_choice_labels_bridge,
                     },
+                    "episode_choice": {
+                        "get": lambda: _episode_choice_label(_episode_choice[0]),
+                        "set": _set_episode_choice_early,
+                        "choices": _episode_choice_labels_bridge,
+                    },
                     "notebooklm": {
                         "get": lambda: "",
                         "set": _set_notebooklm_early,
@@ -7747,6 +8110,10 @@ class MediaGUIManager:
             scene_ui.update(
                 {
                     "prompt_combo_var": prompt_combo_var,
+                    "material_var": material_var,
+                    "pdf_layout_var": pdf_layout_var,
+                    "sync_material_widgets": _sync_material_widgets,
+                    "remember_pdf_source": _remember_pdf_source,
                     "prompt_combo": prompt_combo,
                     "nb_prompt_choices": nb_prompt_choices,
                     "instruction_tx": instruction_tx,
@@ -7851,31 +8218,92 @@ class MediaGUIManager:
 
                     _lang_lbl = config.llm_language_label(self.language)
                     _scene_copy_index = scene_ui["_scene_copy_index"]
+                    _episode_choice = scene_ui["_episode_choice"]
 
                     def _scene_index_button_label(idx: int) -> str:
                         return "All" if idx < 0 else str(idx + 1)
 
+                    def _scenes_in_episode() -> list:
+                        return _filter_scenes_by_episode(
+                            _scene_list_from_editor() or [], _episode_choice[0]
+                        )
+
                     def _scene_count() -> int:
-                        scenes = _scene_list_from_editor()
-                        return len(scenes) if scenes else 0
+                        return len(_scenes_in_episode())
 
                     def _scene_choice_labels():
                         n = _scene_count()
                         return ["All"] + [str(i) for i in range(1, n + 1)]
 
+                    def _episode_choice_labels():
+                        return ["全部"] + _episode_ids_in_scenes(_scene_list_from_editor())
+
+                    def _sync_choice_buttons():
+                        try:
+                            episode_btn.config(text=_episode_choice_label(_episode_choice[0]))
+                        except (NameError, tk.TclError):
+                            pass
+                        try:
+                            scene_index_btn.config(
+                                text=_scene_index_button_label(_scene_copy_index[0])
+                            )
+                        except (NameError, tk.TclError):
+                            pass
+
+                    def _cycle_episode_choice():
+                        ids = _episode_ids_in_scenes(_scene_list_from_editor())
+                        cur = (_episode_choice[0] or "").strip()
+                        if not ids:
+                            _episode_choice[0] = ""
+                        elif _episode_choice_is_all(cur) or cur not in ids:
+                            _episode_choice[0] = ids[0]
+                        else:
+                            nxt = ids.index(cur) + 1
+                            _episode_choice[0] = "" if nxt >= len(ids) else ids[nxt]
+                        _scene_copy_index[0] = -1
+                        _sync_choice_buttons()
+                        _copy_selected_scenes_to_clipboard()
+
+                    def _selected_scene_payload() -> tuple[object, str] | None:
+                        filtered = _scenes_in_episode()
+                        if not filtered:
+                            return None
+                        ep_label = _episode_choice_label(_episode_choice[0])
+                        idx = _scene_copy_index[0]
+                        if idx < 0:
+                            payload = filtered
+                            if _episode_choice_is_all(_episode_choice[0]):
+                                msg = f"已拷贝全部 {len(filtered)} 个场景"
+                            else:
+                                msg = f"已拷贝第 {ep_label} 集的全部 {len(filtered)} 个场景"
+                            return payload, msg
+                        if idx >= len(filtered):
+                            return None
+                        if _episode_choice_is_all(_episode_choice[0]):
+                            msg = f"已拷贝第 {idx + 1} 个场景"
+                        else:
+                            msg = f"已拷贝第 {ep_label} 集的第 {idx + 1} 个场景"
+                        return filtered[idx], msg
+
+                    def _copy_selected_scenes_to_clipboard():
+                        picked = _selected_scene_payload()
+                        if not picked:
+                            return
+                        payload, msg = picked
+                        text = json.dumps(payload, ensure_ascii=False, indent=2)
+                        _copy_text_to_clipboard(dlg, text)
+                        show_auto_close_popup(dlg, "场景内容", msg)
+
                     def _cycle_scene_copy_index():
-                        scenes = _scene_list_from_editor()
-                        n = len(scenes) if scenes else 0
+                        n = _scene_count()
                         cur = _scene_copy_index[0]
                         if cur < 0:
                             _scene_copy_index[0] = 0 if n > 0 else -1
                         else:
                             nxt = cur + 1
                             _scene_copy_index[0] = -1 if nxt >= n else nxt
-                        try:
-                            scene_index_btn.config(text=_scene_index_button_label(_scene_copy_index[0]))
-                        except (NameError, tk.TclError):
-                            pass
+                        _sync_choice_buttons()
+                        _copy_selected_scenes_to_clipboard()
 
                     def _copy_scene_instruction(nb_mode: str, nb_variant: str = ""):
                         scenes = _scene_list_from_editor()
@@ -7896,6 +8324,7 @@ class MediaGUIManager:
                             channel_path=channel_path or self.channel_path or "",
                             scene_index=_scene_copy_index[0],
                             visual_style=(visual_style_var.get() or "").strip(),
+                            episode=_episode_choice[0],
                         )
 
                     def on_show_nb_export_menu():
@@ -7932,17 +8361,37 @@ class MediaGUIManager:
                             pass
 
                     def on_smart_generate():
+                        label = (prompt_combo_var.get() or "").strip()
+                        user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+                        override = None
+                        if material_var.get() == "pdf":
+                            cached = _remember_pdf_source()
+                            if not (cached.get("text") or "").strip():
+                                messagebox.showwarning(
+                                    "PDF",
+                                    "这条没有可用的 PDF 文字，材料请改回 analyzed content。",
+                                    parent=dlg,
+                                )
+                                return
+                            override = cached["text"]
+                            extra = _pdf_scene_generation_instruction(
+                                label,
+                                int(cached.get("pages") or 0),
+                                _pdf_layout_mode() if "series" in label.lower() else "ai",
+                            )
+                            user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
                         self._run_scene_smart_generate_async(
                             dlg,
                             video_detail,
-                            (prompt_combo_var.get() or "").strip(),
+                            label,
                             lambda merged: (tx.delete("1.0", tk.END), tx.insert("1.0", merged)),
-                            get_instruction=lambda: (instruction_tx.get("1.0", tk.END) or ""),
+                            get_instruction=lambda instr=user_instr: instr,
                             on_busy=lambda: _busy(smart_btn),
                             on_idle=lambda: _idle(smart_btn),
                             persist_fn=persist,
                             on_saved=on_saved,
                             on_title_updated=on_title_updated,
+                            content_override=override,
                         )
 
                     def on_persist_keep_open():
@@ -7997,8 +8446,72 @@ class MediaGUIManager:
 
                     smart_btn = ttk.Button(btn_row, text="智能生成", command=on_smart_generate)
                     smart_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+                    def _attach_dropped_slide(pdf_path: str) -> None:
+                        gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+                        if not gen_dir:
+                            return
+                        os.makedirs(gen_dir, exist_ok=True)
+                        dest = os.path.join(gen_dir, _gen_video_slide_pdf_dest_filename(video_detail))
+                        safe_copy_overwrite(pdf_path, dest)
+                        video_detail[GEN_VIDEO_SLIDE_KEY] = os.path.abspath(dest)
+
+                    def _offer_pdf_scene_generate(pdf_path: str) -> None:
+                        _text, page_count, _has_text = _pdf_pages_as_scene_source(pdf_path)
+                        if page_count <= 0:
+                            messagebox.showwarning("PDF", "这份 PDF 没有页面。", parent=dlg)
+                            return
+                        try:
+                            _attach_dropped_slide(pdf_path)
+                        except Exception as exc:
+                            messagebox.showerror("PDF", f"无法保存 slide：\n{exc}", parent=dlg)
+                            return
+                        pdf_source_cache["path"] = ""
+                        material_var.set("pdf")
+                        _sync_material_widgets()
+                        refresh_scene_prompt()
+                        note = f"材料已改为这份 PDF（{page_count} 页）。提示词里只写文件和页数，具体内容看 PDF。"
+                        if "series" in (prompt_combo_var.get() or "").lower():
+                            note += "\n\n系列提示词可以在材料旁边选择：每一页一个场景，或由 AI 判断场数。"
+                        show_auto_close_popup(dlg, "PDF", note)
+
+                    def _on_scene_pdf_drop(event):
+                        master = getattr(event, "widget", None) or dlg
+                        paths = _dnd_normalize_file_paths(master, getattr(event, "data", None))
+                        pdfs = [p for p in paths if p.lower().endswith(".pdf")]
+                        if not pdfs:
+                            return
+                        _offer_pdf_scene_generate(pdfs[0])
+
+                    if DND_FILES and callable(getattr(dlg, "drop_target_register", None)):
+                        def _bind_pdf_drop(widget):
+                            try:
+                                widget.drop_target_register(DND_FILES)
+                                widget.dnd_bind("<<Drop>>", _on_scene_pdf_drop)
+                            except (tk.TclError, AttributeError, Exception):
+                                pass
+
+                        def _walk_pdf_drop(widget):
+                            _bind_pdf_drop(widget)
+                            try:
+                                for child in widget.winfo_children():
+                                    _walk_pdf_drop(child)
+                            except tk.TclError:
+                                pass
+
+                        _walk_pdf_drop(dlg)
                     if not nb_prompt_choices:
                         smart_btn.config(state=tk.DISABLED)
+                    ttk.Label(btn_row, text="集").pack(side=tk.LEFT, padx=(0, 2))
+                    episode_btn = ttk.Button(
+                        btn_row,
+                        text=_episode_choice_label(_episode_choice[0]),
+                        width=6,
+                        command=_cycle_episode_choice,
+                    )
+                    episode_btn.pack(side=tk.LEFT, padx=(0, 6))
+                    scene_ui["episode_btn"] = episode_btn
+                    ttk.Label(btn_row, text="场").pack(side=tk.LEFT, padx=(0, 2))
                     scene_index_btn = ttk.Button(
                         btn_row,
                         text=_scene_index_button_label(_scene_copy_index[0]),
@@ -8085,6 +8598,31 @@ class MediaGUIManager:
                         tx.insert("1.0", value)
                         return True, "scene_content set"
 
+                    def _set_episode_choice(value: str):
+                        raw = (value or "").strip().translate(
+                            str.maketrans("０１２３４５６７８９", "0123456789")
+                        )
+                        if not raw:
+                            return False, "empty episode_choice"
+                        ids = _episode_ids_in_scenes(_scene_list_from_editor())
+                        low = raw.lower().replace(" ", "")
+                        if low in ("all", "全部", "0", "-1"):
+                            _episode_choice[0] = ""
+                        elif not ids:
+                            return False, "当前场景没有 episode，只能选全部"
+                        elif raw in ids:
+                            _episode_choice[0] = raw
+                        else:
+                            return False, (
+                                "unknown episode_choice: " + value
+                                + "\nchoices: " + " | ".join(_episode_choice_labels())
+                            )
+                        _scene_copy_index[0] = -1
+                        _sync_choice_buttons()
+                        return True, (
+                            f"episode_choice={_episode_choice_label(_episode_choice[0])}"
+                        )
+
                     def _set_scene_choice(value: str):
                         raw = (value or "").strip().translate(
                             str.maketrans("０１２３４５６７８９", "0123456789")
@@ -8132,6 +8670,7 @@ class MediaGUIManager:
                                 channel_path=channel_path or self.channel_path or "",
                                 scene_index=_scene_copy_index[0],
                                 visual_style=(visual_style_var.get() or "").strip(),
+                                episode=_episode_choice[0],
                             )
                             if not copied:
                                 return False, (
@@ -8189,6 +8728,7 @@ class MediaGUIManager:
                             channel_path=channel_path or self.channel_path or "",
                             scene_index=_scene_copy_index[0],
                             visual_style=(visual_style_var.get() or "").strip(),
+                            episode=_episode_choice[0],
                         )
                         if not copied:
                             return False, (
@@ -8235,6 +8775,11 @@ class MediaGUIManager:
                                 "get": lambda: _scene_index_button_label(_scene_copy_index[0]),
                                 "set": _set_scene_choice,
                                 "choices": _scene_choice_labels,
+                            },
+                            "episode_choice": {
+                                "get": lambda: _episode_choice_label(_episode_choice[0]),
+                                "set": _set_episode_choice,
+                                "choices": _episode_choice_labels,
                             },
                             "prompt": {
                                 "get": lambda: (prompt_tx.get("1.0", tk.END) or "").strip(),
@@ -9446,11 +9991,103 @@ class MediaGUIManager:
                     f"已成功删除 {deleted_count} 个视频及其相关文件",
                 )
         
+        story_clip = {"rows": []}
+
+        def _focus_is_text_entry():
+            w = dialog.focus_get()
+            if w is None:
+                return False
+            return w.winfo_class() in ("Entry", "TEntry", "Text")
+
+        def copy_selected_stories(_event=None):
+            """Ctrl+C：记下选中的故事，供 Ctrl+V 粘成新条目。"""
+            if not self.content_mode or _focus_is_text_entry():
+                return
+            rows = _unique_video_details_from_tree_selection()
+            if not rows:
+                return "break"
+            story_clip["rows"] = [copy.deepcopy(r) for r in rows]
+            show_auto_close_popup(
+                dialog,
+                "已复制",
+                f"已复制 {len(rows)} 条故事。在列表里按 Ctrl+V 粘贴。",
+            )
+            try:
+                tree.focus_set()
+            except tk.TclError:
+                pass
+            return "break"
+
+        def paste_copied_stories(_event=None):
+            """Ctrl+V：插入副本。新 id，并清掉项目信息。"""
+            if not self.content_mode or _focus_is_text_entry():
+                return
+            srcs = [r for r in (story_clip.get("rows") or []) if isinstance(r, dict)]
+            if not srcs:
+                return "break"
+            videos = self.downloader.channel_videos
+            existing = {
+                str(v.get("id") or "").strip()
+                for v in videos
+                if isinstance(v, dict) and str(v.get("id") or "").strip()
+            }
+            copies = [
+                _copy_story_list_row(src, _fresh_story_row_id(existing)) for src in srcs
+            ]
+            insert_at = len(videos)
+            selected = _unique_video_details_from_tree_selection()
+            anchor = selected[-1] if selected else None
+            if anchor is not None and anchor in videos:
+                insert_at = videos.index(anchor) + 1
+            for offset, row in enumerate(copies):
+                videos.insert(insert_at + offset, row)
+            new_key = _channel_list_row_tree_key(copies[-1])
+            try:
+                _normalize_channel_videos_for_storage(
+                    videos, self.channel_path or ""
+                )
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, videos
+                )
+            except OSError as exc:
+                for row in copies:
+                    if row in videos:
+                        videos.remove(row)
+                show_auto_close_popup(dialog, "粘贴失败", str(exc), kind="error")
+                return "break"
+            populate_tree()
+            if new_key:
+                try:
+                    for item in tree.get_children():
+                        tags = _treeview_item_tags_safe(tree, item)
+                        if tags and tags[0] == new_key:
+                            tree.selection_set(item)
+                            tree.see(item)
+                            tree.focus(item)
+                            break
+                except tk.TclError:
+                    pass
+            show_auto_close_popup(
+                dialog,
+                "已粘贴",
+                f"已加入 {len(copies)} 条。编号是新的，项目信息已清掉，只留下故事材料。",
+            )
+            return "break"
+
         # 绑定Delete键
         def on_key_press(event):
             if event.keysym == 'Delete':
                 delete_selected_videos()
         tree.bind('<KeyPress>', on_key_press)
+        if self.content_mode:
+            for seq, handler in (
+                ("<Control-c>", copy_selected_stories),
+                ("<Control-C>", copy_selected_stories),
+                ("<Control-v>", paste_copied_stories),
+                ("<Control-V>", paste_copied_stories),
+            ):
+                tree.bind(seq, handler)
+                dialog.bind(seq, handler)
         # 确保tree可以获得焦点以便接收键盘事件
         tree.focus_set()
 
@@ -9759,17 +10396,17 @@ class MediaGUIManager:
                     (vd.get("topic_category") or selected_config.get("topic_category") or "")
                     .strip()
                 )
-                viewing_topic_list = _is_viewing_topic_category_program_list(
+                viewing_topic_list = self.content_mode or _is_viewing_topic_category_program_list(
                     ch_path, list_path, tc
                 )
                 old_pid = (superseded_pid or "").strip()
 
                 if viewing_topic_list:
-                    # 在主题分表中「新建项目」：保留源行，追加独立项目行（计数 +1）
-                    new_row = _clone_channel_video_for_new_project(vd, selected_config)
-                    _normalize_channel_list_item_for_storage(new_row, ch_path)
-                    self.downloader.channel_videos.append(new_row)
-                    select_key = _channel_list_row_tree_key(new_row)
+                    # 当前列表已是主题分表：项目信息写回这一条，不另建一行。
+                    _apply_project_config_to_list_row(
+                        vd, selected_config, channel_path=ch_path
+                    )
+                    select_key = _channel_list_row_tree_key(vd)
                 else:
                     # 在频道热门总表中：仅更新源 YouTube 行，不向总表克隆重复行
                     _apply_project_config_to_list_row(
@@ -9785,15 +10422,21 @@ class MediaGUIManager:
                 _persist_channel_list_and_refresh_tree(select_key, reopen_summary=False)
 
                 if not tc:
-                    messagebox.showwarning(
-                        "项目已创建",
-                        f"PID：{_pid}\n\n缺少 topic_category，未写入 list_by_topic。\n"
-                        "请先保存主题分类后再打开工作流。",
-                        parent=parent,
-                    )
+                    if viewing_topic_list:
+                        messagebox.showwarning(
+                            "项目已写入当前条目",
+                            f"PID：{_pid}\n\n这条还没有 topic_category，暂时不能打开工作流。",
+                            parent=parent,
+                        )
+                    else:
+                        messagebox.showwarning(
+                            "项目已创建",
+                            f"PID：{_pid}\n\n缺少 topic_category，未写入 list_by_topic。\n"
+                            "请先保存主题分类后再打开工作流。",
+                            parent=parent,
+                        )
                     return
                 if viewing_topic_list:
-                    # 当前列表即主题分表，persist 已写入；勿再 upsert 追加导致磁盘多一行而内存不同步
                     topic_list_path = list_path
                 else:
                     try:
@@ -9880,7 +10523,9 @@ class MediaGUIManager:
                         parent=parent,
                     )
                     return
-                _open_bound_project(cfg, cfg_pid)
+                _open_bound_project(
+                    cfg, cfg_pid, topic_list_path=list_path or None
+                )
                 return
 
             if forced_action == "new":
@@ -9955,6 +10600,66 @@ class MediaGUIManager:
                 topic_tags_kw=_topic_tags_val(),
             )
 
+        def _regenerate_project_for_video_detail(vd, parent):
+            """确认后删掉这条已有项目的工作流文件，再用当前内容新建一个新 pid。"""
+            if not isinstance(vd, dict):
+                return
+            old_pid = (_video_detail_project_pid(vd) or "").strip()
+            if not old_pid:
+                messagebox.showwarning("重新生成项目", "这条还没有项目。", parent=parent)
+                return
+            if not _video_detail_can_create_project(vd):
+                messagebox.showwarning(
+                    "重新生成项目",
+                    "scene_content 须为有效 JSON array，无法重新生成。\n"
+                    "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
+                    parent=parent,
+                )
+                return
+            ok = messagebox.askyesno(
+                "重新生成项目",
+                f"将删除项目 {old_pid} 的工作流文件（场景、媒体），\n"
+                f"并另建一个新的项目号。\n\n"
+                f"这条里的文案和场景内容会保留，用来填写新项目。\n\n"
+                f"确定删除并重新生成吗？",
+                parent=parent,
+            )
+            if not ok:
+                return
+            folder = os.path.join(config.PROJECT_DATA_PATH, old_pid)
+            if os.path.isdir(folder):
+                try:
+                    shutil.rmtree(folder)
+                except OSError as exc:
+                    messagebox.showerror(
+                        "重新生成项目",
+                        f"无法删除原项目文件：\n{folder}\n\n{exc}",
+                        parent=parent,
+                    )
+                    return
+            vd.pop(project_manager.PROJECT_PROFILE_KEY, None)
+            vd.pop("project_id", None)
+            vd.pop("project_pid", None)
+            vd.pop("pid", None)
+            try:
+                _normalize_channel_videos_for_storage(
+                    self.downloader.channel_videos, self.channel_path or ""
+                )
+                _write_channel_list_json_file(
+                    self.downloader.channel_list_json, self.downloader.channel_videos
+                )
+                populate_tree()
+            except Exception:
+                pass
+            _run_project_start_for_video_detail(
+                vd,
+                parent,
+                forced_action="new",
+                topic_category=(vd.get("topic_category") or "").strip() or None,
+                topic_subtype=(vd.get("topic_subtype") or "").strip() or None,
+                topic_tags=vd.get("tags"),
+            )
+
         def _open_project_for_video_detail(
             vd,
             parent,
@@ -9963,45 +10668,16 @@ class MediaGUIManager:
             topic_subtype=None,
             topic_tags=None,
         ):
-            """打开项目：已有/同源克隆 pid 时询问打开或新建；否则直接新建（须 scene_content）。"""
+            """当前这条已有项目则直接打开；还没有则把新建项目的信息写回这一条。"""
             if not isinstance(vd, dict):
                 return
-            linked_pids = _linked_project_pids_for_video_detail(
-                vd, self.downloader.channel_videos
-            )
-            if linked_pids:
-                choices = [
-                    (f"open:{pid}", f"打开已有项目（{pid}）") for pid in linked_pids
-                ]
-                choices.append(("new", "新建项目（基于当前 scene_content）"))
-                picked = askchoice("打开项目", choices, parent=parent)
-                if not picked:
-                    return
-                action = picked[1]
-                if action == "new":
-                    if not _video_detail_can_create_project(vd):
-                        messagebox.showwarning(
-                            "打开项目",
-                            "scene_content 须为有效 JSON array，无法启动新项目。\n"
-                            "可拖入/粘贴场景 JSON，或在「场景」中编辑。",
-                            parent=parent,
-                        )
-                        return
-                    _run_project_start_for_video_detail(
-                        vd,
-                        parent,
-                        forced_action="new",
-                        topic_category=topic_category,
-                        topic_subtype=topic_subtype,
-                        topic_tags=topic_tags,
-                    )
-                    return
-                open_pid = action[5:] if action.startswith("open:") else linked_pids[0]
+            existing_pid = (_video_detail_project_pid(vd) or "").strip()
+            if existing_pid:
                 _run_project_start_for_video_detail(
                     vd,
                     parent,
                     forced_action="open",
-                    bound_pid=open_pid,
+                    bound_pid=existing_pid,
                     topic_category=topic_category,
                     topic_subtype=topic_subtype,
                     topic_tags=topic_tags,
@@ -10042,6 +10718,8 @@ class MediaGUIManager:
             )
             if has_project:
                 choices.append(("open_project", "打开项目"))
+            if existing_pid:
+                choices.append(("regen_project", "重新生成项目"))
             choices.append(("edit", "打开摘要编辑"))
             if (vd.get("analyzed_content", "")):
                 choices.append(
@@ -10063,6 +10741,8 @@ class MediaGUIManager:
                 self.show_analyzed_content_popup(vd, parent=dialog)
             elif action == "open_project":
                 _open_project_for_video_detail(vd, dialog)
+            elif action == "regen_project":
+                _regenerate_project_for_video_detail(vd, dialog)
             elif action == "resummarize":
                 _resummarize_one_video_detail(vd)
 
@@ -11840,6 +12520,19 @@ class MediaGUIManager:
                     parent=dialog,
                 )
                 return
+            mode_pairs = [
+                (prompt, label)
+                for label, prompt in config_prompt.COMBO_ANALYZE_CHOICES
+                if (prompt or "").strip()
+            ]
+            picked = askchoice(
+                "合成方式",
+                [(prompt, label) for prompt, label in mode_pairs],
+                parent=dialog,
+            )
+            if not picked:
+                return
+            _mode_label, system_template = picked
             lines = "\n".join(f"· {title}" for title, _, _ in usable)
             extra = ""
             if skipped:
@@ -11848,7 +12541,8 @@ class MediaGUIManager:
                 )
             if not messagebox.askyesno(
                 "合成项目",
-                f"将把下面 {len(usable)} 条的分析收成一条新的组合分析，加到当前列表末尾。\n"
+                f"方式：{_mode_label}\n"
+                f"将把下面 {len(usable)} 条收成一条新的组合分析，加到当前列表末尾。\n"
                 "场景和分集在打开这条之后，用场景里的 Series 提示再生成。\n\n"
                 f"{lines}{extra}",
                 parent=dialog,
@@ -11865,7 +12559,7 @@ class MediaGUIManager:
                 )
             user_prompt = "\n\n".join(blocks)
             lang_label = config.llm_language_label(self.language)
-            system_prompt = config_prompt.COMBO_ANALYZE_PROMPT.format(language=lang_label)
+            system_prompt = system_template.format(language=lang_label)
             first = usable[0][1]
 
             def work():
@@ -11889,6 +12583,19 @@ class MediaGUIManager:
                         return
                     body = (parsed.get("analyzed_content") or "").strip()
                     title = (parsed.get("title") or "").strip() or "组合分析"
+                    ignored_notes = []
+                    for item in parsed.get("ignored") or []:
+                        if isinstance(item, dict):
+                            idx = item.get("index")
+                            reason = (item.get("reason") or "").strip()
+                            name = ""
+                            try:
+                                name = usable[int(idx) - 1][0]
+                            except (TypeError, ValueError, IndexError):
+                                name = str(idx or "")
+                            ignored_notes.append(f"{name}：{reason}" if reason else name)
+                        elif str(item).strip():
+                            ignored_notes.append(str(item).strip())
                     if not body:
                         messagebox.showwarning(
                             "合成项目", "模型没有写出 analyzed_content。", parent=dialog
@@ -11919,6 +12626,7 @@ class MediaGUIManager:
                         "view_count": 0,
                         "duration": 0,
                         "upload_date": datetime.now().strftime("%Y%m%d"),
+                        "combo_mode": _mode_label,
                         "combo_source_ids": [
                             (vd.get("id") or "").strip() for _, vd, _ in usable if (vd.get("id") or "").strip()
                         ],
@@ -11934,11 +12642,10 @@ class MediaGUIManager:
                         show_auto_close_popup(dialog, "写入失败", str(exc), kind="error")
                         return
                     populate_tree()
-                    show_auto_close_popup(
-                        dialog,
-                        "已合成",
-                        f"已加入「{title}」。\n打开这条后，在场景里选 Series 提示再生成分集。",
-                    )
+                    done = f"方式：{_mode_label}\n已加入「{title}」。"
+                    if ignored_notes:
+                        done += "\n\n未纳入：\n" + "\n".join(ignored_notes)
+                    show_auto_close_popup(dialog, "已合成", done)
 
                 self.root.after(0, apply)
 

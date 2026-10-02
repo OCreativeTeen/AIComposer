@@ -1306,7 +1306,12 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="PID:").pack(side=tk.LEFT, padx=(0, 4))
         pid_entry = ttk.Entry(top_fields_row, width=18)
         pid_entry.pack(side=tk.LEFT, padx=(0, 16))
-        auto_pid = f"p{datetime.now().strftime('%Y%m%d%H%M')}"
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        auto_pid = f"p{stamp}"
+        n = 0
+        while os.path.isdir(os.path.join(config.PROJECT_DATA_PATH, auto_pid)):
+            n += 1
+            auto_pid = f"p{stamp}_{n}"
         pid_entry.insert(0, auto_pid)
 
         ttk.Label(top_fields_row, text="标题:").pack(side=tk.LEFT, padx=(0, 4))

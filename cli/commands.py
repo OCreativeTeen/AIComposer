@@ -364,7 +364,7 @@ def cmd_help() -> tuple[bool, str]:
         "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
-        "scnlm / scnvs = 先无参看列表，再 scnlm N / scnvs N   grv 1 [1…8] = 开标签+出图+出片+下载   vc = 审阅窗   gvd = 补下载",
+        "scnlm / scnvs = 先无参看列表，再 scnlm N / scnvs N   grv 1 [变体序号] = 开标签+出图+出片+下载   vc = 审阅窗   gvd = 补下载",
         "长名仍可用（scene_lm / scene_visual_style / gemini / scene_save …）",
         "",
         "bot:  python -m cli bot",
@@ -1793,7 +1793,7 @@ def cmd_whole_story_image(value: str = "") -> tuple[bool, str]:
 
 
 def cmd_grok_image(value: str = "") -> tuple[bool, str]:
-    """Pick Chrome profile + optional video prompt variant (1…8), open Grok Imagine tabs."""
+    """Pick Chrome profile + optional video prompt variant, open Grok Imagine tabs."""
     import config
     import config_prompt
     from utility.telegram_session import (
