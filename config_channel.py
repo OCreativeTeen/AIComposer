@@ -386,7 +386,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 
@@ -501,7 +501,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 
@@ -539,7 +539,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Visual story of this beat. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 """
@@ -810,7 +810,7 @@ You are a professional storyteller and creative director. Your task is to create
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat: place, people, what they do. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 
@@ -935,7 +935,7 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat, including the A-world or B-world contrast. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 
@@ -1028,10 +1028,11 @@ You are a psychological counselor and master of high-empathy storytelling.
         * Include the place, and what the people do to each other: a hand, a step back, walking side by side.
         * When they move or answer, the picture may change — a cut, another angle, a closer shot. Write that change here so the video can cut.
     * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
-    * (5) **Actor**: story people first, separated by " ; ". Each: gender/age/race | mood | actions
-        * Two or more story people: never add the host. End with ``没主持人``.
-        * Exactly one story person, and the host is in this scene: add the host LAST, ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only.
-        * The scene is only the host: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. Do not also write 有主持人 or 没主持人.
+    * (5) **Actor**: up to three parts, joined by " | ". Never use ";".
+        * Part 1 is the first person (``speaking``). Part 2 is the second person (``voiceover``); leave part 2 out when there is only one story person. Part 3 is the host mark.
+        * Two or more story people: never add the host. ``first | second | 没主持人``.
+        * Exactly one story person, and the host is in this scene: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only.
+        * The scene is only the host: ``主持人（{narrator}，出镜） | mood | actions``. Do not also write 有主持人 or 没主持人.
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
@@ -1040,7 +1041,7 @@ You are a psychological counselor and master of high-empathy storytelling.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. Empty when the scene is only the host. In {language}.",
             "visual": "the story scene, their interaction, and any cut or angle change. about ###LENGTH### {language} char. No on-image text.",
             "speaking": "The first actor's line, or the host's line when the scene is only the host. In {language}.",
-            "actor": "gender/age/race | mood | actions ; second person gender/age/race | mood | actions ; 没主持人"
+            "actor": "first person | second person | 没主持人"
         }}
     ]
 
@@ -1224,7 +1225,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
         "voiceover": "Empty when the counselor speaks. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The host, when the scene is only the host; otherwise the first person of this life. In {language}.",
-        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
     }}
 ]
 
@@ -1296,7 +1297,7 @@ COUNSELING_SERIES_STORY_ONLY = """
         "voiceover": "The host's line when the host is in this scene; otherwise the second person's line. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The first person of this life, or empty on a host-only scene. In {language}.",
-        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
     }}
 ]
 
@@ -1581,7 +1582,7 @@ COUNSELING_TALK_SCENES = """
         "voiceover": "The second person's reply, or the host's line when 主持人 is last in actor. In {language}.",
         "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
         "speaking": "The first person's line. In {language}.",
-        "actor": "first person | mood | actions ; second person | mood | actions ; 没主持人"
+        "actor": "first person | second person | 没主持人"
     }}
 ]
 
@@ -1672,7 +1673,7 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars. No on-image text.",
             "speaking": "The first person's line, or empty on a host-only scene. In {language}.",
-            "actor": "two people end with 没主持人. One person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
         }}
     ]
 
@@ -1773,11 +1774,11 @@ Output:
 
 COMIC_STRIP_SCENES = """
 *** ROLE: Picture-story editor.
-    ** The source is a comic: each page is one picture, often with a little text.
-    ** Read it and retell that story as scenes. Keep the same events and the same people.
-    ** If a stretch is too wordy, tighten it into fewer clear scenes.
-    ** If a stretch is too thin, split it and describe the picture more clearly.
-    ** Join the scenes so one leads into the next. Do not jump, and do not invent a different plot.
+    ** The source is a comic PDF, one picture a page, or this episode already written as scenes, one scene a page.
+    ** Output is strict one-to-one. Do not add a scene. Do not drop a scene. Do not merge two into one. Do not split one into two.
+    ** PDF: page 1 is scene 1, page 2 is scene 2, through the last page. The array length equals the page count.
+    ** Scenes already written: scene 1 stays scene 1, scene 2 stays scene 2, through the last. The array length equals the source scene count.
+    ** Rewrite the words in that same slot. Keep the same event and the same people in that slot. Do not move a moment into another scene.
 
 *** HOST
     ** Host look for this run: {narrator}.
@@ -1785,25 +1786,24 @@ COMIC_STRIP_SCENES = """
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
     ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: the people in the pictures. Two or more people: ``speaking`` is the first said aloud, ``voiceover`` is the second answering aloud, ``actor`` ends with ``没主持人``. One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
 
 *** STORY
-    ** One comic is one episode. Every scene "episode": "1".
-    ** If the PDF is clearly several separate stories, one episode per story, in order.
-    ** Middle scenes follow the pictures. ``visual`` is that picture: place, people, what they do. No words on the image.
-    ** The short text on a picture becomes ``speaking`` and ``voiceover``, cleaned so it sounds spoken.
+    ** One episode. Every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
+    ** ``speaking`` and ``voiceover`` sound like people talking: natural, vivid, not a summary.
+    ** ``visual`` is that same picture, made vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
 
 *** OUTPUT
-    * One JSON array in watch order. All text in {language}.
+    * One JSON array in the same order, same length as the source. All text in {language}.
 
 [
     {{
         "episode": "1",
         "caption": "Story title on the first scene, then the beat. In {language}.",
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
-        "visual": "This picture: place, people, what they do. No on-image text. In {language}.",
-        "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-        "actor": "two story people end with 没主持人. One story person plus host: that person ; 主持人（{narrator}，出镜） or 主持人（{narrator}，不出镜）. Host-only: 主持人（{narrator}，出镜） | mood | actions"
+        "visual": "This same picture, vivid: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
+        "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
     }}
 ]
 
@@ -1820,5 +1820,161 @@ INPUT
     {content}
 
 """
+
+
+COMIC_RESHAPE_SCENES = """
+*** ROLE: Picture-story editor.
+    ** The source is a comic PDF, or this episode already written as scenes.
+    ** Retell that story. Keep the same events and the same people. Do not invent a different plot.
+    ** You may reshape the scene breaks to follow the story.
+    ** If a stretch is too wordy, tighten it into fewer clear scenes.
+    ** If a stretch is too thin, split it and describe the picture more clearly.
+    ** Join the scenes so one leads into the next. Do not jump.
+
+*** HOST
+    ** Host look for this run: {narrator}.
+    ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
+    ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
+    ** Last scene: host voiceover holds the ending. No new event.
+    ** Do not add a host scene that is not already holding the open or the close.
+    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+
+*** STORY
+    ** One episode. Every scene "episode": "1".
+    ** ``speaking`` and ``voiceover`` sound like people talking: natural, vivid, not a summary.
+    ** ``visual`` is vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
+
+*** OUTPUT
+    * One JSON array in watch order. All text in {language}. Scene count may change when you tighten or split.
+
+[
+    {{
+        "episode": "1",
+        "caption": "Story title on the first scene, then the beat. In {language}.",
+        "voiceover": "The host on the first and last scene; otherwise the second person's line. Spoken, natural. In {language}.",
+        "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
+        "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+COMIC_EXPAND_SCENES = """
+*** ROLE: Picture-story editor.
+    ** The source is one episode already told as scenes, or the comic PDF itself.
+    ** Expand this episode. Keep the same events, the same people, and the same ending.
+    ** Where a scene is thin, split it and say what the picture shows. Do not invent a new plot.
+    ** Join the scenes so one leads into the next.
+
+*** HOST
+    ** Host look for this run: {narrator}.
+    ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
+    ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
+    ** Last scene: host voiceover holds the ending. No new event.
+    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+
+*** STORY
+    ** The result is still one episode. Every scene "episode": "1".
+    ** ``speaking`` and ``voiceover`` sound like people talking: natural, vivid, not a summary.
+    ** ``visual`` is vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
+
+*** OUTPUT
+    * One JSON array in watch order. All text in {language}. More scenes than the source where the source was thin.
+
+[
+    {{
+        "episode": "1",
+        "caption": "Story title on the first scene, then the beat. In {language}.",
+        "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
+        "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
+        "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+_COMIC_CONDENSE_SCENES = """
+*** ROLE: Picture-story editor.
+    ** The source is one episode already told as scenes, or the comic PDF itself.
+    ** Condense this episode into exactly {act_count} scenes. Keep the same story, the same people, and the same ending.
+    ** Drop repeated beats. Do not add events that are not in the source.
+    ** Scene 1 opens the story. The last scene holds the ending. The scenes between carry the turns that matter.
+
+*** HOST
+    ** Host look for this run: {narrator}.
+    ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
+    ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
+    ** Last scene: host voiceover holds the ending. No new event.
+    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+
+*** STORY
+    ** The result is still one episode. Every scene "episode": "1".
+    ** Output exactly {act_count} scenes, no more and no fewer.
+    ** ``speaking`` and ``voiceover`` sound like people talking: natural, vivid, not a summary.
+    ** ``visual`` is vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
+
+*** OUTPUT
+    * One JSON array of exactly {act_count} scenes, in watch order. All text in {language}.
+
+[
+    {{
+        "episode": "1",
+        "caption": "Story title on the first scene, then the beat. In {language}.",
+        "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
+        "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
+        "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
+        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Reference Content (analyzed_content):
+    {content}
+
+"""
+
+
+def comic_condense_prompt(act_count: int) -> str:
+    """把连环画这一集收成固定幕数。幕数先写死，留下给列表和工作流填的占位符。"""
+    return _COMIC_CONDENSE_SCENES.replace("{act_count}", str(int(act_count)))
 
 

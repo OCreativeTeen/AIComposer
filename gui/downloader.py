@@ -3087,25 +3087,6 @@ def _normalize_channel_videos_for_storage(items, channel_path: str = "") -> None
             _normalize_channel_list_item_for_storage(it, channel_path)
 
 
-def _ensure_topic_category_list_files(channel_path: str, topic_categories) -> None:
-    """为 topics.json 中每个 topic_category 在 ``list_by_topic`` 下放空列表 JSON（尚无文件时）。"""
-    if not channel_path or not os.path.isdir(channel_path):
-        return
-    seen = set()
-    for cat in topic_categories or []:
-        c = (cat or "").strip()
-        if not c or c in seen:
-            continue
-        seen.add(c)
-        p = _topic_category_program_list_path(channel_path, c)
-        if os.path.isfile(p):
-            continue
-        try:
-            config.write_channel_list_json(p, [])
-        except OSError:
-            pass
-
-
 _STORY_COPY_PROJECT_KEYS = (
     "project_profile",
     "project_id",
@@ -6376,10 +6357,6 @@ class MediaGUIManager:
         self.active_threads_lock = threading.Lock()
 
         self.topic_choices, self.topic_categories, self.tag_features_map = config.load_topics(channel)
-        try:
-            _ensure_topic_category_list_files(self.channel_path, self.topic_categories)
-        except Exception:
-            pass
         
         # 初始化主主题分类变量
         self.main_topic_category = None

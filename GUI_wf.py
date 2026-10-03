@@ -384,10 +384,12 @@ class WorkflowGUI:
         ttk.Button(row1_frame, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Label(row1_frame, text="场景:").pack(side=tk.LEFT)
+        ttk.Button(row1_frame, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
         self.scene_label = ttk.Label(row1_frame, text="0 / 0", width=7)
         self.scene_label.pack(side=tk.LEFT, padx=2)
         ttk.Button(row1_frame, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1_frame, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
         ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
         ttk.Button(row1_frame, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
 
@@ -2466,13 +2468,41 @@ class WorkflowGUI:
         self.video_start_time = None
         self.video_pause_time = None  # 记录暂停时的累计播放时间
         
-        # 右侧：场景信息显示区域
-        self.video_edit_frame = ttk.LabelFrame(main_content, text="场景信息", padding=10)
-        self.video_edit_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
-        # 设置右侧面板的固定宽度，防止被挤压
-        self.video_edit_frame.configure(width=700)
-        self.video_edit_frame.pack_propagate(False)
-        
+        # 右侧：上面是这一集，下面是这一场
+        right_panel = ttk.Frame(main_content, width=700)
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+        right_panel.pack_propagate(False)
+
+        episode_tools_frame = ttk.LabelFrame(right_panel, text="本集内容", padding=(8, 2))
+        episode_tools_frame.pack(side=tk.TOP, fill=tk.X)
+        ttk.Button(
+            episode_tools_frame,
+            text="拷提",
+            width=7,
+            command=self.copy_episode_prompt,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            episode_tools_frame,
+            text="拷集",
+            width=7,
+            command=self.copy_current_episode_pdf,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            episode_tools_frame,
+            text="拆集",
+            width=7,
+            command=self.split_current_group,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            episode_tools_frame,
+            text="贴回",
+            width=7,
+            command=self.paste_episode_scenes,
+        ).pack(side=tk.LEFT)
+
+        self.video_edit_frame = ttk.LabelFrame(right_panel, text="本场内容", padding=10)
+        self.video_edit_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(4, 0))
+
         row_number = 1
 
         # 第一行：故事导出 / 包装 / Import / 讲旁互换
@@ -2535,18 +2565,6 @@ class WorkflowGUI:
             text="头像",
             width=7,
             command=self.select_talking_avatar_to_clipboard,
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            story_tools_frame,
-            text="拆集",
-            width=7,
-            command=self.split_current_group,
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            story_tools_frame,
-            text="页图",
-            width=7,
-            command=self.review_episode_pdf_pages,
         ).pack(side=tk.LEFT)
 
         # 第二行：延长 / 增主轨 / 主动画 / 次动画
@@ -2620,7 +2638,7 @@ class WorkflowGUI:
         self.scene_speaking = scrolledtext.ScrolledText(
             self.video_edit_frame,
             width=40,
-            height=10,
+            height=5,
             undo=True,
             maxundo=0,
             font=("Arial", 16),
@@ -3751,7 +3769,7 @@ class WorkflowGUI:
         #else:
         #    self.scene_cinematography.insert("1.0", cinematography_value)
         status = scene_data.get("clip_status", "")
-        self.video_edit_frame.config(text=f"视频尺寸: {status}")
+        self.video_edit_frame.config(text=f"本场内容: {status}" if status else "本场内容")
         self.video_edit_frame.update()
 
     def format_time_with_centisec(self, sec):
@@ -3891,6 +3909,47 @@ class WorkflowGUI:
         self.current_scene_index = len(self.workflow.scenes) - 1
         self.refresh_gui_scenes()
 
+
+    def _episode_spans(self) -> list[tuple[str, int, int]]:
+        """按场景顺序排出每一集的起止下标。"""
+        spans: list[tuple[str, int, int]] = []
+        for i, scene in enumerate(self.workflow.scenes or []):
+            if not isinstance(scene, dict):
+                continue
+            name = self.workflow.scene_group(scene)
+            if not spans or spans[-1][0] != name:
+                spans.append((name, i, i))
+            else:
+                start = spans[-1][1]
+                spans[-1] = (name, start, i)
+        return spans
+
+    def _jump_episode(self, delta: int) -> None:
+        spans = self._episode_spans()
+        if not spans:
+            return
+        if hasattr(self, "_save_timer") and self._save_timer:
+            self.root.after_cancel(self._save_timer)
+            self._save_timer = None
+        self.update_current_scene()
+        here = 0
+        for k, (_name, start, end) in enumerate(spans):
+            if start <= self.current_scene_index <= end:
+                here = k
+                break
+        target = here + delta
+        if target < 0 or target >= len(spans):
+            return
+        self.current_scene_index = spans[target][1]
+        self.refresh_gui_scenes()
+
+    def prev_episode(self):
+        """跳到上一集的第一场。"""
+        self._jump_episode(-1)
+
+    def next_episode(self):
+        """跳到下一集的第一场。"""
+        self._jump_episode(1)
 
     def prev_scene(self):
         """上一个场景"""
@@ -4101,6 +4160,7 @@ class WorkflowGUI:
             dup["id"] = self.workflow.max_id(scene) + 1
 
         self.workflow.scenes.insert(self.current_scene_index, dup)
+        self.workflow.touch_episode_media(self.workflow.scene_group(dup))
         self.workflow.save_scenes_to_json()
         self.current_scene_index += 1
         self.refresh_gui_scenes()
@@ -4120,6 +4180,7 @@ class WorkflowGUI:
             dup["id"] = self.workflow.max_id(scene) + 1
 
         self.workflow.scenes.insert(self.current_scene_index + 1, dup)
+        self.workflow.touch_episode_media(self.workflow.scene_group(dup))
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
 
@@ -4194,6 +4255,7 @@ class WorkflowGUI:
         scene["speaking"] = before
         dup["speaking"] = after
         self.workflow.scenes.insert(self.current_scene_index + 1, dup)
+        self.workflow.touch_episode_media(self.workflow.scene_group(dup))
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
         return "break"
@@ -4296,6 +4358,7 @@ class WorkflowGUI:
             current.get("speaking") or "",
             nxt.get("speaking") or "",
         )
+        self.workflow.release_scene_page_png(nxt)
         self.workflow.scenes.pop(self.current_scene_index + 1)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -5431,28 +5494,62 @@ class WorkflowGUI:
         return "break"
 
     def on_image_canvas_double_click(self, event, image_type):
-        """左键双击：将当前槽位图片复制到剪贴板。"""
+        """左键双击：把当前槽位的图拷到剪贴板。Clip Image 若本集有 PDF，同时打开页面审阅。"""
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
-            _preview_path = current_scene.get(image_type)
-            if _preview_path and os.path.exists(_preview_path):
-                self.copy_image_to_clipboard(_preview_path, silent=True)
-
             image_path = current_scene.get(image_type)
-            if not image_path or not os.path.exists(image_path):
+            if image_path and os.path.exists(image_path):
+                self.copy_image_to_clipboard(image_path)
+            elif image_type != "clip_image":
                 messagebox.showwarning(
                     "警告", f"场景中没有有效的 {image_type} 图像", parent=self.root
                 )
                 return
-            self.copy_image_to_clipboard(image_path)
+            if image_type == "clip_image":
+                self._open_clip_image_pdf_review(current_scene)
             self.refresh_gui_scenes()
 
         except Exception as e:
             error_msg = f"处理双击事件失败: {str(e)}"
             print(f"❌ {error_msg}")
             messagebox.showerror("错误", error_msg)
+
+    def _open_clip_image_pdf_review(self, scene: dict) -> None:
+        """本集 PDF 已拆则直接审阅；还没拆就先拆进 media/<episode>/ 再审阅。"""
+        pdf_path = self._resolve_scene_episode_pdf(scene)
+        if not pdf_path:
+            return
+        group_name = self.workflow.scene_group(scene)
+        pages = self._episode_page_pngs(group_name)
+        folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        if not pages:
+            try:
+                self.root.config(cursor="watch")
+                self.root.update_idletasks()
+                folder, pages = self.workflow.export_pdf_pages_to_group(pdf_path, group_name)
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("页图", f"拆分失败：{e}", parent=self.root)
+                return
+            finally:
+                try:
+                    self.root.config(cursor="")
+                except tk.TclError:
+                    pass
+        if not pages:
+            messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
+            return
+        start_idx = 0
+        try:
+            page_no = int(scene.get("episode_page") or 0)
+        except (TypeError, ValueError):
+            page_no = 0
+        if 1 <= page_no <= len(pages):
+            start_idx = page_no - 1
+        self._open_pdf_page_review(
+            folder, pages, group_name, os.path.basename(pdf_path), initial_index=start_idx
+        )
 
 
     @staticmethod
@@ -5834,6 +5931,8 @@ class WorkflowGUI:
 
         for scene in selected_scens:
             refresh_scene_media(scene, image_type, ".webp", file_path, True)
+            if image_type == "clip_image":
+                self.workflow.write_scene_page_png(scene, file_path)
 
         self.workflow.save_scenes_to_json()
         self.display_image_on_canvas_for_track(image_type)
@@ -6271,6 +6370,10 @@ class WorkflowGUI:
         temp_image = current_scene["clip_image"]
         current_scene["clip_image"] = next_scene["clip_image"]
         next_scene["clip_image"] = temp_image
+        for sc in (current_scene, next_scene):
+            page_image = sc.get("clip_image") or ""
+            if page_image and os.path.isfile(page_image):
+                self.workflow.write_scene_page_png(sc, page_image)
 
         # self.workflow._generate_video_from_image(current_scene)
         # self.workflow._generate_video_from_image(next_scene)
@@ -6292,6 +6395,7 @@ class WorkflowGUI:
             clip_image_last = current_scene.get("clip_image_last", "")
             if clip_image_last and clip_image_last.endswith(".webp"):
                 refresh_scene_media(next_scene, "clip_image", ".webp", clip_image_last, True)
+                self.workflow.write_scene_page_png(next_scene, clip_image_last)
 
             narration_image_last = current_scene.get("narration_image_last", "")
             if narration_image_last and narration_image_last.endswith(".webp"):
@@ -7385,7 +7489,7 @@ class WorkflowGUI:
         show_auto_close_popup(self.root, "拆集", f"从当前场景起为第 {new_name} 集")
 
     def _on_media_drop_pdf(self, pdf_path: str) -> None:
-        """视频画布拖入 PDF：按当前 episode 拆成 1.png、2.png…，再打开翻页预览。"""
+        """视频画布拖入 PDF：按当前 episode 拆成 1.jpg、2.jpg…，再打开翻页预览。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -7413,18 +7517,8 @@ class WorkflowGUI:
         self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
 
     def _episode_page_pngs(self, group_name: str) -> list[str]:
-        """media/<episode>/ 里按页码排好的 1.png、2.png…。"""
-        folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
-        if not os.path.isdir(folder):
-            return []
-        numbered: list[tuple[int, str]] = []
-        for name in os.listdir(folder):
-            stem, ext = os.path.splitext(name)
-            if ext.lower() != ".png" or not stem.isdigit():
-                continue
-            numbered.append((int(stem), os.path.join(folder, name)))
-        numbered.sort()
-        return [path for _, path in numbered]
+        """media/<episode>/ 里按页码排好的页面图。"""
+        return self.workflow._episode_png_paths(group_name)
 
     def _resolve_scene_episode_pdf(self, scene: dict) -> str:
         """当前场景 episode_pdf 指向的文件。找不到就返回空。"""
@@ -7451,55 +7545,270 @@ class WorkflowGUI:
                 return os.path.abspath(path)
         return ""
 
-    def review_episode_pdf_pages(self):
-        """当前场景有 episode PDF 时，审阅这一集的页面图，并可重新拆 PDF 再写回场景。"""
+    def _scenes_as_prompt_content(self, scenes: list, episode_name: str) -> str:
+        """把这一集（或一场）的场景描述收成提示词材料，不带媒体路径。"""
+        fields = ("caption", "visual", "speaking", "voiceover", "actor")
+        blocks = [f"Episode {episode_name}. {len(scenes)} scene(s)."]
+        for i, scene in enumerate(scenes, start=1):
+            if not isinstance(scene, dict):
+                continue
+            lines = [f"Scene {i}"]
+            for key in fields:
+                text = str(scene.get(key) or "").strip()
+                if text:
+                    lines.append(f"{key}: {text}")
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks).strip()
+
+    def _episode_pdf_for_prompt(self, scene: dict) -> str:
+        group_name = self.workflow.scene_group(scene)
+        generated = self.workflow.episode_pdf_path(group_name)
+        if os.path.isfile(generated):
+            return generated
+        return self._resolve_scene_episode_pdf(scene)
+
+    def _ask_episode_prompt(self, choices: list, materials: list) -> tuple[str, str] | None:
+        """一个窗口里选提示词，材料用下拉框，默认这一集的内容。"""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("拷贝哪一种提示词？")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        result: list = [None]
+        material_labels = [label for _, label in materials]
+        material_by_label = {label: key for key, label in materials}
+
+        main = ttk.Frame(dlg, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(main, text="拷贝哪一种提示词？", font=("Arial", 12, "bold")).pack(pady=(4, 10))
+
+        mat_row = ttk.Frame(main)
+        mat_row.pack(fill=tk.X, pady=(0, 12))
+        ttk.Label(mat_row, text="材料").pack(side=tk.LEFT, padx=(0, 8))
+        material_var = tk.StringVar(value=material_labels[0])
+        ttk.Combobox(
+            mat_row,
+            textvariable=material_var,
+            values=material_labels,
+            state="readonly",
+            width=22,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def on_choice(label: str):
+            result[0] = (label, material_by_label.get(material_var.get(), materials[0][0]))
+            dlg.destroy()
+
+        for choice_label, _template in choices:
+            ttk.Button(
+                main,
+                text=choice_label,
+                width=36,
+                command=lambda lb=choice_label: on_choice(lb),
+            ).pack(pady=3, fill=tk.X)
+        ttk.Button(main, text="取消", width=16, command=dlg.destroy).pack(pady=(12, 4))
+
+        dlg.update_idletasks()
+        width = max(420, dlg.winfo_reqwidth())
+        height = dlg.winfo_reqheight()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - height) // 2)
+        dlg.geometry(f"{width}x{height}+{x}+{y}")
+        dlg.wait_window()
+        return result[0]
+
+    def copy_episode_prompt(self):
+        """按频道里的场景提示词，用这一集的文字或 PDF 填好，拷到剪贴板。"""
+        from gui.downloader import (
+            _format_nb_prompt_template,
+            _pdf_pages_as_scene_source,
+            _prompt_choice_entries,
+            _prompt_text_for_material,
+        )
+
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
+            messagebox.showwarning("拷提", "请先选中一个场景。", parent=self.root)
             return
-        pdf_name = str(scene.get("episode_pdf") or "").strip()
-        if not pdf_name:
+        pc = project_manager.PROJECT_CONFIG or {}
+        channel = (pc.get("channel") or getattr(self.workflow, "channel", "") or "").strip()
+        choices = _prompt_choice_entries(channel)
+        if not choices:
+            messagebox.showwarning("拷提", "这个频道没有场景提示词。", parent=self.root)
             return
-        pdf_path = self._resolve_scene_episode_pdf(scene)
-        if not pdf_path:
+        materials = [
+            ("episode_text", "这一集的内容"),
+            ("scene_text", "当前场景的文字"),
+            ("pdf", "这一集的 PDF"),
+        ]
+        picked = self._ask_episode_prompt(choices, materials)
+        if not picked:
+            return
+        label, kind = picked
+        template = ""
+        for choice_label, choice_template in choices:
+            if choice_label == label:
+                template = choice_template
+                break
+        if not template:
+            return
+        group_name = self.workflow.scene_group(scene)
+        if kind == "scene_text":
+            content = self._scenes_as_prompt_content([scene], group_name)
+        elif kind == "pdf":
+            pdf_path = self._episode_pdf_for_prompt(scene)
+            content, _page_count, _ = _pdf_pages_as_scene_source(pdf_path)
+            if not content:
+                messagebox.showwarning("拷提", "这一集没有可引用的 PDF。", parent=self.root)
+                return
+        else:
+            indices = self.workflow.group_scene_indices(group_name)
+            episode_scenes = [
+                self.workflow.scenes[i]
+                for i in indices
+                if 0 <= i < len(self.workflow.scenes)
+            ]
+            content = self._scenes_as_prompt_content(episode_scenes, group_name)
+        if not content:
+            messagebox.showwarning("拷提", "这一集没有可拷贝的场景文字。", parent=self.root)
+            return
+        ch_cfg = config.get_channel_config(channel) or {}
+        topic = (pc.get("topic") or ch_cfg.get("topic") or "").strip()
+        narrator = (pc.get("narrator") or "").strip()
+        language = config.llm_language_label(
+            getattr(self.workflow, "language", "") or pc.get("language") or ""
+        )
+        prompt = _format_nb_prompt_template(
+            template,
+            content=content,
+            instruction="",
+            language=language,
+            topic=topic,
+            narrator=narrator,
+        )
+        if kind == "pdf":
+            prompt = _prompt_text_for_material(prompt, "pdf")
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(prompt)
+            self.root.update_idletasks()
+        except tk.TclError:
+            messagebox.showwarning("拷提", "没能写入剪贴板。", parent=self.root)
+            return
+        show_auto_close_popup(self.root, "拷提", f"已拷贝提示词：{label}")
+
+    def paste_episode_scenes(self):
+        """把剪贴板里的场景 JSON 合并回这一集。只覆盖 JSON 里有的文案字段。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("贴回", "请先选中一个场景。", parent=self.root)
+            return
+        try:
+            raw = safe_clipboard_json_copy(self.root.clipboard_get())
+        except tk.TclError:
+            raw = ""
+        parsed = config.parse_json_from_text(raw) if raw else None
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if not isinstance(parsed, list) or not parsed or not all(isinstance(item, dict) for item in parsed):
             messagebox.showwarning(
-                "页图",
-                f"当前场景记了 {os.path.basename(pdf_name)}，但找不到这个 PDF 文件。",
+                "贴回",
+                "剪贴板里不是场景 JSON。需要一个场景对象，或一组场景。",
                 parent=self.root,
             )
             return
+        picked = askchoice(
+            "贴回到哪里？只覆盖 JSON 里有的字段，图片和声音留着。",
+            [
+                ("from_start", "从本集开头写入"),
+                ("from_here", "从当前场景往后"),
+            ],
+            self.root,
+        )
+        if not picked:
+            return
+        self.update_current_scene()
         group_name = self.workflow.scene_group(scene)
-        pages = self._episode_page_pngs(group_name)
-        folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
-        if pages:
-            picked = askchoice(
-                f"第 {group_name} 集已有 {len(pages)} 张页面图",
-                [
-                    ("keep", "直接审阅现有页面图"),
-                    ("extract", "重新拆开这份 PDF，再审阅"),
-                ],
+        indices = self.workflow.group_scene_indices(group_name)
+        if picked[1] == "from_here":
+            indices = [i for i in indices if i >= self.current_scene_index]
+        if not indices:
+            messagebox.showwarning("贴回", "这一集没有可写入的场景。", parent=self.root)
+            return
+        keep = self._SCENE_IMPORT_SKIP_KEYS | {
+            "id",
+            "episode",
+            "group",
+            "episode_page",
+            "episode_pdf",
+            "group_page",
+            "group_pdf",
+            "clip",
+            "zero",
+            "narration",
+            "background",
+            "background_music",
+        }
+        written = 0
+        fields = 0
+        for offset, item in enumerate(parsed):
+            if offset >= len(indices):
+                break
+            cleaned = {
+                key: val
+                for key, val in item.items()
+                if key not in keep and not str(key).endswith(("_image", "_audio", "_last"))
+            }
+            n = self._apply_scene_import_item(self.workflow.scenes[indices[offset]], cleaned)
+            if n:
+                written += 1
+                fields += n
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        used = min(len(parsed), len(indices))
+        extra = len(parsed) - used
+        msg = f"写入了 {used} 场，覆盖了 {fields} 个字段。"
+        if extra > 0:
+            msg += f" 剪贴板里还有 {extra} 场没有落下去，这一集后面没有空位了。"
+        messagebox.showinfo("贴回", msg, parent=self.root)
+
+    def copy_current_episode_pdf(self):
+        """拷贝这一集的 PDF。有页面图时才在这里合成；文件夹时间和 PDF 一致就直接拷。"""
+        from gui.downloader import _copy_file_to_clipboard_hdrop
+
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        group_name = self.workflow.scene_group(scene)
+        pngs = self.workflow._episode_png_paths(group_name)
+        rebuilt = False
+        if pngs:
+            pdf_path = self.workflow.episode_pdf_path(group_name)
+            if not self.workflow.episode_pdf_is_current(group_name):
+                try:
+                    self.root.config(cursor="watch")
+                    self.root.update_idletasks()
+                    pdf_path = self.workflow.build_episode_pdf(group_name)
+                    rebuilt = True
+                except Exception as e:  # noqa: BLE001
+                    messagebox.showerror("拷集", f"合成 PDF 失败：{e}", parent=self.root)
+                    return
+                finally:
+                    try:
+                        self.root.config(cursor="")
+                    except tk.TclError:
+                        pass
+        else:
+            pdf_path = self._resolve_scene_episode_pdf(scene)
+        if not pdf_path or not os.path.isfile(pdf_path):
+            messagebox.showwarning("拷集", "这一集没有可拷贝的 PDF。", parent=self.root)
+            return
+        if _copy_file_to_clipboard_hdrop(self.root, pdf_path):
+            note = "已重新生成并拷贝" if rebuilt else "已拷贝"
+            show_auto_close_popup(
                 self.root,
+                "拷集",
+                f"{note}这一集的 PDF：\n{os.path.basename(pdf_path)}",
             )
-            if not picked:
-                return
-            if picked[1] == "keep":
-                self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
-                return
-        try:
-            self.root.config(cursor="watch")
-            self.root.update_idletasks()
-            folder, pages = self.workflow.export_pdf_pages_to_group(pdf_path, group_name)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("页图", f"拆分失败：{e}", parent=self.root)
-            return
-        finally:
-            try:
-                self.root.config(cursor="")
-            except tk.TclError:
-                pass
-        if not pages:
-            messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
-            return
-        self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
 
     def _assign_scene_clip_image_from_file(self, scene: dict, image_path: str) -> None:
         fp = self.workflow.ffmpeg_processor
@@ -7515,20 +7824,22 @@ class WorkflowGUI:
         scene.pop("group_pdf", None)
 
     def _open_pdf_page_review(
-        self, folder: str, pages: list[str], group_name: str, pdf_name: str
+        self,
+        folder: str,
+        pages: list[str],
+        group_name: str,
+        pdf_name: str,
+        initial_index: int = 0,
     ) -> None:
-        """翻页查看拆出的 PNG。可选页段，再按当前 group 写入 clip_image。"""
+        """翻页查看拆出的 PNG。左右方向键翻页；从当前页写到本集结束。"""
         dlg = tk.Toplevel(self.root)
         dlg.title(f"PDF 页面 · 第 {group_name} 集")
         dlg.geometry("980x800")
         dlg.minsize(720, 560)
         dlg.transient(self.root)
-        idx = [0]
+        idx = [max(0, min(int(initial_index or 0), len(pages) - 1))]
         photo_holder: list = [None]
         showing = [False]
-        last_page = len(pages)
-        start_var = tk.IntVar(value=1)
-        end_var = tk.IntVar(value=last_page)
 
         canvas = tk.Canvas(dlg, bg="#222", highlightthickness=0)
         canvas.pack(fill=tk.BOTH, expand=True)
@@ -7576,21 +7887,6 @@ class WorkflowGUI:
             idx[0] = (idx[0] + delta) % len(pages)
             _show_page()
 
-        def _selected_range() -> tuple[list[str], list[int]] | None:
-            try:
-                start = int(start_var.get())
-                end = int(end_var.get())
-            except (TypeError, ValueError, tk.TclError):
-                messagebox.showwarning("PDF", "页码请填数字。", parent=dlg)
-                return None
-            if start > end:
-                start, end = end, start
-            start = max(1, min(start, last_page))
-            end = max(1, min(end, last_page))
-            start_var.set(start)
-            end_var.set(end)
-            return pages[start - 1 : end], list(range(start, end + 1))
-
         def _assign_current():
             scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not scene:
@@ -7611,77 +7907,69 @@ class WorkflowGUI:
             )
             _show_page()
 
-        def _assign_group():
-            picked = askchoice(
-                f"写入第 {group_name} 集",
-                [
-                    ("keep", "场景数不动"),
-                    ("match", "场景数随页数变动：不够补齐，多了删掉"),
-                ],
-                dlg,
-            )
-            if not picked:
+        def _assign_forward():
+            """从正在看的这一页起，写入当前场景和本集后面的场景。场数不改。"""
+            scene_i = self.current_scene_index
+            if scene_i < 0 or scene_i >= len(self.workflow.scenes):
+                messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
                 return
-            mode = picked[1]
-            selected = _selected_range()
-            if not selected:
-                return
-            sel_pages, page_numbers = selected
+            page_i = idx[0]
+            written = 0
+            first_page = page_i + 1
             try:
-                added, removed = self.workflow.fit_group_to_page_count(
-                    group_name, len(sel_pages), mode
-                )
-                indices = self.workflow.group_scene_indices(group_name)
-                written = 0
-                for k, scene_i in enumerate(indices):
-                    if k >= len(sel_pages):
-                        break
+                while scene_i < len(self.workflow.scenes) and page_i < len(pages):
                     scene = self.workflow.scenes[scene_i]
-                    self._assign_scene_clip_image_from_file(scene, sel_pages[k])
-                    self._tag_scene_pdf_page(scene, group_name, page_numbers[k], pdf_name)
+                    if not isinstance(scene, dict) or self.workflow.scene_group(scene) != group_name:
+                        break
+                    self._assign_scene_clip_image_from_file(scene, pages[page_i])
+                    self._tag_scene_pdf_page(scene, group_name, page_i + 1, pdf_name)
                     written += 1
-                if self.current_scene_index >= len(self.workflow.scenes):
-                    self.current_scene_index = max(0, len(self.workflow.scenes) - 1)
+                    scene_i += 1
+                    page_i += 1
                 self.workflow.save_scenes_to_json()
                 self.refresh_gui_scenes()
                 self.display_image_on_canvas_for_track("clip_image")
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
-            msg = f"第 {group_name} 集：第 {page_numbers[0]}–{page_numbers[-1]} 页写入了 {written} 个场景"
-            if added:
-                msg += f"，补了 {added} 场"
-            if removed:
-                msg += f"，删了 {removed} 场"
-            left = len(sel_pages) - written
-            if left > 0:
-                msg += f"，还有 {left} 页没有写入"
-            show_auto_close_popup(dlg, "PDF", msg)
+            last_page_no = first_page + written - 1 if written else first_page
+            show_auto_close_popup(
+                dlg,
+                "PDF",
+                f"从第 {first_page} 页起，写入了当前场景及本集后面共 {written} 场"
+                + (f"（到第 {last_page_no} 页）" if written else ""),
+            )
             _show_page()
-
-        range_bar = ttk.Frame(dlg)
-        range_bar.pack(fill=tk.X, padx=8, pady=(8, 0))
-        ttk.Label(range_bar, text="从第").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            range_bar, from_=1, to=last_page, textvariable=start_var, width=5
-        ).pack(side=tk.LEFT, padx=4)
-        ttk.Label(range_bar, text="页到第").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            range_bar, from_=1, to=last_page, textvariable=end_var, width=5
-        ).pack(side=tk.LEFT, padx=4)
-        ttk.Label(range_bar, text=f"页（共 {last_page} 页）").pack(side=tk.LEFT)
 
         bar = ttk.Frame(dlg)
         bar.pack(fill=tk.X, padx=8, pady=8)
         ttk.Button(bar, text="上一页", command=lambda: _step(-1)).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(bar, text="下一页", command=lambda: _step(1)).pack(side=tk.LEFT, padx=(0, 16))
         ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(bar, text="写入当前集", command=_assign_group).pack(side=tk.LEFT)
+        ttk.Button(bar, text="写到本集结束", command=_assign_forward).pack(side=tk.LEFT)
 
-        dlg.bind("<Left>", lambda e: _step(-1))
-        dlg.bind("<Right>", lambda e: _step(1))
+        def _on_left(_event=None):
+            _step(-1)
+            return "break"
+
+        def _on_right(_event=None):
+            _step(1)
+            return "break"
+
+        dlg.bind_all("<Left>", _on_left)
+        dlg.bind_all("<Right>", _on_right)
+
+        def _release_keys(_event=None):
+            try:
+                dlg.unbind_all("<Left>")
+                dlg.unbind_all("<Right>")
+            except tk.TclError:
+                pass
+
+        dlg.bind("<Destroy>", _release_keys)
         canvas.bind("<Configure>", _show_page)
         dlg.after(50, _show_page)
+        dlg.after(80, canvas.focus_set)
 
     def _on_media_drop_single_clip_image(self, image_path: str) -> None:
         """视频画布拖入单张图：仅更新当前场景 clip_image。"""
@@ -7692,6 +7980,7 @@ class WorkflowGUI:
             fp = self.workflow.ffmpeg_processor
             file_path = fp.resize_image_smart(image_path)
             refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
+            self.workflow.write_scene_page_png(scene, file_path)
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
             self.display_image_on_canvas_for_track("clip_image")
@@ -7711,6 +8000,7 @@ class WorkflowGUI:
 
             file_path0 = fp.resize_image_smart(image_paths[0])
             refresh_scene_media(scene0, "clip_image", ".webp", file_path0, True)
+            self.workflow.write_scene_page_png(scene0, file_path0)
 
             for i in range(1, len(image_paths)):
                 dup = template.copy()
@@ -7718,6 +8008,7 @@ class WorkflowGUI:
                 self.workflow.scenes.insert(k + i, dup)
                 file_i = fp.resize_image_smart(image_paths[i])
                 refresh_scene_media(dup, "clip_image", ".webp", file_i, True)
+                self.workflow.write_scene_page_png(dup, file_i, force_new_page=True)
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()
@@ -7746,6 +8037,7 @@ class WorkflowGUI:
                 file_i = fp.resize_image_smart(img_path)
                 refresh_scene_media(dup, "clip_image", ".webp", file_i, True)
                 self.workflow.scenes.insert(k + i, dup)
+                self.workflow.write_scene_page_png(dup, file_i, force_new_page=(i > 0))
 
             self.workflow.save_scenes_to_json()
             self.refresh_gui_scenes()

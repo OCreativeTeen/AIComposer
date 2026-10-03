@@ -223,7 +223,7 @@ Each scene's ``show_this_content`` tells you WHAT to paint — setting, characte
 NOTEBOOKLM_IMAGE_CHARACTER_EMPHASIS = """
 ** When ``actor`` / ``speaking`` are present: the protagonist MUST appear with facial expression, posture, gesture, and action that MATCH the emotional state in ``speaking`` and ``actor``.
 ** Use ``speaking`` only to infer mood and body language — NEVER render speaking lines as subtitles, captions, or speech bubbles (unless variant explicitly allows Word-in-image video).
-** ``actor`` may name more than one person, separated by " ; ". Paint each person who is listed. ``speaking`` still must not become words on the image.
+** ``actor`` is joined by " | ", never ";": first person, then the second person if there is one, then ``没主持人`` or the host. Paint each story person. ``speaking`` still must not become words on the image.
 """
 
 NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION = """
@@ -682,11 +682,10 @@ NOTEBOOKLM_NARRATOR_AUDIO_ONLY = """
 """
 
 NOTEBOOKLM_ACTOR_HOST_READING = """
-** Read ``actor`` exactly. Parts are separated by " ; ". The scene already says if a host is there. If an earlier line says the host never appears, follow this block instead.
-** Two or more story people: the field ends with ``没主持人``. There is no host. ``speaking`` is the first person, mouth moves. ``voiceover`` is the second person speaking, that mouth moves. A third person only sometimes has one short line in ``voiceover``. Do not add a host.
-** One story person, last part ``主持人（look，出镜）``: ``speaking`` is that person, mouth moves. ``voiceover`` is the host, look inside the parentheses, and the host is in the picture. The story person's mouth stays closed during the host line.
-** Last part ``主持人（look，不出镜）``: same voices, but the host must not appear. Voice only. The story person stays in the picture and keeps acting.
-** ``actor`` is only ``主持人（look，出镜）``: the scene is the host alone. ``speaking`` is the host, mouth moves. ``voiceover`` is empty. Do not invent another voice.
+** Read ``actor`` exactly. Parts are separated by " | ". Never by ";". The scene already says if a host is there. If an earlier line says the host never appears, follow this block instead.
+** Two story people and no host: ``first | second | 没主持人``. ``speaking`` is the first person, mouth moves. ``voiceover`` is the second person speaking, that mouth moves. Do not add a host.
+** One story person and the host: ``first | 主持人（look，出镜）`` or ``first | 主持人（look，不出镜）``. ``speaking`` is that person, mouth moves. ``voiceover`` is the host, look inside the parentheses. 出镜: the host is in the picture, and the story person's mouth stays closed during the host line. 不出镜: the host must not appear, voice only. The story person stays in the picture and keeps acting.
+** Host alone: ``主持人（look，出镜） | mood | actions``. ``speaking`` is the host, mouth moves. ``voiceover`` is empty. Do not invent another voice.
 """
 
 NOTEBOOKLM_SPEAKING_THINK = """

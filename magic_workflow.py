@@ -11,6 +11,10 @@ import copy
 import json
 import shutil
 import re
+import time
+
+# 连环画页面图和再合成的 PDF 都用这份 JPEG。质量压低一些，避免 PNG 把文件撑得太大。
+_PAGE_JPEG_QUALITY = 60
 from datetime import datetime
 from pathlib import Path
 import config
@@ -388,6 +392,7 @@ class MagicWorkflow:
         refresh_scene_media(from_scene, "clip_audio", ".wav",  self.ffmpeg_audio_processor.concat_audios(audio_list))
         refresh_scene_media(from_scene, "clip", ".mp4",  self.ffmpeg_processor.concat_videos(video_list, True))
 
+        self.release_scene_page_png(to_scene)
         del self.scenes[to_index]
         return True
 
@@ -402,6 +407,7 @@ class MagicWorkflow:
         else:
             new_scenes = [self.scenes[current_index].copy(), self.scenes[current_index]]
             self.replace_scene_with_others(current_index, new_scenes)
+        self.touch_episode_media(self.scene_group(self.scenes[current_index]))
 
 
     def replace_scene(self, current_index, new_scene=None):
@@ -410,10 +416,11 @@ class MagicWorkflow:
 
         old_scene = self.scenes[current_index]
         ss = self.scenes_in_story(old_scene)
-        
+
         if new_scene:
             self.scenes[current_index] = new_scene
         else:
+            self.release_scene_page_png(old_scene)
             del self.scenes[current_index]
 
         if len(ss) == 1:
@@ -797,9 +804,10 @@ class MagicWorkflow:
             return int(im.width), int(im.height)
 
     def _pdf_pages_to_images(self, pdf_path: str, out_dir: str | None = None) -> list[str]:
-        """用 PyMuPDF 将 PDF 每页渲成 PNG，返回按页序的绝对路径列表。"""
+        """用 PyMuPDF 将 PDF 每页渲成压缩 JPEG，返回按页序的绝对路径列表。"""
         import fitz  # PyMuPDF
         import tempfile
+        from PIL import Image
 
         pdf_path = (pdf_path or "").strip()
         if not pdf_path or not os.path.isfile(pdf_path):
@@ -822,8 +830,11 @@ class MagicWorkflow:
             for i in range(len(doc)):
                 page = doc.load_page(i)
                 pix = page.get_pixmap(matrix=zoom, alpha=False)
-                out_path = os.path.join(dest_dir, f"{i + 1}.png")
-                pix.save(out_path)
+                out_path = os.path.join(dest_dir, f"{i + 1}.jpg")
+                mode = "RGB" if pix.n >= 3 else "L"
+                Image.frombytes(mode, (pix.width, pix.height), pix.samples).save(
+                    out_path, "JPEG", quality=_PAGE_JPEG_QUALITY, optimize=True
+                )
                 paths.append(os.path.abspath(out_path))
         finally:
             doc.close()
@@ -905,12 +916,13 @@ class MagicWorkflow:
         return highest + 1
 
     def export_pdf_pages_to_group(self, pdf_path: str, group_name: str) -> tuple[str, list[str]]:
-        """把 PDF 每一页渲成 1.png、2.png…，放进项目 media/<episode>/。"""
+        """把 PDF 每一页渲成 1.jpg、2.jpg…，放进项目 media/<episode>/。"""
         group_name = (group_name or "").strip() or "1"
         folder = os.path.join(config.get_media_path(self.pid), group_name)
         os.makedirs(folder, exist_ok=True)
         for name in os.listdir(folder):
-            if name.lower().endswith(".png"):
+            stem, ext = os.path.splitext(name)
+            if stem.isdigit() and ext.lower() in (".png", ".jpg", ".jpeg"):
                 try:
                     os.remove(os.path.join(folder, name))
                 except OSError:
@@ -942,21 +954,224 @@ class MagicWorkflow:
                 removed += 1
         return added, removed
 
+    def _episode_png_paths(self, episode: str) -> list[str]:
+        """这一集里按页码排好的页面图。同一页同时有 jpg 和旧 png 时用 jpg。"""
+        folder = os.path.join(config.get_media_path(self.pid), episode)
+        if not os.path.isdir(folder):
+            return []
+        rank = {".jpg": 0, ".jpeg": 0, ".png": 1}
+        best: dict[int, tuple[int, str]] = {}
+        for name in os.listdir(folder):
+            stem, ext = os.path.splitext(name)
+            ext = ext.lower()
+            if ext not in rank or not stem.isdigit():
+                continue
+            n = int(stem)
+            path = os.path.join(folder, name)
+            prev = best.get(n)
+            if prev is None or rank[ext] < prev[0]:
+                best[n] = (rank[ext], path)
+        return [best[n][1] for n in sorted(best)]
+
+    def episode_media_dir(self, episode: str) -> str:
+        return os.path.join(config.get_media_path(self.pid), (episode or "").strip() or "1")
+
+    def touch_episode_media(self, episode: str) -> None:
+        """改这一集页面文件夹的修改时间。拷集用它和 PDF 的时间判断要不要重做。"""
+        folder = self.episode_media_dir(episode)
+        if not os.path.isdir(folder):
+            return
+        now = time.time()
+        os.utime(folder, (now, now))
+
+    def write_scene_page_png(self, scene: dict, image_path: str, *, force_new_page: bool = False) -> None:
+        """把这张图写成这一集文件夹里对应页的 jpg，并改文件夹时间。页码可以不连续。"""
+        from PIL import Image
+
+        if not isinstance(scene, dict) or not image_path or not os.path.isfile(image_path):
+            return
+        episode = self.scene_group(scene)
+        folder = self.episode_media_dir(episode)
+        os.makedirs(folder, exist_ok=True)
+        page = None
+        if not force_new_page:
+            try:
+                page = int(scene.get("episode_page") or 0)
+            except (TypeError, ValueError):
+                page = None
+            if page is not None and page <= 0:
+                page = None
+        if page is None:
+            used: set[int] = set()
+            for path in self._episode_png_paths(episode):
+                used.add(int(os.path.splitext(os.path.basename(path))[0]))
+            for other in self.scenes:
+                if not isinstance(other, dict) or self.scene_group(other) != episode:
+                    continue
+                try:
+                    n = int(other.get("episode_page") or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                if n > 0:
+                    used.add(n)
+            page = (max(used) if used else 0) + 1
+            scene["episode_page"] = page
+        dest = os.path.join(folder, f"{page}.jpg")
+        with Image.open(image_path) as im:
+            im.convert("RGB").save(dest, "JPEG", quality=_PAGE_JPEG_QUALITY, optimize=True)
+        for old_ext in (".png", ".jpeg"):
+            old = os.path.join(folder, f"{page}{old_ext}")
+            if os.path.isfile(old) and os.path.abspath(old) != os.path.abspath(dest):
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+        scene["episode"] = episode
+        scene["episode_pdf"] = f"{episode}.pdf"
+        self.touch_episode_media(episode)
+
+    def release_scene_page_png(self, scene: dict) -> None:
+        """删场景时去掉它对应的那一页 png。同一页还被别的场景用着就留下。"""
+        if not isinstance(scene, dict):
+            return
+        episode = self.scene_group(scene)
+        try:
+            page = int(scene.get("episode_page") or 0)
+        except (TypeError, ValueError):
+            page = 0
+        if page > 0:
+            still_used = False
+            for other in self.scenes:
+                if other is scene or not isinstance(other, dict):
+                    continue
+                if self.scene_group(other) != episode:
+                    continue
+                try:
+                    other_page = int(other.get("episode_page") or 0)
+                except (TypeError, ValueError):
+                    other_page = 0
+                if other_page == page:
+                    still_used = True
+                    break
+            if not still_used:
+                for ext in (".jpg", ".jpeg", ".png"):
+                    path = os.path.join(self.episode_media_dir(episode), f"{page}{ext}")
+                    if os.path.isfile(path):
+                        try:
+                            os.remove(path)
+                        except OSError:
+                            pass
+        self.touch_episode_media(episode)
+
+    def episode_pdf_path(self, episode: str) -> str:
+        episode = (episode or "").strip() or "1"
+        return os.path.join(self.episode_media_dir(episode), f"{episode}.pdf")
+
+    def _episode_pdf_codec_path(self, episode: str) -> str:
+        episode = (episode or "").strip() or "1"
+        return os.path.join(self.episode_media_dir(episode), f".{episode}.codec")
+
+    def episode_pdf_is_current(self, episode: str) -> bool:
+        """这一集的 PDF 和页面文件夹修改时间一致，而且是按当前 JPEG 质量生成的。"""
+        folder = self.episode_media_dir(episode)
+        pdf_path = self.episode_pdf_path(episode)
+        codec_path = self._episode_pdf_codec_path(episode)
+        if not os.path.isdir(folder) or not os.path.isfile(pdf_path) or not os.path.isfile(codec_path):
+            return False
+        try:
+            with open(codec_path, "r", encoding="utf-8") as f:
+                codec = f.read().strip()
+        except OSError:
+            return False
+        if codec != f"jpeg{_PAGE_JPEG_QUALITY}":
+            return False
+        return abs(os.path.getmtime(folder) - os.path.getmtime(pdf_path)) < 1.0
+
+    def build_episode_pdf(self, episode: str) -> str:
+        """按页码顺序把现有页面图压成 JPEG 再合成 PDF，再把 PDF 和文件夹改成同一个时间。"""
+        pngs = self._episode_png_paths(episode)
+        if not pngs:
+            return ""
+        pdf_path = self._assemble_episode_pdf(episode, pngs)
+        if not pdf_path:
+            return ""
+        codec_path = self._episode_pdf_codec_path(episode)
+        with open(codec_path, "w", encoding="utf-8") as f:
+            f.write(f"jpeg{_PAGE_JPEG_QUALITY}")
+        stamp = time.time()
+        os.utime(pdf_path, (stamp, stamp))
+        os.utime(self.episode_media_dir(episode), (stamp, stamp))
+        return pdf_path
+
+    def _assemble_episode_pdf(self, episode: str, pngs: list[str]) -> str:
+        """把这一集的页面图压成 JPEG 后合成 media/<episode>/<episode>.pdf。"""
+        import fitz
+        from io import BytesIO
+        from PIL import Image
+
+        if not pngs:
+            return ""
+        folder = os.path.join(config.get_media_path(self.pid), episode)
+        os.makedirs(folder, exist_ok=True)
+        pdf_path = os.path.join(folder, f"{episode}.pdf")
+        doc = fitz.open()
+        try:
+            for src in pngs:
+                with Image.open(src) as im:
+                    rgb = im.convert("RGB")
+                    width, height = rgb.size
+                    buf = BytesIO()
+                    rgb.save(buf, "JPEG", quality=_PAGE_JPEG_QUALITY, optimize=True)
+                page = doc.new_page(width=width, height=height)
+                page.insert_image(page.rect, stream=buf.getvalue())
+            doc.save(pdf_path, deflate=True, garbage=4)
+        finally:
+            doc.close()
+        return os.path.abspath(pdf_path)
+
     def split_group_at(self, index: int) -> str:
-        """从当前场景起，连续属于同一 episode 的场景划到新的一集。之前的场景保持原集。"""
+        """从当前场景起划成新的一集。页面图跟着挪过去，保留原来的页码，不在这里合成 PDF。"""
         if not self.scenes or index < 0 or index >= len(self.scenes):
             return ""
         old_name = self.scene_group(self.scenes[index])
-        new_name = self.next_group_name()
+        episode_indices = self.group_scene_indices(old_name)
+        stay_indices = [i for i in episode_indices if i < index]
+        move_indices: list[int] = []
         i = index
         while i < len(self.scenes) and self.scene_group(self.scenes[i]) == old_name:
-            self.scenes[i]["episode"] = new_name
-            self.scenes[i].pop("group", None)
-            self.scenes[i].pop("episode_page", None)
-            self.scenes[i].pop("episode_pdf", None)
-            self.scenes[i].pop("group_page", None)
-            self.scenes[i].pop("group_pdf", None)
+            move_indices.append(i)
             i += 1
+        if not move_indices:
+            return ""
+        new_name = self.next_group_name()
+        pages = self._episode_png_paths(old_name)
+        move_pages = pages[len(stay_indices) :]
+        if move_pages:
+            new_folder = self.episode_media_dir(new_name)
+            os.makedirs(new_folder, exist_ok=True)
+            for src in move_pages:
+                dest = os.path.join(new_folder, os.path.basename(src))
+                if os.path.abspath(src) != os.path.abspath(dest):
+                    shutil.move(src, dest)
+        for scene_i, png in zip(move_indices, move_pages):
+            scene = self.scenes[scene_i]
+            if isinstance(scene, dict):
+                scene["episode_page"] = int(os.path.splitext(os.path.basename(png))[0])
+        for scene_i in move_indices:
+            scene = self.scenes[scene_i]
+            scene["episode"] = new_name
+            if move_pages:
+                scene["episode_pdf"] = f"{new_name}.pdf"
+            scene.pop("group", None)
+            scene.pop("group_page", None)
+            scene.pop("group_pdf", None)
+        if pages[: len(stay_indices)]:
+            for scene_i in stay_indices:
+                scene = self.scenes[scene_i]
+                if isinstance(scene, dict):
+                    scene["episode_pdf"] = f"{old_name}.pdf"
+        self.touch_episode_media(old_name)
+        self.touch_episode_media(new_name)
         for scene in self.scenes:
             if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
                 scene["episode"] = "1"
@@ -1354,6 +1569,8 @@ class MagicWorkflow:
 
     def replace_scene_image(self, current_scene, source_image_path, vertical_line_position, target_field):
         oldi, image_path = refresh_scene_media(current_scene, target_field, ".webp", source_image_path)
+        if target_field == "clip_image" and image_path:
+            self.write_scene_page_png(current_scene, image_path)
 
         current_scene[target_field + "_split"] = vertical_line_position
         clip_image_last = get_file_path(current_scene, target_field + "_last")

@@ -2129,6 +2129,11 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             ("Comic to Scenes", config_channel.COMIC_STRIP_SCENES),
+            ("Reshape Episode", config_channel.COMIC_RESHAPE_SCENES),
+            ("Expand Episode", config_channel.COMIC_EXPAND_SCENES),
+            ("Condense · 2 Acts", config_channel.comic_condense_prompt(2)),
+            ("Condense · 3 Acts", config_channel.comic_condense_prompt(3)),
+            ("Condense · 4 Acts", config_channel.comic_condense_prompt(4)),
         ],
 
         "channel_prompt": {
