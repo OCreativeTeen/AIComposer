@@ -721,7 +721,6 @@ class MagicWorkflow:
 
 
     def load_scenes(self):
-        _narr_default, _visual_style_default = self._defaults_from_project_config()
         scenes_file = config.get_scenes_path(self.pid)
         if os.path.exists(scenes_file):
             # 先读取文件到局部变量再赋值，避免先清空 self.scenes 导致在 make_backgroud_medias 期间若触发 save 会覆盖成空列表
@@ -745,12 +744,19 @@ class MagicWorkflow:
                 loaded_scenes = []
             self.scenes = loaded_scenes
 
+            changed = False
             for story_scene in self.scenes:
-                if not story_scene.get("visual_style"):
-                    story_scene["visual_style"] = _visual_style_default
+                if not isinstance(story_scene, dict):
+                    continue
+                if story_scene.pop("visual_style", None) is not None:
+                    changed = True
+                if story_scene.pop("title_font", None) is not None:
+                    changed = True
                 if not story_scene.get("caption"):
                     story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
-            self.save_scenes_to_json()
+                    changed = True
+            if changed:
+                self.save_scenes_to_json()
             return
 
         self.scenes = []
@@ -774,8 +780,10 @@ class MagicWorkflow:
         #          element["caption"] = config.get_channel_config(channel)["channel_name"]
         #          self.add_story_scene(story_index, element, True, is_append=False)
         for story_scene in self.scenes:
-            if not story_scene.get("visual_style"):
-                story_scene["visual_style"] = _visual_style_default
+            if not isinstance(story_scene, dict):
+                continue
+            story_scene.pop("visual_style", None)
+            story_scene.pop("title_font", None)
             if not story_scene.get("caption"):
                 story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
 

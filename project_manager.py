@@ -413,6 +413,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "language",
     "narrator",
     "visual_style",
+    "title_font",
     "pid",
     "video_width",
     "video_height",
