@@ -307,6 +307,7 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
         vo = str(legacy_vo).strip()
     if vo:
         item["voiceover"] = vo
+    item.pop("narrator", None)
 
 
 
@@ -365,6 +366,176 @@ def build_soul(channel, topic_category, topic_subtype):
 PROJECT_CONFIG = None
 
 # 欢迎屏选择的旁白 narrator，供 YT → RAW 启动新项目 等路径复用（与 config_prompt.NARRATOR 一致）
+def project_narrator() -> str:
+    """整部片子的讲员，只记在项目上，不跟某一场走。"""
+    pc = PROJECT_CONFIG if isinstance(PROJECT_CONFIG, dict) else {}
+    return (pc.get("narrator") or LAST_NARRATOR or "").strip()
+
+
+_ACTOR_AGE = {
+    "mature": "mature",
+    "middle": "mature",
+    "middle-aged": "mature",
+    "old": "mature",
+    "senior": "senior",
+    "elder": "senior",
+    "young": "young",
+    "teen": "young",
+    "teenager": "young",
+    "kids": "kids",
+    "kid": "kids",
+    "child": "kids",
+    "children": "kids",
+}
+
+
+def _actor_voice_names() -> set:
+    try:
+        return {x.strip() for x in config.narrator_person_options() if (x or "").strip()}
+    except Exception:
+        return set()
+
+
+def _actor_segments(text: str) -> list:
+    raw = (text or "").replace("；", "|").replace(";", "|")
+    return [p.strip() for p in raw.split("|") if p.strip() and p.strip() != "没主持人"]
+
+
+def _strip_actor_label(part: str) -> str:
+    return re.sub(r"^(?:人物\s*\d*|讲员)\s*[：:]\s*", "", (part or "").strip()).strip()
+
+
+def _host_voice_in(part: str, voices: set) -> str:
+    body = _strip_actor_label(part)
+    found = re.search(r"主持人\s*[（(]\s*([^，,）)]+)", body)
+    if found:
+        body = found.group(1).strip()
+    if body in voices:
+        return body
+    return ""
+
+
+def _is_host_segment(part: str, voices: set) -> bool:
+    return "讲员" in (part or "") or "主持人" in (part or "")
+
+
+def _race_token(token: str) -> str:
+    t = (token or "").strip().lower()
+    if t in ("english", "western") or "英" in token or "西" in token:
+        return "english"
+    return "chinese"
+
+
+def _person_body(part: str) -> str:
+    """能看懂的写成 woman|man / 名字或年纪 / chinese|english，认不出就保留原文。"""
+    body = _strip_actor_label(part)
+    bits = [b.strip() for b in body.split("/") if b.strip()]
+    gender = ""
+    if bits:
+        head = bits[0].lower()
+        if head in ("woman", "female", "girl") or bits[0] in ("女", "女性"):
+            gender = "woman"
+        elif head in ("man", "male", "boy") or bits[0] in ("男", "男性"):
+            gender = "man"
+    if gender and len(bits) >= 2:
+        mid = bits[1]
+        if mid.lower() in _ACTOR_AGE:
+            mid = _ACTOR_AGE[mid.lower()]
+        race = _race_token(bits[2]) if len(bits) >= 3 else "chinese"
+        return f"{gender}/{mid}/{race}"
+    return body
+
+
+def normalize_actor_text(text: str) -> str:
+    """保留各段原来的先后。人物按出现次序编号，讲员留在原来的位置。"""
+    voices = _actor_voice_names()
+    out = []
+    person_n = 0
+    seen_host = False
+    for part in _actor_segments(text):
+        if _is_host_segment(part, voices):
+            if seen_host:
+                continue
+            seen_host = True
+            host = _host_voice_in(part, voices) or _strip_actor_label(part)
+            if host:
+                out.append(f"讲员：{host}")
+            continue
+        body = _person_body(part)
+        if body:
+            person_n += 1
+            out.append(f"人物{person_n}：{body}")
+    return " | ".join(out)
+
+
+def actor_host_name(text: str) -> str:
+    voices = _actor_voice_names()
+    for part in _actor_segments(text):
+        if _is_host_segment(part, voices):
+            return _host_voice_in(part, voices) or _strip_actor_label(part)
+    return ""
+
+
+def actor_entries(text: str) -> list:
+    """``[{role, label, body}, ...]``，role 为 person 或 host。"""
+    voices = _actor_voice_names()
+    rows = []
+    person_n = 0
+    normalized = normalize_actor_text(text)
+    for part in _actor_segments(normalized):
+        if _is_host_segment(part, voices):
+            rows.append({
+                "role": "host",
+                "label": "讲员",
+                "body": _host_voice_in(part, voices) or _strip_actor_label(part),
+            })
+            continue
+        person_n += 1
+        rows.append({
+            "role": "person",
+            "label": f"人物{person_n}",
+            "body": _person_body(part),
+        })
+    return rows
+
+
+def format_actor_entries(rows: list) -> str:
+    """按给定顺序写成 actor 文字。人物在这个顺序里重新编号，讲员留在被放到的位置。"""
+    out = []
+    person_n = 0
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("role") == "host":
+            body = (row.get("body") or "").strip()
+            if body:
+                out.append(f"讲员：{body}")
+            continue
+        body = (row.get("body") or "").strip()
+        if not body:
+            continue
+        person_n += 1
+        out.append(f"人物{person_n}：{body}")
+    return " | ".join(out)
+
+
+def actor_with_host(text: str, voice_name: str) -> str:
+    """换讲员时留在原来的位置。原来没有讲员才加到最后。声音名为空则去掉讲员。"""
+    voice_name = (voice_name or "").strip()
+    rows = []
+    placed = False
+    for row in actor_entries(text):
+        if row["role"] == "host":
+            if voice_name:
+                rows.append({"role": "host", "body": voice_name})
+                placed = True
+            continue
+        rows.append(row)
+    if voice_name and not placed:
+        rows.append({"role": "host", "body": voice_name})
+    return format_actor_entries(rows)
+
+
 LAST_NARRATOR = (
     config.narrator_person_options()[0]
     if config.narrator_person_options()
@@ -414,6 +585,8 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "narrator",
     "visual_style",
     "title_font",
+    "setting_region",
+    "setting_era",
     "pid",
     "video_width",
     "video_height",
@@ -1370,12 +1543,17 @@ class ProjectSelectionDialog:
         welcome_info_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
         _np_styles = list(config.VISUAL_STYLE_OPTIONS)
         _vs_cur = self.story_result.get('visual_style')
-        _nar_init = self.story_result.get('narrator')
+        _nar_opts = list(config.CHARACTER_PERSON_OPTIONS)
+        _nar_init = (self.story_result.get('narrator') or "").strip()
+        if _nar_init not in _nar_opts:
+            _fallback = (LAST_NARRATOR or "").strip()
+            if _fallback in _nar_opts:
+                _nar_init = _fallback
+            else:
+                _named = [x for x in _nar_opts if (x or "").strip()]
+                _nar_init = _named[0] if _named else ""
         new_project_visual_style_var = tk.StringVar(value=_vs_cur)
-
         new_project_narrator_var = tk.StringVar(value=_nar_init)
-        # SET new_project_narrator_var default value TO woman/qin-fast/chinese
-        new_project_narrator_var.set("woman/qin-fast/chinese")
 
         ttk.Label(welcome_info_row, text="频道:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(welcome_info_row, text=str(self.story_result.get('channel', '')), foreground="gray").pack(side=tk.LEFT, padx=(0, 14))
@@ -1393,7 +1571,7 @@ class ProjectSelectionDialog:
         ttk.Combobox(
             welcome_info_row,
             textvariable=new_project_narrator_var,
-            values=config.CHARACTER_PERSON_OPTIONS,
+            values=_nar_opts,
             state="readonly",
             width=18,
         ).pack(side=tk.LEFT, padx=(0, 8))

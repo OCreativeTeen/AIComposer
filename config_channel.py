@@ -386,12 +386,12 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
 """
 
 
@@ -488,7 +488,7 @@ INPUT (the original case+analysis content):
         3) voiceover (second person, or the host when the host is in this scene)
         4) visual (cinematic scene + musical atmosphere. No on-image text)
         5) speaking (first person said aloud, or empty on a host-only scene)
-        6) actor — 没主持人, or 主持人（{narrator}，出镜/不出镜）
+        6) actor — 人物1：woman/名字/chinese, then 人物2 if any, then 讲员：{narrator} only when the host is in the scene
 
 
 --------------------------------------------------
@@ -501,14 +501,14 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
 """
 
@@ -524,10 +524,10 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
     ** Strictly output ``scene_content`` as a JSON array (all text in {language}):
 
     Each scene includes episode, caption, voiceover, visual, speaking, actor.
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
@@ -539,7 +539,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Visual story of this beat. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 """
@@ -810,14 +810,14 @@ You are a professional storyteller and creative director. Your task is to create
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat: place, people, what they do. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
 
 --------------------------------------------------
@@ -935,14 +935,14 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat, including the A-world or B-world contrast. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
 --------------------------------------------------
 INPUT
@@ -1020,7 +1020,7 @@ You are a psychological counselor and master of high-empathy storytelling.
 ## STEP 3 - (Json structure)
     * (1) **Caption**: poetic, evocative title of the story & scene. 
     * (2) **Voiceover**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
-        * Host look chosen for this run: {narrator}
+        * Host look chosen for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, not a separate 人物.
         * Two or more story people: do NOT put the host in this scene. This field is the SECOND person speaking.
         * Exactly one story person, and you choose to include the host: this field is the host's line.
         * The scene is only the host: ``speaking`` is the host, and this field is empty.
@@ -1030,9 +1030,9 @@ You are a psychological counselor and master of high-empathy storytelling.
     * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
     * (5) **Actor**: up to three parts, joined by " | ". Never use ";".
         * Part 1 is the first person (``speaking``). Part 2 is the second person (``voiceover``); leave part 2 out when there is only one story person. Part 3 is the host mark.
-        * Two or more story people: never add the host. ``first | second | 没主持人``.
-        * Exactly one story person, and the host is in this scene: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only.
-        * The scene is only the host: ``主持人（{narrator}，出镜） | mood | actions``. Do not also write 有主持人 or 没主持人.
+        * Two or more story people: never add the host. ``人物1：woman/名字/chinese | 人物2：man/名字/english``.
+        * Exactly one story person, and the host is in this scene: ``人物1：woman/名字/chinese | 讲员：{narrator}``.
+        * The scene is only the narrator speaking: ``actor`` is exactly ``讲员：{narrator}``. No 人物. Mood, gesture, and camera direction are not people.
 
     like this (the story has ###STEP### scene (###STEP### json objects)) :
     [
@@ -1041,7 +1041,7 @@ You are a psychological counselor and master of high-empathy storytelling.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. Empty when the scene is only the host. In {language}.",
             "visual": "the story scene, their interaction, and any cut or angle change. about ###LENGTH### {language} char. No on-image text.",
             "speaking": "The first actor's line, or the host's line when the scene is only the host. In {language}.",
-            "actor": "first person | second person | 没主持人"
+            "actor": "人物1：woman/名字/chinese | 人物2：man/名字/english"
         }}
     ]
 
@@ -1175,9 +1175,9 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
 
 *** SHARED RULES
     ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
-    ** Host look for this run: {narrator}. Every counselor scene in the program is THIS host, the same person. Do not invent another age, gender, or face. ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``speaking`` is the host. ``voiceover`` is empty.
-    ** A life with two people is mostly dialogue, not one person thinking. In those scenes both are in ``actor``, ending ``没主持人``. ``speaking`` is what the first says aloud. ``voiceover`` is what the second says aloud back, not a private thought. Across the story scenes, swap who is first. At most one story scene may be a person alone. Do not make every scene a single actor.
-    ** Exactly one story person, and the host is in that scene: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means the host is in the picture. 不出镜 means voice only. ``speaking`` is that person. ``voiceover`` is the host.
+    ** Host look for this run: {narrator}. Every counselor scene in the program is THIS host, the same person. A third person who explains the story is this 讲员, not a separate 说书人 or 人物. Do not invent another age, gender, or face. ``actor`` is exactly ``讲员：{narrator}``. No 人物. The narrator is the only speaker.
+    ** A life with two people is mostly dialogue, not one person thinking. In those scenes both are in ``actor`` as ``人物1：woman/名字/chinese | 人物2：man/名字/english``, with no 讲员. ``speaking`` is what the first says aloud. ``voiceover`` is what the second says aloud back, not a private thought. Across the story scenes, swap who is first. At most one story scene may be a person alone. Do not make every scene a single actor.
+    ** Exactly one story person, and the host is in that scene: the last part is ``讲员：{narrator}``. ``speaking`` is that person. ``voiceover`` is the host.
     ** No DSM labels. No "the lesson is". Do not say 根, 根儿, or 病根 in caption, speaking, or voiceover. Name the problem in ordinary professional language.
     ** Do not solve a life inside the story scenes. Do not skip from the first quarrel to the ending in one scene.
     ** Inside a story run, in this order, shown in what people do: a concrete moment where the struggle is visible and the cause is not named; the same move repeating, and the price; one moment where that way of coping fails; then it becomes plain why they keep doing it.
@@ -1225,7 +1225,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
         "voiceover": "Empty when the counselor speaks. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The host, when the scene is only the host; otherwise the first person of this life. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 
@@ -1253,10 +1253,10 @@ COUNSELING_SERIES_STORY_ONLY = """
 
 *** HOST VOICEOVER
     ** Host lines live only in voiceover, and only on the start scene and the end scene of an episode, and on the remedy scenes. Short: 2 to 4 sentences.
-    ** Host look for this run: {narrator}. Opening, closing, and remedy scenes are host scenes.
-    ** A host-only scene: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Two or more story people: never add the host. ``speaking`` is the first person said aloud. ``voiceover`` is the second person answering aloud, not a private thought. ``actor`` ends with ``没主持人``. Most life scenes are both people. Swap who is first. At most one scene is a person alone.
-    ** Exactly one story person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. 出镜 means in the picture. 不出镜 means voice only. ``voiceover`` is the host.
+    ** Host look for this run: {narrator}. Opening, closing, and remedy scenes are host scenes. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
+    ** A host-only scene: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Two or more story people: never add the host. ``speaking`` is the first person said aloud. ``voiceover`` is the second person answering aloud, not a private thought. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员. Most life scenes are both people. Swap who is first. At most one scene is a person alone.
+    ** Exactly one story person and the host: the last part is ``讲员：{narrator}``. ``voiceover`` is the host.
 
 *** PATH A — one story. Every scene "episode": "1".
     ** Start — 1 scene. Caption is the program title. Host voiceover names the problem and enters this life. No remedy.
@@ -1297,7 +1297,7 @@ COUNSELING_SERIES_STORY_ONLY = """
         "voiceover": "The host's line when the host is in this scene; otherwise the second person's line. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The first person of this life, or empty on a host-only scene. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 
@@ -1341,7 +1341,7 @@ SCENE FIELDS (one scene in the output array)
         2) voiceover (Host narrator summary + sub-insights; reflective tone)
         3) visual (cinematic visual setting — time, weather, architecture, lighting)
         4) speaking (optional brief host spoken line; ~9 seconds)
-        5) actor (counselor/host: gender/age/race | mood | actions)
+        5) actor (讲员：{narrator}, or 人物1：woman/名字/chinese)
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
@@ -1352,7 +1352,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Host narration — summary of the story and sub-insights. Warm, reflective. In {language}.",
             "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
             "speaking": "Optional brief host spoken line (~9 seconds). In {language}.",
-            "actor": "woman/mature/english | calm | seated, welcoming gesture"
+            "actor": "讲员：{narrator}"
         }}
     ]
 
@@ -1383,7 +1383,7 @@ COUNSELING_CASE_DEVELOPMENT = """
     2) voiceover — host bridge + gentle analysis — audio only; never paste into visual
     3) visual — clean film-still (see VISUAL rules): scene+character express the beat — NO words-to-paint, NO analysis on screen
     4) speaking — character or host line ~10s — audio only
-    5) actor — gender/age/race | mood | actions
+    5) actor — 人物1：woman/名字/chinese | 讲员：{narrator} when the host is present
 
 INPUT (user prompt bottom):
     story / case content (e.g. full case description or analysis)
@@ -1397,7 +1397,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full 
         "voiceover": "Bridge + analysis tied to what we just saw. In {language}.",
         "visual": "Clean film-still — scene+character, sensory, NO on-image text or story prose. In {language}.",
         "speaking": "Character or host line ~10s, reactive. In {language}.",
-        "actor": "gender/age/race | mood | actions"
+        "actor": "人物1：woman/名字/chinese | 讲员：{narrator}"
     }}
 ]
 
@@ -1429,7 +1429,7 @@ COUNSELING_STORY_DEVELOPMENT = """
     2) voiceover — host bridge + insight — audio only
     3) visual — clean film-still (see VISUAL rules): pictures tell the story; almost no on-image text
     4) speaking — character dialogue ~10s — audio only
-    5) actor — gender/age/race | mood | actions
+    5) actor — 人物1：woman/名字/chinese | 讲员：{narrator} when the host is present
 
 INPUT (user prompt bottom):
     Full raw case-story / complete story description
@@ -1443,7 +1443,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
         "voiceover": "Bridge + insight for this beat. In {language}.",
         "visual": "Clean film-still — continues same thread, scene+character, NO on-image text. In {language}.",
         "speaking": "Character dialogue ~10s. In {language}.",
-        "actor": "gender/age/race | mood | actions"
+        "actor": "人物1：woman/名字/chinese | 讲员：{narrator}"
     }}
 ]
 
@@ -1483,7 +1483,7 @@ INPUT (the original case+analysis content):
         2) voiceover (random audience member sharing a personal life fragment — NOT commenting on story characters; per Separation Protocol)
         3) visual or story (Story/Scene details, include cinematic salon/live setting — time, weather, architecture, lighting)
         4) speaking (counselor host: Acknowledge → Analyze → Call to Action; warm, ~10 seconds)
-        5) actor (counselor OR audience member: gender/age/race | mood | actions)
+        5) actor (人物1：woman/名字/chinese or 讲员：{narrator})
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
@@ -1494,7 +1494,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Random audience member's personal sharing (never names story characters). In {language}.",
             "visual": "Story/Scene description, including cinematic salon/live setting. In {language}.",
             "speaking": "Counselor host — acknowledge, analyze, invite interaction (~10 seconds). In {language}.",
-            "actor": "woman/mature/english | calm | warm eye contact, open posture"
+            "actor": "讲员：{narrator}"
         }}
     ]
 
@@ -1531,7 +1531,7 @@ OUTPUT FORMAT (STRICT JSON)
     2) voiceover (host intro: Welcome → Normalcy → Shattering Moment; piercing yet welcoming)
     3) visual (Story/Scene description, including cinematic visual of the shattering moment — vivid, brief)
     4) speaking (optional brief host spoken hook; ~9 seconds)
-    5) actor (counselor/host: gender/age/race | mood | actions)
+    5) actor (讲员：{narrator}, or 人物1：woman/名字/chinese)
 
 [
         {{
@@ -1539,7 +1539,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Host intro: welcome to {channel_name}, who/where, then the shattering moment. In {language}.",
             "visual": "Story/Scene description, including Vivid cinematic snapshot of the shattering moment. In {language}.",
             "speaking": "Optional brief host spoken hook (~9 seconds). In {language}.",
-            "actor": "woman/mature/english | calm | direct gaze to camera"
+            "actor": "讲员：{narrator}"
         }}
     ]
 
@@ -1569,10 +1569,10 @@ COUNSELING_TALK_SCENES = """
 
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
-    * Host look for this run: {narrator}
-    * Two or more story people: do not include the host. speaking is what the FIRST person says aloud. voiceover is what the SECOND person says aloud back, not a private thought. actor ends with ``没主持人``. Swap who is first across scenes. Do not make every scene one person thinking.
-    * Exactly one story person and the host is in this scene: add ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）`` last. 出镜 means in the picture. 不出镜 means voice only. speaking is that person. voiceover is the host.
-    * The scene is only the host: actor is only ``主持人（{narrator}，出镜） | mood | actions``, speaking is the host, voiceover is empty.
+    * Host look for this run: {narrator}. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
+    * Two or more story people: do not include the host. speaking is what the FIRST person says aloud. voiceover is what the SECOND person says aloud back, not a private thought. actor is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` with no 讲员. Swap who is first across scenes. Do not make every scene one person thinking.
+    * Exactly one story person and the host is in this scene: add ``讲员：{narrator}`` last. speaking is that person. voiceover is the host.
+    * The scene is only the host: actor is exactly ``讲员：{narrator}``. No 人物. The narrator is the only speaker.
     * visual is the room and the people, no words on the image. Include how they face each other, and a cut or a closer angle when the reply lands.
     * caption: scene 1 is the program title; later scenes are short beat titles.
 
@@ -1582,7 +1582,7 @@ COUNSELING_TALK_SCENES = """
         "voiceover": "The second person's reply, or the host's line when 主持人 is last in actor. In {language}.",
         "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
         "speaking": "The first person's line. In {language}.",
-        "actor": "first person | second person | 没主持人"
+        "actor": "人物1：woman/名字/chinese | 人物2：man/名字/english"
     }}
 ]
 
@@ -1673,14 +1673,14 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars. No on-image text.",
             "speaking": "The first person's line, or empty on a host-only scene. In {language}.",
-            "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+            "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
         }}
     ]
 
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
 --------------------------------------------------
 INPUT
@@ -1741,16 +1741,16 @@ FLYLINK_CONTENT_SCENES = """
 """ + FLYLINK_UNIFIED_NARRATIVE_SPINE + """
 
 *** SCENE FIELDS (all text in {language})
-    ** Host look for this run: {narrator}. Every scene includes "episode": "1".
-    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` ends with ``没主持人``.
-    ** One person and the host: last part is ``主持人（{narrator}，出镜）`` or ``主持人（{narrator}，不出镜）``. ``voiceover`` is the host.
-    ** Host-only: ``actor`` is only ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
+    ** Two or more people: never add the host. ``speaking`` is the first said aloud. ``voiceover`` is the second answering aloud. ``actor`` is ``人物1：woman/名字/chinese | 人物2：man/名字/english`` and has no 讲员.
+    ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
     1) episode — "1"
     2) caption — scene / program title (metadata only)
     3) voiceover — the second person, or the host when the host is in this scene
     4) visual — clean documentary still; operational detail, lighting, geography. No on-image text.
     5) speaking — the first person, or empty on a host-only scene
-    6) actor — people, then 没主持人 or 主持人（{narrator}，出镜/不出镜）
+    6) actor — 人物1：woman/名字/chinese | 人物2 if any | 讲员：{narrator} only when the host is in the scene
 
 INPUT:
 ** Topic: {topic}
@@ -1782,11 +1782,12 @@ COMIC_STRIP_SCENES = """
 
 *** HOST
     ** Host look for this run: {narrator}.
+    ** The person who tells the story — 说书人, storyteller, or any third person outside the story explaining it — is this 讲员. Use {narrator} only. Do not invent a separate 说书人, and do not list 说书人 as 人物.
     ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
-    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+    ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: join people with " | ". Two or more people: ``人物1：woman/名字/chinese | 人物2：man/名字/english``, no 讲员. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``人物1：woman/名字/chinese | 讲员：{narrator}``, and ``voiceover`` is the host.
 
 *** STORY
     ** One episode. Every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
@@ -1803,7 +1804,7 @@ COMIC_STRIP_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "This same picture, vivid: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 
@@ -1833,12 +1834,13 @@ COMIC_RESHAPE_SCENES = """
 
 *** HOST
     ** Host look for this run: {narrator}.
+    ** The person who tells the story — 说书人, storyteller, or any third person outside the story explaining it — is this 讲员. Use {narrator} only. Do not invent a separate 说书人, and do not list 说书人 as 人物.
     ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
     ** Do not add a host scene that is not already holding the open or the close.
-    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+    ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: join people with " | ". Two or more people: ``人物1：woman/名字/chinese | 人物2：man/名字/english``, no 讲员. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``人物1：woman/名字/chinese | 讲员：{narrator}``, and ``voiceover`` is the host.
 
 *** STORY
     ** One episode. Every scene "episode": "1".
@@ -1855,7 +1857,7 @@ COMIC_RESHAPE_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. Spoken, natural. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 
@@ -1883,11 +1885,12 @@ COMIC_EXPAND_SCENES = """
 
 *** HOST
     ** Host look for this run: {narrator}.
+    ** The person who tells the story — 说书人, storyteller, or any third person outside the story explaining it — is this 讲员. Use {narrator} only. Do not invent a separate 说书人, and do not list 说书人 as 人物.
     ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
-    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+    ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: join people with " | ". Two or more people: ``人物1：woman/名字/chinese | 人物2：man/名字/english``, no 讲员. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``人物1：woman/名字/chinese | 讲员：{narrator}``, and ``voiceover`` is the host.
 
 *** STORY
     ** The result is still one episode. Every scene "episode": "1".
@@ -1904,7 +1907,7 @@ COMIC_EXPAND_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 
@@ -1932,11 +1935,12 @@ _COMIC_CONDENSE_SCENES = """
 
 *** HOST
     ** Host look for this run: {narrator}.
+    ** The person who tells the story — 说书人, storyteller, or any third person outside the story explaining it — is this 讲员. Use {narrator} only. Do not invent a separate 说书人, and do not list 说书人 as 人物.
     ** Host voiceover only on the first scene and the last scene. Short: 2 to 4 sentences.
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
-    ** A host scene: ``actor`` is ``主持人（{narrator}，出镜） | mood | actions``. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: ``actor`` is the first person, then the second person if there is one, then the host mark. Join those parts with " | ". Never use ";". Two or more people: ``first | second | 没主持人``. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``first | 主持人（{narrator}，出镜）`` or ``first | 主持人（{narrator}，不出镜）``, and ``voiceover`` is the host.
+    ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
+    ** Story scenes: join people with " | ". Two or more people: ``人物1：woman/名字/chinese | 人物2：man/名字/english``, no 讲员. ``speaking`` is the first, ``voiceover`` is the second. One person and the host: ``人物1：woman/名字/chinese | 讲员：{narrator}``, and ``voiceover`` is the host.
 
 *** STORY
     ** The result is still one episode. Every scene "episode": "1".
@@ -1954,7 +1958,7 @@ _COMIC_CONDENSE_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "first | second | 没主持人. One person and the host: first | 主持人（{narrator}，出镜） or first | 主持人（{narrator}，不出镜）. Host only: 主持人（{narrator}，出镜） | mood | actions. Join these parts with | only. Never use a semicolon."
+        "actor": "Only speakers. 人物1：woman/名字/chinese | 人物2：man/名字/english are story people who say a line. 讲员：{narrator} is the narrator and is not a 人物. If only the narrator speaks, actor is exactly 讲员：{narrator} with no 人物. Never put mood, gesture, or camera direction in actor. woman or man / name (or mature, young, kids, senior) / chinese or english. Join with | only."
     }}
 ]
 

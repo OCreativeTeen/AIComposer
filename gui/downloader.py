@@ -1042,7 +1042,24 @@ def _register_summary_gen_media_paste_bindings(
 ):
     """Ctrl+V：粘贴媒体（mp4 / 图片 / PDF）或场景 JSON 文本。"""
 
-    def _on_paste_media(_event=None):
+    def _paste_target_is_text(widget) -> bool:
+        if widget is None:
+            return False
+        try:
+            cls = widget.winfo_class()
+        except tk.TclError:
+            return False
+        return cls in ("Entry", "TEntry", "Text", "TCombobox", "Spinbox", "TSpinbox")
+
+    def _on_paste_media(event=None):
+        widget = getattr(event, "widget", None)
+        if not _paste_target_is_text(widget):
+            try:
+                widget = summary_window.focus_get()
+            except tk.TclError:
+                widget = None
+        if _paste_target_is_text(widget):
+            return None
         _on_summary_paste_media_from_clipboard(summary_window)
         return "break"
 
@@ -7439,13 +7456,13 @@ class MediaGUIManager:
         dlg = tk.Toplevel(parent)
         self._scene_content_dialog = dlg
         dlg.title("SCENE")
-        dlg.geometry("980x880")
-        dlg.minsize(980, 880)
+        dlg.geometry("980x930")
+        dlg.minsize(980, 930)
         # 非模态：允许切回摘要窗 / 列表等其它窗口（勿 grab_set / transient）
         dlg.update_idletasks()
         sw = dlg.winfo_screenwidth()
         sh = dlg.winfo_screenheight()
-        dlg.geometry(f"980x880+{(sw - 980) // 2}+{(sh - 880) // 2}")
+        dlg.geometry(f"980x930+{(sw - 980) // 2}+{(sh - 930) // 2}")
 
         frm = tk.Frame(dlg, padx=12, pady=12, bg="#f0f0f0")
         frm.pack(fill=tk.BOTH, expand=True)

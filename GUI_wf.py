@@ -372,104 +372,97 @@ class WorkflowGUI:
 
    
     def create_shared_info_area(self, parent):
-        """创建共享信息区域"""
-        shared_frame = ttk.LabelFrame(parent, text="共享配置", padding=10)
-        shared_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # 第一行：基本项目配置
-        row1_frame = ttk.Frame(shared_frame)
-        row1_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(row1_frame, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Label(row1_frame, text="场景:").pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
-        self.scene_label = ttk.Label(row1_frame, text="0 / 0", width=7)
-        self.scene_label.pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Button(row1_frame, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
+        """顶栏两行：第一行是项目配置，第二行是场景切换和操作。"""
+        shared_frame = ttk.Frame(parent)
+        shared_frame.pack(fill=tk.X, pady=(0, 6))
 
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        project_row = ttk.Frame(shared_frame)
+        project_row.pack(fill=tk.X, pady=(0, 4))
+        nav_row = ttk.Frame(shared_frame)
+        nav_row.pack(fill=tk.X)
 
-        ttk.Button(row1_frame, text="拷贝图",   command=self.copy_lastimage_to_next).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1_frame, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
-
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        pid_frame = ttk.Frame(row1_frame)
-        pid_frame.pack(side=tk.LEFT, padx=(0, 10))
+        pid_frame = ttk.Frame(project_row)
+        pid_frame.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(pid_frame, text="PID").pack(side=tk.LEFT)
-        self.shared_pid = ttk.Label(pid_frame, width=20, relief="sunken", background="white")
-        self.shared_pid.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # 语言组 (只读)
-        lang_frame = ttk.Frame(row1_frame)
-        lang_frame.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(lang_frame, text="语言").pack(side=tk.LEFT)
-        self.shared_language = ttk.Label(lang_frame, width=5, relief="sunken", background="white")
-        self.shared_language.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # 视频标题组
-        title_frame = ttk.Frame(row1_frame)
-        title_frame.pack(side=tk.LEFT, padx=(0, 10))
+        self.shared_pid = ttk.Label(pid_frame, width=16, relief="sunken", background="white")
+        self.shared_pid.pack(side=tk.LEFT, padx=(4, 0))
+
+        title_frame = ttk.Frame(project_row)
+        title_frame.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(title_frame, text="标题").pack(side=tk.LEFT)
-        self.video_title = ttk.Entry(title_frame, width=20)
-        self.video_title.pack(side=tk.LEFT)
-        ttk.Label(title_frame, text="频道").pack(side=tk.LEFT)
-        self.shared_channel = ttk.Label(title_frame, width=15, relief="sunken", background="white")
-        self.shared_channel.pack(side=tk.LEFT)
-        ttk.Label(title_frame, text="尺寸").pack(side=tk.LEFT, padx=(10, 0))
+        self.video_title = ttk.Entry(title_frame, width=14)
+        self.video_title.pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(project_row, text="频道").pack(side=tk.LEFT)
+        self.shared_channel = ttk.Label(project_row, width=12, relief="sunken", background="white")
+        self.shared_channel.pack(side=tk.LEFT, padx=(4, 8))
+
+        ttk.Label(project_row, text="尺寸").pack(side=tk.LEFT)
         self._video_size_presets = ("1920×1080", "1080×1920")
         self.video_size_combo = ttk.Combobox(
-            title_frame, width=12, state="readonly", values=self._video_size_presets
+            project_row, width=11, state="readonly", values=self._video_size_presets
         )
-        self.video_size_combo.pack(side=tk.LEFT, padx=(4, 0))
+        self.video_size_combo.pack(side=tk.LEFT, padx=(4, 8))
         self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
+        ttk.Label(project_row, text="语言").pack(side=tk.LEFT)
+        self.shared_language = ttk.Label(project_row, width=4, relief="sunken", background="white")
+        self.shared_language.pack(side=tk.LEFT, padx=(4, 4))
+        ttk.Label(project_row, text="字体").pack(side=tk.LEFT)
+        self.scene_language = ttk.Combobox(
+            project_row, width=4, values=list(config.FONT_LIST.keys()), state="readonly"
+        )
+        self.scene_language.pack(side=tk.LEFT, padx=(4, 8))
+
+        ttk.Label(project_row, text="风格").pack(side=tk.LEFT)
+        self.scene_visual_style = ttk.Combobox(
+            project_row,
+            width=16,
+            values=list(config.VISUAL_STYLE_OPTIONS),
+            state="readonly",
+        )
+        self.scene_visual_style.pack(side=tk.LEFT, padx=(4, 8))
+
+        ttk.Label(project_row, text="地域").pack(side=tk.LEFT)
+        self.setting_region = ttk.Combobox(
+            project_row,
+            width=6,
+            values=list(config_prompt.SETTING_PLACES.keys()),
+            state="readonly",
+        )
+        self.setting_region.pack(side=tk.LEFT, padx=(4, 4))
+        ttk.Label(project_row, text="时代").pack(side=tk.LEFT)
+        self.setting_era = ttk.Combobox(project_row, width=10, state="readonly")
+        self.setting_era.pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(nav_row, text="场景").pack(side=tk.LEFT)
+        ttk.Button(nav_row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
+        self.scene_label = ttk.Label(nav_row, text="0 / 0", width=7)
+        self.scene_label.pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=(2, 8))
+
+        ttk.Button(nav_row, text="拷贝图", command=self.copy_lastimage_to_next).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_row, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
         ttk.Button(
-            row1_frame, text="分镜",
+            nav_row, text="分镜",
             command=lambda: self._open_workflow_content_field_editor("scene_content"),
         ).pack(side=tk.LEFT, padx=(8, 2))
         ttk.Button(
-            row1_frame, text="分析",
+            nav_row, text="分析",
             command=lambda: self._open_workflow_content_field_editor("analyzed_content"),
         ).pack(side=tk.LEFT, padx=2)
-
-        ttk.Button(row1_frame, text="摘要", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 10))
-        ttk.Button(row1_frame, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 10))
-
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        #ttk.Button(row1_frame, text="视频合成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(row1_frame, text="视背合成", command=lambda:self.run_finalize_video(zero_audio_only=True)).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(row1_frame, text="推广合成", command=lambda:self.run_promotion_video()).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(row1_frame, text="上传视频", command=self.run_upload_video).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(scene_nav_row, text="拼接视频", command=self.run_final_concat_video).pack(side=tk.LEFT, padx=2)
-
-
-        ttk.Button(row1_frame, text="视频生成", command=lambda:self.run_finalize_video()).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="视频发布", command=lambda:self.publish_video()).pack(side=tk.LEFT)
-        #ttk.Button(row1_frame, text="Video提升", command=lambda:self.enhance_video()).pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="视频播放", command=lambda:self.play_finalize_video()).pack(side=tk.LEFT)
-        # add choice of value (from 0.0 to 2.0) used for "Video生成" as quiet audio add at end of each scene clip
-
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        ttk.Separator(row1_frame, orient='vertical').pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-
-        ttk.Button(row1_frame, text="清媒体",command=self.clean_media).pack(side=tk.LEFT)
-        ttk.Button(row1_frame, text="清WAN", command=self.clean_wan).pack(side=tk.LEFT) 
-        ttk.Button(row1_frame, text="SUNO",  command=self._open_suno_gui).pack(side=tk.LEFT) 
+        ttk.Button(nav_row, text="视频生成", command=lambda: self.run_finalize_video()).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(nav_row, text="视频发布", command=lambda: self.publish_video()).pack(side=tk.LEFT)
+        ttk.Button(nav_row, text="视频播放", command=lambda: self.play_finalize_video()).pack(side=tk.LEFT)
+        ttk.Button(nav_row, text="清媒体", command=self.clean_media).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(nav_row, text="清WAN", command=self.clean_wan).pack(side=tk.LEFT)
+        ttk.Button(nav_row, text="SUNO", command=self._open_suno_gui).pack(side=tk.LEFT)
+        ttk.Button(nav_row, text="摘要", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(0, 4))
+        ttk.Button(nav_row, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(0, 4)) 
 
    
     def _parse_video_size_combo_label(self, lbl: str):
@@ -617,11 +610,7 @@ class WorkflowGUI:
         ch_path = ""
         if ch:
             ch_path = config.get_channel_path(config.get_channel_id(ch))
-        main_char = ""
-        if hasattr(self, "scene_narrator"):
-            main_char = (self.scene_narrator.get() or "").strip()
-        if not main_char:
-            main_char = (project_manager.PROJECT_CONFIG or {}).get("narrator") or ""
+        main_char = project_manager.project_narrator()
         result = mgr.open_content_field_editor(
             self.root,
             vd,
@@ -912,63 +901,372 @@ class WorkflowGUI:
         threading.Thread(target=work, daemon=True).start()
 
 
-    def select_talking_avatar_to_clipboard(self) -> None:
-        """从频道 ``clip/`` 选择 talking-avatar 静帧（``avatar_169_*`` / ``avatar_916_*``）并复制到剪贴板。"""
-        pc = project_manager.PROJECT_CONFIG or {}
+    def _narrator_button_text(self, name: str = "") -> str:
+        """按钮上只显示讲员名字的中段，够认出是谁。"""
+        name = (name or project_manager.project_narrator() or "").strip()
+        parts = [p for p in name.replace("\\", "/").split("/") if p]
+        short = parts[1] if len(parts) >= 2 else (parts[0] if parts else "")
+        if not short:
+            return "讲员 无"
+        return f"讲员 {short}"
 
-        try:
-            vw = int(pc.get("video_width", 1920))
-            vh = int(pc.get("video_height", 1080))
-        except (TypeError, ValueError):
-            vw, vh = 1920, 1080
+    def _refresh_narrator_button(self, name: str = "") -> None:
+        btn = getattr(self, "_narrator_avatar_btn", None)
+        if btn is not None:
+            btn.config(text=self._narrator_button_text(name))
 
-        landscape = vw > vh
-        ratio_tag = "169" if landscape else "916"
-        name_prefix = f"avatar_{ratio_tag}_"
+    def _actor_button_text(self, label: str, body: str) -> str:
+        parts = [p for p in (body or "").split("/") if p]
+        short = parts[1] if len(parts) >= 2 else (body or "")
+        short = short.strip()
+        if len(short) > 8:
+            short = short[:8]
+        if not short:
+            return label
+        return f"{label} {short}"
 
-        img_ext = (".png")
-        choices: list[str] = []
-        path_by_rel: dict[str, str] = {}
-        for fn in sorted(os.listdir(config.AVATAR_PATH)):
-            fl = fn.lower()
-            if not fl.startswith(name_prefix) or not fl.endswith(img_ext):
-                continue
-            full = os.path.join(config.AVATAR_PATH, fn)
-            if not os.path.isfile(full):
-                continue
-            rel = os.path.relpath(full, config.AVATAR_PATH).replace("\\", "/")
-            if rel in path_by_rel:
-                continue
-            path_by_rel[rel] = full
-            choices.append(rel)
-
-        if not choices:
-            messagebox.showwarning(
-                "Avatar",
-                f"在 clip 目录未找到 {name_prefix}* 图片（当前项目 {vw}×{vh}）。",
-                parent=self.root,
-            )
+    def _render_actor_buttons(self) -> None:
+        row = getattr(self, "scene_actor_row", None)
+        if row is None:
             return
+        for child in row.winfo_children():
+            child.destroy()
+        entries = project_manager.actor_entries(self._actor_text)
+        self._actor_buttons = []
+        self._actor_drag_index = None
+        self._actor_drag_moved = False
+        if not entries:
+            ttk.Label(row, text="（没有人物）").pack(side=tk.LEFT, padx=(0, 4))
+        for entry in entries:
+            self._pack_actor_button(row, entry)
+        if not any(entry["role"] == "host" for entry in entries):
+            self._pack_actor_button(row, {"role": "host", "label": "讲员", "body": ""})
 
-        pick = askchoice_media_preview(
-            f"选择 Avatar（{ratio_tag} · {vw}×{vh}）",
-            choices,
-            config.AVATAR_PATH,
-            self.root,
-        )
-        if not pick:
-            return
-
-        image_path = path_by_rel.get(pick) or os.path.join(config.AVATAR_PATH, pick)
-        if self.copy_image_to_clipboard(image_path, silent=True):
-            show_auto_close_popup(
-                self.root,
-                "Avatar",
-                f"已复制到剪贴板：{os.path.basename(image_path)}",
-            )
+    def _pack_actor_button(self, row, entry: dict) -> None:
+        body = (entry.get("body") or "").strip()
+        if entry.get("role") == "host":
+            text = self._actor_button_text("讲员", body) if body else "讲员 无"
         else:
-            messagebox.showerror("Avatar", "复制到剪贴板失败。", parent=self.root)
+            text = self._actor_button_text(entry.get("label") or "人物", body)
+        btn = ttk.Button(row, text=text, cursor="fleur")
+        btn._actor_entry = dict(entry)
+        btn.pack(side=tk.LEFT, padx=(0, 4))
+        btn.bind("<ButtonPress-1>", self._actor_press)
+        btn.bind("<B1-Motion>", self._actor_motion)
+        btn.bind("<ButtonRelease-1>", self._actor_release)
+        self._actor_buttons.append(btn)
 
+    def _actor_press(self, event) -> None:
+        btn = event.widget
+        try:
+            self._actor_drag_index = self._actor_buttons.index(btn)
+        except ValueError:
+            self._actor_drag_index = None
+        self._actor_drag_moved = False
+        self._actor_drag_x = event.x_root
+
+    def _actor_motion(self, event) -> None:
+        src = self._actor_drag_index
+        buttons = getattr(self, "_actor_buttons", None) or []
+        if src is None or not buttons or src >= len(buttons):
+            return
+        if not self._actor_drag_moved and abs(event.x_root - self._actor_drag_x) < 6:
+            return
+        target = None
+        best = None
+        for i, btn in enumerate(buttons):
+            center = btn.winfo_rootx() + max(btn.winfo_width(), 1) / 2
+            dist = abs(event.x_root - center)
+            if best is None or dist < best:
+                best = dist
+                target = i
+        if target is None or target == src:
+            return
+        self._actor_drag_moved = True
+        moved = buttons.pop(src)
+        buttons.insert(target, moved)
+        self._actor_drag_index = target
+        for btn in buttons:
+            btn.pack_forget()
+        for btn in buttons:
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+
+    def _actor_release(self, event) -> None:
+        buttons = getattr(self, "_actor_buttons", None) or []
+        index = self._actor_drag_index
+        moved = self._actor_drag_moved
+        self._actor_drag_index = None
+        self._actor_drag_moved = False
+        if index is None or index >= len(buttons):
+            return
+        if not moved:
+            entry = getattr(buttons[index], "_actor_entry", None) or {}
+            if entry.get("role") == "host":
+                self._review_actor_host()
+            else:
+                self._review_actor_person((entry.get("body") or "").strip())
+            return
+        rows = [getattr(btn, "_actor_entry", None) for btn in buttons]
+        rows = [row for row in rows if isinstance(row, dict) and (row.get("body") or "").strip()]
+        self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
+
+    def _set_actor_text(self, text: str, *, save_scene: bool = False) -> None:
+        self._actor_text = project_manager.normalize_actor_text(text)
+        self._render_actor_buttons()
+        if not save_scene:
+            return
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if not scene:
+            return
+        old = (scene.get("actor") or "").strip()
+        if old == self._actor_text:
+            return
+        scene["actor"] = self._actor_text
+        self.workflow.save_scenes_to_json()
+
+    def _review_actor_host(self) -> None:
+        current = project_manager.actor_host_name(self._actor_text)
+
+        def chosen(name: str) -> None:
+            self._set_actor_text(project_manager.actor_with_host(self._actor_text, name), save_scene=True)
+
+        self.review_project_narrator(current=current, on_confirm=chosen)
+
+    @staticmethod
+    def _portrait_stem(name: str) -> str:
+        stem = (name or "").strip().replace("\\", "/").replace("/", "_")
+        for ch in '<>:"|?*':
+            stem = stem.replace(ch, "_")
+        return stem.strip(" .")
+
+    @staticmethod
+    def _narrator_portrait_path(name: str) -> str:
+        """voices.json 的 name 把 / 换成 _，对应 avatar 目录里的 png。"""
+        stem = WorkflowGUI._portrait_stem(name)
+        if not stem:
+            return ""
+        path = os.path.join(config.AVATAR_PATH, stem + ".png")
+        return path if os.path.isfile(path) else ""
+
+    def _narrator_portrait_dest(self, name: str) -> str:
+        stem = self._portrait_stem(name)
+        if not stem:
+            return ""
+        return os.path.join(config.AVATAR_PATH, stem + ".png")
+
+    def _project_avatar_dir(self) -> str:
+        pid = self.get_pid()
+        path = os.path.join(config.PROJECT_DATA_PATH, pid, "avatar")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _person_portrait_dest(self, name: str) -> str:
+        stem = self._portrait_stem(name)
+        if not stem:
+            return ""
+        return os.path.join(self._project_avatar_dir(), stem + ".png")
+
+    def _person_portrait_path(self, name: str) -> str:
+        path = self._person_portrait_dest(name)
+        return path if path and os.path.isfile(path) else ""
+
+    @staticmethod
+    def _backup_portrait(path: str) -> None:
+        if not path or not os.path.isfile(path):
+            return
+        folder, base = os.path.split(path)
+        stem, ext = os.path.splitext(base)
+        n = 1
+        while True:
+            bak = os.path.join(folder, f"{stem}.bak{n}{ext}")
+            if not os.path.exists(bak):
+                os.replace(path, bak)
+                return
+            n += 1
+
+    def _paste_portrait_file(self, dest: str, parent) -> bool:
+        """把剪贴板里的图存成 dest。原来有文件就先改名备份。"""
+        from PIL import ImageGrab
+
+        if not dest:
+            messagebox.showwarning("头像", "先选定一个名字。", parent=parent)
+            return False
+        clip = ImageGrab.grabclipboard()
+        if clip is None:
+            messagebox.showwarning("头像", "剪贴板里没有图片。", parent=parent)
+            return False
+        try:
+            if isinstance(clip, list):
+                src = next((p for p in clip if p and os.path.isfile(p)), "")
+                if not src:
+                    messagebox.showwarning("头像", "剪贴板里没有图片。", parent=parent)
+                    return False
+                img = Image.open(src)
+            else:
+                img = clip
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGBA")
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            self._backup_portrait(dest)
+            img.save(dest, "PNG")
+        except Exception as e:
+            messagebox.showerror("头像", f"保存失败：{e}", parent=parent)
+            return False
+        return True
+
+    def _review_actor_person(self, body: str) -> None:
+        body = (body or "").strip()
+        if not body:
+            return
+        self._open_portrait_dialog(
+            title="人物",
+            names=[body],
+            current=body,
+            dest_for=self._person_portrait_dest,
+            path_for=self._person_portrait_path,
+            hint="Ctrl+V 把剪贴板图片存成这个人物。没有就显示没有。",
+            allow_empty=False,
+        )
+
+    def _open_portrait_dialog(
+        self,
+        *,
+        title: str,
+        names: list,
+        current: str,
+        dest_for,
+        path_for,
+        hint: str,
+        allow_empty: bool,
+        on_confirm=None,
+    ) -> None:
+        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。确定时把当前图拷进剪贴板。"""
+        if not names:
+            return
+        current = (current or "").strip()
+        try:
+            index = names.index(current)
+        except ValueError:
+            index = 0
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        name_var = tk.StringVar()
+        ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(12, 4))
+        image_label = ttk.Label(dlg)
+        image_label.pack(padx=16, pady=4)
+        ttk.Label(dlg, text=hint).pack(pady=(0, 8))
+        holder = {"photo": None, "index": index}
+
+        def show_at(i: int) -> None:
+            holder["index"] = max(0, min(i, len(names) - 1))
+            name = names[holder["index"]]
+            if not name:
+                holder["photo"] = None
+                name_var.set("没有讲员")
+                image_label.config(image="", text="没有头像")
+                return
+            name_var.set(name)
+            path = path_for(name)
+            if not path:
+                holder["photo"] = None
+                image_label.config(image="", text="没有头像")
+                return
+            try:
+                img = Image.open(path)
+                img.thumbnail((420, 560), Image.Resampling.LANCZOS)
+                holder["photo"] = ImageTk.PhotoImage(img)
+                image_label.config(image=holder["photo"], text="")
+            except OSError:
+                holder["photo"] = None
+                image_label.config(image="", text="没有头像")
+
+        def shift(step: int) -> None:
+            if len(names) < 2:
+                return
+            nxt = holder["index"] + step
+            if allow_empty:
+                nxt = max(0, min(nxt, len(names) - 1))
+            else:
+                nxt = max(0, min(nxt, len(names) - 1))
+            show_at(nxt)
+
+        def paste(_event=None) -> str:
+            name = names[holder["index"]]
+            if not name:
+                messagebox.showwarning(title, "先选定一个名字。", parent=dlg)
+                return "break"
+            if self._paste_portrait_file(dest_for(name), dlg):
+                show_at(holder["index"])
+            return "break"
+
+        def confirm() -> None:
+            name = names[holder["index"]]
+            portrait = path_for(name) if name else ""
+            if portrait:
+                self.copy_image_to_clipboard(portrait, silent=True)
+            dlg.destroy()
+            if on_confirm is not None:
+                on_confirm(name)
+
+        btns = ttk.Frame(dlg)
+        btns.pack(pady=(0, 12))
+        ttk.Button(btns, text="确定", command=confirm).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="取消", command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+
+        if len(names) > 1:
+            image_label.bind("<Button-1>", lambda _e: shift(1))
+            image_label.bind("<Button-3>", lambda _e: shift(-1))
+            dlg.bind("<Left>", lambda _e: shift(-1))
+            dlg.bind("<Right>", lambda _e: shift(1))
+        dlg.bind("<Control-v>", paste)
+        dlg.bind("<Return>", lambda _e: confirm())
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        show_at(index)
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dlg.winfo_reqwidth()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dlg.winfo_reqheight()) // 2)
+        dlg.geometry(f"+{x}+{y}")
+        dlg.focus_set()
+        dlg.wait_window()
+
+    def review_project_narrator(self, current: str | None = None, on_confirm=None) -> None:
+        """左右键翻讲员头像。默认写回项目 narrator；传入 on_confirm 则交给调用方。"""
+        pc = project_manager.PROJECT_CONFIG
+        if not isinstance(pc, dict):
+            messagebox.showwarning("讲员", "请先加载或创建项目。", parent=self.root)
+            return
+        names = [""] + [x for x in config.narrator_person_options() if (x or "").strip()]
+        if len(names) == 1:
+            messagebox.showwarning("讲员", "voices.json 里没有可选讲员。", parent=self.root)
+            return
+        if current is None:
+            current = project_manager.project_narrator()
+
+        def chosen(name: str) -> None:
+            if on_confirm is not None:
+                on_confirm(name)
+                return
+            pc["narrator"] = name
+            project_manager.LAST_NARRATOR = name
+            save_project_config(parent=self.root)
+            self._refresh_narrator_button(name)
+
+        self._open_portrait_dialog(
+            title="讲员",
+            names=names,
+            current=(current or "").strip(),
+            dest_for=self._narrator_portrait_dest,
+            path_for=self._narrator_portrait_path,
+            hint="← 最左是没有讲员。Ctrl+V 粘贴可替换当前头像。",
+            allow_empty=True,
+            on_confirm=chosen,
+        )
 
     def clean_channel_media(self, track):
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -1271,9 +1569,9 @@ class WorkflowGUI:
             picked = askchoice(
                 "下载视频替换：音频如何处理？",
                 [
+                    ("keep", "保留输入自带音频"),
                     ("replace_speed", "场景音轨替换/SPEED"),
                     ("replace_trim", "场景音轨替换/TRIM"),
-                    ("keep", "保留输入自带音频"),
                     ("keep_trim", "保留输入自带音频/TRIM"),
                     ("mix", "ZERO混音伸缩"),
                     ("mix_flat", "ZERO混音平铺"),
@@ -1769,10 +2067,11 @@ class WorkflowGUI:
         if not scene:
             return "no_scene"
         if source_mode == "narrator":
-            speaker = WorkflowGUI._strip_narrator_export_markup(scene.get("narrator") or "")
+            speaker = project_manager.actor_host_name(scene.get("actor") or "") or project_manager.project_narrator()
             raw = (scene.get("voiceover") or "").strip()
         else:
-            speaker = (scene.get("actor") or "").strip()
+            speaker = project_manager.actor_entries(scene.get("actor") or "")
+            speaker = next((row["body"] for row in speaker if row["role"] == "person"), "")
             raw = (scene.get("speaking") or "").strip()
         content = raw.replace("——", ", ").replace("—", ", ")
         if not content:
@@ -2475,106 +2774,105 @@ class WorkflowGUI:
 
         ai_tools_frame = ttk.LabelFrame(right_panel, text="AI生成", padding=(8, 2))
         ai_tools_frame.pack(side=tk.TOP, fill=tk.X)
+        # 一排放不下，拆成两排；按钮宽度约为原来的 75%
+        ai_row1 = ttk.Frame(ai_tools_frame)
+        ai_row1.pack(side=tk.TOP, fill=tk.X)
+        ai_row2 = ttk.Frame(ai_tools_frame)
+        ai_row2.pack(side=tk.TOP, fill=tk.X, pady=(2, 0))
         self._nb_story_image_btn = ttk.Button(
-            ai_tools_frame,
-            text="图像▼",
-            width=7,
+            ai_row1,
+            text="幻灯▼",
+            width=5,
             command=self._show_story_notebooklm_image_menu,
         )
         self._nb_story_image_btn.pack(side=tk.LEFT)
+        self._nb_picture_btn = ttk.Button(
+            ai_row1,
+            text="图片▼",
+            width=5,
+            command=self._show_picture_transform_menu,
+        )
+        self._nb_picture_btn.pack(side=tk.LEFT)
         self._nb_story_video_btn = ttk.Button(
-            ai_tools_frame,
+            ai_row1,
             text="视频▼",
-            width=7,
+            width=5,
             command=self._show_scene_notebooklm_video_menu,
         )
         self._nb_story_video_btn.pack(side=tk.LEFT)
         self._nb_scene_speaking_btn = ttk.Button(
-            ai_tools_frame,
+            ai_row1,
             text="主角▼",
-            width=7,
+            width=5,
             command=self._show_scene_notebooklm_speaking_menu,
         )
         self._nb_scene_speaking_btn.pack(side=tk.LEFT)
         self._nb_scene_voiceover_btn = ttk.Button(
-            ai_tools_frame,
+            ai_row1,
             text="旁白▼",
-            width=7,
+            width=5,
             command=self._show_scene_notebooklm_voiceover_menu,
         )
         self._nb_scene_voiceover_btn.pack(side=tk.LEFT)
         self._story_packaging_btn = ttk.Button(
-            ai_tools_frame,
+            ai_row2,
             text="包装▼",
-            width=7,
+            width=5,
             command=self._show_story_packaging_menu,
         )
         self._story_packaging_btn.pack(side=tk.LEFT)
         ttk.Button(
-            ai_tools_frame,
+            ai_row2,
             text="导入",
-            width=7,
+            width=5,
             command=self.import_scene_data,
         ).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(
-            ai_tools_frame,
+            ai_row2,
             text="互换",
-            width=7,
+            width=5,
             command=self.swap_speaking_voiceover,
         ).pack(side=tk.LEFT)
-        ttk.Button(
-            ai_tools_frame,
-            text="头像",
-            width=7,
-            command=self.select_talking_avatar_to_clipboard,
-        ).pack(side=tk.LEFT)
+        self._narrator_avatar_btn = ttk.Button(
+            ai_row2,
+            text="讲员",
+            width=12,
+            command=self.review_project_narrator,
+        )
+        self._narrator_avatar_btn.pack(side=tk.LEFT)
 
         episode_tools_frame = ttk.LabelFrame(right_panel, text="本集内容", padding=(8, 2))
         episode_tools_frame.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
+        episode_btn_row = ttk.Frame(episode_tools_frame)
+        episode_btn_row.pack(side=tk.TOP, fill=tk.X)
         ttk.Button(
-            episode_tools_frame,
+            episode_btn_row,
             text="拷提",
-            width=7,
+            width=5,
             command=self.copy_episode_prompt,
         ).pack(side=tk.LEFT)
         ttk.Button(
-            episode_tools_frame,
+            episode_btn_row,
             text="拷集",
-            width=7,
+            width=5,
             command=self.copy_current_episode_pdf,
         ).pack(side=tk.LEFT)
         ttk.Button(
-            episode_tools_frame,
+            episode_btn_row,
             text="拆集",
-            width=7,
+            width=5,
             command=self.split_current_group,
         ).pack(side=tk.LEFT)
         ttk.Button(
-            episode_tools_frame,
+            episode_btn_row,
             text="贴回",
-            width=7,
+            width=5,
             command=self.paste_episode_scenes,
         ).pack(side=tk.LEFT)
 
-        look_row = ttk.Frame(episode_tools_frame)
-        look_row.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
-        ttk.Label(look_row, text="字体:").pack(side=tk.LEFT)
-        self.scene_language = ttk.Combobox(
-            look_row, width=8, values=list(config.FONT_LIST.keys()), state="readonly"
-        )
-        self.scene_language.pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(look_row, text="风格:").pack(side=tk.LEFT)
-        self.scene_visual_style = ttk.Combobox(
-            look_row,
-            width=28,
-            values=list(config.VISUAL_STYLE_OPTIONS),
-            state="readonly",
-        )
-        self.scene_visual_style.pack(side=tk.LEFT, padx=(4, 0))
-        self._load_project_look_into_controls()
-
         self.video_edit_frame = ttk.LabelFrame(right_panel, text="本场内容", padding=10)
         self.video_edit_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(4, 0))
+        self.video_edit_frame.columnconfigure(1, weight=1)
 
         row_number = 1
 
@@ -2582,13 +2880,14 @@ class WorkflowGUI:
         # Tk Text 内置撤销/重做：Ctrl+Z 撤销，Ctrl+Y 重做（Windows 常见）；maxundo=0 为不限制深度
         self.scene_speaking = scrolledtext.ScrolledText(
             self.video_edit_frame,
-            width=40,
+            width=20,
             height=5,
             undo=True,
             maxundo=0,
             font=("Arial", 16),
+            wrap=tk.WORD,
         )
-        self.scene_speaking.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_speaking.grid(row=row_number, column=1, sticky=tk.EW, padx=5, pady=2)
         self.scene_speaking.bind(
             "<Double-1>",
             lambda event: self.on_scene_text_review("speaking", event, title="审阅文案 — 讲话"),
@@ -2596,15 +2895,16 @@ class WorkflowGUI:
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="人物:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
-        self.scene_speaker = ttk.Combobox(self.video_edit_frame, width=32, values=config.CHARACTER_PERSON_OPTIONS)
-        self.scene_speaker.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self._actor_text = ""
+        self.scene_actor_row = ttk.Frame(self.video_edit_frame)
+        self.scene_actor_row.grid(row=row_number, column=1, sticky=tk.EW, padx=5, pady=2)
         row_number += 1
 
         ttk.Label(self.video_edit_frame, text="视觉:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_visual = scrolledtext.ScrolledText(
-            self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
+            self.video_edit_frame, width=20, height=1, undo=True, maxundo=0, wrap=tk.WORD
         )
-        self.scene_visual.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_visual.grid(row=row_number, column=1, sticky=tk.EW, padx=5, pady=2)
         self.scene_visual.bind(
             "<Double-1>",
             lambda event: self.on_scene_text_review("visual", event, title="审阅文案 — 视觉"),
@@ -2612,18 +2912,11 @@ class WorkflowGUI:
         self.scene_visual.bind("<Double-3>", self.on_scene_voiceover_image_action_menu)
         row_number += 1
 
-        _nar_host_row = ttk.Frame(self.video_edit_frame)
-        _nar_host_row.grid(row=row_number, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Label(_nar_host_row, text="讲员:").pack(side=tk.LEFT, padx=(0, 4))
-        self.scene_narrator = ttk.Combobox(_nar_host_row, width=22, values=config.CHARACTER_PERSON_OPTIONS)
-        self.scene_narrator.pack(side=tk.LEFT, padx=(0, 14))
-        row_number += 1
-
         ttk.Label(self.video_edit_frame, text="旁白:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_voiceover = scrolledtext.ScrolledText(
-            self.video_edit_frame, width=40, height=5, undo=True, maxundo=0
+            self.video_edit_frame, width=20, height=5, undo=True, maxundo=0, wrap=tk.WORD
         )
-        self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_voiceover.grid(row=row_number, column=1, sticky=tk.EW, padx=5, pady=2)
         self.scene_voiceover.bind(
             "<Double-1>",
             lambda event: self.on_scene_text_review("voiceover", event, title="审阅文案 — 旁白"),
@@ -2633,9 +2926,9 @@ class WorkflowGUI:
         _caption_lbl = ttk.Label(self.video_edit_frame, text="字幕:")
         _caption_lbl.grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         self.scene_caption = scrolledtext.ScrolledText(
-            self.video_edit_frame, width=40, height=1, undo=True, maxundo=0
+            self.video_edit_frame, width=20, height=1, undo=True, maxundo=0, wrap=tk.WORD
         )
-        self.scene_caption.grid(row=row_number, column=1, sticky=tk.W, padx=5, pady=2)
+        self.scene_caption.grid(row=row_number, column=1, sticky=tk.EW, padx=5, pady=2)
         self.scene_caption.bind(
             "<Double-1>",
             lambda event: self.on_scene_text_review(
@@ -3704,8 +3997,12 @@ class WorkflowGUI:
 
         self.scene_speaking.delete("1.0", tk.END)
         self.scene_speaking.insert("1.0", scene_data.get("speaking", ""))
-        
-        self.scene_speaker.set(scene_data.get("actor", ""))
+
+        normalized_actor = project_manager.normalize_actor_text(scene_data.get("actor", ""))
+        if normalized_actor != (scene_data.get("actor") or "").strip():
+            scene_data["actor"] = normalized_actor
+            self.workflow.save_scenes_to_json()
+        self._set_actor_text(normalized_actor)
 
         self.scene_visual.delete("1.0", tk.END)
         self.scene_visual.insert("1.0", scene_data.get("visual", ""))
@@ -3715,15 +4012,7 @@ class WorkflowGUI:
 
         self.scene_caption.delete("1.0", tk.END)
         self.scene_caption.insert("1.0", scene_data.get("caption", ""))
-
-        _n_fb = project_manager.PROJECT_CONFIG.get("narrator") or config.CHARACTER_PERSON_OPTIONS[0]
-        _n_raw = scene_data.get("narrator", _n_fb)
-        _n_clean = WorkflowGUI._strip_narrator_export_markup(str(_n_raw or ""))
-        if not _n_clean:
-            _n_clean = str(_n_raw).strip() or _n_fb
-        self.scene_narrator.set(_n_clean)
-        if str(_n_raw).strip() != _n_clean:
-            scene_data["narrator"] = _n_clean
+        if scene_data.pop("narrator", None) is not None:
             self.workflow.save_scenes_to_json()
         #self.scene_cinematography.delete("1.0", tk.END)
         # 如果 cinematography 是字典，格式化显示；如果是字符串，直接显示
@@ -3842,10 +4131,8 @@ class WorkflowGUI:
             self.extension_var.set("0")
 
             self.scene_speaking.delete("1.0", tk.END)
-            self.scene_speaker.set("")
+            self._set_actor_text("")
             self.scene_visual.delete("1.0", tk.END)
-            _pc = project_manager.PROJECT_CONFIG
-            self.scene_narrator.set(_pc.get("narrator") or project_manager.LAST_NARRATOR)
             self.scene_voiceover.delete("1.0", tk.END)
             self.scene_caption.delete("1.0", tk.END)
         finally:
@@ -4501,10 +4788,12 @@ class WorkflowGUI:
             if dialog:
                 story_level = False
 
-        dup = self.workflow.get_scene_by_index(self.current_scene_index).copy()
+        source = self.workflow.get_scene_by_index(self.current_scene_index)
+        dup = source.copy()
         dup["id"] = self.workflow.max_id(dup) + 1
 
-        self.workflow.scenes.insert(self.current_scene_index+1, dup) 
+        self.workflow.scenes.insert(self.current_scene_index + 1, dup)
+        self.workflow.insert_copied_episode_page(source, dup)
 
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
@@ -4592,7 +4881,7 @@ class WorkflowGUI:
 
 
     def swap_speaking_voiceover(self):
-        """交换「讲话」与「旁白」字段内容（当前场景或本故事全部场景）。"""
+        """交换当前场景的「讲话」与「旁白」。"""
         if not getattr(self, "workflow", None) or not self.workflow.scenes:
             messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
             return
@@ -4601,36 +4890,14 @@ class WorkflowGUI:
             messagebox.showwarning("提示", "没有当前场景", parent=self.root)
             return
 
-        scope = messagebox.askyesnocancel(
-            "讲旁互换",
-            "交换「讲话」与「旁白」内容：\n\n"
-            "「是」本故事全部场景\n"
-            "「否」仅当前场景\n"
-            "「取消」不处理",
-            parent=self.root,
-        )
-        if scope is None:
+        sp = current_scene.get("speaking") or ""
+        vo = current_scene.get("voiceover") or ""
+        if sp == vo:
             return
-
-        target_scenes = self.workflow.scenes_in_story(current_scene) if scope else [current_scene]
-        n = 0
-        for s in target_scenes:
-            sp = s.get("speaking") or ""
-            vo = s.get("voiceover") or ""
-            if sp == vo:
-                continue
-            s["speaking"] = vo
-            s["voiceover"] = sp
-            n += 1
-
-        if n == 0:
-            messagebox.showinfo("讲旁互换", "没有需要交换的内容。", parent=self.root)
-            return
-
+        current_scene["speaking"] = vo
+        current_scene["voiceover"] = sp
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
-        scope_label = "本故事全部场景" if scope else "当前场景"
-        messagebox.showinfo("讲旁互换", f"已在{scope_label}交换 {n} 个场景的讲话/旁白。", parent=self.root)
 
 
     def add_headmark(self):
@@ -5501,13 +5768,19 @@ class WorkflowGUI:
         if not pages:
             messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
             return
+        self.workflow.compact_episode_pages(group_name)
+        pages = self._episode_page_pngs(group_name)
         start_idx = 0
         try:
             page_no = int(scene.get("episode_page") or 0)
         except (TypeError, ValueError):
             page_no = 0
-        if 1 <= page_no <= len(pages):
-            start_idx = page_no - 1
+        if page_no > 0:
+            for i, path in enumerate(pages):
+                stem = os.path.splitext(os.path.basename(path))[0]
+                if stem.isdigit() and int(stem) == page_no:
+                    start_idx = i
+                    break
         self._open_pdf_page_review(
             folder, pages, group_name, os.path.basename(pdf_path), initial_index=start_idx
         )
@@ -6423,10 +6696,8 @@ class WorkflowGUI:
         cur = self.workflow.get_scene_by_index(self.current_scene_index)
         main_char = ""
         if cur:
-            main_char = (cur.get("actor") or self.scene_speaker.get() or "").strip()
-        host_nar = (pc.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
-        if not host_nar and cur:
-            host_nar = WorkflowGUI._strip_narrator_export_markup(cur.get("narrator") or "")
+            main_char = (cur.get("actor") or self._actor_text or "").strip()
+        host_nar = project_manager.project_narrator()
 
         try:
             clip_body = config_prompt.build_notebooklm_gen_instruction_clipbody(
@@ -6477,6 +6748,28 @@ class WorkflowGUI:
             return
         self._show_nb_variant_menu(self._nb_story_image_btn, "image", scenes)
 
+    def _show_picture_transform_menu(self) -> None:
+        m = tk.Menu(self.root, tearoff=0)
+        for kind, label in config_prompt.PICTURE_TRANSFORM_OPTIONS:
+            m.add_command(
+                label=label,
+                command=lambda k=kind, lbl=label: self._copy_picture_transform_prompt(k, lbl),
+            )
+        post_menu_below_widget(m, self._nb_picture_btn)
+
+    def _copy_picture_transform_prompt(self, kind: str, label: str) -> None:
+        region = (self.setting_region.get() or "").strip()
+        era = (self.setting_era.get() or "").strip()
+        try:
+            text = config_prompt.build_picture_transform_prompt(kind, region, era)
+        except ValueError as exc:
+            messagebox.showwarning("图片", str(exc), parent=self.root)
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        show_auto_close_popup(self.root, f"图片 · {label}", "已拷贝变换提示词")
+
     def _show_scene_notebooklm_video_menu(self) -> None:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
@@ -6499,7 +6792,7 @@ class WorkflowGUI:
         self._show_nb_variant_menu(self._nb_scene_voiceover_btn, "voiceover", [scene])
 
     _SCENE_IMPORT_ALWAYS_KEYS = frozenset({
-        "speaking", "caption", "voiceover", "visual", "actor", "narrator",
+        "speaking", "caption", "voiceover", "visual", "actor",
         "clip_animation", "narration_animation", "extension", "cinematography",
     })
     _SCENE_IMPORT_SKIP_KEYS = frozenset({"start", "end", "duration"})
@@ -6509,7 +6802,7 @@ class WorkflowGUI:
         if not isinstance(scene, dict):
             return {}
         keys = (
-        "speaking", "caption", "voiceover", "visual", "actor", "narrator",
+        "speaking", "caption", "voiceover", "visual", "actor",
         "clip_animation", "narration_animation", "extension", "cinematography",
         )
         out = {}
@@ -6661,58 +6954,6 @@ class WorkflowGUI:
             msg += f"\n\n注意：JSON 有 {overflow} 项超出可用场景，已忽略。"
         messagebox.showinfo("Import", msg, parent=self.root)
 
-    def on_narrator_selected(self, event=None):
-        """讲员下拉变更：若本故事有多镜且值相对当前镜有变化，询问是否同步到本故事全部场景。"""
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            return
-        if getattr(self, "_scene_widgets_loading", False):
-            self.update_current_scene(event)
-            return
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            return
-        new_val = (self.scene_narrator.get() or "").strip()
-        old_val = (scene.get("narrator") or "").strip()
-        ss = self.workflow.scenes_in_story(scene)
-        if len(ss) <= 1 or new_val == old_val:
-            self.update_current_scene(event)
-            return
-        if messagebox.askyesno(
-            "讲员",
-            f"是否将讲员「{new_val}」应用到本故事的全部 {len(ss)} 个场景？",
-            parent=self.root,
-        ):
-            for s in ss:
-                s["narrator"] = new_val
-            self.workflow.save_scenes_to_json()
-        self.update_current_scene(event)
-
-    def on_speaker_selected(self, event=None):
-        """人物下拉变更：若本故事有多镜且值相对当前镜有变化，询问是否同步到本故事全部场景。"""
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            return
-        if getattr(self, "_scene_widgets_loading", False):
-            self.update_current_scene(event)
-            return
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            return
-        new_val = (self.scene_speaker.get() or "").strip()
-        old_val = (scene.get("actor") or "").strip()
-        ss = self.workflow.scenes_in_story(scene)
-        if len(ss) <= 1 or new_val == old_val:
-            self.update_current_scene(event)
-            return
-        if messagebox.askyesno(
-            "人物",
-            f"是否将人物「{new_val}」应用到本故事的全部 {len(ss)} 个场景？",
-            parent=self.root,
-        ):
-            for s in ss:
-                s["actor"] = new_val
-            self.workflow.save_scenes_to_json()
-        self.update_current_scene(event)
-
     def _load_project_look_into_controls(self):
         """字体和风格记在项目上，不跟某一场走。"""
         pc = project_manager.PROJECT_CONFIG or {}
@@ -6725,6 +6966,25 @@ class WorkflowGUI:
             style = config.VISUAL_STYLE_OPTIONS[0]
         if style:
             self.scene_visual_style.set(style)
+        region = (pc.get("setting_region") or "").strip()
+        if region not in config_prompt.SETTING_PLACES:
+            region = ""
+        self.setting_region.set(region)
+        eras = config_prompt.setting_era_labels(region)
+        self.setting_era["values"] = eras
+        era = (pc.get("setting_era") or "").strip()
+        if era not in eras:
+            era = eras[0] if eras else ""
+        self.setting_era.set(era)
+
+    def _on_setting_region_selected(self, event=None):
+        """换地域后，时代只保留这一地域里的项，并选中第一项。"""
+        region = (self.setting_region.get() or "").strip()
+        eras = config_prompt.setting_era_labels(region)
+        self.setting_era["values"] = eras
+        if self.setting_era.get() not in eras:
+            self.setting_era.set(eras[0] if eras else "")
+        self._save_project_look()
 
     def _save_project_look(self, event=None):
         """把字体、风格写回项目配置。"""
@@ -6740,6 +7000,14 @@ class WorkflowGUI:
         if style and pc.get("visual_style") != style:
             pc["visual_style"] = style
             project_manager.LAST_VISUAL_STYLE = style
+            changed = True
+        region = (self.setting_region.get() or "").strip()
+        era = (self.setting_era.get() or "").strip()
+        if pc.get("setting_region") != region:
+            pc["setting_region"] = region
+            changed = True
+        if pc.get("setting_era") != era:
+            pc["setting_era"] = era
             changed = True
         if changed:
             save_project_config(parent=self.root)
@@ -6766,9 +7034,8 @@ class WorkflowGUI:
 
         scene.update({
             "speaking": self.scene_speaking.get("1.0", tk.END).strip(),
-            "actor": self.scene_speaker.get().strip(),
+            "actor": (self._actor_text or "").strip(),
             "visual": self.scene_visual.get("1.0", tk.END).strip(),
-            "narrator": self.scene_narrator.get(),
             "voiceover": self.scene_voiceover.get("1.0", tk.END).strip(),
             "caption": self.scene_caption.get("1.0", tk.END).strip(),
 
@@ -6777,6 +7044,7 @@ class WorkflowGUI:
         })
         scene.pop("visual_style", None)
         scene.pop("title_font", None)
+        scene.pop("narrator", None)
         self.workflow.save_scenes_to_json()
         return scene
 
@@ -6849,6 +7117,7 @@ class WorkflowGUI:
             
             if hasattr(self, "scene_language"):
                 self._load_project_look_into_controls()
+            self._refresh_narrator_button()
             print(f"✅ 已将配置应用到GUI: 频道={channel}, 语言={language}, PID={pid}")
             
         except Exception as e:
@@ -6934,6 +7203,8 @@ class WorkflowGUI:
             'video_height': config_data.get('video_height', '1080'),
             'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
             'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
+            'setting_region': (self.setting_region.get() or "").strip(),
+            'setting_era': (self.setting_era.get() or "").strip(),
         })
 
         # Add audio_prepares data if available
@@ -6975,6 +7246,8 @@ class WorkflowGUI:
                 'video_height': config_data.get('video_height', '1080'),
                 'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
                 'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
+                'setting_region': (self.setting_region.get() or "").strip(),
+                'setting_era': (self.setting_era.get() or "").strip(),
             })
 
             # Save audio_prepares data if available
@@ -7063,18 +7336,11 @@ class WorkflowGUI:
             field.bind('<KP_Enter>', self.on_scene_field_return_commit)
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
 
-        for field in (self.scene_speaker, self.scene_narrator):
-            field.bind('<FocusOut>', self.on_scene_field_focus_out)
-        self.scene_speaker.bind('<<ComboboxSelected>>', self.on_speaker_selected)
-        self.scene_narrator.bind('<<ComboboxSelected>>', self.on_narrator_selected)
-        self.scene_speaker.bind('<Return>', self.on_scene_speaker_return)
-        self.scene_speaker.bind('<KP_Enter>', self.on_scene_speaker_return)
-        self.scene_narrator.bind('<Return>', self.on_scene_narrator_return)
-        self.scene_narrator.bind('<KP_Enter>', self.on_scene_narrator_return)
-
-        for field in (self.scene_visual_style, self.scene_language):
+        for field in (self.scene_visual_style, self.scene_language, self.setting_era):
             field.bind("<<ComboboxSelected>>", self._save_project_look)
             field.bind("<FocusOut>", self._save_project_look)
+        self.setting_region.bind("<<ComboboxSelected>>", self._on_setting_region_selected)
+        self.setting_region.bind("<FocusOut>", self._save_project_look)
         
         # 讲话：仅在此框 — Ctrl+S 拆分克隆；Ctrl+←/→ 移动片段；Ctrl+M 合并下一场景讲话并删下一场景（仅讲话，不碰音视频）
         self.scene_speaking.bind("<Control-s>", self._on_speaking_ctrl_s_split_clone)
@@ -7163,25 +7429,6 @@ class WorkflowGUI:
             return
         self._cancel_scene_debounce_timer()
         self.update_current_scene()
-
-    def on_scene_speaker_return(self, event=None):
-        """人物下拉按 Enter：与选择变更一致（含多镜同步询问）。"""
-        if getattr(self, "_scene_widgets_loading", False):
-            return
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            return
-        self._cancel_scene_debounce_timer()
-        self.on_speaker_selected(event)
-
-    def on_scene_narrator_return(self, event=None):
-        """讲员下拉按 Enter：与选择变更一致（含多镜同步询问）。"""
-        if getattr(self, "_scene_widgets_loading", False):
-            return
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            return
-        self._cancel_scene_debounce_timer()
-        self.on_narrator_selected(event)
-
 
     def on_scene_field_focus_out(self, event=None):
         """当场景编辑字段失去焦点时的回调"""
@@ -7467,7 +7714,7 @@ class WorkflowGUI:
         show_auto_close_popup(self.root, "拆集", f"从当前场景起为第 {new_name} 集")
 
     def _on_media_drop_pdf(self, pdf_path: str) -> None:
-        """视频画布拖入 PDF：按当前 episode 拆成 1.jpg、2.jpg…，再打开翻页预览。"""
+        """视频画布拖入 PDF：按当前 episode 拆成 1.webp、2.webp…，再打开翻页预览。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -7789,9 +8036,9 @@ class WorkflowGUI:
             )
 
     def _assign_scene_clip_image_from_file(self, scene: dict, image_path: str) -> None:
-        fp = self.workflow.ffmpeg_processor
-        file_path = fp.resize_image_smart(image_path)
-        refresh_scene_media(scene, "clip_image", ".webp", file_path, True)
+        """把已经拆好的页图拷到场景的 clip_image，不缩放、不转格式。"""
+        ext = os.path.splitext(image_path)[1].lower() or ".webp"
+        refresh_scene_media(scene, "clip_image", ext, image_path, True)
 
     def _tag_scene_pdf_page(self, scene: dict, group_name: str, page_no: int, pdf_name: str) -> None:
         scene["episode"] = group_name
@@ -7875,7 +8122,6 @@ class WorkflowGUI:
                 self._assign_scene_clip_image_from_file(scene, pages[idx[0]])
                 self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
                 self.workflow.save_scenes_to_json()
-                self.refresh_gui_scenes()
                 self.display_image_on_canvas_for_track("clip_image")
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
@@ -7905,7 +8151,6 @@ class WorkflowGUI:
                     scene_i += 1
                     page_i += 1
                 self.workflow.save_scenes_to_json()
-                self.refresh_gui_scenes()
                 self.display_image_on_canvas_for_track("clip_image")
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)

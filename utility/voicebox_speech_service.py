@@ -26,12 +26,9 @@ from utility.file_util import safe_copy_overwrite
 # 与 minimax_speech_service 一致，供 GUI import EXPRESSION_STYLES
 EXPRESSION_STYLES = ["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm"]
 
-# 仓库根目录下 ``media/voices.json``（非各视频项目目录）
-_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-
-
 def _repo_media_voices_json_path() -> str:
-    return os.path.join(_REPO_ROOT, "media", "voices.json")
+    """音色表：``D:\\AI_MEDIA\\avatar\\voices.json``（``config.AVATAR_PATH``）。"""
+    return os.path.join(config.AVATAR_PATH, "voices.json")
 
 
 DEFAULT_BASE_URL = "http://10.0.0.111:17493"
@@ -639,7 +636,7 @@ def _voice_entries_from_json_payload(data: Any) -> List[Dict[str, Any]]:
 
 def _ensure_voices_for_project(pid: str) -> None:
     """
-    从本仓库 ``media/voices.json`` 加载音色时**整表替换** ``VOICES``（与内置默认字段一致）。
+    从 ``AVATAR_PATH/voices.json`` 加载音色时**整表替换** ``VOICES``（与内置默认字段一致）。
     同一 ``pid`` 只应用一次；切换项目时重新从默认快照还原再读文件。
     JSON：每项含 ``id``（或 ``voice`` / ``profile_id``）、``name``、``language``；可选 ``volume`` / ``speed`` / ``pitch``。
     """
@@ -662,7 +659,7 @@ def _ensure_voices_for_project(pid: str) -> None:
         if merged:
             VOICES = merged
     _voice_json_applied_pid = pid
-    # 与 config.CHARACTER_PERSON_OPTIONS 同源（media/voices.json 的 name），切换项目时刷新下拉
+    # 与 config.CHARACTER_PERSON_OPTIONS 同源（avatar/voices.json 的 name），切换项目时刷新下拉
     try:
         config.reload_character_person_options()
     except Exception:

@@ -3,7 +3,7 @@
 重合成（VoiceboxService.synthesize_speaker_text_to_wav + FfmpegProcessor）。
 
 旁白音色：本对话框可重新选择「重合成」说话人；未改时顺序为
-主界面「旁白」scene_narrator → 欢迎屏 LAST_NARRATOR → 项目 narrator → 默认人物。
+主界面项目 narrator → 欢迎屏 LAST_NARRATOR → 默认人物。
 """
 import os
 import shutil
@@ -424,20 +424,10 @@ class PublishReviewDialog:
         return FfmpegAudioProcessor(self.media_gui.pid)
 
     def _default_narrator(self) -> str:
-        """与摘要窗口「旁白」一致：主界面旁白 → 欢迎屏 LAST_NARRATOR → 项目 narrator → 列表首项。"""
-        wg = self.workflow_gui
-        if wg and getattr(wg, "scene_narrator", None) is not None:
-            raw = (wg.scene_narrator.get() or "").strip()
-            if raw:
-                return raw
-        ln = (getattr(project_manager, "LAST_NARRATOR", None) or "").strip()
-        if ln:
-            return ln
-        pc = getattr(project_manager, "PROJECT_CONFIG", None)
-        if isinstance(pc, dict):
-            pn = (pc.get("narrator") or "").strip()
-            if pn:
-                return pn
+        """与项目讲员一致：项目 narrator → 欢迎屏 LAST_NARRATOR → 列表首项。"""
+        pn = project_manager.project_narrator()
+        if pn:
+            return pn
         opts = [x for x in config.CHARACTER_PERSON_OPTIONS if (x or "").strip()]
         if opts:
             return opts[0]
