@@ -465,6 +465,7 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
         ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
         ("scene_real", "单画面 · 过渡到贴切的真实画面"),
         ("start_end", "两画面 · 从开始到结束"),
+        ("interact", "原画面 · 人物互动"),
     ],
     "speaking": [
         ("think", "主人公说话 + 自己思考 voiceover（自言自语，嘴巴不动）"),
@@ -775,7 +776,7 @@ def scene_payload_for_notebooklm_export(
         new_scene = _notebooklm_scene_content_base(scene)
 
         if base == "video":
-            if var in ("scene_real", "start_end"):
+            if var in ("scene_real", "start_end", "interact"):
                 new_scenes.append(
                     _slim_scene_fields(
                         new_scene,
@@ -883,6 +884,14 @@ NOTEBOOKLM_VIDEO_START_END = """
 ** A third picture may be attached: a full-body reference of the person who says ``speaking`` (the first ``actor``).
 ** A fourth picture may be attached only when there is a second ``actor``: a reference of the person who says ``voiceover``.
 ** References are optional. Use a reference when it is attached. When it is missing, create that person from ``actor`` and ``visual``.
+""" + NOTEBOOKLM_VIDEO_ACTOR_ORDER
+
+NOTEBOOKLM_VIDEO_INTERACT = """
+** One scene picture is attached. Keep it. The place, the framing, and the drawing style stay as they are.
+** Do not restyle the picture. Do not fade it into a photograph or another art style. The scene itself almost does not change.
+** Eyes, looks, and small expressions are allowed. Use them.
+** Show the people interacting: the first ``actor`` and the second, if there is one. Their gestures and faces carry the moment.
+** Also perform what ``visual`` describes. If ``visual`` names a change, show that change through the people, not by replacing the scene.
 """ + NOTEBOOKLM_VIDEO_ACTOR_ORDER
 
 NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION = """
@@ -1376,11 +1385,12 @@ def build_notebooklm_gen_instruction_clipbody(
             "word_in_image": NOTEBOOKLM_VIDEO_WORD_IN_IMAGE,
             "scene_real": NOTEBOOKLM_VIDEO_SCENE_TO_REAL,
             "start_end": NOTEBOOKLM_VIDEO_START_END,
+            "interact": NOTEBOOKLM_VIDEO_INTERACT,
         }.get(var, NOTEBOOKLM_VIDEO_MOTION_SILENT)
         parts["Instruction_for_video_generation"] = vid_instr.strip()
         audio_instr = (
             NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION
-            if var in ("scene_real", "start_end")
+            if var in ("scene_real", "start_end", "interact")
             else NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION
         ).strip()
         lang_note = _audio_language_instruction(language)
