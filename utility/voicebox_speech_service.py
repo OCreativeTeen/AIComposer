@@ -3,7 +3,7 @@ Voicebox TTS / ASR 客户端：与 MinimaxSpeechService 相同入口（create_ss
 便于在 GUI 中替换导入。
 
 环境变量（可选）：
-  VOICEBOX_BASE_URL   默认 http://10.0.0.111:17493
+  VOICEBOX_BASE_URL   默认 http://192.168.1.36:17493
   VOICEBOX_PROFILE_ID 默认示例 UUID（可被 VOICES 中 voice 覆盖）
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _repo_media_voices_json_path() -> str:
     return os.path.join(config.AVATAR_PATH, "voices.json")
 
 
-DEFAULT_BASE_URL = "http://10.0.0.111:17493"
+DEFAULT_BASE_URL = "http://192.168.1.36:17493"
 DEFAULT_PROFILE_ID = "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
 
 
@@ -56,11 +56,14 @@ def _vb_normalize_gender(token: str) -> str:
 
 
 def _vb_age_number_to_category(n: int) -> str:
-    if n < 20:
-        return "teen"
-    if n < 30:
-        return "young"
-    return "mature"
+    """与 voices.json 的中间一档一致：kids / youth / mature / senior。"""
+    if n <= 12:
+        return "kids"
+    if n <= 29:
+        return "youth"
+    if n <= 59:
+        return "mature"
+    return "senior"
 
 
 def _vb_age_token_to_category(token: str) -> str:
@@ -68,18 +71,25 @@ def _vb_age_token_to_category(token: str) -> str:
     if t.isdigit():
         return _vb_age_number_to_category(int(t))
     aliases = {
-        "kid": "teen",
-        "child": "teen",
-        "children": "teen",
-        "teenager": "teen",
+        "kid": "kids",
+        "kids": "kids",
+        "child": "kids",
+        "children": "kids",
+        "teenager": "kids",
+        "teen": "kids",
+        "young": "youth",
+        "youth": "youth",
         "middle": "mature",
         "middle-aged": "mature",
         "middle_aged": "mature",
-        "senior": "mature",
+        "adult": "mature",
+        "senior": "senior",
+        "elder": "senior",
+        "old": "senior",
     }
     if t in aliases:
         return aliases[t]
-    if t in ("teen", "young", "mature"):
+    if t in ("kids", "youth", "mature", "senior"):
         return t
     return "mature"
 
@@ -696,6 +706,29 @@ def _voicebox_resolve_voice(speaker: str, language: str) -> dict:
             return v
 
     parts = [p.strip() for p in raw.split("/") if p.strip()]
+    if len(parts) >= 4:
+        gender = _vb_normalize_gender(parts[0])
+        race = _vb_normalize_race(parts[2], language)
+        three = f"{gender}/{parts[1]}/{race}"
+        for v in VOICES:
+            if v["name"].lower() == three.lower():
+                return v
+        bucket = _vb_age_token_to_category(parts[3])
+        fallbacks = {
+            "kids": ("kids", "youth", "mature"),
+            "youth": ("youth", "mature", "kids"),
+            "mature": ("mature", "youth"),
+            "senior": ("senior", "mature"),
+        }.get(bucket, ("mature",))
+        for age_name in fallbacks:
+            key = f"{gender}/{age_name}/{race}"
+            for v in VOICES:
+                if v["name"] == key:
+                    return v
+        for v in VOICES:
+            if v["language"] == lang_pref and v["name"].startswith(f"{gender}/") and v["name"].endswith(f"/{race}"):
+                return v
+        return _fallback()
     if len(parts) >= 3:
         gender = _vb_normalize_gender(parts[0])
         age = _vb_age_token_to_category(parts[1])

@@ -1907,9 +1907,17 @@ class MagicWorkflow:
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
-    def finalize_video(self, with_transitions, replace_final_audio_with_zero=False):
+    def finalize_video(self, with_transitions, replace_final_audio_with_zero=False, scene_start=None, scene_end=None):
+        scenes = self.scenes
+        n_all = len(scenes)
+        if scene_start is not None and scene_end is not None and n_all:
+            a = max(0, min(int(scene_start), n_all - 1))
+            b = max(0, min(int(scene_end), n_all - 1))
+            if a > b:
+                a, b = b, a
+            scenes = scenes[a:b + 1]
         video_segments = []
-        for s in self.scenes:
+        for s in scenes:
             #valid_narrator = None
             #if add_narration and "narration" in s and "narrator" in s and s["narration"] and s["narrator"]:
             #    valid_narrator = s["narrator"]
@@ -1960,15 +1968,15 @@ class MagicWorkflow:
             # 否则：按场景顺序拼接本 story 内所有 clip_audio，再裁切/静音补齐到与本 story 成片总时长一致。
             # 最后再按 story 顺序 concat 成整条成片音轨。
             per_story_audios = []
-            n = len(self.scenes)
+            n = len(scenes)
             idx = 0
             aud = self.ffmpeg_audio_processor
             while idx < n:
-                scene0 = self.scenes[idx]
+                scene0 = scenes[idx]
                 root_id = int(scene0.get("id", 0) / 10000)
                 story_dur = 0.0
                 j = idx
-                while j < n and int(self.scenes[j].get("id", 0) / 10000) == root_id:
+                while j < n and int(scenes[j].get("id", 0) / 10000) == root_id:
                     seg_path = video_segments[j]["path"]
                     story_dur += self.ffmpeg_processor.get_duration(seg_path)
                     j += 1
@@ -1979,7 +1987,7 @@ class MagicWorkflow:
                 else:
                     clip_paths = []
                     for k in range(idx, j):
-                        ca = get_file_path(self.scenes[k], "clip_audio")
+                        ca = get_file_path(scenes[k], "clip_audio")
                         if ca and os.path.isfile(ca):
                             clip_paths.append(ca)
                     if not clip_paths:

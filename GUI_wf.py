@@ -443,7 +443,16 @@ class WorkflowGUI:
         self.scene_label.pack(side=tk.LEFT, padx=2)
         ttk.Button(nav_row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
         ttk.Button(nav_row, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Button(nav_row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Button(nav_row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=(2, 4))
+        ttk.Label(nav_row, text="│").pack(side=tk.LEFT, padx=(2, 2))
+        start_btn = ttk.Button(nav_row, text="开始", width=4, command=lambda: self._set_scene_marker("start"))
+        start_btn.pack(side=tk.LEFT, padx=(2, 0))
+        end_btn = ttk.Button(nav_row, text="结束", width=4, command=lambda: self._set_scene_marker("end"))
+        end_btn.pack(side=tk.LEFT, padx=(2, 0))
+        start_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
+        end_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
+        self.marker_label = ttk.Label(nav_row, text="", width=9)
+        self.marker_label.pack(side=tk.LEFT, padx=(2, 6))
 
         ttk.Button(nav_row, text="拷贝图", command=self.copy_lastimage_to_next).pack(side=tk.LEFT, padx=2)
         ttk.Button(nav_row, text="场景交换", command=self.swap_scene).pack(side=tk.LEFT, padx=2)
@@ -906,8 +915,8 @@ class WorkflowGUI:
         name = (name or project_manager.project_narrator() or "").strip()
         parts = [p for p in name.replace("\\", "/").split("/") if p]
         short = parts[1] if len(parts) >= 2 else (parts[0] if parts else "")
-        if not short:
-            return "讲员 无"
+        if not short or project_manager.actor_is_absent(name):
+            return "讲员 不出现"
         return f"讲员 {short}"
 
     def _refresh_narrator_button(self, name: str = "") -> None:
@@ -915,15 +924,32 @@ class WorkflowGUI:
         if btn is not None:
             btn.config(text=self._narrator_button_text(name))
 
-    def _actor_button_text(self, label: str, body: str) -> str:
-        parts = [p for p in (body or "").split("/") if p]
-        short = parts[1] if len(parts) >= 2 else (body or "")
+    def _actor_button_text(self, label: str, body: str, *, full: bool = False) -> str:
+        body = (body or "").strip()
+        if full and body:
+            return f"{label} {body}"
+        parts = [p for p in body.split("/") if p]
+        short = parts[1] if len(parts) >= 2 else body
         short = short.strip()
         if len(short) > 8:
             short = short[:8]
         if not short:
             return label
         return f"{label} {short}"
+
+    @staticmethod
+    def _motion_chip_text(motion: str) -> str:
+        motion = (motion or "").strip()
+        if not motion or "已经在画面" in motion:
+            return ""
+        short = {
+            "从容自然地 - 走进画面，讲完走出": "走进走出",
+            "淡入画面，讲完淡出": "淡入淡出",
+            "边品茶, 边讲述 - 淡入画面，讲完淡出": "茶叙式",
+            "跳进画面，讲完跳出": "跳进跳出",
+            "自然地 - 骑马走进画面，讲完骑马走出": "骑马进出",
+        }
+        return short.get(motion, motion)
 
     def _render_actor_buttons(self) -> None:
         row = getattr(self, "scene_actor_row", None)
@@ -938,26 +964,44 @@ class WorkflowGUI:
         if not entries:
             ttk.Label(row, text="（没有人物）").pack(side=tk.LEFT, padx=(0, 4))
         for entry in entries:
+            if entry.get("role") == "host" and project_manager.actor_is_absent(entry.get("body") or ""):
+                continue
             self._pack_actor_button(row, entry)
-        if not any(entry["role"] == "host" for entry in entries):
-            self._pack_actor_button(row, {"role": "host", "label": "讲员", "body": ""})
 
     def _pack_actor_button(self, row, entry: dict) -> None:
         body = (entry.get("body") or "").strip()
+        base, motion = project_manager.split_actor_motion(body)
         if entry.get("role") == "host":
-            text = self._actor_button_text("讲员", body) if body else "讲员 无"
+            text = self._actor_button_text("讲员", base, full=True) if base else "讲员"
         else:
-            text = self._actor_button_text(entry.get("label") or "人物", body)
-        btn = ttk.Button(row, text=text, cursor="fleur")
-        btn._actor_entry = dict(entry)
-        btn.pack(side=tk.LEFT, padx=(0, 4))
-        btn.bind("<ButtonPress-1>", self._actor_press)
-        btn.bind("<B1-Motion>", self._actor_motion)
-        btn.bind("<ButtonRelease-1>", self._actor_release)
-        self._actor_buttons.append(btn)
+            text = self._actor_button_text(entry.get("label") or "人物", base)
+        motion_text = self._motion_chip_text(motion)
+        if motion_text:
+            text = f"{text} {motion_text}"
+        chip = tk.Frame(row, bg="white", relief="sunken", bd=1, cursor="fleur")
+        label = tk.Label(chip, text=text, bg="white", cursor="fleur", anchor="w")
+        label.pack(fill=tk.BOTH, expand=True, padx=6, pady=2)
+        chip._actor_entry = dict(entry)
+        chip._actor_label = text
+        chip.pack(side=tk.LEFT, padx=(0, 4))
+        chip.update_idletasks()
+        chip.configure(width=max(int(label.winfo_reqwidth() * 1.5) + 12, 72), height=label.winfo_reqheight() + 6)
+        chip.pack_propagate(False)
+        for widget in (chip, label):
+            widget.bind("<ButtonPress-1>", self._actor_press)
+            widget.bind("<B1-Motion>", self._actor_motion)
+            widget.bind("<ButtonRelease-1>", self._actor_release)
+            widget.bind("<Double-Button-1>", self._actor_double)
+        self._actor_buttons.append(chip)
+
+    def _actor_chip(self, widget):
+        buttons = getattr(self, "_actor_buttons", None) or []
+        while widget is not None and widget not in buttons:
+            widget = getattr(widget, "master", None)
+        return widget
 
     def _actor_press(self, event) -> None:
-        btn = event.widget
+        btn = self._actor_chip(event.widget)
         try:
             self._actor_drag_index = self._actor_buttons.index(btn)
         except ValueError:
@@ -999,16 +1043,81 @@ class WorkflowGUI:
         self._actor_drag_moved = False
         if index is None or index >= len(buttons):
             return
-        if not moved:
-            entry = getattr(buttons[index], "_actor_entry", None) or {}
-            if entry.get("role") == "host":
-                self._review_actor_host()
-            else:
-                self._review_actor_person((entry.get("body") or "").strip())
+        if getattr(self, "_actor_skip_release", False):
+            self._actor_skip_release = False
             return
-        rows = [getattr(btn, "_actor_entry", None) for btn in buttons]
-        rows = [row for row in rows if isinstance(row, dict) and (row.get("body") or "").strip()]
+        if not moved:
+            chip = buttons[index]
+            pending = getattr(self, "_actor_click_after", None)
+            if pending:
+                try:
+                    self.root.after_cancel(pending)
+                except tk.TclError:
+                    pass
+            self._actor_click_after = self.root.after(280, lambda c=chip: self._actor_single_click(c))
+            return
+        rows = []
+        for btn in buttons:
+            row = getattr(btn, "_actor_entry", None)
+            if not isinstance(row, dict):
+                continue
+            row = dict(row)
+            body = (row.get("body") or "").strip()
+            if row.get("role") == "host" and (not body or project_manager.actor_is_absent(body)):
+                continue
+            if body:
+                rows.append(row)
         self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
+
+    def _actor_double(self, event) -> None:
+        self._actor_skip_release = True
+        pending = getattr(self, "_actor_click_after", None)
+        if pending:
+            try:
+                self.root.after_cancel(pending)
+            except tk.TclError:
+                pass
+            self._actor_click_after = None
+        chip = self._actor_chip(event.widget)
+        entry = getattr(chip, "_actor_entry", None) or {}
+        self._open_actor_preview(entry)
+
+    def _actor_single_click(self, chip) -> None:
+        self._actor_click_after = None
+        entry = getattr(chip, "_actor_entry", None) or {}
+        path = self._actor_entry_portrait(entry)
+        who = getattr(chip, "_actor_label", "") or "这个人"
+        body, _motion = project_manager.split_actor_motion((entry.get("body") or "").strip())
+        if path:
+            self.copy_image_to_clipboard(path, silent=True)
+            show_auto_close_popup(self.root, "剪贴板", f"{who} 的参考形象已拷贝", duration_ms=1000)
+            return
+        if entry.get("role") == "person" and body and not project_manager.actor_is_absent(body):
+            self.copy_image_to_clipboard(self._blank_portrait_path(), silent=True)
+            show_auto_close_popup(self.root, "剪贴板", f"{who} 没有参考图，已拷贝白板", duration_ms=1000)
+            return
+        self._open_actor_preview(entry)
+
+    def _open_actor_preview(self, entry: dict) -> None:
+        if entry.get("role") == "host":
+            self._review_actor_host()
+            return
+        self._review_actor_person((entry.get("body") or "").strip())
+
+    def _actor_entry_portrait(self, entry: dict) -> str:
+        body, _motion = project_manager.split_actor_motion((entry.get("body") or "").strip())
+        if project_manager.actor_is_absent(body):
+            return ""
+        names = [body]
+        bits = [part for part in body.split("/") if part]
+        if len(bits) >= 4 and bits[-1].isdigit():
+            names.append("/".join(bits[:3]))
+        finder = self._narrator_portrait_path if entry.get("role") == "host" else self._person_portrait_path
+        for name in names:
+            path = finder(name)
+            if path:
+                return path
+        return ""
 
     def _set_actor_text(self, text: str, *, save_scene: bool = False) -> None:
         self._actor_text = project_manager.normalize_actor_text(text)
@@ -1030,7 +1139,11 @@ class WorkflowGUI:
         def chosen(name: str) -> None:
             self._set_actor_text(project_manager.actor_with_host(self._actor_text, name), save_scene=True)
 
-        self.review_project_narrator(current=current, on_confirm=chosen)
+        host = next(
+            (row for row in project_manager.actor_entries(self._actor_text) if row.get("role") == "host"),
+            {"role": "host", "label": "讲员", "body": current or "不出现"},
+        )
+        self.review_project_narrator(current=current, on_confirm=chosen, actor_entry=host)
 
     @staticmethod
     def _portrait_stem(name: str) -> str:
@@ -1054,11 +1167,53 @@ class WorkflowGUI:
             return ""
         return os.path.join(config.AVATAR_PATH, stem + ".png")
 
+    def _blank_portrait_path(self) -> str:
+        """背景讲员用的白板图。确定时拷进剪贴板，表示这个人只在背景里说话。"""
+        folder = config.AVATAR_PATH
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "_blank.png")
+        if not os.path.isfile(path):
+            Image.new("RGB", (768, 1024), (255, 255, 255)).save(path, "PNG")
+        return path
+
     def _project_avatar_dir(self) -> str:
         pid = self.get_pid()
         path = os.path.join(config.PROJECT_DATA_PATH, pid, "avatar")
         os.makedirs(path, exist_ok=True)
         return path
+
+    def _narrator_browse_names(self) -> list:
+        return [""] + [x for x in config.narrator_person_options() if (x or "").strip()]
+
+    def _project_person_names(self) -> list:
+        """这个项目 avatar 目录里的人物，再加上这一场里还没有图片的人物。"""
+        found = []
+        folder = ""
+        try:
+            folder = self._project_avatar_dir()
+        except Exception:
+            folder = ""
+        if folder and os.path.isdir(folder):
+            for fn in sorted(os.listdir(folder)):
+                low = fn.lower()
+                if not low.endswith(".png") or ".bak" in low:
+                    continue
+                stem = os.path.splitext(fn)[0]
+                if not stem or stem.startswith("_"):
+                    continue
+                found.append(stem.replace("_", "/"))
+        try:
+            rows = self._scene_actor_rows()
+        except Exception:
+            rows = []
+        for row in rows:
+            if row.get("role") != "person":
+                continue
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            if not body or project_manager.actor_is_absent(body) or body in found:
+                continue
+            found.append(body)
+        return found
 
     def _person_portrait_dest(self, name: str) -> str:
         stem = self._portrait_stem(name)
@@ -1115,17 +1270,22 @@ class WorkflowGUI:
         return True
 
     def _review_actor_person(self, body: str) -> None:
-        body = (body or "").strip()
+        body, _motion = project_manager.split_actor_motion((body or "").strip())
         if not body:
             return
+        names = self._project_person_names()
+        if body not in names:
+            names.append(body)
         self._open_portrait_dialog(
             title="人物",
-            names=[body],
+            names=names,
             current=body,
             dest_for=self._person_portrait_dest,
             path_for=self._person_portrait_path,
-            hint="Ctrl+V 把剪贴板图片存成这个人物。没有就显示没有。",
+            hint="Ctrl+V 把剪贴板图片存成这个人物。没有就显示没有。人物已经在画面里，拷贝图案直接拷这张图。",
             allow_empty=False,
+            ask_motion=False,
+            actor_entry={"role": "person", "label": "人物", "body": body},
         )
 
     def _open_portrait_dialog(
@@ -1139,8 +1299,10 @@ class WorkflowGUI:
         hint: str,
         allow_empty: bool,
         on_confirm=None,
+        ask_motion: bool = False,
+        actor_entry: dict | None = None,
     ) -> None:
-        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。确定时把当前图拷进剪贴板。"""
+        """头像预览。左右键换人；Ctrl+V 粘贴图片，旧图先备份。拷贝图案或拷贝背景。"""
         if not names:
             return
         current = (current or "").strip()
@@ -1159,19 +1321,45 @@ class WorkflowGUI:
         ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(12, 4))
         image_label = ttk.Label(dlg)
         image_label.pack(padx=16, pady=4)
-        ttk.Label(dlg, text=hint).pack(pady=(0, 8))
-        holder = {"photo": None, "index": index}
+        hint_var = tk.StringVar(value=hint)
+        ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
+        holder = {
+            "photo": None,
+            "index": index,
+            "names": list(names),
+            "path_for": path_for,
+            "dest_for": dest_for,
+            "mode": "host" if ask_motion else "person",
+            "override_name": "",
+        }
+        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。"
+        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物只在这一边。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
 
         def show_at(i: int) -> None:
-            holder["index"] = max(0, min(i, len(names) - 1))
-            name = names[holder["index"]]
-            if not name:
+            holder["override_name"] = ""
+            names_now = holder["names"]
+            if not names_now:
+                holder["index"] = 0
+                name_var.set("还没有人物")
                 holder["photo"] = None
-                name_var.set("没有讲员")
-                image_label.config(image="", text="没有头像")
+                image_label.config(image="", text="还没有人物")
+                return
+            holder["index"] = max(0, min(i, len(names_now) - 1))
+            name = names_now[holder["index"]]
+            if not name:
+                name_var.set("不出现")
+                path = self._blank_portrait_path()
+                try:
+                    img = Image.open(path)
+                    img.thumbnail((420, 560), Image.Resampling.LANCZOS)
+                    holder["photo"] = ImageTk.PhotoImage(img)
+                    image_label.config(image=holder["photo"], text="")
+                except OSError:
+                    holder["photo"] = None
+                    image_label.config(image="", text="不出现")
                 return
             name_var.set(name)
-            path = path_for(name)
+            path = holder["path_for"](name)
             if not path:
                 holder["photo"] = None
                 image_label.config(image="", text="没有头像")
@@ -1186,45 +1374,172 @@ class WorkflowGUI:
                 image_label.config(image="", text="没有头像")
 
         def shift(step: int) -> None:
-            if len(names) < 2:
+            names_now = holder["names"]
+            if len(names_now) < 2:
                 return
-            nxt = holder["index"] + step
-            if allow_empty:
-                nxt = max(0, min(nxt, len(names) - 1))
-            else:
-                nxt = max(0, min(nxt, len(names) - 1))
+            nxt = max(0, min(holder["index"] + step, len(names_now) - 1))
             show_at(nxt)
 
         def paste(_event=None) -> str:
-            name = names[holder["index"]]
-            if not name:
-                messagebox.showwarning(title, "先选定一个名字。", parent=dlg)
+            names_now = holder["names"]
+            if not names_now:
                 return "break"
-            if self._paste_portrait_file(dest_for(name), dlg):
+            name = names_now[holder["index"]]
+            if not name:
+                messagebox.showinfo(title, "不出现的人不用粘贴图片。", parent=dlg)
+                return "break"
+            if self._paste_portrait_file(holder["dest_for"](name), dlg):
                 show_at(holder["index"])
             return "break"
 
-        def confirm() -> None:
-            name = names[holder["index"]]
-            portrait = path_for(name) if name else ""
+        def ask_motion_choice() -> str:
+            dlg.grab_release()
+            picked = askchoice(
+                "这个人怎么进出画面",
+                [
+                    ("走进走出", "从容自然地 - 走进画面，讲完走出"),
+                    ("淡入淡出", "淡入画面，讲完淡出"),
+                    ("茶叙式",   "边品茶, 边讲述 - 淡入画面，讲完淡出"),
+                    ("跳进跳出", "跳进画面，讲完跳出"),
+                    ("骑马进出", "自然地 - 骑马走进画面，讲完骑马走出")
+                ],
+                dlg,
+            )
+            dlg.grab_set()
+            return picked[0] if picked else ""
+
+        def apply_choice(name: str, motion: str) -> None:
+            """把打开时的那一格换成现在选定的人。缺年龄就按年龄段补上。"""
+            role = "host" if holder.get("mode") == "host" else "person"
+            bare = (name or "").strip()
+            if project_manager.actor_is_absent(bare):
+                if role == "host" and actor_entry:
+                    self._clear_scene_host(dlg)
+                elif on_confirm is not None and role == "host":
+                    on_confirm("")
+                return
+            if role != "host":
+                motion = ""
+            body = project_manager.actor_body_with_default_age(bare)
+            if motion:
+                base, _old = project_manager.split_actor_motion(body)
+                body = project_manager._with_actor_motion(base, motion)
+            if role == "person" and self._scene_has_person(body):
+                return
+            if actor_entry:
+                self._replace_opened_actor(actor_entry, role, body)
+                return
+            if on_confirm is not None and role == "host":
+                on_confirm(bare)
+
+        def finish(copy_blank: bool) -> None:
+            if holder.get("override_name"):
+                name = holder["override_name"]
+            else:
+                names_now = holder["names"]
+                if holder.get("mode") == "person" and not names_now:
+                    messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
+                    return
+                name = (names_now[holder["index"]] if names_now else "") or ""
+            if holder.get("mode") == "person" and not name:
+                messagebox.showinfo("人物", "先选定一个人物。", parent=dlg)
+                return
+            motion = ""
+            if holder.get("mode") == "host" and not copy_blank and name and not project_manager.actor_is_absent(name):
+                motion = ask_motion_choice()
+                if not motion:
+                    return
+            if copy_blank or not name or project_manager.actor_is_absent(name):
+                portrait = self._blank_portrait_path()
+            elif holder.get("override_name"):
+                portrait = self._narrator_portrait_path(name) or self._blank_portrait_path()
+            else:
+                portrait = holder["path_for"](name) or ""
+                if not portrait and holder.get("mode") == "person":
+                    portrait = self._blank_portrait_path()
             if portrait:
                 self.copy_image_to_clipboard(portrait, silent=True)
+            apply_choice(name, motion)
             dlg.destroy()
-            if on_confirm is not None:
-                on_confirm(name)
+
+        def delete_entry() -> None:
+            if not self._delete_scene_actor(actor_entry, dlg):
+                return
+            dlg.destroy()
+
+        def add_person() -> None:
+            dlg.grab_release()
+            try:
+                before = list(holder["names"])
+                self._add_manual_scene_person(dlg)
+            finally:
+                try:
+                    dlg.grab_set()
+                except tk.TclError:
+                    pass
+            if holder.get("mode") != "person":
+                return
+            holder["names"] = self._project_person_names()
+            added = [name for name in holder["names"] if name not in before]
+            show_at(holder["names"].index(added[-1]) if added else holder["index"])
+
+        def apply_domain_chrome() -> None:
+            if holder["mode"] == "host":
+                dlg.title("讲员")
+                hint_var.set(host_hint)
+                switch_btn.config(text="切换成人物")
+                add_btn.pack_forget()
+                return
+            dlg.title("人物")
+            hint_var.set(person_hint)
+            switch_btn.config(text="切换成讲员")
+            if not add_btn.winfo_ismapped():
+                add_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if actor_entry else cancel_btn)
+
+        def toggle_domain() -> None:
+            if holder["mode"] == "host":
+                holder["mode"] = "person"
+                holder["names"] = self._project_person_names()
+                holder["path_for"] = self._person_portrait_path
+                holder["dest_for"] = self._person_portrait_dest
+                start = 0
+                body = ""
+                if actor_entry and actor_entry.get("role") == "person":
+                    body, _motion = project_manager.split_actor_motion(actor_entry.get("body") or "")
+                if body and body in holder["names"]:
+                    start = holder["names"].index(body)
+            else:
+                holder["mode"] = "host"
+                holder["names"] = self._narrator_browse_names()
+                holder["path_for"] = self._narrator_portrait_path
+                holder["dest_for"] = self._narrator_portrait_dest
+                current_host = project_manager.project_narrator()
+                start = holder["names"].index(current_host) if current_host in holder["names"] else 0
+            holder["override_name"] = ""
+            apply_domain_chrome()
+            show_at(start)
 
         btns = ttk.Frame(dlg)
         btns.pack(pady=(0, 12))
-        ttk.Button(btns, text="确定", command=confirm).pack(side=tk.LEFT, padx=6)
-        ttk.Button(btns, text="取消", command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="拷贝图案", command=lambda: finish(False)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="拷贝背景", command=lambda: finish(True)).pack(side=tk.LEFT, padx=6)
+        switch_btn = ttk.Button(btns, text="切换成人物", command=toggle_domain)
+        switch_btn.pack(side=tk.LEFT, padx=6)
+        add_btn = ttk.Button(btns, text="增加人物", command=add_person)
+        delete_btn = None
+        if actor_entry:
+            delete_btn = ttk.Button(btns, text="删除", command=delete_entry)
+            delete_btn.pack(side=tk.LEFT, padx=6)
+        cancel_btn = ttk.Button(btns, text="取消", command=dlg.destroy)
+        cancel_btn.pack(side=tk.LEFT, padx=6)
+        apply_domain_chrome()
 
-        if len(names) > 1:
-            image_label.bind("<Button-1>", lambda _e: shift(1))
-            image_label.bind("<Button-3>", lambda _e: shift(-1))
-            dlg.bind("<Left>", lambda _e: shift(-1))
-            dlg.bind("<Right>", lambda _e: shift(1))
+        image_label.bind("<Button-1>", lambda _e: shift(1))
+        image_label.bind("<Button-3>", lambda _e: shift(-1))
+        dlg.bind("<Left>", lambda _e: shift(-1))
+        dlg.bind("<Right>", lambda _e: shift(1))
         dlg.bind("<Control-v>", paste)
-        dlg.bind("<Return>", lambda _e: confirm())
+        dlg.bind("<Return>", lambda _e: finish(False))
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         show_at(index)
@@ -1235,7 +1550,219 @@ class WorkflowGUI:
         dlg.focus_set()
         dlg.wait_window()
 
-    def review_project_narrator(self, current: str | None = None, on_confirm=None) -> None:
+    def _write_actor_motion(self, name: str, motion: str) -> None:
+        """把进出方式写进当前场景里这个人的 actor 名字后面。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if not scene:
+            return
+        name = (name or "").strip()
+        motion = (motion or "").strip()
+        if not name or not motion:
+            return
+        entries = project_manager.actor_entries(scene.get("actor") or self._actor_text)
+        for row in entries:
+            base, _old = project_manager.split_actor_motion(row.get("body") or "")
+            if base == name:
+                row["body"] = project_manager._with_actor_motion(base, motion)
+                self._set_actor_text(project_manager.format_actor_entries(entries), save_scene=True)
+                return
+
+    def _scene_actor_rows(self) -> list:
+        return project_manager.actor_entries(self._actor_text)
+
+    def _drop_scene_actor(self, entry: dict) -> tuple[list, bool]:
+        target_role = (entry or {}).get("role")
+        target_body, _motion = project_manager.split_actor_motion((entry or {}).get("body") or "")
+        kept = []
+        removed = False
+        for row in self._scene_actor_rows():
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            same = row.get("role") == target_role and (target_role == "host" or body == target_body)
+            if same and not removed:
+                removed = True
+                continue
+            kept.append(row)
+        return kept, removed
+
+    def _delete_scene_actor(self, entry: dict | None, parent) -> bool:
+        if not entry:
+            return False
+        rows = self._scene_actor_rows()
+        if len(rows) <= 1:
+            messagebox.showinfo("删除", "这一场至少要留下一个讲员或人物。", parent=parent)
+            return False
+        kept, removed = self._drop_scene_actor(entry)
+        if not removed:
+            messagebox.showinfo("删除", "这一场的名单里没有这一位。", parent=parent)
+            return False
+        if not messagebox.askyesno("删除", "删除这一位？这一场的人物里就没有他了。", parent=parent):
+            return False
+        self._set_actor_text(project_manager.format_actor_entries(kept), save_scene=True)
+        return True
+
+    def _clear_scene_host(self, parent) -> bool:
+        """这场没有讲员。从名单里拿掉，不写「不出现」。"""
+        people = [
+            row for row in self._scene_actor_rows()
+            if row.get("role") != "host" and not project_manager.actor_is_absent(row.get("body") or "")
+        ]
+        if not people:
+            messagebox.showinfo("讲员", "这一场至少要留下一个讲员或人物。", parent=parent)
+            return False
+        self._set_actor_text(project_manager.format_actor_entries(people), save_scene=True)
+        return True
+
+    def _replace_opened_actor(self, entry: dict | None, role: str, body: str) -> None:
+        """把打开预览时的那一格换成现在这个人，位置不动。换成讲员时，原来的讲员让开。"""
+        role = "host" if role == "host" else "person"
+        body = (body or "").strip() or "不出现"
+        target_role = (entry or {}).get("role")
+        target_body, _motion = project_manager.split_actor_motion((entry or {}).get("body") or "")
+        rows = []
+        replaced = False
+        for row in self._scene_actor_rows():
+            row_body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            same = row.get("role") == target_role and (target_role == "host" or row_body == target_body)
+            if same and not replaced:
+                rows.append({"role": role, "label": "讲员" if role == "host" else "人物", "body": body})
+                replaced = True
+                continue
+            if role == "host" and row.get("role") == "host":
+                continue
+            rows.append(row)
+        if not replaced:
+            if role == "person" and self._scene_has_person(body):
+                return
+            rows.append({"role": role, "label": "讲员" if role == "host" else "人物", "body": body})
+        self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
+
+    def _scene_has_person(self, body: str) -> bool:
+        want, _motion = project_manager.split_actor_motion(project_manager.actor_body_with_default_age(body))
+        if not want or project_manager.actor_is_absent(want):
+            return False
+        for row in self._scene_actor_rows():
+            if row.get("role") != "person":
+                continue
+            got, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            if got == want:
+                return True
+        return False
+
+    def _switch_scene_actor_to_host(self, entry: dict | None, narrator: str) -> None:
+        narrator = (narrator or "").strip() or "不出现"
+        rows = []
+        replaced = False
+        target_role = (entry or {}).get("role")
+        target_body, _motion = project_manager.split_actor_motion((entry or {}).get("body") or "")
+        for row in self._scene_actor_rows():
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            same = row.get("role") == target_role and (target_role == "host" or body == target_body)
+            if same and not replaced:
+                rows.append({"role": "host", "label": "讲员", "body": narrator})
+                replaced = True
+                continue
+            if row.get("role") == "host":
+                continue
+            rows.append(row)
+        if not replaced:
+            rows.append({"role": "host", "label": "讲员", "body": narrator})
+        self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
+
+    def _ask_manual_person(self, parent) -> str:
+        """手工加一位人物。名字可空，空了就用年龄段。"""
+        box = tk.Toplevel(parent)
+        box.title("增加人物")
+        box.transient(parent)
+        box.grab_set()
+        box.resizable(False, False)
+        result = {"body": ""}
+        gender = tk.StringVar(value="woman")
+        bucket = tk.StringVar(value="mature")
+        race = tk.StringVar(value="chinese")
+        person_name = tk.StringVar()
+        age = tk.StringVar(value="40")
+        age_touched = {"v": False}
+        defaults = {"kids": "10", "youth": "25", "mature": "40", "senior": "70"}
+
+        frm = ttk.Frame(box, padding=12)
+        frm.pack()
+        ttk.Label(frm, text="男女").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Combobox(frm, textvariable=gender, values=("woman", "man"), state="readonly", width=18).grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(frm, text="年龄段").grid(row=1, column=0, sticky="w", pady=4)
+        bucket_box = ttk.Combobox(
+            frm, textvariable=bucket, values=("kids", "youth", "mature", "senior"), state="readonly", width=18
+        )
+        bucket_box.grid(row=1, column=1, sticky="w")
+        ttk.Label(frm, text="中英").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Combobox(frm, textvariable=race, values=("chinese", "english"), state="readonly", width=18).grid(
+            row=2, column=1, sticky="w"
+        )
+        ttk.Label(frm, text="名字").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(frm, textvariable=person_name, width=20).grid(row=3, column=1, sticky="w")
+        ttk.Label(frm, text="可以不填").grid(row=3, column=2, sticky="w", padx=8)
+        ttk.Label(frm, text="年龄").grid(row=4, column=0, sticky="w", pady=4)
+        ages = [str(n) for n in ([1] + list(range(5, 81, 5)))]
+        age_box = ttk.Combobox(frm, textvariable=age, values=ages, width=18)
+        age_box.grid(row=4, column=1, sticky="w")
+        ttk.Label(
+            frm,
+            text="加上之后可以拖到第几位。没有图片时，参考图用白板。双击这位，Ctrl+V 可以贴上形象。",
+            wraplength=360,
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        def on_bucket(_event=None) -> None:
+            if not age_touched["v"]:
+                age.set(defaults.get(bucket.get(), "40"))
+
+        def on_age(_event=None) -> None:
+            age_touched["v"] = True
+
+        bucket_box.bind("<<ComboboxSelected>>", on_bucket)
+        age_box.bind("<Key>", on_age)
+        age_box.bind("<<ComboboxSelected>>", on_age)
+
+        def ok() -> None:
+            mid = person_name.get().strip() or bucket.get().strip() or "mature"
+            years = age.get().strip()
+            body = f"{gender.get().strip() or 'woman'}/{mid}/{race.get().strip() or 'chinese'}"
+            if years:
+                body = f"{body}/{years}"
+            result["body"] = body
+            box.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=6, column=0, columnspan=3, pady=(12, 0))
+        ttk.Button(btns, text="加上", command=ok).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="取消", command=box.destroy).pack(side=tk.LEFT, padx=6)
+        box.bind("<Return>", lambda _e: ok())
+        box.bind("<Escape>", lambda _e: box.destroy())
+        box.protocol("WM_DELETE_WINDOW", box.destroy)
+        box.focus_set()
+        box.wait_window()
+        return result["body"]
+
+    def _add_manual_scene_person(self, parent) -> None:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if not scene:
+            messagebox.showinfo("增加人物", "先打开一场。", parent=parent)
+            return
+        people = [
+            row for row in self._scene_actor_rows()
+            if row.get("role") == "person" and not project_manager.actor_is_absent(row.get("body") or "")
+        ]
+        if len(people) >= 4:
+            messagebox.showinfo("增加人物", "这一场最多四个人物。", parent=parent)
+            return
+        body = self._ask_manual_person(parent)
+        if not body:
+            return
+        rows = list(self._scene_actor_rows())
+        rows.append({"role": "person", "label": "人物", "body": body})
+        self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
+
+    def review_project_narrator(self, current: str | None = None, on_confirm=None, actor_entry=None) -> None:
         """左右键翻讲员头像。默认写回项目 narrator；传入 on_confirm 则交给调用方。"""
         pc = project_manager.PROJECT_CONFIG
         if not isinstance(pc, dict):
@@ -1263,9 +1790,11 @@ class WorkflowGUI:
             current=(current or "").strip(),
             dest_for=self._narrator_portrait_dest,
             path_for=self._narrator_portrait_path,
-            hint="← 最左是没有讲员。Ctrl+V 粘贴可替换当前头像。",
+            hint="← 最左是不出现：不进画面，也不说话。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人选不变。",
             allow_empty=True,
             on_confirm=chosen,
+            ask_motion=True,
+            actor_entry=actor_entry,
         )
 
     def clean_channel_media(self, track):
@@ -2078,6 +2607,7 @@ class WorkflowGUI:
             return "no_content"
         if not speaker:
             return "no_speaker"
+        speaker = project_manager.resolve_actor_voice(speaker) or speaker
         ok = self.apply_tts_audio_to_scene_track(
             scene,
             "clip",
@@ -2478,7 +3008,7 @@ class WorkflowGUI:
 
 
         # 图片预览区域（原zero位置）
-        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (拖放 / 左键双击复制 / 右键双击粘贴)", padding=5)
+        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (拖放 / 单击复制 / 右键双击粘贴)", padding=5)
         images_preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # 创建3个图片预览canvas (clip_image, narration_image, zero_image)
@@ -2554,6 +3084,10 @@ class WorkflowGUI:
             (self.zero_image_canvas, "zero_image"),
             (self.zero_image_last_canvas, "zero_image_last"),
         ):
+            _img_canvas.bind(
+                "<Button-1>",
+                lambda e, t=_img_type: self.on_image_canvas_click(e, t),
+            )
             _img_canvas.bind(
                 "<Double-Button-1>",
                 lambda e, t=_img_type: self.on_image_canvas_double_click(e, t),
@@ -2875,6 +3409,33 @@ class WorkflowGUI:
         self.video_edit_frame.columnconfigure(1, weight=1)
 
         row_number = 1
+
+        scene_text_row = ttk.Frame(self.video_edit_frame)
+        scene_text_row.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+        ttk.Button(
+            scene_text_row,
+            text="场景变换",
+            width=8,
+            command=lambda: self.copy_scene_speech_transform(1),
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            scene_text_row,
+            text="场景变换2",
+            width=10,
+            command=lambda: self.copy_scene_speech_transform(2),
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(
+            scene_text_row,
+            text="场景变换3",
+            width=10,
+            command=lambda: self.copy_scene_speech_transform(3),
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(
+            scene_text_row,
+            text="贴回",
+            width=5,
+            command=self.paste_current_scene_text,
+        ).pack(side=tk.LEFT, padx=(4, 0))
 
         ttk.Label(self.video_edit_frame, text="讲话:").grid(row=row_number, column=0, sticky=tk.NW, pady=2)
         # Tk Text 内置撤销/重做：Ctrl+Z 撤销，Ctrl+Y 重做（Windows 常见）；maxundo=0 为不限制深度
@@ -3327,6 +3888,85 @@ class WorkflowGUI:
         dlg.protocol("WM_DELETE_WINDOW", on_cancel)
 
 
+    def _marker_number(self, key: str, count: int):
+        pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+        try:
+            n = int(pc.get(key))
+        except (TypeError, ValueError):
+            return None
+        if count <= 0 or n < 1 or n > count:
+            return None
+        return n
+
+    def _refresh_marker_label(self) -> None:
+        label = getattr(self, "marker_label", None)
+        if label is None:
+            return
+        count = len(self.workflow.scenes) if getattr(self, "workflow", None) else 0
+        if count <= 0:
+            label.config(text="")
+            return
+        start = self._marker_number("marker_start", count)
+        end = self._marker_number("marker_end", count)
+        if start and end:
+            label.config(text=f"{start}–{end}")
+        elif start:
+            label.config(text=f"{start}–")
+        elif end:
+            label.config(text=f"–{end}")
+        else:
+            label.config(text=f"1–{count}")
+
+    def _set_scene_marker(self, which: str) -> None:
+        """开始记下当前场为起点，结束记下当前场为终点。颠倒时把另一头拉到同一场。"""
+        pc = project_manager.PROJECT_CONFIG
+        if not isinstance(pc, dict) or not getattr(self, "workflow", None):
+            return
+        count = len(self.workflow.scenes)
+        if count <= 0:
+            return
+        current = self.current_scene_index + 1
+        start = self._marker_number("marker_start", count)
+        end = self._marker_number("marker_end", count)
+        if which == "start":
+            start = current
+            if end is not None and end < start:
+                end = start
+        else:
+            end = current
+            if start is not None and end < start:
+                start = end
+        if start is None:
+            pc.pop("marker_start", None)
+        else:
+            pc["marker_start"] = start
+        if end is None:
+            pc.pop("marker_end", None)
+        else:
+            pc["marker_end"] = end
+        save_project_config(parent=self.root)
+        self._refresh_marker_label()
+
+    def _clear_scene_markers(self) -> None:
+        pc = project_manager.PROJECT_CONFIG
+        if not isinstance(pc, dict):
+            return
+        pc.pop("marker_start", None)
+        pc.pop("marker_end", None)
+        save_project_config(parent=self.root)
+        self._refresh_marker_label()
+
+    def _marker_scene_bounds(self) -> tuple[int, int]:
+        """返回要生成的场景下标，含首尾。没标完整时用第一场到最后一场。"""
+        count = len(self.workflow.scenes)
+        if count <= 0:
+            return 0, 0
+        start = self._marker_number("marker_start", count)
+        end = self._marker_number("marker_end", count)
+        if start and end:
+            return start - 1, end - 1
+        return 0, count - 1
+
     def play_finalize_video(self):
         """与 magic_workflow.finalize_video 相同的路径规则；用系统默认播放器打开（独立窗口、含声音）。"""
         final_path = config.publish_final_video_path(self.workflow.pid)
@@ -3381,7 +4021,14 @@ class WorkflowGUI:
 
         def run_task():
             try:
-                self.workflow.finalize_video(with_transitions, replace_final_audio_with_zero)
+                start, end = self._marker_scene_bounds()
+                self.log_to_output(self.video_output, f"视频生成：第 {start + 1}–{end + 1} 场")
+                self.workflow.finalize_video(
+                    with_transitions,
+                    replace_final_audio_with_zero,
+                    scene_start=start,
+                    scene_end=end,
+                )
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"
             except Exception as e:
@@ -3969,6 +4616,7 @@ class WorkflowGUI:
         """更新场景显示"""
         if len(self.workflow.scenes) == 0:
             self.scene_label.config(text="0 / 0")
+            self._refresh_marker_label()
             self.clear_scene_fields()
             self.clear_video_preview()
             return
@@ -3981,6 +4629,7 @@ class WorkflowGUI:
 
     def _update_scene_display_impl(self):
         self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
+        self._refresh_marker_label()
         scene_data = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene_data:
             return
@@ -5721,28 +6370,68 @@ class WorkflowGUI:
             messagebox.showerror("粘贴失败", str(e), parent=self.root)
         return "break"
 
+    def _copy_preview_slot_image(self, image_type: str) -> None:
+        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not current_scene:
+            return
+        image_path = current_scene.get(image_type)
+        if image_path and os.path.exists(image_path):
+            self.copy_image_to_clipboard(image_path, silent=True)
+            show_auto_close_popup(
+                self.root,
+                "剪贴板",
+                f"已拷贝 {os.path.basename(image_path)}",
+                duration_ms=1000,
+            )
+            return
+        if image_type != "clip_image":
+            messagebox.showwarning(
+                "警告", f"场景中没有有效的 {image_type} 图像", parent=self.root
+            )
+
+    def on_image_canvas_click(self, event, image_type):
+        """单击：把当前槽位的图拷到剪贴板。双击会先取消这次拷贝。"""
+        if getattr(event, "state", 0) & 0x4:
+            return
+        pending = getattr(self, "_image_click_after", None)
+        if pending is not None:
+            try:
+                self.root.after_cancel(pending)
+            except tk.TclError:
+                pass
+        self._image_click_after = self.root.after(
+            280, lambda t=image_type: self._run_preview_image_copy(t)
+        )
+
+    def _run_preview_image_copy(self, image_type: str) -> None:
+        self._image_click_after = None
+        try:
+            self._copy_preview_slot_image(image_type)
+        except Exception as e:
+            messagebox.showerror("复制", str(e), parent=self.root)
+
     def on_image_canvas_double_click(self, event, image_type):
-        """左键双击：把当前槽位的图拷到剪贴板。Clip Image 若本集有 PDF，同时打开页面审阅。"""
+        """双击 Clip Image：只打开本集 PDF 页面预览，不拷贝。"""
+        pending = getattr(self, "_image_click_after", None)
+        if pending is not None:
+            try:
+                self.root.after_cancel(pending)
+            except tk.TclError:
+                pass
+            self._image_click_after = None
+        if image_type != "clip_image":
+            try:
+                self._copy_preview_slot_image(image_type)
+            except Exception as e:
+                messagebox.showerror("复制", str(e), parent=self.root)
+            return
         try:
             current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not current_scene:
                 return
-            image_path = current_scene.get(image_type)
-            if image_path and os.path.exists(image_path):
-                self.copy_image_to_clipboard(image_path)
-            elif image_type != "clip_image":
-                messagebox.showwarning(
-                    "警告", f"场景中没有有效的 {image_type} 图像", parent=self.root
-                )
-                return
-            if image_type == "clip_image":
-                self._open_clip_image_pdf_review(current_scene)
-            self.refresh_gui_scenes()
-
+            self._open_clip_image_pdf_review(current_scene)
         except Exception as e:
-            error_msg = f"处理双击事件失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
+            messagebox.showerror("错误", f"打开页面预览失败: {e}", parent=self.root)
 
     def _open_clip_image_pdf_review(self, scene: dict) -> None:
         """本集 PDF 已拆则直接审阅；还没拆就先拆进 media/<episode>/ 再审阅。"""
@@ -6750,18 +7439,23 @@ class WorkflowGUI:
 
     def _show_picture_transform_menu(self) -> None:
         m = tk.Menu(self.root, tearoff=0)
+        style = (self.scene_visual_style.get() or "").strip()
         for kind, label in config_prompt.PICTURE_TRANSFORM_OPTIONS:
+            shown = label
+            if kind in ("softer", "softer_no_text", "to_style", "to_style_no_text") and style:
+                shown = f"{label} · {style}"
             m.add_command(
-                label=label,
-                command=lambda k=kind, lbl=label: self._copy_picture_transform_prompt(k, lbl),
+                label=shown,
+                command=lambda k=kind, lbl=shown: self._copy_picture_transform_prompt(k, lbl),
             )
         post_menu_below_widget(m, self._nb_picture_btn)
 
     def _copy_picture_transform_prompt(self, kind: str, label: str) -> None:
         region = (self.setting_region.get() or "").strip()
         era = (self.setting_era.get() or "").strip()
+        style = (self.scene_visual_style.get() or "").strip()
         try:
-            text = config_prompt.build_picture_transform_prompt(kind, region, era)
+            text = config_prompt.build_picture_transform_prompt(kind, region, era, style)
         except ValueError as exc:
             messagebox.showwarning("图片", str(exc), parent=self.root)
             return
@@ -6836,6 +7530,90 @@ class WorkflowGUI:
                 scene[key] = val
                 applied += 1
         return applied
+
+    def copy_scene_speech_transform(self, span: int = 1) -> None:
+        """按当前 actor 选一种说法，把提示词拷进剪贴板。span 为 2 或 3 时并进后面连续几场。"""
+        title = "场景变换" if span <= 1 else f"场景变换{span}"
+        if not self.workflow.get_scene_by_index(self.current_scene_index):
+            messagebox.showwarning(title, "没有当前场景", parent=self.root)
+            return
+        scene = self.update_current_scene()
+        index = self.current_scene_index
+        fetch = 1 if span <= 1 else span
+        later = [self.workflow.get_scene_by_index(index + step) for step in range(1, fetch + 1)]
+        if span >= 2 and not later[0]:
+            messagebox.showwarning(title, "后面没有下一场。", parent=self.root)
+            return
+        if span >= 3 and not later[1]:
+            messagebox.showwarning(title, "后面不够两场。", parent=self.root)
+            return
+        built = config_prompt.build_scene_speech_transform_prompt(
+            scene,
+            self.workflow.get_previous_scene(index),
+            later[0] if later else None,
+            span=1 if span <= 1 else span,
+            later=later,
+        )
+        if not built:
+            messagebox.showwarning(
+                title,
+                "这一场没有可说话的人。不出现的人不算。",
+                parent=self.root,
+            )
+            return
+        label, text = built
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
+        show_auto_close_popup(self.root, title, f"已拷贝：{label}")
+
+    def paste_current_scene_text(self) -> None:
+        """把剪贴板里的场景 JSON 贴回当前这一场。JSON 里有的字段覆盖，没有的留下。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("贴回", "没有当前场景", parent=self.root)
+            return
+        try:
+            raw = safe_clipboard_json_copy(self.root.clipboard_get())
+        except tk.TclError:
+            raw = ""
+        parsed = config.parse_json_from_text(raw) if raw else None
+        if isinstance(parsed, list):
+            parsed = parsed[0] if parsed else None
+        if not isinstance(parsed, dict):
+            messagebox.showwarning(
+                "贴回",
+                "剪贴板里不是一场的 JSON。",
+                parent=self.root,
+            )
+            return
+        self.update_current_scene()
+        keep = self._SCENE_IMPORT_SKIP_KEYS | {
+            "id",
+            "episode",
+            "group",
+            "episode_page",
+            "episode_pdf",
+            "group_page",
+            "group_pdf",
+            "clip",
+            "zero",
+            "narration",
+            "background",
+            "background_music",
+        }
+        cleaned = {
+            key: val
+            for key, val in parsed.items()
+            if key not in keep and not str(key).endswith(("_image", "_audio", "_last"))
+        }
+        n = self._apply_scene_import_item(scene, cleaned)
+        if not n:
+            messagebox.showwarning("贴回", "JSON 里没有能写回这一场的字段。", parent=self.root)
+            return
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, "贴回", f"已写回 {n} 个字段")
 
     def import_scene_data(self):
         """从 JSON array 批量导入场景文案：array[0] 对应当前场景，依次向后覆盖同名字段。"""

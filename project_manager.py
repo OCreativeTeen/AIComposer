@@ -405,8 +405,59 @@ def _strip_actor_label(part: str) -> str:
     return re.sub(r"^(?:人物\s*\d*|讲员)\s*[：:]\s*", "", (part or "").strip()).strip()
 
 
+def split_actor_motion(body: str) -> tuple[str, str]:
+    """名字后面的（走进走出）这类进出方式拆出来。"""
+    body = (body or "").strip()
+    found = re.search(r"[（(]([^）)]*)[）)]\s*$", body)
+    if not found:
+        return body, ""
+    return body[: found.start()].strip(), found.group(1).strip()
+
+
+ACTOR_ABSENT = "不出现"
+
+
+def actor_is_absent(body: str) -> bool:
+    """没有名字、背景、不出现：这个人不进画面，也不说话。"""
+    base, _motion = split_actor_motion(body or "")
+    return base.strip() in ("", ACTOR_ABSENT, "背景")
+
+
+ACTOR_AGE_BY_BUCKET = {"kids": "10", "youth": "25", "mature": "40", "senior": "70"}
+
+
+def actor_body_with_default_age(body: str) -> str:
+    """缺年龄时按年龄段补上：kids 10，youth 25，mature 40，senior 70。"""
+    raw, motion = split_actor_motion(body or "")
+    if actor_is_absent(raw):
+        return _with_actor_motion(raw, motion)
+    bits = [part.strip() for part in raw.split("/") if part.strip()]
+    if len(bits) >= 4 and re.sub(r"\D", "", bits[3]):
+        return _with_actor_motion("/".join(bits), motion)
+    bucket = bits[1].lower() if len(bits) >= 2 else ""
+    bucket = {"young": "youth", "teen": "kids", "adult": "mature", "old": "senior"}.get(bucket, bucket)
+    age = ACTOR_AGE_BY_BUCKET.get(bucket, "")
+    if not age or len(bits) < 2:
+        return _with_actor_motion(raw, motion)
+    if len(bits) == 2:
+        bits.extend(["chinese", age])
+    elif len(bits) == 3:
+        bits.append(age)
+    else:
+        bits[3] = age
+    return _with_actor_motion("/".join(bits[:4]), motion)
+
+
+def _with_actor_motion(body: str, motion: str) -> str:
+    body = (body or "").strip()
+    motion = (motion or "").strip()
+    if motion and body:
+        return f"{body}（{motion}）"
+    return body
+
+
 def _host_voice_in(part: str, voices: set) -> str:
-    body = _strip_actor_label(part)
+    body, _motion = split_actor_motion(_strip_actor_label(part))
     found = re.search(r"主持人\s*[（(]\s*([^，,）)]+)", body)
     if found:
         body = found.group(1).strip()
@@ -428,7 +479,7 @@ def _race_token(token: str) -> str:
 
 def _person_body(part: str) -> str:
     """能看懂的写成 woman|man / 名字或年纪 / chinese|english，认不出就保留原文。"""
-    body = _strip_actor_label(part)
+    body, _motion = split_actor_motion(_strip_actor_label(part))
     bits = [b.strip() for b in body.split("/") if b.strip()]
     gender = ""
     if bits:
@@ -442,14 +493,104 @@ def _person_body(part: str) -> str:
         if mid.lower() in _ACTOR_AGE:
             mid = _ACTOR_AGE[mid.lower()]
         race = _race_token(bits[2]) if len(bits) >= 3 else "chinese"
-        return f"{gender}/{mid}/{race}"
+        age = _snap_actor_age(bits[3]) if len(bits) >= 4 else ""
+        body = f"{gender}/{mid}/{race}"
+        return f"{body}/{age}" if age else body
     return body
+
+
+_ACTOR_AGE_STEPS = [1] + list(range(5, 81, 5))
+
+
+def _snap_actor_age(token: str) -> str:
+    """年纪收成 1，或 5 到 80 的整五岁。"""
+    digits = re.sub(r"\D", "", token or "")
+    if not digits:
+        return ""
+    n = max(1, min(80, int(digits)))
+    best = min(_ACTOR_AGE_STEPS, key=lambda step: (abs(step - n), step))
+    return str(best)
+
+
+def _age_number_bucket(token: str) -> str:
+    """1–12 小孩，13–29 青年，30–59 成年，60–80 年长。"""
+    digits = re.sub(r"\D", "", token or "")
+    if not digits:
+        return ""
+    n = int(digits)
+    if n <= 12:
+        return "kids"
+    if n <= 29:
+        return "youth"
+    if n <= 59:
+        return "mature"
+    return "senior"
+
+
+def resolve_actor_voice(body: str) -> str:
+    """把人物描述对到 voices.json 里一定存在的声音。先对前三段，对不上再用年纪。"""
+    voices = _actor_voice_names()
+    ordered = []
+    for name in config.narrator_person_options():
+        name = (name or "").strip()
+        if name and name not in ordered:
+            ordered.append(name)
+    if not voices:
+        return ""
+    base, _motion = split_actor_motion(body or "")
+    bits = [b.strip() for b in base.split("/") if b.strip()]
+    if base in voices:
+        return base
+    gender = ""
+    if bits:
+        head = bits[0].lower()
+        if head in ("woman", "female", "girl") or bits[0] in ("女", "女性"):
+            gender = "woman"
+        elif head in ("man", "male", "boy") or bits[0] in ("男", "男性"):
+            gender = "man"
+    race = _race_token(bits[2]) if len(bits) >= 3 else "chinese"
+    if gender and len(bits) >= 2:
+        three = f"{gender}/{bits[1]}/{race}"
+        if three in voices:
+            return three
+    bucket = ""
+    if len(bits) >= 4:
+        bucket = _age_number_bucket(bits[3])
+    if not bucket and len(bits) >= 2 and bits[1].isdigit():
+        bucket = _age_number_bucket(bits[1])
+    if not bucket and len(bits) >= 2:
+        word = bits[1].lower()
+        word = {"young": "youth", "teen": "kids", "adult": "mature", "old": "senior"}.get(word, word)
+        if word in ("kids", "youth", "mature", "senior"):
+            bucket = word
+    if not bucket:
+        bucket = "mature"
+    if gender:
+        aliases = {
+            "kids": ("kids", "youth", "mature"),
+            "youth": ("youth", "mature", "kids"),
+            "mature": ("mature", "youth"),
+            "senior": ("senior", "mature"),
+        }.get(bucket, ("mature",))
+        for age_name in aliases:
+            candidate = f"{gender}/{age_name}/{race}"
+            if candidate in voices:
+                return candidate
+        for name in ordered:
+            parts = name.split("/")
+            if len(parts) >= 3 and parts[0] == gender and parts[-1] == race:
+                return name
+        for name in ordered:
+            if name.startswith(gender + "/"):
+                return name
+    return ordered[0]
 
 
 def normalize_actor_text(text: str) -> str:
     """保留各段原来的先后。人物按出现次序编号，讲员留在原来的位置。"""
     voices = _actor_voice_names()
-    out = []
+    present = []
+    absent = []
     person_n = 0
     seen_host = False
     for part in _actor_segments(text):
@@ -457,22 +598,33 @@ def normalize_actor_text(text: str) -> str:
             if seen_host:
                 continue
             seen_host = True
-            host = _host_voice_in(part, voices) or _strip_actor_label(part)
-            if host:
-                out.append(f"讲员：{host}")
+            _base, motion = split_actor_motion(_strip_actor_label(part))
+            host = _host_voice_in(part, voices) or _base
+            if not host or actor_is_absent(host):
+                continue
+            if "已经在画面" in (motion or ""):
+                motion = ""
+            present.append(f"讲员：{_with_actor_motion(host, motion)}")
             continue
         body = _person_body(part)
-        if body:
-            person_n += 1
-            out.append(f"人物{person_n}：{body}")
-    return " | ".join(out)
+        if not body:
+            continue
+        if actor_is_absent(body):
+            absent.append(f"人物：{ACTOR_ABSENT}")
+            continue
+        if person_n >= 4:
+            continue
+        person_n += 1
+        present.append(f"人物{person_n}：{body}")
+    return " | ".join(present + absent)
 
 
 def actor_host_name(text: str) -> str:
     voices = _actor_voice_names()
     for part in _actor_segments(text):
         if _is_host_segment(part, voices):
-            return _host_voice_in(part, voices) or _strip_actor_label(part)
+            raw = _host_voice_in(part, voices) or _strip_actor_label(part)
+            return split_actor_motion(raw)[0]
     return ""
 
 
@@ -508,7 +660,7 @@ def format_actor_entries(rows: list) -> str:
             continue
         if row.get("role") == "host":
             body = (row.get("body") or "").strip()
-            if body:
+            if body and not actor_is_absent(body):
                 out.append(f"讲员：{body}")
             continue
         body = (row.get("body") or "").strip()
@@ -520,8 +672,10 @@ def format_actor_entries(rows: list) -> str:
 
 
 def actor_with_host(text: str, voice_name: str) -> str:
-    """换讲员时留在原来的位置。原来没有讲员才加到最后。声音名为空则去掉讲员。"""
+    """换讲员时留在原来的位置。原来没有讲员才加到最后。没有名字就从名单里拿掉。"""
     voice_name = (voice_name or "").strip()
+    if actor_is_absent(voice_name):
+        voice_name = ""
     rows = []
     placed = False
     for row in actor_entries(text):
@@ -534,6 +688,16 @@ def actor_with_host(text: str, voice_name: str) -> str:
     if voice_name and not placed:
         rows.append({"role": "host", "body": voice_name})
     return format_actor_entries(rows)
+
+
+def actor_text_for_generation(text: str) -> str:
+    """生成时去掉不出现的人。他们不进画面，也不占讲话和旁白。"""
+    rows = [row for row in actor_entries(text) if not actor_is_absent(row.get("body") or "")]
+    return format_actor_entries(rows)
+
+
+def active_actor_entries(text: str) -> list:
+    return [row for row in actor_entries(text) if not actor_is_absent(row.get("body") or "")]
 
 
 LAST_NARRATOR = (
@@ -596,6 +760,8 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "video_title",
     "topic_category",
     "topic_subtype",
+    "marker_start",
+    "marker_end",
 })
 
 # 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）
