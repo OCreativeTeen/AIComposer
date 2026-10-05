@@ -832,6 +832,98 @@ class WorkflowGUI:
             pass
         threading.Thread(target=work, daemon=True).start()
 
+    def _concat_downloaded_track_async(self, scene, tmp_mp4, tmp_wav, track, where: str):
+        """把下载的视频和声音接到当前音轨前面或后面。"""
+
+        def work():
+            err = None
+            try:
+                self._concat_downloaded_track(scene, tmp_mp4, tmp_wav, track, where)
+            except Exception as e:
+                err = str(e)
+
+            def done():
+                try:
+                    self.root.config(cursor="")
+                except tk.TclError:
+                    pass
+                if err:
+                    messagebox.showerror("错误", f"接上失败：{err}", parent=self.root)
+                else:
+                    scene[track + "_status"] = "ORIG"
+                    self.workflow.save_scenes_to_json()
+                    self.refresh_gui_scenes()
+                    show_auto_close_popup(
+                        self.root,
+                        "放入",
+                        "已接到前面。" if where == "prepend" else "已接到后面。",
+                    )
+
+            try:
+                self.root.after(0, done)
+            except tk.TclError:
+                pass
+
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _concat_downloaded_track(self, scene, tmp_mp4, tmp_wav, track, where: str) -> None:
+        fp = self.workflow.ffmpeg_processor
+        ap = self.workflow.ffmpeg_audio_processor
+        new_video = fp.resize_video(tmp_mp4, width=None, height=fp.height)
+        if not new_video or not os.path.isfile(new_video):
+            raise RuntimeError("新视频没有准备好")
+        new_audio = tmp_wav if tmp_wav and os.path.isfile(tmp_wav) else ap.extract_audio_from_video(new_video)
+        if not new_audio or not os.path.isfile(new_audio):
+            raise RuntimeError("新视频里没有声音")
+        old_video = get_file_path(scene, track)
+        old_audio = get_file_path(scene, track + "_audio")
+        if not old_video or not os.path.isfile(old_video):
+            refresh_scene_media(scene, track + "_audio", ".wav", new_audio, True)
+            refresh_scene_media(scene, track, ".mp4", new_video, True)
+            return
+        if not old_audio or not os.path.isfile(old_audio):
+            old_audio = ap.extract_audio_from_video(old_video)
+        if not old_audio or not os.path.isfile(old_audio):
+            raise RuntimeError("当前这一段没有声音可以接")
+        ow, oh = fp.get_resolution(old_video)
+        if ow and oh and (ow != fp.width or oh != fp.height):
+            fitted = fp.resize_video(old_video, width=fp.width, height=fp.height)
+            if fitted and os.path.isfile(fitted):
+                old_video = fitted
+        if where == "prepend":
+            videos = [new_video, old_video]
+            audios = [new_audio, old_audio]
+        else:
+            videos = [old_video, new_video]
+            audios = [old_audio, new_audio]
+        merged_audio = ap.concat_audios(audios)
+        merged_video = fp.concat_videos(videos, False)
+        if not merged_audio or not merged_video:
+            raise RuntimeError("没有接成一条")
+        muxed = fp.add_audio_to_video(merged_video, merged_audio)
+        if not muxed or not os.path.isfile(muxed):
+            raise RuntimeError("声音没有回到画面上")
+        if track == "clip":
+            self._backup_clip_to_scene_back(scene)
+        refresh_scene_media(scene, track + "_audio", ".wav", merged_audio, True)
+        refresh_scene_media(scene, track, ".mp4", muxed, True)
+        if track == "clip" and where == "prepend":
+            added = float(fp.get_duration(new_video) or 0.0)
+            if added > 0.05:
+                for name in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
+                    raw = scene.get(name)
+                    if raw is None or raw == "":
+                        continue
+                    try:
+                        scene[name] = round(float(raw) + added, 2)
+                    except (TypeError, ValueError):
+                        pass
+
     def _clip_overlay_ffmpeg_batch_async(
         self,
         target_scenes,
@@ -1899,7 +1991,9 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def _pick_media_from_download_to_project_folder(self, suffixes_tuple, *, track_rename_key: str):
+    def _pick_media_from_download_to_project_folder(
+        self, suffixes_tuple, *, track_rename_key: str, confirm_actions=None
+    ):
         """从用户 Downloads（或 L:）或项目 download 选一文件→整理到项目 download。
 
         顺序：① ``~/Downloads``（及可选 ``L:``）中新下载的源文件；② 项目 ``download/`` 内已整理好的成片。
@@ -1912,6 +2006,15 @@ class WorkflowGUI:
                 "use_mp4_video_preview": True,
                 "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
             }
+            if confirm_actions:
+                pv_kw["confirm_actions"] = confirm_actions
+        place_mode = None
+
+        def _unpack_mp4_pick(r):
+            nonlocal place_mode
+            if r is not None and len(r) >= 4:
+                place_mode = r[3]
+            return r[0], r[1], r[2]
 
         title_drive = "从 Downloads 选择视频" if single_mp4_only else "从 Downloads 选择媒体（MP3/MP4）"
         title_proj = "从项目 download 选择视频" if single_mp4_only else "从项目 download 选择媒体（MP3/MP4）"
@@ -1934,7 +2037,7 @@ class WorkflowGUI:
             if not r:
                 return None
             if single_mp4_only:
-                fn, temp_adj_mp4, temp_adj_wav = r
+                fn, temp_adj_mp4, temp_adj_wav = _unpack_mp4_pick(r)
                 media_path = os.path.join(folder, fn)
             else:
                 media_path = os.path.join(folder, r)
@@ -1988,7 +2091,7 @@ class WorkflowGUI:
                 if not r:
                     return None
                 if single_mp4_only:
-                    fn, temp_adj_mp4, temp_adj_wav = r
+                    fn, temp_adj_mp4, temp_adj_wav = _unpack_mp4_pick(r)
                     media_final = os.path.join(download_path, fn)
                 else:
                     bn = r
@@ -2077,7 +2180,12 @@ class WorkflowGUI:
                     parent=self.root,
                 )
                 return None
-            return {"final_path": media_final, "temp_adj_mp4": temp_adj_mp4, "temp_adj_wav": temp_adj_wav}
+            return {
+                "final_path": media_final,
+                "temp_adj_mp4": temp_adj_mp4,
+                "temp_adj_wav": temp_adj_wav,
+                "place": place_mode,
+            }
 
         messagebox.showerror("错误", f"暂不支持的格式：{media_final}", parent=self.root)
         return None
@@ -2086,6 +2194,11 @@ class WorkflowGUI:
         res = self._pick_media_from_download_to_project_folder(
             media_post,
             track_rename_key=track,
+            confirm_actions=[
+                ("replace", "替换"),
+                ("prepend", "前加"),
+                ("append", "后加"),
+            ],
         )
         if not res:
             return
@@ -2095,6 +2208,12 @@ class WorkflowGUI:
         temp_adj_wav = res.get("temp_adj_wav")
 
         if rename.lower().endswith(".mp4"):
+            place_mode = res.get("place") or "replace"
+            if place_mode in ("prepend", "append"):
+                self._concat_downloaded_track_async(
+                    scene, temp_adj_mp4, temp_adj_wav, track, place_mode
+                )
+                return
             picked = askchoice(
                 "下载视频替换：音频如何处理？",
                 [
@@ -3008,7 +3127,7 @@ class WorkflowGUI:
 
 
         # 图片预览区域（原zero位置）
-        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (拖放 / 单击复制 / 右键双击粘贴)", padding=5)
+        images_preview_frame = ttk.LabelFrame(left_frame, text="图片预览 (拖放 / 单击复制 / 右键双击放入)", padding=5)
         images_preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # 创建3个图片预览canvas (clip_image, narration_image, zero_image)
@@ -3225,6 +3344,36 @@ class WorkflowGUI:
         
         # 绑定配置事件来动态调整提示文本位置
         self.video_canvas.bind('<Configure>', self.on_video_canvas_configure)
+
+        span_row = ttk.Frame(right_frame)
+        span_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(span_row, text="检测", width=5, command=self.detect_speech_spans).pack(side=tk.LEFT, padx=(0, 4))
+        self.speech_span_canvas = tk.Canvas(span_row, height=24, bg="#d9d9d9", highlightthickness=1, highlightbackground="#b0b0b0")
+        self.speech_span_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._speech_spans = {
+            "speaking_start": None,
+            "speaking_end": None,
+            "voiceover_start": None,
+            "voiceover_end": None,
+        }
+        self._speech_span_duration = 0.0
+        self._speech_span_drag = None
+        self._preview_playhead = 0.0
+        self._span_bar_scene = None
+        self._span_press_seek = False
+        self._span_press_on_edge = False
+        self.speech_span_canvas.bind("<Configure>", lambda _e: self._draw_speech_span_bar())
+        self.speech_span_canvas.bind("<ButtonPress-1>", self._speech_span_press)
+        self.speech_span_canvas.bind("<B1-Motion>", self._speech_span_drag_move)
+        self.speech_span_canvas.bind("<ButtonRelease-1>", self._speech_span_release)
+        self.speech_span_canvas.bind("<Double-Button-1>", self._speech_span_double)
+
+        span_info = ttk.Frame(right_frame)
+        span_info.pack(fill=tk.X, pady=(2, 0))
+        self.speech_span_label = ttk.Label(span_info, text="")
+        self.speech_span_label.pack(side=tk.LEFT, padx=(2, 8))
+        self.video_progress_label = ttk.Label(span_info, text="现在 00:00.00 / 共 00:00.00")
+        self.video_progress_label.pack(side=tk.RIGHT, padx=(8, 2))
         
         # 视频控制按钮框架（在视频画布下方）
         video_control_frame = ttk.Frame(right_frame)
@@ -3249,7 +3398,9 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         ttk.Button(video_control_frame, text="分离", command=self.split_scene, width=5).pack(side=tk.LEFT, padx=1) 
-        ttk.Button(video_control_frame, text="修剪", command=self.trim_scene, width=5).pack(side=tk.LEFT, padx=1) 
+        ttk.Button(video_control_frame, text="修剪", command=self.trim_scene, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="裁前", command=lambda: self.trim_clip_at_playhead(True), width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(video_control_frame, text="裁后", command=lambda: self.trim_clip_at_playhead(False), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="拷贝", command=self.copy_story_scene, width=5).pack(side=tk.LEFT, padx=1)
 
         ttk.Button(video_control_frame, text="下移", command=lambda: self.shift_scene(True), width=5).pack(side=tk.LEFT, padx=1)
@@ -3283,15 +3434,7 @@ class WorkflowGUI:
         #ttk.Button(video_control_frame, text="背继", command=self.zero_continue, width=5).pack(side=tk.LEFT, padx=1)
         #ttk.Button(video_control_frame, text="背终", command=self.zero_end, width=5).pack(side=tk.LEFT, padx=1)
 
-        # 分隔符
-        separator = ttk.Separator(video_control_frame, orient='vertical')
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-
-        # 视频进度标签
-        self.video_progress_label = ttk.Label(video_control_frame, text="00:00.00 /00:00.00")
-        self.video_progress_label.pack(side=tk.RIGHT, padx=1)
-        
-        # 初始化视频进度显示
+        # 初始化视频进度显示（时间在时间条下面那一行，不放在按钮中间）
         self.update_video_progress_display()
         
         # 视频播放状态
@@ -4190,7 +4333,7 @@ class WorkflowGUI:
                 self.video_play_button.config(text="⏸")
                 # 重新设置开始时间，考虑之前暂停的时间
                 self.video_start_time = time.time()
-                self.resume_audio_playback()
+                self._park_preview_audio(self.video_pause_time or 0, paused=False)
                 print(f"▶️ 恢复播放，已播放时间: {self.video_pause_time or 0:.2f}秒")
                 self.play_next_frame()
             else:
@@ -4308,6 +4451,7 @@ class WorkflowGUI:
         # 重置时间相关变量
         self.video_start_time = None
         self.video_pause_time = None
+        self._preview_playhead = 0.0
             
         self.refresh_gui_scenes()
 
@@ -4391,13 +4535,9 @@ class WorkflowGUI:
                     self.current_video_frame = ImageTk.PhotoImage(pil_image)
                     self.video_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_video_frame)
             
-            current_time, total_time = self.get_current_video_time()
-            
-            # Format time with 0.01 narration precision
-            current_time_str = self.format_time_with_centisec(current_time)
-            total_time_str = self.format_time_with_centisec(total_time)
-            
-            self.video_progress_label.config(text=f"{current_time_str} /{total_time_str}")
+            current_time, _total_time = self.get_current_video_time()
+            self._preview_playhead = current_time
+            self._draw_speech_span_bar()
             
             # 计算下一帧的延迟时间（毫秒）- 正常1倍播放速度
             delay = int(1000 / STANDARD_FPS)  # 正常播放速度
@@ -4619,6 +4759,7 @@ class WorkflowGUI:
             self._refresh_marker_label()
             self.clear_scene_fields()
             self.clear_video_preview()
+            self._refresh_speech_span_bar()
             return
 
         self._scene_widgets_loading = True
@@ -4626,13 +4767,16 @@ class WorkflowGUI:
             self._update_scene_display_impl()
         finally:
             self._scene_widgets_loading = False
+            self._refresh_speech_span_bar()
 
     def _update_scene_display_impl(self):
         self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
         self._refresh_marker_label()
         scene_data = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene_data:
+            self._scene_form_scene = None
             return
+        self._scene_form_scene = scene_data
 
         # 设置宣传复选框状态
         clip_animation = scene_data.get("clip_animation", "S2V")
@@ -4760,18 +4904,909 @@ class WorkflowGUI:
                 else:
                     total_duration = 0.0
                 
-                if self.video_playing:
-                    pass
-                else:
-                    total_time_str = self.format_time_with_centisec(total_duration)
-                    self.video_progress_label.config(text=f"00:00.00 /{total_time_str}")
+                current = float(getattr(self, "_preview_playhead", 0) or 0)
+                self.video_progress_label.config(
+                    text=f"现在 {self.format_time_with_centisec(current)} / 共 {self.format_time_with_centisec(total_duration)}"
+                )
             else:
-                self.video_progress_label.config(text="00:00.00 /00:00.00")
+                self.video_progress_label.config(text="现在 00:00.00 / 共 00:00.00")
                 
         except Exception as e:
-            self.video_progress_label.config(text="00:00.00 /00:00.00")
+            self.video_progress_label.config(text="现在 00:00.00 / 共 00:00.00")
             print(f"⚠️ 更新视频进度显示失败: {e}")
 
+
+    def _speech_media_path(self, scene: dict | None) -> str:
+        if not scene:
+            return ""
+        audio = get_file_path(scene, "clip_audio")
+        if audio and os.path.isfile(audio):
+            return audio
+        video = get_file_path(scene, "clip")
+        if video and os.path.isfile(video):
+            return video
+        return ""
+
+    def _clip_duration(self, scene: dict | None) -> float:
+        path = self._speech_media_path(scene)
+        if not path or not getattr(self, "workflow", None):
+            return 0.0
+        try:
+            return float(self.workflow.ffmpeg_processor.get_duration(path) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _refresh_speech_span_bar(self) -> None:
+        spans = {
+            "speaking_start": None,
+            "speaking_end": None,
+            "voiceover_start": None,
+            "voiceover_end": None,
+        }
+        duration = 0.0
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if scene:
+            duration = self._clip_duration(scene)
+            for key in spans:
+                raw = scene.get(key)
+                if raw is None or raw == "":
+                    continue
+                try:
+                    spans[key] = float(raw)
+                except (TypeError, ValueError):
+                    spans[key] = None
+        if getattr(self, "_span_bar_scene", None) != self.current_scene_index:
+            self._preview_playhead = 0.0
+            self._span_bar_scene = self.current_scene_index
+        self._speech_spans = spans
+        self._speech_span_duration = duration
+        if duration > 0 and self._clamp_speech_spans():
+            self._save_speech_spans()
+        self._draw_speech_span_bar()
+
+    def _clamp_speech_spans(self) -> bool:
+        """旁白开始不得早于讲话结束。讲话结尾是分界。"""
+        duration = float(self._speech_span_duration or 0.0)
+        if duration <= 0:
+            return False
+        changed = False
+
+        def put(key: str, value) -> None:
+            nonlocal changed
+            if value is None:
+                if self._speech_spans.get(key) is not None:
+                    self._speech_spans[key] = None
+                    changed = True
+                return
+            value = round(max(0.0, min(duration, float(value))), 2)
+            if self._speech_spans.get(key) != value:
+                self._speech_spans[key] = value
+                changed = True
+
+        for key in ("speaking", "voiceover"):
+            start = self._speech_spans.get(f"{key}_start")
+            end = self._speech_spans.get(f"{key}_end")
+            if start is None or end is None:
+                continue
+            if end < start:
+                start, end = end, start
+            put(f"{key}_start", start)
+            put(f"{key}_end", end)
+        speaking_end = self._speech_spans.get("speaking_end")
+        voice_start = self._speech_spans.get("voiceover_start")
+        voice_end = self._speech_spans.get("voiceover_end")
+        if speaking_end is not None and voice_start is not None and voice_start < speaking_end:
+            put("voiceover_start", speaking_end)
+            voice_start = self._speech_spans.get("voiceover_start")
+        if voice_start is not None and voice_end is not None and voice_end <= voice_start:
+            put("voiceover_start", None)
+            put("voiceover_end", None)
+        return changed
+
+    def _second_from_x(self, x: int) -> float:
+        duration = float(self._speech_span_duration or 0.0)
+        width = max(self.speech_span_canvas.winfo_width(), 2)
+        if duration <= 0:
+            return 0.0
+        return max(0.0, min(duration, x / width * duration))
+
+    def _draw_speech_span_bar(self) -> None:
+        canvas = getattr(self, "speech_span_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 2)
+        height = max(canvas.winfo_height(), 24)
+        duration = self._speech_span_duration or 0.0
+        canvas.create_rectangle(0, 0, width, height, fill="#d9d9d9", outline="")
+        play = float(getattr(self, "_preview_playhead", 0) or 0)
+        if duration > 0:
+            play = max(0.0, min(duration, play))
+        if hasattr(self, "video_progress_label"):
+            self.video_progress_label.config(
+                text=f"现在 {self.format_time_with_centisec(play)} / 共 {self.format_time_with_centisec(duration)}"
+            )
+        if duration <= 0:
+            canvas.create_text(8, height / 2, anchor="w", text="没有可标注的声音", fill="#666666")
+            if hasattr(self, "speech_span_label"):
+                self.speech_span_label.config(text="讲话 —    旁白 —")
+            return
+
+        def x_at(second: float) -> int:
+            return int(max(0.0, min(duration, second)) / duration * width)
+
+        bits = []
+        top, bottom = 1, height - 1
+        for key, color, title in (("speaking", "#2f6fed", "讲话"), ("voiceover", "#e07a2f", "旁白")):
+            start = self._speech_spans.get(f"{key}_start")
+            end = self._speech_spans.get(f"{key}_end")
+            if start is None or end is None or end <= start:
+                bits.append(f"{title} —")
+                continue
+            x0, x1 = x_at(start), x_at(end)
+            canvas.create_rectangle(x0, top, max(x1, x0 + 2), bottom, fill=color, outline="")
+            canvas.create_rectangle(x0, top, min(x0 + 4, x1), bottom, fill="#1a1a1a", outline="")
+            canvas.create_rectangle(max(x0, x1 - 4), top, x1, bottom, fill="#1a1a1a", outline="")
+            if x1 - x0 > 36:
+                canvas.create_text(x0 + 8, height / 2, anchor="w", text=title, fill="white")
+            bits.append(f"{title} {start:.2f}–{end:.2f}")
+        px = x_at(play)
+        tag = f"{play:.2f}"
+        chip = 40
+        if px < width / 2:
+            chip_x0, text_x, anchor = px + 3, px + 6, "w"
+        else:
+            chip_x0, text_x, anchor = px - 3 - chip, px - 6, "e"
+        canvas.create_rectangle(chip_x0, 2, chip_x0 + chip, height - 2, fill="#ffffff", outline="")
+        canvas.create_line(px, 0, px, height, fill="#111111", width=2)
+        canvas.create_text(text_x, height / 2, anchor=anchor, text=tag, fill="#111111")
+        if hasattr(self, "speech_span_label"):
+            self.speech_span_label.config(text="    ".join(bits))
+
+    def _speech_span_edge_at(self, x: int, _y: int):
+        duration = self._speech_span_duration or 0.0
+        if duration <= 0:
+            return None
+        width = max(self.speech_span_canvas.winfo_width(), 2)
+
+        def x_at(second: float) -> int:
+            return int(max(0.0, min(duration, second)) / duration * width)
+
+        hits = []
+        for key in ("speaking", "voiceover"):
+            for edge in ("start", "end"):
+                value = self._speech_spans.get(f"{key}_{edge}")
+                if value is None:
+                    continue
+                dist = abs(x - x_at(value))
+                if dist <= 8:
+                    hits.append((dist, key, edge))
+        if not hits:
+            return None
+        kinds = {(key, edge) for _dist, key, edge in hits}
+        if ("speaking", "end") in kinds and ("voiceover", "start") in kinds:
+            return ("join", "boundary")
+        hits.sort()
+        return hits[0][1], hits[0][2]
+
+    def _move_span_edge(self, key: str, edge: str, second: float) -> None:
+        duration = float(self._speech_span_duration or 0.0)
+        start = self._speech_spans.get(f"{key}_start")
+        end = self._speech_spans.get(f"{key}_end")
+        if start is None or end is None or duration <= 0:
+            return
+        if edge == "start":
+            second = min(second, end - 0.15)
+            second = max(0.0, second)
+            if key == "voiceover":
+                speaking_end = self._speech_spans.get("speaking_end")
+                if speaking_end is not None:
+                    second = max(second, speaking_end)
+            self._speech_spans[f"{key}_start"] = round(second, 2)
+        else:
+            second = max(second, start + 0.15)
+            second = min(duration, second)
+            if key == "speaking":
+                voice_end = self._speech_spans.get("voiceover_end")
+                if voice_end is not None and self._speech_spans.get("voiceover_start") is not None:
+                    second = min(second, voice_end - 0.15)
+                self._speech_spans["speaking_end"] = round(second, 2)
+                voice_start = self._speech_spans.get("voiceover_start")
+                if voice_start is not None and self._speech_spans["speaking_end"] > voice_start:
+                    self._speech_spans["voiceover_start"] = self._speech_spans["speaking_end"]
+            else:
+                self._speech_spans["voiceover_end"] = round(second, 2)
+        self._clamp_speech_spans()
+
+    def _move_span_boundary(self, second: float) -> None:
+        duration = float(self._speech_span_duration or 0.0)
+        speaking_start = self._speech_spans.get("speaking_start") or 0.0
+        voice_end = self._speech_spans.get("voiceover_end") or duration
+        second = max(speaking_start + 0.15, min(voice_end - 0.15, second))
+        second = max(0.0, min(duration, second))
+        self._speech_spans["speaking_end"] = round(second, 2)
+        self._speech_spans["voiceover_start"] = round(second, 2)
+
+    def _speech_span_press(self, event) -> None:
+        hit = self._speech_span_edge_at(event.x, event.y)
+        if hit:
+            self._speech_span_drag = hit
+            self._span_press_seek = False
+            self._span_press_on_edge = True
+            return
+        self._speech_span_drag = None
+        self._span_press_on_edge = False
+        if (self._speech_span_duration or 0) <= 0:
+            self._span_press_seek = False
+            return
+        self._span_press_seek = True
+        self._seek_preview_to(self._second_from_x(event.x), park_audio=False)
+
+    def _speech_span_drag_move(self, event) -> None:
+        drag = getattr(self, "_speech_span_drag", None)
+        if drag:
+            second = self._second_from_x(event.x)
+            key, edge = drag
+            if key == "join":
+                self._move_span_boundary(second)
+            else:
+                self._move_span_edge(key, edge, second)
+            self._draw_speech_span_bar()
+            return
+        if getattr(self, "_span_press_seek", False):
+            self._seek_preview_to(self._second_from_x(event.x), park_audio=False)
+
+    def _speech_span_release(self, _event) -> None:
+        if getattr(self, "_speech_span_drag", None):
+            self._clamp_speech_spans()
+            self._save_speech_spans()
+        elif getattr(self, "_span_press_seek", False):
+            self._park_preview_audio(float(getattr(self, "_preview_playhead", 0) or 0))
+        self._speech_span_drag = None
+        self._span_press_seek = False
+
+    def _halt_preview_loop(self) -> None:
+        self.video_playing = False
+        try:
+            self.video_play_button.config(text="▶")
+        except tk.TclError:
+            pass
+        if self.video_after_id:
+            try:
+                self.root.after_cancel(self.video_after_id)
+            except Exception:
+                pass
+            self.video_after_id = None
+        try:
+            pygame.mixer.music.pause()
+        except Exception:
+            pass
+
+    def _open_preview_cap(self) -> bool:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        video_path = get_file_path(scene, "clip") if scene else ""
+        if not video_path or not os.path.isfile(video_path):
+            return False
+        if self.video_cap is None or not self.video_cap.isOpened():
+            if self.video_cap:
+                self.video_cap.release()
+            self.video_cap = cv2.VideoCapture(video_path)
+        return bool(self.video_cap and self.video_cap.isOpened())
+
+    def _show_preview_frame_at(self, second: float) -> None:
+        if not self._open_preview_cap():
+            return
+        target = max(0, int(float(second) * STANDARD_FPS))
+        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+        ok, frame = self.video_cap.read()
+        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+        if not ok or frame is None:
+            return
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(frame_rgb)
+        canvas_width = self.video_canvas.winfo_width()
+        canvas_height = self.video_canvas.winfo_height()
+        if canvas_width > 1 and canvas_height > 1:
+            pil_image.thumbnail((canvas_width - 10, canvas_height - 10), Image.Resampling.LANCZOS)
+        else:
+            pil_image.thumbnail((630, 350), Image.Resampling.LANCZOS)
+        self.current_video_frame = ImageTk.PhotoImage(pil_image)
+        self.video_canvas.delete("all")
+        x = (canvas_width or 640) // 2
+        y = (canvas_height or 360) // 2
+        self.video_canvas.create_image(x, y, anchor=tk.CENTER, image=self.current_video_frame)
+
+    def _seek_preview_to(self, second: float, park_audio: bool = True) -> None:
+        self._halt_preview_loop()
+        duration = float(self._speech_span_duration or 0.0)
+        second = max(0.0, min(duration, float(second))) if duration > 0 else 0.0
+        self._preview_playhead = second
+        self.video_pause_time = second
+        self.video_start_time = None
+        self._show_preview_frame_at(second)
+        self._draw_speech_span_bar()
+        if park_audio:
+            self._park_preview_audio(second)
+
+    def _park_preview_audio(self, second: float, paused: bool = True) -> None:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        clip = get_file_path(scene, "clip_audio") if scene else ""
+        if not clip or not os.path.isfile(clip):
+            return
+        try:
+            pygame.mixer.music.load(clip)
+            pygame.mixer.music.play(start=max(0.0, float(second)))
+            if paused:
+                pygame.mixer.music.pause()
+        except Exception as exc:
+            print(f"⚠️ 声音停到 {second:.2f} 秒失败: {exc}")
+
+    def _span_key_at(self, second: float) -> str:
+        speaking_start = self._speech_spans.get("speaking_start")
+        speaking_end = self._speech_spans.get("speaking_end")
+        if speaking_start is not None and speaking_end is not None and speaking_start <= second < speaking_end:
+            return "speaking"
+        voice_start = self._speech_spans.get("voiceover_start")
+        voice_end = self._speech_spans.get("voiceover_end")
+        if voice_start is not None and voice_end is not None and voice_start <= second <= voice_end:
+            return "voiceover"
+        return ""
+
+    def _release_preview_lock(self) -> None:
+        self._halt_preview_loop()
+        if self.video_cap:
+            try:
+                self.video_cap.release()
+            except Exception:
+                pass
+            self.video_cap = None
+        self.stop_audio_playback()
+        try:
+            pygame.mixer.music.unload()
+        except Exception:
+            pass
+        self.video_start_time = None
+        self.video_pause_time = None
+
+    def _retarget_spans_for_trim(self, cut_at: float, drop_head: bool) -> None:
+        def convert(start, end):
+            if start is None or end is None:
+                return None, None
+            if drop_head:
+                start -= cut_at
+                end -= cut_at
+                if end <= 0.05:
+                    return None, None
+                start = max(0.0, start)
+            else:
+                if start >= cut_at - 0.01:
+                    return None, None
+                end = min(end, cut_at)
+            if end - start < 0.05:
+                return None, None
+            return round(start, 2), round(end, 2)
+
+        for key in ("speaking", "voiceover"):
+            start, end = convert(
+                self._speech_spans.get(f"{key}_start"),
+                self._speech_spans.get(f"{key}_end"),
+            )
+            self._speech_spans[f"{key}_start"] = start
+            self._speech_spans[f"{key}_end"] = end
+        self._speech_span_duration = max(0.0, (self._speech_span_duration or 0.0) - cut_at) if drop_head else cut_at
+        self._clamp_speech_spans()
+        self._save_speech_spans()
+
+    def trim_clip_at_playhead(self, drop_head: bool) -> None:
+        """裁前丢掉播放线之前，裁后丢掉播放线之后。画面和声音一起切。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if not scene:
+            return
+        video = get_file_path(scene, "clip")
+        if not video or not os.path.isfile(video):
+            messagebox.showinfo("裁切", "这一场没有画面。", parent=self.root)
+            return
+        duration = self._clip_duration(scene)
+        if duration <= 0.2:
+            messagebox.showinfo("裁切", "这一场太短，切不开。", parent=self.root)
+            return
+        cut_at = float(getattr(self, "_preview_playhead", 0) or 0)
+        cut_at = max(0.0, min(duration, cut_at))
+        title = "裁前" if drop_head else "裁后"
+        if drop_head and cut_at <= 0.08:
+            messagebox.showinfo(title, "播放线还在开头，前面没有可去掉的部分。", parent=self.root)
+            return
+        if (not drop_head) and cut_at >= duration - 0.08:
+            messagebox.showinfo(title, "播放线已经在结尾，后面没有可去掉的部分。", parent=self.root)
+            return
+        if drop_head:
+            question = f"去掉 {cut_at:.2f} 秒之前的画面和声音？"
+        else:
+            question = f"去掉 {cut_at:.2f} 秒之后的画面和声音？"
+        if not messagebox.askyesno(title, question, parent=self.root):
+            return
+        self._release_preview_lock()
+        try:
+            if drop_head:
+                new_video = self.workflow.ffmpeg_processor.trim_video(video, start_time=cut_at)
+            else:
+                new_video = self.workflow.ffmpeg_processor.trim_video(video, start_time=0, end_time=cut_at)
+        except Exception as exc:
+            messagebox.showerror(title, f"画面没有切开：{exc}", parent=self.root)
+            return
+        if not new_video or not os.path.isfile(new_video):
+            messagebox.showerror(title, "画面没有切开。", parent=self.root)
+            return
+        audio = get_file_path(scene, "clip_audio")
+        new_audio = None
+        if audio and os.path.isfile(audio):
+            head, tail = self.workflow.ffmpeg_audio_processor.split_audio(audio, cut_at)
+            new_audio = tail if drop_head else head
+            if not new_audio or not os.path.isfile(new_audio):
+                messagebox.showerror(title, "声音没有切开。", parent=self.root)
+                return
+        self._backup_clip_to_scene_back(scene)
+        refresh_scene_media(scene, "clip", ".mp4", new_video, True)
+        if new_audio:
+            refresh_scene_media(scene, "clip_audio", ".wav", new_audio, True)
+        self._retarget_spans_for_trim(cut_at, drop_head)
+        self._preview_playhead = 0.0
+        self.video_pause_time = 0.0
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, title, "已去掉前面。" if drop_head else "已去掉后面。")
+
+    def _save_speech_spans(self) -> None:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        if not scene:
+            return
+        for key, value in self._speech_spans.items():
+            if value is None:
+                scene.pop(key, None)
+            else:
+                scene[key] = round(float(value), 2)
+        self.workflow.save_scenes_to_json()
+
+    def detect_speech_spans(self) -> None:
+        """按静音把主轨声音分成先说的讲话、后说的旁白。"""
+        import re
+        from utility.ffmpeg_processor import ffmpeg_path
+
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        path = self._speech_media_path(scene)
+        if not path:
+            messagebox.showinfo("检测", "这一场没有主轨声音。", parent=self.root)
+            return
+        duration = self._clip_duration(scene)
+        if duration <= 0:
+            messagebox.showinfo("检测", "读不出这段声音有多长。", parent=self.root)
+            return
+        try:
+            result = subprocess.run(
+                [ffmpeg_path, "-i", path, "-af", "silencedetect=noise=-30dB:d=0.28", "-f", "null", "-"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+        except OSError as exc:
+            messagebox.showerror("检测", f"ffmpeg 没有跑起来：{exc}", parent=self.root)
+            return
+        silences = []
+        pending = None
+        for line in (result.stderr or "").splitlines():
+            start_hit = re.search(r"silence_start:\s*([0-9.]+)", line)
+            end_hit = re.search(r"silence_end:\s*([0-9.]+)", line)
+            if start_hit:
+                pending = float(start_hit.group(1))
+            elif end_hit and pending is not None:
+                silences.append((pending, float(end_hit.group(1))))
+                pending = None
+        if pending is not None:
+            silences.append((pending, duration))
+        speech = []
+        cursor = 0.0
+        for start, end in silences:
+            if start - cursor > 0.12:
+                speech.append((cursor, min(start, duration)))
+            cursor = max(cursor, end)
+        if duration - cursor > 0.12:
+            speech.append((cursor, duration))
+        merged = []
+        for start, end in speech:
+            if merged and start - merged[-1][1] < 0.35:
+                merged[-1] = (merged[-1][0], end)
+            else:
+                merged.append((start, end))
+        speaking = voiceover = None
+        if len(merged) == 1:
+            speaking = merged[0]
+        elif len(merged) >= 2:
+            gaps = [(merged[i + 1][0] - merged[i][1], i) for i in range(len(merged) - 1)]
+            _gap, index = max(gaps)
+            speaking = (merged[0][0], merged[index][1])
+            voiceover = (merged[index + 1][0], merged[-1][1])
+        self._speech_span_duration = duration
+        self._speech_spans = {
+            "speaking_start": round(speaking[0], 2) if speaking else None,
+            "speaking_end": round(speaking[1], 2) if speaking else None,
+            "voiceover_start": round(voiceover[0], 2) if voiceover else None,
+            "voiceover_end": round(voiceover[1], 2) if voiceover else None,
+        }
+        self._clamp_speech_spans()
+        self._save_speech_spans()
+        self._draw_speech_span_bar()
+        if speaking and voiceover:
+            show_auto_close_popup(self.root, "检测", "已标出讲话和旁白，边缘可以拖")
+        elif speaking:
+            show_auto_close_popup(self.root, "检测", "只听到一段声音，标成了讲话")
+        else:
+            messagebox.showinfo("检测", "没有听到人声。", parent=self.root)
+
+    def _speech_span_double(self, event) -> None:
+        if getattr(self, "_span_press_on_edge", False):
+            return
+        self._speech_span_drag = None
+        self._span_press_seek = False
+        key = self._span_key_at(self._second_from_x(event.x))
+        if not key:
+            return
+        self._ask_regenerate_span(key)
+
+    def _span_voice_names(self) -> list[str]:
+        try:
+            config.reload_character_person_options()
+        except Exception:
+            pass
+        names = []
+        for name in config.narrator_person_options():
+            name = (name or "").strip()
+            if name and name not in names:
+                names.append(name)
+        return names or ["woman/mature/chinese"]
+
+    def _ask_span_action(self, title: str, who: str, voice: str, start: float, end: float, has_text: bool) -> dict | None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        holder = {"choice": None}
+        voices = self._span_voice_names()
+        if voice not in voices:
+            voices.insert(0, voice)
+        voice_var = tk.StringVar(value=voice)
+        speed_var = tk.DoubleVar(value=1.0)
+        speed_text = tk.StringVar(value="1.00 倍")
+
+        frame = ttk.Frame(dlg, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frame,
+            text=f"{title}  {start:.2f}–{end:.2f} 秒\n这一段现在对的是 {who}",
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 8))
+        ttk.Label(frame, text="声音").grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
+        combo = ttk.Combobox(frame, textvariable=voice_var, values=voices, state="readonly", width=28)
+        combo.grid(row=1, column=1, columnspan=2, sticky=tk.EW)
+        ttk.Button(
+            frame,
+            text="按这个声音重做",
+            command=lambda: self._close_span_action(dlg, holder, "regen", voice_var, speed_var, has_text, title),
+        ).grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=(8, 10))
+        ttk.Label(frame, text="速度").grid(row=3, column=0, sticky=tk.W)
+        tk.Scale(
+            frame,
+            from_=0.7,
+            to=1.5,
+            resolution=0.01,
+            orient=tk.HORIZONTAL,
+            length=260,
+            variable=speed_var,
+            showvalue=False,
+            command=lambda val: speed_text.set(f"{float(val):.2f} 倍"),
+        ).grid(row=3, column=1, sticky=tk.EW)
+        ttk.Label(frame, textvariable=speed_text, width=8).grid(row=3, column=2, sticky=tk.W, padx=(6, 0))
+        ttk.Label(frame, text="0.7 倍更慢更长，1.5 倍更快更短。画面跟着这段声音对齐。").grid(
+            row=4, column=0, columnspan=3, sticky=tk.W, pady=(2, 4)
+        )
+        ttk.Button(
+            frame,
+            text="套用这个速度",
+            command=lambda: self._close_span_action(dlg, holder, "speed", voice_var, speed_var, True, title),
+        ).grid(row=5, column=0, columnspan=3, sticky=tk.EW, pady=(0, 10))
+        ttk.Button(
+            frame,
+            text="拷贝这一段声音",
+            command=lambda: self._close_span_action(dlg, holder, "copy", voice_var, speed_var, True, title),
+        ).grid(row=6, column=0, columnspan=3, sticky=tk.EW)
+        ttk.Button(frame, text="关闭", command=dlg.destroy).grid(row=7, column=0, columnspan=3, sticky=tk.EW, pady=(8, 0))
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.grab_set()
+        dlg.wait_window()
+        return holder["choice"]
+
+    def _close_span_action(self, dlg, holder, action: str, voice_var, speed_var, has_text: bool, title: str) -> None:
+        speed = float(speed_var.get() or 1.0)
+        if action == "regen" and not has_text:
+            messagebox.showinfo(title, f"这一场的{title}是空的，不能重做。", parent=dlg)
+            return
+        if action == "speed" and abs(speed - 1.0) < 0.005:
+            messagebox.showinfo(title, "速度还是 1 倍，这一段不用变。", parent=dlg)
+            return
+        holder["choice"] = {"action": action, "voice": (voice_var.get() or "").strip(), "speed": speed}
+        dlg.destroy()
+
+    def _ask_regenerate_span(self, key: str) -> None:
+        scene = None
+        if getattr(self, "workflow", None):
+            try:
+                scene = self.update_current_scene()
+            except Exception:
+                scene = None
+            if not scene:
+                scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        start = self._speech_spans.get(f"{key}_start")
+        end = self._speech_spans.get(f"{key}_end")
+        title = "讲话" if key == "speaking" else "旁白"
+        if start is None or end is None or end <= start:
+            messagebox.showinfo(title, "先标出这一段的开始和结束。", parent=self.root)
+            return
+        actor_text = (getattr(self, "_actor_text", "") or "").strip() or (scene.get("actor") or "")
+        active = project_manager.active_actor_entries(actor_text)
+        index = 0 if key == "speaking" else 1
+        voice = "woman/mature/chinese"
+        who = "这一段"
+        if len(active) > index:
+            row = active[index]
+            body = (row.get("body") or "").strip()
+            voice = project_manager.resolve_actor_voice(body) or voice
+            who = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
+        text = (scene.get(key) or "").strip()
+        choice = self._ask_span_action(title, who, voice, float(start), float(end), bool(text))
+        if not choice:
+            return
+        if choice["action"] == "copy":
+            self._copy_span_audio(key, float(start), float(end))
+            return
+        if getattr(self, "_span_regen_busy", False):
+            messagebox.showinfo(title, "上一段还在处理。", parent=self.root)
+            return
+        self._span_regen_busy = True
+        try:
+            self.root.config(cursor="watch")
+        except tk.TclError:
+            pass
+        if choice["action"] == "speed":
+            threading.Thread(
+                target=self._speed_span_audio,
+                args=(key, float(choice["speed"]), float(start), float(end)),
+                daemon=True,
+            ).start()
+            return
+        threading.Thread(
+            target=self._regenerate_span_audio,
+            args=(key, choice["voice"], text, float(start), float(end)),
+            daemon=True,
+        ).start()
+
+    def _span_source_audio(self, scene: dict) -> str:
+        audio = get_file_path(scene, "clip_audio")
+        if audio and os.path.isfile(audio):
+            return audio
+        video = get_file_path(scene, "clip")
+        if video and os.path.isfile(video):
+            return video
+        return ""
+
+    def _cut_span_wav(self, source: str, start: float, end: float, dest: str) -> bool:
+        from utility.ffmpeg_processor import ffmpeg_path
+
+        try:
+            subprocess.run(
+                [
+                    ffmpeg_path, "-y",
+                    "-ss", f"{start:.3f}",
+                    "-to", f"{end:.3f}",
+                    "-i", source,
+                    "-vn",
+                    "-c:a", "pcm_s16le",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    dest,
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return False
+        return os.path.isfile(dest) and os.path.getsize(dest) > 100
+
+    def _atempo_wav(self, source: str, speed: float, dest: str) -> bool:
+        from utility.ffmpeg_processor import ffmpeg_path
+
+        speed = max(0.7, min(1.5, float(speed)))
+        try:
+            subprocess.run(
+                [
+                    ffmpeg_path, "-y",
+                    "-i", source,
+                    "-filter:a", f"atempo={speed:.4f}",
+                    "-c:a", "pcm_s16le",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    dest,
+                ],
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return False
+        return os.path.isfile(dest) and os.path.getsize(dest) > 100
+
+    def _copy_span_audio(self, key: str, start: float, end: float) -> None:
+        title = "讲话" if key == "speaking" else "旁白"
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        source = self._span_source_audio(scene) if scene else ""
+        if not source:
+            messagebox.showinfo(title, "这一场没有声音。", parent=self.root)
+            return
+        pid = getattr(self.workflow, "pid", None) or "span"
+        folder = os.path.join(config.PROJECT_DATA_PATH, str(pid), "temp")
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, f"{key}_{start:.2f}_{end:.2f}.wav")
+        if not self._cut_span_wav(source, start, end, dest):
+            messagebox.showerror(title, "这一段声音没有切出来。", parent=self.root)
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(dest)
+            self.root.update()
+        except tk.TclError:
+            messagebox.showwarning(title, f"文件已经写好，但没能放进剪贴板：\n{dest}", parent=self.root)
+            return
+        show_auto_close_popup(self.root, title, "这一段 wav 的路径已经拷贝")
+
+    def _install_span_wav(self, key: str, wav: str, start: float, end: float, scene: dict, clip: str, finish, success: str) -> None:
+        root = self.root
+        new_len = float(self.workflow.ffmpeg_processor.get_duration(wav) or 0.0)
+        if new_len <= 0.2:
+            root.after(0, lambda: finish(False, "这一段声音太短。"))
+            return
+        duration = float(self.workflow.ffmpeg_processor.get_duration(clip) or 0.0)
+        if duration <= 0:
+            root.after(0, lambda: finish(False, "读不出视频有多长。"))
+            return
+        end = min(end, duration)
+        if end - start < 0.15:
+            root.after(0, lambda: finish(False, "这一段太短。"))
+            return
+        ff = self.workflow.ffmpeg_processor
+        pieces = []
+        if start > 0.08:
+            head = ff.trim_video(clip, 0, start)
+            if not head:
+                root.after(0, lambda: finish(False, "切开前面一段失败。"))
+                return
+            pieces.append(head)
+        middle = ff.trim_video(clip, start, end)
+        if not middle:
+            root.after(0, lambda: finish(False, "切开这一段失败。"))
+            return
+        sped = ff.adjust_video_to_duration(middle, new_len, when_longer="speed")
+        muxed = ff.add_audio_to_video(sped, wav, match_audio_length=True, when_longer="speed")
+        if not muxed or not os.path.isfile(muxed):
+            root.after(0, lambda: finish(False, "新的声音没有接到画面上。"))
+            return
+        pieces.append(muxed)
+        if duration - end > 0.08:
+            tail = ff.trim_video(clip, end, duration)
+            if not tail:
+                root.after(0, lambda: finish(False, "切开后面一段失败。"))
+                return
+            pieces.append(tail)
+        merged = ff.concat_videos(pieces, True)
+        if not merged or not os.path.isfile(merged):
+            root.after(0, lambda: finish(False, "接回整段视频失败。"))
+            return
+        self._backup_clip_to_scene_back(scene)
+        refresh_scene_media(scene, "clip", ".mp4", merged)
+        new_clip = get_file_path(scene, "clip")
+        extracted = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(new_clip, "wav")
+        if extracted and os.path.isfile(extracted):
+            refresh_scene_media(scene, "clip_audio", ".wav", extracted)
+        old_len = end - start
+        delta = new_len - old_len
+        scene[f"{key}_start"] = round(start, 2)
+        scene[f"{key}_end"] = round(start + new_len, 2)
+        other = "voiceover" if key == "speaking" else "speaking"
+        other_start = scene.get(f"{other}_start")
+        other_end = scene.get(f"{other}_end")
+        try:
+            other_start_f = float(other_start)
+            other_end_f = float(other_end)
+        except (TypeError, ValueError):
+            other_start_f = None
+            other_end_f = None
+        if other_start_f is not None and other_end_f is not None and other_start_f >= end - 0.08:
+            scene[f"{other}_start"] = round(other_start_f + delta, 2)
+            scene[f"{other}_end"] = round(other_end_f + delta, 2)
+        self.workflow.save_scenes_to_json()
+        root.after(0, lambda: finish(True, success))
+
+    def _speed_span_audio(self, key: str, speed: float, start: float, end: float) -> None:
+        root = self.root
+
+        def finish(ok: bool, message: str) -> None:
+            self._span_regen_busy = False
+            try:
+                root.config(cursor="")
+            except tk.TclError:
+                pass
+            if ok:
+                self.refresh_gui_scenes()
+                show_auto_close_popup(root, "声音", message)
+            else:
+                messagebox.showerror("声音", message, parent=root)
+
+        try:
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            clip = get_file_path(scene, "clip") if scene else ""
+            source = self._span_source_audio(scene) if scene else ""
+            if not clip or not os.path.isfile(clip) or not source:
+                root.after(0, lambda: finish(False, "这一场没有主轨声音。"))
+                return
+            raw = config.get_temp_file(self.workflow.pid, "wav")
+            sped = config.get_temp_file(self.workflow.pid, "wav")
+            if not self._cut_span_wav(source, start, end, raw):
+                root.after(0, lambda: finish(False, "这一段声音没有切出来。"))
+                return
+            if not self._atempo_wav(raw, speed, sped):
+                root.after(0, lambda: finish(False, "速度没有套上。"))
+                return
+            self._install_span_wav(
+                key, sped, start, end, scene, clip, finish,
+                f"这一段已经按 {speed:.2f} 倍放好，画面也跟着对齐了。",
+            )
+        except Exception as exc:
+            err = str(exc)
+            root.after(0, lambda msg=err: finish(False, msg))
+
+    def _regenerate_span_audio(self, key: str, voice: str, text: str, start: float, end: float) -> None:
+        root = self.root
+
+        def finish(ok: bool, message: str) -> None:
+            self._span_regen_busy = False
+            try:
+                root.config(cursor="")
+            except tk.TclError:
+                pass
+            if ok:
+                self.refresh_gui_scenes()
+                show_auto_close_popup(root, "声音", message)
+            else:
+                messagebox.showerror("声音", message, parent=root)
+
+        try:
+            if not getattr(self, "speech_service", None):
+                root.after(0, lambda: finish(False, "语音服务还没准备好。"))
+                return
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            clip = get_file_path(scene, "clip") if scene else ""
+            if not clip or not os.path.isfile(clip):
+                root.after(0, lambda: finish(False, "这一场没有主轨视频。"))
+                return
+            wav = self.speech_service.synthesize_speaker_text_to_wav(voice, text, self.workflow.language)
+            if not wav or not os.path.isfile(wav):
+                root.after(0, lambda: finish(False, "语音没有生成出来。"))
+                return
+            self._install_span_wav(
+                key, wav, start, end, scene, clip, finish,
+                "这一段声音已经换上，画面也跟着对齐了。",
+            )
+        except Exception as exc:
+            err = str(exc)
+            root.after(0, lambda msg=err: finish(False, msg))
 
     def clear_scene_fields(self):
         self._scene_widgets_loading = True
@@ -4784,6 +5819,7 @@ class WorkflowGUI:
             self.scene_visual.delete("1.0", tk.END)
             self.scene_voiceover.delete("1.0", tk.END)
             self.scene_caption.delete("1.0", tk.END)
+            self._scene_form_scene = None
         finally:
             self._scene_widgets_loading = False
 
@@ -6358,17 +7394,179 @@ class WorkflowGUI:
             return [tmp_png]
         return []
 
+    def _preview_track_title(self, image_type: str) -> str:
+        base = image_type[: -len("_last")] if str(image_type).endswith("_last") else image_type
+        return {"clip_image": "Clip", "narration_image": "Narration", "zero_image": "Zero"}.get(base, base)
+
+    def _ask_preview_image_action(self, image_type: str, has_clip: bool, has_video: bool) -> str | None:
+        is_last = str(image_type).endswith("_last")
+        index = self.current_scene_index
+        total = len(self.workflow.scenes) if getattr(self, "workflow", None) else 0
+        neighbor_ok = index < total - 1 if is_last else index > 0
+        title = self._preview_track_title(image_type)
+        slot = "结束图" if is_last else "起始图"
+        shift_label = "结束图挪到起始，新图放结束" if is_last else "起始图挪到结束，新图放起始"
+        neighbor_label = (
+            f"用下一场的{title}起始图替换这里"
+            if is_last
+            else f"用上一场的{title}结束图替换这里"
+        )
+        frame_label = (
+            f"用这条{title}视频的尾帧替换这里"
+            if is_last
+            else f"用这条{title}视频的首帧替换这里"
+        )
+        dlg = tk.Toplevel(self.root)
+        dlg.title(slot)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        holder = {"choice": None}
+        frame = ttk.Frame(dlg, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=f"这张{title}{slot}怎么处理？").pack(anchor=tk.W, pady=(0, 8))
+
+        def choose(action: str) -> None:
+            holder["choice"] = action
+            dlg.destroy()
+
+        clip_state = tk.NORMAL if has_clip else tk.DISABLED
+        neighbor_state = tk.NORMAL if neighbor_ok else tk.DISABLED
+        video_state = tk.NORMAL if has_video else tk.DISABLED
+        ttk.Button(frame, text="用剪贴板的图替换这里", state=clip_state, command=lambda: choose("replace")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text=shift_label, state=clip_state, command=lambda: choose("shift")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text=neighbor_label, state=neighbor_state, command=lambda: choose("neighbor")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text=frame_label, state=video_state, command=lambda: choose("frame")).pack(fill=tk.X, pady=2)
+        ttk.Button(frame, text="取消", command=dlg.destroy).pack(fill=tk.X, pady=(8, 0))
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.grab_set()
+        dlg.wait_window()
+        return holder["choice"]
+
     def on_image_canvas_paste_from_clipboard(self, event, image_type):
-        """右键双击：剪贴板有图则粘贴到当前预览槽。"""
+        """右键双击：替换、挪到另一端、拿相邻一场的图，或从这条视频抓首帧/尾帧。"""
         try:
             paths = self._image_paths_from_clipboard()
-            if not paths:
-                messagebox.showwarning("粘贴", "剪贴板中没有图片。", parent=self.root)
-                return "break"
-            self._apply_image_paths_to_preview_slot(image_type, paths)
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            track = str(image_type).split("_")[0]
+            video_path = (scene or {}).get(track) or ""
+            has_video = bool(video_path and os.path.isfile(video_path))
+            action = self._ask_preview_image_action(image_type, bool(paths), has_video)
+            if action == "shift":
+                self._shift_preview_slot_image(image_type, paths)
+            elif action == "replace":
+                self._apply_image_paths_to_preview_slot(image_type, paths)
+            elif action == "neighbor":
+                self._take_neighbor_preview_image(image_type)
+            elif action == "frame":
+                self._take_track_video_frame(image_type)
         except Exception as e:
             messagebox.showerror("粘贴失败", str(e), parent=self.root)
         return "break"
+
+    def _take_track_video_frame(self, image_type: str) -> None:
+        """起始图用这条视频的首帧，结束图用尾帧。抽帧和缩放与导入视频时写末帧相同。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        is_last = str(image_type).endswith("_last")
+        track = str(image_type).split("_")[0]
+        video_path = scene.get(track) or ""
+        if not video_path or not os.path.isfile(video_path):
+            messagebox.showinfo("放入", "这条轨道没有视频。", parent=self.root)
+            return
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            frame = self.workflow.ffmpeg_processor.extract_frame(video_path, not is_last)
+            if not frame:
+                messagebox.showinfo("放入", "这一帧没有抽出来。", parent=self.root)
+                return
+            frame = self.workflow.ffmpeg_processor.resize_image_smart(frame)
+            if not frame:
+                messagebox.showinfo("放入", "这一帧没有缩放好。", parent=self.root)
+                return
+            refresh_scene_media(scene, image_type, ".webp", frame)
+            if image_type == "clip_image":
+                self.workflow.write_scene_page_png(scene, scene.get("clip_image") or frame)
+            self.workflow.save_scenes_to_json()
+            self.display_image_on_canvas_for_track(image_type)
+            show_auto_close_popup(
+                self.root,
+                "放入",
+                "已用这条视频的尾帧换上" if is_last else "已用这条视频的首帧换上",
+            )
+        finally:
+            try:
+                self.root.config(cursor="")
+            except tk.TclError:
+                pass
+
+    def _take_neighbor_preview_image(self, image_type: str) -> None:
+        """起始图用上一场的结束图。结束图用下一场的起始图。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return
+        is_last = str(image_type).endswith("_last")
+        base = image_type[: -len("_last")] if is_last else image_type
+        if is_last:
+            other = self.workflow.get_next_scene(self.current_scene_index)
+            source_key = base
+            empty = "下一场没有这张起始图。"
+        else:
+            other = self.workflow.get_previous_scene(self.current_scene_index)
+            source_key = base + "_last"
+            empty = "上一场没有这张结束图。"
+        if not other:
+            messagebox.showinfo("放入", "旁边没有场景。", parent=self.root)
+            return
+        source = other.get(source_key) or ""
+        if not source or not os.path.isfile(source):
+            messagebox.showinfo("放入", empty, parent=self.root)
+            return
+        refresh_scene_media(scene, image_type, ".webp", source, True)
+        if image_type == "clip_image":
+            self.workflow.write_scene_page_png(scene, scene.get("clip_image") or source)
+        self.workflow.save_scenes_to_json()
+        self.display_image_on_canvas_for_track(image_type)
+        show_auto_close_popup(self.root, "放入", "已用旁边那场的图换上")
+
+    def _shift_preview_slot_image(self, image_type: str, img_paths: list[str]) -> None:
+        """起始：旧起始挪到结束，新图放起始。结束：旧结束挪到起始，新图放结束。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning("放入", "没有当前场景。", parent=self.root)
+            return
+        if not img_paths:
+            return
+        is_last = str(image_type).endswith("_last")
+        if is_last:
+            start_key = image_type[: -len("_last")]
+            last_key = image_type
+        else:
+            start_key = image_type
+            last_key = image_type + "_last"
+        file_path = self.workflow.ffmpeg_processor.resize_image_smart(img_paths[0])
+        if not file_path or not os.path.isfile(file_path):
+            messagebox.showerror("放入", "新图没有处理好。", parent=self.root)
+            return
+        if is_last:
+            old_path = scene.get(last_key) or ""
+            if old_path and os.path.isfile(old_path):
+                refresh_scene_media(scene, start_key, ".webp", old_path, True)
+                if start_key == "clip_image":
+                    self.workflow.write_scene_page_png(scene, scene.get(start_key) or old_path)
+            refresh_scene_media(scene, last_key, ".webp", file_path, True)
+        else:
+            old_path = scene.get(start_key) or ""
+            if old_path and os.path.isfile(old_path):
+                refresh_scene_media(scene, last_key, ".webp", old_path, True)
+            refresh_scene_media(scene, start_key, ".webp", file_path, True)
+            if start_key == "clip_image":
+                self.workflow.write_scene_page_png(scene, file_path)
+        self.workflow.save_scenes_to_json()
+        self.display_image_on_canvas_for_track(start_key)
+        self.display_image_on_canvas_for_track(last_key)
+        show_auto_close_popup(self.root, "放入", "已把旧图挪到另一端，新图放在你点的这一格")
 
     def _copy_preview_slot_image(self, image_type: str) -> None:
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -7252,6 +8450,7 @@ class WorkflowGUI:
             messagebox.showinfo("警告", "⚠️ 无场景")
             return
 
+        self._cancel_scene_debounce_timer()
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
         ss = self.workflow.scenes_in_story(current_scene)
         if len(ss) <= 1:
@@ -7271,8 +8470,9 @@ class WorkflowGUI:
                     result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
                     if result:
                         ss = self.workflow.replace_scene(self.current_scene_index)
-            
-        self.refresh_gui_scenes()
+
+        self._cancel_scene_debounce_timer()
+        self._refresh_gui_scenes_impl()
         messagebox.showinfo("合并场景", "完成")
 
 
@@ -7791,7 +8991,17 @@ class WorkflowGUI:
             save_project_config(parent=self.root)
 
     def update_current_scene(self, event=None):
+        if getattr(self, "_scene_widgets_loading", False):
+            return None
+        if not getattr(self, "workflow", None):
+            return None
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            return None
+        # 输入框还停在上一场时，不能写进已经滑到这个位置的下一场。
+        bound = getattr(self, "_scene_form_scene", None)
+        if bound is not None and bound is not scene:
+            return None
         
         # 处理 cinematography 字段：尝试解析 JSON 字符串
         #cinematography_text = self.scene_cinematography.get("1.0", tk.END).strip()

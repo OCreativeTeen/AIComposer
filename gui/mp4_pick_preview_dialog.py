@@ -190,7 +190,8 @@ def ask_mp4_pick_with_trim_preview(
     build_adjusted_pair: Optional[
         Callable[..., Tuple[str, str]]
     ] = None,
-) -> Union[Tuple[str, str, str], None]:
+    confirm_actions: Optional[list] = None,
+) -> Union[Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
   ``build_adjusted_pair(full_path, volume, start=, end=, speed=) -> (tmp_mp4, tmp_wav)``
@@ -307,7 +308,13 @@ def ask_mp4_pick_with_trim_preview(
     foot = ttk.Frame(root)
     foot.pack(fill=tk.X, pady=(10, 0))
     ttk.Button(foot, text="取消", command=lambda: _close()).pack(side=tk.RIGHT, padx=(6, 0))
-    ttk.Button(foot, text="确定", command=lambda: _on_confirm()).pack(side=tk.RIGHT)
+    if confirm_actions:
+        for value, label in reversed(confirm_actions):
+            ttk.Button(
+                foot, text=label, command=lambda v=value: _on_confirm(v)
+            ).pack(side=tk.RIGHT, padx=(0, 6))
+    else:
+        ttk.Button(foot, text="确定", command=lambda: _on_confirm()).pack(side=tk.RIGHT)
 
     def _c() -> _ClipTrim:
         return clip[0]
@@ -751,7 +758,7 @@ def ask_mp4_pick_with_trim_preview(
 
     listbox.bind("<<ListboxSelect>>", _on_list_select)
 
-    def _on_confirm() -> None:
+    def _on_confirm(action: str | None = None) -> None:
         _save_trim()
         c = _c()
         if c.end <= c.start + (1.0 / c.fps):
@@ -764,13 +771,16 @@ def ask_mp4_pick_with_trim_preview(
             )
             if not mp4_adj:
                 raise RuntimeError("生成本地临时音视频失败")
-            result[0] = (sel_fn[0], mp4_adj, wav_adj)
+            picked = (sel_fn[0], mp4_adj, wav_adj)
         except TypeError:
             mp4_adj, wav_adj = build_adjusted_pair(c.path, vol)
-            result[0] = (sel_fn[0], mp4_adj, wav_adj)
+            picked = (sel_fn[0], mp4_adj, wav_adj)
         except Exception as ex:
             messagebox.showerror("错误", str(ex), parent=dlg)
             return
+        if action:
+            picked = picked + (action,)
+        result[0] = picked
         _close()
 
     def _close() -> None:

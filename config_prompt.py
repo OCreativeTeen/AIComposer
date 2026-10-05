@@ -1152,7 +1152,7 @@ NOTEBOOKLM_VIDEO_MOTION_SILENT = """
 ** Prerequisite: slideshow or scene image(s) already generated for the same Scene_Content.
 ** Tell the story ONLY through: scene evolution, environmental changes, character actions, facial expressions, and camera movement across the narrative arc.
 ** Match emotional beats implied by ``visual``, ``speaking`` / ``voiceover`` subtext — express them via VISUAL change only (not dialogue).
-** Use sound effects and light background music to support mood — no dialogue.
+** Use sound effects that belong in the place. No music.
 """
 
 NOTEBOOKLM_VIDEO_WORD_IN_IMAGE = """
@@ -1241,8 +1241,15 @@ NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION = """
 ** Use ``visual`` as what the picture does, not as a spoken line.
 """
 
+NOTEBOOKLM_VIDEO_NO_MUSIC = """
+** No music in this clip. No score, no song, no melody, no background music, no musical sting, no mood track.
+** Music for the finished film is added later, across the whole piece. A music bed inside one scene cannot be taken out.
+** Sound effects that belong to this place are welcome: birds, wind, rain, water, footsteps, a door, a cup set down, cloth, leaves, a street, a room.
+** Keep those effects under the voices. Do not turn them into a tune.
+"""
+
 NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
-** Silent-video variants: no audio dialogue; SFX and light music only (see variant instruction).
+** Silent-video variants: no spoken dialogue. Sound effects that belong in the place are fine. No music.
 ** Use ``visual`` / ``caption`` (and optional subtext fields) as staging direction for on-screen change — not as spoken lines. Do not assign lip-sync or narrator/host roles.
 """
 
@@ -1748,6 +1755,7 @@ def build_notebooklm_gen_instruction_clipbody(
                 ACTOR_AGE_LOOK,
                 vid_instr.strip(),
                 NOTEBOOKLM_VIDEO_BLANK_REF.strip(),
+                NOTEBOOKLM_VIDEO_NO_MUSIC.strip(),
             )
             if part
         )
@@ -1755,7 +1763,7 @@ def build_notebooklm_gen_instruction_clipbody(
             NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION
             if var in ("scene_real", "start_end", "interact")
             else NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION
-        ).strip() + "\n" + NOTEBOOKLM_VIDEO_BLANK_REF.strip()
+        ).strip() + "\n" + NOTEBOOKLM_VIDEO_BLANK_REF.strip() + "\n" + NOTEBOOKLM_VIDEO_NO_MUSIC.strip()
         lang_note = _audio_language_instruction(language)
         parts["Instruction_for_audio_generation"] = "\n".join(
             part
@@ -1874,7 +1882,7 @@ Audio generation / Words-in-image generation instruction:
     ** Speaker:
         * Speaker-info: both 'actor' & 'narrator' have avatar description like 'gender/age/race' (i.e, 'woman/young/chinese'), find the right voice / avatar accordingly by 'gender, age, race'.
         * Narrator talking-avatar location : 'narrator' has how-to-show-in-screen info behind '|' (i.e, woman/young/chinese | speaking-at-image-right), this help to find out where is the talking-avatar in the screen.
-	    * if current scene has no 'actor' & no 'narrator' fields, no speak (may add some smooth music / sound-effects; may generate some Word-in-image to the scene based on the 'speaking' content).
+	    * if current scene has no 'actor' & no 'narrator' fields, no speak (sound effects that belong in the place are fine; no music; may generate some Word-in-image to the scene based on the 'speaking' content).
         * if current scene has 'actor' but no 'narrator', 'actor' is the talking_avatar (lip_sync)
         * if current scene has 'narrator' but no 'actor', 'narrator' is the talking_avatar (lip_sync)
         * if current scene has both 'narrator' & 'actor', 'narrator' is the talking_avatar (lip_sync), and 'actor' only act (not speak); No interaction between 'narrator' & any 'actor'!!!!!

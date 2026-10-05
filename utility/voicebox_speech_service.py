@@ -458,13 +458,8 @@ class VoiceboxService:
         return code
 
     def get_voice(self, speaker: str, language: str) -> dict:
-        for v in VOICES:
-            if v["name"].lower().strip() in speaker.lower().strip().lower():
-                if v["language"].lower().strip() == language.lower().strip():
-                    return v
-                else:
-                    return None
-
+        # 必须整段相等。woman/mature/chinese 里含有 man/mature/chinese，
+        # 用“包含”会先命中排在前面的男声。
         return _voicebox_resolve_voice(speaker, language)
 
 
