@@ -572,18 +572,15 @@ class MagicWorkflow:
         self.save_scenes_to_json()
         return True
 
-
-
-
     def trim_scene_at_position(self, n, position, trim_audio):
-        """分离当前场景"""
-        if n<0  or n >= len(self.scenes):
+        """只留播放位置前面的一段。选音频就切声音、画面不动；不选就切画面，声音再贴回去。"""
+        if n < 0 or n >= len(self.scenes):
             return False
 
         current_scene = self.scenes[n]
 
         original_duration = self.find_clip_duration(current_scene)
-        if position<=0 or position >= original_duration:
+        if position <= 0 or position >= original_duration:
             return False
 
         original_audio_clip = get_file_path(current_scene, "clip_audio")
@@ -599,8 +596,6 @@ class MagicWorkflow:
 
         self.save_scenes_to_json()
         return True
-
-
 
     def shift_scene(self, n, m, position, only_audio):
         """分离为n张图片"""
@@ -1167,6 +1162,147 @@ class MagicWorkflow:
         if changed:
             self.save_scenes_to_json()
         self.touch_episode_media(episode)
+
+    _SCENE_PICTURE_KEYS = (
+        "clip_image",
+        "clip_image_last",
+        "narration_image",
+        "narration_image_last",
+        "zero_image",
+        "zero_image_last",
+    )
+
+    def copy_scene_pictures(self, source: dict, dup: dict) -> None:
+        """新场景另存本场各槽位的图，并在本集文件夹里另占一页 webp。别的场景页码不动。"""
+        if not isinstance(source, dict) or not isinstance(dup, dict):
+            return
+        for key in self._SCENE_PICTURE_KEYS:
+            path = source.get(key)
+            if not isinstance(path, str) or not path or not os.path.isfile(path):
+                continue
+            ext = os.path.splitext(path)[1] or ".webp"
+            refresh_scene_media(dup, key, ext, path, True)
+        self._attach_new_episode_page(source, dup)
+
+    _INSERTED_MEDIA_KEYS = (
+        ("clip", ".mp4"),
+        ("clip_audio", ".wav"),
+        ("narration", ".mp4"),
+        ("narration_audio", ".wav"),
+        ("zero", ".mp4"),
+        ("zero_audio", ".wav"),
+    )
+
+    @staticmethod
+    def _existing_media_path(scene: dict, key: str) -> str:
+        if not isinstance(scene, dict):
+            return ""
+        path = scene.get(key)
+        if isinstance(path, str) and path and os.path.isfile(path):
+            return path
+        return ""
+
+    def _copy_media_slot(self, dup: dict, key: str, src: str, default_ext: str) -> None:
+        if not src:
+            dup.pop(key, None)
+            return
+        ext = os.path.splitext(src)[1] or default_ext
+        refresh_scene_media(dup, key, ext, src, True)
+
+    def copy_inserted_scene_media(
+        self,
+        dup: dict,
+        current: dict,
+        *,
+        earlier: dict | None = None,
+        later: dict | None = None,
+        bridge: bool = False,
+    ) -> None:
+        """声音和视频只从当前这场另存一份。
+
+        两边都有场景时，起始图用前一场的尾图，尾图用后一场的起始图。
+        缺一边时，图片也整份从当前这场拷贝。页图按新场景的起始图另占一页。
+        """
+        if not isinstance(dup, dict) or not isinstance(current, dict):
+            return
+        for key, ext in self._INSERTED_MEDIA_KEYS:
+            self._copy_media_slot(dup, key, self._existing_media_path(current, key), ext)
+        tracks = ("clip", "narration", "zero")
+        if not bridge:
+            for key in self._SCENE_PICTURE_KEYS:
+                self._copy_media_slot(dup, key, self._existing_media_path(current, key), ".webp")
+            self._attach_new_episode_page(current, dup)
+            return
+        for track in tracks:
+            start_key = f"{track}_image"
+            last_key = f"{track}_image_last"
+            start_src = ""
+            if earlier is not None:
+                start_src = self._existing_media_path(earlier, last_key) or self._existing_media_path(earlier, start_key)
+            start_src = start_src or self._existing_media_path(current, start_key)
+            last_src = ""
+            if later is not None:
+                last_src = self._existing_media_path(later, start_key) or self._existing_media_path(later, last_key)
+            last_src = last_src or self._existing_media_path(current, last_key)
+            self._copy_media_slot(dup, start_key, start_src, ".webp")
+            self._copy_media_slot(dup, last_key, last_src, ".webp")
+        dup.pop("episode_page", None)
+        page_src = self._existing_media_path(dup, "clip_image")
+        if page_src:
+            self.write_scene_page_png(dup, page_src, force_new_page=True)
+        else:
+            self._attach_new_episode_page(current, dup)
+
+    def _attach_new_episode_page(self, source: dict, dup: dict) -> None:
+        """按场景上记的页码找到这一页，拷成新页，只写到新场景。不改别的场景，也不按文件名重排。"""
+        episode = self.scene_group(source)
+        dup["episode"] = episode
+        dup["episode_pdf"] = source.get("episode_pdf") or f"{episode}.pdf"
+        dup.pop("group", None)
+        dup.pop("group_page", None)
+        dup.pop("group_pdf", None)
+        try:
+            page = int(source.get("episode_page") or 0)
+        except (TypeError, ValueError):
+            page = 0
+        folder = self.episode_media_dir(episode)
+        os.makedirs(folder, exist_ok=True)
+        used: set[int] = set()
+        for other in self.scenes or []:
+            if other is dup or not isinstance(other, dict):
+                continue
+            if self.scene_group(other) != episode:
+                continue
+            try:
+                n = int(other.get("episode_page") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            if n > 0:
+                used.add(n)
+        if os.path.isdir(folder):
+            for name in os.listdir(folder):
+                stem, ext = os.path.splitext(name)
+                if ext.lower() in (".webp", ".jpg", ".jpeg", ".png") and stem.isdigit():
+                    used.add(int(stem))
+        new_page = (max(used) if used else 0) + 1
+        src = None
+        if page > 0:
+            for ext in (".webp", ".png", ".jpg", ".jpeg"):
+                candidate = os.path.join(folder, f"{page}{ext}")
+                if os.path.isfile(candidate):
+                    src = candidate
+                    break
+        if src is None:
+            for key in ("clip_image", "narration_image", "zero_image"):
+                path = source.get(key)
+                if isinstance(path, str) and path and os.path.isfile(path):
+                    src = path
+                    break
+        if not src:
+            dup.pop("episode_page", None)
+            return
+        dup["episode_page"] = new_page
+        self.write_scene_page_png(dup, src)
 
     def insert_copied_episode_page(self, source: dict, dup: dict) -> None:
         """拷贝场景后，副本占用下一页，后面的页码和页面文件都顺延，并复制这一页的图。"""

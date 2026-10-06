@@ -307,6 +307,7 @@ def _build_notebooklm_prompt_for_row(
     topic_category: str = "",
     topic_subtype: str = "",
     content_override: str | None = None,
+    dialogue_mode: str = "",
 ) -> str:
     """按频道模板 + 列表行数据拼 NotebookLM / LLM 提示词（``{content}`` = analyzed_content）。"""
     ctx = _notebooklm_prompt_context_from_video_detail(
@@ -320,7 +321,7 @@ def _build_notebooklm_prompt_for_row(
         ctx["tags"] = tags
     cat = (topic_category or ctx.get("category") or "").strip()
     sub = (topic_subtype or ctx.get("subtype") or "").strip()
-    return _format_nb_prompt_template(
+    prompt = _format_nb_prompt_template(
         template,
         topic=ctx.get("topic", ""),
         tags=ctx.get("tags", ""),
@@ -332,6 +333,10 @@ def _build_notebooklm_prompt_for_row(
         sections=sections,
         narrator=ctx.get("narrator", ""),
     )
+    talk = config.dialogue_mode_instruction(dialogue_mode) if dialogue_mode else ""
+    if talk:
+        prompt = (prompt or "").rstrip() + "\n\n" + talk + "\n"
+    return prompt
 
 
 
@@ -725,6 +730,75 @@ def _pdf_pages_as_scene_source(pdf_path: str) -> tuple[str, int, bool]:
         "Pages may contain pictures and a little text. Read the PDF for the content."
     )
     return text, n, False
+
+
+def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
+    """一条故事上的风格、对话方式、解说员。项目配置优先，没有再用这条上的值。"""
+    sources = []
+    if isinstance(cfg, dict):
+        sources.append(cfg)
+    if isinstance(vd, dict):
+        pp = vd.get(project_manager.PROJECT_PROFILE_KEY)
+        if isinstance(pp, dict):
+            sources.append(pp)
+        sources.append(vd)
+    visual_style = ""
+    dialogue_mode = ""
+    narrator = ""
+    for src in sources:
+        if not visual_style:
+            vs = (src.get("visual_style") or "").strip()
+            if vs in config.VISUAL_STYLE_OPTIONS:
+                visual_style = vs
+        if not dialogue_mode:
+            talk = (src.get("dialogue_mode") or "").strip()
+            if talk in config.DIALOGUE_MODE_OPTIONS:
+                dialogue_mode = talk
+        if not narrator:
+            nar = (src.get("narrator") or "").strip()
+            if nar:
+                narrator = nar
+    if not visual_style:
+        visual_style = project_manager.LAST_VISUAL_STYLE
+        if visual_style not in config.VISUAL_STYLE_OPTIONS and config.VISUAL_STYLE_OPTIONS:
+            visual_style = config.VISUAL_STYLE_OPTIONS[0]
+    return (
+        visual_style,
+        dialogue_mode or config.normalize_dialogue_mode(""),
+        narrator or (project_manager.LAST_NARRATOR or ""),
+    )
+
+
+def _stamp_project_look(vd, *, visual_style: str, dialogue_mode: str, narrator: str) -> None:
+    """把风格、对话方式、解说员写回这一条，已有项目配置时一并写入。"""
+    if not isinstance(vd, dict):
+        return
+    vs = (visual_style or "").strip()
+    if vs not in config.VISUAL_STYLE_OPTIONS and config.VISUAL_STYLE_OPTIONS:
+        vs = config.VISUAL_STYLE_OPTIONS[0]
+    talk = config.normalize_dialogue_mode(dialogue_mode)
+    nar = (narrator or "").strip()
+    if vs:
+        vd["visual_style"] = vs
+        project_manager.LAST_VISUAL_STYLE = vs
+    if talk:
+        vd["dialogue_mode"] = talk
+    if nar:
+        vd["narrator"] = nar
+        project_manager.LAST_NARRATOR = nar
+    pp = vd.get(project_manager.PROJECT_PROFILE_KEY)
+    if isinstance(pp, dict):
+        if vs:
+            pp["visual_style"] = vs
+        if talk:
+            pp["dialogue_mode"] = talk
+        if nar:
+            pp["narrator"] = nar
+
+
+def _dialogue_mode_from_row(vd, cfg=None) -> str:
+    """场景窗或已有项目配置里的对话方式。没有就用第一种。"""
+    return _project_look_from_row(vd, cfg)[1]
 
 
 def _prompt_text_for_material(prompt: str, material: str) -> str:
@@ -6732,6 +6806,7 @@ class MediaGUIManager:
         *,
         instruction: str = "",
         content_override: str | None = None,
+        dialogue_mode: str = "",
     ) -> tuple[str, str]:
         """按频道 LM 提示 label 生成完整 prompt 文本（``{content}`` = analyzed_content）。"""
         channel_key = self._channel_config_key()
@@ -6752,6 +6827,7 @@ class MediaGUIManager:
             topic_category=cat,
             topic_subtype=sub,
             content_override=content_override,
+            dialogue_mode=dialogue_mode,
         )
         return lbl, prompt
 
@@ -6762,6 +6838,7 @@ class MediaGUIManager:
         *,
         instruction: str = "",
         content_override: str | None = None,
+        dialogue_mode: str = "",
     ) -> tuple[str, str]:
         """按频道 config 的提示 label 生成完整 prompt 文本。"""
         return self._combined_prompt_text_for_label(
@@ -6769,6 +6846,7 @@ class MediaGUIManager:
             prompt_label,
             instruction=instruction,
             content_override=content_override,
+            dialogue_mode=dialogue_mode,
         )
 
     def _generate_scene_content_from_notebooklm_prompt(
@@ -6778,6 +6856,7 @@ class MediaGUIManager:
         *,
         instruction: str = "",
         content_override: str | None = None,
+        dialogue_mode: str = "",
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
@@ -6788,6 +6867,7 @@ class MediaGUIManager:
             prompt_label,
             instruction=instruction,
             content_override=content_override,
+            dialogue_mode=dialogue_mode,
         )
         if not (prompt or "").strip():
             return None
@@ -6818,6 +6898,7 @@ class MediaGUIManager:
         on_saved=None,
         on_title_updated=None,
         content_override: str | None = None,
+        dialogue_mode: str = "",
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         channel_key = self._channel_config_key()
@@ -6851,6 +6932,7 @@ class MediaGUIManager:
                     prompt_label,
                     instruction=instr,
                     content_override=content_override,
+                    dialogue_mode=dialogue_mode,
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -7620,22 +7702,19 @@ class MediaGUIManager:
             ttk.Label(frm, text="").pack(anchor=tk.W)
 
             _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
-            _pp = video_detail.get("project_profile") if isinstance(video_detail.get("project_profile"), dict) else {}
-            _vs_cur = (_pp.get("visual_style") or project_manager.LAST_VISUAL_STYLE or "").strip()
-            if _vs_cur not in _vs_opts:
-                _vs_cur = _vs_opts[0] if _vs_opts else "realistic"
+            _vs_cur, _talk_cur, _nar_cur = _project_look_from_row(video_detail)
             style_row = ttk.Frame(frm)
             style_row.pack(fill=tk.X, pady=(0, 6))
             ttk.Label(style_row, text="Visual Style").pack(side=tk.LEFT, padx=(0, 5))
             visual_style_var = tk.StringVar(value=_vs_cur)
-            ttk.Combobox(
-                style_row,
-                textvariable=visual_style_var,
-                values=_vs_opts,
-                state="readonly",
-                width=48,
-            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Label(style_row, textvariable=visual_style_var).pack(side=tk.LEFT)
             visual_style_combo_opts = list(_vs_opts)
+            ttk.Label(style_row, text="对话方式").pack(side=tk.LEFT, padx=(16, 5))
+            dialogue_mode_var = tk.StringVar(value=_talk_cur)
+            ttk.Label(style_row, textvariable=dialogue_mode_var).pack(side=tk.LEFT)
+            dialogue_mode_opts = list(config.DIALOGUE_MODE_OPTIONS)
+            ttk.Label(style_row, text="解说员").pack(side=tk.LEFT, padx=(16, 5))
+            ttk.Label(style_row, text=_nar_cur or "—").pack(side=tk.LEFT)
 
             ttk.Label(frm, text="").pack(anchor=tk.W)
 
@@ -7712,6 +7791,7 @@ class MediaGUIManager:
                             sel,
                             instruction=send_instr,
                             content_override=override,
+                            dialogue_mode=(dialogue_mode_var.get() or "").strip(),
                         )
                         prompt = _prompt_text_for_material(prompt, "pdf" if use_pdf else "analyzed")
                     except Exception:
@@ -7737,6 +7817,7 @@ class MediaGUIManager:
 
                 prompt_combo.bind("<<ComboboxSelected>>", on_prompt_combo_selected)
             instruction_tx.bind("<FocusOut>", refresh_scene_prompt)
+            dialogue_mode_var.trace_add("write", lambda *_a: refresh_scene_prompt())
             _sync_material_widgets()
             if nb_prompt_choices:
                 dlg.after_idle(refresh_scene_prompt)
@@ -8386,6 +8467,7 @@ class MediaGUIManager:
                             on_saved=on_saved,
                             on_title_updated=on_title_updated,
                             content_override=override,
+                            dialogue_mode=(dialogue_mode_var.get() or "").strip(),
                         )
 
                     def on_persist_keep_open():
@@ -8571,6 +8653,13 @@ class MediaGUIManager:
                         visual_style_var.set(matched)
                         return True, matched
 
+                    def _set_dialogue(value: str):
+                        matched = match_choice(value, dialogue_mode_opts)
+                        if not matched:
+                            return False, "unknown dialogue: " + value + "\nchoices: " + " | ".join(dialogue_mode_opts)
+                        dialogue_mode_var.set(matched)
+                        return True, matched
+
                 def _set_instruction(value: str):
                     instruction_tx.delete("1.0", tk.END)
                     instruction_tx.insert("1.0", value)
@@ -8746,6 +8835,11 @@ class MediaGUIManager:
                                 "get": lambda: (visual_style_var.get() or "").strip(),
                                 "set": _set_style,
                                 "choices": lambda: list(visual_style_combo_opts),
+                            },
+                            "dialogue": {
+                                "get": lambda: (dialogue_mode_var.get() or "").strip(),
+                                "set": _set_dialogue,
+                                "choices": lambda: list(dialogue_mode_opts),
                             },
                             "instruction": {
                                 "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
@@ -9540,11 +9634,6 @@ class MediaGUIManager:
                     self.main_topic_category = selected_value
 
             topic_category_combo.bind("<<ComboboxSelected>>", on_topic_category_selected)
-
-        # 画面风格：与欢迎屏一致，只读展示（LAST_VISUAL_STYLE）
-        ttk.Label(control_frame, text="画面风格:").pack(side=tk.LEFT, padx=(10, 5))
-        ttk.Label(control_frame, text=project_manager.LAST_VISUAL_STYLE, width=22, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
-
 
         def smart_select():
             """根据输入文本智能选择匹配的视频（在 title 和 content 中搜索关键字）"""
@@ -10465,6 +10554,7 @@ class MediaGUIManager:
                 topic_subtype_kw=None,
                 topic_tags_kw=None,
                 superseded_pid: str = "",
+                dialogue_mode=None,
             ):
                 if not _scene_content_nonempty(
                     {"scene_content": scene_content}
@@ -10490,6 +10580,7 @@ class MediaGUIManager:
                     topic_category=topic_category_kw if topic_category_kw is not None else _topic_category_val(),
                     topic_subtype=topic_subtype_kw if topic_subtype_kw is not None else _topic_subtype_val(),
                     topic_tags=topic_tags_kw if topic_tags_kw is not None else _topic_tags_val(),
+                    dialogue_mode=dialogue_mode,
                 )
                 if result == "new" and selected_config:
                     _after_new_project_created(
@@ -10523,14 +10614,18 @@ class MediaGUIManager:
                 return
 
             if forced_action == "new":
+                _look_vs, _look_talk, _look_nar = _project_look_from_row(vd)
                 _create_new_project_from_raw(
                     vd.get("analyzed_content"),
                     vd.get("scene_content"),
+                    narrator=_look_nar,
+                    visual_style=_look_vs,
                     language=vd.get("language"),
                     topic_category_kw=_topic_category_val(),
                     topic_subtype_kw=_topic_subtype_val(),
                     topic_tags_kw=_topic_tags_val(),
                     superseded_pid=existing_pid or "",
+                    dialogue_mode=_look_talk,
                 )
                 return
 
@@ -10566,16 +10661,18 @@ class MediaGUIManager:
                         if _action == "clone":
                             ac = cfg.get("analyzed_content") or vd.get("analyzed_content")
                             sc = cfg.get("scene_content") or vd.get("scene_content")
+                            _look_vs, _look_talk, _look_nar = _project_look_from_row(vd, cfg)
                             _create_new_project_from_raw(
                                 ac,
                                 sc,
-                                narrator=cfg.get("narrator"),
-                                visual_style=cfg.get("visual_style"),
+                                narrator=_look_nar,
+                                visual_style=_look_vs,
                                 language=cfg.get("language"),
                                 topic_category_kw=_topic_category_val(cfg),
                                 topic_subtype_kw=_topic_subtype_val(cfg),
                                 topic_tags_kw=_topic_tags_val(cfg),
                                 superseded_pid=cfg_pid,
+                                dialogue_mode=_look_talk,
                             )
                             return
                 else:
@@ -10586,12 +10683,16 @@ class MediaGUIManager:
                         parent=parent,
                     )
 
+            _look_vs, _look_talk, _look_nar = _project_look_from_row(vd)
             _create_new_project_from_raw(
                 vd.get("analyzed_content"),
                 vd.get("scene_content"),
+                narrator=_look_nar,
+                visual_style=_look_vs,
                 topic_category_kw=_topic_category_val(),
                 topic_subtype_kw=_topic_subtype_val(),
                 topic_tags_kw=_topic_tags_val(),
+                dialogue_mode=_look_talk,
             )
 
         def _regenerate_project_for_video_detail(vd, parent):
@@ -10821,6 +10922,78 @@ class MediaGUIManager:
             _refresh_summary_window_title(summary_window, video_detail)
             main_frame = ttk.Frame(summary_window, padding=10)
             main_frame.pack(fill=tk.BOTH, expand=True)
+
+            _look_vs, _look_talk, _look_nar = _project_look_from_row(video_detail)
+            look_row = ttk.Frame(main_frame)
+            look_row.pack(fill=tk.X, pady=(0, 8))
+            ttk.Label(look_row, text="风格").pack(side=tk.LEFT, padx=(0, 4))
+            story_style_var = tk.StringVar(value=_look_vs)
+            ttk.Combobox(
+                look_row,
+                textvariable=story_style_var,
+                values=list(config.VISUAL_STYLE_OPTIONS),
+                state="readonly",
+                width=28,
+            ).pack(side=tk.LEFT, padx=(0, 12))
+            ttk.Label(look_row, text="对话方式").pack(side=tk.LEFT, padx=(0, 4))
+            story_talk_var = tk.StringVar(value=_look_talk)
+            ttk.Combobox(
+                look_row,
+                textvariable=story_talk_var,
+                values=list(config.DIALOGUE_MODE_OPTIONS),
+                state="readonly",
+                width=16,
+            ).pack(side=tk.LEFT, padx=(0, 12))
+            ttk.Label(look_row, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
+            story_narrator_var = tk.StringVar(value=_look_nar)
+
+            def _story_narrator_caption(name: str = "") -> str:
+                name = (name or "").strip()
+                if not name or project_manager.actor_is_absent(name):
+                    return "讲员 不出现"
+                return f"讲员 {name}"
+
+            def _pick_story_narrator():
+                from GUI_wf import open_narrator_portrait
+
+                def chosen(name: str) -> None:
+                    story_narrator_var.set((name or "").strip())
+
+                open_narrator_portrait(summary_window, story_narrator_var.get(), chosen)
+
+            story_narrator_btn = ttk.Button(
+                look_row,
+                text=_story_narrator_caption(_look_nar),
+                command=_pick_story_narrator,
+            )
+            story_narrator_btn.pack(side=tk.LEFT)
+
+            def _sync_story_narrator_btn(*_a):
+                text = _story_narrator_caption(story_narrator_var.get())
+                try:
+                    story_narrator_btn.config(text=text, width=max(len(text), 18))
+                except tk.TclError:
+                    pass
+
+            def _save_story_look(*_a):
+                _stamp_project_look(
+                    video_detail,
+                    visual_style=story_style_var.get(),
+                    dialogue_mode=story_talk_var.get(),
+                    narrator=story_narrator_var.get(),
+                )
+                try:
+                    _write_channel_list_json_file(
+                        self.downloader.channel_list_json, self.downloader.channel_videos
+                    )
+                except Exception:
+                    pass
+
+            story_style_var.trace_add("write", _save_story_look)
+            story_talk_var.trace_add("write", _save_story_look)
+            story_narrator_var.trace_add("write", _save_story_look)
+            story_narrator_var.trace_add("write", _sync_story_narrator_btn)
+            _sync_story_narrator_btn()
 
             # 视频名称（第一行，可编辑；保存信息时一并写回列表）
             has_project_profile = project_manager.list_json_row_has_project_profile(
@@ -11536,18 +11709,6 @@ class MediaGUIManager:
                 )
 
             open_project_btn.config(command=on_open_project_from_summary)
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
-
-            # 画面风格 / 旁白：与欢迎屏一致，只读（LAST_*）
-            ttk.Label(prompt_choice_frame, text="风格:").pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Label(prompt_choice_frame, text=project_manager.LAST_VISUAL_STYLE, width=16, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
-
-            ttk.Label(prompt_choice_frame, text="   |   ").pack(side=tk.LEFT, padx=(10, 10))
-
-            ttk.Label(prompt_choice_frame, text="旁白").pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Label(prompt_choice_frame, text=str(project_manager.LAST_NARRATOR or ""), width=14, anchor="w").pack(side=tk.LEFT, padx=(0, 5))
-
 
             def copy_style_character():
                 try:

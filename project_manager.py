@@ -748,6 +748,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "language",
     "narrator",
     "visual_style",
+    "dialogue_mode",
     "title_font",
     "setting_region",
     "setting_era",
@@ -1070,6 +1071,7 @@ def project_config_from_list_item(item: dict, list_path: str = "", index: int = 
         "video_width",
         "video_height",
         "visual_style",
+        "dialogue_mode",
         "narrator",
         "watermark",
         "headmark",
@@ -1418,6 +1420,7 @@ class ProjectSelectionDialog:
     
     def __init__(self, parent, config_manager, youtube_gui, create_only,
                  initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None,
+                 initial_dialogue_mode=None,
                  initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None):
 
         self.parent = parent
@@ -1435,6 +1438,7 @@ class ProjectSelectionDialog:
 
         _nar = initial_narrator or LAST_NARRATOR
         _vs = initial_visual_style or LAST_VISUAL_STYLE
+        _dm = config.normalize_dialogue_mode(initial_dialogue_mode)
         
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
@@ -1485,6 +1489,7 @@ class ProjectSelectionDialog:
             'language': default_lang,
             'narrator': _nar,
             'visual_style': _vs,
+            'dialogue_mode': _dm,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
@@ -2125,6 +2130,9 @@ class ProjectSelectionDialog:
             self.story_result['video_height'] = video_height
             self.story_result['visual_style'] = new_project_visual_style_var.get()
             self.story_result['narrator'] = new_project_narrator_var.get()
+            self.story_result['dialogue_mode'] = config.normalize_dialogue_mode(
+                self.story_result.get('dialogue_mode')
+            )
 
             global LAST_NARRATOR, LAST_VISUAL_STYLE
             LAST_VISUAL_STYLE = self.story_result['visual_style']
@@ -2305,7 +2313,7 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
     main_frame = ttk.Frame(dialog, padding=30)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
-    # 第 1 行：频道（YT_text_download.json）、语言；第 2 行：风格、预留；第 3 行：旁白、HOST
+    # 主题内容：只选频道和语言。风格、对话方式、解说员在打开某一条故事后再选。
     _yt_ch = config.load_yt_text_download_channel_options()
     _yt_display_to_id = _yt_ch["display_to_id"]
     _prefs = _apply_yt_tools_prefs_to_globals()
@@ -2355,33 +2363,36 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
     )
     language_combo.set(_lang_default_display)
     visual_style_var = tk.StringVar(value=_style_default)
-    visual_style_combo = ttk.Combobox(
-        opts_grid,
-        textvariable=visual_style_var,
-        values=_styles,
-        state="readonly",
-        width=_combo_w,
-    )
-    _narr_opts = config.narrator_person_options()
-    _narr_cur = (LAST_NARRATOR or "").strip()
-    _narr_default = _narr_cur if _narr_cur in _narr_opts else (_narr_opts[0] if _narr_opts else "")
-    narrator_var = tk.StringVar(value=_narr_default)
-    narrator_combo = ttk.Combobox(
-        opts_grid,
-        textvariable=narrator_var,
-        values=_narr_opts,
-        state="readonly",
-        width=_combo_w,
-    )
-
+    visual_style_combo = None
+    narrator_var = tk.StringVar(value="")
+    narrator_combo = None
     reserved_var = tk.StringVar(value="")
-    reserved_combo = ttk.Combobox(
-        opts_grid,
-        textvariable=reserved_var,
-        values=(),
-        state="disabled",
-        width=_combo_w,
-    )
+    if not content_only:
+        visual_style_combo = ttk.Combobox(
+            opts_grid,
+            textvariable=visual_style_var,
+            values=_styles,
+            state="readonly",
+            width=_combo_w,
+        )
+        _narr_opts = config.narrator_person_options()
+        _narr_cur = (LAST_NARRATOR or "").strip()
+        _narr_default = _narr_cur if _narr_cur in _narr_opts else (_narr_opts[0] if _narr_opts else "")
+        narrator_var.set(_narr_default)
+        narrator_combo = ttk.Combobox(
+            opts_grid,
+            textvariable=narrator_var,
+            values=_narr_opts,
+            state="readonly",
+            width=_combo_w,
+        )
+        reserved_combo = ttk.Combobox(
+            opts_grid,
+            textvariable=reserved_var,
+            values=(),
+            state="disabled",
+            width=_combo_w,
+        )
 
     # 每行 2 组 label+combo；两列 combo 等宽
     ttk.Label(opts_grid, text="频道").grid(row=0, column=0, sticky="w", padx=(0, 6))
@@ -2389,24 +2400,30 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
     ttk.Label(opts_grid, text="语言").grid(row=0, column=2, sticky="w", padx=(0, 6))
     language_combo.grid(row=0, column=3, sticky="ew")
 
-    ttk.Label(opts_grid, text="风格").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
-    visual_style_combo.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
-    ttk.Label(opts_grid, text="预留").grid(row=1, column=2, sticky="w", padx=(0, 6), pady=_row_gap)
-    reserved_combo.grid(row=1, column=3, sticky="ew", pady=_row_gap)
-
-    ttk.Label(opts_grid, text="旁白").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
-    narrator_combo.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
+    if not content_only:
+        ttk.Label(opts_grid, text="风格").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
+        visual_style_combo.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
+        ttk.Label(opts_grid, text="预留").grid(row=1, column=2, sticky="w", padx=(0, 6), pady=_row_gap)
+        reserved_combo.grid(row=1, column=3, sticky="ew", pady=_row_gap)
+        ttk.Label(opts_grid, text="旁白").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=_row_gap)
+        narrator_combo.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=_row_gap)
 
     for col in (1, 3):
         opts_grid.columnconfigure(col, weight=1, uniform="yt_welcome_combo")
 
     def _sync_result_narrator():
         global LAST_NARRATOR
+        if content_only:
+            result['narrator'] = LAST_NARRATOR
+            return
         result['narrator'] = narrator_var.get()
         LAST_NARRATOR = result['narrator']
 
     def _sync_result_visual_style():
         global LAST_VISUAL_STYLE
+        if content_only:
+            result['visual_style'] = LAST_VISUAL_STYLE
+            return
         result['visual_style'] = visual_style_var.get()
         LAST_VISUAL_STYLE = result['visual_style']
 
@@ -2430,13 +2447,15 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
         global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE
         _sync_welcome_choices()
         ch = _resolve_welcome_channel_id()
-        config.save_yt_tools_prefs({
+        prefs = {
             "channel": ch,
             "language": LAST_YT_LANGUAGE,
             "narrator": LAST_NARRATOR,
             "visual_style": LAST_VISUAL_STYLE,
-            "reserved": (reserved_var.get() or "").strip(),
-        })
+        }
+        if not content_only:
+            prefs["reserved"] = (reserved_var.get() or "").strip()
+        config.save_yt_tools_prefs(prefs)
 
     def on_cancel():
         result['choice'] = 'cancel'
@@ -2451,7 +2470,7 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
         if not ch:
             messagebox.showwarning("提示", "请先选择频道", parent=dialog)
             return
-        if not (narrator_var.get() or "").strip():
+        if not content_only and not (narrator_var.get() or "").strip():
             messagebox.showwarning("提示", "请选择旁白（Narrator）", parent=dialog)
             return
         _sync_welcome_choices()
@@ -2463,8 +2482,8 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
             parent,
             channel=ch,
             language=_resolve_language_key(),
-            narrator=narrator_var.get(),
-            visual_style=visual_style_var.get(),
+            narrator=LAST_NARRATOR if content_only else narrator_var.get(),
+            visual_style=LAST_VISUAL_STYLE if content_only else visual_style_var.get(),
             yt_method=yt_method,
             yt_method_args=method_args,
             content_mode=content_only,
@@ -2531,7 +2550,12 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
             command=on_cancel,
         ).grid(row=5, column=3, sticky="ew")
 
-    for _combo in (channel_combo, language_combo, visual_style_combo, narrator_combo):
+    _welcome_combos = [channel_combo, language_combo]
+    if visual_style_combo is not None:
+        _welcome_combos.append(visual_style_combo)
+    if narrator_combo is not None:
+        _welcome_combos.append(narrator_combo)
+    for _combo in _welcome_combos:
         _combo.bind("<<ComboboxSelected>>", lambda _e: _persist_yt_welcome_prefs())
     if content_only:
         channel_combo.bind("<<ComboboxSelected>>", _refresh_topics, add="+")
@@ -2580,7 +2604,8 @@ def create_project_dialog(parent, youtube_gui=None):
 
 
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
-                                    analyzed_content, scene_content, topic_category, topic_subtype, topic_tags):
+                                    analyzed_content, scene_content, topic_category, topic_subtype, topic_tags,
+                                    dialogue_mode=None):
     """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。"""
     global PROJECT_CONFIG
     sc_ok = False
@@ -2606,6 +2631,7 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         
         initial_narrator=_nar,
         initial_visual_style=_vs,
+        initial_dialogue_mode=dialogue_mode,
 
         initial_analyzed_content=analyzed_content,
         initial_scene_content=scene_content,
