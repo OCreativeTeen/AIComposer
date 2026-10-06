@@ -7486,11 +7486,12 @@ class MediaGUIManager:
         main_character: str = "",
         channel_path: str = "",
     ) -> bool:
-        """兼容旧调用：``slideshow`` → ``image/slideshow``；``speak`` → ``voiceover``。"""
+        """兼容旧调用：``slideshow`` → ``image/slideshow``；``speak`` → ``video/act_one``。"""
         mode = "image" if nb_mode == "slideshow" else nb_mode
         variant = ""
         if mode == "speak":
-            mode = "voiceover"
+            mode = "video"
+            variant = "act_one"
         if "/" in mode:
             mode, variant = mode.split("/", 1)
         return self._copy_notebooklm_scene_instruction(
@@ -8402,22 +8403,97 @@ class MediaGUIManager:
                             episode=_episode_choice[0],
                         )
 
+                    def _chosen_export_scenes():
+                        scenes = _scene_list_from_editor()
+                        if scenes is None:
+                            messagebox.showwarning(
+                                "无 Scene JSON",
+                                "请先在编辑区填写有效的 scene_content JSON 数组。",
+                                parent=dlg,
+                            )
+                            return
+                        filtered = _filter_scenes_by_episode(scenes, _episode_choice[0])
+                        ep_label = _episode_choice_label(_episode_choice[0])
+                        if not filtered:
+                            messagebox.showwarning(
+                                "该集没有场景",
+                                f"第 {ep_label} 集在当前 scene_content 里没有场景。\n"
+                                "请把集选回「全部」，或改 JSON 里的 episode。",
+                                parent=dlg,
+                            )
+                            return
+                        idx = _scene_copy_index[0]
+                        if idx >= len(filtered):
+                            scope = (
+                                f"全部场景共 {len(filtered)} 条"
+                                if _episode_choice_is_all(_episode_choice[0])
+                                else f"第 {ep_label} 集共 {len(filtered)} 条"
+                            )
+                            messagebox.showwarning(
+                                "场景索引超出范围",
+                                f"当前要第 {idx + 1} 个场景，但{scope}。\n"
+                                "请点击场按钮调整，或改为 All。",
+                                parent=dlg,
+                            )
+                            return
+                        return filtered if idx < 0 else [filtered[idx]]
+
+                    def _open_scene_video_prompt():
+                        from gui.video_prompt_dialog import open_video_prompt_dialog
+
+                        chosen = _chosen_export_scenes()
+                        if not chosen:
+                            return
+
+                        def copy_text(text: str) -> None:
+                            _copy_text_to_clipboard(dlg, text)
+                            cp = (channel_path or self.channel_path or "").strip()
+                            if text and cp:
+                                channel_clipboard_append_item(cp, text, "video/flow")
+
+                        open_video_prompt_dialog(
+                            dlg,
+                            nb_export_btn,
+                            get_scenes=lambda: chosen,
+                            get_style=lambda: (visual_style_var.get() or "").strip(),
+                            copy_text=copy_text,
+                            language=getattr(self, "language", "") or project_manager.LAST_YT_LANGUAGE,
+                            host_narrator=project_manager.project_narrator(),
+                        )
+
+                    def _open_scene_slide_prompt():
+                        from gui.slide_prompt_dialog import open_slide_prompt_dialog
+
+                        chosen = _chosen_export_scenes()
+                        if not chosen:
+                            return
+
+                        def copy_text(text: str) -> None:
+                            _copy_text_to_clipboard(dlg, text)
+                            cp = (channel_path or self.channel_path or "").strip()
+                            if text and cp:
+                                channel_clipboard_append_item(cp, text, "image/flow")
+
+                        open_slide_prompt_dialog(
+                            dlg,
+                            nb_export_btn,
+                            get_scenes=lambda: chosen,
+                            get_style=lambda: (visual_style_var.get() or "").strip(),
+                            copy_text=copy_text,
+                            host_narrator=project_manager.project_narrator(),
+                            main_character=main_character or "",
+                        )
+
                     def on_show_nb_export_menu():
                         m = tk.Menu(dlg, tearoff=0)
-                        _cat_labels = {
-                            "image": f"Image 幻灯片 ({_lang_lbl})",
-                            "video": f"Video 视频 ({_lang_lbl})",
-                            "speaking": f"Speaking 主人公 ({_lang_lbl})",
-                            "voiceover": f"Voiceover 旁白 ({_lang_lbl})",
-                        }
-                        for base, cat_label in _cat_labels.items():
-                            sub = tk.Menu(m, tearoff=0)
-                            for var, var_label in config_prompt.NOTEBOOKLM_EXPORT_VARIANTS[base]:
-                                sub.add_command(
-                                    label=var_label,
-                                    command=lambda b=base, v=var: _copy_scene_instruction(b, v),
-                                )
-                            m.add_cascade(label=cat_label, menu=sub)
+                        m.add_command(
+                            label=f"幻灯提示 ({_lang_lbl})",
+                            command=_open_scene_slide_prompt,
+                        )
+                        m.add_command(
+                            label=f"Video 视频 ({_lang_lbl})",
+                            command=_open_scene_video_prompt,
+                        )
                         post_menu_below_widget(m, nb_export_btn)
 
                     def _busy(btn):

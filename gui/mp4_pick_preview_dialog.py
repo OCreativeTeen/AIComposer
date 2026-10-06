@@ -191,6 +191,7 @@ def ask_mp4_pick_with_trim_preview(
         Callable[..., Tuple[str, str]]
     ] = None,
     confirm_actions: Optional[list] = None,
+    radios: Optional[tuple] = None,
 ) -> Union[Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -307,6 +308,17 @@ def ask_mp4_pick_with_trim_preview(
 
     foot = ttk.Frame(root)
     foot.pack(fill=tk.X, pady=(10, 0))
+    radio_var = tk.StringVar(value="")
+    if radios:
+        radio_title, radio_options = radios
+        radio_var.set(radio_options[0][0])
+        radio_row = ttk.Frame(foot)
+        radio_row.pack(side=tk.LEFT)
+        ttk.Label(radio_row, text=radio_title).pack(side=tk.LEFT, padx=(0, 8))
+        for value, label in radio_options:
+            ttk.Radiobutton(
+                radio_row, text=label, value=value, variable=radio_var
+            ).pack(side=tk.LEFT, padx=(0, 12))
     ttk.Button(foot, text="取消", command=lambda: _close()).pack(side=tk.RIGHT, padx=(6, 0))
     if confirm_actions:
         for value, label in reversed(confirm_actions):
@@ -780,6 +792,8 @@ def ask_mp4_pick_with_trim_preview(
             return
         if action:
             picked = picked + (action,)
+        if radios:
+            picked = picked + (radio_var.get(),)
         result[0] = picked
         _close()
 

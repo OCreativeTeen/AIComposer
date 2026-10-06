@@ -248,6 +248,107 @@ NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
+SLIDE_FLOW_TARGET_CHOICES = (
+    ("single", "单图"),
+    ("slideshow", "幻灯片"),
+)
+SLIDE_FLOW_TEXT_CHOICES = (
+    ("none", "不加"),
+    ("keywords", "背景关键字"),
+)
+
+
+def slide_flow_choice_label(target: str, text: str) -> str:
+    """把幻灯目标和对画面文字的选择写成一行。"""
+    target_label = dict(SLIDE_FLOW_TARGET_CHOICES).get(target, target)
+    text_label = "背景关键字" if text == "keywords" else "不加文字"
+    return f"{target_label} · {text_label}"
+
+
+def build_slide_flow_prompt(
+    *,
+    target: str,
+    text: str,
+    visual_style: str = "",
+    scene_content: list,
+    host_narrator: str = "",
+    region: str = "",
+    era: str = "",
+    main_character: str = "",
+) -> str:
+    """按单图或幻灯片、以及画面上的字，组装这一次的幻灯提示词。"""
+    if target not in {k for k, _ in SLIDE_FLOW_TARGET_CHOICES}:
+        target = "slideshow"
+    if text not in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES}:
+        text = "none"
+    style = (visual_style or "").strip() or "realistic"
+    variant = "single" if target == "single" else "slideshow"
+    scenes = scene_content if isinstance(scene_content, list) else []
+    json_content = json.dumps(
+        scene_payload_for_notebooklm_export(scenes, "image", variant),
+        ensure_ascii=False,
+        indent=2,
+    )
+    lines = [
+        "You generate pictures, not a written report and not a page of text.",
+        f"Visual style for every picture: {style}.",
+        "The same person keeps the same face and the same clothes.",
+    ]
+    if target == "single":
+        lines.extend([
+            "Make exactly one picture for this whole story.",
+            "Every scene belongs in this one picture. Do not make a row of panels. Do not make one picture per scene.",
+            "Show the story through the place, the people, their faces, their poses, and a few objects that carry the story.",
+            "Read each scene's show_this_content as what must be visible somewhere in this one picture.",
+        ])
+    else:
+        lines.extend([
+            "Make exactly one picture for each scene. One scene is one frozen moment.",
+            "The number of pictures equals the number of scenes. Do not merge two scenes into one picture. Do not split one scene into two.",
+            "Paint what that scene's show_this_content describes: the place, the emotion, the action, and the light.",
+            "A change of angle or an action already written there belongs in that picture.",
+            "Two or more story people and no 讲员: draw those people. Do not add a host.",
+            "One story person and a 讲员: paint that host with them.",
+            "Only a story person: do not invent a host.",
+            "Only a 讲员: the picture is that host.",
+        ])
+    host = (host_narrator or "").strip()
+    if host:
+        lines.append(
+            f"A host was chosen: {host}. When a scene has only this host, show this host. Do not add another person for that scene."
+        )
+    else:
+        lines.append("No host was chosen. Do not add a visible host.")
+    look = (main_character or "").strip()
+    if look:
+        lines.append(f"Keep this cast readable and consistent: {look}.")
+    lines.append("Faces, posture, and gesture match the feeling of the scene.")
+    if text == "keywords":
+        lines.extend([
+            "Do not add captions, subtitles, or speech bubbles.",
+            "If one very short phrase is essential, place it as large sparse lettering in the background, behind the people.",
+            "One word or a few words. Never a sentence. Never a paragraph.",
+        ])
+    else:
+        lines.extend([
+            "Do not put words on the picture. No subtitle, no caption, no annotation, no speech bubble, no background writing.",
+            "Spoken lines tell you the mood and the body. They are not text to draw.",
+        ])
+    phrase = setting_place_phrase(region, era)
+    if phrase:
+        lines.append(
+            f"Place and period: {phrase}. "
+            "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
+        )
+    lines.extend(["", ACTOR_AGE_LOOK])
+    parts = {
+        "Visual_Style": style,
+        "Slide_choices": slide_flow_choice_label(target, text),
+        "Instruction_for_image": "\n".join(lines),
+        "Story_Scene_Content": json_content,
+    }
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
 # 图片变换：先选地域，时代只列出这一地域里的项。值为 (界面名, 写进提示词的英文)。
 SETTING_PLACES: dict[str, dict] = {
     "中国": {
@@ -439,6 +540,139 @@ ACTOR_AGE_LOOK = """
 
 def _with_picture_character_refs(text: str) -> str:
     return text.rstrip() + "\n\n" + PICTURE_CHARACTER_REF_NOTE + "\n\n" + ACTOR_AGE_LOOK
+
+
+PICTURE_FLOW_TASK_CHOICES = (
+    ("keep", "保持画风"),
+    ("restyle", "转成项目风格"),
+    ("extract", "人物提取"),
+)
+PICTURE_FLOW_TEXT_CHOICES = (
+    ("keep", "保留"),
+    ("remove", "去掉"),
+)
+
+
+def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> str:
+    """把图片处理的选择写成一行。人物提取不带说明文字。"""
+    if task == "extract":
+        return "人物提取"
+    task_label = dict(PICTURE_FLOW_TASK_CHOICES).get(task, task)
+    text_label = "去掉说明文字" if text == "remove" else "保留说明文字"
+    label = f"{task_label} · {text_label}"
+    style = (visual_style or "").strip()
+    if style:
+        label = f"{label} · {style}"
+    return label
+
+
+def _picture_flow_text_rule(remove_text: bool) -> str:
+    if remove_text:
+        return (
+            "Remove the explanation text. "
+            "Story pictures and comic pages often have captions beside the picture, under it, or in a box, "
+            "telling what the scene means or which part of the story this is. "
+            "Those words are not part of the drawing. Remove them. "
+            "Fill those areas with the picture that belongs there: paper, sky, wall, ground, or the rest of the illustration. "
+            "Do not leave empty boxes. Do not redraw the story."
+        )
+    return "Keep any words already drawn in the picture. They stay part of the picture."
+
+
+def _picture_flow_refs() -> str:
+    return (
+        "Picture 1 is the picture to change.\n"
+        "Pictures after it, if any are pasted, are reference portraits of people already in picture 1, "
+        "from the most important person to the next.\n"
+        "Picture 2 is the most important person. Picture 3 is the second person. Further pictures continue in that order.\n"
+        "Use a reference only when that picture is attached.\n"
+        "When a reference is attached, that person keeps the face and the clothes in the reference. "
+        "Keep that person's place, size, pose, and action from picture 1.\n"
+        "Do not add a person who is not already in picture 1.\n\n"
+        + ACTOR_AGE_LOOK
+    )
+
+
+def build_picture_flow_prompt(
+    *,
+    task: str,
+    text: str,
+    visual_style: str = "",
+    region: str = "",
+    era: str = "",
+) -> str:
+    """按画风处理和说明文字，组装这一次的图片提示词。人物提取用固定提示。"""
+    if task not in {k for k, _ in PICTURE_FLOW_TASK_CHOICES}:
+        task = "keep"
+    if text not in {k for k, _ in PICTURE_FLOW_TEXT_CHOICES}:
+        text = "keep"
+    style = (visual_style or "").strip()
+    if task != "extract" and not style:
+        raise ValueError("请先在项目里选定画面风格。")
+    phrase = setting_place_phrase(region, era)
+    if task == "extract":
+        lines = [
+            "Make one clean upper-body portrait of each person already in the attached picture.",
+            "Extract every person. Do not add anyone. Do not drop anyone.",
+            "Show each person from the waist up, turned to face the viewer.",
+            "If two people are facing each other, both turn toward the camera.",
+            "Facial features must be large and readable: eyes, nose, mouth, face shape.",
+            "Clothes must be clear: color, cut, collar, sleeves, pattern.",
+            "Hands are empty and still. Remove anything they were holding: cups, fans, books, tools, weapons, cloth, or any other object.",
+            "Remove the action, the furniture, the scenery, the writing, and every other prop. Nothing remains except the person.",
+            "Keep each person's identity, age, and the clothes they already wear.",
+            "Plain empty background. A clean picture of the face and the clothes.",
+        ]
+        if phrase:
+            lines.append(
+                f"Place and period: {phrase}. "
+                "The clothes and the face belong to this place and this time. "
+                "Do not bring back buildings, streets, or objects."
+            )
+        lines.extend(["", ACTOR_AGE_LOOK])
+        body = "\n".join(lines)
+        label = picture_flow_choice_label("extract", text)
+    elif task == "restyle":
+        lines = [
+            "Make one still picture from the attached picture.",
+            "Keep the same composition, the same people, the same action, and the same story moment.",
+            "Do not add people. Do not change who is doing what.",
+            "Do not keep the original drawing style.",
+            f"Restyle the whole picture into this target style: {style}.",
+            "Faces, clothes, the place, and the objects all take that style. The story in the picture stays the same.",
+            _picture_flow_text_rule(text == "remove"),
+        ]
+        if phrase:
+            lines.append(
+                f"Place and period: {phrase}. "
+                "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
+            )
+        lines.extend(["", _picture_flow_refs()])
+        body = "\n".join(lines)
+        label = picture_flow_choice_label("restyle", text, style)
+    else:
+        lines = [
+            "Make one still picture from the attached picture.",
+            "Keep the same composition, the same people, the same action, and the same story moment.",
+            "Do not add people. Do not change who is doing what.",
+            "Keep the original painting style. "
+            "If the picture is Chinese watercolor, it stays Chinese watercolor. "
+            "If it is gouache, it stays gouache. "
+            "If it is ink, color painting, or another hand-drawn style, that same style remains.",
+            "Color the picture more fully.",
+            f"Shift only a little toward this project style: {style}.",
+            "The original style is still what you see. This is not a full change into that style.",
+            _picture_flow_text_rule(text == "remove"),
+        ]
+        if phrase:
+            lines.append(
+                f"Place and period: {phrase}. "
+                "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
+            )
+        lines.extend(["", _picture_flow_refs()])
+        body = "\n".join(lines)
+        label = picture_flow_choice_label("keep", text, style)
+    return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
 
 
 def scene_speech_transform(actor_text: str) -> tuple[str, str] | None:
@@ -762,30 +996,14 @@ NOTEBOOKLM_EXPORT_VARIANTS: dict[str, list[tuple[str, str]]] = {
         ("slideshow", "幻灯片 · 每场景独立一图"),
     ],
     "video": [
-        ("motion", "纯画面 · 动作/表情/场景演进（无口播）"),
-        ("word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
-        ("scene_real", "单画面 · 过渡到贴切的真实画面"),
-        ("start_end", "两画面 · 从开始到结束"),
-        ("interact", "原画面 · 人物互动"),
-    ],
-    "speaking": [
-        ("think", "主人公说话 + 自己思考 voiceover（自言自语，嘴巴不动）"),
-        ("script", "主人公说话 + 主持人旁白 voiceover（主持人不入镜）"),
-        ("speaking", "仅主人公 speaking（无旁白）"),
-        ("acting", "只演不讲 + 画外旁白 voiceover"),
-    ],
-    "voiceover": [
-        ("narration", "旁白讲述 · 第三人叙述"),
-        ("narration_with_speakingavatar", "旁白讲述 · 主持人说话"),
-        ("supplement", "补充/总结 · 衔接与点评"),
+        ("act_one", "只演不说 · 单画面（动作/表情/场景演进，讲员可评述）"),
+        ("act_two", "只演不说 · 两画面（起始画面到结束画面，讲员可评述）"),
     ],
 }
 
 _NB_EXPORT_DEFAULT_VARIANT = {
     "image": "slideshow",
-    "video": "motion",
-    "speaking": "script",
-    "voiceover": "narration",
+    "video": "act_one",
 }
 
 
@@ -793,7 +1011,7 @@ def normalize_nb_export_mode(mode: str, variant: str = "") -> tuple[str, str]:
     """解析 ``image/slideshow``、``image_slideshow`` 或 legacy ``image`` → (base, variant)。"""
     raw = (mode or "").strip()
     if raw == "speak":
-        raw = "voiceover"
+        raw = "video"
     if "/" in raw:
         base, var = raw.split("/", 1)
         base, var = base.strip(), var.strip()
@@ -806,12 +1024,20 @@ def normalize_nb_export_mode(mode: str, variant: str = "") -> tuple[str, str]:
         raise ValueError(f"Unknown NotebookLM export mode: {mode!r}")
     if not var:
         var = _NB_EXPORT_DEFAULT_VARIANT[base]
+    if base == "video" and var in (
+        "motion",
+        "act_quiet",
+        "word_in_image",
+        "scene_real",
+        "interact",
+        "inner",
+    ):
+        var = "act_one"
+    elif base == "video" and var == "start_end":
+        var = "act_two"
     valid = {v for v, _ in NOTEBOOKLM_EXPORT_VARIANTS[base]}
     if var not in valid:
-        if base == "speaking" and var == "visual_keypoints":
-            var = "speaking"
-        else:
-            raise ValueError(f"Unknown variant {var!r} for mode {base!r}")
+        raise ValueError(f"Unknown variant {var!r} for mode {base!r}")
     return base, var
 
 
@@ -822,8 +1048,6 @@ def nb_export_mode_label(mode: str, variant: str = "") -> str:
     base_names = {
         "image": "Image",
         "video": "Video",
-        "speaking": "Speaking",
-        "voiceover": "Voiceover",
     }
     return f"{base_names.get(base, base)} · {labels.get(var, var)}"
 
@@ -831,8 +1055,6 @@ def nb_export_mode_label(mode: str, variant: str = "") -> str:
 _NB_EXPORT_CAT_LABELS = {
     "image": "Image 幻灯片",
     "video": "Video 视频",
-    "speaking": "Speaking 主人公",
-    "voiceover": "Voiceover 旁白",
 }
 
 _NB_EXPORT_CHOICE_ALIASES = {
@@ -843,69 +1065,33 @@ _NB_EXPORT_CHOICE_ALIASES = {
     "slideshow": ("image", "slideshow"),
     "image/slideshow": ("image", "slideshow"),
     "image/幻灯片": ("image", "slideshow"),
-    "纯画面": ("video", "motion"),
-    "video/纯画面": ("video", "motion"),
-    "video/motion": ("video", "motion"),
-    "video_motion": ("video", "motion"),
-    "motion": ("video", "motion"),
-    "自己思考": ("speaking", "think"),
-    "主人公思考": ("speaking", "think"),
-    "自言自语": ("speaking", "think"),
-    "speaking/think": ("speaking", "think"),
-    "speaking_think": ("speaking", "think"),
-    "念speaking": ("speaking", "script"),
-    "念 speaking": ("speaking", "script"),
-    "主持人旁白": ("speaking", "script"),
-    "speaking/script": ("speaking", "script"),
-    "speaking_script": ("speaking", "script"),
-    "speaking/念speaking": ("speaking", "script"),
-    "仅speaking": ("speaking", "speaking"),
-    "仅 speaking": ("speaking", "speaking"),
-    "speaking/speaking": ("speaking", "speaking"),
-    "只演不讲": ("speaking", "acting"),
-    "speaking/acting": ("speaking", "acting"),
-    "visual_keypoints": ("speaking", "speaking"),
-    "speaking/visual_keypoints": ("speaking", "speaking"),
+    "纯画面": ("video", "act_one"),
+    "video/纯画面": ("video", "act_one"),
+    "video/motion": ("video", "act_one"),
+    "video_motion": ("video", "act_one"),
+    "motion": ("video", "act_one"),
+    "act_quiet": ("video", "act_one"),
+    "video/act_quiet": ("video", "act_one"),
+    "文字动画": ("video", "act_one"),
+    "心里话": ("video", "act_one"),
+    "原画面": ("video", "act_one"),
+    "start_end": ("video", "act_two"),
+    "两画面": ("video", "act_two"),
 }
 
-# Grok 场景 video：NotebookLM 提示词（video + speaking + voiceover，不含 image）
+# Grok 场景 video：NotebookLM 提示词（不含图片）
 GROK_SCENE_VIDEO_NB_VARIANTS: list[tuple[str, str, str]] = [
-    ("video", "motion", "纯画面 · 动作/表情/场景演进（无口播）"),
-    ("video", "word_in_image", "文字动画 · 关键词/思想泡泡（无口播）"),
-    (
-        "speaking",
-        "think",
-        "主人公说话 + 自己思考 voiceover（自言自语，嘴巴不动）",
-    ),
-    (
-        "speaking",
-        "script",
-        "主人公说话 + 主持人旁白 voiceover（主持人不入镜）",
-    ),
-    # 仅主人公说 speaking；无旁白 / voiceover
-    (
-        "speaking",
-        "speaking",
-        "主人公表演和说 speaking (第一人称口播)；无旁白和 voiceover",
-    ),
-    # 主人公只演不讲；画外旁白说 voiceover（主人公不对口型）
-    (
-        "speaking",
-        "acting",
-        "只演不讲 (神态/肢体/思考) + 旁白者(不出现在画面中) voiceover",
-    ),
-    ("voiceover", "narration", "旁白讲述 · 第三人叙述"),
-    ("voiceover", "narration_with_speakingavatar", "旁白讲述 · 主持人说话"),
-    ("voiceover", "supplement", "补充/总结 · 衔接与点评"),
+    ("video", "act_one", "只演不说 · 单画面（动作/表情/场景演进，讲员可评述）"),
+    ("video", "act_two", "只演不说 · 两画面（起始画面到结束画面，讲员可评述）"),
 ]
-GROK_SCENE_VIDEO_NB_DEFAULT_INDEX = 3
+GROK_SCENE_VIDEO_NB_DEFAULT_INDEX = 1
 
 
 def grok_scene_video_nb_export(index: int | None = None) -> tuple[str, str, str]:
     """``index`` 从 1 到列表长度 → ``(base, variant, short_label)``."""
     rows = GROK_SCENE_VIDEO_NB_VARIANTS
     if not rows:
-        return ("speaking", "script", "念 speaking")
+        return ("video", "act_one", "只演不说 · 单画面")
     try:
         i = int(index) if index is not None else GROK_SCENE_VIDEO_NB_DEFAULT_INDEX
     except (TypeError, ValueError):
@@ -934,8 +1120,7 @@ def format_grok_scene_video_nb_choices() -> str:
     return "\n".join(lines)
 
 
-# 兼容旧别名（念 speaking = 3）
-GROK_SCENE_VIDEO_NB_CHOICE = "念speaking"
+GROK_SCENE_VIDEO_NB_CHOICE = "只演不说 · 单画面"
 
 
 def notebooklm_export_flat_choices(lang_label: str = "") -> list[tuple[str, str, str]]:
@@ -1064,22 +1249,14 @@ def scene_payload_for_notebooklm_export(
     scenes: list, mode: str, variant: str = "", narrator: str = ""
 ) -> list[dict]:
     """按 NotebookLM 导出模式裁剪 scene JSON。"""
-    import project_manager
-
     base, var = normalize_nb_export_mode(mode, variant)
-    project_narrator = (narrator or "").strip()
-    if not project_narrator:
-        pc = project_manager.PROJECT_CONFIG or {}
-        project_narrator = (
-            (pc.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
-        )
 
     new_scenes = []
     for scene in scenes:
         new_scene = _notebooklm_scene_content_base(scene)
 
         if base == "video":
-            if var in ("scene_real", "start_end", "interact"):
+            if var in ("act_one", "act_two"):
                 new_scenes.append(
                     _slim_scene_fields(
                         new_scene,
@@ -1092,41 +1269,6 @@ def scene_payload_for_notebooklm_export(
                 ("visual", "speaking", "voiceover"),
             )
             slim["show_this_content_____not_speaking"] = new_scene.pop("speaking", "")+" ~~~ "+new_scene.pop("voiceover", "")
-            new_scenes.append(slim)
-            continue
-        elif base == "voiceover":
-            vo_keys: tuple[str, ...] = ("voiceover", "visual", "speaking")
-            slim = _slim_scene_fields(new_scene, vo_keys)
-            if var == "supplement" or var == "narration_with_speakingavatar":
-                slim["to_supply_this_content"] = slim.pop("speaking", "")
-            if project_narrator:
-                slim["narrator"] = project_narrator
-            new_scenes.append(slim)
-            continue
-        elif base == "speaking":
-            if var in ("script", "think"):
-                slim = _slim_scene_fields(
-                    new_scene,
-                    ("speaking", "voiceover", "actor", "visual"),
-                )
-            elif var == "speaking":
-                slim = _slim_scene_fields(
-                    new_scene,
-                    ("speaking", "actor", "visual"),
-                )
-            elif var == "acting":
-                slim = _slim_scene_fields(
-                    new_scene,
-                    ("visual", "actor", "voiceover"),
-                )
-                sp = (new_scene.get("speaking") or "").strip()
-                if sp:
-                    slim["acting_subtext_from_speaking"] = sp
-            else:
-                slim = _slim_scene_fields(
-                    new_scene,
-                    ("speaking", "actor", "visual"),
-                )
             new_scenes.append(slim)
             continue
 
@@ -1147,99 +1289,163 @@ def scene_payload_for_slideshow_images(
     return scene_payload_for_notebooklm_export(scenes, mode, variant, narrator=narrator)
 
 
-NOTEBOOKLM_VIDEO_MOTION_SILENT = """
-** NO speaking, lip-sync, or voice-over in this video.
-** Prerequisite: slideshow or scene image(s) already generated for the same Scene_Content.
-** Tell the story ONLY through: scene evolution, environmental changes, character actions, facial expressions, and camera movement across the narrative arc.
-** Match emotional beats implied by ``visual``, ``speaking`` / ``voiceover`` subtext — express them via VISUAL change only (not dialogue).
-** Use sound effects that belong in the place. No music.
+NOTEBOOKLM_VIDEO_ACT_SPEECH = """
+** Story people do not speak. No lip-sync. A 人物 line is not heard.
+** Show the story through action, facial expression, and how the scene changes. Use ``visual`` for that change.
+** Read ``actor`` from left to right. Skip anyone named 不出现. Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
+** A 讲员 in entry 1 or entry 2 may speak that entry's line aloud as commentary.
+** A 讲员 with a plain white picture stays off screen. No mouth in the scene moves for that commentary.
+** A 讲员 with a real portrait enters, says only that commentary, then leaves. Face and clothes match the portrait.
+** If neither entry is 讲员, nobody speaks. Action, expression, and place sounds only.
+** When the 讲员 speaks, every 人物 mouth stays closed. One voice at a time. No music.
 """
 
-NOTEBOOKLM_VIDEO_WORD_IN_IMAGE = """
-** NO speaking, lip-sync, or voice-over in this video.
-** Prerequisite: scene image(s) already generated.
-** Show content (Word-in-image) only — animate each key element in sequence (with sound effect) to attract viewer's attention.
-** ONLY in absolute necessary case: Extract the most critical keywords/phrases from ``speaking`` / ``voiceover`` subtext — display as changing background text OR small thought-bubble-style callouts.
-** Keep on-screen text sparse: short titles or keyword clusters; never long paragraphs; do not make the frame busy.
-"""
+NOTEBOOKLM_VIDEO_ACT_ONE = """
+** One scene picture is attached. Picture 1 is the only scene. Keep the same place and the same people.
+** Evolve action, expression, and the scene inside this one picture. Do not cut to a second scene.
+** Pictures after picture 1 are actor references, in ``actor`` order, skipping 不出现.
+** A 人物 reference only shows who is already in picture 1. Do not walk a 人物 in or out. That mouth stays closed.
+""" + NOTEBOOKLM_VIDEO_ACT_SPEECH
 
-NOTEBOOKLM_VIDEO_MOTION_INSTRUCTION = NOTEBOOKLM_VIDEO_MOTION_SILENT
+NOTEBOOKLM_VIDEO_ACT_TWO = """
+** Picture 1 is the opening scene. Picture 2 is the ending scene.
+** Move from picture 1 to picture 2. The audience sees the start, the change, and the end.
+** Carry that change with action, facial expression, and the place itself.
+** Pictures after picture 2 are actor references, in ``actor`` order, skipping 不出现.
+** A 人物 reference only shows who is already in the scenes. Do not walk a 人物 in or out. That mouth stays closed from the opening frame through the ending frame.
+""" + NOTEBOOKLM_VIDEO_ACT_SPEECH
 
-NOTEBOOKLM_ONE_SPEAKER = """
-** One speaker at a time. Only one mouth lip-syncs. Every other mouth stays closed.
-** ``speaking`` and ``voiceover`` never play together. The first person finishes, then the next person starts.
-** Two people never say one line with two mouths.
-"""
+VIDEO_FLOW_FRAME_CHOICES = (
+    ("one", "单画面"),
+    ("two", "多画面"),
+)
+VIDEO_FLOW_BACKGROUND_CHOICES = (
+    ("none", "不加"),
+    ("art_text", "背景文字"),
+    ("bubble", "思想泡泡"),
+)
+VIDEO_FLOW_EVOLVE_CHOICES = (
+    ("keep", "风格不变"),
+    ("to_style", "演进到目标风格"),
+)
 
-NOTEBOOKLM_VIDEO_ACTOR_ORDER = """
-** Skip any actor named 不出现. That person is not in the video and does not speak.
-** Read the remaining ``actor`` entries from left to right. Entry 1 says ``speaking``. Entry 2, if any, says ``voiceover``. Later entries do not take those lines.
-** Do not give entry 1's line to entry 2 or entry 3 because they are easier to see.
-** Only the person who is speaking moves their mouth. A 人物 speaks with the mouth you found in picture 1.
-** A plain white picture for a 讲员 means that 讲员 speaks off screen, so no mouth in the scene moves for that line.
-** A plain white picture for a 人物 means there is no portrait. That 人物 is still in the scene. Read woman or man, the name, chinese or english, and the age on that entry, and find that person in picture 1.
-"""
 
-NOTEBOOKLM_VIDEO_BLANK_REF = """
-** Picture 1 is the scene. Skip any actor named 不出现.
-** Entry 1 says ``speaking``. Entry 2, if any, says ``voiceover``.
-** If this prompt says a later picture is an ending scene, person references start after that scene. Otherwise picture 2 is entry 1, picture 3 is entry 2, and further pictures continue in ``actor`` order.
-** A 讲员 reference is a real portrait, or a plain white picture when that 讲员 is off screen.
-** A 人物 reference is a real portrait when one was pasted. A plain white picture for a 人物 means no portrait: they are still inside picture 1. Use woman or man, the name, chinese or english, and the age number to find them. The white picture is not a face.
-** 讲员 does not stand in the scene the whole time. Parentheses on the 讲员 name say how they enter and leave.
-** 讲员 with a real portrait: enter that way, lip-sync only their own line, then leave. Face and clothes match the portrait.
-** 讲员 with a white picture: stay off screen and still speak. No mouth in the scene moves for that line.
-** 人物 is already inside picture 1. Do not walk a 人物 in or out. A 人物 name has no entrance and no exit.
-** A real 人物 portrait: find that same face and clothes in picture 1. When that 人物 speaks, only that mouth moves.
-** A white 人物 picture: find them by the actor text, not by a face on the white picture. When that 人物 speaks, only that mouth moves.
+def video_flow_choice_label(frames: str, background: str, evolve: str) -> str:
+    """把三组选择写成一行，供窗口标题和提示词开头使用。"""
+    frame_label = dict(VIDEO_FLOW_FRAME_CHOICES).get(frames, frames)
+    bg_label = dict(VIDEO_FLOW_BACKGROUND_CHOICES).get(background, background)
+    parts = [frame_label, bg_label]
+    if frames != "two":
+        evolve_label = dict(VIDEO_FLOW_EVOLVE_CHOICES).get(evolve, evolve)
+        parts.append(evolve_label)
+    return " · ".join(parts)
 
-** Case A — entry 1 is 讲员, entry 2 is 人物. The 讲员 says ``speaking``. The 人物 says ``voiceover``.
-** Picture 2 is the 讲员. White: off-screen voice. Real face: enter, speak, leave.
-** Picture 3 is the 人物. A real face: find that person in picture 1. White: no portrait, so find them by woman or man, name, and age. Lip-sync ``voiceover`` on that mouth only.
 
-** Case B — entry 1 is 人物, entry 2 is 讲员. The 人物 says ``speaking``. The 讲员 says ``voiceover``.
-** Picture 2 is the 人物. A real face: find that person in picture 1. White: no portrait, so find them by woman or man, name, and age. Only that mouth says ``speaking``.
-** Picture 3 is the 讲员. White: the 讲员 narrates off screen. Real face: the 讲员 enters, says ``voiceover``, then leaves.
+def _video_flow_instruction(frames: str, background: str, evolve: str, visual_style: str) -> str:
+    """按这一次的画面、背景、演进选择，只写用得上的那几段。"""
+    style = (visual_style or "").strip() or "realistic"
+    chunks: list[str] = []
+    if frames == "two":
+        chunks.append(
+            """** Picture 1 is the opening frame. Picture 2 is the ending frame.
+** Move from picture 1 to picture 2. The audience sees the start, the change, and the end.
+** Carry that change with action, facial expression, and the place itself.
+** Picture 1's look is the start. Picture 2's look is the end. Do not invent another visual style between them.
+** Pictures after picture 2, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
+** A 人物 reference only shows who is already in these frames. Do not walk a 人物 in or out."""
+        )
+    else:
+        chunks.append(
+            """** One scene picture is attached. Picture 1 is the only scene. Keep the same place and the same people.
+** Pictures after picture 1, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
+** A 人物 reference only shows who is already in picture 1. Do not walk a 人物 in or out."""
+        )
+        if evolve == "to_style":
+            chunks.append(
+                f"""** Open on picture 1 and hold its original style long enough to read it.
+** Then slowly change that look into the target visual style: {style}.
+** The audience must see the change. Show the starting look, a halfway look, and the finished {style}. Do not jump. Do not finish the change in a flash.
+** Same people, same place, recognizable at every moment.
+** A 讲员 commentary may play while the style is still changing."""
+            )
+        else:
+            chunks.append(
+                f"""** Keep the visual style of picture 1 for the whole clip. Do not restyle it.
+** The target style of this project is {style}. Do not move the picture toward that style.
+** Still show action, facial expression, and the scene change in ``visual``, inside the original style.
+** The change stays gentle. The audience remains in the same picture."""
+            )
+    chunks.append(NOTEBOOKLM_VIDEO_ACT_SPEECH.strip())
+    if background == "art_text":
+        chunks.append(
+            """** In the deep background, behind the people, place a few artistic words. They belong to the picture, not to a subtitle bar.
+** Take only the shortest keywords from ``speaking`` and ``voiceover``. A word or a short phrase. Never a sentence. Never a paragraph.
+** Draw the letters in a hand that fits the picture. Do not cover faces.
+** Do not turn the spoken lines into captions."""
+        )
+    elif background == "bubble":
+        chunks.append(
+            """** A small thought bubble may appear, as if a person is thinking. One bubble at a time.
+** The bubble holds a keyword or a very short phrase from ``speaking`` or ``voiceover``. It sits near that person and does not cover the face.
+** It is not a subtitle bar and not a paragraph. If there is no short phrase to think, show no bubble."""
+        )
+    else:
+        chunks.append(
+            """** Do not put words on the picture. No background writing, no thought bubble, no subtitle, no title card.
+** ``speaking`` and ``voiceover`` are not text to draw."""
+        )
+    chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
+    return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
 
-** Case C — entry 1 is 人物, entry 2 is 人物. Both are already in picture 1.
-** Entry 1 says ``speaking``. Entry 2 says ``voiceover``.
-** Picture 2 is 人物1. Picture 3 is 人物2. Match each reference to a different person in picture 1, then lip-sync the matching mouth.
-** A white picture 2 or picture 3 is still that 人物. Match them with their actor text. If picture 3 is missing, 人物1 is the person who matches picture 2. The other person in the scene is 人物2. That remaining mouth says ``voiceover``.
-"""
 
-NOTEBOOKLM_VIDEO_SCENE_TO_REAL = """
-** One scene picture is attached. This is a single-image clip. Keep the same place and the same people.
-** Open on that picture and hold it long enough to read the original art: a simple painted panel, a 连环画 page, or a Chinese painting.
-** Then spend about 4 to 5 seconds turning that art into a photographic scene. The audience must see the change happen.
-** Brushwork, ink, flat color, and drawn outlines slowly become real light, real skin, real cloth, and a real place. The picture stays recognizable at every moment.
-** This is one continuous change across those 4 to 5 seconds. Show the painted look, the halfway look, and the finished photographic look.
-** Speech starts while the picture is still changing. The mouth begins to move during the slow change, and the line continues as the scene becomes real.
-** After those 4 to 5 seconds, stay on the realistic scene. A 讲员 with a real portrait enters for their line, then leaves. A 人物 is already in the scene.
-""" + NOTEBOOKLM_VIDEO_ACTOR_ORDER
+def build_video_flow_prompt(
+    *,
+    frames: str,
+    background: str,
+    evolve: str,
+    visual_style: str,
+    scene_content: list,
+    language: str = "",
+    host_narrator: str = "",
+) -> str:
+    """按画面数量、背景文字、单画面演进，组装这一次的视频提示词。"""
+    if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
+        frames = "one"
+    if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
+        background = "none"
+    if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES}:
+        evolve = "keep"
+    if frames == "two":
+        evolve = "keep"
+    style = (visual_style or "").strip() or "realistic"
+    variant = "act_two" if frames == "two" else "act_one"
+    scenes = scene_content if isinstance(scene_content, list) else []
+    json_content = json.dumps(
+        scene_payload_for_notebooklm_export(scenes, "video", variant, narrator=host_narrator),
+        ensure_ascii=False,
+        indent=2,
+    )
+    instruction = _video_flow_instruction(frames, background, evolve, style)
+    lang_note = _audio_language_instruction(language)
+    audio = "\n".join(
+        part
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), instruction, lang_note)
+        if part
+    )
+    video = "\n".join(
+        part
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), ACTOR_AGE_LOOK.strip(), instruction)
+        if part
+    )
+    parts = {
+        "Visual_Style": style,
+        "Video_choices": video_flow_choice_label(frames, background, evolve),
+        "Instruction_for_video_generation": video,
+        "Instruction_for_audio_generation": audio,
+        "Story_Scene_Content": json_content,
+    }
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
-NOTEBOOKLM_VIDEO_START_END = """
-** Picture 1 is the opening scene. Picture 2 is the ending scene only when picture 2 shows a real place.
-** If picture 2 is plain white, it is not an ending frame. The clip has one scene, picture 1. The white picture is the reference for ``actor`` entry 1. A white 讲员 speaks off screen. A white 人物 stays in picture 1 and is found by woman or man, name, and age.
-** When picture 2 is a real scene, move from picture 1 to picture 2 gradually. Picture 3 is then entry 1's reference. Picture 4 is entry 2's reference.
-** A white reference keeps that 讲员 off screen. A 讲员 with a real face enters, lip-syncs, then leaves. A 人物 is already in the scene; the reference only shows which person they are.
-""" + NOTEBOOKLM_VIDEO_ACTOR_ORDER
-
-NOTEBOOKLM_VIDEO_INTERACT = """
-** One scene picture is attached. Keep it. The place, the framing, and the drawing style stay as they are.
-** Do not restyle the picture. Do not fade it into a photograph or another art style. The scene itself almost does not change.
-** Eyes, looks, and small expressions are allowed. Use them.
-** Show the people interacting: the first ``actor`` and the second, if there is one. Their gestures and faces carry the moment.
-** While one person speaks, the other may look, nod, or react. That other mouth stays closed.
-** Also perform what ``visual`` describes. If ``visual`` names a change, show that change through the people, not by replacing the scene.
-""" + NOTEBOOKLM_VIDEO_ACTOR_ORDER
-
-NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION = """
-** Entry 1 speaks ``speaking``. Entry 2, if any, speaks ``voiceover``.
-** One mouth at a time. The other mouth stays closed until that line is finished.
-** The lip-sync voice is that speaker's own voice. woman is female. man is male.
-** Deliver the lines. Do not turn them into subtitles.
-** Use ``visual`` as what the picture does, not as a spoken line.
-"""
 
 NOTEBOOKLM_VIDEO_NO_MUSIC = """
 ** No music in this clip. No score, no song, no melody, no background music, no musical sting, no mood track.
@@ -1247,97 +1453,6 @@ NOTEBOOKLM_VIDEO_NO_MUSIC = """
 ** Sound effects that belong to this place are welcome: birds, wind, rain, water, footsteps, a door, a cup set down, cloth, leaves, a street, a room.
 ** Keep those effects under the voices. Do not turn them into a tune.
 """
-
-NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION = """
-** Silent-video variants: no spoken dialogue. Sound effects that belong in the place are fine. No music.
-** Use ``visual`` / ``caption`` (and optional subtext fields) as staging direction for on-screen change — not as spoken lines. Do not assign lip-sync or narrator/host roles.
-"""
-
-NOTEBOOKLM_VOICEOVER_NARRATION = """
-** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
-** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
-** Lip-sync: Host/Narrator talking-avatar when present in scene image; otherwise voice-over off-screen only.
-** Scene-Image (2nd-image) animate elements inside, in sequence to follow the progress of the speaking)
-** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
-"""
-
-NOTEBOOKLM_VOICEOVER_SUPPLEMENT = """
-** Host/Narrator supplementary voiceover — use ``voiceover`` as bridge, summary, commentary, or contextual supplement (not full scene re-telling).
-** Tone: third-person counselor/analyst — connect scenes, highlight insight, fill gaps; shorter and reflective vs. pure narration.
-** May combine the ``voiceover`` and the supplement content based on ``visual`` and ``speaking``.
-** Lip-sync: Host/Narrator talking-avatar when present in scene image; off-screen OK when no Host in image.
-** Do NOT use protagonist/``actor`` identity for this track — narrator voice only.
-"""
-
-
-NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR = """
-** Host/Narrator voiceover ONLY — deliver the ``voiceover`` field verbatim in natural third-person narration.
-** Tone: objective storyteller — describe what happens and what it means; not first-person protagonist monologue.
-** Lip-sync: Use the person in 2nd-image as Talking-Avatar, to introduce the 1st-image (scene-image ~~ animate elements in it, following the progress of the speaking)
-"""
-
-
-NOTEBOOKLM_NARRATOR_AUDIO_ONLY = """
-** Narrator/Host = OFF-SCREEN AUDIO ONLY — never visible, never in frame, never as talking-head/avatar.
-** ``voiceover`` is delivered by narrator voice in the background; everyone on screen only ACTS (emotion, reaction, movement) while voiceover plays — mouths stay closed to voiceover.
-** CRITICAL — ZERO lip-sync to ``voiceover``: not the protagonist, not supporting characters, not anyone in the frame. No on-screen person becomes the narrator.
-** ONLY the scene protagonist (``actor`` field) lip-syncs ``speaking`` — the one and only lip-sync track in this video.
-"""
-
-NOTEBOOKLM_ACTOR_HOST_READING = """
-** Read ``actor`` exactly. Parts are separated by " | ". Never by ";". The scene already says if a host is there. If an earlier line says the host never appears, follow this block instead.
-** Two story people and no host: ``人物1：... | 人物2：...`` with no 讲员. ``speaking`` is the first person, that mouth moves. ``voiceover`` is the second person, and only that mouth moves, after the first line ends. The two mouths never move together. Do not add a host.
-** One story person and the host: ``人物1：... | 讲员：look``. ``speaking`` is that person, mouth moves. ``voiceover`` is the host. The host may be in the picture; during the host line the story person's mouth stays closed.
-** Host alone: the narrator is the only speaker. ``actor`` is exactly ``讲员：look``. No other person. ``voiceover`` is the narrator, or ``speaking`` is the narrator and ``voiceover`` is empty. Do not invent another voice. Do not put mood or gesture in ``actor``.
-"""
-
-NOTEBOOKLM_SPEAKING_THINK = """
-** Protagonist = scene ``actor`` field (1st-person story character). Delivers ``speaking`` as lip-synced dialogue.
-** If no global protagonist is configured, use each scene's ``actor`` from Story_Scene_Content — do not substitute another speaker.
-** ``voiceover`` may play BEFORE or AFTER the protagonist ``speaking`` line as the scene needs.
-** ``speaking`` is the line said aloud. The protagonist's mouth moves, and lip-sync covers that line only.
-** ``voiceover`` is the same protagonist thinking — talking to himself — while he acts and interacts in the scene. He keeps the action going; his mouth stays closed for the whole ``voiceover``. It is not a second spoken line, and nobody on screen mouths it.
-** Deliver ``voiceover`` in his own voice, as written. Do not turn it into a host or an outside narrator.
-** Do NOT read text printed in the image aloud.
-** Inner thought, mouth closed, only when one story person is listed and there is no 讲员.
-** Follow cuts and angle changes written in ``visual``. No words on the image.
-""" + NOTEBOOKLM_ACTOR_HOST_READING
-
-NOTEBOOKLM_SPEAKING_SCRIPT = """
-** Protagonist = scene ``actor`` field (1st-person story character). Delivers ``speaking`` as lip-synced dialogue.
-** If no global protagonist is configured, use each scene's ``actor`` from Story_Scene_Content — do not substitute another speaker.
-** ``voiceover`` may play BEFORE or AFTER the protagonist ``speaking`` line as the scene needs.
-""" + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
-** Subjective, in-the-moment tone for ``speaking``; ``voiceover`` stays third-person narrator tone.
-** This option's ``voiceover`` is the host/narrator off screen, not the protagonist thinking to himself.
-** Do NOT read text printed in the image aloud.
-** Follow cuts and angle changes written in ``visual``. No words on the image.
-""" + NOTEBOOKLM_ACTOR_HOST_READING
-
-NOTEBOOKLM_SPEAKING_ONLY = """
-** Protagonist (scene ``actor`` field) performs AND delivers ONLY the ``speaking`` field as 1st-person lip-synced dialogue.
-** NO narrator/host voiceover track — do not speak ``voiceover`` (it may inform staging only).
-** ONLY the protagonist lip-syncs — no other visible character lip-syncs.
-** Do NOT read text printed in the image aloud.
-** Follow cuts and angle changes written in ``visual``. No words on the image.
-** In this option do not speak ``voiceover``. If there is no 讲员, the other story people only act. If the scene is only ``讲员：...``, ``speaking`` is the host.
-""" + NOTEBOOKLM_ACTOR_HOST_READING
-
-NOTEBOOKLM_SPEAKING_ACTING_SILENT = """
-** Protagonist (scene ``actor`` field) acts silently — NO lip-sync, NO spoken ``speaking`` dialogue on screen.
-** Use ``speaking`` / ``acting_subtext_from_speaking`` only as emotional/subtext reference: acting, wondering, reacting, hesitating, processing.
-** Express inner state through facial expression, posture, gesture, and subtle movement.
-""" + NOTEBOOKLM_NARRATOR_AUDIO_ONLY + """
-** May reference ``visual`` composition for what to react to; do NOT read words printed in the image aloud.
-** When ``voiceover`` is present, there is no 讲员, and only one story person is listed, it is that person thinking: mouth closed.
-** Follow cuts and angle changes written in ``visual``. No words on the image.
-""" + NOTEBOOKLM_ACTOR_HOST_READING
-
-# 旧变体 visual_keypoints 已并入 speaking/speaking；保留常量供旧剪贴板/脚本引用
-NOTEBOOKLM_SPEAKING_VISUAL_KEYPOINTS = NOTEBOOKLM_SPEAKING_ONLY
-
-NOTEBOOKLM_SPEAKING_INSTRUCTION = NOTEBOOKLM_SPEAKING_SCRIPT
-
 
 # Direct Video：从单张场景图生成视频的指令选项（Story 编辑区「Direct Video」按钮）。
 DIRECT_VIDEO_PROTAGONIST_REFLECTION = """
@@ -1741,96 +1856,25 @@ def build_notebooklm_gen_instruction_clipbody(
                 )
 
     elif base == "video":
-        vid_instr = {
-            "word_in_image": NOTEBOOKLM_VIDEO_WORD_IN_IMAGE,
-            "scene_real": NOTEBOOKLM_VIDEO_SCENE_TO_REAL,
-            "start_end": NOTEBOOKLM_VIDEO_START_END,
-            "interact": NOTEBOOKLM_VIDEO_INTERACT,
-        }.get(var, NOTEBOOKLM_VIDEO_MOTION_SILENT)
+        vid_instr = NOTEBOOKLM_VIDEO_ACT_TWO if var == "act_two" else NOTEBOOKLM_VIDEO_ACT_ONE
         parts["Instruction_for_video_generation"] = "\n".join(
             part
             for part in (
                 NOTEBOOKLM_VOICE_MATCH.strip(),
-                NOTEBOOKLM_ONE_SPEAKER.strip(),
                 ACTOR_AGE_LOOK,
                 vid_instr.strip(),
-                NOTEBOOKLM_VIDEO_BLANK_REF.strip(),
                 NOTEBOOKLM_VIDEO_NO_MUSIC.strip(),
             )
             if part
         )
-        audio_instr = (
-            NOTEBOOKLM_VIDEO_DIALOGUE_INSTRUCTION
-            if var in ("scene_real", "start_end", "interact")
-            else NOTEBOOKLM_VIDEO_AUDIO_INSTRUCTION
-        ).strip() + "\n" + NOTEBOOKLM_VIDEO_BLANK_REF.strip() + "\n" + NOTEBOOKLM_VIDEO_NO_MUSIC.strip()
         lang_note = _audio_language_instruction(language)
         parts["Instruction_for_audio_generation"] = "\n".join(
             part
-            for part in (NOTEBOOKLM_VOICE_MATCH.strip(), NOTEBOOKLM_ONE_SPEAKER.strip(), audio_instr, lang_note)
-            if part
-        )
-        parts["Story_Scene_Content"] = json_content
-
-    elif base == "voiceover":
-        parts["Voice"] = (
-            f"{host_narrator} ~ Host/Narrator"
-        )
-        vo_instr = (
-            NOTEBOOKLM_VOICEOVER_SUPPLEMENT
-            if var == "supplement"
-            else NOTEBOOKLM_VOICEOVER_NARRATION_WITH_SPEAKINGAVATAR
-            if var == "narration_with_speakingavatar"
-            else NOTEBOOKLM_VOICEOVER_NARRATION
-        )
-        vo_block = vo_instr.strip()
-        lang_note = _audio_language_instruction(language)
-        parts["Instruction_for_voiceover_audio"] = "\n".join(
-            part
             for part in (
                 NOTEBOOKLM_VOICE_MATCH.strip(),
-                NOTEBOOKLM_ONE_SPEAKER.strip(),
-                vo_block,
+                vid_instr.strip(),
+                NOTEBOOKLM_VIDEO_NO_MUSIC.strip(),
                 lang_note,
-                NOTEBOOKLM_VIDEO_BLANK_REF.strip(),
-            )
-            if part
-        )
-        parts["Story_Scene_Content"] = json_content
-
-    elif base == "speaking":
-        if main_character:
-            parts["Voice"] = f"{main_character} ~ Protagonist/actor (1st person)"
-        if host_narrator:
-            parts["Narrator_audio"] = (
-                f"{host_narrator} ~ host look for this run. "
-                f"Use the host only when ``actor`` says ``主持人``. "
-                f"Two or more story people are ``人物1 | 人物2`` and have no 讲员."
-            )
-        else:
-            parts["Narrator_audio"] = (
-                "No host look was chosen. "
-                "If ``actor`` still says ``主持人``, keep that person as written in the scene."
-            )
-        sp_instr = (
-            NOTEBOOKLM_SPEAKING_ONLY
-            if var == "speaking"
-            else NOTEBOOKLM_SPEAKING_ACTING_SILENT
-            if var == "acting"
-            else NOTEBOOKLM_SPEAKING_THINK
-            if var == "think"
-            else NOTEBOOKLM_SPEAKING_SCRIPT
-        )
-        sp_block = sp_instr.strip()
-        lang_note = _audio_language_instruction(language)
-        parts["Instruction_for_speaking_audio"] = "\n".join(
-            part
-            for part in (
-                NOTEBOOKLM_VOICE_MATCH.strip(),
-                NOTEBOOKLM_ONE_SPEAKER.strip(),
-                sp_block,
-                lang_note,
-                NOTEBOOKLM_VIDEO_BLANK_REF.strip(),
             )
             if part
         )
