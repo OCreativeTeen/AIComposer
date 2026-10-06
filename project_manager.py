@@ -772,6 +772,7 @@ LIST_ITEM_TOP_PROJECT_KEYS = (
     "topic_category",
     "topic_subtype",
     "tags",
+    "summary",
 )
 
 _LIST_REF_PREFIX = "chanlist:"

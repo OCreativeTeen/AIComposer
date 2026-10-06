@@ -7598,7 +7598,7 @@ class MediaGUIManager:
                     "没有 PDF 时只用 analyzed content。"
                     "「智能生成」用所选提示和当前材料生成 scene_content 并自动保存。"
                     "把 PDF 拖进本窗口后，可以把材料改成这份 PDF。PDF 多半是一页一张图，每一张图是一场。"
-                    "「拷贝 PDF」把这份 PDF 文件放进剪贴板，可以粘贴到别的 AI 工具。"
+                    "材料选分析报告或 PDF。双击下面的内容区，把分析报告或 PDF 拷到剪贴板。"
                     "「集」「场」选定后立刻把对应场景 JSON 拷到剪贴板。"
                     "Image 单图和幻灯片只拷提示词。"
                     "Video、Speaking、Voiceover 仍把选定场景写进提示词。"
@@ -7627,15 +7627,15 @@ class MediaGUIManager:
             pdf_source_cache = {"path": "", "text": "", "pages": 0, "has_text": False}
             material_row = ttk.Frame(frm)
             material_row.pack(fill=tk.X, pady=(0, 6))
-            ttk.Label(material_row, text="材料").pack(side=tk.LEFT, padx=(0, 5))
-            material_combo = ttk.Combobox(
-                material_row,
-                state="disabled",
-                width=22,
-                values=["analyzed content"],
+            ttk.Label(material_row, text="材料").pack(side=tk.LEFT, padx=(0, 8))
+            rb_analyzed = ttk.Radiobutton(
+                material_row, text="分析报告", value="analyzed", variable=material_var
             )
-            material_combo.pack(side=tk.LEFT, padx=(0, 8))
-            material_combo.set("analyzed content")
+            rb_analyzed.pack(side=tk.LEFT, padx=(0, 12))
+            rb_pdf = ttk.Radiobutton(
+                material_row, text="PDF", value="pdf", variable=material_var
+            )
+            rb_pdf.pack(side=tk.LEFT, padx=(0, 12))
             pdf_layout_combo = ttk.Combobox(
                 material_row,
                 state="readonly",
@@ -7643,6 +7643,11 @@ class MediaGUIManager:
                 values=["由 AI 判断场数", "每一页一个场景"],
             )
             pdf_layout_combo.set("由 AI 判断场数")
+
+            material_preview = scrolledtext.ScrolledText(
+                frm, wrap=tk.WORD, width=100, height=12, font=("Arial", 10)
+            )
+            material_preview.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
             def _copy_slide_pdf():
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -7653,7 +7658,24 @@ class MediaGUIManager:
                         f"PDF 已复制到剪贴板，可以粘贴到 AI 工具：\n{os.path.basename(slide)}",
                     )
 
-            copy_pdf_btn = ttk.Button(material_row, text="拷贝 PDF", command=_copy_slide_pdf)
+            def _copy_analyzed_text():
+                raw = video_detail.get("analyzed_content") or ""
+                text = raw if isinstance(raw, str) else str(raw)
+                if not text.strip():
+                    show_auto_close_popup(dlg, "分析报告", "这一条没有分析报告。")
+                    return
+                _copy_text_to_clipboard(dlg, text)
+                show_auto_close_popup(dlg, "已复制", "分析报告已拷到剪贴板。")
+
+            def _on_material_preview_double(_event=None):
+                if material_var.get() == "pdf":
+                    _copy_slide_pdf()
+                else:
+                    _copy_analyzed_text()
+                return "break"
+
+            material_preview.bind("<Double-Button-1>", _on_material_preview_double)
+            material_preview.bind("<Key>", lambda _event: "break")
 
             def _pdf_layout_mode() -> str:
                 shown = (pdf_layout_combo.get() or "").strip()
@@ -7670,35 +7692,54 @@ class MediaGUIManager:
                 pdf_source_cache["has_text"] = has_text
                 return pdf_source_cache
 
+            def _fill_material_preview():
+                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+                use_pdf = material_var.get() == "pdf" and bool(slide)
+                material_preview.configure(state=tk.NORMAL)
+                material_preview.delete("1.0", tk.END)
+                if use_pdf:
+                    cached = _remember_pdf_source(slide)
+                    pages = int(cached.get("pages") or 0)
+                    material_preview.insert(
+                        "1.0",
+                        f"{os.path.basename(slide)}\n共 {pages} 页\n\n双击这里，把这份 PDF 拷到剪贴板。",
+                    )
+                else:
+                    raw = video_detail.get("analyzed_content") or ""
+                    text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                    material_preview.insert(
+                        "1.0",
+                        text or "（这一条没有分析报告）",
+                    )
+                    material_preview.insert(tk.END, "\n\n双击这里，把分析报告拷到剪贴板。")
+
             def _sync_material_widgets(*_args):
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
                 if slide:
-                    material_combo.config(state="readonly", values=["analyzed content", "PDF"])
-                    material_combo.set("PDF" if material_var.get() == "pdf" else "analyzed content")
+                    rb_pdf.state(["!disabled"])
                 else:
-                    material_var.set("analyzed")
-                    material_combo.config(state="disabled", values=["analyzed content"])
-                    material_combo.set("analyzed content")
+                    if material_var.get() != "analyzed":
+                        material_var.set("analyzed")
+                    rb_pdf.state(["disabled"])
                 series = "series" in (prompt_combo_var.get() or "").lower()
                 pdf_layout_combo.pack_forget()
-                copy_pdf_btn.pack_forget()
-                if material_var.get() == "pdf" and series:
+                if material_var.get() == "pdf" and series and slide:
                     pdf_layout_combo.pack(side=tk.LEFT)
                     if not (pdf_layout_combo.get() or "").strip():
                         pdf_layout_combo.set("由 AI 判断场数")
-                if slide:
-                    copy_pdf_btn.pack(side=tk.LEFT, padx=(8, 0))
+                _fill_material_preview()
 
-            def _on_material_selected(_event=None):
-                shown = (material_combo.get() or "").strip()
-                material_var.set("pdf" if shown == "PDF" else "analyzed")
+            def _on_material_selected(*_args):
+                if material_var.get() == "pdf" and not (_find_gen_video_slide_for_row(video_detail) or "").strip():
+                    material_var.set("analyzed")
                 _sync_material_widgets()
                 refresh_scene_prompt()
 
-            material_combo.bind("<<ComboboxSelected>>", _on_material_selected)
+            material_var.trace_add("write", _on_material_selected)
             pdf_layout_combo.bind(
                 "<<ComboboxSelected>>", lambda _e: refresh_scene_prompt()
             )
+            _sync_material_widgets()
 
             ttk.Label(frm, text="").pack(anchor=tk.W)
 
@@ -9424,6 +9465,14 @@ class MediaGUIManager:
             if isinstance(video_detail, dict)
             else ""
         )
+        if isinstance(video_detail, dict):
+            fresh = project_manager.load_video_detail_row_for_config(
+                video_detail.get("project_profile") or video_detail
+            )
+            if isinstance(fresh, dict):
+                saved = fresh.get("summary")
+                if isinstance(saved, str) and saved.strip():
+                    video_detail["summary"] = saved
         flow = ask_publish_metadata_then_schedule(
             parent,
             language=self.language,

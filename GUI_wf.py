@@ -379,7 +379,6 @@ class WorkflowGUI:
         row = ttk.Frame(shared_frame)
         row.pack(fill=tk.X)
 
-        ttk.Button(row, text="摘要", command=self._do_speaking_summarize).pack(side=tk.RIGHT, padx=(4, 4))
         ttk.Button(row, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Button(row, text="SUNO", command=self._open_suno_gui).pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Button(row, text="清WAN", command=self.clean_wan).pack(side=tk.RIGHT)
@@ -3446,15 +3445,15 @@ class WorkflowGUI:
         ttk.Separator(ai_row1, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(
             ai_row1,
-            text="分镜",
-            width=4,
+            text="生成分镜",
+            width=8,
             command=lambda: self._open_workflow_content_field_editor("scene_content"),
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             ai_row1,
-            text="分析",
-            width=4,
-            command=lambda: self._open_workflow_content_field_editor("analyzed_content"),
+            text="生成摘要",
+            width=8,
+            command=self._do_speaking_summarize,
         ).pack(side=tk.LEFT)
 
         episode_tools_frame = ttk.LabelFrame(right_panel, text="本集内容", padding=(8, 2))
@@ -3463,26 +3462,26 @@ class WorkflowGUI:
         episode_btn_row.pack(side=tk.TOP, fill=tk.X)
         ttk.Button(
             episode_btn_row,
-            text="拷提",
-            width=5,
+            text="拷贝提示",
+            width=8,
             command=self.copy_episode_prompt,
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             episode_btn_row,
-            text="拷集",
-            width=5,
+            text="拷贝PDF",
+            width=8,
             command=self.copy_current_episode_pdf,
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             episode_btn_row,
-            text="拆集",
-            width=5,
+            text="拆成新集",
+            width=8,
             command=self.split_current_group,
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             episode_btn_row,
-            text="贴回",
-            width=5,
+            text="贴回本集",
+            width=8,
             command=self.paste_episode_scenes,
         ).pack(side=tk.LEFT)
 
@@ -3494,24 +3493,13 @@ class WorkflowGUI:
 
         scene_text_row = ttk.Frame(self.video_edit_frame)
         scene_text_row.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
-        ttk.Button(
+        self._scene_speech_btn = ttk.Button(
             scene_text_row,
             text="场景变换",
             width=8,
-            command=lambda: self.copy_scene_speech_transform(1),
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            scene_text_row,
-            text="场景变换2",
-            width=10,
-            command=lambda: self.copy_scene_speech_transform(2),
-        ).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(
-            scene_text_row,
-            text="场景变换3",
-            width=10,
-            command=lambda: self.copy_scene_speech_transform(3),
-        ).pack(side=tk.LEFT, padx=(4, 0))
+            command=self._ask_scene_speech_transform,
+        )
+        self._scene_speech_btn.pack(side=tk.LEFT)
         ttk.Button(
             scene_text_row,
             text="贴回",
@@ -3949,7 +3937,7 @@ class WorkflowGUI:
 
         ttk.Label(
             dlg,
-            text="已复制到剪贴板。可编辑后点「保存到项目摘要」写入配置，或取消不保存。",
+            text="已复制到剪贴板。可编辑后点「保存到故事摘要」，写入这一条列表的 summary。",
             wraplength=680,
         ).pack(anchor="w", padx=12, pady=(12, 6))
 
@@ -3962,17 +3950,21 @@ class WorkflowGUI:
 
         def on_save():
             text = body.get("1.0", tk.END).strip()
-            if project_manager.PROJECT_CONFIG is not None:
-                project_manager.PROJECT_CONFIG["summary"] = text
-                save_project_config(parent=self.root)
+            if project_manager.PROJECT_CONFIG is None:
+                messagebox.showwarning("摘要", "没有打开的故事，写不进去。", parent=dlg)
+                return
+            project_manager.PROJECT_CONFIG["summary"] = text
+            if not save_project_config(parent=dlg):
+                messagebox.showwarning("摘要", "没有写进故事列表。", parent=dlg)
+                return
             dlg.destroy()
-            messagebox.showinfo("SUMMARIZE", "摘要已写入项目配置。", parent=self.root)
+            messagebox.showinfo("摘要", "概述已写入这一条故事的 summary。", parent=self.root)
 
         def on_cancel():
             dlg.destroy()
 
         ttk.Button(btn_f, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_f, text="保存到项目摘要", command=on_save).pack(side=tk.RIGHT)
+        ttk.Button(btn_f, text="保存到故事摘要", command=on_save).pack(side=tk.RIGHT)
 
         dlg.protocol("WM_DELETE_WINDOW", on_cancel)
 
@@ -9477,6 +9469,21 @@ class WorkflowGUI:
                 scene[key] = val
                 applied += 1
         return applied
+
+    def _ask_scene_speech_transform(self) -> None:
+        """场景变换：先选改一场、两场还是三场，再把对应提示词拷走。"""
+        picked = self._ask_near_choices(
+            self._scene_speech_btn,
+            "场景变换",
+            [
+                ("1", "只改这一场的讲话和旁白"),
+                ("2", "这一场和下一场合成一段"),
+                ("3", "这一场连后面两场合成一段"),
+            ],
+            hint="按现在的人物重写说法。提示词拷走以后，用旁边的贴回写回这一场。",
+        )
+        if picked in ("1", "2", "3"):
+            self.copy_scene_speech_transform(int(picked))
 
     def copy_scene_speech_transform(self, span: int = 1) -> None:
         """按当前 actor 选一种说法，把提示词拷进剪贴板。span 为 2 或 3 时并进后面连续几场。"""
