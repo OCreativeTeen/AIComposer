@@ -3311,15 +3311,11 @@ class WorkflowGUI:
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        # AI前插、AI后插：简单拷贝，或在相邻两场之间插入过渡场景
-        self.btn_add_scene_before = ttk.Button(
-            video_control_frame, text="AI前插", command=self.add_scene_before, width=8
+        # 在当前这场和上一场、或和下一场之间插入过渡
+        self.btn_add_scene = ttk.Button(
+            video_control_frame, text="插入过渡", command=self.add_scene_insert, width=8
         )
-        self.btn_add_scene_before.pack(side=tk.LEFT, padx=1)
-        self.btn_add_scene_after = ttk.Button(
-            video_control_frame, text="AI后插", command=self.add_scene_after, width=8
-        )
-        self.btn_add_scene_after.pack(side=tk.LEFT, padx=1)
+        self.btn_add_scene.pack(side=tk.LEFT, padx=1)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -6302,13 +6298,11 @@ class WorkflowGUI:
 
 
     def update_add_scene_insert_buttons_state(self):
-        """当前有场景时，前插和后插都可以用。"""
-        if not getattr(self, "btn_add_scene_before", None) or not getattr(self, "btn_add_scene_after", None):
+        """当前有场景时可以打开插入过渡。"""
+        if not getattr(self, "btn_add_scene", None):
             return
         scene = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
-        state = tk.NORMAL if scene else tk.DISABLED
-        self.btn_add_scene_before.config(state=state)
-        self.btn_add_scene_after.config(state=state)
+        self.btn_add_scene.config(state=tk.NORMAL if scene else tk.DISABLED)
 
     def _insert_image_sides(self, before: bool) -> tuple:
         """前插时前一场是上一场、后一场是当前这场。后插相反。缺一边就不做首尾衔接。"""
@@ -6338,45 +6332,50 @@ class WorkflowGUI:
             self.current_scene_index += 1
         self.refresh_gui_scenes()
 
-    _TRANSITION_MODES = (
-        ("两人对话", "两个人短短说几句，把两场连上"),
-        ("一人说话", "其中一个人用简单的话过渡"),
-        ("自言自语", "一个人的心里话，写在讲话里"),
-        ("动作表现", "可以不说话，用动作、表情和音效过渡"),
-        ("解说员", "第三方解说员承上启下"),
+    _TRANSITION_SPACE = (
+        ("不变", "地方和时间都保持"),
+        ("换地方", "例如从室外走进室内"),
+        ("换时间", "白天到黑夜，或反过来"),
+        ("一起变", "地方和时间一起变。场面大，过渡很短"),
     )
-    _TRANSITION_LENGTHS = (
-        ("短", "大约前后内容的三成"),
-        ("中", "大约六成"),
-        ("长", "和前后一样充实"),
+    _TRANSITION_PEOPLE = (
+        ("没有变化", "在场的人不动"),
+        ("自然增减", "平淡地走进来，或平静地走开"),
+        ("意外增减", "由意外带出来，例如车忽然停下、有人下来"),
+    )
+    _TRANSITION_SPEECH = (
+        ("不说话", "这场不开口"),
+        ("简单寒暄", "一两句没有实际内容的招呼"),
+        ("小动作", "碰杯、吃饭，声音跟着动作"),
+        ("音乐", "用一段短音乐把两场带过去"),
+        ("场景烘托", "对话停一下，把谈到的气氛在环境里托出来"),
+    )
+    _TRANSITION_EFFECTS = (
+        ("自然转换", "从起始图到终止图自然过渡"),
+        ("叠化", "两张图慢慢融在一起"),
+        ("嗖一下", "一声掠过，画面很快甩过去"),
+        ("翻书", "像翻过一页书"),
+        ("擦除", "后一张图从一边推开前一张"),
+        ("闪白", "先闪白，再落到终止图"),
     )
 
-    def add_scene_before(self):
-        """在当前场景前面插入：简单拷贝，或接上一场的过渡。"""
-        self._open_ai_insert_dialog(True)
+    def add_scene_insert(self):
+        """在当前这场和上一场、或和下一场之间插入。"""
+        self._open_ai_insert_dialog()
 
-    def add_scene_after(self):
-        """在当前场景后面插入：简单拷贝，或接下一场的过渡。"""
-        self._open_ai_insert_dialog(False)
-
-    def _open_ai_insert_dialog(self, before: bool) -> None:
-        """AI前插、AI后插各用自己的窗口。第一项是简单拷贝，下面才是过渡。"""
+    def _open_ai_insert_dialog(self) -> None:
+        """一个窗口里选择插在上一场和本场之间，还是本场和下一场之间。"""
         self.update_current_scene()
         scene = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
         if not scene:
             return
-        other_index = self.current_scene_index - 1 if before else self.current_scene_index + 1
-        has_other = 0 <= other_index < len(self.workflow.scenes or [])
-        title = "AI前插" if before else "AI后插"
-        if before:
-            intro = "插在当前这场前面，仍在这一集。过渡场景接的是上一场和当前这场。"
-            missing = "前面没有场景，不能做过渡。简单拷贝仍可用。"
-        else:
-            intro = "插在当前这场后面，仍在这一集。过渡场景接的是当前这场和下一场。"
-            missing = "后面没有场景，不能做过渡。简单拷贝仍可用。"
+        total = len(self.workflow.scenes or [])
+        has_prev = self.current_scene_index > 0
+        has_next = self.current_scene_index + 1 < total
+        place_var = tk.StringVar(value="before" if has_prev else "after")
 
         dlg = tk.Toplevel(self.root)
-        dlg.title(title)
+        dlg.title("插入过渡")
         dlg.transient(self.root)
         dlg.resizable(False, False)
         dlg.withdraw()
@@ -6384,70 +6383,126 @@ class WorkflowGUI:
 
         main = ttk.Frame(dlg, padding=12)
         main.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(main, text=title, font=("Arial", 13, "bold")).pack(anchor=tk.W)
-        ttk.Label(main, text=intro, wraplength=460, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 10))
+        ttk.Label(main, text="插入过渡", font=("Arial", 13, "bold")).pack(anchor=tk.W)
+        ttk.Label(
+            main,
+            text="插在当前这场和相邻一场之间，仍在这一集。过渡接的就是选中的这两场。",
+            wraplength=460,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 8))
+
+        ttk.Label(main, text="插在").pack(anchor=tk.W)
+        rb_before = ttk.Radiobutton(
+            main,
+            text="本场和上一场之间" if has_prev else "本场和上一场之间（这是第一场，没有上一场）",
+            value="before",
+            variable=place_var,
+        )
+        rb_before.pack(anchor=tk.W)
+        rb_after = ttk.Radiobutton(
+            main,
+            text="本场和下一场之间" if has_next else "本场和下一场之间（这是最后一场，没有下一场）",
+            value="after",
+            variable=place_var,
+        )
+        rb_after.pack(anchor=tk.W, pady=(0, 8))
+        if not has_prev:
+            rb_before.state(["disabled"])
+        if not has_next:
+            rb_after.state(["disabled"])
+
+        def _before() -> bool:
+            return place_var.get() == "before"
 
         ttk.Button(
             main,
             text="简单拷贝",
-            command=lambda: self._close_and_insert_copy(dlg, before),
+            command=lambda: self._close_and_insert_copy(dlg, _before()),
         ).pack(fill=tk.X)
-        ttk.Label(
-            main,
-            text=(
-                "文字、声音和视频按当前这场拷贝。有上一场时，起始图用上一场的尾图，尾图用当前这场的起始图。"
-                if before
-                else "文字、声音和视频按当前这场拷贝。有下一场时，起始图用当前这场的尾图，尾图用下一场的起始图。"
-            ),
-            wraplength=460,
-            foreground="#555555",
-        ).pack(anchor=tk.W, pady=(2, 10))
+        copy_hint = ttk.Label(main, wraplength=460, foreground="#555555", justify=tk.LEFT)
+        copy_hint.pack(anchor=tk.W, pady=(2, 10))
 
         box = ttk.LabelFrame(main, text="过渡场景", padding=8)
         box.pack(fill=tk.X)
         ttk.Label(
             box,
-            text="让相邻两场接得自然。可以说话，也可以只做动作、加音效。音乐以后再配。",
+            text="上一场的尾图是这场的起始图，下一场的起始图是这场的终止图。视频要从这两张图之间转过去。下面几组可以一起选。",
             wraplength=440,
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(0, 6))
-        if not has_other:
-            ttk.Label(box, text=missing, foreground="#8a3b12").pack(anchor=tk.W, pady=(0, 6))
+        missing_lbl = ttk.Label(
+            box,
+            text="旁边没有场景，不能做过渡。简单拷贝仍可用。",
+            foreground="#8a3b12",
+        )
+        mode_caption = ttk.Label(box, text="时空")
+        space_var = tk.StringVar(value=self._TRANSITION_SPACE[0][0])
+        people_var = tk.StringVar(value=self._TRANSITION_PEOPLE[0][0])
+        speech_var = tk.StringVar(value=self._TRANSITION_SPEECH[0][0])
+        effect_var = tk.StringVar(value=self._TRANSITION_EFFECTS[0][0])
 
-        mode_var = tk.StringVar(value=self._TRANSITION_MODES[0][0])
-        length_var = tk.StringVar(value=self._TRANSITION_LENGTHS[0][0])
-        ttk.Label(box, text="方式").pack(anchor=tk.W)
-        for key, hint in self._TRANSITION_MODES:
-            ttk.Radiobutton(box, text=f"{key}　{hint}", value=key, variable=mode_var).pack(anchor=tk.W)
-        ttk.Label(box, text="长短").pack(anchor=tk.W, pady=(8, 0))
-        length_row = ttk.Frame(box)
-        length_row.pack(anchor=tk.W, fill=tk.X)
-        for key, hint in self._TRANSITION_LENGTHS:
-            ttk.Radiobutton(length_row, text=f"{key}　{hint}", value=key, variable=length_var).pack(side=tk.LEFT, padx=(0, 8))
+        def _pack_choice_group(title_widget, choices, variable) -> None:
+            title_widget.pack(anchor=tk.W, pady=(8, 0))
+            for key, hint in choices:
+                ttk.Radiobutton(
+                    box, text=f"{key}　{hint}", value=key, variable=variable
+                ).pack(anchor=tk.W)
+
+        _pack_choice_group(mode_caption, self._TRANSITION_SPACE, space_var)
+        _pack_choice_group(ttk.Label(box, text="人物"), self._TRANSITION_PEOPLE, people_var)
+        _pack_choice_group(ttk.Label(box, text="对白"), self._TRANSITION_SPEECH, speech_var)
+        _pack_choice_group(ttk.Label(box, text="特效"), self._TRANSITION_EFFECTS, effect_var)
 
         actions = ttk.Frame(main)
         actions.pack(fill=tk.X, pady=(12, 0))
         insert_btn = ttk.Button(
             actions,
             text="插入过渡",
-            command=lambda: self._close_and_insert_transition(dlg, before, mode_var.get(), length_var.get()),
+            command=lambda: self._close_and_insert_transition(
+                dlg,
+                _before(),
+                space_var.get(),
+                people_var.get(),
+                speech_var.get(),
+                effect_var.get(),
+            ),
         )
         insert_btn.pack(side=tk.LEFT)
-        if not has_other:
-            insert_btn.state(["disabled"])
         ttk.Button(actions, text="取消", command=dlg.destroy).pack(side=tk.RIGHT)
 
-        anchor = self.btn_add_scene_before if before else self.btn_add_scene_after
-        self._place_popup_near(dlg, anchor, below=False)
+        def _sync_place(*_args) -> None:
+            before = _before()
+            side_ok = has_prev if before else has_next
+            copy_hint.config(
+                text=(
+                    "文字、声音和视频按当前这场拷贝。有上一场时，起始图用上一场的尾图，尾图用当前这场的起始图。"
+                    if before
+                    else "文字、声音和视频按当前这场拷贝。有下一场时，起始图用当前这场的尾图，尾图用下一场的起始图。"
+                )
+            )
+            if side_ok:
+                missing_lbl.pack_forget()
+                insert_btn.state(["!disabled"])
+            else:
+                if not missing_lbl.winfo_ismapped():
+                    missing_lbl.pack(anchor=tk.W, pady=(0, 6), before=mode_caption)
+                insert_btn.state(["disabled"])
+
+        place_var.trace_add("write", _sync_place)
+        _sync_place()
+
+        self._place_popup_near(dlg, self.btn_add_scene, below=False)
         dlg.wait_window()
 
     def _close_and_insert_copy(self, dlg: tk.Toplevel, before: bool) -> None:
         dlg.destroy()
         self._insert_scene_copy(before)
 
-    def _close_and_insert_transition(self, dlg: tk.Toplevel, before: bool, mode: str, length: str) -> None:
+    def _close_and_insert_transition(
+        self, dlg: tk.Toplevel, before: bool, space: str, people: str, speech: str, effect: str
+    ) -> None:
         dlg.destroy()
-        self._insert_transition_scene(before, mode, length)
+        self._insert_transition_scene(before, space, people, speech, effect)
 
     def _scene_prompt_block(self, scene: dict, title: str) -> str:
         lines = [title]
@@ -6465,67 +6520,108 @@ class WorkflowGUI:
             lines.append("（这场没有文字）")
         return "\n".join(lines)
 
-    def _transition_prompt(self, earlier: dict, later: dict, mode: str, length: str) -> tuple[str, str]:
-        """过渡说明放 system，前后两场原文放 user。Manual 窗口会把两段一起拷进剪贴板。"""
-        narrator = (project_manager.project_narrator() or "").strip()
-        narrator_absent = (not narrator) or project_manager.actor_is_absent(narrator)
-        host_line = "讲员：不出现" if narrator_absent else f"讲员：{narrator}"
-        mode_text = {
-            "两人对话": (
-                "用两场里已经出现的两个人，用一段短对话把两场接上。不要新造人物。\n"
-                "第一人的话写在 speaking，第二人的话写在 voiceover。\n"
-                "话要接着前面那场，又把人带到后面那场，不要另讲一件事。"
+    def _transition_prompt(
+        self, earlier: dict, later: dict, space: str, people: str, speech: str, effect: str
+    ) -> tuple[str, str]:
+        """时空、人物、对白、特效四组选择拼成一场过渡。内容从这两场里看。"""
+        space_text = {
+            "不变": "地方和时间都不要改。人还在原来的地方，也不要换成另一个时段。",
+            "换地方": (
+                "地方要从起始图走到终止图。\n"
+                "前一场在室外、后一场在室内：写出怎么走到门口、怎么进去。\n"
+                "两个地方不一样：写出这一段路。不要顺便改时间。"
             ),
-            "一人说话": (
-                "只留一个已经出现的人开口，用简单的几句话把两场接上。不要新造人物。\n"
-                "话写在 speaking，voiceover 留空。\n"
-                "这句话要像这个人接着前面说，又把场面交给后面。"
+            "换时间": (
+                "时间要过去。白天到黑夜，或黑夜到白天，都写在 visual 里。\n"
+                "这种过渡很快。人可以留在场上。不要用对话解释过了多久，也不要顺便换地方。"
             ),
-            "自言自语": (
-                "只留一个已经出现的人。这是他的心里话，自己对自己说，不是对另一个人讲。\n"
-                "心里话写在 speaking，voiceover 留空。\n"
-                "用这个念头把两场的情绪接上。"
+            "一起变": (
+                "地方和时间一起变。这是一次大的场面转换，带一点奇幻的跳跃，但这场本身很短。\n"
+                "例如从白天的街上，一下子到夜里的室内。不要把路途慢慢走完。"
             ),
-            "动作表现": (
-                "这场不说话。speaking 和 voiceover 都留空。\n"
-                "人可以只做一个动作或一个表情，用来带过这场转场。不要新造人物。"
+        }.get(space) or "按这两场里真正的地方和时间来写。"
+        people_text = {
+            "没有变化": "在场的人保持不变。不要加人，也不要让人离开。不要新造两场里都没有的人。",
+            "自然增减": (
+                "比较两场的人物。变化要平淡。\n"
+                "多出来的人平静地走进来，或被带着进来。例如前一场没有小孩，后一场有，就写这个小孩怎么走进画面。\n"
+                "少掉的人平静地走开、转身、退出画面。\n"
+                "不要用车、碰撞、惊吓这类意外来解释。"
             ),
-            "解说员": (
-                (
-                    f"用第三方解说员承上启下。本项目的解说员是「{host_line}」。\n"
-                    "speaking 是解说员的话，点出前面刚发生的事怎么接到后面，不要把后面的对白提前说完。\n"
-                    "voiceover 留空。actor 以这一行讲员开头。不要把解说员写成故事里的人物。"
-                )
-                if not narrator_absent
-                else
-                (
-                    "这个项目的讲员是不出现，不要写讲员。\n"
-                    "改成用已经在场的人说一句短话来承上启下。话写在 speaking，voiceover 留空。"
-                )
+            "意外增减": (
+                "比较两场的人物。人的增减由一个意外带出来。\n"
+                "例如车忽然停下，有人从车上下来；或一声动静把人引进来；少掉的人被意外带走、匆匆离开。\n"
+                "意外要能从这两场里看出来。不要另编一场和这两场无关的事故，也不要新造两场里都没有的人。"
             ),
-        }.get(mode, "")
-        length_text = {
-            "短": "文字量大约是前后两场内容的三成。转场可以很短，但环境变化要看得见。",
-            "中": "文字量大约是前后两场内容的六成。比一场完整场景短一截。转场过程要写完整。",
-            "长": "和前后两场一样充实。内容可以一样丰富，但仍然是一场转场，不要另开一段新故事。",
-        }.get(length, "")
-        visual_text = (
-            "这场最重要的是转场，写在 visual 里。\n"
-            "visual 要写出从前面那场走到后面那场的过程，不要只停在其中一场的画面上。\n"
-            "把两边不一样的地方写出来：环境、场所、色调、光线、天气、远近。让画面从前面的样子变成后面的样子。\n"
-            "多半时候场上的人不说话，只用动作把这场带过去。即使这场有人说话，转场仍然是这场的主体，话只是陪着画面走。\n"
-            "转场过程中可以加入音效来托这场变化，例如脚步、风、门、水、杯盏、衣料、街声。音效写在 visual。不要写背景音乐，音乐以后再配。"
+        }.get(people) or "人物按这两场里已经有的人来写。"
+        speech_text = {
+            "不说话": "speaking 和 voiceover 都留空。不要寒暄，也不要借动作把话说出来。",
+            "简单寒暄": (
+                "只写一两句没有实际内容的招呼，例如好久不见、进来坐。按这两场来写，不要照抄例子。\n"
+                "不要接上两边正在谈的话题，也不要把后面那场的对话提前说完。\n"
+                "两个人都开口时，每人只一句：第一人写 speaking，第二人写 voiceover。一个人就够时，voiceover 留空。"
+            ),
+            "小动作": (
+                "speaking 和 voiceover 都留空。\n"
+                "做一个把两场接上的小动作，声音跟着动作，写在 visual 里。\n"
+                "饭馆里是吃饭、倒酒、碰杯；路上是走几步、停一下。按这两场真正的地方来，不要把话题讲下去。"
+            ),
+            "音乐": (
+                "speaking 和 voiceover 都留空。\n"
+                "用一段很短的音乐把两场带过去。音乐的情绪贴着这两场正在谈的事，写在 visual 里。不要写歌词，不要让人开口。"
+            ),
+            "场景烘托": (
+                "speaking 和 voiceover 都留空。对话在这里暂停。\n"
+                "看两场正在谈的事，把那种气氛在环境里展现一下，并带上相应的声音，写在 visual 里。\n"
+                "谈得沉重或可怕，就阴一点；谈得顺，就有光、鲜花。也可以是风、树叶，或他们看见的风景。\n"
+                "只烘托他们的话题，不要替他们把话说完，也不要另起一个故事。"
+            ),
+        }.get(speech) or "话要少。"
+        effect_text = {
+            "自然转换": (
+                "不加特效。画面从起始图自然走到终止图。\n"
+                "不要写翻书、嗖的一声、擦除、闪白或叠化。"
+            ),
+            "叠化": (
+                "这场很短。起始图慢慢变淡，终止图从里面显出来，两张图有一小段叠在一起。\n"
+                "这个叠化写在 visual 里。"
+            ),
+            "嗖一下": (
+                "这场很短。画面被很快地甩过去，带一声「嗖」的掠过。\n"
+                "这一声写在 visual 里。不要写成慢慢走路。"
+            ),
+            "翻书": (
+                "这场很短。起始图像书页被翻过去，终止图在新的一页上。可以有纸页翻动的声音。\n"
+                "翻页写在 visual 里。"
+            ),
+            "擦除": (
+                "这场很短。终止图从一侧把起始图推开，像一道擦除扫过画面。\n"
+                "擦除写在 visual 里。"
+            ),
+            "闪白": (
+                "这场很短。画面先闪成一片白，再落到终止图。\n"
+                "闪白写在 visual 里。"
+            ),
+        }.get(effect) or (
+            "画面从起始图走到终止图。这场保持短。"
         )
         system_prompt = (
-            "写一场过渡场景，插在用户给出的两场之间。这场的图片已经备好，这里只生成要写回这一场的文字。\n"
-            "目的：让前面那场和后面那场接得自然，不要突兀。不要另起一个新故事，不要重复两场已经说过的整段话。\n\n"
-            f"{visual_text}\n\n"
-            f"过渡方式：{mode}\n{mode_text}\n\n"
-            f"长短：{length}\n{length_text}\n\n"
+            "写一场过渡，插在用户给出的两场之间。这里只写要写回这一场的文字。\n"
+            "转场一定用两张已经备好的图：上一场的尾图是这场的起始图，下一场的起始图是这场的终止图。\n"
+            "后面生成视频时，画面要从起始图转到终止图。visual 就是给这段视频用的，必须写成这个转场过程，不能写成两张各不相干的静图说明。\n"
+            "时空、人物、对白、特效是四组分开的选择，每一组都要照着做。\n"
+            "某一组选了不变、没有变化或不说话，就不要在那一组里自行加戏。\n"
+            "内容必须来自这两场。不要另起一个故事，不要把两边已经说过的话再讲一遍。\n"
+            "只有对白选了「音乐」时才写音乐。其他时候不要写背景音乐。\n"
+            "动作、表情、音效和转场特效都写在 visual，不要写进 actor。\n\n"
+            f"时空：{space}\n{space_text}\n\n"
+            f"人物：{people}\n{people_text}\n\n"
+            f"对白：{speech}\n{speech_text}\n\n"
+            f"特效：{effect}\n{effect_text}\n"
+            "除了自然转换，特效都是很短的一闪，不要写成一场完整的戏。\n\n"
             "只输出一个 JSON 对象，不要解释。字段是 caption、visual、speaking、voiceover、actor。\n"
             "用这两场原来的语言。\n"
-            "actor 沿用两场里已有的写法。第一位说 speaking，第二位说 voiceover。转场、动作、表情和音效都写在 visual，不要写进 actor。\n"
-            "visual 不能只是一张静图的说明，必须能看出这场是怎么从前面转到后面的。"
+            "actor 沿用两场里已有的写法。有两个人说话时，第一位说 speaking，第二位说 voiceover。没有的话就留空字符串。"
         )
         user_prompt = (
             f"{self._scene_prompt_block(earlier, '前面那场')}\n\n"
@@ -6533,7 +6629,9 @@ class WorkflowGUI:
         )
         return system_prompt, user_prompt
 
-    def _insert_transition_scene(self, before: bool, mode: str, length: str) -> None:
+    def _insert_transition_scene(
+        self, before: bool, space: str, people: str, speech: str, effect: str
+    ) -> None:
         """插入一场图片已拷好的过渡场景，并把提示词拷到剪贴板。"""
         self.update_current_scene()
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -6547,7 +6645,17 @@ class WorkflowGUI:
         earlier, later = (other, scene) if before else (scene, other)
         dup = copy.deepcopy(scene)
         dup["id"] = self.workflow.max_id(scene) + 1
-        dup["caption"] = f"过渡·{mode}"
+        bits = [
+            name
+            for name, plain in (
+                (space, "不变"),
+                (people, "没有变化"),
+                (speech, "不说话"),
+                (effect, "自然转换"),
+            )
+            if name and name != plain
+        ]
+        dup["caption"] = "过渡" if not bits else "过渡·" + "·".join(bits)
         dup["speaking"] = ""
         dup["voiceover"] = ""
         index = self.current_scene_index if before else self.current_scene_index + 1
@@ -6556,7 +6664,9 @@ class WorkflowGUI:
         self.workflow.save_scenes_to_json()
         self.current_scene_index = index
         self.refresh_gui_scenes()
-        system_prompt, user_prompt = self._transition_prompt(earlier, later, mode, length)
+        system_prompt, user_prompt = self._transition_prompt(
+            earlier, later, space, people, speech, effect
+        )
         try:
             parsed = self.llm_api.generate_json(system_prompt, user_prompt, expect_list=False)
         except Exception as exc:
