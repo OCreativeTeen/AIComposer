@@ -982,7 +982,10 @@ class WorkflowGUI:
         if full and body:
             return f"{label} {body}"
         parts = [p for p in body.split("/") if p]
-        short = parts[1] if len(parts) >= 2 else body
+        if len(parts) >= 4 and not parts[-1].isdigit():
+            short = parts[-1]
+        else:
+            short = parts[1] if len(parts) >= 2 else body
         short = short.strip()
         if len(short) > 8:
             short = short[:8]
@@ -1161,16 +1164,17 @@ class WorkflowGUI:
         body, _motion = project_manager.split_actor_motion((entry.get("body") or "").strip())
         if project_manager.actor_is_absent(body):
             return ""
-        names = [body]
-        bits = [part for part in body.split("/") if part]
-        if len(bits) >= 4 and bits[-1].isdigit():
-            names.append("/".join(bits[:3]))
-        finder = self._narrator_portrait_path if entry.get("role") == "host" else self._person_portrait_path
-        for name in names:
-            path = finder(name)
-            if path:
-                return path
-        return ""
+        if entry.get("role") == "host":
+            names = [body]
+            bits = [part for part in body.split("/") if part]
+            if len(bits) >= 3:
+                names.append("/".join(bits[:3]))
+            for name in names:
+                path = self._narrator_portrait_path(name)
+                if path:
+                    return path
+            return ""
+        return self._person_portrait_path(body)
 
     def _set_actor_text(self, text: str, *, save_scene: bool = False) -> None:
         self._actor_text = project_manager.normalize_actor_text(text)
@@ -1254,7 +1258,9 @@ class WorkflowGUI:
                 stem = os.path.splitext(fn)[0]
                 if not stem or stem.startswith("_"):
                     continue
-                found.append(stem.replace("_", "/"))
+                raw = stem.replace("_", "/")
+                if raw not in found:
+                    found.append(raw)
         try:
             rows = self._scene_actor_rows()
         except Exception:
@@ -1269,7 +1275,8 @@ class WorkflowGUI:
         return found
 
     def _person_portrait_dest(self, name: str) -> str:
-        stem = self._portrait_stem(name)
+        body, _motion = project_manager.split_actor_motion((name or "").strip())
+        stem = self._portrait_stem(body)
         if not stem:
             return ""
         return os.path.join(self._project_avatar_dir(), stem + ".png")
@@ -1377,6 +1384,12 @@ class WorkflowGUI:
         ttk.Label(dlg, textvariable=name_var, font=("TkDefaultFont", 12, "bold")).pack(pady=(12, 4))
         image_label = ttk.Label(dlg)
         image_label.pack(padx=16, pady=4)
+        voice_row = ttk.Frame(dlg)
+        voice_row.pack(pady=(0, 8))
+        ttk.Label(voice_row, text="声音").pack(side=tk.LEFT, padx=(0, 8))
+        voice_var = tk.StringVar()
+        voice_box = ttk.Combobox(voice_row, textvariable=voice_var, state="readonly", width=18)
+        voice_box.pack(side=tk.LEFT)
         hint_var = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
         holder = {
@@ -1387,9 +1400,57 @@ class WorkflowGUI:
             "dest_for": dest_for,
             "mode": "host" if ask_motion else "person",
             "override_name": "",
+            "voice_ready": False,
         }
         host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。"
         person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物只在这一边。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
+
+        def remember_voice(name: str, voice: str) -> None:
+            pc = project_manager.PROJECT_CONFIG
+            if not isinstance(pc, dict) or not name or not voice:
+                return
+            role = "host" if holder.get("mode") == "host" else "person"
+            key = config_prompt.actor_voice_storage_key(name, role)
+            if not key:
+                return
+            table = pc.get("actor_voices")
+            if not isinstance(table, dict):
+                table = {}
+                pc["actor_voices"] = table
+            if table.get(key) == voice:
+                return
+            table[key] = voice
+            save_project_config(parent=dlg)
+
+        def show_voice(name: str) -> None:
+            holder["voice_ready"] = False
+            if not name or project_manager.actor_is_absent(name):
+                voice_box.configure(values=())
+                voice_var.set("")
+                voice_box.state(["disabled"])
+                return
+            role = "host" if holder.get("mode") == "host" else "person"
+            options = list(config_prompt.voice_choices_for_actor(name))
+            voice_box.configure(values=options)
+            if not options:
+                voice_var.set("")
+                voice_box.state(["disabled"])
+                return
+            voice_box.state(["!disabled"])
+            saved = config_prompt.chosen_actor_voice(name, role)
+            voice_var.set(saved if saved in options else options[0])
+            holder["voice_ready"] = True
+            if len(options) == 1:
+                remember_voice(name, options[0])
+
+        def on_voice_picked(_event=None) -> None:
+            if not holder.get("voice_ready"):
+                return
+            names_now = holder["names"]
+            if not names_now:
+                return
+            name = names_now[holder["index"]]
+            remember_voice(name, voice_var.get().strip())
 
         def show_at(i: int) -> None:
             holder["override_name"] = ""
@@ -1399,11 +1460,13 @@ class WorkflowGUI:
                 name_var.set("还没有人物")
                 holder["photo"] = None
                 image_label.config(image="", text="还没有人物")
+                show_voice("")
                 return
             holder["index"] = max(0, min(i, len(names_now) - 1))
             name = names_now[holder["index"]]
             if not name:
                 name_var.set("不出现")
+                show_voice("")
                 path = self._blank_portrait_path()
                 try:
                     img = Image.open(path)
@@ -1415,6 +1478,7 @@ class WorkflowGUI:
                     image_label.config(image="", text="不出现")
                 return
             name_var.set(name)
+            show_voice(name)
             path = holder["path_for"](name)
             if not path:
                 holder["photo"] = None
@@ -1465,7 +1529,7 @@ class WorkflowGUI:
             return picked[0] if picked else ""
 
         def apply_choice(name: str, motion: str) -> None:
-            """把打开时的那一格换成现在选定的人。缺年龄就按年龄段补上。"""
+            """把打开时的那一格换成现在选定的人。收成性别、年龄段、民族，名字放最后。"""
             role = "host" if holder.get("mode") == "host" else "person"
             bare = (name or "").strip()
             if project_manager.actor_is_absent(bare):
@@ -1591,6 +1655,7 @@ class WorkflowGUI:
         cancel_btn.pack(side=tk.LEFT, padx=6)
         apply_domain_chrome()
 
+        voice_box.bind("<<ComboboxSelected>>", on_voice_picked)
         image_label.bind("<Button-1>", lambda _e: shift(1))
         image_label.bind("<Button-3>", lambda _e: shift(-1))
         dlg.bind("<Left>", lambda _e: shift(-1))
@@ -1726,7 +1791,7 @@ class WorkflowGUI:
         self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
 
     def _ask_manual_person(self, parent) -> str:
-        """手工加一位人物。名字可空，空了就用年龄段。"""
+        """手工加一位人物。名字可空，有名字就写在最后。"""
         box = tk.Toplevel(parent)
         box.title("增加人物")
         box.transient(parent)
@@ -1737,9 +1802,6 @@ class WorkflowGUI:
         bucket = tk.StringVar(value="mature")
         race = tk.StringVar(value="chinese")
         person_name = tk.StringVar()
-        age = tk.StringVar(value="40")
-        age_touched = {"v": False}
-        defaults = {"kids": "10", "youth": "25", "mature": "40", "senior": "70"}
 
         frm = ttk.Frame(box, padding=12)
         frm.pack()
@@ -1748,49 +1810,40 @@ class WorkflowGUI:
             row=0, column=1, sticky="w"
         )
         ttk.Label(frm, text="年龄段").grid(row=1, column=0, sticky="w", pady=4)
-        bucket_box = ttk.Combobox(
-            frm, textvariable=bucket, values=("kids", "youth", "mature", "senior"), state="readonly", width=18
-        )
-        bucket_box.grid(row=1, column=1, sticky="w")
+        ttk.Combobox(
+            frm,
+            textvariable=bucket,
+            values=("kids", "youth", "teenager", "mature", "senior"),
+            state="readonly",
+            width=18,
+        ).grid(row=1, column=1, sticky="w")
         ttk.Label(frm, text="中英").grid(row=2, column=0, sticky="w", pady=4)
         ttk.Combobox(frm, textvariable=race, values=("chinese", "english"), state="readonly", width=18).grid(
             row=2, column=1, sticky="w"
         )
         ttk.Label(frm, text="名字").grid(row=3, column=0, sticky="w", pady=4)
         ttk.Entry(frm, textvariable=person_name, width=20).grid(row=3, column=1, sticky="w")
-        ttk.Label(frm, text="可以不填").grid(row=3, column=2, sticky="w", padx=8)
-        ttk.Label(frm, text="年龄").grid(row=4, column=0, sticky="w", pady=4)
-        ages = [str(n) for n in ([1] + list(range(5, 81, 5)))]
-        age_box = ttk.Combobox(frm, textvariable=age, values=ages, width=18)
-        age_box.grid(row=4, column=1, sticky="w")
+        ttk.Label(frm, text="可以不填。有名字就写在最后。").grid(row=3, column=2, sticky="w", padx=8)
         ttk.Label(
             frm,
             text="加上之后可以拖到第几位。没有图片时，参考图用白板。双击这位，Ctrl+V 可以贴上形象。",
             wraplength=360,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
-
-        def on_bucket(_event=None) -> None:
-            if not age_touched["v"]:
-                age.set(defaults.get(bucket.get(), "40"))
-
-        def on_age(_event=None) -> None:
-            age_touched["v"] = True
-
-        bucket_box.bind("<<ComboboxSelected>>", on_bucket)
-        age_box.bind("<Key>", on_age)
-        age_box.bind("<<ComboboxSelected>>", on_age)
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         def ok() -> None:
-            mid = person_name.get().strip() or bucket.get().strip() or "mature"
-            years = age.get().strip()
-            body = f"{gender.get().strip() or 'woman'}/{mid}/{race.get().strip() or 'chinese'}"
-            if years:
-                body = f"{body}/{years}"
+            body = (
+                f"{gender.get().strip() or 'woman'}/"
+                f"{bucket.get().strip() or 'mature'}/"
+                f"{race.get().strip() or 'chinese'}"
+            )
+            who = person_name.get().strip()
+            if who:
+                body = f"{body}/{who}"
             result["body"] = body
             box.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=6, column=0, columnspan=3, pady=(12, 0))
+        btns.grid(row=5, column=0, columnspan=3, pady=(12, 0))
         ttk.Button(btns, text="加上", command=ok).pack(side=tk.LEFT, padx=6)
         ttk.Button(btns, text="取消", command=box.destroy).pack(side=tk.LEFT, padx=6)
         box.bind("<Return>", lambda _e: ok())
@@ -2201,19 +2254,81 @@ class WorkflowGUI:
         messagebox.showerror("错误", f"暂不支持的格式：{media_final}", parent=self.root)
         return None
 
-    def choose_from_download(self, track, media_post=".mp4", radios=None):
-        res = self._pick_media_from_download_to_project_folder(
-            media_post,
-            track_rename_key=track,
-            confirm_actions=[
-                ("replace", "替换"),
-                ("prepend", "前加"),
-                ("append", "后加"),
-            ],
-            radios=radios,
+    def _download_mp4_source(self) -> tuple[str, list]:
+        suffixes = (".mp4",)
+        for folder in _external_media_pick_folders():
+            matching = _download_folder_list_matching_suffixes(folder, suffixes)
+            if matching:
+                return folder, matching
+        download_path = config.get_project_path(self.workflow.pid) + "/download"
+        os.makedirs(download_path, exist_ok=True)
+        return download_path, _download_folder_list_matching_suffixes(download_path, suffixes)
+
+    def _channel_mp4_source(self) -> tuple[str, list]:
+        channel = (project_manager.PROJECT_CONFIG or {}).get("channel")
+        source_folder = config.channel_track_media_dir(channel, "clip")
+        if not os.path.isdir(source_folder):
+            return source_folder, []
+        landscape = int(project_manager.PROJECT_CONFIG.get("video_width", 1920)) > int(
+            project_manager.PROJECT_CONFIG.get("video_height", 1080)
         )
-        if not res:
-            return
+        candidates = [
+            name
+            for name in os.listdir(source_folder)
+            if name.lower().endswith(".mp4")
+            and os.path.isfile(os.path.join(source_folder, name))
+            and config.channel_media_matches_project_layout(name, landscape=landscape)
+        ]
+        n_scenes = len(self.workflow.scenes or [])
+        idx = self.current_scene_index
+        if idx == 0:
+            position_prefix = "starting"
+        elif n_scenes > 0 and idx == n_scenes - 1:
+            position_prefix = "ending"
+        else:
+            position_prefix = "running"
+        prefix = position_prefix.lower()
+
+        def _sort_key(name: str):
+            if name.lower().startswith(prefix):
+                return (1, 0, name)
+            return (2, 0, name)
+
+        return source_folder, sorted(candidates, key=_sort_key)
+
+    def _stage_downloaded_video(
+        self, folder: str, filename: str, temp_adj_mp4, temp_adj_wav, place, picked_radio, track_rename_key: str
+    ) -> dict | None:
+        """外部下载的文件移进项目 download。已经在项目 download 里的文件留在原地。"""
+        scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
+        sid = scene0["id"] if scene0 else 0
+        download_path = config.get_project_path(self.workflow.pid) + "/download"
+        os.makedirs(download_path, exist_ok=True)
+        media_path = os.path.join(folder, filename)
+        in_project = os.path.normcase(os.path.abspath(folder)) == os.path.normcase(
+            os.path.abspath(download_path)
+        )
+        if in_project:
+            media_final = media_path
+        else:
+            ext = os.path.splitext(media_path)[1].lower() or ".mp4"
+            media_final = os.path.join(
+                download_path,
+                f'{(picked_radio or track_rename_key)}_{sid}_{datetime.now().strftime("%H%M%S")}{ext}',
+            )
+            shutil.move(media_path, media_final)
+        if temp_adj_mp4 is None or temp_adj_wav is None:
+            messagebox.showerror("错误", "内部错误：未取得音量处理后的临时视频/音频。", parent=self.root)
+            return None
+        return {
+            "final_path": media_final,
+            "temp_adj_mp4": temp_adj_mp4,
+            "temp_adj_wav": temp_adj_wav,
+            "place": place,
+            "track": picked_radio,
+        }
+
+    def _apply_download_video_result(self, res: dict, track: str) -> None:
         if res.get("track"):
             track = res["track"]
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -2264,9 +2379,87 @@ class WorkflowGUI:
             vtrack = get_file_path(scene, "clip")
         newv = self.workflow.ffmpeg_processor.add_audio_to_video(vtrack, newa)
         refresh_scene_media(scene, track, ".mp4", newv)
-
         self.workflow.get_scene_by_index(self.current_scene_index)[track + "_status"] = "ORIG"
         self.refresh_gui_scenes()
+
+    def choose_import_video(self) -> None:
+        """从一个窗口导入视频。来源默认是下载，也可以改成这个项目的频道。"""
+        download_folder, download_files = self._download_mp4_source()
+        channel_folder, channel_files = self._channel_mp4_source()
+        if not download_files and not channel_files:
+            messagebox.showwarning("导入视频", "下载和频道里都没有视频。", parent=self.root)
+            return
+        sources = [
+            {
+                "key": "download",
+                "label": "下载",
+                "folder": download_folder,
+                "choices": download_files,
+                "radios": ("放到", [("clip", "Clip"), ("narration", "旁白")]),
+                "confirm_actions": [
+                    ("replace", "替换"),
+                    ("prepend", "前加"),
+                    ("append", "后加"),
+                ],
+            },
+            {
+                "key": "channel",
+                "label": "频道",
+                "folder": channel_folder,
+                "choices": channel_files,
+                "radios": ("声音", [("keep", "原声"), ("replace_speed", "配声")]),
+                "confirm_actions": None,
+            },
+        ]
+        pick = askchoice_media_preview(
+            "导入视频",
+            download_files or channel_files,
+            download_folder if download_files else channel_folder,
+            self.root,
+            use_mp4_video_preview=True,
+            build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
+            sources=sources,
+        )
+        if not pick:
+            return
+        source = pick[-1]
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if source == "channel":
+            self._video_simple_replacement_async(
+                scene,
+                pick[1],
+                pick[2],
+                pick[3],
+                "clip",
+                track_status="ENH2",
+            )
+            return
+        res = self._stage_downloaded_video(
+            download_folder,
+            pick[0],
+            pick[1],
+            pick[2],
+            pick[3],
+            pick[4],
+            "clip",
+        )
+        if res:
+            self._apply_download_video_result(res, "clip")
+
+    def choose_from_download(self, track, media_post=".mp4", radios=None):
+        res = self._pick_media_from_download_to_project_folder(
+            media_post,
+            track_rename_key=track,
+            confirm_actions=[
+                ("replace", "替换"),
+                ("prepend", "前加"),
+                ("append", "后加"),
+            ],
+            radios=radios,
+        )
+        if not res:
+            return
+        self._apply_download_video_result(res, track)
 
     def apply_zero_background_media_from_path(
         self,
@@ -3323,21 +3516,7 @@ class WorkflowGUI:
             video_control_frame,
             text="导入视频",
             width=8,
-            command=lambda: self.choose_from_download(
-                "clip",
-                ".mp4",
-                radios=("放到", [("clip", "Clip"), ("narration", "旁白")]),
-            ),
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Button(
-            video_control_frame,
-            text="频道视频",
-            width=8,
-            command=lambda: self.choose_from_channel_media(
-                "clip",
-                "keep",
-                radios=("声音", [("keep", "原声"), ("replace_speed", "配声")]),
-            ),
+            command=self.choose_import_video,
         ).pack(side=tk.LEFT, padx=2)
 
         #ttk.Button(video_control_frame, text="背起", command=self.zero_start, width=5).pack(side=tk.LEFT, padx=1)
@@ -6173,6 +6352,18 @@ class WorkflowGUI:
                 ("swap_prev", "与上一场交换"),
             ],
         )
+        confirm = {
+            "split": "从播放点把这一场分成前后两场？",
+            "delete": "删除这一场？删掉以后回不来。",
+            "merge_next": "把这一场和下一场合成一场？",
+            "merge_prev": "把上一场和这一场合成一场？",
+            "swap_next": "把这一场和下一场对调？",
+            "swap_prev": "把这一场和上一场对调？",
+        }.get(picked or "")
+        if not confirm:
+            return
+        if not messagebox.askyesno("场景变换", confirm, parent=self.root):
+            return
         if picked == "split":
             self.split_scene()
         elif picked == "delete":
@@ -6344,10 +6535,10 @@ class WorkflowGUI:
         ("意外增减", "由意外带出来，例如车忽然停下、有人下来"),
     )
     _TRANSITION_SPEECH = (
-        ("不说话", "这场不开口"),
+        ("不说话", "不开口，可以用音乐带过"),
         ("简单寒暄", "一两句没有实际内容的招呼"),
+        ("人声", "人来人走时，嬉笑、叹息或一声短招呼"),
         ("小动作", "碰杯、吃饭，声音跟着动作"),
-        ("音乐", "用一段短音乐把两场带过去"),
         ("场景烘托", "对话停一下，把谈到的气氛在环境里托出来"),
     )
     _TRANSITION_EFFECTS = (
@@ -6555,20 +6746,29 @@ class WorkflowGUI:
             ),
         }.get(people) or "人物按这两场里已经有的人来写。"
         speech_text = {
-            "不说话": "speaking 和 voiceover 都留空。不要寒暄，也不要借动作把话说出来。",
+            "不说话": (
+                "speaking 和 voiceover 都留空。不要寒暄，不要嬉笑、叹息，也不要借动作把话说出来。\n"
+                "可以用一段很短的音乐把两场带过去，写在 visual 里。不要写歌词。不用音乐也可以，那就只留画面。"
+            ),
             "简单寒暄": (
                 "只写一两句没有实际内容的招呼，例如好久不见、进来坐。按这两场来写，不要照抄例子。\n"
                 "不要接上两边正在谈的话题，也不要把后面那场的对话提前说完。\n"
-                "两个人都开口时，每人只一句：第一人写 speaking，第二人写 voiceover。一个人就够时，voiceover 留空。"
+                "一个人开口：话写在 speaking，voiceover 留空。actor 只放这个人，放在第一位。\n"
+                "两个人都开口：每人只一句。第一人写 speaking，第二人写 voiceover。actor 按这个顺序写这两位。"
+            ),
+            "人声": (
+                "用很短的人声，把人的出现或离开托出来。配合上面选的人物增减。\n"
+                "人走进来、多了一个人，或忽然出现：一声嬉笑、一声招呼、一声轻呼。\n"
+                "人离开或少了一个人：一声叹息、一声短别。声音要跟这个地方相称。\n"
+                "不要写成一段有内容的对话，也不要把后面那场的话提前说完。\n"
+                "一个人出声：写在 speaking，voiceover 留空。actor 只放这个人，放在第一位。\n"
+                "两个人都出声：第一人写 speaking，第二人写 voiceover。actor 按这个顺序写这两位。\n"
+                "人没有增减时，不要硬加一声。speaking 和 voiceover 留空。actor 只保留本来在场的人。"
             ),
             "小动作": (
                 "speaking 和 voiceover 都留空。\n"
                 "做一个把两场接上的小动作，声音跟着动作，写在 visual 里。\n"
                 "饭馆里是吃饭、倒酒、碰杯；路上是走几步、停一下。按这两场真正的地方来，不要把话题讲下去。"
-            ),
-            "音乐": (
-                "speaking 和 voiceover 都留空。\n"
-                "用一段很短的音乐把两场带过去。音乐的情绪贴着这两场正在谈的事，写在 visual 里。不要写歌词，不要让人开口。"
             ),
             "场景烘托": (
                 "speaking 和 voiceover 都留空。对话在这里暂停。\n"
@@ -6612,8 +6812,11 @@ class WorkflowGUI:
             "时空、人物、对白、特效是四组分开的选择，每一组都要照着做。\n"
             "某一组选了不变、没有变化或不说话，就不要在那一组里自行加戏。\n"
             "内容必须来自这两场。不要另起一个故事，不要把两边已经说过的话再讲一遍。\n"
-            "只有对白选了「音乐」时才写音乐。其他时候不要写背景音乐。\n"
-            "动作、表情、音效和转场特效都写在 visual，不要写进 actor。\n\n"
+            "对白选了「不说话」时，可以在 visual 里写一段短音乐把这场带过去。其他对白不要写背景音乐。\n"
+            "动作、表情、音效和转场特效都写在 visual，不要写进 actor。\n"
+            "只要 speaking 或 voiceover 里有字，actor 就必须写上出声的人，并且和这两处对上。\n"
+            "actor 用两场里已有的写法。第一位说 speaking，第二位说 voiceover。只有一个人出声时，actor 只写这一位，voiceover 留空。\n"
+            "speaking 和 voiceover 都空时，不要为了填 actor 而加一个开口的人。\n\n"
             f"时空：{space}\n{space_text}\n\n"
             f"人物：{people}\n{people_text}\n\n"
             f"对白：{speech}\n{speech_text}\n\n"
@@ -6621,7 +6824,7 @@ class WorkflowGUI:
             "除了自然转换，特效都是很短的一闪，不要写成一场完整的戏。\n\n"
             "只输出一个 JSON 对象，不要解释。字段是 caption、visual、speaking、voiceover、actor。\n"
             "用这两场原来的语言。\n"
-            "actor 沿用两场里已有的写法。有两个人说话时，第一位说 speaking，第二位说 voiceover。没有的话就留空字符串。"
+            "actor 沿用两场里已有的人。有人出声时，actor 的顺序必须和 speaking、voiceover 一致，不能空着。"
         )
         user_prompt = (
             f"{self._scene_prompt_block(earlier, '前面那场')}\n\n"
@@ -6656,6 +6859,13 @@ class WorkflowGUI:
             if name and name != plain
         ]
         dup["caption"] = "过渡" if not bits else "过渡·" + "·".join(bits)
+        dup["transition"] = {
+            "插在": "上一场" if before else "下一场",
+            "时空": space,
+            "人物": people,
+            "对白": speech,
+            "特效": effect,
+        }
         dup["speaking"] = ""
         dup["voiceover"] = ""
         index = self.current_scene_index if before else self.current_scene_index + 1
@@ -9538,7 +9748,7 @@ class WorkflowGUI:
         "speaking", "caption", "voiceover", "visual", "actor",
         "clip_animation", "narration_animation", "extension", "cinematography",
     })
-    _SCENE_IMPORT_SKIP_KEYS = frozenset({"start", "end", "duration"})
+    _SCENE_IMPORT_SKIP_KEYS = frozenset({"start", "end", "duration", "transition"})
 
     def _scene_import_extractable_fields(self, scene: dict) -> dict:
         """从场景 dict 提取可导入/导出的文案字段（作 JSON 编辑初始模板）。"""

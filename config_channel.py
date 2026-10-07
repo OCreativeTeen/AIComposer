@@ -386,12 +386,12 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 """
 
 
@@ -488,7 +488,7 @@ INPUT (the original case+analysis content):
         3) voiceover (second person, or the host when the host is in this scene)
         4) visual (cinematic scene + musical atmosphere. No on-image text)
         5) speaking (first person said aloud, or empty on a host-only scene)
-        6) actor — 人物1：woman/名字/chinese, then 人物2 if any, then 讲员：{narrator} only when the host is in the scene
+        6) actor — 人物1：woman/mature/chinese/封氏, then 人物2 if any, then 讲员：{narrator} only when the host is in the scene
 
 
 --------------------------------------------------
@@ -501,12 +501,12 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
@@ -525,7 +525,7 @@ As professional speaker, rephrase in first person dialogue, the entire passage i
 
     Each scene includes episode, caption, voiceover, visual, speaking, actor.
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
@@ -539,7 +539,7 @@ OUTPUT FORMAT (STRICT JSON)
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Visual story of this beat. No on-image text. In {language}.",
             "speaking": "Rephrased first-person line, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 """
@@ -810,12 +810,12 @@ You are a professional storyteller and creative director. Your task is to create
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat: place, people, what they do. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
@@ -935,12 +935,12 @@ NOTEBOOKLM__MV_STORY_2LAYER = """
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "the picture of this beat, including the A-world or B-world contrast. No on-image text. In {language}.",
             "speaking": "The first person said aloud, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
@@ -1030,8 +1030,9 @@ You are a psychological counselor and master of high-empathy storytelling.
     * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
     * (5) **Actor**: everyone visible, at most four 人物, then 讲员 if the narrator is in this scene. Join with " | ". Never use ";".
         * Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 are in the picture and do not speak.
-        * Each 人物 has a real name and an age: ``人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60``.
-        * Age is a number: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80.
+        * Each 人物 has gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村``.
+        * Age band is kids, youth, teenager, mature, or senior. No age number. Without a name: woman/mature/chinese.
+        * When the source is a picture or a PDF page, read the age band from how that person looks. The words rarely give an age. A name in the picture or the text goes last. The same person keeps that age band in every scene.
         * If the narrator is presenting this scene, ``讲员：{narrator}`` is position 1 and is not also a 人物.
         * Mood, gesture, and camera direction are not people.
 
@@ -1042,7 +1043,7 @@ You are a psychological counselor and master of high-empathy storytelling.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. Empty when the scene is only the host. In {language}.",
             "visual": "the story scene, their interaction, and any cut or angle change. about ###LENGTH### {language} char. No on-image text.",
             "speaking": "The first actor's line, or the host's line when the scene is only the host. In {language}.",
-            "actor": "人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60 | 人物3：woman/名字/chinese/10"
+            "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村 | 人物3：woman/kids/chinese"
         }}
     ]
 
@@ -1177,7 +1178,8 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
 *** SHARED RULES
     ** visual is a film-still with no words on the image. Also the place, how the people act on each other, and a cut or another angle when the picture should move.
     ** Host look for this run: {narrator}. Every counselor scene in the program is THIS host, the same person. A third person who explains the story is this 讲员, not a separate 说书人 or 人物. Do not invent another age, gender, or face. ``actor`` is exactly ``讲员：{narrator}``. No 人物. The narrator is the only speaker.
-    ** A life with two people is mostly dialogue. List everyone visible, at most four 人物, each ``woman/名字/chinese/35``. ``speaking`` is position 1. ``voiceover`` is position 2. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    ** A life with two people is mostly dialogue. List everyone visible, at most four 人物, each ``woman/mature/chinese/封氏``. ``speaking`` is position 1. ``voiceover`` is position 2. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    ** When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
     ** Exactly one story person, and the host is in that scene: the last part is ``讲员：{narrator}``. ``speaking`` is that person. ``voiceover`` is the host.
     ** No DSM labels. No "the lesson is". Do not say 根, 根儿, or 病根 in caption, speaking, or voiceover. Name the problem in ordinary professional language.
     ** Do not solve a life inside the story scenes. Do not skip from the first quarrel to the ending in one scene.
@@ -1226,7 +1228,7 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
         "voiceover": "Empty when the counselor speaks. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The host, when the scene is only the host; otherwise the first person of this life. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 
@@ -1256,7 +1258,8 @@ COUNSELING_SERIES_STORY_ONLY = """
     ** Host lines live only in voiceover, and only on the start scene and the end scene of an episode, and on the remedy scenes. Short: 2 to 4 sentences.
     ** Host look for this run: {narrator}. Opening, closing, and remedy scenes are host scenes. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
     ** A host-only scene: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** List everyone visible, at most four 人物, each with a real name and an age ``woman/名字/chinese/35``. ``speaking`` is position 1. ``voiceover`` is position 2, said aloud, not a private thought. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    ** List everyone visible, at most four 人物, each with gender, an age band, an ethnicity, and the name last ``woman/mature/chinese/封氏``. ``speaking`` is position 1. ``voiceover`` is position 2, said aloud, not a private thought. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    ** When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
     ** Exactly one story person and the host: the last part is ``讲员：{narrator}``. ``voiceover`` is the host.
 
 *** PATH A — one story. Every scene "episode": "1".
@@ -1298,7 +1301,7 @@ COUNSELING_SERIES_STORY_ONLY = """
         "voiceover": "The host's line when the host is in this scene; otherwise the second person's line. In {language}.",
         "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
         "speaking": "The first person of this life, or empty on a host-only scene. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 
@@ -1342,7 +1345,7 @@ SCENE FIELDS (one scene in the output array)
         2) voiceover (Host narrator summary + sub-insights; reflective tone)
         3) visual (cinematic visual setting — time, weather, architecture, lighting)
         4) speaking (optional brief host spoken line; ~9 seconds)
-        5) actor (讲员：{narrator}, or 人物1：woman/名字/chinese)
+        5) actor (讲员：{narrator}, or 人物1：woman/mature/chinese/封氏)
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
@@ -1384,7 +1387,7 @@ COUNSELING_CASE_DEVELOPMENT = """
     2) voiceover — host bridge + gentle analysis — audio only; never paste into visual
     3) visual — clean film-still (see VISUAL rules): scene+character express the beat — NO words-to-paint, NO analysis on screen
     4) speaking — character or host line ~10s — audio only
-    5) actor — 人物1：woman/名字/chinese | 讲员：{narrator} when the host is present
+    5) actor — 人物1：woman/mature/chinese/封氏 | 讲员：{narrator} when the host is present
 
 INPUT (user prompt bottom):
     story / case content (e.g. full case description or analysis)
@@ -1398,7 +1401,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full 
         "voiceover": "Bridge + analysis tied to what we just saw. In {language}.",
         "visual": "Clean film-still — scene+character, sensory, NO on-image text or story prose. In {language}.",
         "speaking": "Character or host line ~10s, reactive. In {language}.",
-        "actor": "人物1：woman/名字/chinese | 讲员：{narrator}"
+        "actor": "人物1：woman/mature/chinese/封氏 | 讲员：{narrator}"
     }}
 ]
 
@@ -1430,7 +1433,7 @@ COUNSELING_STORY_DEVELOPMENT = """
     2) voiceover — host bridge + insight — audio only
     3) visual — clean film-still (see VISUAL rules): pictures tell the story; almost no on-image text
     4) speaking — character dialogue ~10s — audio only
-    5) actor — 人物1：woman/名字/chinese | 讲员：{narrator} when the host is present
+    5) actor — 人物1：woman/mature/chinese/封氏 | 讲员：{narrator} when the host is present
 
 INPUT (user prompt bottom):
     Full raw case-story / complete story description
@@ -1444,7 +1447,7 @@ OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
         "voiceover": "Bridge + insight for this beat. In {language}.",
         "visual": "Clean film-still — continues same thread, scene+character, NO on-image text. In {language}.",
         "speaking": "Character dialogue ~10s. In {language}.",
-        "actor": "人物1：woman/名字/chinese | 讲员：{narrator}"
+        "actor": "人物1：woman/mature/chinese/封氏 | 讲员：{narrator}"
     }}
 ]
 
@@ -1484,7 +1487,7 @@ INPUT (the original case+analysis content):
         2) voiceover (random audience member sharing a personal life fragment — NOT commenting on story characters; per Separation Protocol)
         3) visual or story (Story/Scene details, include cinematic salon/live setting — time, weather, architecture, lighting)
         4) speaking (counselor host: Acknowledge → Analyze → Call to Action; warm, ~10 seconds)
-        5) actor (人物1：woman/名字/chinese or 讲员：{narrator})
+        5) actor (人物1：woman/mature/chinese/封氏 or 讲员：{narrator})
 
 --------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)
@@ -1532,7 +1535,7 @@ OUTPUT FORMAT (STRICT JSON)
     2) voiceover (host intro: Welcome → Normalcy → Shattering Moment; piercing yet welcoming)
     3) visual (Story/Scene description, including cinematic visual of the shattering moment — vivid, brief)
     4) speaking (optional brief host spoken hook; ~9 seconds)
-    5) actor (讲员：{narrator}, or 人物1：woman/名字/chinese)
+    5) actor (讲员：{narrator}, or 人物1：woman/mature/chinese/封氏)
 
 [
         {{
@@ -1571,7 +1574,8 @@ COUNSELING_TALK_SCENES = """
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
     * Host look for this run: {narrator}. A third person who explains the story is this 讲员, not a separate 说书人 or 人物.
-    * List everyone visible, at most four 人物, each with a real name and an age ``woman/名字/chinese/35``. speaking is position 1. voiceover is position 2, said aloud. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    * List everyone visible, at most four 人物, each with gender, an age band, an ethnicity, and the name last ``woman/mature/chinese/封氏``. speaking is position 1. voiceover is position 2, said aloud. Later people do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1.
+    * When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
     * Exactly one story person and the host is in this scene: add ``讲员：{narrator}`` last. speaking is that person. voiceover is the host.
     * The scene is only the host: actor is exactly ``讲员：{narrator}``. No 人物. The narrator is the only speaker.
     * visual is the room and the people, no words on the image. Include how they face each other, and a cut or a closer angle when the reply lands.
@@ -1583,7 +1587,7 @@ COUNSELING_TALK_SCENES = """
         "voiceover": "The second person's reply, or the host's line when 主持人 is last in actor. In {language}.",
         "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
         "speaking": "The first person's line. In {language}.",
-        "actor": "人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60"
+        "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村"
     }}
 ]
 
@@ -1674,12 +1678,12 @@ You are a senior aviation-industry storyteller and low-altitude economy analyst.
             "voiceover": "Second person's line, or the host's line when the host is in this scene. In {language}.",
             "visual": "Operational scene with environment, equipment, people, action. About ###LENGTH### {language} chars. No on-image text.",
             "speaking": "The first person's line, or empty on a host-only scene. In {language}.",
-            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+            "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
         }}
     ]
 
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
 
@@ -1743,7 +1747,7 @@ FLYLINK_CONTENT_SCENES = """
 
 *** SCENE FIELDS (all text in {language})
     ** Host look for this run: {narrator}. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, {narrator}, not a separate 人物. Every scene includes "episode": "1".
-    ** List everyone in the picture, at most four 人物, each with a real name and an age: ``人物1：woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** List everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Put ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
     ** One person and the host: add ``讲员：{narrator}`` after the story person. ``voiceover`` is the host.
     ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` is empty.
     1) episode — "1"
@@ -1751,7 +1755,7 @@ FLYLINK_CONTENT_SCENES = """
     3) voiceover — the second person, or the host when the host is in this scene
     4) visual — clean documentary still; operational detail, lighting, geography. No on-image text.
     5) speaking — the first person, or empty on a host-only scene
-    6) actor — up to 人物1–人物4, each woman/名字/chinese/35, then 讲员：{narrator} when the narrator is in the scene. Position 1 speaks. Position 2 answers.
+    6) actor — up to 人物1–人物4, each woman/mature/chinese/封氏, then 讲员：{narrator} when the narrator is in the scene. Position 1 speaks. Position 2 answers.
 
 INPUT:
 ** Topic: {topic}
@@ -1788,7 +1792,7 @@ COMIC_STRIP_SCENES = """
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
     ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: list everyone in the picture, at most four 人物, each with a real name and an age, ``woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** Story scenes: list everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
     ** One episode. Every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
@@ -1805,7 +1809,7 @@ COMIC_STRIP_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "This same picture, vivid: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 
@@ -1841,7 +1845,7 @@ COMIC_RESHAPE_SCENES = """
     ** Last scene: host voiceover holds the ending. No new event.
     ** Do not add a host scene that is not already holding the open or the close.
     ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: list everyone in the picture, at most four 人物, each with a real name and an age, ``woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** Story scenes: list everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
     ** One episode. Every scene "episode": "1".
@@ -1858,7 +1862,7 @@ COMIC_RESHAPE_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. Spoken, natural. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 
@@ -1891,7 +1895,7 @@ COMIC_EXPAND_SCENES = """
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
     ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: list everyone in the picture, at most four 人物, each with a real name and an age, ``woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** Story scenes: list everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
     ** The result is still one episode. Every scene "episode": "1".
@@ -1908,7 +1912,7 @@ COMIC_EXPAND_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 
@@ -1941,7 +1945,7 @@ _COMIC_CONDENSE_SCENES = """
     ** First scene: caption is the story title. Host voiceover enters the story. No summary of the ending.
     ** Last scene: host voiceover holds the ending. No new event.
     ** A host scene: the narrator is the only speaker. ``actor`` is exactly ``讲员：{narrator}``. No 人物. Do not put mood, gesture, or camera direction in actor. ``voiceover`` is the host. ``speaking`` may be empty.
-    ** Story scenes: list everyone in the picture, at most four 人物, each with a real name and an age, ``woman/名字/chinese/35``. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** Story scenes: list everyone in the picture, at most four 人物, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. Position 1 says ``speaking``. Position 2 says ``voiceover``. 人物3 and 人物4 do not speak. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
     ** The result is still one episode. Every scene "episode": "1".
@@ -1959,7 +1963,7 @@ _COMIC_CONDENSE_SCENES = """
         "voiceover": "The host on the first and last scene; otherwise the second person's line. In {language}.",
         "visual": "Vivid picture: place, light, faces, the hit of the action, and the camera move if it should move. No on-image text. In {language}.",
         "speaking": "Spoken aloud, natural, not a summary. Empty on a host-only scene. In {language}.",
-        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 must have a real name: 人物1：woman/名字/chinese/35 | 人物2：man/名字/chinese/60. woman or man / name / chinese or english / age. Age is a number, the best estimate: 1 for an infant, otherwise 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, or 80. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        "actor": "People in this picture, at most four, then the narrator if this scene has one. Position 1 says speaking. Position 2 says voiceover. 人物3 and 人物4 are visible and do not speak. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：{narrator} is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
     }}
 ]
 

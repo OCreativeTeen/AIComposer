@@ -727,7 +727,9 @@ def _pdf_pages_as_scene_source(pdf_path: str) -> tuple[str, int, bool]:
     text = (
         f"PDF file: {os.path.basename(pdf_path)}\n"
         f"Page count: {n}\n"
-        "Pages may contain pictures and a little text. Read the PDF for the content."
+        "Pages may contain pictures and a little text. Read the PDF for the content. "
+        "For each person in a picture, judge the age band from the face and body: "
+        "kids, youth, teenager, mature, or senior. The words rarely state an age."
     )
     return text, n, False
 
@@ -814,7 +816,10 @@ def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: 
     n = max(0, int(page_count))
     line = (
         f"The PDF has {n} pages. It may contain pictures and a little text. "
-        "Read the PDF for the content. Use this prompt's scene JSON fields."
+        "Read the PDF for the content. Use this prompt's scene JSON fields. "
+        "When you write actor, take the name from the picture or the words, "
+        "and take the age band from how the person looks: kids, youth, teenager, mature, or senior. "
+        "Do not write an age number. The same person keeps one age band."
     )
     if mode == "page" or "series" not in label.lower():
         return line + f" One scene per page, in order: {n} scenes."

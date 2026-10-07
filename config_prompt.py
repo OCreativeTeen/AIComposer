@@ -531,10 +531,9 @@ VIDEO: frame one is still picture 1. Across the clip, each referenced person gra
 """.strip()
 
 ACTOR_AGE_LOOK = """
-** Read each actor as woman or man / name / chinese or english / age.
-** A number after chinese or english is that person's age in years.
-** The face and the body in the picture, and in the video, must look that age.
-** If that number is absent, the age is not given. Do not invent one.
+** Read each actor as woman or man / age band / chinese or english, and the name last when there is one.
+** Age band is kids, youth, teenager, mature, or senior. Example: woman/mature/chinese/封氏. Without a name: woman/mature/chinese.
+** There is no age number. The face and the body must look that age band.
 """.strip()
 
 
@@ -774,6 +773,7 @@ def build_scene_speech_transform_prompt(
         "名叫「不出现」的人不算。讲员如果是不出现，这场就没有讲员。",
         "visual 是画面描述，原样保留，不要改写，也不要放进返回的 JSON。",
         "actor 不要改，也不要放进返回的 JSON。",
+        "actor 里已经写了年龄段：kids、youth、teenager、mature、senior。说话的口气按这个年龄段来。不要另判一个年龄。",
         "用原来的语言来写。",
         "说的时候留一点间隙，不要赶着把字塞满。",
         "说话时自然带出这些人是谁、彼此是什么关系、以前有过什么交集，让听众听得出来。",
@@ -1327,6 +1327,8 @@ VIDEO_FLOW_BACKGROUND_CHOICES = (
 VIDEO_FLOW_EVOLVE_CHOICES = (
     ("keep", "风格不变"),
     ("to_style", "演进到目标风格"),
+    ("to_style_page", "翻书到目标风格"),
+    ("to_style_dissolve", "叠化到目标风格"),
 )
 
 
@@ -1365,8 +1367,27 @@ def _video_flow_instruction(frames: str, background: str, evolve: str, visual_st
                 f"""** Open on picture 1 and hold its original style long enough to read it.
 ** Then slowly change that look into the target visual style: {style}.
 ** The audience must see the change. Show the starting look, a halfway look, and the finished {style}. Do not jump. Do not finish the change in a flash.
+** No page turn, no dissolve trick, no wipe, no flash. The picture itself changes.
 ** Same people, same place, recognizable at every moment.
 ** A 讲员 commentary may play while the style is still changing."""
+            )
+        elif evolve == "to_style_page":
+            chunks.append(
+                f"""** Evolve picture 1 into the target visual style: {style}, by turning pages.
+** The whole change takes about four to five seconds.
+** Each turned page is visibly closer to {style} than the page before. The audience must see the approach. Do not land on the finished style at the first turn.
+** The last page is {style}.
+** Same people, same place, recognizable on every page.
+** This is a page turn. Do not replace it with a plain fade or a jump cut."""
+            )
+        elif evolve == "to_style_dissolve":
+            chunks.append(
+                f"""** Evolve picture 1 into the target visual style: {style}, through several soft dissolves.
+** The whole change takes about four to five seconds.
+** Each dissolve lands closer to {style}. Show the starting look, at least two in-between looks, and the finished {style}.
+** The audience must see the approach. Do not finish it in one blend.
+** No page curl, no wipe, no flash. The dissolves themselves carry the change.
+** Same people, same place, recognizable in every blend."""
             )
         else:
             chunks.append(
@@ -1398,6 +1419,118 @@ def _video_flow_instruction(frames: str, background: str, evolve: str, visual_st
     return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
 
 
+# 性别 / 年龄段 / 民族 → 商业声音名。同一档有多个时，按书写顺序往下用。
+ACTOR_VOICE_NAMES = {
+    ("man", "youth", "chinese"): ("Leo",),
+    ("man", "mature", "chinese"): ("Sal", "Atlas"),
+    ("man", "senior", "chinese"): ("Zagan", "Rex"),
+    ("woman", "youth", "chinese"): ("Carina",),
+    ("woman", "mature", "chinese"): ("Celeste",),
+    ("woman", "senior", "chinese"): ("Ara",),
+    ("man", "youth", "english"): ("Helix", "Eve", "Lux", "Lumen"),
+    ("man", "mature", "english"): ("Castor", "Cosmo", "Kepler", "Sirius"),
+    ("man", "senior", "english"): ("Hellios", "Perseus"),
+    ("woman", "youth", "english"): ("Iris",),
+    ("woman", "mature", "english"): ("Ursa",),
+    ("woman", "senior", "english"): ("Luna",),
+}
+
+_VOICE_AGE_BAND = {
+    "kids": "youth",
+    "teenager": "youth",
+    "youth": "youth",
+    "mature": "mature",
+    "senior": "senior",
+}
+
+
+def actor_voice_storage_key(body: str, role: str) -> str:
+    """项目里记下的键。讲员单独记，有名字的人物用完整写法。"""
+    import project_manager
+
+    raw, _motion = project_manager.split_actor_motion(body or "")
+    canon = project_manager._person_body(raw) or (raw or "").strip()
+    if not canon:
+        return ""
+    if role == "host":
+        bits = [part for part in canon.split("/") if part]
+        look = "/".join(bits[:3]) if len(bits) >= 3 else canon
+        return "narrator:" + look
+    return canon
+
+
+def voice_choices_for_actor(body: str) -> tuple:
+    """这一档性别、年龄段、民族可以选的商业声音。"""
+    import project_manager
+
+    raw, _motion = project_manager.split_actor_motion(body or "")
+    canon = project_manager._person_body(raw) or (raw or "").strip()
+    bits = [part.strip() for part in canon.split("/") if part.strip()]
+    gender = bits[0].lower() if bits else ""
+    age = project_manager._ACTOR_AGE.get(bits[1].lower(), bits[1].lower()) if len(bits) >= 2 else ""
+    age = _VOICE_AGE_BAND.get(age, "")
+    race = bits[2].lower() if len(bits) >= 3 else ""
+    if race not in ("chinese", "english"):
+        race = ""
+    return ACTOR_VOICE_NAMES.get((gender, age, race), ())
+
+
+def chosen_actor_voice(body: str, role: str) -> str:
+    """用户在预览里选定的声音。还没选过时用这一档的第一个。"""
+    import project_manager
+
+    options = voice_choices_for_actor(body)
+    if not options:
+        return ""
+    pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+    table = pc.get("actor_voices") if isinstance(pc, dict) else {}
+    if not isinstance(table, dict):
+        table = {}
+    saved = str(table.get(actor_voice_storage_key(body, role)) or "").strip()
+    if saved in options:
+        return saved
+    return options[0]
+
+
+def speaking_voice_lines(scenes: list) -> str:
+    """按 actor 位置标出商业声音名。第 1 个说 speaking，第 2 个说 voiceover。"""
+    import project_manager
+
+    scenes = [item for item in (scenes or []) if isinstance(item, dict)]
+
+    def voice_for(body: str, role: str) -> str:
+        return chosen_actor_voice(body, role)
+
+    lines = [
+        "** Use the voice name written here for that line. Do not substitute another voice.",
+        "** Position 1 in actor says speaking. Position 2, when present, says voiceover.",
+    ]
+    noted = False
+    many = len(scenes) > 1
+    for index, scene in enumerate(scenes, start=1):
+        actor_text = project_manager.actor_text_for_generation(scene.get("actor") or "")
+        active = project_manager.active_actor_entries(actor_text)
+        prefix = f"Scene {index}, " if many else ""
+        pairs = (
+            (0, "speaking", scene.get("speaking") or ""),
+            (1, "voiceover", scene.get("voiceover") or ""),
+        )
+        for slot, field, text in pairs:
+            if slot >= len(active) or not str(text).strip():
+                continue
+            row = active[slot]
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            voice = voice_for(body, row.get("role") or "person")
+            if not voice:
+                continue
+            label = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
+            lines.append(f"** {prefix}{field}: {label} {body}. Voice: {voice}.")
+            noted = True
+    if not noted:
+        return ""
+    return "\n".join(lines)
+
+
 def build_video_flow_prompt(
     *,
     frames: str,
@@ -1426,20 +1559,153 @@ def build_video_flow_prompt(
         indent=2,
     )
     instruction = _video_flow_instruction(frames, background, evolve, style)
+    voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
     audio = "\n".join(
         part
-        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), instruction, lang_note)
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, instruction, lang_note)
         if part
     )
     video = "\n".join(
         part
-        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), ACTOR_AGE_LOOK.strip(), instruction)
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, ACTOR_AGE_LOOK.strip(), instruction)
         if part
     )
     parts = {
         "Visual_Style": style,
         "Video_choices": video_flow_choice_label(frames, background, evolve),
+        "Instruction_for_video_generation": video,
+        "Instruction_for_audio_generation": audio,
+        "Story_Scene_Content": json_content,
+    }
+    return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+def _transition_video_choice_lines(transition: dict) -> str:
+    order = ("插在", "时空", "人物", "对白", "特效")
+    lines = []
+    for key in order:
+        value = transition.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        lines.append(f"{key}：{value}")
+    return "\n".join(lines)
+
+
+def _transition_video_instruction(transition: dict, visual_style: str) -> str:
+    """过渡场景的视频说明。形式跟着普通视频提示，内容按这场记下的选择来写。"""
+    style = (visual_style or "").strip() or "realistic"
+    space = str(transition.get("时空") or "").strip()
+    people = str(transition.get("人物") or "").strip()
+    speech = str(transition.get("对白") or "").strip()
+    effect = str(transition.get("特效") or "").strip()
+    chunks: list[str] = [
+        """** This clip is a transition between two neighboring scenes. It is not a new story.
+** Picture 1 is the opening frame: the last image of the earlier scene.
+** Picture 2 is the ending frame: the first image of the later scene.
+** The video must travel from picture 1 to picture 2. The audience sees the start, the change, and the end.
+** Do not invent a third look that belongs to neither frame.
+** Pictures after picture 2, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
+** A 人物 reference only shows who is already in these frames."""
+    ]
+    space_text = {
+        "不变": "** Place and time stay as they are. Do not walk into a new place. Do not change day into night.",
+        "换地方": "** The change is the place. Show how the people go from picture 1's place to picture 2's place. If one frame is outdoors and the other is indoors, show the door and the step inside. Do not also change the time of day.",
+        "换时间": "** The change is the time. Day into night, or night into day, happens in the picture. It is quick. Do not also change the place. Do not explain how long it took with dialogue.",
+        "一起变": "** Place and time both change. This is a large jump, a little fantastical, and the clip itself is short. Do not walk the whole road. Arrive.",
+    }.get(space)
+    if space_text:
+        chunks.append(space_text)
+    elif space:
+        chunks.append(f"** Place and time follow this choice: {space}.")
+    people_text = {
+        "没有变化": "** The people stay the people already in both frames. Do not add a person. Do not send a person away.",
+        "自然增减": "** Compare who is in picture 1 and picture 2. A person who is only in picture 2 comes in calmly: walks in, or is led in. A person who is only in picture 1 leaves calmly. No car, no crash, no shock.",
+        "意外增减": "** Compare who is in picture 1 and picture 2. The change of people comes from a surprise, for example a car stopping and someone stepping out, or a sound that brings someone in. Do not invent a person who is in neither frame.",
+    }.get(people)
+    if people_text:
+        chunks.append(people_text)
+    elif people:
+        chunks.append(f"** People follow this choice: {people}.")
+    speech_text = {
+        "不说话": """** Nobody speaks. speaking and voiceover stay unspoken. No greeting, no laugh, no sigh said aloud.
+** A short piece of music may carry the clip. No lyrics. No mouth moves.
+** The clip can also have no music, only the picture and the chosen transition effect.""",
+        "简单寒暄": """** At most one or two greetings with no real topic, such as a hello. Do not start the conversation that belongs to the later scene.
+** One voice: that line is speaking, voiceover is empty, and actor lists only that person first.
+** Two voices: the first person is speaking, the second is voiceover, and actor lists them in that order.
+** Mouths move only for those short lines. One voice at a time.""",
+        "人声": """** A very short human sound marks someone arriving or leaving.
+** Someone coming in: a laugh, a hello, or a small call. Someone leaving: a sigh, or a short goodbye. Match the place.
+** Do not turn it into a real conversation.
+** One voice: speaking only, voiceover empty, actor lists that person first.
+** Two voices: speaking then voiceover, actor in that same order.
+** If the people do not change, nobody makes this sound.""",
+        "小动作": """** Nobody speaks. A small action joins the two frames, and its sound belongs to the action.
+** In a restaurant: eating, pouring, cups touching. On a road: a few steps, a pause. Use the place that is actually in these frames.""",
+        "场景烘托": """** Nobody speaks. The talk pauses.
+** Show the mood of what the two scenes are about: gloom if it is heavy, light and flowers if it is kind, or wind, leaves, and the view they are looking at.
+** Those sounds stay in the picture. Do not finish their conversation for them.""",
+    }.get(speech)
+    if speech_text:
+        chunks.append(speech_text)
+    elif speech:
+        chunks.append(f"** Sound and speech follow this choice: {speech}.")
+    effect_text = {
+        "自然转换": "** No trick effect. The picture moves naturally from picture 1 to picture 2. No page turn, no dissolve, no wipe, no white flash, no whoosh.",
+        "叠化": "** The join is a short dissolve. Picture 1 fades and picture 2 appears through it. They overlap for a moment. Write that dissolve into the motion.",
+        "嗖一下": "** The join is very short. The picture is thrown across with one whoosh. Do not walk it slowly.",
+        "翻书": "** The join is a page turn. Picture 1 turns like a page. Picture 2 is the new page. Paper may rustle.",
+        "擦除": "** The join is a wipe. Picture 2 pushes picture 1 off from one side.",
+        "闪白": "** The join is a white flash. The picture goes white, then lands on picture 2.",
+    }.get(effect)
+    if effect_text:
+        chunks.append(effect_text)
+    elif effect:
+        chunks.append(f"** Use this transition effect between the two frames: {effect}.")
+    chunks.append(
+        f"** The project's visual style is {style}. Keep faces and clothes recognizable on the way from picture 1 to picture 2."
+    )
+    if speech != "不说话":
+        chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
+    return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
+
+
+def build_transition_video_prompt(
+    *,
+    visual_style: str,
+    scene_content: list,
+    transition: dict,
+    language: str = "",
+    host_narrator: str = "",
+) -> str:
+    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。"""
+    style = (visual_style or "").strip() or "realistic"
+    chosen = transition if isinstance(transition, dict) else {}
+    scenes = scene_content if isinstance(scene_content, list) else []
+    json_content = json.dumps(
+        scene_payload_for_notebooklm_export(scenes, "video", "act_two", narrator=host_narrator),
+        ensure_ascii=False,
+        indent=2,
+    )
+    instruction = _transition_video_instruction(chosen, style)
+    voices = speaking_voice_lines(scenes)
+    lang_note = _audio_language_instruction(language)
+    audio = "\n".join(
+        part
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, instruction, lang_note)
+        if part
+    )
+    video = "\n".join(
+        part
+        for part in (NOTEBOOKLM_VOICE_MATCH.strip(), voices, ACTOR_AGE_LOOK.strip(), instruction)
+        if part
+    )
+    choice_lines = _transition_video_choice_lines(chosen)
+    parts = {
+        "Visual_Style": style,
+        "Video_choices": "过渡 · 起始画面到终止画面",
+        "Transition_choices": choice_lines or "（这场没有记下选择）",
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,
         "Story_Scene_Content": json_content,
@@ -1555,15 +1821,9 @@ def build_direct_video_clipbody(
         parts["Visual_Style"] = visual_style.strip()
     if (main_character or "").strip():
         parts["Story_Character"] = main_character.strip()
-    speaking_lines: list[str] = []
-    for i, entry in enumerate(story_entries or []):
-        if not isinstance(entry, dict):
-            continue
-        sp = (entry.get("speaking") or "").strip()
-        if sp:
-            speaking_lines.append(f"[{i + 1}] {sp}")
-    #if speaking_lines:
-    #    parts["Speaking_reference"] = "\n".join(speaking_lines)
+    voices = speaking_voice_lines(story_entries or [])
+    if voices:
+        parts["Speaking_voices"] = voices
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
@@ -1573,14 +1833,14 @@ Output: as json array like
 [
     {
         "caption": "Scene title; for 1st scene, give the title for the whole-story",
-        "actor": "人物1：woman/名字/chinese | 人物2：man/名字/english | 讲员：voice-name",
+        "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/english/贾雨村 | 讲员：voice-name",
         "speaking": "Actor's speaking line, as the 1st person's perspective",
         "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
         "voiceover": "Host/narrator's introduction / elaborate / summary, as the outsider's perspective"
     },
     {
         "caption": "Scene title",
-        "actor": "人物1：woman/名字/chinese | 人物2：man/名字/english | 讲员：voice-name",
+        "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/english/贾雨村 | 讲员：voice-name",
         "speaking": "Actor's speaking line, as the 1st person's perspective",
         "visual": "Visual elements of the image, give (animation) development of the scene to guid the viewer's attention",
         "voiceover": "Host/narrator's introduction / elaborate-insight / summary, as the outsider's perspective"
@@ -1756,7 +2016,8 @@ NOTEBOOKLM_VOICE_MATCH = """
 ** Voice rule, read first. The person who speaks uses the gender in their own name.
 ** woman = female voice. man = male voice. Lip-sync uses this same voice.
 ** On screen or off screen, a woman is never given a male voice.
-** Age is kids, young, mature, or senior when that word is in the name. Otherwise adult. Last word chinese or english matches the voice.
+** Age band is kids, youth, teenager, mature, or senior, the word after woman or man. Otherwise adult. Ethnicity is chinese or english, the word after the age band. A name, when present, is last and is not the voice.
+** When a voice name is written for speaking or voiceover, that line uses that commercial voice. Do not substitute another.
 """
 
 
@@ -1857,10 +2118,12 @@ def build_notebooklm_gen_instruction_clipbody(
 
     elif base == "video":
         vid_instr = NOTEBOOKLM_VIDEO_ACT_TWO if var == "act_two" else NOTEBOOKLM_VIDEO_ACT_ONE
+        voices = speaking_voice_lines(scenes)
         parts["Instruction_for_video_generation"] = "\n".join(
             part
             for part in (
                 NOTEBOOKLM_VOICE_MATCH.strip(),
+                voices,
                 ACTOR_AGE_LOOK,
                 vid_instr.strip(),
                 NOTEBOOKLM_VIDEO_NO_MUSIC.strip(),
@@ -1872,6 +2135,7 @@ def build_notebooklm_gen_instruction_clipbody(
             part
             for part in (
                 NOTEBOOKLM_VOICE_MATCH.strip(),
+                voices,
                 vid_instr.strip(),
                 NOTEBOOKLM_VIDEO_NO_MUSIC.strip(),
                 lang_note,

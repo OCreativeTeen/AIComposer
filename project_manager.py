@@ -373,19 +373,21 @@ def project_narrator() -> str:
 
 
 _ACTOR_AGE = {
-    "mature": "mature",
-    "middle": "mature",
-    "middle-aged": "mature",
-    "old": "mature",
-    "senior": "senior",
-    "elder": "senior",
-    "young": "young",
-    "teen": "young",
-    "teenager": "young",
     "kids": "kids",
     "kid": "kids",
     "child": "kids",
     "children": "kids",
+    "teenager": "teenager",
+    "teen": "teenager",
+    "youth": "youth",
+    "young": "youth",
+    "mature": "mature",
+    "middle": "mature",
+    "middle-aged": "mature",
+    "adult": "mature",
+    "senior": "senior",
+    "elder": "senior",
+    "old": "senior",
 }
 
 
@@ -423,29 +425,12 @@ def actor_is_absent(body: str) -> bool:
     return base.strip() in ("", ACTOR_ABSENT, "背景")
 
 
-ACTOR_AGE_BY_BUCKET = {"kids": "10", "youth": "25", "mature": "40", "senior": "70"}
-
-
 def actor_body_with_default_age(body: str) -> str:
-    """缺年龄时按年龄段补上：kids 10，youth 25，mature 40，senior 70。"""
+    """收成 性别/年龄段/民族，有名字就放在最后。不再写具体岁数。"""
     raw, motion = split_actor_motion(body or "")
     if actor_is_absent(raw):
         return _with_actor_motion(raw, motion)
-    bits = [part.strip() for part in raw.split("/") if part.strip()]
-    if len(bits) >= 4 and re.sub(r"\D", "", bits[3]):
-        return _with_actor_motion("/".join(bits), motion)
-    bucket = bits[1].lower() if len(bits) >= 2 else ""
-    bucket = {"young": "youth", "teen": "kids", "adult": "mature", "old": "senior"}.get(bucket, bucket)
-    age = ACTOR_AGE_BY_BUCKET.get(bucket, "")
-    if not age or len(bits) < 2:
-        return _with_actor_motion(raw, motion)
-    if len(bits) == 2:
-        bits.extend(["chinese", age])
-    elif len(bits) == 3:
-        bits.append(age)
-    else:
-        bits[3] = age
-    return _with_actor_motion("/".join(bits[:4]), motion)
+    return _with_actor_motion(_person_body(raw) or raw, motion)
 
 
 def _with_actor_motion(body: str, motion: str) -> str:
@@ -477,8 +462,16 @@ def _race_token(token: str) -> str:
     return "chinese"
 
 
+def _strip_host_age_number(body: str) -> str:
+    """讲员已有年龄段时，去掉末尾的具体岁数。"""
+    bits = [b.strip() for b in (body or "").split("/") if b.strip()]
+    if len(bits) >= 4 and bits[-1].isdigit() and bits[1].lower() in _ACTOR_AGE:
+        return "/".join(bits[:3])
+    return (body or "").strip()
+
+
 def _person_body(part: str) -> str:
-    """能看懂的写成 woman|man / 名字或年纪 / chinese|english，认不出就保留原文。"""
+    """写成 woman|man / 年龄段 / chinese|english，有名字放在最后。认不出就保留原文。"""
     body, _motion = split_actor_motion(_strip_actor_label(part))
     bits = [b.strip() for b in body.split("/") if b.strip()]
     gender = ""
@@ -488,15 +481,31 @@ def _person_body(part: str) -> str:
             gender = "woman"
         elif head in ("man", "male", "boy") or bits[0] in ("男", "男性"):
             gender = "man"
-    if gender and len(bits) >= 2:
-        mid = bits[1]
-        if mid.lower() in _ACTOR_AGE:
-            mid = _ACTOR_AGE[mid.lower()]
-        race = _race_token(bits[2]) if len(bits) >= 3 else "chinese"
-        age = _snap_actor_age(bits[3]) if len(bits) >= 4 else ""
-        body = f"{gender}/{mid}/{race}"
-        return f"{body}/{age}" if age else body
-    return body
+    if not gender or len(bits) < 2:
+        return body
+    age = ""
+    race = ""
+    name = ""
+    number_age = ""
+    for token in bits[1:]:
+        low = token.lower()
+        if low in _ACTOR_AGE and not age:
+            age = _ACTOR_AGE[low]
+            continue
+        if not race and low in ("chinese", "english", "western"):
+            race = _race_token(token)
+            continue
+        if token.isdigit() and not number_age:
+            number_age = _age_number_bucket(token)
+            continue
+        if not name:
+            name = token
+    if not age:
+        age = number_age or "mature"
+    if not race:
+        race = "chinese"
+    out = f"{gender}/{age}/{race}"
+    return f"{out}/{name}" if name else out
 
 
 _ACTOR_AGE_STEPS = [1] + list(range(5, 81, 5))
@@ -513,13 +522,15 @@ def _snap_actor_age(token: str) -> str:
 
 
 def _age_number_bucket(token: str) -> str:
-    """1–12 小孩，13–29 青年，30–59 成年，60–80 年长。"""
+    """1–12 小孩，13–19 少年，20–29 青年，30–59 成年，60–80 年长。"""
     digits = re.sub(r"\D", "", token or "")
     if not digits:
         return ""
     n = int(digits)
     if n <= 12:
         return "kids"
+    if n <= 19:
+        return "teenager"
     if n <= 29:
         return "youth"
     if n <= 59:
@@ -554,21 +565,22 @@ def resolve_actor_voice(body: str) -> str:
         if three in voices:
             return three
     bucket = ""
-    if len(bits) >= 4:
-        bucket = _age_number_bucket(bits[3])
+    if len(bits) >= 2:
+        word = bits[1].lower()
+        word = _ACTOR_AGE.get(word, word)
+        if word in ("kids", "teenager", "youth", "mature", "senior"):
+            bucket = word
+    if not bucket and len(bits) >= 4 and bits[-1].isdigit():
+        bucket = _age_number_bucket(bits[-1])
     if not bucket and len(bits) >= 2 and bits[1].isdigit():
         bucket = _age_number_bucket(bits[1])
-    if not bucket and len(bits) >= 2:
-        word = bits[1].lower()
-        word = {"young": "youth", "teen": "kids", "adult": "mature", "old": "senior"}.get(word, word)
-        if word in ("kids", "youth", "mature", "senior"):
-            bucket = word
     if not bucket:
         bucket = "mature"
     if gender:
         aliases = {
-            "kids": ("kids", "youth", "mature"),
-            "youth": ("youth", "mature", "kids"),
+            "kids": ("kids", "teenager", "youth", "mature"),
+            "teenager": ("teenager", "youth", "kids", "mature"),
+            "youth": ("youth", "teenager", "mature"),
             "mature": ("mature", "youth"),
             "senior": ("senior", "mature"),
         }.get(bucket, ("mature",))
@@ -599,7 +611,7 @@ def normalize_actor_text(text: str) -> str:
                 continue
             seen_host = True
             _base, motion = split_actor_motion(_strip_actor_label(part))
-            host = _host_voice_in(part, voices) or _base
+            host = _host_voice_in(part, voices) or _strip_host_age_number(_base)
             if not host or actor_is_absent(host):
                 continue
             if "已经在画面" in (motion or ""):
@@ -763,6 +775,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "topic_subtype",
     "marker_start",
     "marker_end",
+    "actor_voices",
 })
 
 # 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）

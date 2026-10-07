@@ -56,9 +56,11 @@ def _vb_normalize_gender(token: str) -> str:
 
 
 def _vb_age_number_to_category(n: int) -> str:
-    """与 voices.json 的中间一档一致：kids / youth / mature / senior。"""
+    """kids / teenager / youth / mature / senior。"""
     if n <= 12:
         return "kids"
+    if n <= 19:
+        return "teenager"
     if n <= 29:
         return "youth"
     if n <= 59:
@@ -75,8 +77,8 @@ def _vb_age_token_to_category(token: str) -> str:
         "kids": "kids",
         "child": "kids",
         "children": "kids",
-        "teenager": "kids",
-        "teen": "kids",
+        "teenager": "teenager",
+        "teen": "teenager",
         "young": "youth",
         "youth": "youth",
         "middle": "mature",
@@ -89,7 +91,7 @@ def _vb_age_token_to_category(token: str) -> str:
     }
     if t in aliases:
         return aliases[t]
-    if t in ("kids", "youth", "mature", "senior"):
+    if t in ("kids", "teenager", "youth", "mature", "senior"):
         return t
     return "mature"
 
@@ -678,8 +680,7 @@ def _voicebox_resolve_voice(speaker: str, language: str) -> dict:
     speaker 形如 ``gender/age/race``（与 ``name`` 一致），例如 ``woman/mature/chinese``。
     gender：``woman`` | ``man``；race：``chinese`` | ``english``（缺省时由 ``language`` 推断）。
 
-    age 可为词（``kids`` / ``teen`` / ``young`` / ``mature`` / ``old`` / ``narrator``）或**年龄数字**：
-    <20 teen，20–29 young，>30 mature。
+    age 是 ``kids`` / ``teenager`` / ``youth`` / ``mature`` / ``senior``。第四段如果是名字，不拿来判断年龄。
     """
     raw = (speaker or "").strip().replace("\\", "/")
     # split raw by |, keep the first part
@@ -704,17 +705,20 @@ def _voicebox_resolve_voice(speaker: str, language: str) -> dict:
     if len(parts) >= 4:
         gender = _vb_normalize_gender(parts[0])
         race = _vb_normalize_race(parts[2], language)
-        three = f"{gender}/{parts[1]}/{race}"
+        age_word = _vb_age_token_to_category(parts[1])
+        if parts[1].strip().lower() not in ("kids", "teenager", "teen", "youth", "young", "mature", "senior", "old") and parts[-1].isdigit():
+            age_word = _vb_age_token_to_category(parts[-1])
+        three = f"{gender}/{age_word}/{race}"
         for v in VOICES:
             if v["name"].lower() == three.lower():
                 return v
-        bucket = _vb_age_token_to_category(parts[3])
         fallbacks = {
-            "kids": ("kids", "youth", "mature"),
-            "youth": ("youth", "mature", "kids"),
+            "kids": ("kids", "teenager", "youth", "mature"),
+            "teenager": ("teenager", "youth", "kids", "mature"),
+            "youth": ("youth", "teenager", "mature"),
             "mature": ("mature", "youth"),
             "senior": ("senior", "mature"),
-        }.get(bucket, ("mature",))
+        }.get(age_word, ("mature",))
         for age_name in fallbacks:
             key = f"{gender}/{age_name}/{race}"
             for v in VOICES:

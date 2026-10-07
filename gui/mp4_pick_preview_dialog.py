@@ -192,6 +192,7 @@ def ask_mp4_pick_with_trim_preview(
     ] = None,
     confirm_actions: Optional[list] = None,
     radios: Optional[tuple] = None,
+    sources: Optional[list] = None,
 ) -> Union[Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -202,7 +203,18 @@ def ask_mp4_pick_with_trim_preview(
             parent = tk._default_root
         except Exception:
             parent = None
-    if not choices or build_adjusted_pair is None or cv2 is None:
+    if sources:
+        usable = [item for item in sources if item.get("choices")]
+        if not usable or build_adjusted_pair is None or cv2 is None:
+            if cv2 is None and parent:
+                messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
+            return None
+        current = next((item for item in usable if item.get("key") == "download"), usable[0])
+        folder_path = current["folder"]
+        choices = list(current["choices"])
+        radios = current.get("radios")
+        confirm_actions = current.get("confirm_actions")
+    elif not choices or build_adjusted_pair is None or cv2 is None:
         if cv2 is None and parent:
             messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
         return None
@@ -216,7 +228,10 @@ def ask_mp4_pick_with_trim_preview(
     dlg.grab_set()
 
     result: list = [None]
-    clip = [_ClipTrim(os.path.join(folder_path, choices[0]))]
+    folder_box = [folder_path]
+    radio_holder = [radios]
+    confirm_holder = [confirm_actions]
+    clip = [_ClipTrim(os.path.join(folder_box[0], choices[0]))]
     sel_fn = [choices[0]]
 
     playing = [False]
@@ -249,7 +264,13 @@ def ask_mp4_pick_with_trim_preview(
 
     left = ttk.LabelFrame(body, text="文件列表", padding=6)
     left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-    listbox = tk.Listbox(left, width=38, height=22, exportselection=False, font=("Consolas", 9))
+    choice_style = ttk.Style(dlg)
+    choice_style.configure("PickChoice.TLabel", font=("Microsoft YaHei UI", 14))
+    choice_style.configure("PickChoice.TRadiobutton", font=("Microsoft YaHei UI", 14))
+    choice_box = ttk.Frame(left)
+    if sources or radios:
+        choice_box.pack(fill=tk.X, anchor=tk.W, pady=(0, 8))
+    listbox = tk.Listbox(left, width=42, height=22, exportselection=False, font=("Consolas", 9))
     listbox.pack(fill=tk.BOTH, expand=True)
     for c in choices:
         listbox.insert(tk.END, c)
@@ -306,27 +327,26 @@ def ask_mp4_pick_with_trim_preview(
     timeline = tk.Canvas(trim_box, height=52, bg="#e8e8e8", highlightthickness=0, cursor="hand2")
     timeline.pack(fill=tk.X, pady=(4, 0))
 
+    radio_var = tk.StringVar(value="")
+    source_var = tk.StringVar(value=(current["key"] if sources else ""))
+    if sources:
+        source_row = ttk.Frame(choice_box)
+        source_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 4))
+        ttk.Label(source_row, text="来源", style="PickChoice.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+        for item in sources:
+            ttk.Radiobutton(
+                source_row,
+                text=item["label"],
+                value=item["key"],
+                variable=source_var,
+                style="PickChoice.TRadiobutton",
+            ).pack(side=tk.LEFT, padx=(0, 12))
+    extra_host = ttk.Frame(choice_box)
+    extra_host.pack(anchor=tk.W, fill=tk.X)
     foot = ttk.Frame(root)
     foot.pack(fill=tk.X, pady=(10, 0))
-    radio_var = tk.StringVar(value="")
-    if radios:
-        radio_title, radio_options = radios
-        radio_var.set(radio_options[0][0])
-        radio_row = ttk.Frame(foot)
-        radio_row.pack(side=tk.LEFT)
-        ttk.Label(radio_row, text=radio_title).pack(side=tk.LEFT, padx=(0, 8))
-        for value, label in radio_options:
-            ttk.Radiobutton(
-                radio_row, text=label, value=value, variable=radio_var
-            ).pack(side=tk.LEFT, padx=(0, 12))
-    ttk.Button(foot, text="取消", command=lambda: _close()).pack(side=tk.RIGHT, padx=(6, 0))
-    if confirm_actions:
-        for value, label in reversed(confirm_actions):
-            ttk.Button(
-                foot, text=label, command=lambda v=value: _on_confirm(v)
-            ).pack(side=tk.RIGHT, padx=(0, 6))
-    else:
-        ttk.Button(foot, text="确定", command=lambda: _on_confirm()).pack(side=tk.RIGHT)
+    btn_host = ttk.Frame(foot)
+    btn_host.pack(side=tk.RIGHT)
 
     def _c() -> _ClipTrim:
         return clip[0]
@@ -752,7 +772,7 @@ def ask_mp4_pick_with_trim_preview(
 
     def _load_file(fn: str) -> None:
         _stop_play()
-        full = os.path.join(folder_path, fn)
+        full = os.path.join(folder_box[0], fn)
         sel_fn[0] = fn
         clip[0] = _ClipTrim(full)
         c = clip[0]
@@ -771,6 +791,9 @@ def ask_mp4_pick_with_trim_preview(
     listbox.bind("<<ListboxSelect>>", _on_list_select)
 
     def _on_confirm(action: str | None = None) -> None:
+        if clip[0] is None:
+            messagebox.showwarning("导入视频", "这里没有视频。", parent=dlg)
+            return
         _save_trim()
         c = _c()
         if c.end <= c.start + (1.0 / c.fps):
@@ -792,8 +815,10 @@ def ask_mp4_pick_with_trim_preview(
             return
         if action:
             picked = picked + (action,)
-        if radios:
+        if radio_holder[0]:
             picked = picked + (radio_var.get(),)
+        if sources:
+            picked = picked + (source_var.get(),)
         result[0] = picked
         _close()
 
@@ -804,7 +829,62 @@ def ask_mp4_pick_with_trim_preview(
         except tk.TclError:
             pass
 
+    def _fill_actions() -> None:
+        for widget in extra_host.winfo_children():
+            widget.destroy()
+        for widget in btn_host.winfo_children():
+            widget.destroy()
+        spec = radio_holder[0]
+        if spec:
+            radio_title, radio_options = spec
+            radio_var.set(radio_options[0][0])
+            ttk.Label(extra_host, text=radio_title, style="PickChoice.TLabel").pack(
+                side=tk.LEFT, padx=(0, 8)
+            )
+            for value, label in radio_options:
+                ttk.Radiobutton(
+                    extra_host,
+                    text=label,
+                    value=value,
+                    variable=radio_var,
+                    style="PickChoice.TRadiobutton",
+                ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(btn_host, text="取消", command=_close).pack(side=tk.RIGHT, padx=(6, 0))
+        actions = confirm_holder[0]
+        if actions:
+            for value, label in reversed(actions):
+                ttk.Button(
+                    btn_host, text=label, command=lambda v=value: _on_confirm(v)
+                ).pack(side=tk.RIGHT, padx=(0, 6))
+        else:
+            ttk.Button(btn_host, text="确定", command=lambda: _on_confirm()).pack(side=tk.RIGHT)
+
+    def _apply_source() -> None:
+        if not sources:
+            return
+        spec = next(item for item in sources if item["key"] == source_var.get())
+        _stop_play()
+        folder_box[0] = spec["folder"]
+        choices.clear()
+        choices.extend(spec["choices"])
+        listbox.delete(0, tk.END)
+        for name in choices:
+            listbox.insert(tk.END, name)
+        radio_holder[0] = spec.get("radios")
+        confirm_holder[0] = spec.get("confirm_actions")
+        _fill_actions()
+        if choices:
+            listbox.selection_set(0)
+            _load_file(choices[0])
+        else:
+            clip[0] = None
+            sel_fn[0] = ""
+            preview_canvas.delete("all")
+
     dlg.protocol("WM_DELETE_WINDOW", _close)
+    _fill_actions()
+    if sources:
+        source_var.trace_add("write", lambda *_args: _apply_source())
     listbox.selection_set(0)
     _load_file(choices[0])
 
