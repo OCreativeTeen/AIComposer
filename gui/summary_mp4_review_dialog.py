@@ -138,6 +138,8 @@ class SummaryMp4ReviewDialog:
         initial_segments: list[dict] | None = None,
         pid: str,
         lang: str,
+        dialog_title: str = "审阅成片片段 — 裁剪与排序",
+        confirm_label: str = "确认并保存（裁剪→末帧延长→拼接→水印）",
     ):
         self.pid = pid or "yt_wm"
         self.lang = lang or "zh"
@@ -227,8 +229,9 @@ class SummaryMp4ReviewDialog:
         self._has_audio = False
         self._syncing_ui = False
 
+        self._confirm_label = confirm_label
         self.dlg = tk.Toplevel(parent)
-        self.dlg.title("审阅成片片段 — 裁剪与排序")
+        self.dlg.title(dialog_title)
         self.dlg.geometry("1060x720")
         self.dlg.minsize(900, 600)
         self.dlg.transient(parent)
@@ -365,7 +368,7 @@ class SummaryMp4ReviewDialog:
         ttk.Button(foot, text="取消", command=self._on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(
             foot,
-            text="确认并保存（裁剪→末帧延长→拼接→水印）",
+            text=self._confirm_label,
             command=self._on_confirm,
         ).pack(side=tk.RIGHT)
 
@@ -1029,6 +1032,8 @@ def ask_summary_mp4_review_segments(
     initial_segments: list[dict] | None = None,
     pid: str,
     lang: str,
+    dialog_title: str = "审阅成片片段 — 裁剪与排序",
+    confirm_label: str = "确认并保存（裁剪→末帧延长→拼接→水印）",
 ) -> list[dict] | None:
     """审阅并返回 ``[{scene, path, start, end, speed}, ...]``；取消返回 ``None``。"""
     dlg = SummaryMp4ReviewDialog(
@@ -1037,6 +1042,8 @@ def ask_summary_mp4_review_segments(
         initial_segments=initial_segments,
         pid=pid,
         lang=lang,
+        dialog_title=dialog_title,
+        confirm_label=confirm_label,
     )
     parent.wait_window(dlg.dlg)
     return dlg.confirmed

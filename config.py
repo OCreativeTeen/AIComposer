@@ -718,7 +718,7 @@ AVATAR_PATH = f"{BASE_MEDIA_PATH}/avatar"
 CHARACTER_PERSON_OPTIONS = load_character_person_options()
 PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
-# 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗、审阅发布等）
+# 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗等）
 INPUT_MEDIA_GEN_VIDEO_PATH = f"{PUBLISH_PATH}/gen_video"
 TEMP_PATH_BASE = PROJECT_DATA_PATH  # temp 目录在各个项目下
 

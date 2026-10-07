@@ -11,7 +11,6 @@ Design goals:
 Usage:
     python -m cli.win_gui_tasks click 场景
     python -m cli.win_gui_tasks click 保存
-    python -m cli.win_gui_tasks click 审阅发布
     python -m cli.win_gui_tasks select_4step
     python -m cli.win_gui_tasks paste_scene
     python -m cli.win_gui_tasks status
@@ -478,9 +477,7 @@ def click_app_button(button_name: str) -> bool:
     # Summary action row sits above 主角/风格/旁白, not at mid-height.
     # ttk buttons are invisible to UIA, so these ratios are the click fallback.
     button_ratios = {
-        "审阅发布": 0.08,
         "保存": 0.20,
-        "风格": 0.36,
         "分析": 0.44,
         "场景": 0.52,
         "诗歌": 0.60,

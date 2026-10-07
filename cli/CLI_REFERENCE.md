@@ -38,7 +38,7 @@ python -m cli bot           # 启动 Telegram 听筒
 
 ### STORY（`story_root`）
 
-`scn` `save` `pub` `ana` `poe` `scr` `sty` `cov` `vc` `vp` `sync`
+`scn` `save` `ana` `poe` `scr` `sty` `cov` `vc` `vp` `sync`
 
 ### LIST / YT / none
 
@@ -120,7 +120,6 @@ pick next          # 下一条
 |------|------|------|------|------|
 | `scn` | `scene`, `go`, `flow` | STORY（或已有 SCENE） | 无 | 打开并置前 **SCENE**；已在 SCENE 则直接 ok |
 | `save` | — | STORY 或 SCENE | 无 | 点「保存」 |
-| `pub` | `publish` | STORY | 无 | 审阅发布 |
 | `ana` | `analyze` | STORY | 无 | 分析 |
 | `poe` | `poem` | STORY | 无 | 诗歌 |
 | `scr` | `script` | STORY | 无 | 脚本 |
@@ -378,7 +377,6 @@ chrome.exe --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\HermesCh
 | `vp` | `video_publish` |
 | `pick` | `story_pickup` |
 | `scn` | `scene` / `go` |
-| `pub` | `publish` |
 | `ana` | `analyze` |
 | `poe` | `poem` |
 | `scr` | `script` |

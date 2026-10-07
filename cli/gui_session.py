@@ -120,7 +120,6 @@ def listen_clis_for_screen(screen: str) -> list[str]:
         return [
             "scn",
             "save",
-            "pub",
             "ana",
             "poe",
             "scr",

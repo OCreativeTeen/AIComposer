@@ -47,7 +47,6 @@ _LAST_PUMP_TS = 0.0
 _CLICK_LABELS = {
     "scene": "场景",
     "save": "保存",
-    "publish": "审阅发布",
     "analyze": "分析",
     "poem": "诗歌",
     "script": "脚本",

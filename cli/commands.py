@@ -19,7 +19,6 @@ from cli.screens import (
 )
 
 STORY_ROOT_BUTTONS: dict[str, str] = {
-    "publish": "审阅发布",
     "save": "保存",
     "style": "风格",
     "analyze": "分析",
@@ -77,7 +76,6 @@ _SHORT_CLI: dict[str, str] = {
     "video_concat": "vc",
     "video_publish": "vp",
     "story_pickup": "pick",
-    "publish": "pub",
     "analyze": "ana",
     "poem": "poe",
     "script": "scr",
@@ -137,7 +135,6 @@ def _lm_bridge_retry(want: str, *, timeout_s: float = 90.0) -> tuple[bool, str] 
     return _bridge_field_retry("lm", want, timeout_s=timeout_s, per_try_timeout_s=8.0)
 
 _ALIASES: dict[str, str] = {
-    "审阅发布": "publish",
     "保存": "save",
     "风格": "style",
     "分析": "analyze",
@@ -152,7 +149,6 @@ _ALIASES: dict[str, str] = {
     "打开项目": "project",
     "analysis": "analyze",
     "poetry": "poem",
-    "review": "publish",
     "cover_prompt": "cover",
     "lm": "scene_lm",
     "scnlm": "scene_lm",
@@ -189,7 +185,6 @@ _ALIASES: dict[str, str] = {
     "vc": "video_concat",
     "vp": "video_publish",
     "pick": "story_pickup",
-    "pub": "publish",
     "ana": "analyze",
     "poe": "poem",
     "scr": "script",
@@ -361,7 +356,7 @@ def cmd_help() -> tuple[bool, str]:
         "sync  — 再同步一次",
         "",
         "SCENE:  scnlm  scnvs  sty  snp  prf  scnge  scnsave  nbp  nbi  nbif  itc  itcs  grv  gvd  vc  vp  nbv  gen  cx  sync",
-        "STORY:  scn  save  pub  ana  poe  scr  sty  cov  vc  vp  sync",
+        "STORY:  scn  save  ana  poe  scr  sty  cov  vc  vp  sync",
         "QUEUE:  pick  /  pick next  /  pick N  /  pick exit",
         "",
         "scnlm / scnvs = 先无参看列表，再 scnlm N / scnvs N   grv 1 [变体序号] = 开标签+出图+出片+下载   vc = 审阅窗   gvd = 补下载",

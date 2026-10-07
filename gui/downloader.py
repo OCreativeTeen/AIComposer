@@ -34,10 +34,6 @@ from utility.file_util import (
     show_auto_close_popup,
 )
 from gui.choice_dialog import askchoice
-from gui.publish_metadata_dialog import (
-    ask_publish_metadata_then_schedule,
-    scene_content_list_for_publish,
-)
 from gui.summary_mp4_review_dialog import (
     ask_summary_mp4_review_segments,
     run_trim_concat_watermark_worker,
@@ -4301,63 +4297,6 @@ def _is_windows_file_in_use(err: OSError) -> bool:
     return en in (11, 16, 26)  # EAGAIN, EBUSY, ETXTBSY 等视平台而定
 
 
-def _tk_dialog_parent(preferred, fallback=None):
-    """messagebox 父窗口：preferred 已关闭时回退 fallback，避免 parent 销毁后弹窗报错。"""
-    for w in (preferred, fallback):
-        if w is None:
-            continue
-        try:
-            if w.winfo_exists():
-                return w
-        except tk.TclError:
-            continue
-    return fallback
-
-
-def _set_publish_review_publishing(parent, publishing: bool) -> None:
-    try:
-        pr = getattr(parent, "_publish_review", None)
-        if pr is not None:
-            pr._publishing = bool(publishing)
-    except Exception:
-        pass
-
-
-def _run_on_main_tk_and_wait(root, fn, timeout=60) -> None:
-    """后台线程中等待 Tk 主线程执行 fn（释放播放器句柄等）。"""
-    ev = threading.Event()
-    err: list = [None]
-
-    def _run():
-        try:
-            fn()
-        except Exception as e:
-            err[0] = e
-        finally:
-            ev.set()
-
-    root.after(0, _run)
-    if not ev.wait(timeout=timeout):
-        raise TimeoutError("主线程操作超时")
-    if err[0]:
-        raise err[0]
-
-
-def _release_publish_review_if_same_mp4(parent, mp4_path: str) -> None:
-    """审阅窗口若正在播放同一 mp4，先 _stop_play，避免归档/覆盖时 WinError 32。"""
-    try:
-        pr = getattr(parent, "_publish_review", None)
-        if not pr:
-            return
-        p = os.path.normcase(os.path.abspath(getattr(pr, "mp4_path", "") or ""))
-        m = os.path.normcase(os.path.abspath(mp4_path or ""))
-        if p == m and hasattr(pr, "_stop_play"):
-            pr._stop_play()
-            time.sleep(0.15)  # 给 OS 释放 mp4 句柄一点时间
-    except Exception:
-        pass
-
-
 def _move_file_to_dest_with_fallback(src: str, dst: str) -> None:
     """优先 move；失败时 copy2 再删源。对「文件正被使用」短暂重试（预览刚停时句柄未立即释放）。"""
     retries = 12
@@ -6759,21 +6698,6 @@ class MediaGUIManager:
         return video_detail.get("analyzed_content")
 
 
-    def _youtube_story_title_from_video_detail(self, video_detail) -> str:
-        if not isinstance(video_detail, dict):
-            return ""
-        from gui.publish_metadata_dialog import resolve_story_title_for_publish
-
-        t = resolve_story_title_for_publish(video_detail)
-        if t:
-            return t
-        cap = project_manager.video_detail_narrative_heading(video_detail)
-        if cap:
-            return cap
-        return _youtube_row_source_title(video_detail)
-
-
-
     def _youtube_story_llm_source_text(self, video_detail) -> str:
         """Story 智能添加 / 生成的 LLM 输入原文。"""
         if not isinstance(video_detail, dict):
@@ -7519,44 +7443,60 @@ class MediaGUIManager:
         main_character: str = "",
         channel_path: str = "",
         persist_fn=None,
+        embed_in=None,
     ) -> list | None:
         """编辑 ``video_detail['scene_content']``（JSON array）；确认后写回频道列表。"""
         persist = persist_fn or (
             lambda vd, parent=None: self._persist_video_detail_story(vd, parent=parent)
         )
         result_holder: list[list | None] = [None]
-        existing = getattr(self, "_scene_content_dialog", None)
-        if existing is not None:
-            try:
-                if existing.winfo_exists():
-                    from gui.cli_bridge import is_screen_bound
+        embedded = embed_in is not None
+        if not embedded:
+            existing = getattr(self, "_scene_content_dialog", None)
+            if existing is not None:
+                try:
+                    if existing.winfo_exists():
+                        from gui.cli_bridge import is_screen_bound
 
-                    if is_screen_bound(config.SCREEN_STORY_SCENE):
-                        _raise_own_window(existing)
-                        return None
-                    try:
-                        existing.destroy()
-                    except tk.TclError:
-                        pass
+                        if is_screen_bound(config.SCREEN_STORY_SCENE):
+                            _raise_own_window(existing)
+                            return None
+                        try:
+                            existing.destroy()
+                        except tk.TclError:
+                            pass
+                        self._scene_content_dialog = None
+                except tk.TclError:
                     self._scene_content_dialog = None
-            except tk.TclError:
-                self._scene_content_dialog = None
-        dlg = tk.Toplevel(parent)
-        self._scene_content_dialog = dlg
-        dlg.title("SCENE")
-        dlg.geometry("980x930")
-        dlg.minsize(980, 930)
-        # 非模态：允许切回摘要窗 / 列表等其它窗口（勿 grab_set / transient）
-        dlg.update_idletasks()
-        sw = dlg.winfo_screenwidth()
-        sh = dlg.winfo_screenheight()
-        dlg.geometry(f"980x930+{(sw - 980) // 2}+{(sh - 930) // 2}")
+            dlg = tk.Toplevel(parent)
+            self._scene_content_dialog = dlg
+            dlg.title("SCENE")
+            dlg.geometry("980x930")
+            dlg.minsize(980, 930)
+            # 非模态：允许切回摘要窗 / 列表等其它窗口（勿 grab_set / transient）
+            dlg.update_idletasks()
+            sw = dlg.winfo_screenwidth()
+            sh = dlg.winfo_screenheight()
+            dlg.geometry(f"980x930+{(sw - 980) // 2}+{(sh - 930) // 2}")
+            frm = tk.Frame(dlg, padx=12, pady=12, bg="#f0f0f0")
+            frm.pack(fill=tk.BOTH, expand=True)
+        else:
+            dlg = parent
+            self._scene_content_dialog = dlg
+            frm = tk.Frame(embed_in, padx=4, pady=2, bg="#f0f0f0")
+            frm.pack(fill=tk.BOTH, expand=True)
 
-        frm = tk.Frame(dlg, padx=12, pady=12, bg="#f0f0f0")
-        frm.pack(fill=tk.BOTH, expand=True)
+        def _dismiss_scene_window() -> None:
+            if embedded:
+                return
+            try:
+                dlg.destroy()
+            except tk.TclError:
+                pass
         title = _youtube_row_display_title(video_detail) or "YouTube 视频"
         short = title[:48].rstrip() + ("…" if len(title) > 48 else "")
-        dlg.title(f"SCENE | {short}")
+        if not embedded:
+            dlg.title(f"SCENE | {short}")
 
         def _raise_scene_dialog() -> None:
             _raise_own_window(dlg)
@@ -7578,10 +7518,7 @@ class MediaGUIManager:
             _unbind_scene_early(config.SCREEN_STORY_SCENE)
             if getattr(self, "_scene_content_dialog", None) is dlg:
                 self._scene_content_dialog = None
-            try:
-                dlg.destroy()
-            except tk.TclError:
-                pass
+            _dismiss_scene_window()
 
         # ready=False: the bridge reports "still building" instead of timing out
         # while the (large) editor body is created on the next Tk tick.
@@ -7595,22 +7532,6 @@ class MediaGUIManager:
         scene_ui: dict = {}
 
         def _build_editor_ui():
-            ttk.Label(
-                frm,
-                text=(
-                    f"{title}\n"
-                    "选 LM 提示。有 PDF 时，材料在 analyzed content 和 PDF 里二选一，只放进 {content}。"
-                    "没有 PDF 时只用 analyzed content。"
-                    "「智能生成」用所选提示和当前材料生成 scene_content 并自动保存。"
-                    "把 PDF 拖进本窗口后，可以把材料改成这份 PDF。PDF 多半是一页一张图，每一张图是一场。"
-                    "材料选分析报告或 PDF。双击下面的内容区，把分析报告或 PDF 拷到剪贴板。"
-                    "「集」「场」选定后立刻把对应场景 JSON 拷到剪贴板。"
-                    "Image 单图和幻灯片只拷提示词。"
-                    "Video、Speaking、Voiceover 仍把选定场景写进提示词。"
-                ),
-                wraplength=940,
-            ).pack(anchor=tk.W, pady=(0, 8))
-
             channel_key = self._channel_config_key()
             nb_prompt_choices = _prompt_choice_entries(channel_key)
             prompt_row = ttk.Frame(frm)
@@ -7626,6 +7547,9 @@ class MediaGUIManager:
                 width=28,
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+            action_bar = ttk.Frame(prompt_row)
+            action_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(12, 0))
+            scene_ui["action_bar"] = action_bar
 
             material_var = tk.StringVar(value="analyzed")
             pdf_layout_var = tk.StringVar(value="ai")
@@ -7650,9 +7574,9 @@ class MediaGUIManager:
             pdf_layout_combo.set("由 AI 判断场数")
 
             material_preview = scrolledtext.ScrolledText(
-                frm, wrap=tk.WORD, width=100, height=12, font=("Arial", 10)
+                frm, wrap=tk.WORD, width=100, height=5, font=("Arial", 10)
             )
-            material_preview.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+            material_preview.pack(fill=tk.X, expand=False, pady=(0, 8))
 
             def _copy_slide_pdf():
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -7746,24 +7670,12 @@ class MediaGUIManager:
             )
             _sync_material_widgets()
 
-            ttk.Label(frm, text="").pack(anchor=tk.W)
-
             _vs_opts = list(config.VISUAL_STYLE_OPTIONS)
-            _vs_cur, _talk_cur, _nar_cur = _project_look_from_row(video_detail)
-            style_row = ttk.Frame(frm)
-            style_row.pack(fill=tk.X, pady=(0, 6))
-            ttk.Label(style_row, text="Visual Style").pack(side=tk.LEFT, padx=(0, 5))
+            _vs_cur, _talk_cur, _ = _project_look_from_row(video_detail)
             visual_style_var = tk.StringVar(value=_vs_cur)
-            ttk.Label(style_row, textvariable=visual_style_var).pack(side=tk.LEFT)
             visual_style_combo_opts = list(_vs_opts)
-            ttk.Label(style_row, text="对话方式").pack(side=tk.LEFT, padx=(16, 5))
             dialogue_mode_var = tk.StringVar(value=_talk_cur)
-            ttk.Label(style_row, textvariable=dialogue_mode_var).pack(side=tk.LEFT)
             dialogue_mode_opts = list(config.DIALOGUE_MODE_OPTIONS)
-            ttk.Label(style_row, text="解说员").pack(side=tk.LEFT, padx=(16, 5))
-            ttk.Label(style_row, text=_nar_cur or "—").pack(side=tk.LEFT)
-
-            ttk.Label(frm, text="").pack(anchor=tk.W)
 
             ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
                 anchor=tk.W, pady=(0, 2)
@@ -7771,17 +7683,15 @@ class MediaGUIManager:
             instruction_frm = ttk.Frame(frm)
             instruction_frm.pack(fill=tk.X, pady=(0, 8))
             instruction_tx = scrolledtext.ScrolledText(
-                instruction_frm, wrap=tk.WORD, width=100, height=3, font=("Arial", 9)
+                instruction_frm, wrap=tk.WORD, width=100, height=2, font=("Arial", 9)
             )
             instruction_tx.pack(fill=tk.X, pady=(0, 4))
-
-            ttk.Label(frm, text="").pack(anchor=tk.W)
 
             ttk.Label(frm, text="提示词预览（切换选项/编辑导向说明时更新并复制到剪贴板）：").pack(
                 anchor=tk.W, pady=(0, 2)
             )
             prompt_tx = scrolledtext.ScrolledText(
-                frm, wrap=tk.WORD, width=100, height=8, font=("Arial", 9)
+                frm, wrap=tk.WORD, width=100, height=4, font=("Arial", 9)
             )
             prompt_tx.pack(fill=tk.X, pady=(0, 8))
 
@@ -7880,10 +7790,7 @@ class MediaGUIManager:
                 if getattr(self, "_scene_content_dialog", None) is dlg:
                     self._scene_content_dialog = None
                 _unbind_scene_cli()
-                try:
-                    dlg.destroy()
-                except tk.TclError:
-                    pass
+                _dismiss_scene_window()
 
             def _set_lm_early(value: str):
                 labels = [opt[0] for opt in nb_prompt_choices]
@@ -8260,9 +8167,9 @@ class MediaGUIManager:
             refresh_scene_prompt = scene_ui["refresh_scene_prompt"]
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
-                frm, wrap=tk.WORD, width=100, height=20, font=("Consolas", 10)
+                frm, wrap=tk.WORD, width=100, height=25, font=("Consolas", 10)
             )
-            tx.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+            tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
             scene_ui["tx"] = tx
 
@@ -8335,8 +8242,8 @@ class MediaGUIManager:
                             return None
                         return parsed if parsed else None
 
-                    btn_row = ttk.Frame(frm)
-                    btn_row.pack(fill=tk.X)
+                    btn_row = ttk.Frame(scene_ui["action_bar"])
+                    btn_row.pack(side=tk.LEFT)
 
                     _lang_lbl = config.llm_language_label(self.language)
                     _scene_copy_index = scene_ui["_scene_copy_index"]
@@ -8638,7 +8545,7 @@ class MediaGUIManager:
                             result_holder[0] = parsed
                         if not persist(video_detail, parent=dlg):
                             return
-                        dlg.destroy()
+                        _dismiss_scene_window()
                         if callable(on_saved):
                             on_saved()
 
@@ -8697,7 +8604,7 @@ class MediaGUIManager:
                             except tk.TclError:
                                 pass
 
-                        _walk_pdf_drop(dlg)
+                        _walk_pdf_drop(frm)
                     if not nb_prompt_choices:
                         smart_btn.config(state=tk.DISABLED)
                     ttk.Label(btn_row, text="集").pack(side=tk.LEFT, padx=(0, 2))
@@ -8726,8 +8633,9 @@ class MediaGUIManager:
                     nb_export_btn.pack(side=tk.LEFT, padx=(0, 8))
                     save_btn = ttk.Button(btn_row, text="保存", command=on_confirm)
                     save_btn.pack(side=tk.LEFT, padx=(0, 8))
-                    cancel_btn = ttk.Button(btn_row, text="取消", command=dlg.destroy)
-                    cancel_btn.pack(side=tk.LEFT)
+                    cancel_btn = ttk.Button(btn_row, text="取消", command=_dismiss_scene_window)
+                    if not embedded:
+                        cancel_btn.pack(side=tk.LEFT)
 
                     from gui.cli_bridge import bind_screen, match_choice, unbind_screen
 
@@ -8740,10 +8648,7 @@ class MediaGUIManager:
                         if getattr(self, "_scene_content_dialog", None) is dlg:
                             self._scene_content_dialog = None
                         _unbind_scene_cli()
-                        try:
-                            dlg.destroy()
-                        except tk.TclError:
-                            pass
+                        _dismiss_scene_window()
 
                     def on_confirm_cli():
                         on_confirm()
@@ -9005,7 +8910,8 @@ class MediaGUIManager:
                         },
                     )
                     dlg.bind("<Destroy>", _unbind_scene_cli)
-                    dlg.protocol("WM_DELETE_WINDOW", _close_scene_editor)
+                    if not embedded:
+                        dlg.protocol("WM_DELETE_WINDOW", _close_scene_editor)
                     _raise_scene_dialog()
 
                 # Bottom button row is optional for scnlm/scnvs/grv — defer so bridge stays responsive.
@@ -9044,6 +8950,7 @@ class MediaGUIManager:
         on_story_title_updated=None,
         main_character: str = "",
         channel_path: str = "",
+        embed_in=None,
     ):
         """统一入口：analyzed_content / scene_content 编辑。"""
         if field == "analyzed_content":
@@ -9063,6 +8970,7 @@ class MediaGUIManager:
                 main_character=main_character,
                 channel_path=channel_path or self.channel_path or "",
                 persist_fn=persist_fn,
+                embed_in=embed_in,
             )
         if field == "poem":
             return self._show_poem_editor(
@@ -9444,182 +9352,6 @@ class MediaGUIManager:
             except Exception as e:
                 print(f"❌ 保存 channel_list_json 失败: {e}")
 
-
-    def _open_publish_video_dialog(
-        self,
-        parent,
-        title_prefix: str,
-        mp4_path: str,
-        video_detail: dict,
-        refresh_tree,
-        *,
-        review_script_text: str = "",
-    ):
-        """从 INPUT_MEDIA_PATH 匹配的成品 mp4 上传；顺序与 GUI_wf.publish_video 相同（先标题/描述，再定时）。"""
-        ch_key = os.path.basename(self.channel_path)
-        cfg = config.get_channel_config(ch_key)
-        if not cfg:
-            show_auto_close_popup(parent, "错误", "未找到频道配置", kind="error")
-            return
-        if not mp4_path or not os.path.isfile(mp4_path):
-            messagebox.showwarning("提示", f"未找到 mp4 文件：\n{mp4_path}", parent=parent)
-            return
-
-        poem_text = (
-            (video_detail.get("poem") or "").strip()
-            if isinstance(video_detail, dict)
-            else ""
-        )
-        if isinstance(video_detail, dict):
-            fresh = project_manager.load_video_detail_row_for_config(
-                video_detail.get("project_profile") or video_detail
-            )
-            if isinstance(fresh, dict):
-                saved = fresh.get("summary")
-                if isinstance(saved, str) and saved.strip():
-                    video_detail["summary"] = saved
-        flow = ask_publish_metadata_then_schedule(
-            parent,
-            language=self.language,
-            default_title=self._youtube_story_title_from_video_detail(video_detail),
-            scene_content_list=scene_content_list_for_publish(
-                language=self.language,
-                video_detail=video_detail if isinstance(video_detail, dict) else None,
-            ),
-            analyzed_content=video_detail.get("analyzed_content"),
-            summary_text=(
-                video_detail.get("summary")
-                if isinstance(video_detail, dict)
-                else ""
-            )
-            or "",
-            poem_text=poem_text,
-            review_script_text=review_script_text,
-            video_detail=video_detail if isinstance(video_detail, dict) else None,
-            generate_text_fn=self.llm_api_local.generate_text,
-            schedule_dialog_fn=ask_publish_schedule_dialog,
-            mp4_path_hint=mp4_path,
-            metadata_dialog_title="发布前 — 标题与描述",
-            schedule_dialog_title="发布成品视频到 YouTube",
-        )
-        if flow is None:
-            return
-
-        title = flow["title"]
-        summary = flow["description"]
-        publish_at = flow["publish_at"]
-        disp_name = title_prefix + config.chinese_convert(
-            title.strip().replace(" ", "_").replace("\n", "_"), self.language
-        )
-
-        root_win = self.root
-
-        def worker():
-            watch = ""
-            try:
-                _run_on_main_tk_and_wait(
-                    root_win,
-                    lambda: _set_publish_review_publishing(parent, True),
-                    timeout=10,
-                )
-                vid, published_iso = self.downloader.upload_video(
-                    mp4_path,
-                    None,
-                    disp_name,
-                    summary,
-                    self.language,
-                    None,
-                    cfg["channel_key"],
-                    cfg.get("channel_id") or ch_key,
-                    cfg["channel_category_id"],
-                    [],
-                    privacy="unlisted",
-                    publish_at=publish_at,
-                )
-                if publish_at is not None:
-                    pub_str = publish_at.strftime("%Y-%m-%d %H:%M")
-                else:
-                    pub_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                video_detail["publish"] = pub_str
-                _apply_publish_create_date(
-                    video_detail,
-                    publish_at=publish_at,
-                    published_iso=published_iso or "",
-                )
-                vid_s = str(vid).strip() if vid is not None else ""
-                if vid_s:
-                    watch = f"https://www.youtube.com/watch?v={vid_s}"
-                    video_detail["url"] = watch
-                _write_channel_list_json_file(
-                    self.downloader.channel_list_json, self.downloader.channel_videos
-                )
-
-                tg_lines = []
-                try:
-                    from utility.telegram_notify import notify_youtube_publish_extras
-
-                    tg_lines = notify_youtube_publish_extras(
-                        mp4_path=mp4_path,
-                        watch_url=watch or "",
-                        title_line=disp_name,
-                        summary=summary,
-                    )
-                except Exception as _tg_e:
-                    tg_lines = [f"Telegram（旁路异常）: {_tg_e}"]
-
-                # 审阅窗口若正在播放同一 mp4，先主线程释放句柄，否则归档 move/copy 易 WinError 32
-                try:
-                    _run_on_main_tk_and_wait(
-                        self.root,
-                        lambda: _release_publish_review_if_same_mp4(parent, mp4_path),
-                        timeout=25,
-                    )
-                except Exception:
-                    pass
-
-                archive_msg = _move_published_input_media_files(mp4_path, video_detail)
-
-                def ok_ui():
-                    _set_publish_review_publishing(parent, False)
-                    try:
-                        refresh_tree()
-                    except Exception:
-                        pass
-                    msg = f"已上传，YouTube 视频 ID: {vid}"
-                    if watch:
-                        msg = f"{msg}\n{watch}"
-                    if archive_msg:
-                        msg = f"{msg}\n\n{archive_msg}"
-                    if tg_lines:
-                        msg = f"{msg}\n\n--- Telegram ---\n" + "\n".join(tg_lines)
-                    par = _tk_dialog_parent(parent, root_win)
-                    show_auto_close_popup(par, "成功", msg)
-
-                root_win.after(0, ok_ui)
-            except Exception as e:
-                err = str(e)
-
-                def err_ui():
-                    _set_publish_review_publishing(parent, False)
-                    par = _tk_dialog_parent(parent, root_win)
-                    show_auto_close_popup(par, "上传失败", err, kind="error")
-
-                root_win.after(0, err_ui)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _open_publish_review_dialog(self, parent, mp4_path: str, video_detail: dict, on_refresh):
-        """打开成品审阅窗口（预览、转写、重合成、发布）。"""
-        from gui.publish_review_dialog import PublishReviewDialog
-
-        PublishReviewDialog(
-            parent,
-            mp4_path,
-            video_detail,
-            self,
-            getattr(self, "workflow_gui", None),
-            on_refresh,
-        )
 
     def _show_channel_videos_dialog(self, *, auto_open_summary_row_keys: list[str] | None = None):
         # 创建视频管理对话框
@@ -11022,7 +10754,11 @@ class MediaGUIManager:
             # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
             if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():
                 summary_window = summary_window_ref["w"]
-                summary_window.geometry("1060x520")
+                _sw = summary_window.winfo_screenwidth()
+                _sh = summary_window.winfo_screenheight()
+                summary_window.geometry(
+                    f"1100x{max(720, _sh - 80)}+{max(0, (_sw - 1100) // 2)}+20"
+                )
                 try:
                     from gui.cli_bridge import set_screen_ready
 
@@ -11034,7 +10770,11 @@ class MediaGUIManager:
             else:
                 summary_window = tk.Toplevel(dialog)
                 summary_window_ref["w"] = summary_window
-                summary_window.geometry("1060x520")
+                _sw = summary_window.winfo_screenwidth()
+                _sh = summary_window.winfo_screenheight()
+                summary_window.geometry(
+                    f"1100x{max(720, _sh - 80)}+{max(0, (_sw - 1100) // 2)}+20"
+                )
                 summary_window.resizable(True, True)
                 summary_window.transient(dialog)
             if not getattr(summary_window, "_summary_drop_ctx", None):
@@ -11042,46 +10782,45 @@ class MediaGUIManager:
             summary_window._summary_drop_ctx["mgr"] = self
             summary_window._summary_drop_ctx["vd"] = video_detail
             summary_window._summary_drop_ctx["refresh_channel_tree"] = populate_tree
-            _dnd_title_suffix = ""
-            if not _TK_DND_AVAILABLE:
-                _dnd_title_suffix = "（未安装 tkinterdnd2，拖放不可用）"
-            elif not _tkinter_dnd_root_capable(summary_window):
-                _dnd_title_suffix = "（拖放需根窗为 TkinterDnD.Tk；GUI_pm 已改为该方式，请重开程序）"
             summary_window._summary_drop_ctx["summary_title_index"] = selected_index
-            summary_window._summary_drop_ctx["summary_dnd_title_suffix"] = _dnd_title_suffix
+            summary_window._summary_drop_ctx["summary_dnd_title_suffix"] = ""
             _refresh_summary_window_title(summary_window, video_detail)
-            main_frame = ttk.Frame(summary_window, padding=10)
+            main_frame = ttk.Frame(summary_window, padding=6)
             main_frame.pack(fill=tk.BOTH, expand=True)
 
             _look_vs, _look_talk, _look_nar = _project_look_from_row(video_detail)
-            look_row = ttk.Frame(main_frame)
-            look_row.pack(fill=tk.X, pady=(0, 8))
-            ttk.Label(look_row, text="风格").pack(side=tk.LEFT, padx=(0, 4))
+            header = ttk.Frame(main_frame)
+            header.pack(fill=tk.X, pady=(0, 2))
+            row_top = ttk.Frame(header)
+            row_top.pack(fill=tk.X)
+            row_meta = ttk.Frame(header)
+            row_meta.pack(fill=tk.X, pady=(3, 0))
+            ttk.Label(row_top, text="风格").pack(side=tk.LEFT, padx=(0, 4))
             story_style_var = tk.StringVar(value=_look_vs)
             ttk.Combobox(
-                look_row,
+                row_top,
                 textvariable=story_style_var,
                 values=list(config.VISUAL_STYLE_OPTIONS),
                 state="readonly",
-                width=28,
-            ).pack(side=tk.LEFT, padx=(0, 12))
-            ttk.Label(look_row, text="对话方式").pack(side=tk.LEFT, padx=(0, 4))
+                width=14,
+            ).pack(side=tk.LEFT, padx=(0, 8))
+            ttk.Label(row_top, text="对话方式").pack(side=tk.LEFT, padx=(0, 4))
             story_talk_var = tk.StringVar(value=_look_talk)
             ttk.Combobox(
-                look_row,
+                row_top,
                 textvariable=story_talk_var,
                 values=list(config.DIALOGUE_MODE_OPTIONS),
                 state="readonly",
-                width=16,
-            ).pack(side=tk.LEFT, padx=(0, 12))
-            ttk.Label(look_row, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
+                width=14,
+            ).pack(side=tk.LEFT, padx=(0, 8))
+            ttk.Label(row_top, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
             story_narrator_var = tk.StringVar(value=_look_nar)
 
             def _story_narrator_caption(name: str = "") -> str:
                 name = (name or "").strip()
                 if not name or project_manager.actor_is_absent(name):
-                    return "讲员 不出现"
-                return f"讲员 {name}"
+                    return "不出现"
+                return name
 
             def _pick_story_narrator():
                 from GUI_wf import open_narrator_portrait
@@ -11092,16 +10831,16 @@ class MediaGUIManager:
                 open_narrator_portrait(summary_window, story_narrator_var.get(), chosen)
 
             story_narrator_btn = ttk.Button(
-                look_row,
+                row_top,
                 text=_story_narrator_caption(_look_nar),
                 command=_pick_story_narrator,
             )
-            story_narrator_btn.pack(side=tk.LEFT)
+            story_narrator_btn.pack(side=tk.LEFT, padx=(0, 10))
 
             def _sync_story_narrator_btn(*_a):
                 text = _story_narrator_caption(story_narrator_var.get())
                 try:
-                    story_narrator_btn.config(text=text, width=max(len(text), 18))
+                    story_narrator_btn.config(text=text, width=max(len(text), 12))
                 except tk.TclError:
                     pass
 
@@ -11125,12 +10864,26 @@ class MediaGUIManager:
             story_narrator_var.trace_add("write", _sync_story_narrator_btn)
             _sync_story_narrator_btn()
 
-            # 视频名称（第一行，可编辑；保存信息时一并写回列表）
             has_project_profile = project_manager.list_json_row_has_project_profile(
                 video_detail
             )
-            title_frame = ttk.LabelFrame(main_frame, text="视频名称", padding=10)
-            title_frame.pack(fill=tk.X, pady=(0, 10))
+            ttk.Label(row_top, text="分类").pack(side=tk.LEFT, padx=(0, 4))
+            category_var = tk.StringVar(value=topic_category)
+            category_combo = ttk.Combobox(
+                row_top,
+                textvariable=category_var,
+                values=self.topic_categories,
+                state="readonly",
+                width=16,
+            )
+            category_combo.pack(side=tk.LEFT, padx=(0, 8))
+            ttk.Label(row_top, text="子类型").pack(side=tk.LEFT, padx=(0, 4))
+            subtype_var = tk.StringVar(value=topic_subtype)
+            subtype_combo = ttk.Combobox(
+                row_top, textvariable=subtype_var, values=[], state="readonly", width=12
+            )
+            subtype_combo.pack(side=tk.LEFT, padx=(0, 8))
+
             source_title_var = tk.StringVar(
                 value=_youtube_row_source_title(video_detail)
             )
@@ -11139,105 +10892,24 @@ class MediaGUIManager:
             )
             scene_meta_title = _youtube_row_scene_meta_title(video_detail)
             scene_meta_var = tk.StringVar(value=scene_meta_title)
-            show_second_title_row = True
+            ttk.Label(row_meta, text="原标题").pack(side=tk.LEFT, padx=(0, 4))
+            source_title_entry = ttk.Entry(row_meta, textvariable=source_title_var)
+            source_title_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
             if has_project_profile:
-                ttk.Label(
-                    title_frame,
-                    text="原视频标题:",
-                    font=("Arial", 10, "bold"),
-                ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
-                source_title_entry = ttk.Entry(
-                    title_frame, textvariable=source_title_var
-                )
-                source_title_entry.grid(
-                    row=0, column=1, sticky="ew", padx=(0, 5), pady=4
-                )
-                ttk.Label(
-                    title_frame,
-                    text="项目 meta (project_profile):",
-                    font=("Arial", 10, "bold"),
-                ).grid(row=1, column=0, sticky="w", padx=(5, 4), pady=4)
-                project_title_entry = ttk.Entry(
-                    title_frame, textvariable=project_title_var
-                )
-                project_title_entry.grid(row=1, column=1, sticky="ew", padx=(0, 5), pady=4)
-                title_frame.columnconfigure(1, weight=1)
+                ttk.Label(row_meta, text="项目").pack(side=tk.LEFT, padx=(0, 4))
+                project_title_entry = ttk.Entry(row_meta, textvariable=project_title_var)
+                project_title_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
             else:
-                ttk.Label(
-                    title_frame,
-                    text="标题:",
-                    font=("Arial", 10, "bold"),
-                ).grid(row=0, column=0, sticky="w", padx=(5, 4), pady=4)
-                source_title_entry = ttk.Entry(
-                    title_frame, textvariable=source_title_var
-                )
-                source_title_entry.grid(
-                    row=0, column=1, sticky="ew", padx=5, pady=4
-                )
-                title_frame.columnconfigure(1, weight=1)
                 project_title_entry = None
-                ttk.Label(
-                    title_frame,
-                    text="Scene meta:",
-                    font=("Arial", 10, "bold"),
-                ).grid(row=1, column=0, sticky="w", padx=(5, 4), pady=4)
-                ttk.Label(
-                    title_frame,
-                    textvariable=scene_meta_var,
-                    anchor="w",
-                    wraplength=720,
-                ).grid(row=1, column=1, sticky="ew", padx=(0, 5), pady=4)
-
+                ttk.Label(row_meta, text="场景").pack(side=tk.LEFT, padx=(0, 4))
+                ttk.Label(row_meta, textvariable=scene_meta_var, anchor="w").pack(
+                    side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+                )
+            ttk.Label(row_meta, text="标签").pack(side=tk.LEFT, padx=(0, 4))
+            tags_var = tk.StringVar(value=topic_tags)
+            tags_entry = ttk.Entry(row_meta, textvariable=tags_var)
+            tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             feature_media_var = tk.StringVar(value="")
-            media_btn_row = ttk.Frame(title_frame)
-            media_btn_row.grid(
-                row=2 if show_second_title_row else 1,
-                column=0,
-                columnspan=2,
-                sticky="ew",
-                pady=(6, 2),
-            )
-            media_btn_row.columnconfigure(0, weight=1)
-            ttk.Label(
-                media_btn_row,
-                textvariable=feature_media_var,
-                font=("Arial", 9),
-                wraplength=680,
-                justify=tk.LEFT,
-                anchor="w",
-            ).grid(row=0, column=0, sticky="ew", padx=(5, 10), pady=(0, 4))
-            media_actions_row = ttk.Frame(media_btn_row)
-            media_actions_row.grid(row=1, column=0, sticky="w")
-            open_feature_folder_btn = ttk.Button(
-                media_actions_row,
-                text="打开成片文件夹",
-                width=16,
-            )
-            open_feature_folder_btn.pack(side=tk.LEFT, padx=(0, 6))
-            edit_clip_segments_btn = ttk.Button(
-                media_actions_row,
-                text="编辑成片片段",
-                width=14,
-            )
-            edit_clip_segments_btn.pack(side=tk.LEFT, padx=(0, 6))
-            open_cover_btn = ttk.Button(
-                media_actions_row,
-                text="打开封面",
-                width=14,
-            )
-            open_cover_btn.pack(side=tk.LEFT, padx=(0, 6))
-            prompt_picker_btn = ttk.Button(
-                media_actions_row,
-                text="封面提示",
-                width=12,
-            )
-            prompt_picker_btn.pack(side=tk.LEFT, padx=(0, 6))
-            open_project_btn = ttk.Button(
-                media_actions_row,
-                text="打开项目",
-                width=12,
-            )
-            open_project_btn.pack(side=tk.LEFT, padx=(0, 6))
 
             def refresh_feature_media_row():
                 if not summary_window.winfo_exists():
@@ -11262,62 +10934,10 @@ class MediaGUIManager:
                 if seg_n:
                     parts.append(f"场景 clip: {seg_n} 段")
                 if parts:
-                    feature_media_var.set("\n".join(parts))
+                    feature_media_var.set("  |  ".join(parts))
                 else:
-                    gen_hint = _gen_video_storage_dir() or "(未配置 publish/gen_video)"
-                    feature_media_var.set(
-                        "尚未拖入成片/封面/幻灯片/场景 JSON\n"
-                        f"（拖入 MP4、图片、PDF 或 .json 到本窗，保存至 {gen_hint}）"
-                    )
-                try:
-                    open_cover_btn.config(
-                        state=tk.NORMAL if webp_p else tk.DISABLED
-                    )
-                except tk.TclError:
-                    pass
-                try:
-                    prompt_picker_btn.config(
-                        state=tk.NORMAL
-                        if (webp_p or slide_p)
-                        else tk.DISABLED
-                    )
-                except tk.TclError:
-                    pass
-                try:
-                    _can_open_proj = bool(
-                        _linked_project_pids_for_video_detail(
-                            video_detail, self.downloader.channel_videos
-                        )
-                        or _video_detail_can_create_project(video_detail)
-                    )
-                    open_project_btn.config(
-                        state=tk.NORMAL if _can_open_proj else tk.DISABLED
-                    )
-                except tk.TclError:
-                    pass
-                try:
-                    edit_clip_segments_btn.config(
-                        state=tk.NORMAL
-                        if _story_has_reviewable_clips(video_detail)
-                        else tk.DISABLED
-                    )
-                except tk.TclError:
-                    pass
+                    feature_media_var.set("还没有成片、封面或 slide")
 
-            def on_open_feature_media_folder():
-                mp4_p = _find_gen_video_mp4_for_row(video_detail)
-                webp_p = _find_gen_video_webp_for_row(video_detail)
-                slide_p = _find_gen_video_slide_for_row(video_detail)
-                _open_feature_media_in_explorer(mp4_p, webp_p, slide_p)
-
-            def on_open_cover_image():
-                _open_cover_image_for_row(summary_window, video_detail)
-
-            open_feature_folder_btn.config(command=on_open_feature_media_folder)
-            edit_clip_segments_btn.config(
-                command=lambda: _on_summary_reopen_gen_video_clip_review(summary_window)
-            )
-            open_cover_btn.config(command=on_open_cover_image)
             refresh_feature_media_row()
             if isinstance(summary_window._summary_drop_ctx, dict):
                 summary_window._summary_drop_ctx[
@@ -11343,28 +10963,6 @@ class MediaGUIManager:
                     "refresh_title_fields"
                 ] = refresh_title_fields
             
-            # 主题信息编辑区域
-            topic_frame = ttk.LabelFrame(main_frame, text="主题信息", padding=10)
-            topic_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            # 主题信息两行：分类+子类型 | 标签
-            ttk.Label(topic_frame, text="主题分类:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky='w', padx=(5, 2), pady=5)
-            category_var = tk.StringVar(value=topic_category)
-            category_combo = ttk.Combobox(topic_frame, textvariable=category_var, values=self.topic_categories, state="readonly", width=16)
-            category_combo.grid(row=0, column=1, padx=(0, 8), pady=5, sticky='ew')
-
-            ttk.Label(topic_frame, text="主题子类型:", font=("Arial", 10, "bold")).grid(row=0, column=2, sticky='w', padx=(0, 2), pady=5)
-            subtype_var = tk.StringVar(value=topic_subtype)
-            subtype_combo = ttk.Combobox(topic_frame, textvariable=subtype_var, values=[], state="readonly", width=16)
-            subtype_combo.grid(row=0, column=3, padx=(0, 5), pady=5, sticky='ew')
-
-            ttk.Label(topic_frame, text="主题标签:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky='w', padx=(5, 2), pady=5)
-            tags_var = tk.StringVar(value=topic_tags)
-            tags_row = ttk.Frame(topic_frame)
-            tags_row.grid(row=1, column=1, columnspan=3, padx=(0, 5), pady=5, sticky='ew')
-            tags_entry = ttk.Entry(tags_row, textvariable=tags_var)
-            tags_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
             def update_subtypes(*args):
                 """根据选择的分类更新子类型选项"""
                 selected_category = category_var.get()
@@ -11385,34 +10983,6 @@ class MediaGUIManager:
                     subtype_var.set(current_subtype)
                 else:
                     subtype_var.set('')
-
-            def do_re_category():
-                """重新分类：重新分类，保存回 video_detail 并持久化"""
-                self.prepare_category_for_content(video_detail, self.topic_choices)
-                # 3. 同步 UI 显示
-                category_var.set(video_detail.get("topic_category", ""))
-                subtype_var.set(video_detail.get("topic_subtype", ""))
-                tags_list = video_detail.get("tags", [])
-                tags_var.set(", ".join(tags_list) if isinstance(tags_list, list) else str(tags_list or ""))
-                update_subtypes()
-                try:
-                    populate_tree()
-                except Exception:
-                    pass
-
-            def do_poem_view():
-                text = self.open_content_field_editor(
-                    summary_window,
-                    video_detail,
-                    "poem",
-                    on_saved=_after_content_field_saved,
-                )
-                if text is not None:
-                    show_auto_close_popup(summary_window, "已保存", "poem 已更新。")
-                    try:
-                        populate_tree()
-                    except Exception:
-                        pass
 
             # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
             def _on_category_var_write(*args):
@@ -11493,80 +11063,17 @@ class MediaGUIManager:
                 except tk.TclError:
                     pass
 
-            # 操作按钮区（整行宽；发布状态单独一行，避免挤掉右侧按钮）
-            button_frame = ttk.Frame(topic_frame)
-            button_frame.grid(row=2, column=0, columnspan=4, sticky="ew", padx=5, pady=(8, 5))
-
             publish_info_var = tk.StringVar(value="发布: …")
-            pub_row = ttk.Frame(button_frame)
-            pub_row.pack(fill=tk.X, anchor=tk.W)
-            ttk.Label(pub_row, textvariable=publish_info_var).pack(side=tk.LEFT, anchor=tk.W)
-
-            right_btns = ttk.Frame(button_frame)
-            right_btns.pack(fill=tk.X, anchor=tk.W, pady=(6, 0))
-
-            def on_review_publish():
-                imap = _scan_input_media_publish_map()
-                mp4 = _resolve_review_publish_mp4_path(video_detail, imap)
-                if not mp4 or not os.path.isfile(mp4):
-                    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "")
-                    messagebox.showwarning(
-                        "提示",
-                        "当前不可审阅：请先在「摘要」窗拖入 MP4 加水印，或在 publish/gen_video 下放好\n"
-                        f"与本条 YouTube id 同名的成品：\n"
-                        f"{gen_dir or '(未配置路径)'}\\\\<视频id>.mp4\n\n"
-                        "（仍支持旧逻辑：INPUT_MEDIA_PATH 下 __*__.txt + 同名 .mp4）",
-                        parent=summary_window,
-                    )
-                    return
-
-                def after_publish():
-                    try:
-                        populate_tree()
-                    except Exception:
-                        pass
-                    try:
-                        refresh_publish_row()
-                    except Exception:
-                        pass
-                    try:
-                        _select_tree_row_for_key(_channel_list_row_tree_key(video_detail))
-                    except Exception:
-                        pass
-                    try:
-                        update_selection_count()
-                    except Exception:
-                        pass
-
-                self._open_publish_review_dialog(summary_window, mp4, video_detail, after_publish)
-
-            pub_btn = ttk.Button(right_btns, text="审阅发布", command=on_review_publish)
-            pub_btn.pack(side=tk.LEFT, padx=(0, 6))
-
-            def on_review_story_clips():
-                _on_summary_reopen_gen_video_clip_review(summary_window)
-
-            review_clips_btn = ttk.Button(
-                right_btns, text="审阅片段", command=on_review_story_clips
-            )
-            review_clips_btn.pack(side=tk.LEFT, padx=(0, 6))
-
-            def _refresh_review_clips_btn():
-                try:
-                    review_clips_btn.config(
-                        state=tk.NORMAL
-                        if _story_has_reviewable_clips(video_detail)
-                        else tk.DISABLED
-                    )
-                except tk.TclError:
-                    pass
+            status_row = ttk.Frame(header)
+            status_row.pack(fill=tk.X, pady=(2, 0))
+            ttk.Label(status_row, textvariable=feature_media_var).pack(side=tk.LEFT, padx=(0, 12))
+            ttk.Label(status_row, textvariable=publish_info_var).pack(side=tk.LEFT)
 
             def refresh_publish_row():
                 if not summary_window.winfo_exists():
                     return
                 imap = _scan_input_media_publish_map()
                 txt, st, _ = _publish_cell_display(video_detail, imap)
-                mp_resolved = _resolve_review_publish_mp4_path(video_detail, imap)
                 urow = (video_detail.get("url") or "").strip()
                 pub_hist = (video_detail.get("publish") or "").strip()
                 ud = (video_detail.get("upload_date") or "").strip()
@@ -11585,16 +11092,6 @@ class MediaGUIManager:
                 else:
                     publish_info_var.set(f"发布: {txt}")
 
-                btn_state = (
-                    tk.NORMAL
-                    if mp_resolved and os.path.isfile(mp_resolved)
-                    else tk.DISABLED
-                )
-                try:
-                    pub_btn.config(state=btn_state)
-                except tk.TclError:
-                    pass
-                _refresh_review_clips_btn()
                 try:
                     refresh_feature_media_row()
                 except Exception:
@@ -11604,78 +11101,13 @@ class MediaGUIManager:
             if isinstance(summary_window._summary_drop_ctx, dict):
                 summary_window._summary_drop_ctx["refresh_publish_row"] = refresh_publish_row
 
-            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
-            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
-
-            ttk.Button(right_btns, text="保存", command=save_story_info).pack(side=tk.LEFT, padx=(0, 5))
+            ttk.Button(row_top, text="保存", width=8, command=save_story_info).pack(side=tk.RIGHT)
 
             def _after_content_field_saved():
                 try:
                     populate_tree()
                 except Exception:
                     pass
-
-            def do_review_analyzed():
-                def _after_content_summary():
-                    do_re_category()
-
-                self.open_content_field_editor(
-                    summary_window,
-                    video_detail,
-                    "analyzed_content",
-                    on_saved=_after_content_field_saved,
-                    on_content_summarized=_after_content_summary,
-                )
-
-            def do_review_scene():
-                def _after_scene_title():
-                    try:
-                        refresh_title_fields()
-                    except (NameError, tk.TclError):
-                        pass
-
-                result = self.open_content_field_editor(
-                    summary_window,
-                    video_detail,
-                    "scene_content",
-                    on_saved=_after_content_field_saved,
-                    on_story_title_updated=_after_scene_title,
-                    main_character=(character_var.get() or "").strip(),
-                    channel_path=self.channel_path or "",
-                )
-                if result is not None:
-                    show_auto_close_popup(summary_window, "已保存", "scene_content 已更新。")
-                    try:
-                        populate_tree()
-                    except Exception:
-                        pass
-                    try:
-                        refresh_title_fields()
-                    except (NameError, tk.TclError):
-                        pass
-
-            def do_review_script():
-                self._show_transcript_script_viewer(summary_window, video_detail)
-
-            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
-            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
-
-            image_en_btn = ttk.Button(right_btns, text="风格", command=lambda: copy_style_character())
-            image_en_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-            ttk.Button(right_btns, text="分析", command=do_review_analyzed).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
-            ttk.Button(right_btns, text="场景", command=do_review_scene).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
-            ttk.Button(right_btns, text="诗歌", command=do_poem_view).pack(side=tk.LEFT, padx=(5, 5))
-
-            ttk.Label(right_btns, text="  |").pack(side=tk.LEFT, padx=(2, 2))
-            ttk.Label(right_btns, text="|  ").pack(side=tk.LEFT, padx=(2, 2))
-            ttk.Button(right_btns, text="脚本", command=do_review_script).pack(
-                side=tk.LEFT, padx=(5, 5)
-            )
 
             from gui.cli_bridge import bind_screen, unbind_screen
 
@@ -11776,16 +11208,15 @@ class MediaGUIManager:
                     return
                 unbind_screen(config.SCREEN_STORY_ROOT)
 
+            def _scene_is_in_this_window():
+                return None
+
             bind_screen(
                 config.SCREEN_STORY_ROOT,
                 summary_window,
                 {
-                    "scene": {"click": do_review_scene},
+                    "scene": {"click": _scene_is_in_this_window},
                     "save": {"click": save_story_info},
-                    "publish": {"click": on_review_publish},
-                    "analyze": {"click": do_review_analyzed},
-                    "poem": {"click": do_poem_view},
-                    "script": {"click": do_review_script},
                     "cover_image": {"set": _cli_set_story_cover},
                     "clip_review": {"set": _cli_open_clip_review},
                 },
@@ -11793,149 +11224,12 @@ class MediaGUIManager:
             )
             summary_window.bind("<Destroy>", _unbind_story_root)
 
-            
-            # 输入列（分类/子类型/标签）均分剩余宽度
-            for _c in (1, 3):
-                topic_frame.columnconfigure(_c, weight=1, uniform='topic_inputs')
-            
             # 初始化子类型选项
             if topic_category:
                 update_subtypes()
             
-            prompt_choice_frame = ttk.Frame(main_frame)
-            prompt_choice_frame.pack(anchor=tk.W, pady=(0, 5))
-
-            ttk.Label(prompt_choice_frame, text="主角").pack(side=tk.LEFT, padx=(0, 5))
-            char_labels = list(config.CHARACTER_PERSON_OPTIONS)
-            character_var = tk.StringVar(value=char_labels[0])
-            character_combo = ttk.Combobox(prompt_choice_frame, textvariable=character_var, values=char_labels, state="readonly", width=12)
-            character_combo.pack(side=tk.LEFT, padx=(0, 5))
-            character_combo.current(0)
-
-            def on_open_prompt_picker():
-                sc = video_detail.get("scene_content") or []
-                story_raw = (
-                    json.dumps(sc, ensure_ascii=False, indent=2)
-                    if isinstance(sc, list) and sc
-                    else ""
-                )
-                self._open_image_slide_prompt_picker(
-                    summary_window,
-                    video_detail,
-                    story_raw=story_raw,
-                    main_character=(character_var.get() or "").strip(),
-                    channel_path=self.channel_path or "",
-                )
-
-            prompt_picker_btn.config(command=on_open_prompt_picker)
-
-            def on_open_project_from_summary():
-                _open_project_for_video_detail(
-                    video_detail,
-                    summary_window,
-                    topic_category=category_var.get().strip(),
-                    topic_subtype=subtype_var.get().strip(),
-                    topic_tags=tags_var.get().strip(),
-                )
-
-            open_project_btn.config(command=on_open_project_from_summary)
-
-            def copy_style_character():
-                try:
-                    pending_scene: list[dict | None] = [None]
-
-                    def _apply_scene_dict(scene_raw) -> None:
-                        scene_list = scene_raw if isinstance(scene_raw, list) else []
-                        if not scene_list:
-                            return
-                        video_detail["scene_content"] = scene_list
-                        pending_scene[0] = None
-                        _write_channel_list_json_file(
-                            self.downloader.channel_list_json, self.downloader.channel_videos
-                        )
-                        dialog.after(0, populate_tree)
-
-                    def _video_scene_list() -> list:
-                        sc = video_detail.get("scene_content")
-                        return sc if isinstance(sc, list) else []
-
-                    has_scene = bool(_video_scene_list())
-
-                    def _show_scene_clipboard_menu():
-                        choices: list[tuple[str, str]] = [("cross_channel", "全频道剪贴板")]
-                        if pending_scene[0]:
-                            choices.append(
-                                ("paste_scene", "将所选内容写入 scene_content (JSON)")
-                            )
-                        if has_scene:
-                            _lang = config.llm_language_label(self.language)
-                            for base, variants in config_prompt.NOTEBOOKLM_EXPORT_VARIANTS.items():
-                                for var, _var_label in variants:
-                                    choices.append(
-                                        (
-                                            f"gen_export:{base}/{var}",
-                                            f"Scene → {config_prompt.nb_export_mode_label(base, var)} ({_lang})",
-                                        )
-                                    )
-
-                        picked = askchoice("场景 / 剪贴板", choices, parent=summary_window)
-                        if not picked:
-                            return
-                        mode = picked[1]
-
-                        if mode == "cross_channel":
-                            picked_scene = ask_cross_channel_clipboard_pick(
-                                summary_window,
-                                summary_window,
-                                self.channel_path or "",
-                            )
-                            if picked_scene is not None:
-                                pending_scene[0] = picked_scene
-                            _show_scene_clipboard_menu()
-                            return
-
-                        if mode == "paste_scene":
-                            if not pending_scene[0]:
-                                messagebox.showwarning(
-                                    "未选择内容",
-                                    "请先在「全频道剪贴板」中选择一条 Scene JSON。",
-                                    parent=summary_window,
-                                )
-                                _show_scene_clipboard_menu()
-                                return
-                            _apply_scene_dict(pending_scene[0])
-                            _show_scene_clipboard_menu()
-                            return
-
-                        if isinstance(mode, str) and mode.startswith("gen_export:"):
-                            export_spec = mode[len("gen_export:"):]
-                            if "/" in export_spec:
-                                nb_mode, nb_variant = export_spec.split("/", 1)
-                            else:
-                                nb_mode, nb_variant = export_spec, ""
-                            scene_for_gen = _video_scene_list()
-                            self._copy_notebooklm_scene_instruction(
-                                parent=summary_window,
-                                video_detail=video_detail,
-                                scenes=scene_for_gen,
-                                nb_mode=nb_mode,
-                                nb_variant=nb_variant,
-                                main_character=(character_var.get() or "").strip(),
-                                channel_path=self.channel_path or "",
-                                visual_style=project_manager.LAST_VISUAL_STYLE,
-                            )
-                            return
-
-                    _show_scene_clipboard_menu()
-
-                except Exception as ex:
-                    show_auto_close_popup(
-                        summary_window,
-                        "场景/剪贴板",
-                        f"操作失败: {ex}",
-                        kind="error",
-                    )
-
+            scene_host = ttk.Frame(main_frame)
+            scene_host.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
             def on_category_change(e):
                 update_subtypes()
@@ -11948,8 +11242,22 @@ class MediaGUIManager:
                 summary_window._summary_nav_root_bound = True
             _bind_summary_nav_subtree(main_frame)
 
-            _register_summary_gen_media_drop_targets(summary_window, main_frame)
-            _register_summary_gen_media_paste_bindings(summary_window, main_frame)
+            def _after_scene_title():
+                try:
+                    refresh_title_fields()
+                except (NameError, tk.TclError):
+                    pass
+
+            self.open_content_field_editor(
+                summary_window,
+                video_detail,
+                "scene_content",
+                on_saved=_after_content_field_saved,
+                on_story_title_updated=_after_scene_title,
+                main_character=(story_narrator_var.get() or "").strip(),
+                channel_path=self.channel_path or "",
+                embed_in=scene_host,
+            )
 
             summary_window.focus_set()
 
