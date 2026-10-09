@@ -474,7 +474,10 @@ def _askchoice_media_preview_mp4_video(
     confirm_actions: Optional[list] = None,
     radios: Optional[tuple] = None,
     sources: Optional[list] = None,
-) -> Union[Tuple[str, str, str], Tuple[str, str, str, str], None]:
+    audio_sources: Optional[list] = None,
+    dest_options: Optional[list] = None,
+    lock_video_source: bool = False,
+) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """MP4 专用：列表 + 裁剪起止/变速/音量预览；确定时调用 build_volume_adjusted_pair。"""
     from gui.mp4_pick_preview_dialog import ask_mp4_pick_with_trim_preview
 
@@ -487,6 +490,9 @@ def _askchoice_media_preview_mp4_video(
         confirm_actions=confirm_actions,
         radios=radios,
         sources=sources,
+        audio_sources=audio_sources,
+        dest_options=dest_options,
+        lock_video_source=lock_video_source,
     )
 
 
@@ -501,7 +507,10 @@ def askchoice_media_preview(
     confirm_actions=None,
     radios=None,
     sources=None,
-) -> Union[str, Tuple[str, str, str], Tuple[str, str, str, str], None]:
+    audio_sources=None,
+    dest_options=None,
+    lock_video_source=False,
+) -> Union[str, dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
     带预览的媒体选择对话框（支持 mp4 与图片）。
     左侧为文件列表，右侧为选中文件的预览图；若 use_mp4_video_preview=True 则右侧改为视频播放 + 音量 + 产出临时 mp4/wav。
@@ -523,6 +532,9 @@ def askchoice_media_preview(
             confirm_actions=confirm_actions,
             radios=radios,
             sources=sources,
+            audio_sources=audio_sources,
+            dest_options=dest_options,
+            lock_video_source=lock_video_source,
         )
 
     if parent is None:

@@ -716,11 +716,13 @@ BASE_AIAGENT_PATH = f"{BASE_MEDIA_PATH}/aiagent"
 AVATAR_PATH = f"{BASE_MEDIA_PATH}/avatar"
 # 音色表与头像放在一起；人物/旁白下拉和 Voicebox 都读这一份
 CHARACTER_PERSON_OPTIONS = load_character_person_options()
-PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
+# 旧位置。新项目改在 program/<channel_id>/project/<pid>。
+LEGACY_PROJECT_DATA_PATH = f"{BASE_MEDIA_PATH}/project"
+PROJECT_DATA_PATH = LEGACY_PROJECT_DATA_PATH
 PUBLISH_PATH = f"{BASE_MEDIA_PATH}/publish"
 # 频道列表拖放加水印成片 / 封面 webp（Youtube 摘要窗等）
 INPUT_MEDIA_GEN_VIDEO_PATH = f"{PUBLISH_PATH}/gen_video"
-TEMP_PATH_BASE = PROJECT_DATA_PATH  # temp 目录在各个项目下
+TEMP_PATH_BASE = PROJECT_DATA_PATH  # 旧注释；临时文件在 program/<channel>/project/<pid>/temp
 
 
 def publish_final_video_path(pid: str) -> str:
@@ -1362,8 +1364,9 @@ def yt_text_download_list_json_path(channel_id: str) -> str:
     return os.path.join(ensure_channel_list_json_dir(ch_path), basename)
 
 
-def create_project_path(pid: str):
+def create_project_path(pid: str, channel: str | None = None):
     os.makedirs(PUBLISH_PATH, exist_ok=True)
+    get_project_path(pid, channel)
 
 
 def _channel_id_from_program_path(channel: str) -> str:
@@ -1629,28 +1632,143 @@ def topic_category_list_json_abspath(channel_field: str, topic_category: str) ->
     return os.path.join(d, topic_category_list_file_basename(topic_category))
 
 
-def get_project_path(pid: str) -> str:
-    path = f"{PROJECT_DATA_PATH}/{pid}"
+# pid -> channel_id。创建或打开项目时写入，避免每次再扫列表。
+_PID_CHANNEL: dict[str, str] = {}
+
+
+def remember_project_channel(pid: str, channel: str | None) -> None:
+    """记下这个 pid 属于哪个频道，项目目录据此落到 program/<channel>/project。"""
+    pid = (pid or "").strip()
+    channel = (channel or "").strip()
+    if not pid or not channel:
+        return
+    slug = get_channel_id(channel) or _channel_id_from_program_path(channel)
+    if slug:
+        _PID_CHANNEL[pid] = slug
+
+
+def channel_project_root(channel: str) -> str:
+    """``program/<channel_id>/project``。"""
+    slug = get_channel_id(channel) or _channel_id_from_program_path(channel)
+    path = os.path.join(get_channel_path(slug), "project")
     os.makedirs(path, exist_ok=True)
     return path
 
-def get_temp_path(pid: str) -> str:
-    path = f"{PROJECT_DATA_PATH}/{pid}/temp"
+
+def _channel_from_open_project(pid: str) -> str:
+    try:
+        import project_manager as _pm
+    except Exception:
+        return ""
+    pc = getattr(_pm, "PROJECT_CONFIG", None)
+    if not isinstance(pc, dict):
+        return ""
+    if (pc.get("pid") or "").strip() != pid:
+        return ""
+    ch = (pc.get("channel") or "").strip()
+    return (get_channel_id(ch) or _channel_id_from_program_path(ch)) if ch else ""
+
+
+def _channel_from_topic_lists(pid: str) -> str:
+    """在各频道 list_by_topic 里找这个 pid，用来决定项目目录。"""
+    for cid in sorted(configured_program_channel_ids()):
+        topic_dir = os.path.join(BASE_PROGRAM_PATH, cid, "list_by_topic")
+        if not os.path.isdir(topic_dir):
+            continue
+        try:
+            names = os.listdir(topic_dir)
+        except OSError:
+            continue
+        for fn in names:
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(topic_dir, fn)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if pid in text:
+                return cid
+    return ""
+
+
+def project_channel_of(pid: str) -> str:
+    """这个 pid 的 channel_id。没有则返回空字符串。"""
+    pid = (pid or "").strip()
+    if not pid:
+        return ""
+    cached = _PID_CHANNEL.get(pid)
+    if cached:
+        return cached
+    ch = _channel_from_open_project(pid)
+    if ch:
+        _PID_CHANNEL[pid] = ch
+        return ch
+    for cid in sorted(configured_program_channel_ids()):
+        if os.path.isdir(os.path.join(BASE_PROGRAM_PATH, cid, "project", pid)):
+            _PID_CHANNEL[pid] = cid
+            return cid
+    ch = _channel_from_topic_lists(pid)
+    if ch:
+        _PID_CHANNEL[pid] = ch
+        return ch
+    return ""
+
+
+def project_dir_exists(pid: str) -> bool:
+    pid = (pid or "").strip()
+    if not pid:
+        return False
+    if os.path.isdir(os.path.join(LEGACY_PROJECT_DATA_PATH, pid)):
+        return True
+    for cid in configured_program_channel_ids():
+        if os.path.isdir(os.path.join(BASE_PROGRAM_PATH, cid, "project", pid)):
+            return True
+    return False
+
+
+def resolve_project_dir(pid: str, channel: str | None = None, *, create: bool = True) -> str:
+    """项目目录：``program/<channel_id>/project/<pid>``。
+
+    不知道频道、但旧目录 ``/AI_MEDIA/project/<pid>`` 还在时，仍返回旧目录。
+    """
+    pid = (pid or "").strip()
+    if channel:
+        remember_project_channel(pid, channel)
+    slug = project_channel_of(pid)
+    if slug:
+        root = os.path.join(BASE_PROGRAM_PATH, slug, "project")
+        path = os.path.join(root, pid)
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+    legacy = os.path.join(LEGACY_PROJECT_DATA_PATH, pid)
+    if create and not os.path.isdir(legacy):
+        os.makedirs(legacy, exist_ok=True)
+    return legacy
+
+
+def get_project_path(pid: str, channel: str | None = None) -> str:
+    return resolve_project_dir(pid, channel, create=True)
+
+def get_temp_path(pid: str, channel: str | None = None) -> str:
+    path = os.path.join(resolve_project_dir(pid, channel, create=True), "temp")
     os.makedirs(path, exist_ok=True)
     return path
 
 
 tmp_file_list = []
-def get_temp_file(pid: str, ext: str, filename: str = None) -> str:
+def get_temp_file(pid: str, ext: str, filename: str = None, channel: str | None = None) -> str:
     """获取临时文件路径"""
     if not filename:
         filename = f"{uuid.uuid4()}.{ext}"
     else:
         filename = filename + "." + ext
-    temp_dir = f"{PROJECT_DATA_PATH}/{pid}/temp"
-    # 确保临时目录存在
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_file = f"{temp_dir}/{filename}" 
+    temp_dir = get_temp_path(pid, channel)
+    temp_file = os.path.join(temp_dir, filename)
     tmp_file_list.append(temp_file)
     return temp_file
 
@@ -1662,9 +1780,9 @@ def clear_temp_files():
     tmp_file_list.clear()
 
 
-def get_media_path(pid: str) -> str:
+def get_media_path(pid: str, channel: str | None = None) -> str:
     """获取视频文件路径"""
-    path = f"{PROJECT_DATA_PATH}/{pid}/media"
+    path = os.path.join(resolve_project_dir(pid, channel, create=True), "media")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -1995,6 +2113,7 @@ CHANNEL_PROMPT_META_KEYS = frozenset({
 })
 
 CHANNEL_PROMPT_MODE_ORDER = (
+    "split_scene",
     "init_single",
     "raw_single",
     "init_multiple",
@@ -2128,8 +2247,7 @@ CHANNEL_CONFIG = {
 
         "channel_prompt": {
             "analyze_prompt": config_channel.COUNSELING_ANALYZE,
-            "init_multiple": config_channel.COUNSELING_CASE_DEVELOPMENT,
-            "init_single": config_channel.COUNSELING_CASE_SUMMARY
+            "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
 
@@ -2169,7 +2287,8 @@ CHANNEL_CONFIG = {
         ],
 
         "channel_prompt": {
-            "analyze_prompt": config_channel.FLYLINK_ANALYZE
+            "analyze_prompt": config_channel.FLYLINK_ANALYZE,
+            "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
 
@@ -2206,6 +2325,7 @@ CHANNEL_CONFIG = {
 
         "channel_prompt": {
             "analyze_prompt": config_channel.COMIC_ANALYZE,
+            "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
 
@@ -2241,8 +2361,7 @@ CHANNEL_CONFIG = {
         "channel_prompt": {
             "analyze_prompt": config_channel.MV_ANALYZE_2,
             "content_guide": config_channel.MV_CONTENT_GUIDE,
-            "init_multiple": config_channel.MV_STORY_DEVELOPMENT,
-            "init_single": config_channel.MV_SIMPLE_REORGANIZE
+            "split_scene": config_channel.SCENE_SPLIT_MANY,
         },
     },
 
@@ -2255,7 +2374,10 @@ CHANNEL_CONFIG = {
             ("Lyrics to Story", config_channel.NOTEBOOKLM__MV_STORY_FROM_LYRICS),
             ("2 Layers Story", config_channel.NOTEBOOKLM__MV_STORY_2LAYER),
         ],
-        "channel_key": "config/client_secret_main.json"
+        "channel_key": "config/client_secret_main.json",
+        "channel_prompt": {
+            "split_scene": config_channel.SCENE_SPLIT_MANY,
+        },
     }
 
 }

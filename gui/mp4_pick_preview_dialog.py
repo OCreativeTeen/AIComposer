@@ -20,6 +20,17 @@ try:
 except ImportError:
     pygame = None
 
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    import numpy as np
+    _RECORDING_OK = True
+except ImportError:
+    sd = None
+    sf = None
+    np = None
+    _RECORDING_OK = False
+
 from PIL import Image, ImageTk
 
 from utility.ffmpeg_audio_processor import ffmpeg_path, ffprobe_path
@@ -41,6 +52,24 @@ def _fmt_time(sec: float) -> str:
 def _snap_mp4_preview_volume(raw: float) -> float:
     v = round(float(raw) * 2.0) / 2.0
     return max(0.5, min(2.0, v))
+
+
+def _is_audio_path(path: str) -> bool:
+    return os.path.splitext(path or "")[1].lower() in (".mp3", ".wav", ".m4a", ".aac")
+
+
+def _probe_audio_duration(path: str) -> float:
+    try:
+        r = subprocess.run(
+            [
+                ffprobe_path, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", path,
+            ],
+            check=False, capture_output=True, text=True, encoding="utf-8", errors="ignore",
+        )
+        return max(0.01, float((r.stdout or "").strip() or 0.01))
+    except Exception:
+        return 0.01
 
 
 def _probe_mp4_meta(path: str) -> tuple[float, float, int]:
@@ -168,11 +197,16 @@ def _build_preview_segment_wav(
 
 
 class _ClipTrim:
-    __slots__ = ("path", "duration", "fps", "frame_count", "start", "end", "speed")
+    __slots__ = ("path", "duration", "fps", "frame_count", "start", "end", "speed", "is_audio")
 
     def __init__(self, path: str):
         self.path = os.path.normpath(path)
-        dur, fps, fc = _probe_mp4_meta(path)
+        self.is_audio = _is_audio_path(path)
+        if self.is_audio:
+            dur = _probe_audio_duration(path)
+            fps, fc = 100.0, max(1, int(round(dur * 100.0)))
+        else:
+            dur, fps, fc = _probe_mp4_meta(path)
         self.duration = dur
         self.fps = fps
         self.frame_count = fc
@@ -193,7 +227,10 @@ def ask_mp4_pick_with_trim_preview(
     confirm_actions: Optional[list] = None,
     radios: Optional[tuple] = None,
     sources: Optional[list] = None,
-) -> Union[Tuple[str, str, str], Tuple[str, str, str, str], None]:
+    audio_sources: Optional[list] = None,
+    dest_options: Optional[list] = None,
+    lock_video_source: bool = False,
+) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
   ``build_adjusted_pair(full_path, volume, start=, end=, speed=) -> (tmp_mp4, tmp_wav)``
@@ -203,16 +240,24 @@ def ask_mp4_pick_with_trim_preview(
             parent = tk._default_root
         except Exception:
             parent = None
-    if sources:
+    if sources and not lock_video_source:
         usable = [item for item in sources if item.get("choices")]
         if not usable or build_adjusted_pair is None or cv2 is None:
             if cv2 is None and parent:
                 messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
             return None
-        current = next((item for item in usable if item.get("key") == "download"), usable[0])
+        current = next((item for item in sources if item.get("key") == "download"), usable[0])
         folder_path = current["folder"]
         choices = list(current["choices"])
         radios = current.get("radios")
+        confirm_actions = current.get("confirm_actions")
+    elif sources and lock_video_source:
+        if build_adjusted_pair is None or cv2 is None or not choices:
+            if cv2 is None and parent:
+                messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
+            return None
+        current = sources[0]
+        radios = None
         confirm_actions = current.get("confirm_actions")
     elif not choices or build_adjusted_pair is None or cv2 is None:
         if cv2 is None and parent:
@@ -221,8 +266,8 @@ def ask_mp4_pick_with_trim_preview(
 
     dlg = tk.Toplevel(parent)
     dlg.title(title)
-    dlg.geometry("980x640")
-    dlg.minsize(900, 580)
+    dlg.geometry("980x760" if audio_sources else "980x640")
+    dlg.minsize(900, 680 if audio_sources else 580)
     if parent:
         dlg.transient(parent)
     dlg.grab_set()
@@ -270,10 +315,58 @@ def ask_mp4_pick_with_trim_preview(
     choice_box = ttk.Frame(left)
     if sources or radios:
         choice_box.pack(fill=tk.X, anchor=tk.W, pady=(0, 8))
-    listbox = tk.Listbox(left, width=42, height=22, exportselection=False, font=("Consolas", 9))
+    video_box = ttk.LabelFrame(left, text="片段列表", padding=4)
+    video_box.pack(fill=tk.BOTH, expand=True)
+    listbox = tk.Listbox(
+        video_box, width=42, height=8 if audio_sources else 22,
+        exportselection=False, font=("Consolas", 9),
+    )
     listbox.pack(fill=tk.BOTH, expand=True)
     for c in choices:
         listbox.insert(tk.END, c)
+    audio_box = None
+    audio_listbox = None
+    audio_source_var = tk.StringVar(value="")
+    audio_choices: list = []
+    audio_folder_box = [""]
+    audio_state = {"clip": None, "fn": "", "armed": False}
+    rec = {
+        "on": False,
+        "chunks": [],
+        "thread": None,
+        "dialog": None,
+        "folder": "",
+        "started": 0.0,
+        "rate": 44100,
+        "channels": 1,
+        "time_label": None,
+    }
+    focus = ["video"]
+    if audio_sources:
+        usable_audio = [item for item in audio_sources if item.get("folder")]
+        if usable_audio:
+            audio_source_var.set(usable_audio[0]["key"])
+            audio_folder_box[0] = usable_audio[0]["folder"]
+            audio_choices.extend(usable_audio[0].get("choices") or [])
+        audio_box = ttk.LabelFrame(left, text="音频", padding=4)
+        audio_box.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        if len(usable_audio) > 1:
+            audio_src_row = ttk.Frame(audio_box)
+            audio_src_row.pack(fill=tk.X, anchor=tk.W, pady=(0, 4))
+            ttk.Label(audio_src_row, text="来源").pack(side=tk.LEFT, padx=(0, 6))
+            for item in usable_audio:
+                ttk.Radiobutton(
+                    audio_src_row, text=item["label"], value=item["key"], variable=audio_source_var,
+                ).pack(side=tk.LEFT, padx=(0, 8))
+        audio_listbox = tk.Listbox(
+            audio_box, width=42, height=8, exportselection=False, font=("Consolas", 9),
+        )
+        audio_listbox.pack(fill=tk.BOTH, expand=True)
+        for name in audio_choices:
+            audio_listbox.insert(tk.END, name)
+        record_row = ttk.Frame(audio_box)
+        record_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(record_row, text="录音", command=lambda: _start_record()).pack(side=tk.LEFT)
 
     right = ttk.Frame(body)
     right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -328,27 +421,48 @@ def ask_mp4_pick_with_trim_preview(
     timeline.pack(fill=tk.X, pady=(4, 0))
 
     radio_var = tk.StringVar(value="")
+    dest_var = tk.StringVar(value=(dest_options[0][0] if dest_options else ""))
     source_var = tk.StringVar(value=(current["key"] if sources else ""))
     if sources:
         source_row = ttk.Frame(choice_box)
         source_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 4))
         ttk.Label(source_row, text="来源", style="PickChoice.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+        source_radios = []
         for item in sources:
-            ttk.Radiobutton(
+            rb = ttk.Radiobutton(
                 source_row,
                 text=item["label"],
                 value=item["key"],
                 variable=source_var,
                 style="PickChoice.TRadiobutton",
-            ).pack(side=tk.LEFT, padx=(0, 12))
+            )
+            rb.pack(side=tk.LEFT, padx=(0, 12))
+            source_radios.append(rb)
+        if lock_video_source:
+            for rb in source_radios:
+                rb.state(["disabled"])
     extra_host = ttk.Frame(choice_box)
     extra_host.pack(anchor=tk.W, fill=tk.X)
+    if dest_options:
+        dest_row = ttk.Frame(choice_box)
+        dest_row.pack(anchor=tk.W, fill=tk.X, pady=(4, 0))
+        ttk.Label(dest_row, text="放到", style="PickChoice.TLabel").pack(side=tk.LEFT, padx=(0, 8))
+        for value, label in dest_options:
+            ttk.Radiobutton(
+                dest_row, text=label, value=value, variable=dest_var, style="PickChoice.TRadiobutton",
+            ).pack(side=tk.LEFT, padx=(0, 10))
     foot = ttk.Frame(root)
     foot.pack(fill=tk.X, pady=(10, 0))
+    mix_btn = None
+    if audio_sources:
+        mix_btn = ttk.Button(foot, text="套用这段音频", state=tk.DISABLED)
+        mix_btn.pack(side=tk.LEFT)
     btn_host = ttk.Frame(foot)
     btn_host.pack(side=tk.RIGHT)
 
     def _c() -> _ClipTrim:
+        if focus[0] == "audio" and audio_state.get("clip") is not None:
+            return audio_state["clip"]
         return clip[0]
 
     def _snap_time(t: float) -> float:
@@ -463,6 +577,16 @@ def ask_mp4_pick_with_trim_preview(
         c = _c()
         t = _snap_time(t)
         current_t[0] = t
+        if getattr(c, "is_audio", False):
+            cw = max(preview_canvas.winfo_width(), 360)
+            ch = max(preview_canvas.winfo_height(), 200)
+            preview_canvas.delete("all")
+            preview_canvas.create_text(
+                cw // 2, ch // 2, text="音频\n" + os.path.basename(c.path),
+                fill="white", font=("Microsoft YaHei UI", 16), justify=tk.CENTER,
+            )
+            _apply_ui()
+            return
         cap = cv2.VideoCapture(c.path)
         if not cap.isOpened():
             return
@@ -605,15 +729,20 @@ def ask_mp4_pick_with_trim_preview(
             messagebox.showwarning("预览", "选中区间过短。", parent=dlg)
             return
         _stop_play()
-        if not _open_cap():
-            return
+        if not getattr(c, "is_audio", False):
+            if not _open_cap():
+                return
         play_range_only[0] = range_only
         play_media_start[0] = start_t
         play_media_stop[0] = stop_t
         play_speed[0] = spd
         play_wall_start[0] = time.perf_counter()
-        video_cap[0].set(cv2.CAP_PROP_POS_FRAMES, int(round(start_t * c.fps)))
-        ret, frame = video_cap[0].read()
+        ret = False
+        if video_cap[0]:
+            video_cap[0].set(cv2.CAP_PROP_POS_FRAMES, int(round(start_t * c.fps)))
+            ret, frame = video_cap[0].read()
+        else:
+            _show_frame(start_t)
         if ret:
             current_t[0] = start_t
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -656,7 +785,8 @@ def ask_mp4_pick_with_trim_preview(
             play_wall_start[0] = time.perf_counter()
             play_media_start[0] = c.start
             target_t = c.start
-            video_cap[0].set(cv2.CAP_PROP_POS_FRAMES, int(round(c.start * c.fps)))
+            if video_cap[0]:
+                video_cap[0].set(cv2.CAP_PROP_POS_FRAMES, int(round(c.start * c.fps)))
             vol = _snap_mp4_preview_volume(volume_var.get())
             _start_preview_audio(c.start, c.end, 1.0, vol)
 
@@ -770,32 +900,104 @@ def ask_mp4_pick_with_trim_preview(
     preview_canvas.bind("<Button-1>", _on_preview_click)
     preview_canvas.bind("<Double-Button-1>", _on_preview_double)
 
+    def _sync_mix_btn() -> None:
+        if mix_btn is None:
+            return
+        if audio_state.get("clip") is None:
+            mix_btn.config(state=tk.DISABLED, text="套用这段音频")
+        elif audio_state.get("armed"):
+            mix_btn.config(state=tk.NORMAL, text="已套用这段音频")
+        else:
+            mix_btn.config(state=tk.NORMAL, text="套用这段音频")
+
+    def _arm_audio_mix() -> None:
+        if audio_state.get("clip") is None:
+            return
+        _save_trim()
+        audio_state["armed"] = True
+        _sync_mix_btn()
+
+    if mix_btn is not None:
+        mix_btn.config(command=_arm_audio_mix)
+
     def _load_file(fn: str) -> None:
+        _save_trim()
         _stop_play()
-        full = os.path.join(folder_box[0], fn)
+        focus[0] = "video"
+        full = os.path.normpath(os.path.join(folder_box[0], fn))
         sel_fn[0] = fn
-        clip[0] = _ClipTrim(full)
-        c = clip[0]
-        current_t[0] = c.start
+        if clip[0] is None or os.path.normpath(clip[0].path) != full:
+            clip[0] = _ClipTrim(full)
+        current_t[0] = clip[0].start
         _apply_ui()
-        _show_frame(c.start)
+        _show_frame(clip[0].start)
+
+    def _load_audio(fn: str) -> None:
+        _save_trim()
+        _stop_play()
+        focus[0] = "audio"
+        full = os.path.normpath(os.path.join(audio_folder_box[0], fn))
+        prev = audio_state.get("clip")
+        if prev is None or os.path.normpath(prev.path) != full:
+            audio_state["clip"] = _ClipTrim(full)
+            audio_state["armed"] = False
+        audio_state["fn"] = fn
+        current_t[0] = audio_state["clip"].start
+        _sync_mix_btn()
+        _apply_ui()
+        _show_frame(audio_state["clip"].start)
 
     def _on_list_select(_e=None) -> None:
         sel = listbox.curselection()
         if not sel:
             return
         fn = choices[sel[0]]
-        if fn != sel_fn[0]:
+        if fn != sel_fn[0] or focus[0] != "video":
             _load_file(fn)
 
     listbox.bind("<<ListboxSelect>>", _on_list_select)
+
+    def _apply_audio_source() -> None:
+        if not audio_sources or audio_listbox is None:
+            return
+        spec = next(item for item in audio_sources if item["key"] == audio_source_var.get())
+        _stop_play()
+        audio_folder_box[0] = spec["folder"]
+        audio_choices.clear()
+        audio_choices.extend(spec.get("choices") or [])
+        audio_listbox.delete(0, tk.END)
+        for name in audio_choices:
+            audio_listbox.insert(tk.END, name)
+        audio_state["clip"] = None
+        audio_state["fn"] = ""
+        audio_state["armed"] = False
+        _sync_mix_btn()
+        if focus[0] == "audio":
+            focus[0] = "video"
+            if clip[0] is not None:
+                _show_frame(clip[0].start)
+
+    def _on_audio_select(_e=None) -> None:
+        if audio_listbox is None:
+            return
+        sel = audio_listbox.curselection()
+        if not sel:
+            return
+        fn = audio_choices[sel[0]]
+        if fn != audio_state.get("fn") or focus[0] != "audio":
+            _load_audio(fn)
+
+    if audio_listbox is not None:
+        audio_listbox.bind("<<ListboxSelect>>", _on_audio_select)
+        if len([item for item in (audio_sources or []) if item.get("folder")]) > 1:
+            audio_source_var.trace_add("write", lambda *_a: _apply_audio_source())
 
     def _on_confirm(action: str | None = None) -> None:
         if clip[0] is None:
             messagebox.showwarning("导入视频", "这里没有视频。", parent=dlg)
             return
         _save_trim()
-        c = _c()
+        c = clip[0]
         if c.end <= c.start + (1.0 / c.fps):
             messagebox.showerror("区间无效", "结束时间必须大于开始时间。", parent=dlg)
             return
@@ -819,10 +1021,179 @@ def ask_mp4_pick_with_trim_preview(
             picked = picked + (radio_var.get(),)
         if sources:
             picked = picked + (source_var.get(),)
-        result[0] = picked
+        if audio_sources or dest_options:
+            audio_payload = None
+            if audio_state.get("armed") and audio_state.get("clip") is not None:
+                ac = audio_state["clip"]
+                audio_payload = {
+                    "path": ac.path,
+                    "start": ac.start,
+                    "end": ac.end,
+                    "speed": round(ac.speed, 1),
+                }
+            result[0] = {
+                "filename": picked[0],
+                "mp4": picked[1],
+                "wav": picked[2],
+                "action": action,
+                "radio": radio_var.get() if radio_holder[0] else "",
+                "source": source_var.get() if sources else "",
+                "dest": dest_var.get() if dest_options else "",
+                "audio": audio_payload,
+            }
+        else:
+            result[0] = picked
         _close()
 
+    def _save_recording(notify: bool) -> None:
+        chunks = rec["chunks"]
+        rec["chunks"] = []
+        rec_dlg = rec.get("dialog")
+        rec["dialog"] = None
+        if rec_dlg is not None:
+            try:
+                if rec_dlg.winfo_exists():
+                    rec_dlg.destroy()
+            except tk.TclError:
+                pass
+        if not chunks or np is None or sf is None:
+            if notify:
+                messagebox.showwarning("录音", "没有录到声音。", parent=dlg)
+            return
+        folder = rec.get("folder") or ""
+        if not folder:
+            if notify:
+                messagebox.showwarning("录音", "当前没有音频文件夹。", parent=dlg)
+            return
+        os.makedirs(folder, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        name = f"rec_{stamp}.wav"
+        path = os.path.join(folder, name)
+        n = 2
+        while os.path.exists(path):
+            name = f"rec_{stamp}_{n}.wav"
+            path = os.path.join(folder, name)
+            n += 1
+        try:
+            audio_data = np.concatenate(chunks, axis=0)
+            sf.write(path, audio_data, rec["rate"])
+        except Exception as exc:
+            if notify:
+                messagebox.showerror("录音", f"保存失败: {exc}", parent=dlg)
+            return
+        norm_folder = os.path.normpath(folder)
+        matched = None
+        for item in audio_sources or []:
+            if os.path.normpath(item.get("folder") or "") == norm_folder:
+                names = item.setdefault("choices", [])
+                if name not in names:
+                    names.append(name)
+                    names.sort()
+                matched = item
+        if (
+            audio_listbox is not None
+            and matched is not None
+            and os.path.normpath(audio_folder_box[0] or "") == norm_folder
+        ):
+            audio_choices.clear()
+            audio_choices.extend(matched.get("choices") or [])
+            audio_listbox.delete(0, tk.END)
+            for item_name in audio_choices:
+                audio_listbox.insert(tk.END, item_name)
+            if name in audio_choices:
+                idx = audio_choices.index(name)
+                audio_listbox.selection_clear(0, tk.END)
+                audio_listbox.selection_set(idx)
+                audio_listbox.see(idx)
+                _load_audio(name)
+        if notify:
+            messagebox.showinfo("录音", f"已保存到当前文件夹:\n{name}", parent=dlg)
+
+    def _recording_worker() -> None:
+        def _on_audio(indata, _frames, _time_info, status):
+            if status:
+                print(f"录音状态: {status}")
+            if rec["on"]:
+                rec["chunks"].append(indata.copy())
+
+        try:
+            with sd.InputStream(
+                samplerate=rec["rate"],
+                channels=rec["channels"],
+                callback=_on_audio,
+                dtype="float32",
+            ):
+                while rec["on"]:
+                    time.sleep(0.1)
+        except Exception as exc:
+            rec["on"] = False
+            print(f"录音线程错误: {exc}")
+            dlg.after(0, lambda: messagebox.showerror("录音", f"录音失败: {exc}", parent=dlg))
+
+    def _tick_recording() -> None:
+        rec_dlg = rec.get("dialog")
+        label = rec.get("time_label")
+        if not rec["on"] or rec_dlg is None or label is None:
+            return
+        try:
+            if not rec_dlg.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        elapsed = time.time() - rec["started"]
+        label.config(text=f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}")
+        rec_dlg.after(100, _tick_recording)
+
+    def _stop_record(notify: bool = True) -> None:
+        if not rec["on"]:
+            return
+        rec["on"] = False
+        thread = rec.get("thread")
+        if thread is not None:
+            thread.join(timeout=1.5)
+        rec["thread"] = None
+        _save_recording(notify)
+
+    def _start_record() -> None:
+        if audio_listbox is None:
+            return
+        if not _RECORDING_OK:
+            messagebox.showerror("录音", "录音不可用。请安装 sounddevice 和 soundfile。", parent=dlg)
+            return
+        folder = audio_folder_box[0] or ""
+        if not folder:
+            messagebox.showwarning("录音", "当前没有音频文件夹。", parent=dlg)
+            return
+        if rec["on"]:
+            _stop_record(True)
+            return
+        _stop_play()
+        rec["chunks"] = []
+        rec["folder"] = folder
+        rec["on"] = True
+        rec["started"] = time.time()
+        rec_dlg = tk.Toplevel(dlg)
+        rec_dlg.title("录音中...")
+        rec_dlg.geometry("360x180")
+        rec_dlg.resizable(False, False)
+        rec_dlg.transient(dlg)
+        rec_dlg.grab_set()
+        box = ttk.Frame(rec_dlg, padding=20)
+        box.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(box, text="正在录音...", font=("Arial", 14), foreground="red").pack(pady=10)
+        time_label = ttk.Label(box, text="00:00", font=("Arial", 12))
+        time_label.pack(pady=5)
+        rec["dialog"] = rec_dlg
+        rec["time_label"] = time_label
+        ttk.Button(box, text="停止录音", command=lambda: _stop_record(True)).pack(pady=16)
+        rec_dlg.protocol("WM_DELETE_WINDOW", lambda: _stop_record(True))
+        rec["thread"] = threading.Thread(target=_recording_worker, daemon=True)
+        rec["thread"].start()
+        _tick_recording()
+
     def _close() -> None:
+        if rec["on"]:
+            _stop_record(False)
         _stop_play()
         try:
             dlg.destroy()
@@ -890,6 +1261,7 @@ def ask_mp4_pick_with_trim_preview(
 
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
     dlg.update_idletasks()
-    dlg.geometry(f"980x640+{(sw - 980) // 2}+{(sh - 640) // 2}")
+    _dw, _dh = (980, 760) if audio_sources else (980, 640)
+    dlg.geometry(f"{_dw}x{_dh}+{(sw - _dw) // 2}+{(sh - _dh) // 2}")
     dlg.wait_window()
     return result[0]

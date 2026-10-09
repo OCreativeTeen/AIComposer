@@ -37,7 +37,6 @@ from utility.file_util import (
     safe_clipboard_json_copy,
     show_auto_close_popup,
 )
-from gui.media_review_dialog import AVReviewDialog
 #from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
 from utility.voicebox_speech_service import VoiceboxService, EXPRESSION_STYLES
 from utility.ffmpeg_processor import FfmpegProcessor
@@ -379,10 +378,10 @@ class WorkflowGUI:
         row = ttk.Frame(shared_frame)
         row.pack(fill=tk.X)
 
-        ttk.Button(row, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Button(row, text="SUNO", command=self._open_suno_gui).pack(side=tk.RIGHT, padx=(4, 0))
-        ttk.Button(row, text="清WAN", command=self.clean_wan).pack(side=tk.RIGHT)
-        ttk.Button(row, text="清媒体", command=self.clean_media).pack(side=tk.RIGHT)
+        self.btn_clean = ttk.Button(row, text="清理", command=self._open_clean_menu)
+        self.btn_clean.pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(row, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Button(row, text="视频播放", command=lambda: self.play_finalize_video()).pack(side=tk.RIGHT)
         ttk.Button(row, text="视频发布", command=lambda: self.publish_video()).pack(side=tk.RIGHT)
         ttk.Button(row, text="视频生成", command=lambda: self.run_finalize_video()).pack(side=tk.RIGHT, padx=(16, 0))
@@ -655,6 +654,8 @@ class WorkflowGUI:
         menu.add_command(label="封面提示 · 图片", state=tk.DISABLED)
         image_state = tk.NORMAL if cover else tk.DISABLED
         for label, template in config_prompt.DIRECT_VIDEO_PROMPT_CHOICES:
+            if label.startswith("Image to Detail-Single-Step-Image"):
+                continue
             menu.add_command(
                 label=label,
                 state=image_state,
@@ -1200,6 +1201,7 @@ class WorkflowGUI:
                     messagebox.showerror("错误", f"视频处理失败：{err}", parent=self.root)
                 else:
                     scene[track + "_status"] = track_status
+                    self.workflow.save_scenes_to_json()
                     self.refresh_gui_scenes()
 
             try:
@@ -1656,7 +1658,7 @@ class WorkflowGUI:
 
     def _project_avatar_dir(self) -> str:
         pid = self.get_pid()
-        path = os.path.join(config.PROJECT_DATA_PATH, pid, "avatar")
+        path = os.path.join(config.get_project_path(pid), "avatar")
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -2675,6 +2677,91 @@ class WorkflowGUI:
         messagebox.showerror("错误", f"暂不支持的格式：{media_final}", parent=self.root)
         return None
 
+    _CLIP_DEST_OPTIONS = (
+        ("clip", "Clip"),
+        ("narration", "旁白"),
+        ("zero", "Zero"),
+        ("background", "背景"),
+    )
+
+    def _audio_names_in(self, folder: str) -> list:
+        if not folder or not os.path.isdir(folder):
+            return []
+        names = [
+            name
+            for name in os.listdir(folder)
+            if name.lower().endswith((".mp3", ".wav"))
+            and os.path.isfile(os.path.join(folder, name))
+        ]
+        return sorted(names)
+
+    def _download_audio_source(self) -> tuple[str, list]:
+        folder, _videos = self._download_mp4_source()
+        return folder, self._audio_names_in(folder)
+
+    def _channel_audio_source(self) -> tuple[str, list]:
+        folder, _videos = self._channel_mp4_source()
+        return folder, self._audio_names_in(folder)
+
+    def _audio_source_specs(self) -> list:
+        download_folder, download_files = self._download_audio_source()
+        channel_folder, channel_files = self._channel_audio_source()
+        return [
+            {"key": "download", "label": "下载", "folder": download_folder, "choices": download_files},
+            {"key": "channel", "label": "频道", "folder": channel_folder, "choices": channel_files},
+        ]
+
+    def _mix_audio_onto_video(self, video_path: str, audio: dict) -> tuple[str, str]:
+        from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
+
+        wav = _build_preview_segment_wav(
+            audio["path"], audio["start"], audio["end"], audio.get("speed") or 1.0, 1.0,
+        )
+        if not wav:
+            return video_path, ""
+        mixed = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, wav, True, "speed")
+        if mixed and os.path.isfile(mixed):
+            return mixed, wav
+        return video_path, wav
+
+    def _apply_editor_pick(self, pick: dict, *, stage_download: bool) -> None:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene or not isinstance(pick, dict):
+            return
+        mp4 = pick.get("mp4") or ""
+        wav = pick.get("wav") or ""
+        audio = pick.get("audio")
+        if audio:
+            mp4, mixed_wav = self._mix_audio_onto_video(mp4, audio)
+            if mixed_wav:
+                wav = mixed_wav
+        dest = (pick.get("dest") or "clip").strip() or "clip"
+        source = pick.get("source") or ""
+        if source == "channel":
+            self._video_simple_replacement_async(
+                scene, mp4, wav, pick.get("radio") or "keep", dest, track_status="ENH2",
+            )
+            return
+        if stage_download and source == "download":
+            res = self._stage_downloaded_video(
+                self._download_mp4_source()[0],
+                pick.get("filename") or "",
+                mp4,
+                wav,
+                pick.get("action") or "replace",
+                dest,
+                dest,
+            )
+            if res:
+                self._apply_download_video_result(res, dest)
+            return
+        refresh_scene_media(scene, dest, ".mp4", mp4)
+        if wav and os.path.isfile(wav):
+            refresh_scene_media(scene, dest + "_audio", ".wav", wav, True)
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, "片段", "已写回这一场。")
+
     def _download_mp4_source(self) -> tuple[str, list]:
         suffixes = (".mp4",)
         for folder in _external_media_pick_folders():
@@ -2816,7 +2903,7 @@ class WorkflowGUI:
                 "label": "下载",
                 "folder": download_folder,
                 "choices": download_files,
-                "radios": ("放到", [("clip", "Clip"), ("narration", "旁白")]),
+                "radios": None,
                 "confirm_actions": [
                     ("replace", "替换"),
                     ("prepend", "前加"),
@@ -2829,7 +2916,7 @@ class WorkflowGUI:
                 "folder": channel_folder,
                 "choices": channel_files,
                 "radios": ("声音", [("keep", "原声"), ("replace_speed", "配声")]),
-                "confirm_actions": None,
+                "confirm_actions": [("replace", "确定")],
             },
         ]
         pick = askchoice_media_preview(
@@ -2840,32 +2927,14 @@ class WorkflowGUI:
             use_mp4_video_preview=True,
             build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
             sources=sources,
+            audio_sources=self._audio_source_specs(),
+            dest_options=list(self._CLIP_DEST_OPTIONS),
         )
         if not pick:
             return
-        source = pick[-1]
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if source == "channel":
-            self._video_simple_replacement_async(
-                scene,
-                pick[1],
-                pick[2],
-                pick[3],
-                "clip",
-                track_status="ENH2",
-            )
+        if isinstance(pick, dict):
+            self._apply_editor_pick(pick, stage_download=True)
             return
-        res = self._stage_downloaded_video(
-            download_folder,
-            pick[0],
-            pick[1],
-            pick[2],
-            pick[3],
-            pick[4],
-            "clip",
-        )
-        if res:
-            self._apply_download_video_result(res, "clip")
 
     def _open_scene_clip_tools(self) -> None:
         picked = self._ask_near_choices(
@@ -2879,28 +2948,48 @@ class WorkflowGUI:
             self._edit_current_scene_clip()
 
     def _edit_current_scene_clip(self) -> None:
-        from gui.summary_mp4_review_dialog import ask_summary_mp4_review_segments
-
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         clip = get_file_path(scene, "clip") if scene else ""
         if not clip or not os.path.isfile(clip):
             messagebox.showinfo("编辑当前片段", "这一场还没有视频。先导入一段。", parent=self.root)
             return
-        try:
-            segments = ask_summary_mp4_review_segments(
-                self.root,
-                [clip],
-                pid=self.get_pid() or "yt_wm",
-                lang=getattr(self.workflow, "language", None) or "zh",
-                dialog_title="编辑这一场片段",
-                confirm_label="确认并写回这一场",
-            )
-        except ValueError as exc:
-            messagebox.showwarning("编辑当前片段", str(exc), parent=self.root)
+        folder = os.path.dirname(clip)
+        name = os.path.basename(clip)
+        download_folder, download_files = self._download_mp4_source()
+        channel_folder, channel_files = self._channel_mp4_source()
+        sources = [
+            {
+                "key": "download",
+                "label": "下载",
+                "folder": download_folder,
+                "choices": download_files,
+                "radios": None,
+                "confirm_actions": [("replace", "确认并写回")],
+            },
+            {
+                "key": "channel",
+                "label": "频道",
+                "folder": channel_folder,
+                "choices": channel_files,
+                "radios": None,
+                "confirm_actions": [("replace", "确认并写回")],
+            },
+        ]
+        pick = askchoice_media_preview(
+            "编辑这一场片段",
+            [name],
+            folder,
+            self.root,
+            use_mp4_video_preview=True,
+            build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
+            sources=sources,
+            audio_sources=self._audio_source_specs(),
+            dest_options=list(self._CLIP_DEST_OPTIONS),
+            lock_video_source=True,
+        )
+        if not isinstance(pick, dict):
             return
-        if not segments:
-            return
-        self._apply_reviewed_segments_to_current_clip(segments)
+        self._apply_editor_pick(pick, stage_download=False)
 
     def _apply_reviewed_segments_to_current_clip(self, segments: list) -> None:
         root = self.root
@@ -3931,7 +4020,7 @@ class WorkflowGUI:
         self.video_canvas.pack(fill=tk.BOTH, expand=True)
         
         # 添加拖拽提示文本（位置会在canvas配置后动态调整）
-        self.video_canvas.create_text(400, 180, text="拖拽MP4文件到此处可替换当前视频片段\n\n注意：\n• 输入视频不能超过当前场景时长\n• 如果输入视频较短，会自动延长", 
+        self.video_canvas.create_text(400, 180, text="选择场景后会显示视频预览",
                                     fill="gray", font=("Arial", 12), justify=tk.CENTER, tags="drag_hint")
         
         # 绑定配置事件来动态调整提示文本位置
@@ -4103,13 +4192,6 @@ class WorkflowGUI:
         self.scene_dialogue_mode.pack(side=tk.LEFT, padx=(0, 0))
         ai_row1 = ttk.Frame(ai_tools_frame)
         ai_row1.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
-        self._nb_story_image_btn = ttk.Button(
-            ai_row1,
-            text="幻灯提示",
-            width=8,
-            command=self._open_slide_prompt_flow,
-        )
-        self._nb_story_image_btn.pack(side=tk.LEFT)
         self._nb_picture_btn = ttk.Button(
             ai_row1,
             text="图片提示",
@@ -4191,12 +4273,13 @@ class WorkflowGUI:
             command=self._ask_scene_speech_transform,
         )
         self._scene_speech_btn.pack(side=tk.LEFT)
-        ttk.Button(
+        self._scene_split_btn = ttk.Button(
             scene_text_row,
-            text="贴回",
-            width=5,
-            command=self.paste_current_scene_text,
-        ).pack(side=tk.LEFT, padx=(4, 0))
+            text="场景拆分",
+            width=8,
+            command=self._ask_scene_split,
+        )
+        self._scene_split_btn.pack(side=tk.LEFT, padx=(4, 0))
         ttk.Separator(scene_text_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(
             scene_text_row,
@@ -4916,10 +4999,6 @@ class WorkflowGUI:
                 self.video_canvas.create_text(x, y + pil_image.height//2 + 20, 
                                             text="点击 '▶ 播放' 开始播放视频", 
                                             fill="white", font=("Arial", 12))
-                
-                self.video_canvas.create_text(x, y + pil_image.height//2 + 40, 
-                                            text="💡 拖拽MP4文件可替换此视频", 
-                                            fill="gray", font=("Arial", 10))
             else:
                 self.clear_video_preview()
                 self.log_to_output(self.video_output, f"❌ 无法读取视频第一帧")
@@ -4944,7 +5023,7 @@ class WorkflowGUI:
         x = canvas_width // 2
         y = canvas_height // 2
         
-        self.video_canvas.create_text(x, y, text="选择场景后会显示视频预览\n\n💡 可以拖拽MP4文件到此处替换视频片段", fill="white", 
+        self.video_canvas.create_text(x, y, text="选择场景后会显示视频预览", fill="white",
                                     font=("Arial", 12), justify=tk.CENTER, tags="no_video_hint")
 
 
@@ -6315,7 +6394,7 @@ class WorkflowGUI:
             messagebox.showinfo(title, "这一场没有声音。", parent=self.root)
             return
         pid = getattr(self.workflow, "pid", None) or "span"
-        folder = os.path.join(config.PROJECT_DATA_PATH, str(pid), "temp")
+        folder = os.path.join(config.get_project_path(str(pid)), "temp")
         os.makedirs(folder, exist_ok=True)
         dest = os.path.join(folder, f"{key}_{start:.2f}_{end:.2f}.wav")
         if not self._cut_span_wav(source, start, end, dest):
@@ -6985,6 +7064,17 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         messagebox.showinfo("成功", "WAN视频批量生成成功！")
 
+
+    def _open_clean_menu(self) -> None:
+        picked = self._ask_near_choices(
+            self.btn_clean,
+            "清理",
+            [("media", "清媒体"), ("wan", "清WAN")],
+        )
+        if picked == "media":
+            self.clean_media()
+        elif picked == "wan":
+            self.clean_wan()
 
     def clean_wan(self):
         self.workflow.clean_folder("/wan_video/interpolated")
@@ -9915,46 +10005,6 @@ class WorkflowGUI:
             )
         post_menu_below_widget(m, widget)
 
-    def _open_slide_prompt_flow(self) -> None:
-        """幻灯提示：先选单图或幻灯片、以及画面文字，再给出对应该选择的提示词。"""
-        from gui.slide_prompt_dialog import open_slide_prompt_dialog
-
-        scenes = self._current_story_scenes()
-        if not scenes:
-            messagebox.showwarning("幻灯提示", "当前故事无场景", parent=self.root)
-            return
-        pc = project_manager.PROJECT_CONFIG or {}
-        cur = self.workflow.get_scene_by_index(self.current_scene_index) if self.workflow else None
-        cast = ""
-        if isinstance(cur, dict):
-            cast = (cur.get("actor") or "").strip()
-
-        def copy_text(text: str) -> None:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(text)
-            self.root.update_idletasks()
-
-        def get_style() -> str:
-            return (
-                (self.scene_visual_style.get() or "").strip()
-                or (pc.get("visual_style") or "").strip()
-                or config.VISUAL_STYLE_OPTIONS[0]
-            )
-
-        open_slide_prompt_dialog(
-            self.root,
-            self._nb_story_image_btn,
-            get_scenes=lambda: scenes,
-            get_style=get_style,
-            copy_text=copy_text,
-            host_narrator=project_manager.project_narrator(),
-            get_place=lambda: (
-                (self.setting_region.get() or "").strip(),
-                (self.setting_era.get() or "").strip(),
-            ),
-            main_character=cast,
-        )
-
     def _open_picture_prompt_flow(self) -> None:
         """图片提示：先选画风和说明文字，拷贝当前图后再给出对应该选择的提示词。"""
         if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
@@ -9985,8 +10035,11 @@ class WorkflowGUI:
 
         task_box = ttk.LabelFrame(groups, text="处理", padding=(8, 4))
         task_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+        task_buttons = []
         for value, label in config_prompt.PICTURE_FLOW_TASK_CHOICES:
-            ttk.Radiobutton(task_box, text=label, value=value, variable=task_var).pack(anchor=tk.W)
+            btn = ttk.Radiobutton(task_box, text=label, value=value, variable=task_var)
+            btn.pack(anchor=tk.W)
+            task_buttons.append(btn)
 
         text_box = ttk.LabelFrame(groups, text="说明文字", padding=(8, 4))
         text_box.pack(side=tk.LEFT, anchor=tk.N)
@@ -9995,6 +10048,18 @@ class WorkflowGUI:
             btn = ttk.Radiobutton(text_box, text=label, value=value, variable=text_var)
             btn.pack(anchor=tk.W)
             text_buttons.append(btn)
+
+        cover_var = tk.StringVar(value="none")
+        cover_choices: list[tuple[str, str, str]] = []
+        for label, template in config_prompt.DIRECT_VIDEO_PROMPT_CHOICES:
+            if not label.startswith("Image to Detail-Single-Step-Image"):
+                continue
+            cover_choices.append((str(len(cover_choices) + 1), template, label))
+        cover_box = ttk.LabelFrame(groups, text="封面处理", padding=(8, 4))
+        cover_box.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
+        ttk.Radiobutton(cover_box, text="无", value="none", variable=cover_var).pack(anchor=tk.W)
+        for key, _template, _full in cover_choices:
+            ttk.Radiobutton(cover_box, text=key, value=key, variable=cover_var).pack(anchor=tk.W)
 
         box = scrolledtext.ScrolledText(body, wrap=tk.WORD, height=12, width=64)
 
@@ -10012,16 +10077,43 @@ class WorkflowGUI:
                 or ""
             )
 
+        def present_prompt(prompt: str, title: str, hint_text: str) -> None:
+            state["prompt"] = prompt
+            state["phase"] = "prompt"
+            groups.pack_forget()
+            box.configure(state=tk.NORMAL)
+            box.delete("1.0", tk.END)
+            box.insert("1.0", prompt)
+            box.configure(state=tk.DISABLED)
+            box.pack(fill=tk.BOTH, expand=True)
+            dlg.title(title)
+            hint.config(text=hint_text)
+            go.config(text="拷贝提示词")
+            dlg.update_idletasks()
+            w = max(int(dlg.winfo_reqwidth()), 560)
+            h = max(int(dlg.winfo_reqheight()), 420)
+            x = int(dlg.winfo_x())
+            y = int(dlg.winfo_y())
+            dlg.geometry(f"{w}x{h}+{x}+{y}")
+
         def refresh_choices(*_args) -> None:
             if state["phase"] != "choose":
                 return
+            cover_on = cover_var.get() != "none"
             extract = task_var.get() == "extract"
+            for btn in task_buttons:
+                btn.configure(state=("disabled" if cover_on else "normal"))
             for btn in text_buttons:
-                btn.configure(state=("disabled" if extract else "normal"))
-            if extract:
+                btn.configure(state=("disabled" if cover_on or extract else "normal"))
+            if cover_on:
+                hint.config(text="用封面图再生成一张图。选好编号后拷贝封面，再拷提示词。")
+                go.config(text="拷贝封面")
+            elif extract:
                 hint.config(text="人物提取用固定提示。选好后拷贝当前图，再拷提示词，然后去做图片处理。")
+                go.config(text="拷贝当前图")
             else:
-                hint.config(text="先选定画风和说明文字。选好后拷贝当前图，提示词按这些选择来写。")
+                hint.config(text="先选定画风和说明文字。选好后拷贝当前图，提示词按这些选择来写。封面处理选「无」。")
+                go.config(text="拷贝当前图")
 
         def show_prompt() -> None:
             scene = current_scene()
@@ -10040,26 +10132,29 @@ class WorkflowGUI:
             except ValueError as exc:
                 messagebox.showwarning("图片提示", str(exc), parent=dlg)
                 return
-            state["prompt"] = prompt
-            state["phase"] = "prompt"
-            groups.pack_forget()
-            box.configure(state=tk.NORMAL)
-            box.delete("1.0", tk.END)
-            box.insert("1.0", prompt)
-            box.configure(state=tk.DISABLED)
-            box.pack(fill=tk.BOTH, expand=True)
             choice = config_prompt.picture_flow_choice_label(
                 task, text_var.get(), "" if task == "extract" else current_style()
             )
-            dlg.title(f"图片提示 · {choice}")
-            hint.config(text="当前图已拷贝。下面是按刚才的选择写的提示词。按「拷贝提示词」拷走，再去做图片处理。")
-            go.config(text="拷贝提示词")
-            dlg.update_idletasks()
-            w = max(int(dlg.winfo_reqwidth()), 560)
-            h = max(int(dlg.winfo_reqheight()), 420)
-            x = int(dlg.winfo_x())
-            y = int(dlg.winfo_y())
-            dlg.geometry(f"{w}x{h}+{x}+{y}")
+            present_prompt(
+                prompt,
+                f"图片提示 · {choice}",
+                "当前图已拷贝。下面是按刚才的选择写的提示词。按「拷贝提示词」拷走，再去做图片处理。",
+            )
+
+        def show_cover_prompt(key: str, template: str) -> None:
+            _mgr, vd, _story_raw, _ch_path = self._cover_prompt_context()
+            sc = vd.get("scene_content") if isinstance(vd, dict) else []
+            prompt = config_prompt.build_direct_video_clipbody(
+                instruction=template,
+                story_entries=sc if isinstance(sc, list) else [],
+                main_character=project_manager.project_narrator(),
+                visual_style=current_style() or project_manager.LAST_VISUAL_STYLE,
+            )
+            present_prompt(
+                prompt,
+                f"图片提示 · 封面 {key}",
+                "封面已拷贝。下面是这条封面处理的提示词。按「拷贝提示词」拷走，再去做图片处理。",
+            )
 
         def copy_prompt() -> None:
             prompt = state["prompt"]
@@ -10078,6 +10173,20 @@ class WorkflowGUI:
             if state["phase"] == "prompt":
                 copy_prompt()
                 return
+            cover_key = cover_var.get()
+            if cover_key != "none":
+                picked = next((item for item in cover_choices if item[0] == cover_key), None)
+                if picked is None:
+                    return
+                cover, _slide = self._project_cover_and_slide()
+                if not cover:
+                    messagebox.showinfo("图片提示", "还没有封面图。", parent=dlg)
+                    return
+                if not self.copy_image_to_clipboard(cover, silent=True):
+                    messagebox.showwarning("图片提示", "封面没有拷到剪贴板。", parent=dlg)
+                    return
+                show_cover_prompt(picked[0], picked[1])
+                return
             if task_var.get() != "extract" and not current_style():
                 messagebox.showwarning("图片提示", "请先在上面选定画面风格。", parent=dlg)
                 return
@@ -10094,6 +10203,7 @@ class WorkflowGUI:
         go = ttk.Button(actions, text="拷贝当前图", command=on_go)
         go.pack(side=tk.LEFT)
         task_var.trace_add("write", refresh_choices)
+        cover_var.trace_add("write", refresh_choices)
         refresh_choices()
         self._place_popup_near(dlg, self._nb_picture_btn, below=True)
 
@@ -10312,7 +10422,7 @@ class WorkflowGUI:
         return applied
 
     def _ask_scene_speech_transform(self) -> None:
-        """场景变换：先选改一场、两场还是三场，再把对应提示词拷走。"""
+        """场景变换：选改一场、两场还是三场，直接调用语言模型，结果写回这一场。"""
         picked = self._ask_near_choices(
             self._scene_speech_btn,
             "场景变换",
@@ -10321,13 +10431,13 @@ class WorkflowGUI:
                 ("2", "这一场和下一场合成一段"),
                 ("3", "这一场连后面两场合成一段"),
             ],
-            hint="按现在的人物重写说法。提示词拷走以后，用旁边的贴回写回这一场。",
+            hint="按现在的人物重写说法。结果直接写回这一场的讲话和旁白。",
         )
         if picked in ("1", "2", "3"):
-            self.copy_scene_speech_transform(int(picked))
+            self.apply_scene_speech_transform(int(picked))
 
-    def copy_scene_speech_transform(self, span: int = 1) -> None:
-        """按当前 actor 选一种说法，把提示词拷进剪贴板。span 为 2 或 3 时并进后面连续几场。"""
+    def apply_scene_speech_transform(self, span: int = 1) -> None:
+        """按当前 actor 重写说法。span 为 2 或 3 时把后面连续几场并进这一场的讲话和旁白。"""
         title = "场景变换" if span <= 1 else f"场景变换{span}"
         if not self.workflow.get_scene_by_index(self.current_scene_index):
             messagebox.showwarning(title, "没有当前场景", parent=self.root)
@@ -10356,59 +10466,277 @@ class WorkflowGUI:
                 parent=self.root,
             )
             return
-        label, text = built
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        self.root.update()
-        show_auto_close_popup(self.root, title, f"已拷贝：{label}")
-
-    def paste_current_scene_text(self) -> None:
-        """把剪贴板里的场景 JSON 贴回当前这一场。JSON 里有的字段覆盖，没有的留下。"""
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            messagebox.showwarning("贴回", "没有当前场景", parent=self.root)
-            return
+        _label, text = built
         try:
-            raw = safe_clipboard_json_copy(self.root.clipboard_get())
-        except tk.TclError:
-            raw = ""
-        parsed = config.parse_json_from_text(raw) if raw else None
-        if isinstance(parsed, list):
-            parsed = parsed[0] if parsed else None
-        if not isinstance(parsed, dict):
-            messagebox.showwarning(
-                "贴回",
-                "剪贴板里不是一场的 JSON。",
-                parent=self.root,
-            )
+            parsed = self.llm_api.generate_json(text, "按要求重写，只返回 JSON 对象。", expect_list=False)
+        except Exception as exc:
+            messagebox.showerror(title, f"变换失败: {exc}", parent=self.root)
             return
-        self.update_current_scene()
-        keep = self._SCENE_IMPORT_SKIP_KEYS | {
-            "id",
-            "episode",
-            "group",
-            "episode_page",
-            "episode_pdf",
-            "group_page",
-            "group_pdf",
-            "clip",
-            "zero",
-            "narration",
-            "background",
-            "background_music",
+        if isinstance(parsed, list):
+            parsed = parsed[0] if parsed and isinstance(parsed[0], dict) else None
+        if not isinstance(parsed, dict):
+            messagebox.showinfo(title, "没有拿到可写回的内容，这一场保持原样。", parent=self.root)
+            return
+        fields = {
+            key: parsed[key]
+            for key in ("speaking", "voiceover")
+            if key in parsed and parsed[key] is not None
         }
-        cleaned = {
-            key: val
-            for key, val in parsed.items()
-            if key not in keep and not str(key).endswith(("_image", "_audio", "_last"))
-        }
-        n = self._apply_scene_import_item(scene, cleaned)
+        scene = self.workflow.get_scene_by_index(index)
+        if not scene or not fields:
+            messagebox.showinfo(title, "没有拿到可写回的内容，这一场保持原样。", parent=self.root)
+            return
+        n = self._apply_scene_import_item(scene, fields)
         if not n:
-            messagebox.showwarning("贴回", "JSON 里没有能写回这一场的字段。", parent=self.root)
+            messagebox.showinfo(title, "没有拿到可写回的内容，这一场保持原样。", parent=self.root)
             return
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
-        show_auto_close_popup(self.root, "贴回", f"已写回 {n} 个字段")
+        show_auto_close_popup(self.root, title, "已写回这一场的讲话和旁白")
+
+    def _ask_scene_split(self) -> None:
+        """场景拆分：直接调用语言模型，把这一场的文字拆成多场。媒体整段复制。"""
+        picked = self._ask_near_choices(
+            self._scene_split_btn,
+            "场景拆分",
+            [
+                ("content", "按文字内容拆分，媒体照原样复制"),
+                ("audio", "音频转录拆分，按语句切开画面和声音"),
+            ],
+            hint="文字拆分只改说法，每场复制原来的整段。音频转录按每句的起止，把画面和声音切开。",
+        )
+        if picked == "content":
+            self.split_scene_content_by_llm()
+        elif picked == "audio":
+            self.split_scene_by_transcription()
+
+    def split_scene_content_by_llm(self) -> None:
+        title = "场景拆分"
+        if not self.workflow.get_scene_by_index(self.current_scene_index):
+            messagebox.showwarning(title, "没有当前场景", parent=self.root)
+            return
+        scene = self.update_current_scene()
+        index = self.current_scene_index
+        cfg = project_manager.PROJECT_CONFIG or {}
+        override = cfg.get("channel_prompt") if isinstance(cfg.get("channel_prompt"), dict) else None
+        _label, text = config_prompt.build_split_scene_prompt(
+            scene,
+            self.workflow.channel,
+            override,
+            self.workflow.get_previous_scene(index),
+            self.workflow.get_next_scene(index),
+        )
+        try:
+            raw = self.llm_api.generate_json(text, "按要求拆开，只返回 JSON 数组。", expect_list=True)
+        except Exception as exc:
+            messagebox.showerror(title, f"拆分失败: {exc}", parent=self.root)
+            return
+        items = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+        if len(items) < 2:
+            messagebox.showinfo(title, "没有拆成多场，这一场保持原样。", parent=self.root)
+            return
+        self._replace_scene_with_cloned_splits(items)
+
+    def _replace_scene_with_cloned_splits(self, items: list) -> None:
+        """用多场文字替换当前这一场。每场复制原来的整段画面和声音，不按时间切开。"""
+        title = "场景拆分"
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene or len(items) < 2:
+            return
+        index = self.current_scene_index
+        sources = {
+            "clip": get_file_path(scene, "clip"),
+            "clip_audio": get_file_path(scene, "clip_audio"),
+            "clip_image": get_file_path(scene, "clip_image"),
+            "clip_image_last": get_file_path(scene, "clip_image_last"),
+        }
+        used_ids = {int(s.get("id") or 0) for s in (self.workflow.scenes or []) if isinstance(s, dict)}
+        next_id = max(used_ids or {0})
+        base_id = int(scene.get("id") or 0)
+        new_scenes = []
+        for i, item in enumerate(items):
+            project_manager.normalize_scene_content_item_for_workflow(item)
+            piece = copy.deepcopy(scene)
+            if i == 0:
+                piece["id"] = base_id
+            else:
+                next_id += 1
+                while next_id in used_ids:
+                    next_id += 1
+                used_ids.add(next_id)
+                piece["id"] = next_id
+                for field, src in sources.items():
+                    if not src:
+                        continue
+                    postfix = os.path.splitext(src)[1] or ".mp4"
+                    refresh_scene_media(piece, field, postfix, src, True)
+            for key in ("speaking", "voiceover", "visual", "actor", "caption"):
+                if key in item and item.get(key) is not None:
+                    piece[key] = item.get(key)
+            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
+                piece.pop(key, None)
+            piece["clip_status"] = "ORIG"
+            new_scenes.append(piece)
+        self.workflow.replace_scene_with_others(index, new_scenes)
+        self.current_scene_index = index
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, title, f"已拆成 {len(new_scenes)} 场")
+
+    def split_scene_by_transcription(self) -> None:
+        """按音频转录的语句起止，把当前这场切开。画面和声音按每句的时间裁开。"""
+        title = "音频转录拆分"
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene:
+            messagebox.showwarning(title, "没有当前场景", parent=self.root)
+            return
+        self.update_current_scene()
+        index = self.current_scene_index
+        video = get_file_path(scene, "clip")
+        audio = get_file_path(scene, "clip_audio")
+        if not video:
+            messagebox.showwarning(title, "这一场没有画面，无法按声音切开。", parent=self.root)
+            return
+        if not audio:
+            audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(video)
+        if not audio or not os.path.isfile(audio):
+            messagebox.showwarning(title, "这一场没有声音，无法转录。", parent=self.root)
+            return
+        scene_min = project_manager.PROJECT_CONFIG.get("scene_min_length", 9) if project_manager.PROJECT_CONFIG else 9
+        try:
+            scene_min = float(scene_min)
+        except (TypeError, ValueError):
+            scene_min = 9
+        try:
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            transcriber = audio_transcriber.AudioTranscriber(self.workflow.pid, model_size="small", device="cuda")
+            segments = transcriber.transcribe_with_whisper(
+                audio,
+                self.workflow.language,
+                False,
+                True,
+                False,
+                scene_min,
+                int(scene_min * 1.5),
+            )
+        except Exception as exc:
+            messagebox.showerror(title, f"转录失败: {exc}", parent=self.root)
+            return
+        finally:
+            try:
+                self.root.config(cursor="")
+            except tk.TclError:
+                pass
+        if not segments:
+            messagebox.showinfo(title, "没有转录出语句，这一场保持原样。", parent=self.root)
+            return
+        full = float(self.workflow.ffmpeg_audio_processor.get_duration(audio) or 0.0)
+        if full > 0:
+            segments[-1]["end"] = full
+            start = float(segments[-1].get("start") or 0.0)
+            segments[-1]["duration"] = max(0.0, full - start)
+        if len(segments) < 2:
+            messagebox.showinfo(title, "没有拆成多场，这一场保持原样。", parent=self.root)
+            return
+        pieces = self._scenes_from_transcript(scene, segments)
+        if len(pieces) < 2:
+            messagebox.showinfo(title, "没有拆成多场，这一场保持原样。", parent=self.root)
+            return
+        try:
+            self._cut_transcript_scenes(pieces, video, audio)
+        except Exception as exc:
+            messagebox.showerror(title, f"切开失败: {exc}", parent=self.root)
+            return
+        self.workflow.replace_scene_with_others(index, pieces)
+        for piece in pieces:
+            piece["clip_status"] = "ORIG"
+        self.workflow.save_scenes_to_json()
+        self.current_scene_index = index
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, title, f"已按语句拆成 {len(pieces)} 场")
+
+    def _scenes_from_transcript(self, scene: dict, segments: list) -> list:
+        """按转录段生成场景。有起止的段不继承原来的画面和声音，留给后面按时间切开。"""
+        raw_id = int((int(scene.get("id") or 0) / 100) * 100)
+        pieces = []
+        for item in segments:
+            if not isinstance(item, dict):
+                continue
+            raw_id += 100
+            piece = copy.deepcopy(scene)
+            piece["name"] = scene.get("name", "story")
+            piece["id"] = raw_id
+            caption = item.get("caption", "")
+            piece["caption"] = caption
+            piece["speaking"] = caption
+            piece["voiceover"] = ""
+            if "visual" in item and item.get("visual") is not None:
+                piece["visual"] = item.get("visual")
+            if item.get("speaker") is not None:
+                piece["narrator"] = item.get("speaker")
+            for key in ("start", "end", "duration"):
+                if key in item and item.get(key) is not None:
+                    piece[key] = item.get(key)
+            if "start" in item and "end" in item:
+                piece.pop("narrator_audio", None)
+                piece.pop("clip_audio", None)
+                piece.pop("clip", None)
+            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
+                piece.pop(key, None)
+            pieces.append(piece)
+        return pieces
+
+    def _cut_transcript_scenes(self, pieces: list, video: str, audio: str) -> None:
+        """按每场的 start、end 切开源画面和声音，并抽出这一段的首尾图。"""
+        fp = self.workflow.ffmpeg_processor
+        fa = self.workflow.ffmpeg_audio_processor
+        for i, item in enumerate(pieces):
+            try:
+                duration = float(item.get("duration") or 0.0)
+                start = float(item.get("start") or 0.0)
+                end = float(item.get("end") or 0.0)
+            except (TypeError, ValueError):
+                duration = 0.0
+                start = 0.0
+                end = 0.0
+            if duration <= 0:
+                print(f"skip scene {i + 1}: duration={duration}")
+                continue
+            clip_wav = fa.audio_cut_fade(audio, start, duration)
+            if clip_wav:
+                _old, new_audio = refresh_scene_media(item, "clip_audio", ".wav", clip_wav)
+                item["speaker_audio"] = new_audio
+            trimmed = fp.trim_video(video, start, end)
+            if not trimmed:
+                continue
+            refresh_scene_media(item, "clip", ".mp4", trimmed)
+            first_image = item.get("clip_image")
+            if not first_image or not os.path.exists(first_image):
+                first_image = self._frame_or_fallback(trimmed, True)
+                if first_image:
+                    refresh_scene_media(item, "clip_image", ".webp", first_image)
+            last_image = self._frame_or_fallback(trimmed, False)
+            if last_image:
+                refresh_scene_media(item, "clip_image_last", ".webp", last_image, True)
+
+    def _frame_or_fallback(self, video_path: str, first: bool):
+        img = self.workflow.ffmpeg_processor.extract_frame(video_path, first)
+        if img:
+            return img
+        try:
+            channel = None
+            if project_manager.PROJECT_CONFIG:
+                channel = project_manager.PROJECT_CONFIG.get("channel")
+            channel = channel or getattr(self.workflow, "channel", None)
+            if not channel:
+                return None
+            fp = self.workflow.ffmpeg_processor
+            fallback = config.get_fallback_background_image(channel, fp.width, fp.height)
+            if fallback and os.path.exists(fallback):
+                return fp.to_webp(fallback)
+        except Exception as exc:
+            print(f"fallback frame failed: {exc}")
+        return None
 
     def import_scene_data(self):
         """从 JSON array 批量导入场景文案：array[0] 对应当前场景，依次向后覆盖同名字段。"""
@@ -11059,67 +11387,6 @@ class WorkflowGUI:
         self.video_canvas.dnd_bind('<<Drop>>', self.on_media_drop)
         self.video_canvas.dnd_bind('<<DragEnter>>', self.on_video_drag_enter)
         self.video_canvas.dnd_bind('<<DragLeave>>', self.on_video_drag_leave)
-        
-        # 添加双击事件绑定
-        self.video_canvas.bind('<Double-Button-1>', self.on_video_canvas_double_click)
-
-
-    def handle_video_replacement(self, video_path, replace_media_audio, media_type):
-        """处理音频替换"""
-        try:
-            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-
-            # 一次 ffprobe 供帧率写入与 resize 共用，避免重复子进程；同尺寸则 resize 内直接跳过复制/重编码
-            probe = self.workflow.ffmpeg_processor.probe_video_stream_basic(video_path)
-            if probe and probe.get("fps") is not None:
-                current_scene[media_type + "_fps"] = probe["fps"]
-            else:
-                current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(video_path)
-
-            video_path = self.workflow.ffmpeg_processor.resize_video(
-                video_path, width=None, height=self.workflow.ffmpeg_processor.height, _probe=probe
-            )
-
-            print(f"🎬 打开合并编辑器 - 媒体类型: {media_type}, 替换音频: {replace_media_audio}")
-            if media_type == "zero":
-                replace_media_audio = "keep"
-
-            review_dialog = AVReviewDialog(self, video_path, current_scene, self.workflow.get_previous_scene(self.current_scene_index), self.workflow.get_next_scene(self.current_scene_index), media_type, replace_media_audio)
-            self.root.wait_window(review_dialog.dialog)
-
-            if (not review_dialog.result) or ('transcribe_way' not in review_dialog.result) or  ('audio_json' not in review_dialog.result):
-                print("场景内容无变化")
-                return
-
-            transcribe_way = review_dialog.result['transcribe_way']
-            audio_json = review_dialog.result['audio_json']
-            if not audio_json or (transcribe_way != "single" and transcribe_way != "multiple"):
-                print("场景内容无变化 2")
-                return
-
-            if media_type != "clip" and media_type != "narration":
-                if media_type == "zero":
-                    mix_video = self.workflow.ffmpeg_processor.add_video_on_video(current_scene["clip"], current_scene["zero"], 0.0)
-                    refresh_scene_media(current_scene, "clip", ".mp4", mix_video)
-
-                self.workflow.save_scenes_to_json()
-                return
-
-            self.workflow.save_scenes_to_json()
-
-            # media_type == clip
-            if len(audio_json) > 1:
-                self.workflow.replace_scene_with_others(self.current_scene_index, audio_json)
-                current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-                for sss in audio_json:
-                    sss[media_type + "_status"] = "ORIG"
-            else:
-                current_scene[media_type + "_status"] = "ORIG"
-
-            self.media_scanner.last_image_replacement(current_scene, video_path, media_type)
-                
-        except Exception as e:
-            messagebox.showerror("错误", f"视频替换失败: {str(e)}")
 
 
     def handle_image_replacement(self, source_image_path):
@@ -11287,23 +11554,6 @@ class WorkflowGUI:
                 self.apply_zero_background_media_from_path(wav_path)
 
             return
-
-
-        if not is_video_file(dropped_file):
-            return
-
-        from gui.media_type_selector import MediaTypeSelector
-        selector = MediaTypeSelector(
-            self.root,
-            dropped_file,
-            self.workflow.ffmpeg_processor.has_audio_stream(dropped_file),
-            self.workflow.get_scene_by_index(self.current_scene_index),
-        )
-        replace_media_audio, media_type = selector.show()
-        if not media_type:
-            return
-        self.handle_video_replacement(dropped_file, replace_media_audio, media_type)
-        self.refresh_gui_scenes()
 
     def split_current_group(self):
         """从当前场景起，把连续的同一集划成新的一集。"""
@@ -12004,27 +12254,6 @@ class WorkflowGUI:
         
         # 更新拖拽提示文本的位置到canvas中心
         self.video_canvas.coords("drag_hint", center_x, center_y)
-
-
-    def on_video_canvas_double_click(self, event):
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        from gui.media_type_selector import MediaTypeSelector
-        selector = MediaTypeSelector(self.root, None, True, current_scene)
-        replace_media_audio, media_type = selector.show()
-        if not media_type:
-            return  # 用户取消
-
-        video_path = get_file_path(current_scene, media_type)
-        if media_type != 'clip' and video_path is None:
-            oldv, video_path = refresh_scene_media(current_scene, media_type, ".mp4",  get_file_path(current_scene, "clip"), True)
-            refresh_scene_media(current_scene, media_type+"_audio", ".wav", get_file_path(current_scene, "clip_audio"), True)
-            refresh_scene_media(current_scene, media_type+"_image", ".webp", get_file_path(current_scene, "clip_image"), True)
-
-        temp_video = config.get_temp_file(self.workflow.pid, "mp4")
-        video_path = safe_copy_overwrite(video_path, temp_video)
-
-        self.handle_video_replacement(video_path, replace_media_audio, media_type)
-        self.refresh_gui_scenes()
 
 
     def on_clip_animation_change(self, event=None):

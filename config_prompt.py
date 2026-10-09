@@ -708,6 +708,42 @@ def _scene_speech_snapshot(scene: dict | None) -> dict:
     }
 
 
+def build_split_scene_prompt(
+    scene: dict,
+    channel_id: str,
+    project_override: dict | None = None,
+    previous: dict | None = None,
+    following: dict | None = None,
+) -> tuple[str, str]:
+    """把当前这一场拆成多场的提示词。正文来自频道 ``channel_prompt.split_scene``。"""
+    import config
+
+    modes = config.get_channel_prompt_modes(channel_id, project_override)
+    instruction = (modes.get("split_scene") or "").strip()
+    if not instruction:
+        import config_channel
+        instruction = config_channel.SCENE_SPLIT_MANY.strip()
+
+    def dump(item: dict | None, empty: str) -> str:
+        if not item:
+            return empty
+        return json.dumps(_scene_speech_snapshot(item), ensure_ascii=False, indent=2)
+
+    lines = [
+        instruction.strip(),
+        "",
+        "前一场只作衔接，不要改写，也不要放进返回的数组：",
+        dump(previous if isinstance(previous, dict) else None, empty="（没有前一场）"),
+        "",
+        "要拆开的这一场：",
+        dump(scene if isinstance(scene, dict) else None, empty="（没有）"),
+        "",
+        "后一场只作衔接，不要改写，也不要放进返回的数组：",
+        dump(following if isinstance(following, dict) else None, empty="（没有后一场）"),
+    ]
+    return "拆成多场", "\n".join(lines)
+
+
 def build_scene_speech_transform_prompt(
     scene: dict,
     previous: dict | None = None,

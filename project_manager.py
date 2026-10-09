@@ -22,7 +22,6 @@ import utility.llm_api as llm_api
 from utility.llm_api import LLMApi
 from utility.file_util import safe_copy_overwrite, safe_remove, safe_clipboard_json_copy
 from utility.tags_text import parse_tags_list
-from gui.downloader import MediaGUIManager
 
 def _story_value_nonempty(sv) -> bool:
     if sv is None:
@@ -1332,6 +1331,10 @@ class ProjectConfigManager:
         if merged is not None:
             PROJECT_CONFIG = merged
             hydrate_config_cover_media(PROJECT_CONFIG)
+            config.remember_project_channel(
+                PROJECT_CONFIG.get("pid") or "",
+                PROJECT_CONFIG.get("channel") or "",
+            )
             print(f"🔍 load_config: 已从频道 list/ 加载，PID: {PROJECT_CONFIG.get('pid') if PROJECT_CONFIG else 'None'}")
         else:
             print(f"🔍 load_config: 未在任何 list/*.json 中找到 pid={pid}")
@@ -1346,6 +1349,10 @@ class ProjectConfigManager:
             PROJECT_CONFIG.pop('debut_content', None)
             hydrate_config_soul_runtime(PROJECT_CONFIG)
             hydrate_config_cover_media(PROJECT_CONFIG)
+            config.remember_project_channel(
+                PROJECT_CONFIG.get("pid") or "",
+                PROJECT_CONFIG.get("channel") or "",
+            )
 
     def load_project_config(self, config_file):
         """加载项目配置：仅支持 ``chanlist:`` 列表引用（某 ``list/*.json`` 的行）。"""
@@ -1668,7 +1675,7 @@ class ProjectSelectionDialog:
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
         auto_pid = f"p{stamp}"
         n = 0
-        while os.path.isdir(os.path.join(config.PROJECT_DATA_PATH, auto_pid)):
+        while config.project_dir_exists(auto_pid):
             n += 1
             auto_pid = f"p{stamp}_{n}"
         pid_entry.insert(0, auto_pid)
@@ -2252,6 +2259,8 @@ def launch_yt_media_tool(
             w.insert(tk.END, m + "\n")
         except Exception:
             pass
+
+    from gui.downloader import MediaGUIManager
 
     yt_gui = MediaGUIManager(
         parent, ch, "temp", {}, _yt_log_fn, _yt_log, language=lang, content_mode=content_mode

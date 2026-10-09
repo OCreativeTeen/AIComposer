@@ -1037,7 +1037,7 @@ def _set_scene_lm(want: str) -> tuple[bool, str]:
                 f"LM set 回了 ok，但 SCENE 下拉仍是 {got_val!r}，"
                 f"不是 {want_label!r}。请重发 scnlm {want}。"
             )
-    _ = project_manager  # LM 成功时剪贴板由 GUI refresh_scene_prompt 更新
+    _ = project_manager
     return True, (msg or want).strip()
 
 
@@ -1146,7 +1146,7 @@ def cmd_scene_lm(value: str = "") -> tuple[bool, str]:
     return True, (
         f"{shown} ok — {lm_msg}\n"
         f"{scenes_note}"
-        "请看 SCENE「选LM提示」已变对，「提示词预览」应变长。下一步发 scnge。"
+        "请看 SCENE「选LM提示」已变对。下一步发 scnge。"
     )
 
 

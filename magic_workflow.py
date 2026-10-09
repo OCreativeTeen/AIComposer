@@ -36,6 +36,7 @@ class MagicWorkflow:
         self.pid = pid
         self.language = language
         self.channel = channel
+        config.remember_project_channel(pid, channel)
         
         # 全局线程管理
         self.background_threads = []
@@ -55,15 +56,15 @@ class MagicWorkflow:
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
-        self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid), language)
+        self.downloader = MediaDownloader(self.pid, config.get_project_path(self.pid, channel), language)
         self.llm_api = LLMApi()
         self.transcriber = AudioTranscriber(self.pid, model_size="small", device="cuda")
 
-        config.create_project_path(pid)
+        config.create_project_path(pid, channel)
 
         # Create project paths
         self.publish_path = config.PUBLISH_PATH + "/"
-        self.project_path = config.get_project_path(pid)
+        self.project_path = config.get_project_path(pid, channel)
         self.channel_path = config.get_channel_path(config.get_channel_id(channel))
         self.effect_path = config.get_effect_path()
 

@@ -861,7 +861,7 @@ class HermesTelegramClient:
         """Fixed pause after scnlm — GUI refreshes prompt async (~1s); no bridge polling."""
         seconds = max(1.0, float(seconds))
         self.log(
-            f"scnlm 后固定等待 {seconds:.0f} 秒（提示词预览刷新）…",
+            f"scnlm 后固定等待 {seconds:.0f} 秒…",
             telegram=True,
         )
         end = time.monotonic() + seconds
