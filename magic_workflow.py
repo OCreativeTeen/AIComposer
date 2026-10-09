@@ -173,12 +173,15 @@ class MagicWorkflow:
                 valid_media_files.append(narration_right)
 
 
-            back_video = get_file_path(scene, "back")
-            if back_video:
-                backs = back_video.split(',')
-                for back in backs:
+            back_raw = scene.get("back") or ""
+            if isinstance(back_raw, str):
+                for back in back_raw.split(","):
+                    back = back.strip()
                     if back and os.path.exists(back):
                         valid_media_files.append(back)
+            back_audio = scene.get("back_audio") or ""
+            if isinstance(back_audio, str) and back_audio.strip() and os.path.exists(back_audio.strip()):
+                valid_media_files.append(back_audio.strip())
 
             speaker_audio = get_file_path(scene, "speaker_audio")
             if speaker_audio:

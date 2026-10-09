@@ -675,42 +675,51 @@ class WorkflowGUI:
 
 
     def _backup_clip_to_scene_back(self, scene):
-        """在改写主轨 clip 前，将当前 clip 文件路径压入 scene['back']（供 track_recover / 「恢復Back」恢复）。"""
+        """改写主轨前，只记住当前这一条 clip 和 clip_audio。恢復Back 只能退这一步。"""
         clip_path = get_file_path(scene, "clip")
         if not clip_path or not os.path.isfile(clip_path):
             return False
-        prev = scene.get("back", "") or ""
-        prev = prev.strip() if isinstance(prev, str) else ""
-        scene["back"] = (clip_path + "," + prev) if prev else clip_path
+        scene["back"] = clip_path
+        audio_path = scene.get("clip_audio") if isinstance(scene.get("clip_audio"), str) else ""
+        audio_path = audio_path.strip()
+        if audio_path and os.path.isfile(audio_path):
+            scene["back_audio"] = audio_path
+        else:
+            scene.pop("back_audio", None)
         return True
 
 
     def track_recover(self):
+        """把主轨退回上一次改写之前。只退一步，退完就没有更早的版本。"""
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        clip = current_scene.get('clip', None)
-        back = current_scene.get('back', None)
-        if not back:
-            messagebox.showwarning("警告", "背景视频文件不存在")
+        if not current_scene:
+            messagebox.showwarning("警告", "没有当前场景")
             return
-
-        paths = back.split(',') 
-        back_path = None
-        for i in range(len(paths)):
-            back_path = paths[i]
-            back = ','.join(paths[i+1:])
-            if os.path.exists(back_path):
+        back = current_scene.get("back") or ""
+        if not isinstance(back, str):
+            back = ""
+        back_path = ""
+        for part in back.split(","):
+            part = part.strip()
+            if part and os.path.isfile(part):
+                back_path = part
                 break
-            back_path = None
-            if i == len(paths) - 1:
-                back = ""
-
         if not back_path:
+            messagebox.showwarning("警告", "没有可恢复的上一步视频")
             return
 
-        if clip:
-            current_scene['back'] = clip + "," + back
+        audio_path = current_scene.get("back_audio") or ""
+        if not isinstance(audio_path, str):
+            audio_path = ""
+        audio_path = audio_path.strip()
+        if audio_path and not os.path.isfile(audio_path):
+            audio_path = ""
 
-        refresh_scene_media(current_scene, 'clip', '.mp4', back_path)
+        refresh_scene_media(current_scene, "clip", ".mp4", back_path)
+        if audio_path:
+            refresh_scene_media(current_scene, "clip_audio", ".wav", audio_path, True)
+        current_scene.pop("back", None)
+        current_scene.pop("back_audio", None)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
 
@@ -961,6 +970,8 @@ class WorkflowGUI:
                     continue
                 prior_back = scene.get("back")
                 prior_back = prior_back.strip() if isinstance(prior_back, str) else ""
+                prior_audio = scene.get("back_audio")
+                prior_audio = prior_audio.strip() if isinstance(prior_audio, str) else ""
                 self._backup_clip_to_scene_back(scene)
                 oldv_ref, newv = refresh_scene_media(scene, "clip", ".mp4")
                 temp_out = config.get_temp_file(self.workflow.pid, "mp4")
@@ -973,6 +984,10 @@ class WorkflowGUI:
                             scene["back"] = prior_back
                         else:
                             scene.pop("back", None)
+                        if prior_audio:
+                            scene["back_audio"] = prior_audio
+                        else:
+                            scene.pop("back_audio", None)
                         failed.append(f"场景 id={scene.get('id', '?')}: {failure_verb}")
                         continue
                     os.replace(temp_out, newv)
@@ -983,6 +998,10 @@ class WorkflowGUI:
                         scene["back"] = prior_back
                     else:
                         scene.pop("back", None)
+                    if prior_audio:
+                        scene["back_audio"] = prior_audio
+                    else:
+                        scene.pop("back_audio", None)
                     failed.append(f"场景 id={scene.get('id', '?')}: {e}")
                 finally:
                     if not moved and os.path.isfile(temp_out):
@@ -3277,10 +3296,9 @@ class WorkflowGUI:
                 settings = pip_dialog.result
                 print(f"📺 用户选择的画中画设置: {settings}")
 
-                back = current_scene.get('back', '')
-                if background_source == "clip":
-                    current_scene['back'] = background_video + "," + back
-                
+                if target_video_track == "clip":
+                    self._backup_clip_to_scene_back(current_scene)
+
                 if settings['position'] == "full":
                     v = self.workflow.ffmpeg_processor.add_audio_to_video(secondary_track_copy, background_audio)
                     refresh_scene_media(current_scene, target_video_track, '.mp4', v)
