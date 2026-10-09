@@ -381,10 +381,8 @@ class WorkflowGUI:
         ttk.Button(row, text="SUNO", command=self._open_suno_gui).pack(side=tk.RIGHT, padx=(4, 0))
         self.btn_clean = ttk.Button(row, text="清理", command=self._open_clean_menu)
         self.btn_clean.pack(side=tk.RIGHT, padx=(4, 0))
-        ttk.Button(row, text="演示", command=self.start_demo_playthrough).pack(side=tk.RIGHT, padx=(4, 0))
-        ttk.Button(row, text="视频播放", command=lambda: self.play_finalize_video()).pack(side=tk.RIGHT)
-        ttk.Button(row, text="视频发布", command=lambda: self.publish_video()).pack(side=tk.RIGHT)
-        ttk.Button(row, text="视频生成", command=lambda: self.run_finalize_video()).pack(side=tk.RIGHT, padx=(16, 0))
+        self.btn_finalize = ttk.Button(row, text="成片", command=self._open_finalize_menu)
+        self.btn_finalize.pack(side=tk.RIGHT, padx=(16, 0))
 
         ttk.Label(row, text="场景").pack(side=tk.LEFT)
         ttk.Button(row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
@@ -6652,6 +6650,26 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         messagebox.showinfo("成功", "WAN视频批量生成成功！")
 
+
+    def _open_finalize_menu(self) -> None:
+        picked = self._ask_near_choices(
+            self.btn_finalize,
+            "成片",
+            [
+                ("generate", "视频生成"),
+                ("publish", "视频发布"),
+                ("play", "视频播放"),
+                ("demo", "演示"),
+            ],
+        )
+        if picked == "generate":
+            self.run_finalize_video()
+        elif picked == "publish":
+            self.publish_video()
+        elif picked == "play":
+            self.play_finalize_video()
+        elif picked == "demo":
+            self.start_demo_playthrough()
 
     def _open_clean_menu(self) -> None:
         picked = self._ask_near_choices(
