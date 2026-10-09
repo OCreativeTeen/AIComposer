@@ -434,8 +434,6 @@ class WorkflowGUI:
             row, text="拷贝内容", width=8, command=self._copy_project_content
         )
         self.btn_copy_project.pack(side=tk.LEFT, padx=2)
-        self.btn_cover_tools = ttk.Button(row, text="封面处理", width=8, command=self._open_cover_tools)
-        self.btn_cover_tools.pack(side=tk.LEFT, padx=2) 
 
    
     def _parse_video_size_combo_label(self, lbl: str):
@@ -641,47 +639,6 @@ class WorkflowGUI:
             slide = _find_gen_video_slide_for_row(row) or ""
         return cover, slide
 
-    def _open_cover_tools(self) -> None:
-        cover, slide = self._project_cover_and_slide()
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(
-            label="拷贝封面",
-            state=tk.NORMAL if cover else tk.DISABLED,
-            command=self._copy_project_cover,
-        )
-        menu.add_command(label="导入封面", command=self._import_project_cover)
-        menu.add_separator()
-        menu.add_command(label="封面提示 · 图片", state=tk.DISABLED)
-        image_state = tk.NORMAL if cover else tk.DISABLED
-        for label, template in config_prompt.DIRECT_VIDEO_PROMPT_CHOICES:
-            if label.startswith("Image to Detail-Single-Step-Image"):
-                continue
-            menu.add_command(
-                label=label,
-                state=image_state,
-                command=lambda l=label, t=template: self._copy_cover_image_prompt(l, t),
-            )
-        menu.add_separator()
-        menu.add_command(label="封面提示 · PDF", state=tk.DISABLED)
-        slide_state = tk.NORMAL if slide else tk.DISABLED
-        for label, template in config_prompt.SLIDE_ANALYSIS_PROMPT_CHOICES:
-            menu.add_command(
-                label=label,
-                state=slide_state,
-                command=lambda l=label, t=template: self._copy_cover_slide_prompt(l, t),
-            )
-        post_menu_below_widget(menu, self.btn_cover_tools)
-
-    def _copy_project_cover(self) -> None:
-        from gui.downloader import _copy_image_file_to_clipboard
-
-        cover, _slide = self._project_cover_and_slide()
-        if not cover:
-            messagebox.showinfo("拷贝封面", "还没有封面。", parent=self.root)
-            return
-        if _copy_image_file_to_clipboard(self.root, cover):
-            show_auto_close_popup(self.root, "拷贝封面", "已拷贝到剪贴板。")
-
     def _cover_prompt_context(self) -> tuple[object | None, dict, str, str]:
         mgr = getattr(self, "youtube_gui", None)
         vd = self._current_feature_row()
@@ -697,293 +654,6 @@ class WorkflowGUI:
         if mgr is not None:
             ch_path = ch_path or getattr(mgr, "channel_path", "")
         return mgr, vd, story_raw, ch_path
-
-    def _copy_cover_image_prompt(self, label: str, template: str) -> None:
-        mgr, vd, story_raw, ch_path = self._cover_prompt_context()
-        if mgr is None:
-            messagebox.showwarning("封面提示", "请先打开项目。", parent=self.root)
-            return
-        mgr._copy_image_prompt_instruction(
-            parent=self.root,
-            video_detail=vd,
-            story_raw=story_raw,
-            main_character=project_manager.project_narrator(),
-            channel_path=ch_path,
-            picked_label=label,
-            template=template,
-        )
-
-    def _copy_cover_slide_prompt(self, label: str, template: str) -> None:
-        mgr, vd, _story_raw, ch_path = self._cover_prompt_context()
-        if mgr is None:
-            messagebox.showwarning("封面提示", "请先打开项目。", parent=self.root)
-            return
-        mgr._copy_slide_prompt_instruction(
-            parent=self.root,
-            video_detail=vd,
-            channel_path=ch_path,
-            picked_label=label,
-            template=template,
-        )
-
-    def _downloads_folder(self) -> str:
-        return os.path.join(os.path.expanduser("~"), "Downloads")
-
-    def _mutate_current_list_row(self, mutator) -> bool:
-        pc = project_manager.PROJECT_CONFIG or {}
-        path, index, _row = project_manager.find_project_topic_list_row(pc)
-        if index < 0 or not path or not os.path.isfile(path):
-            messagebox.showinfo("导入封面", "找不到这一条项目。", parent=self.root)
-            return False
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                items = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            messagebox.showinfo("导入封面", "这一条项目读不出来。", parent=self.root)
-            return False
-        if not isinstance(items, list) or not (0 <= index < len(items)) or not isinstance(items[index], dict):
-            messagebox.showinfo("导入封面", "找不到这一条项目。", parent=self.root)
-            return False
-        mutator(items[index])
-        try:
-            config.write_channel_list_json(path, items)
-        except OSError as exc:
-            messagebox.showerror("导入封面", str(exc), parent=self.root)
-            return False
-        return True
-
-    def _import_project_cover(self) -> None:
-        folder = self._downloads_folder()
-        if not os.path.isdir(folder):
-            messagebox.showinfo("导入封面", f"找不到下载文件夹：\n{folder}", parent=self.root)
-            return
-        files: list[str] = []
-        try:
-            names = os.listdir(folder)
-        except OSError as exc:
-            messagebox.showerror("导入封面", str(exc), parent=self.root)
-            return
-        for name in names:
-            path = os.path.join(folder, name)
-            if not os.path.isfile(path):
-                continue
-            ext = os.path.splitext(name)[1].lower()
-            if ext == ".pdf" or is_image_file(path):
-                files.append(path)
-        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        if not files:
-            messagebox.showinfo("导入封面", "下载文件夹里没有图片或 PDF。", parent=self.root)
-            return
-
-        dlg = tk.Toplevel(self.root)
-        dlg.title("导入封面")
-        dlg.geometry("980x560")
-        dlg.minsize(760, 420)
-        dlg.transient(self.root)
-        dlg.grab_set()
-        holder = {"path": ""}
-        preview_photo = {"img": None}
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(
-            frm,
-            text="从下载文件夹选一张图片或一份 PDF。图片会转成 WebP，PDF 原样复制，都放进当前项目的 media。下一步可以改成片名，文件名也在可选名字里。",
-            wraplength=940,
-        ).pack(anchor=tk.W, pady=(0, 8))
-        ttk.Label(frm, text=folder, foreground="#555").pack(anchor=tk.W, pady=(0, 8))
-
-        body = ttk.Frame(frm)
-        body.pack(fill=tk.BOTH, expand=True)
-        list_frame = ttk.Frame(body)
-        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        file_list = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("Arial", 11), activestyle="dotbox")
-        scrollbar.config(command=file_list.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        file_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        for path in files:
-            file_list.insert(tk.END, os.path.basename(path))
-
-        preview = ttk.Label(body, text="选一项看预览", anchor=tk.CENTER, width=42)
-        preview.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0))
-
-        def show_preview(_event=None) -> None:
-            sel = file_list.curselection()
-            if not sel:
-                return
-            path = files[sel[0]]
-            try:
-                if path.lower().endswith(".pdf"):
-                    import fitz
-
-                    doc = fitz.open(path)
-                    page = doc[0]
-                    pix = page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2), alpha=False)
-                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                    doc.close()
-                else:
-                    img = Image.open(path)
-                    img.load()
-                img.thumbnail((460, 460))
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGB")
-                photo = ImageTk.PhotoImage(img)
-            except Exception as exc:
-                preview.configure(image="", text=f"这一项预览不了。\n{exc}")
-                preview_photo["img"] = None
-                return
-            preview_photo["img"] = photo
-            preview.configure(image=photo, text="")
-
-        file_list.bind("<<ListboxSelect>>", show_preview)
-        file_list.selection_set(0)
-        file_list.activate(0)
-        show_preview()
-
-        btn_row = ttk.Frame(frm)
-        btn_row.pack(fill=tk.X, pady=(10, 0))
-
-        def confirm() -> None:
-            sel = file_list.curselection()
-            if not sel:
-                messagebox.showinfo("导入封面", "先选一项。", parent=dlg)
-                return
-            holder["path"] = files[sel[0]]
-            dlg.destroy()
-
-        def cancel() -> None:
-            holder["path"] = ""
-            dlg.destroy()
-
-        ttk.Button(btn_row, text="取消", command=cancel).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(btn_row, text="导入这个", command=confirm).pack(side=tk.RIGHT)
-        file_list.bind("<Double-Button-1>", lambda _e: confirm())
-        dlg.protocol("WM_DELETE_WINDOW", cancel)
-        dlg.wait_window()
-
-        src = holder["path"]
-        if not src:
-            return
-        self._confirm_and_store_cover_import(src)
-
-    def _confirm_and_store_cover_import(self, src: str) -> None:
-        from gui.downloader import (
-            _apply_video_title_before_cover_save,
-            _ask_video_title_before_cover_save_dialog,
-        )
-
-        pc = project_manager.PROJECT_CONFIG or {}
-        path, index, _row = project_manager.find_project_topic_list_row(pc)
-        if index < 0 or not path or not os.path.isfile(path):
-            messagebox.showinfo("导入封面", "找不到这一条项目。", parent=self.root)
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                items = json.load(f)
-            row = items[index]
-        except (OSError, json.JSONDecodeError, IndexError, TypeError):
-            messagebox.showinfo("导入封面", "这一条项目读不出来。", parent=self.root)
-            return
-        if not isinstance(row, dict):
-            messagebox.showinfo("导入封面", "找不到这一条项目。", parent=self.root)
-            return
-        title_choice = _ask_video_title_before_cover_save_dialog(self.root, row, image_path=src)
-        if title_choice is None:
-            return
-        kind = "pdf" if src.lower().endswith(".pdf") else "image"
-        root = self.root
-
-        def work() -> None:
-            dest, err = self._materialize_cover_import(kind, src)
-
-            def done() -> None:
-                if not dest:
-                    messagebox.showerror("导入封面", err or "没有写进项目。", parent=root)
-                    return
-                ch = (pc.get("channel") or getattr(self.workflow, "channel", "") or "").strip()
-                ch_path = config.get_channel_path(config.get_channel_id(ch)) if ch else ""
-
-                def mutate(item: dict) -> None:
-                    if not title_choice.get("skip_title_update"):
-                        _apply_video_title_before_cover_save(
-                            item,
-                            video_title=title_choice.get("video_title") or "",
-                            channel_path=ch_path,
-                        )
-                    if kind == "image":
-                        item["cover_image"] = dest
-                    else:
-                        item["slide"] = dest
-
-                if not self._mutate_current_list_row(mutate):
-                    return
-                live = project_manager.PROJECT_CONFIG
-                if isinstance(live, dict):
-                    if kind == "image":
-                        live["cover_image"] = dest
-                    else:
-                        live["slide"] = dest
-                    vt = (title_choice.get("video_title") or "").strip()
-                    if vt and not title_choice.get("skip_title_update"):
-                        live["video_title"] = vt
-                        self.video_title.delete(0, tk.END)
-                        self.video_title.insert(0, vt)
-                save_project_config(parent=root)
-                kind_name = "封面" if kind == "image" else "PDF"
-                show_auto_close_popup(root, "导入封面", f"{kind_name}已放进项目 media：\n{dest}")
-
-            root.after(0, done)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _materialize_cover_import(self, kind: str, src: str) -> tuple[str, str]:
-        pc = project_manager.PROJECT_CONFIG or {}
-        pid = (pc.get("pid") or getattr(self.workflow, "pid", "") or "").strip()
-        if not pid:
-            return "", "没有打开的项目。"
-        media = config.get_media_path(pid)
-        if kind == "pdf":
-            name = os.path.basename(src) or "slide.pdf"
-            dest = os.path.join(media, name)
-            try:
-                safe_copy_overwrite(src, dest)
-            except OSError as exc:
-                return "", str(exc)
-            return os.path.abspath(dest), ""
-
-        dest = os.path.join(media, "cover.webp")
-        lang = getattr(self.workflow, "language", None) or "zh"
-        channel = (getattr(self.workflow, "channel", None) or pc.get("channel") or "")
-        ff = FfmpegProcessor(pid, lang)
-        work = src
-        temps: list[str] = []
-        try:
-            from utility.ffmpeg_processor import resolve_watermark_for_channel
-
-            wm_path, wm_opts = resolve_watermark_for_channel(channel or "")
-            if wm_path:
-                marked = ff.apply_watermark_to_flat_image(src, wm_path, wm_opts or {})
-                if marked and os.path.isfile(marked):
-                    work = marked
-                    temps.append(marked)
-            webp = ff.image_to_webp(work)
-            if not webp or not os.path.isfile(webp):
-                return "", "图片转 WebP 失败。"
-            if os.path.abspath(webp) != os.path.abspath(dest):
-                safe_copy_overwrite(webp, dest)
-                if os.path.abspath(webp) != os.path.abspath(src):
-                    temps.append(webp)
-            return os.path.abspath(dest), ""
-        except Exception as exc:
-            return "", str(exc)
-        finally:
-            for tmp in temps:
-                if tmp and os.path.abspath(tmp) != os.path.abspath(dest) and os.path.isfile(tmp):
-                    try:
-                        os.remove(tmp)
-                    except OSError:
-                        pass
 
     def _open_workflow_content_field_editor(self, field: str) -> None:
         """与 downloader 摘要窗「故事 / 分析 / 场景」共用同一套编辑弹窗。"""
@@ -2715,7 +2385,11 @@ class WorkflowGUI:
         from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
 
         wav = _build_preview_segment_wav(
-            audio["path"], audio["start"], audio["end"], audio.get("speed") or 1.0, 1.0,
+            audio["path"],
+            audio["start"],
+            audio["end"],
+            audio.get("speed") or 1.0,
+            float(audio.get("volume") or 1.0),
         )
         if not wav:
             return video_path, ""
@@ -4086,7 +3760,6 @@ class WorkflowGUI:
             video_control_frame, text="分界处理", command=self._ask_playhead_split, width=8
         )
         self.btn_playhead_split.pack(side=tk.LEFT, padx=1)
-        ttk.Button(video_control_frame, text="修剪", command=self.trim_scene, width=8).pack(side=tk.LEFT, padx=1)
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
@@ -6912,18 +6585,6 @@ class WorkflowGUI:
         self.current_scene_index = next_i
         self.refresh_gui_scenes()
         self.root.after(300, self._demo_start_play_scene)
-
-
-
-    def trim_scene(self):
-        trim_audio = messagebox.askyesno("提示", "音频修剪？")
-
-        self.update_current_scene()
-        position = pygame.mixer.music.get_pos() / 1000.0
-        self.workflow.trim_scene_at_position(self.current_scene_index, position + self.playing_delta, trim_audio)
-        self.playing_delta = 0.0
-        self.playing_delta_label.config(text=f"{self.playing_delta:.1f}s")
-        self.refresh_gui_scenes()
 
     def _story_neighbor_index(self, delta: int) -> int | None:
         """同一故事里紧挨着的上一场或下一场。跨到别的故事就没有。"""

@@ -998,14 +998,25 @@ def ask_mp4_pick_with_trim_preview(
             return
         _save_trim()
         c = clip[0]
-        if c.end <= c.start + (1.0 / c.fps):
+        vol = _snap_mp4_preview_volume(volume_var.get())
+        audio_armed = bool(audio_state.get("armed") and audio_state.get("clip") is not None)
+        if audio_armed:
+            ac = audio_state["clip"]
+            if ac.end <= ac.start + 0.05:
+                messagebox.showerror("区间无效", "音频的结束时间必须大于开始时间。", parent=dlg)
+                return
+        elif c.end <= c.start + (1.0 / c.fps):
             messagebox.showerror("区间无效", "结束时间必须大于开始时间。", parent=dlg)
             return
-        vol = _snap_mp4_preview_volume(volume_var.get())
         try:
-            mp4_adj, wav_adj = build_adjusted_pair(
-                c.path, vol, start=c.start, end=c.end, speed=round(c.speed, 1),
-            )
+            if audio_armed:
+                mp4_adj, wav_adj = build_adjusted_pair(
+                    c.path, 1.0, start=0.0, end=c.duration, speed=1.0,
+                )
+            else:
+                mp4_adj, wav_adj = build_adjusted_pair(
+                    c.path, vol, start=c.start, end=c.end, speed=round(c.speed, 1),
+                )
             if not mp4_adj:
                 raise RuntimeError("生成本地临时音视频失败")
             picked = (sel_fn[0], mp4_adj, wav_adj)
@@ -1030,6 +1041,7 @@ def ask_mp4_pick_with_trim_preview(
                     "start": ac.start,
                     "end": ac.end,
                     "speed": round(ac.speed, 1),
+                    "volume": vol,
                 }
             result[0] = {
                 "filename": picked[0],

@@ -8747,11 +8747,11 @@ class MediaGUIManager:
                         if not chosen:
                             return
 
-                        def copy_text(text: str) -> None:
+                        def copy_text(text: str, kind: str = "image/flow") -> None:
                             _copy_text_to_clipboard(dlg, text)
                             cp = (channel_path or self.channel_path or "").strip()
                             if text and cp:
-                                channel_clipboard_append_item(cp, text, "image/flow")
+                                channel_clipboard_append_item(cp, text, kind)
 
                         open_slide_prompt_dialog(
                             dlg,
@@ -8761,6 +8761,10 @@ class MediaGUIManager:
                             copy_text=copy_text,
                             host_narrator=project_manager.project_narrator(),
                             main_character=main_character or "",
+                            get_video_detail=lambda: video_detail,
+                            get_slide_path=lambda: (
+                                _find_gen_video_slide_for_row(video_detail) or ""
+                            ).strip(),
                         )
 
                     def _busy(btn):
