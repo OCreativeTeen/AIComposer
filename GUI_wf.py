@@ -256,9 +256,6 @@ class WorkflowGUI:
         self.animation_prompt_to_name = {item["prompt"]: item["name"] for item in config_prompt.ANIMATION_PROMPTS}
         self.animation_names = [""] + list(self.animation_name_to_prompt.keys())
         
-        # 添加旁白轨道音量控制变量
-        self.track_volume_var = tk.DoubleVar(value=0.2)
-        
         # 创建主框架
         main_frame = ttk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -778,7 +775,7 @@ class WorkflowGUI:
         end: float | None = None,
         speed: float = 1.0,
     ):
-        """预览对话框确定：按区间裁剪、变速与试听增益产出临时 mp4 + wav。"""
+        """按区间裁剪、变速。音量增益不是 1 时才改音量。"""
         wf = self.workflow
         if not wf:
             raise RuntimeError("工作流未就绪")
@@ -797,6 +794,15 @@ class WorkflowGUI:
             raise RuntimeError("裁剪/变速失败")
 
         raw = ap.extract_audio_from_video(mp4_out)
+        if abs(vol - 1.0) < 0.001:
+            if raw:
+                return mp4_out, raw
+            seg_len = fp.get_duration(mp4_out) or 0.0
+            wav_out = ap.make_silence(seg_len) if seg_len > 0 else None
+            if not wav_out:
+                raise RuntimeError("无法生成临时 wav")
+            return mp4_out, wav_out
+
         if raw:
             raw_len = ap.get_duration(raw)
             if raw_len is None:
@@ -2332,8 +2338,48 @@ class WorkflowGUI:
         ("clip", "Clip"),
         ("narration", "旁白"),
         ("zero", "Zero"),
-        ("background", "背景"),
     )
+
+    def _project_input_dir(self, kind: str) -> str:
+        path = os.path.join(config.get_media_path(self.workflow.pid), kind)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _names_in(self, folder: str, suffixes: tuple[str, ...]) -> list:
+        if not folder or not os.path.isdir(folder):
+            return []
+        names = [
+            name
+            for name in os.listdir(folder)
+            if name.lower().endswith(suffixes) and os.path.isfile(os.path.join(folder, name))
+        ]
+        return sorted(names)
+
+    def _project_video_source(self) -> tuple[str, list]:
+        folder = self._project_input_dir("input_video")
+        return folder, self._names_in(folder, (".mp4",))
+
+    def _project_audio_source(self) -> tuple[str, list]:
+        folder = self._project_input_dir("input_audio")
+        return folder, self._audio_names_in(folder)
+
+    def _intake_import_file(self, src: str, *, kind: str, move: bool) -> str:
+        """把选中的文件放进项目 media/input_video 或 input_audio。下载来的移走，其余复制。"""
+        if not src or not os.path.isfile(src):
+            return src
+        dest_dir = self._project_input_dir(kind)
+        if os.path.normcase(os.path.abspath(os.path.dirname(src))) == os.path.normcase(os.path.abspath(dest_dir)):
+            return src
+        name = os.path.basename(src)
+        dest = os.path.join(dest_dir, name)
+        if os.path.exists(dest):
+            stem, ext = os.path.splitext(name)
+            dest = os.path.join(dest_dir, f"{stem}_{datetime.now().strftime('%H%M%S')}{ext}")
+        if move:
+            shutil.move(src, dest)
+        else:
+            shutil.copy2(src, dest)
+        return dest
 
     def _audio_names_in(self, folder: str) -> list:
         if not folder or not os.path.isdir(folder):
@@ -2355,9 +2401,11 @@ class WorkflowGUI:
         return folder, self._audio_names_in(folder)
 
     def _audio_source_specs(self) -> list:
+        project_folder, project_files = self._project_audio_source()
         download_folder, download_files = self._download_audio_source()
         channel_folder, channel_files = self._channel_audio_source()
         return [
+            {"key": "project", "label": "项目", "folder": project_folder, "choices": project_files},
             {"key": "download", "label": "下载", "folder": download_folder, "choices": download_files},
             {"key": "channel", "label": "频道", "folder": channel_folder, "choices": channel_files},
         ]
@@ -2365,12 +2413,20 @@ class WorkflowGUI:
     def _mix_audio_onto_video(self, video_path: str, audio: dict) -> tuple[str, str]:
         from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
 
-        wav = _build_preview_segment_wav(
-            audio["path"],
-            audio["start"],
-            audio["end"],
-            audio.get("speed") or 1.0,
-            float(audio.get("volume") or 1.0),
+        src = audio.get("path") or ""
+        start = float(audio.get("start") or 0.0)
+        end = float(audio.get("end") or 0.0)
+        speed = float(audio.get("speed") or 1.0)
+        volume = float(audio.get("volume") or 1.0)
+        duration = float(audio.get("duration") or 0.0)
+        untouched = (
+            abs(volume - 1.0) < 0.001
+            and abs(speed - 1.0) < 0.05
+            and start <= 0.05
+            and (duration <= 0 or end >= duration - 0.05)
+        )
+        wav = src if untouched and src and os.path.isfile(src) else _build_preview_segment_wav(
+            src, start, end, speed, volume,
         )
         if not wav:
             return video_path, ""
@@ -2379,27 +2435,113 @@ class WorkflowGUI:
             return mixed, wav
         return video_path, wav
 
+    def _blend_audio_into_video(self, video_path: str, audio: dict) -> tuple[str, str]:
+        from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
+
+        src = audio.get("path") or ""
+        wav = _build_preview_segment_wav(
+            src,
+            float(audio.get("start") or 0.0),
+            float(audio.get("end") or 0.0),
+            float(audio.get("speed") or 1.0),
+            1.0,
+        )
+        if not wav:
+            return video_path, ""
+        fp = self.workflow.ffmpeg_processor
+        fade_in = float(audio.get("fade_in") or 0.0)
+        fade_out = float(audio.get("fade_out") or 0.0)
+        audio_dur = float(fp.get_duration(wav) or 0.0)
+        video_dur = float(fp.get_duration(video_path) or 0.0)
+        mix_len = audio_dur
+        if video_dur > 0.05 and audio_dur > video_dur + 0.05:
+            mix_len = video_dur
+        if mix_len > 0.05 and (fade_in > 0.01 or fade_out > 0.01 or mix_len < audio_dur - 0.05):
+            piece = fp.extract_audio_segment(wav, 0, mix_len, fade_in, fade_out)
+            if piece:
+                wav = piece
+        ratio = float(audio.get("mix_ratio") if audio.get("mix_ratio") is not None else 0.5)
+        mixed = fp.video_audio_mix(video_path, wav, volume=ratio, audio_mix_position=0.0, match_audio_length=False)
+        if not mixed or not os.path.isfile(mixed):
+            return video_path, wav
+        raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
+        return mixed, raw or wav
+
     def _apply_editor_pick(self, pick: dict, *, stage_download: bool) -> None:
+        if isinstance(pick, dict) and pick.get("audio_only"):
+            audio = pick.get("audio") or {}
+            src = audio.get("path") or ""
+            if audio.get("as_is"):
+                self._intake_import_file(
+                    src, kind="input_audio", move=(audio.get("source") == "download"),
+                )
+            else:
+                from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
+
+                wav = _build_preview_segment_wav(
+                    src,
+                    float(audio.get("start") or 0.0),
+                    float(audio.get("end") or 0.0),
+                    float(audio.get("speed") or 1.0),
+                    float(audio.get("volume") or 1.0),
+                )
+                if not wav:
+                    messagebox.showerror("音频", "这段音频处理失败。", parent=self.root)
+                    return
+                stem = os.path.splitext(os.path.basename(src))[0] or "audio"
+                named = os.path.join(os.path.dirname(wav), f"{stem}.wav")
+                if os.path.abspath(wav) != os.path.abspath(named):
+                    if os.path.exists(named):
+                        os.remove(named)
+                    os.replace(wav, named)
+                    wav = named
+                self._intake_import_file(wav, kind="input_audio", move=True)
+            show_auto_close_popup(self.root, "音频", "已拷进项目。")
+            return
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene or not isinstance(pick, dict):
             return
         mp4 = pick.get("mp4") or ""
         wav = pick.get("wav") or ""
         audio = pick.get("audio")
+        if audio and stage_download:
+            audio["path"] = self._intake_import_file(
+                audio.get("path") or "",
+                kind="input_audio",
+                move=(audio.get("source") == "download"),
+            )
         if audio:
-            mp4, mixed_wav = self._mix_audio_onto_video(mp4, audio)
+            if audio.get("use") == "mix":
+                mp4, mixed_wav = self._blend_audio_into_video(mp4, audio)
+            else:
+                mp4, mixed_wav = self._mix_audio_onto_video(mp4, audio)
             if mixed_wav:
                 wav = mixed_wav
         dest = (pick.get("dest") or "clip").strip() or "clip"
+        if dest == "clip":
+            self._backup_clip_to_scene_back(scene)
         source = pick.get("source") or ""
         if source == "channel":
+            filename = pick.get("filename") or ""
+            channel_folder = self._channel_mp4_source()[0]
+            if filename:
+                self._intake_import_file(
+                    os.path.join(channel_folder, filename),
+                    kind="input_video",
+                    move=False,
+                )
             self._video_simple_replacement_async(
                 scene, mp4, wav, pick.get("radio") or "keep", dest, track_status="ENH2",
             )
             return
-        if stage_download and source == "download":
+        if stage_download and source in ("download", "project"):
+            folder = (
+                self._project_input_dir("input_video")
+                if source == "project"
+                else self._download_mp4_source()[0]
+            )
             res = self._stage_downloaded_video(
-                self._download_mp4_source()[0],
+                folder,
                 pick.get("filename") or "",
                 mp4,
                 wav,
@@ -2462,24 +2604,18 @@ class WorkflowGUI:
     def _stage_downloaded_video(
         self, folder: str, filename: str, temp_adj_mp4, temp_adj_wav, place, picked_radio, track_rename_key: str
     ) -> dict | None:
-        """外部下载的文件移进项目 download。已经在项目 download 里的文件留在原地。"""
-        scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
-        sid = scene0["id"] if scene0 else 0
-        download_path = config.get_project_path(self.workflow.pid) + "/download"
-        os.makedirs(download_path, exist_ok=True)
+        """外部下载的视频移进项目 media/input_video。已经在这个目录里的文件留在原地。"""
+        input_dir = self._project_input_dir("input_video")
         media_path = os.path.join(folder, filename)
         in_project = os.path.normcase(os.path.abspath(folder)) == os.path.normcase(
-            os.path.abspath(download_path)
+            os.path.abspath(input_dir)
         )
         if in_project:
             media_final = media_path
+        elif os.path.isfile(media_path):
+            media_final = self._intake_import_file(media_path, kind="input_video", move=True)
         else:
-            ext = os.path.splitext(media_path)[1].lower() or ".mp4"
-            media_final = os.path.join(
-                download_path,
-                f'{(picked_radio or track_rename_key)}_{sid}_{datetime.now().strftime("%H%M%S")}{ext}',
-            )
-            shutil.move(media_path, media_final)
+            media_final = os.path.join(input_dir, os.path.basename(filename))
         if temp_adj_mp4 is None or temp_adj_wav is None:
             messagebox.showerror("错误", "内部错误：未取得音量处理后的临时视频/音频。", parent=self.root)
             return None
@@ -2546,24 +2682,29 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
     def choose_import_video(self) -> None:
-        """从一个窗口导入视频。来源默认是下载，也可以改成这个项目的频道。"""
+        """导入视频。默认先看项目 media/input_video，也可以改到下载或频道。"""
+        project_folder, project_files = self._project_video_source()
         download_folder, download_files = self._download_mp4_source()
         channel_folder, channel_files = self._channel_mp4_source()
-        if not download_files and not channel_files:
-            messagebox.showwarning("导入视频", "下载和频道里都没有视频。", parent=self.root)
-            return
+        video_actions = [
+            ("replace", "替换"),
+        ]
         sources = [
+            {
+                "key": "project",
+                "label": "项目",
+                "folder": project_folder,
+                "choices": project_files,
+                "radios": None,
+                "confirm_actions": video_actions,
+            },
             {
                 "key": "download",
                 "label": "下载",
                 "folder": download_folder,
                 "choices": download_files,
                 "radios": None,
-                "confirm_actions": [
-                    ("replace", "替换"),
-                    ("prepend", "前加"),
-                    ("append", "后加"),
-                ],
+                "confirm_actions": video_actions,
             },
             {
                 "key": "channel",
@@ -2571,13 +2712,13 @@ class WorkflowGUI:
                 "folder": channel_folder,
                 "choices": channel_files,
                 "radios": ("声音", [("keep", "原声"), ("replace_speed", "配声")]),
-                "confirm_actions": [("replace", "确定")],
+                "confirm_actions": [("replace", "替换")],
             },
         ]
         pick = askchoice_media_preview(
             "导入视频",
-            download_files or channel_files,
-            download_folder if download_files else channel_folder,
+            project_files,
+            project_folder,
             self.root,
             use_mp4_video_preview=True,
             build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
@@ -2610,26 +2751,7 @@ class WorkflowGUI:
             return
         folder = os.path.dirname(clip)
         name = os.path.basename(clip)
-        download_folder, download_files = self._download_mp4_source()
-        channel_folder, channel_files = self._channel_mp4_source()
-        sources = [
-            {
-                "key": "download",
-                "label": "下载",
-                "folder": download_folder,
-                "choices": download_files,
-                "radios": None,
-                "confirm_actions": [("replace", "确认并写回")],
-            },
-            {
-                "key": "channel",
-                "label": "频道",
-                "folder": channel_folder,
-                "choices": channel_files,
-                "radios": None,
-                "confirm_actions": [("replace", "确认并写回")],
-            },
-        ]
+        project_audio_folder, project_audio_files = self._project_audio_source()
         pick = askchoice_media_preview(
             "编辑这一场片段",
             [name],
@@ -2637,10 +2759,14 @@ class WorkflowGUI:
             self.root,
             use_mp4_video_preview=True,
             build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
-            sources=sources,
-            audio_sources=self._audio_source_specs(),
             dest_options=list(self._CLIP_DEST_OPTIONS),
-            lock_video_source=True,
+            audio_sources=[{
+                "key": "project",
+                "label": "项目",
+                "folder": project_audio_folder,
+                "choices": project_audio_files,
+            }],
+            audio_edit=True,
         )
         if not isinstance(pick, dict):
             return
@@ -3138,105 +3264,6 @@ class WorkflowGUI:
         except Exception:
             pass
 
-    def _mix_zero_base_offset_seconds(self) -> float:
-        """混零时从 zero_audio 的哪一秒开始截取：副轨选 ZZ 且当前场景有 zero 视频时，用预览时间轴；否则从 0。"""
-        if getattr(self, "selected_secondary_track", None) != "zero":
-            return 0.0
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not current_scene or not get_file_path(current_scene, "zero"):
-            return 0.0
-        if getattr(self, "secondary_track_playing", False) and getattr(self, "secondary_track_start_time", None):
-            return (time.time() - self.secondary_track_start_time) + float(self.secondary_track_offset)
-        if getattr(self, "secondary_track_paused_time", None) is not None:
-            return float(self.secondary_track_paused_time)
-        if hasattr(self, "secondary_track_scale_var"):
-            try:
-                return float(self.secondary_track_scale_var.get())
-            except (tk.TclError, ValueError):
-                pass
-        return float(getattr(self, "secondary_track_offset", 0.0) or 0.0)
-
-    def mix_zero_audio_to_clips(self):
-        """将起始场景的 zero_audio（长背景轨）按时间连续混入当前及后续 N 个场景的 clip。
-
-        时间轴：默认从 zero_audio 起点截取；若副轨选中 ZZ 且当前场景有 zero 视频，则从预览播放头/滑块位置起算。
-        淡变：仅第一段开头淡入、仅最后一段末尾淡出；中间段硬切、无淡入淡出。
-        """
-        try:
-            n = int(getattr(self, 'mix_scenes_var', tk.StringVar(value="1")).get())
-            n = max(1, min(5, n))
-            volume = self.track_volume_var.get()
-            volume = max(0.0, min(1.5, volume))
-            _fade_in_first = 0.5
-            _fade_out_last = 2.0
-
-            # 使用起始场景的 zero_audio
-            start_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            zero_audio = get_file_path(start_scene, "zero_audio")
-            if not zero_audio or not os.path.exists(zero_audio):
-                messagebox.showwarning("警告", "当前场景没有 zero_audio，无法混音")
-                return
-
-            fp = self.workflow.ffmpeg_processor
-            zero_duration = fp.get_duration(zero_audio) or 0
-            if zero_duration <= 0:
-                messagebox.showwarning("警告", "zero_audio 无法读取时长")
-                return
-
-            base = self._mix_zero_base_offset_seconds()
-            base = max(0.0, min(base, max(0.0, zero_duration - 1e-3)))
-
-            mixed_count = 0
-            total_offset = base
-            scenes_to_mix = []
-            for i in range(n):
-                idx = self.current_scene_index + i
-                if idx >= len(self.workflow.scenes):
-                    break
-                scene = self.workflow.get_scene_by_index(idx)
-                clip_path = get_file_path(scene, "clip")
-                if not clip_path or not os.path.exists(clip_path):
-                    continue
-                clip_dur = fp.get_duration(clip_path) or 0
-                if clip_dur <= 0:
-                    continue
-                scenes_to_mix.append((scene, clip_path, clip_dur))
-
-            for idx, (scene, clip_path, clip_dur) in enumerate(scenes_to_mix):
-                is_last = (idx == len(scenes_to_mix) - 1)
-                if total_offset + clip_dur > zero_duration:
-                    break
-                fade_in = _fade_in_first if idx == 0 else 0.0
-                fade_out = _fade_out_last if is_last else 0.0
-                segment_audio = fp.extract_audio_segment(
-                    zero_audio,
-                    total_offset,
-                    clip_dur,
-                    fade_in_duration=fade_in,
-                    fade_out_duration=fade_out,
-                )
-                if not segment_audio:
-                    continue
-                output_video = fp.video_audio_mix(clip_path, segment_audio, volume=volume)
-                if output_video:
-                    output_audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(output_video)
-                    refresh_scene_media(scene, "clip", ".mp4", output_video)
-                    refresh_scene_media(scene, "clip_audio", ".wav", output_audio)
-                    mixed_count += 1
-                total_offset += clip_dur
-
-            if mixed_count > 0:
-                self.workflow.save_scenes_to_json()
-                self.refresh_gui_scenes()
-                msg = f"已将 zero_audio 混入 {mixed_count} 个场景的 clip 视频（音量: {volume:.2f}）"
-                if base > 0.01:
-                    msg = f"已从 zero 轨约 {base:.2f}s 起截取。\n{msg}"
-                messagebox.showinfo("成功", msg)
-            else:
-                messagebox.showwarning("警告", "没有可处理的场景")
-        except Exception as e:
-            messagebox.showerror("错误", f"混零失败: {str(e)}")
-
     def pip_secondary_track(self):
         """将旁白轨道作为画中画叠加到主轨道视频上"""
         try:
@@ -3305,27 +3332,6 @@ class WorkflowGUI:
                 elif settings['position'] == "av":
                     refresh_scene_media(current_scene, target_video_track, '.mp4', secondary_track_copy)
                     refresh_scene_media(current_scene, target_video_track+'_audio', '.wav', secondary_audio_copy)
-                elif settings['position'] == "audio":
-                    if settings['audio_volume'] != 0.0:
-                        volume_main = 1
-                        volume_overlay = 1
-                        if settings['audio_volume'] > 0 :
-                            volume_overlay = settings['audio_volume']
-                            if volume_overlay > 0.9:
-                                volume_overlay = 0.9
-                        elif settings['audio_volume'] < 0:
-                            volume_main = settings['audio_volume']
-                            if volume_main < -0.9:
-                                volume_main = -0.9
-                            volume_main = 1+volume_main    
-
-                        current_time, total_time = self.get_current_video_time()
-                        output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(background_audio, volume_main, current_time, secondary_audio_copy, volume_overlay)
-                        olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), target_video_track+'_audio', ".wav", output_audio)
-
-                        output_video = self.workflow.ffmpeg_processor.add_audio_to_video(background_video, output_audio)
-                        olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), target_video_track, ".mp4", output_video)
-
                 else:
                     # 处理画中画
                     self.process_picture_in_picture(
@@ -3396,33 +3402,10 @@ class WorkflowGUI:
 
             print(f"✅ 画中画处理完成: {output_video}")
 
-            output_audio = None
             audio_field = output_track + "_audio"
-            if settings['audio_volume'] == 0.0:
-                olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), audio_field, ".wav", background_audio, True)
-                output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, background_audio)
-                olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), output_track, ".mp4", output_video, True)
-            else:
-                output_audio = background_audio
-                if overlay_audio:
-                    volume_main = 1
-                    volume_overlay = 1
-                    if settings['audio_volume'] > 0 :
-                        volume_overlay = settings['audio_volume']
-                        if volume_overlay > 0.9:
-                            volume_overlay = 0.9
-                    elif settings['audio_volume'] < 0:
-                        volume_main = settings['audio_volume']
-                        if volume_main < -0.9:
-                            volume_main = -0.9
-                        volume_main = 1+volume_main    
-
-                    output_audio = self.workflow.ffmpeg_audio_processor.audio_mix(background_audio, volume_main, current_time, overlay_audio, volume_overlay)
-                    olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), audio_field, ".wav", output_audio, True)
-
-                    output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, output_audio)
-                    olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), output_track, ".mp4", output_video, True)
-            
+            olda, output_audio = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), audio_field, ".wav", background_audio, True)
+            output_video = self.workflow.ffmpeg_processor.add_audio_to_video(output_video, background_audio)
+            olda, output_video = refresh_scene_media(self.workflow.get_scene_by_index(self.current_scene_index), output_track, ".mp4", output_video, True)
             return output_video, output_audio
 
         except Exception as e:
@@ -3625,20 +3608,6 @@ class WorkflowGUI:
         ttk.Button(self.track_frame, text="📺11", command=lambda:self.pip_secondary_track(), width=5).pack(side=tk.LEFT, padx=(1, 10))
         ttk.Button(self.track_frame, text="💫NN", command=lambda:self.choose_secondary_track("narration"), width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(self.track_frame, text="💫ZZ", command=lambda:self.choose_secondary_track('zero'), width=5).pack(side=tk.LEFT, padx=1)
-        #ttk.Button(self.track_frame, text="💫", command=self.swap_narration, width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="✨", width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="🔊", command=self.pip_narration_sound, width=3).pack(side=tk.LEFT, padx=2)
-        #ttk.Button(self.track_frame, text="🔄", command=self.reset_track_offset, width=3).pack(side=tk.LEFT, padx=1)
-        ttk.Button(self.track_frame, text="⏱",  command=self.track_recover, width=3).pack(side=tk.LEFT, padx=1)
-        
-        # 添加音量控制滑块（共用，根据当前tab自动选择）
-        ttk.Label(self.track_frame, text="音量").pack(side=tk.LEFT, padx=(10, 1))
-        self.volume_scale = ttk.Scale(self.track_frame, from_=0.0, to=1.5, variable=self.track_volume_var, orient=tk.HORIZONTAL, length=38)
-        self.volume_scale.pack(side=tk.LEFT, padx=1)
-        self.volume_label = ttk.Label(self.track_frame, text="0.2")
-        self.volume_label.pack(side=tk.LEFT, padx=(1, 10))
-        # 绑定音量变化事件来更新标签
-        self.track_volume_var.trace('w', self.on_track_volume_change)
 
         # add a button to remove current self.secondary_track (if selected) otherwise disable the button
         # if self.secondary_track is selected, warning user to remove which track ,  then if user confirm, remove this track (video plus audio field) from current scene
@@ -3646,13 +3615,6 @@ class WorkflowGUI:
         self.remove_track_btn.pack(side=tk.LEFT, padx=1)
         self.root.after(100, self._update_remove_track_btn_state)  # 延迟设置初始状态
 
-        # add a combobox 'mix_scenes' to choose a number of scene (default 1, choice 1,2,3,4,5), and add a button (mix zero audio to current & following (total mix_scenes number) scent's clip videos  ~  on volume of track_volume_var)
-        ttk.Label(self.track_frame, text="混零").pack(side=tk.LEFT, padx=(10, 1))
-        self.mix_scenes_var = tk.StringVar(value="1")
-        mix_scenes_combo = ttk.Combobox(self.track_frame, textvariable=self.mix_scenes_var, values=["1", "2", "3", "4", "5"], width=3, state="readonly")
-        mix_scenes_combo.pack(side=tk.LEFT, padx=1)
-        ttk.Button(self.track_frame, text="混零到clip", command=self.mix_zero_audio_to_clips, width=8).pack(side=tk.LEFT, padx=(1, 10))
-        ttk.Button(self.track_frame, text="恢復Back", command=self.track_recover, width=8).pack(side=tk.LEFT, padx=(1, 10))
         
 
 
@@ -3770,6 +3732,7 @@ class WorkflowGUI:
             command=self._open_scene_clip_tools,
         )
         self.btn_clip_tools.pack(side=tk.LEFT, padx=2)
+        ttk.Button(video_control_frame, text="⏱", command=self.track_recover, width=3).pack(side=tk.RIGHT, padx=(8, 2))
 
         #ttk.Button(video_control_frame, text="背起", command=self.zero_start, width=5).pack(side=tk.LEFT, padx=1)
         #ttk.Button(video_control_frame, text="背继", command=self.zero_continue, width=5).pack(side=tk.LEFT, padx=1)
@@ -8022,7 +7985,7 @@ class WorkflowGUI:
                 if audio_path and os.path.exists(audio_path):
                     try:
                         pygame.mixer.music.load(audio_path)
-                        pygame.mixer.music.set_volume(self.track_volume_var.get())
+                        pygame.mixer.music.set_volume(1.0)
                         pygame.mixer.music.play()
                         print(f"🔊 播放音频: {audio_path}")
                     except Exception as e:
@@ -9197,15 +9160,6 @@ class WorkflowGUI:
         except Exception as e:
             print(f"❌ 加载图片预览失败: {e}")
     
-    
-    def on_track_volume_change(self, *args):
-        """音量变化处理（共用）"""
-        volume = self.track_volume_var.get()
-        self.volume_label.config(text=f"{volume:.2f}")
-
-        if hasattr(pygame.mixer, 'music') and pygame.mixer.music.get_busy():
-            pygame.mixer.music.set_volume(volume)
-
     
     def update_secondary_track_time(self):
         """更新旁白轨道播放时间显示"""
@@ -10936,12 +10890,6 @@ class WorkflowGUI:
         self._save_timer = self.root.after(500, lambda: self.update_current_scene())
 
 
-    def on_volume_change(self, *args):
-        """当音量滑块值发生变化时的回调"""
-        volume = self.track_volume_var.get()
-        self.volume_label.config(text=f"{volume:.1f}")
-
-
     def on_tab_changed(self, event):
         if not hasattr(self, 'workflow') or self.workflow is None:
             return
@@ -11391,7 +11339,6 @@ class WorkflowGUI:
             "clip",
             "zero",
             "narration",
-            "background",
             "background_music",
         }
         written = 0

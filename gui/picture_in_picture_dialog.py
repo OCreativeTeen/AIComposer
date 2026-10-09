@@ -28,7 +28,6 @@ class PictureInPictureDialog:
             self.transition_duration = 1.2
 
         self.shape = ""  # none/empty, circle, oval
-        self.audio_volume = 0
         
         self.create_dialog()
         
@@ -79,7 +78,7 @@ class PictureInPictureDialog:
         ttk.Label(position_frame, text="位置:").pack(side=tk.LEFT)
         
         self.position_var = tk.StringVar(value=self.position)
-        positions = [("右", "right"), ("左", "left"), ("中心", "center"), ("满屏", "full"), ("影音", "av"), ("音频", "audio")]
+        positions = [("右", "right"), ("左", "left"), ("中心", "center"), ("满屏", "full"), ("影音", "av")]
         for i, (text, value) in enumerate(positions):
             ttk.Radiobutton(position_frame, text=text, variable=self.position_var, 
                           value=value).pack(side=tk.LEFT, padx=(10, 0))
@@ -110,21 +109,6 @@ class PictureInPictureDialog:
         def update_transition_label(*args):
             self.transition_label.config(text=f"{self.transition_var.get():.1f}")
         self.transition_var.trace('w', update_transition_label)
-        
-        # Audio volume setting
-        volume_frame = ttk.Frame(settings_frame)
-        volume_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(volume_frame, text="音频音量:").pack(side=tk.LEFT)
-        self.volume_var = tk.DoubleVar(value=self.audio_volume)
-        volume_scale = ttk.Scale(volume_frame, from_=-0.9, to=0.9, variable=self.volume_var, orient=tk.HORIZONTAL)
-        volume_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
-        self.volume_label = ttk.Label(volume_frame, text=f"{self.audio_volume:.2f}")
-        self.volume_label.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # Update volume label when scale changes
-        def update_volume_label(*args):
-            self.volume_label.config(text=f"{self.volume_var.get():.2f}")
-        self.volume_var.trace('w', update_volume_label)
         
         # Delay time setting (for left/right overlays)
         delay_frame = ttk.Frame(settings_frame)
@@ -221,7 +205,7 @@ class PictureInPictureDialog:
             'position': self.position_var.get(),
             'shape': self.shape_var.get(),
             'transition_duration': self.transition_var.get(),
-            'audio_volume': self.volume_var.get(),
+            'audio_volume': 0.0,
             'delay_time': self.delay_var.get()
         }
         self.dialog.destroy()

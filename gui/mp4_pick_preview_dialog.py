@@ -230,6 +230,7 @@ def ask_mp4_pick_with_trim_preview(
     audio_sources: Optional[list] = None,
     dest_options: Optional[list] = None,
     lock_video_source: bool = False,
+    audio_edit: bool = False,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -241,14 +242,13 @@ def ask_mp4_pick_with_trim_preview(
         except Exception:
             parent = None
     if sources and not lock_video_source:
-        usable = [item for item in sources if item.get("choices")]
-        if not usable or build_adjusted_pair is None or cv2 is None:
+        if build_adjusted_pair is None or cv2 is None:
             if cv2 is None and parent:
                 messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
             return None
-        current = next((item for item in sources if item.get("key") == "download"), usable[0])
+        current = next((item for item in sources if item.get("key") == "project"), sources[0])
         folder_path = current["folder"]
-        choices = list(current["choices"])
+        choices = list(current.get("choices") or [])
         radios = current.get("radios")
         confirm_actions = current.get("confirm_actions")
     elif sources and lock_video_source:
@@ -266,8 +266,8 @@ def ask_mp4_pick_with_trim_preview(
 
     dlg = tk.Toplevel(parent)
     dlg.title(title)
-    dlg.geometry("980x760" if audio_sources else "980x640")
-    dlg.minsize(900, 680 if audio_sources else 580)
+    dlg.geometry("980x820" if audio_edit else ("980x760" if audio_sources else "980x640"))
+    dlg.minsize(900, 740 if audio_edit else (680 if audio_sources else 580))
     if parent:
         dlg.transient(parent)
     dlg.grab_set()
@@ -276,8 +276,12 @@ def ask_mp4_pick_with_trim_preview(
     folder_box = [folder_path]
     radio_holder = [radios]
     confirm_holder = [confirm_actions]
-    clip = [_ClipTrim(os.path.join(folder_box[0], choices[0]))]
-    sel_fn = [choices[0]]
+    if choices:
+        clip = [_ClipTrim(os.path.join(folder_box[0], choices[0]))]
+        sel_fn = [choices[0]]
+    else:
+        clip = [None]
+        sel_fn = [""]
 
     playing = [False]
     play_range_only = [False]
@@ -316,9 +320,9 @@ def ask_mp4_pick_with_trim_preview(
     if sources or radios:
         choice_box.pack(fill=tk.X, anchor=tk.W, pady=(0, 8))
     video_box = ttk.LabelFrame(left, text="片段列表", padding=4)
-    video_box.pack(fill=tk.BOTH, expand=True)
+    video_box.pack(fill=tk.X if audio_edit else tk.BOTH, expand=not audio_edit)
     listbox = tk.Listbox(
-        video_box, width=42, height=8 if audio_sources else 22,
+        video_box, width=42, height=4 if audio_edit else (8 if audio_sources else 22),
         exportselection=False, font=("Consolas", 9),
     )
     listbox.pack(fill=tk.BOTH, expand=True)
@@ -330,6 +334,13 @@ def ask_mp4_pick_with_trim_preview(
     audio_choices: list = []
     audio_folder_box = [""]
     audio_state = {"clip": None, "fn": "", "armed": False}
+    audio_use_var = tk.StringVar(value="replace")
+    mix_ratio_var = tk.DoubleVar(value=0.5)
+    fade_in_on = tk.BooleanVar(value=False)
+    fade_out_on = tk.BooleanVar(value=False)
+    fade_in_sec = tk.DoubleVar(value=1.0)
+    fade_out_sec = tk.DoubleVar(value=1.0)
+    audio_edit_widgets: list = []
     rec = {
         "on": False,
         "chunks": [],
@@ -364,9 +375,59 @@ def ask_mp4_pick_with_trim_preview(
         audio_listbox.pack(fill=tk.BOTH, expand=True)
         for name in audio_choices:
             audio_listbox.insert(tk.END, name)
-        record_row = ttk.Frame(audio_box)
-        record_row.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(record_row, text="录音", command=lambda: _start_record()).pack(side=tk.LEFT)
+        if audio_edit:
+            use_row = ttk.Frame(audio_box)
+            use_row.pack(fill=tk.X, pady=(6, 0))
+            replace_rb = ttk.Radiobutton(use_row, text="替换声音", value="replace", variable=audio_use_var)
+            replace_rb.pack(side=tk.LEFT, padx=(0, 12))
+            mix_rb = ttk.Radiobutton(use_row, text="混音", value="mix", variable=audio_use_var)
+            mix_rb.pack(side=tk.LEFT)
+            audio_edit_widgets.extend([replace_rb, mix_rb])
+            mix_box = ttk.Frame(audio_box)
+            mix_box.pack(fill=tk.X, pady=(4, 0))
+            ratio_row = ttk.Frame(mix_box)
+            ratio_row.pack(fill=tk.X)
+            ratio_name = ttk.Label(ratio_row, text="混音比例")
+            ratio_name.pack(side=tk.LEFT, padx=(0, 6))
+            ratio_lbl = ttk.Label(ratio_row, text="50%", width=5)
+            ratio_lbl.pack(side=tk.LEFT)
+
+            def _on_mix_ratio(_v=None) -> None:
+                ratio_lbl.config(text=f"{float(mix_ratio_var.get()) * 100:.0f}%")
+
+            ratio_scale = tk.Scale(
+                ratio_row, from_=0.0, to=1.0, resolution=0.1, orient=tk.HORIZONTAL,
+                variable=mix_ratio_var, command=_on_mix_ratio, showvalue=0, length=160,
+            )
+            ratio_scale.pack(side=tk.LEFT, padx=(6, 0))
+            fade_in_row = ttk.Frame(mix_box)
+            fade_in_row.pack(fill=tk.X, pady=(4, 0))
+            fade_in_chk = ttk.Checkbutton(fade_in_row, text="渐强", variable=fade_in_on, command=lambda: _sync_audio_edit())
+            fade_in_chk.pack(side=tk.LEFT)
+            fade_in_spin = ttk.Spinbox(
+                fade_in_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_in_sec,
+            )
+            fade_in_spin.pack(side=tk.LEFT, padx=(8, 4))
+            fade_in_unit = ttk.Label(fade_in_row, text="秒")
+            fade_in_unit.pack(side=tk.LEFT)
+            fade_out_row = ttk.Frame(mix_box)
+            fade_out_row.pack(fill=tk.X, pady=(4, 0))
+            fade_out_chk = ttk.Checkbutton(fade_out_row, text="渐弱", variable=fade_out_on, command=lambda: _sync_audio_edit())
+            fade_out_chk.pack(side=tk.LEFT)
+            fade_out_spin = ttk.Spinbox(
+                fade_out_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_out_sec,
+            )
+            fade_out_spin.pack(side=tk.LEFT, padx=(8, 4))
+            fade_out_unit = ttk.Label(fade_out_row, text="秒")
+            fade_out_unit.pack(side=tk.LEFT)
+            audio_edit_widgets.extend([
+                ratio_name, ratio_lbl, ratio_scale, fade_in_chk, fade_in_spin, fade_in_unit,
+                fade_out_chk, fade_out_spin, fade_out_unit,
+            ])
+        else:
+            record_row = ttk.Frame(audio_box)
+            record_row.pack(fill=tk.X, pady=(4, 0))
+            ttk.Button(record_row, text="录音", command=lambda: _start_record()).pack(side=tk.LEFT)
 
     right = ttk.Frame(body)
     right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -405,7 +466,7 @@ def ask_mp4_pick_with_trim_preview(
     vol_row = ttk.Frame(trim_box)
     vol_row.pack(fill=tk.X, pady=(0, 6))
     volume_var = tk.DoubleVar(value=_snap_mp4_preview_volume(1.0))
-    ttk.Label(vol_row, text="试听音量增益").pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Label(vol_row, text="音量增益").pack(side=tk.LEFT, padx=(0, 8))
     vol_lbl = ttk.Label(vol_row, text=f"{volume_var.get():.1f}×", width=8)
     vol_lbl.pack(side=tk.LEFT)
     vol_slider = tk.Scale(
@@ -454,11 +515,12 @@ def ask_mp4_pick_with_trim_preview(
     foot = ttk.Frame(root)
     foot.pack(fill=tk.X, pady=(10, 0))
     mix_btn = None
-    if audio_sources:
+    if audio_sources and not audio_edit:
         mix_btn = ttk.Button(foot, text="套用这段音频", state=tk.DISABLED)
         mix_btn.pack(side=tk.LEFT)
     btn_host = ttk.Frame(foot)
     btn_host.pack(side=tk.RIGHT)
+    confirm_anchor = [None]
 
     def _c() -> _ClipTrim:
         if focus[0] == "audio" and audio_state.get("clip") is not None:
@@ -474,6 +536,8 @@ def ask_mp4_pick_with_trim_preview(
 
     def _save_trim() -> None:
         c = _c()
+        if c is None:
+            return
         try:
             s = float(start_spin.get())
             e = float(end_spin.get())
@@ -560,7 +624,7 @@ def ask_mp4_pick_with_trim_preview(
         timeline.delete("all")
         w = max(timeline.winfo_width(), 200)
         timeline.create_rectangle(2, 18, w - 2, 34, fill="#c8c8c8", outline="#999")
-        if c.duration <= 0:
+        if c is None or c.duration <= 0:
             return
         x0, x1 = _time_to_x(c.start), _time_to_x(c.end)
         timeline.create_rectangle(x0, 14, x1, 38, fill="#4a9fd8", outline="#2a6fa0", width=2)
@@ -910,6 +974,27 @@ def ask_mp4_pick_with_trim_preview(
         else:
             mix_btn.config(state=tk.NORMAL, text="套用这段音频")
 
+    def _set_enabled(widget, enabled: bool) -> None:
+        try:
+            widget.state(["!disabled"] if enabled else ["disabled"])
+        except (tk.TclError, AttributeError):
+            widget.config(state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def _sync_audio_edit() -> None:
+        if not audio_edit or len(audio_edit_widgets) < 11:
+            return
+        has = audio_state.get("clip") is not None
+        mixing = has and audio_use_var.get() == "mix"
+        for index, widget in enumerate(audio_edit_widgets):
+            if index < 2:
+                _set_enabled(widget, has)
+            elif index == 6:
+                _set_enabled(widget, mixing and bool(fade_in_on.get()))
+            elif index == 9:
+                _set_enabled(widget, mixing and bool(fade_out_on.get()))
+            else:
+                _set_enabled(widget, mixing)
+
     def _arm_audio_mix() -> None:
         if audio_state.get("clip") is None:
             return
@@ -940,10 +1025,11 @@ def ask_mp4_pick_with_trim_preview(
         prev = audio_state.get("clip")
         if prev is None or os.path.normpath(prev.path) != full:
             audio_state["clip"] = _ClipTrim(full)
-            audio_state["armed"] = False
+        audio_state["armed"] = True
         audio_state["fn"] = fn
         current_t[0] = audio_state["clip"].start
         _sync_mix_btn()
+        _sync_audio_edit()
         _apply_ui()
         _show_frame(audio_state["clip"].start)
 
@@ -972,6 +1058,7 @@ def ask_mp4_pick_with_trim_preview(
         audio_state["fn"] = ""
         audio_state["armed"] = False
         _sync_mix_btn()
+        _sync_audio_edit()
         if focus[0] == "audio":
             focus[0] = "video"
             if clip[0] is not None:
@@ -992,24 +1079,214 @@ def ask_mp4_pick_with_trim_preview(
         if len([item for item in (audio_sources or []) if item.get("folder")]) > 1:
             audio_source_var.trace_add("write", lambda *_a: _apply_audio_source())
 
+    def _clear_audio() -> None:
+        audio_state["clip"] = None
+        audio_state["fn"] = ""
+        audio_state["armed"] = False
+        if audio_listbox is not None:
+            audio_listbox.selection_clear(0, tk.END)
+        _sync_mix_btn()
+        _sync_audio_edit()
+        if focus[0] == "audio" and clip[0] is not None:
+            focus[0] = "video"
+            _show_frame(clip[0].start)
+
+    if audio_edit:
+        audio_use_var.trace_add("write", lambda *_a: _sync_audio_edit())
+        _sync_audio_edit()
+
+    def _clear_video() -> None:
+        clip[0] = None
+        sel_fn[0] = ""
+        listbox.selection_clear(0, tk.END)
+        ac = audio_state.get("clip")
+        if ac is not None:
+            focus[0] = "audio"
+            _show_frame(ac.start)
+
+    def _audio_changed(ac, vol: float) -> bool:
+        trimmed = ac.start > 0.05 or ac.end < ac.duration - 0.05
+        sped = abs(float(ac.speed) - 1.0) >= 0.05
+        return trimmed or sped or abs(vol - 1.0) >= 0.001
+
+    def _ask_plan(text: str, *, has_video: bool, has_audio: bool) -> str | None:
+        choice = {"value": None}
+        top = tk.Toplevel(dlg)
+        top.title("确认")
+        top.transient(dlg)
+        top.resizable(False, False)
+        top.withdraw()
+        ttk.Label(top, text=text, justify=tk.LEFT, wraplength=420).pack(
+            anchor=tk.W, padx=16, pady=(14, 10),
+        )
+        row = ttk.Frame(top)
+        row.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        def _pick(value: str | None) -> None:
+            choice["value"] = value
+            top.destroy()
+
+        ttk.Button(row, text="就这样", command=lambda: _pick("go")).pack(side=tk.LEFT, padx=4)
+        if has_audio:
+            ttk.Button(row, text="去掉音频", command=lambda: _pick("drop_audio")).pack(side=tk.LEFT, padx=4)
+        if has_video and has_audio:
+            ttk.Button(row, text="去掉视频", command=lambda: _pick("drop_video")).pack(side=tk.LEFT, padx=4)
+        ttk.Button(row, text="返回", command=lambda: _pick(None)).pack(side=tk.LEFT, padx=4)
+        top.protocol("WM_DELETE_WINDOW", lambda: _pick(None))
+        top.update_idletasks()
+        tw = max(top.winfo_reqwidth(), top.winfo_width())
+        th = max(top.winfo_reqheight(), top.winfo_height())
+        anchor = confirm_anchor[0]
+        if anchor is not None:
+            try:
+                anchor.update_idletasks()
+                ax = anchor.winfo_rootx()
+                ay = anchor.winfo_rooty()
+                aw = anchor.winfo_width()
+            except tk.TclError:
+                ax = ay = aw = 0
+                anchor = None
+        if anchor is None:
+            ax = dlg.winfo_rootx() + dlg.winfo_width() - 80
+            ay = dlg.winfo_rooty() + dlg.winfo_height() - 36
+            aw = 72
+        x = ax + aw - tw
+        y = ay - th - 6
+        sw = top.winfo_screenwidth()
+        sh = top.winfo_screenheight()
+        x = max(0, min(x, sw - tw))
+        y = max(0, min(y, sh - th))
+        top.geometry(f"+{int(x)}+{int(y)}")
+        top.deiconify()
+        top.grab_set()
+        dlg.wait_window(top)
+        return choice["value"]
+
     def _on_confirm(action: str | None = None) -> None:
-        if clip[0] is None:
-            messagebox.showwarning("导入视频", "这里没有视频。", parent=dlg)
-            return
         _save_trim()
-        c = clip[0]
         vol = _snap_mp4_preview_volume(volume_var.get())
-        audio_armed = bool(audio_state.get("armed") and audio_state.get("clip") is not None)
-        if audio_armed:
-            ac = audio_state["clip"]
-            if ac.end <= ac.start + 0.05:
-                messagebox.showerror("区间无效", "音频的结束时间必须大于开始时间。", parent=dlg)
-                return
-        elif c.end <= c.start + (1.0 / c.fps):
+        c = clip[0]
+        ac = audio_state.get("clip") if audio_state.get("armed") else None
+        if c is None and ac is None:
+            messagebox.showwarning("导入", "先选一段视频或音频。", parent=dlg)
+            return
+        if ac is not None and ac.end <= ac.start + 0.05:
+            messagebox.showerror("区间无效", "音频的结束时间必须大于开始时间。", parent=dlg)
+            return
+        if c is not None and (ac is None or audio_edit) and c.end <= c.start + (1.0 / c.fps):
             messagebox.showerror("区间无效", "结束时间必须大于开始时间。", parent=dlg)
             return
+        vol_line = "音量是 1 倍，不改大小。" if abs(vol - 1.0) < 0.001 else f"音量调到 {vol:.1f} 倍。"
+        dest_name = {"clip": "Clip", "narration": "旁白", "zero": "Zero"}.get(
+            dest_var.get() if dest_options else "", "当前片段",
+        )
+
+        def _fade_seconds(flag, var) -> float:
+            if not flag.get():
+                return 0.0
+            try:
+                return max(0.0, float(var.get()))
+            except (tk.TclError, ValueError, TypeError):
+                return 0.0
+
+        if audio_edit and c is not None and ac is not None and audio_use_var.get() == "mix":
+            fade_in = _fade_seconds(fade_in_on, fade_in_sec)
+            fade_out = _fade_seconds(fade_out_on, fade_out_sec)
+            fade_in_line = f"开头渐强 {fade_in:.1f} 秒" if fade_in > 0 else "开头不渐强"
+            fade_out_line = f"结尾渐弱 {fade_out:.1f} 秒" if fade_out > 0 else "结尾不渐弱"
+            video_len = max(0.0, (c.end - c.start) / max(float(c.speed or 1.0), 0.1))
+            audio_len = max(0.0, (ac.end - ac.start) / max(float(ac.speed or 1.0), 0.1))
+            if audio_len > video_len + 0.05:
+                cut_line = "音频比这段视频长，先裁到一样长。渐强在这段开头，渐弱在裁完的结尾。"
+            else:
+                cut_line = "音频不比这段视频长。渐强在音频开头，渐弱在音频自己的结尾。"
+            plan = (
+                f"你在编辑这段视频，并选了音频。\n"
+                f"视频先按 {c.start:.1f}–{c.end:.1f} 秒、速度 {c.speed:.1f} 裁好。\n"
+                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。\n"
+                f"做法：把这段音频混进视频现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
+                f"{fade_in_line}，{fade_out_line}。{cut_line}"
+            )
+        elif audio_edit and c is not None and ac is not None:
+            plan = (
+                f"你在编辑这段视频，并选了音频。\n"
+                f"视频：{sel_fn[0]}，{c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。\n"
+                f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}\n"
+                f"做法：用这段音频换掉视频里的声音。两边长度不一致时，把视频缩放到和音频一样长。"
+            )
+        elif c is not None and ac is not None:
+            plan = (
+                f"你选了视频，也选了音频。\n"
+                f"视频：{sel_fn[0]}\n"
+                f"音频：{audio_state.get('fn') or ''}\n"
+                f"做法：用这段音频换掉视频里的声音，视频长度改成和音频处理后一样，"
+                f"再替换到 {dest_name}。\n"
+                f"音频 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
+            )
+        elif ac is not None:
+            if _audio_changed(ac, vol):
+                plan = (
+                    f"你只选了音频，没有视频。\n"
+                    f"音频：{audio_state.get('fn') or ''}\n"
+                    f"做法：只把这段音频处理好后拷进项目，不替换画面。\n"
+                    f"区间 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
+                )
+            else:
+                plan = (
+                    f"你只选了音频，没有视频。\n"
+                    f"音频：{audio_state.get('fn') or ''}\n"
+                    f"做法：只把这段音频原样拷进项目，不裁剪，不改音量，不替换画面。"
+                )
+        else:
+            plan = (
+                f"你只选了视频，没有另外的音频。\n"
+                f"视频：{sel_fn[0]}\n"
+                f"做法：用这段视频替换 {dest_name} 上现有的画面和声音。\n"
+                f"区间 {c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。{vol_line}"
+            )
+        decided = _ask_plan(
+            plan,
+            has_video=c is not None and not audio_edit,
+            has_audio=ac is not None,
+        )
+        if decided == "drop_audio":
+            _clear_audio()
+            return
+        if decided == "drop_video":
+            _clear_video()
+            return
+        if decided != "go":
+            return
+        if ac is not None and c is None:
+            result[0] = {
+                "audio_only": True,
+                "filename": "",
+                "mp4": "",
+                "wav": "",
+                "action": action,
+                "radio": "",
+                "source": "",
+                "dest": "",
+                "audio": {
+                    "path": ac.path,
+                    "source": audio_source_var.get() if audio_sources else "",
+                    "start": ac.start,
+                    "end": ac.end,
+                    "speed": round(ac.speed, 1),
+                    "volume": vol,
+                    "duration": ac.duration,
+                    "as_is": not _audio_changed(ac, vol),
+                },
+            }
+            _close()
+            return
         try:
-            if audio_armed:
+            if audio_edit and ac is not None:
+                video_vol = 1.0 if audio_use_var.get() == "replace" else vol
+                mp4_adj, wav_adj = build_adjusted_pair(
+                    c.path, video_vol, start=c.start, end=c.end, speed=round(c.speed, 1),
+                )
+            elif ac is not None:
                 mp4_adj, wav_adj = build_adjusted_pair(
                     c.path, 1.0, start=0.0, end=c.duration, speed=1.0,
                 )
@@ -1034,15 +1311,21 @@ def ask_mp4_pick_with_trim_preview(
             picked = picked + (source_var.get(),)
         if audio_sources or dest_options:
             audio_payload = None
-            if audio_state.get("armed") and audio_state.get("clip") is not None:
-                ac = audio_state["clip"]
+            if ac is not None:
                 audio_payload = {
                     "path": ac.path,
+                    "source": audio_source_var.get() if audio_sources else "",
                     "start": ac.start,
                     "end": ac.end,
                     "speed": round(ac.speed, 1),
                     "volume": vol,
+                    "duration": ac.duration,
                 }
+                if audio_edit:
+                    audio_payload["use"] = audio_use_var.get()
+                    audio_payload["mix_ratio"] = float(mix_ratio_var.get())
+                    audio_payload["fade_in"] = _fade_seconds(fade_in_on, fade_in_sec)
+                    audio_payload["fade_out"] = _fade_seconds(fade_out_on, fade_out_sec)
             result[0] = {
                 "filename": picked[0],
                 "mp4": picked[1],
@@ -1234,13 +1517,18 @@ def ask_mp4_pick_with_trim_preview(
                 ).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(btn_host, text="取消", command=_close).pack(side=tk.RIGHT, padx=(6, 0))
         actions = confirm_holder[0]
+        confirm_anchor[0] = None
         if actions:
             for value, label in reversed(actions):
-                ttk.Button(
+                btn = ttk.Button(
                     btn_host, text=label, command=lambda v=value: _on_confirm(v)
-                ).pack(side=tk.RIGHT, padx=(0, 6))
+                )
+                btn.pack(side=tk.RIGHT, padx=(0, 6))
+                confirm_anchor[0] = btn
         else:
-            ttk.Button(btn_host, text="确定", command=lambda: _on_confirm()).pack(side=tk.RIGHT)
+            btn = ttk.Button(btn_host, text="确定", command=lambda: _on_confirm())
+            btn.pack(side=tk.RIGHT)
+            confirm_anchor[0] = btn
 
     def _apply_source() -> None:
         if not sources:
@@ -1268,12 +1556,13 @@ def ask_mp4_pick_with_trim_preview(
     _fill_actions()
     if sources:
         source_var.trace_add("write", lambda *_args: _apply_source())
-    listbox.selection_set(0)
-    _load_file(choices[0])
+    if choices:
+        listbox.selection_set(0)
+        _load_file(choices[0])
 
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
     dlg.update_idletasks()
-    _dw, _dh = (980, 760) if audio_sources else (980, 640)
+    _dw, _dh = (980, 820) if audio_edit else ((980, 760) if audio_sources else (980, 640))
     dlg.geometry(f"{_dw}x{_dh}+{(sw - _dw) // 2}+{(sh - _dh) // 2}")
     dlg.wait_window()
     return result[0]
