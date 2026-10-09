@@ -550,20 +550,6 @@ class WorkflowGUI:
             vd["id"] = file_pid
         return vd
 
-    def _workflow_persist_video_detail(self, video_detail: dict, *, parent=None) -> bool:
-        """将编辑结果写回 ``PROJECT_CONFIG`` 并同步主题列表 JSON。"""
-        pc = project_manager.PROJECT_CONFIG
-        if not pc:
-            messagebox.showerror("保存失败", "未加载项目配置。", parent=parent)
-            return False
-        for field in ("analyzed_content", "scene_content"):
-            val = video_detail.get(field) if isinstance(video_detail, dict) else None
-            if val not in (None, "", [], {}):
-                pc[field] = copy.deepcopy(val)
-            else:
-                pc.pop(field, None)
-        return save_project_config(parent=parent)
-
     def _copy_clipboard_text(self, title: str, text: str) -> None:
         text = (text or "").strip()
         if not text:
@@ -654,35 +640,6 @@ class WorkflowGUI:
         if mgr is not None:
             ch_path = ch_path or getattr(mgr, "channel_path", "")
         return mgr, vd, story_raw, ch_path
-
-    def _open_workflow_content_field_editor(self, field: str) -> None:
-        """与 downloader 摘要窗「故事 / 分析 / 场景」共用同一套编辑弹窗。"""
-        if not project_manager.PROJECT_CONFIG:
-            messagebox.showwarning("提示", "请先加载或创建项目。", parent=self.root)
-            return
-        mgr = getattr(self, "youtube_gui", None)
-        if mgr is None:
-            messagebox.showerror(
-                "错误", "YouTube 管理器未初始化，无法打开内容编辑。", parent=self.root
-            )
-            return
-        vd = self._workflow_video_detail_for_edit()
-        persist = lambda v, parent=None: self._workflow_persist_video_detail(v, parent=parent)
-        ch = (getattr(self.workflow, "channel", None) or "").strip()
-        ch_path = ""
-        if ch:
-            ch_path = config.get_channel_path(config.get_channel_id(ch))
-        main_char = project_manager.project_narrator()
-        result = mgr.open_content_field_editor(
-            self.root,
-            vd,
-            field,
-            persist_fn=persist,
-            main_character=main_char,
-            channel_path=ch_path or getattr(mgr, "channel_path", ""),
-        )
-        if result is not None and field == "scene_content":
-            messagebox.showinfo("已保存", "scene_content 已更新。", parent=self.root)
 
     def _open_suno_gui(self):
         """打开SUNO音乐提示词管理窗口"""
@@ -3883,12 +3840,6 @@ class WorkflowGUI:
         ttk.Button(ai_row1, text="生场音频", width=8, command=self.choose_clip_audio_scope).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(ai_row1, text="生场视频", width=8, command=lambda: self.regenerate_video("clip", True)).pack(side=tk.LEFT)
         ttk.Separator(ai_row1, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(
-            ai_row1,
-            text="生成分镜",
-            width=8,
-            command=lambda: self._open_workflow_content_field_editor("scene_content"),
-        ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(
             ai_row1,
             text="生成摘要",
