@@ -1015,8 +1015,8 @@ def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
     narrator = ""
     for src in sources:
         if not visual_style:
-            vs = (src.get("visual_style") or "").strip()
-            if vs in config.VISUAL_STYLE_OPTIONS:
+            vs = config.match_visual_style(src.get("visual_style") or "")
+            if vs:
                 visual_style = vs
         if not dialogue_mode:
             talk = (src.get("dialogue_mode") or "").strip()
@@ -1027,8 +1027,8 @@ def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
             if nar:
                 narrator = nar
     if not visual_style:
-        visual_style = project_manager.LAST_VISUAL_STYLE
-        if visual_style not in config.VISUAL_STYLE_OPTIONS and config.VISUAL_STYLE_OPTIONS:
+        visual_style = config.match_visual_style(project_manager.LAST_VISUAL_STYLE)
+        if not visual_style and config.VISUAL_STYLE_OPTIONS:
             visual_style = config.VISUAL_STYLE_OPTIONS[0]
     return (
         visual_style,
@@ -1041,8 +1041,8 @@ def _stamp_project_look(vd, *, visual_style: str, dialogue_mode: str, narrator: 
     """把风格、对话方式、解说员写回这一条，已有项目配置时一并写入。"""
     if not isinstance(vd, dict):
         return
-    vs = (visual_style or "").strip()
-    if vs not in config.VISUAL_STYLE_OPTIONS and config.VISUAL_STYLE_OPTIONS:
+    vs = config.match_visual_style(visual_style)
+    if not vs and config.VISUAL_STYLE_OPTIONS:
         vs = config.VISUAL_STYLE_OPTIONS[0]
     talk = config.normalize_dialogue_mode(dialogue_mode)
     nar = (narrator or "").strip()
@@ -6636,7 +6636,7 @@ class MediaGUIManager:
         self.language = self._input_language  # 与 config.LANGUAGES 键一致（欢迎屏已选）
         _dl_lang = 'en' if self._input_language == 'en' else 'zh'  # yt-dlp 字幕常用 en/zh
         
-        self.llm_api_local = llm_api.LLMApi(llm_api.GPT_MINI)
+        self.llm_api_local = llm_api.LLMApi(llm_api.GEMINI)
         self.llm_api = llm_api.LLMApi()
 
         # 创建YoutubeDownloader实例
@@ -9247,8 +9247,8 @@ class MediaGUIManager:
                         dlg.protocol("WM_DELETE_WINDOW", _close_scene_editor)
                     _raise_scene_dialog()
 
-                # Bottom button row is optional for scnlm/scnvs/grv — defer so bridge stays responsive.
-                dlg.after(4000, _fill_scene_editor_rest_body)
+                # 这一排和窗口一起出现。场景 JSON 仍按小段写入，避免一次插进大段文字卡住界面。
+                _fill_scene_editor_rest_body()
 
             dlg.after_idle(_fill_scene_editor_rest)
 
@@ -11088,7 +11088,7 @@ class MediaGUIManager:
                 textvariable=story_style_var,
                 values=list(config.VISUAL_STYLE_OPTIONS),
                 state="readonly",
-                width=10,
+                width=26,
             ).pack(side=tk.LEFT, padx=(0, 6))
             ttk.Label(row_top, text="对话").pack(side=tk.LEFT, padx=(0, 2))
             story_talk_var = tk.StringVar(value=_look_talk)

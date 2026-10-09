@@ -17,6 +17,8 @@ from .file_util import get_file_path, build_scene_media_prefix, safe_copy_overwr
 import subprocess
 
 
+# DEPRECATED: I2V / 2I2V / S2V / WS2V / AI2V / INTP 和下面的 enhance_clip 已不从界面调用。
+# 代码留在这里，免得以后想接回主动画、次动画、增主轨时找不到。
 GEN_CONFIG = {
         #"Story":{"url": "http://10.0.0.179:8188", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0, "workflow":"\\\\10.0.0.179\\wan22\\ComfyUI\\user\\default\\workflows\\nano_banana.json"},
         #"Story":{"url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent", "model": "banana", "seed": 1234567890, "steps": 4, "cfg": 1.0},
@@ -640,6 +642,7 @@ class SDProcessor:
 
 
     def enhance_clip(self, pid, scene, track, level:str):
+        """DEPRECATED: 界面上的增主轨已拿掉。这段增强代码留着。"""
         status = scene.get(track + "_status", "")
         print(f"enhance_clip {track} status: {status}")
         if status == "ENH2":

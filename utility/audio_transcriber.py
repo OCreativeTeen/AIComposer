@@ -33,7 +33,7 @@ class AudioTranscriber:
         self.model_size = model_size
         self.device = device
         self.api_url = "http://10.0.0.231:9001/transcribe"
-        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
+        self.llm_api = llm_api.LLMApi(llm_api.GEMINI)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self._whisperx_engine: Optional[Any] = None
 

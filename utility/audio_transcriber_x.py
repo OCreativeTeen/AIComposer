@@ -151,7 +151,7 @@ class AudioTranscriberX:
         # 对齐 / Diarize 模型按需懒加载
         self._align_cache: Dict[str, Tuple[Any, Any]] = {}
         self._diarize_pipeline = None
-        self.llm_api = llm_api.LLMApi(llm_api.GPT_MINI)
+        self.llm_api = llm_api.LLMApi(llm_api.GEMINI)
 
     def _release_gpu_memory(self) -> None:
         """释放单次转写占用的 GPU 显存（含对齐模型缓存），便于连续批量转写。"""

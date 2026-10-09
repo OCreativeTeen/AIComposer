@@ -717,7 +717,7 @@ LAST_NARRATOR = (
     else ""
 )
 
-# 欢迎屏选择的画面风格（英文，与 config.VISUAL_STYLE_OPTIONS 一致）
+# 欢迎屏选择的画面风格（与 config.VISUAL_STYLE_OPTIONS 一致）
 LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
 LAST_YT_LANGUAGE = "tw"
@@ -734,8 +734,8 @@ def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     if lang in config.LANGUAGES:
         LAST_YT_LANGUAGE = lang
 
-    vs = (prefs.get("visual_style") or "").strip()
-    if vs in config.VISUAL_STYLE_OPTIONS:
+    vs = config.match_visual_style(prefs.get("visual_style") or "")
+    if vs:
         LAST_VISUAL_STYLE = vs
 
     nar = (prefs.get("narrator") or "").strip()
@@ -1448,7 +1448,7 @@ class ProjectSelectionDialog:
         self.config_manager = config_manager
         self.youtube_gui = youtube_gui
         self.selected_config = None
-        self.llm_api_local = LLMApi(llm_api.GPT_MINI)
+        self.llm_api_local = LLMApi(llm_api.GEMINI)
         # 与频道 topics.json / tags.json 对应；create_new_project 内「添加标签」等闭包依赖
         self.topics_data = []
         self.tag_features_map = {}
@@ -1734,7 +1734,9 @@ class ProjectSelectionDialog:
         welcome_info_row = ttk.Frame(main_frame)
         welcome_info_row.grid(row=row, column=0, columnspan=2, sticky='ew', pady=5)
         _np_styles = list(config.VISUAL_STYLE_OPTIONS)
-        _vs_cur = self.story_result.get('visual_style')
+        _vs_cur = config.match_visual_style(self.story_result.get("visual_style") or "") or (
+            config.VISUAL_STYLE_OPTIONS[0] if config.VISUAL_STYLE_OPTIONS else ""
+        )
         _nar_opts = list(config.CHARACTER_PERSON_OPTIONS)
         _nar_init = (self.story_result.get('narrator') or "").strip()
         if _nar_init not in _nar_opts:
@@ -1757,7 +1759,7 @@ class ProjectSelectionDialog:
             textvariable=new_project_visual_style_var,
             values=_np_styles,
             state="readonly",
-            width=14,
+            width=28,
         ).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(welcome_info_row, text="旁白:").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Combobox(
@@ -2358,10 +2360,7 @@ def show_initial_choice_dialog(parent, *, content_only: bool = False):
     _lang_default_display = f"{config.LANGUAGES[default_lang_key]} ({default_lang_key})"
 
     _styles = list(config.VISUAL_STYLE_OPTIONS)
-    try:
-        _style_default = _styles[_styles.index(LAST_VISUAL_STYLE)]
-    except ValueError:
-        _style_default = _styles[0]
+    _style_default = config.match_visual_style(LAST_VISUAL_STYLE) or (_styles[0] if _styles else "")
 
     opts_grid = ttk.Frame(main_frame)
     opts_grid.pack(fill=tk.X, pady=(0, 15))

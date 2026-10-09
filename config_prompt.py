@@ -1366,20 +1366,65 @@ VIDEO_FLOW_EVOLVE_CHOICES = (
     ("to_style_page", "翻书到目标风格"),
     ("to_style_dissolve", "叠化到目标风格"),
 )
+VIDEO_FLOW_CAMERA_CHOICES = (
+    ("none", "默认"),
+    ("wide", "广角 (Wide)"),
+    ("medium", "中景 (Medium)"),
+    ("close", "特写 (Close-up)"),
+    ("push", "推进 (Push In)"),
+    ("pull", "拉远 (Pull Back)"),
+    ("push_pull", "推拉 (Zoom In and Out)"),
+    ("pan", "摇移 (Pan)"),
+    ("tilt", "上摇 (Tilt Up)"),
+    ("arc", "环绕 (Arc)"),
+    ("track", "跟拍 (Tracking)"),
+    ("handheld", "手持 (Handheld)"),
+    ("compound", "复合 (Compound)"),
+)
 
 
-def video_flow_choice_label(frames: str, background: str, evolve: str) -> str:
-    """把三组选择写成一行，供窗口标题和提示词开头使用。"""
+def video_flow_choice_label(
+    frames: str, background: str, evolve: str, camera: str = "none", motion: str = ""
+) -> str:
+    """把这几组选择写成一行，供窗口标题和提示词开头使用。"""
     frame_label = dict(VIDEO_FLOW_FRAME_CHOICES).get(frames, frames)
     bg_label = dict(VIDEO_FLOW_BACKGROUND_CHOICES).get(background, background)
     parts = [frame_label, bg_label]
     if frames != "two":
         evolve_label = dict(VIDEO_FLOW_EVOLVE_CHOICES).get(evolve, evolve)
         parts.append(evolve_label)
+    if camera and camera != "none":
+        parts.append(dict(VIDEO_FLOW_CAMERA_CHOICES).get(camera, camera))
+    if (motion or "").strip():
+        parts.append(motion.strip())
     return " · ".join(parts)
 
 
-def _video_flow_instruction(frames: str, background: str, evolve: str, visual_style: str) -> str:
+def _video_flow_camera_line(camera: str) -> str:
+    """默认不写运镜。选了具体镜头，就只写这一句。"""
+    lines = {
+        "wide": "** Camera: wide-angle. Show the place and the people together. Do not push in to a face.",
+        "medium": "** Camera: a medium shot. People from about the waist up, with some of the place still visible.",
+        "close": "** Camera: a close-up. Stay on the face or the important detail. Do not pull back to a wide view.",
+        "push": "** Camera move: push in, a slow zoom toward the subject, ending closer than it began.",
+        "pull": "** Camera move: pull back, widening from the subject until more of the place is in frame.",
+        "push_pull": "** Camera move: zoom in, hold briefly, then zoom back out. One push and one pull, not a shake.",
+        "pan": "** Camera move: pan across the picture, left or right, following what the scene is looking at.",
+        "tilt": "** Camera move: tilt upward, from a lower part of the picture toward what is above.",
+        "arc": "** Camera move: a short arc around the subject. The place stays recognizable.",
+        "track": "** Camera move: tracking. The camera travels with the person or the action. Do not leave them behind.",
+        "handheld": "** Camera: handheld. A little natural sway. Not a locked tripod, and not a wild shake.",
+        "compound": "** Camera move: one compound move, for example a push-in that also pans. Keep it readable. Do not stack several unrelated moves.",
+    }
+    return lines.get(camera) or (
+        "** Do not prescribe a camera move. No push-in, pull-back, pan, tilt, zoom, arc, tracking, or handheld shake, "
+        "unless ``visual`` already describes one."
+    )
+
+
+def _video_flow_instruction(
+    frames: str, background: str, evolve: str, visual_style: str, camera: str = "none", motion: str = ""
+) -> str:
     """按这一次的画面、背景、演进选择，只写用得上的那几段。"""
     style = (visual_style or "").strip() or "realistic"
     chunks: list[str] = []
@@ -1451,6 +1496,10 @@ def _video_flow_instruction(frames: str, background: str, evolve: str, visual_st
             """** Do not put words on the picture. No background writing, no thought bubble, no subtitle, no title card.
 ** ``speaking`` and ``voiceover`` are not text to draw."""
         )
+    chunks.append(_video_flow_camera_line(camera))
+    motion_line = _video_flow_motion_line(motion)
+    if motion_line:
+        chunks.append(motion_line)
     chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
     return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
 
@@ -1576,14 +1625,21 @@ def build_video_flow_prompt(
     scene_content: list,
     language: str = "",
     host_narrator: str = "",
+    camera: str = "none",
+    motion: str = "",
 ) -> str:
-    """按画面数量、背景文字、单画面演进，组装这一次的视频提示词。"""
+    """按画面数量、背景文字、单画面演进、运镜和动画效果，组装这一次的视频提示词。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
         background = "none"
     if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES}:
         evolve = "keep"
+    if camera not in {k for k, _ in VIDEO_FLOW_CAMERA_CHOICES}:
+        camera = "none"
+    motion = (motion or "").strip()
+    if motion not in {item["name"] for item in ANIMATION_PROMPTS}:
+        motion = ""
     if frames == "two":
         evolve = "keep"
     style = (visual_style or "").strip() or "realistic"
@@ -1594,7 +1650,7 @@ def build_video_flow_prompt(
         ensure_ascii=False,
         indent=2,
     )
-    instruction = _video_flow_instruction(frames, background, evolve, style)
+    instruction = _video_flow_instruction(frames, background, evolve, style, camera, motion)
     voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
     audio = "\n".join(
@@ -1609,7 +1665,7 @@ def build_video_flow_prompt(
     )
     parts = {
         "Visual_Style": style,
-        "Video_choices": video_flow_choice_label(frames, background, evolve),
+        "Video_choices": video_flow_choice_label(frames, background, evolve, camera, motion),
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,
         "Story_Scene_Content": json_content,
@@ -3240,63 +3296,33 @@ ZERO_MIX = [
 
 
 ANIMATION_PROMPTS = [
-    {
-        "name": "歌唱",
-        "prompt": "Singing with slowly body/hand movements."
-    },
-    {
-        "name": "转镜",
-        "prompt": "Camera rotates slowly."
-    },
-    {
-        "name": "渐变",
-        "prompt": "Time-lapse / change gradually along long period."
-    },
-    {
-        "name": "动态",
-        "prompt": "The still image awakens with motion: the scene stirs gently — mist drifts, light flickers softly over old textures, and shadows breathe with calm mystery. The camera moves slowly and gracefully, maintaining perfect focus and stability. A cinematic awakening filled with depth, clarity, and timeless atmosphere."
-    },
-    {
-        "name": "轻柔",
-        "prompt": "The still image awakens with motion: the scene breathes softly, touched by time. Light flows like silk, mist curls around ancient relics, and shadows shift with tender rhythm. The camera drifts slowly, preserving a serene, clear, and dreamlike atmosphere. A poetic fantasy — gentle, warm, and still."
-    },
-    {
-        "name": "梦幻",
-        "prompt": "The still image awakens with motion: colors melt like memory, and sparkles drift in slow rhythm. Light bends through haze, reflections ripple softly. The camera floats gently as if in a dream — everything clear, smooth, and luminous. A slow, poetic vision of beauty and wonder."
-    },
-    {
-        "name": "古风",
-        "prompt": "The still image awakens with motion: sunlight filters through soft mist over tiled roofs and silk curtains. Water ripples faintly, leaves stir in a slow breeze. The camera moves with calm precision, preserving clarity and fine detail. Serene, elegant, and timeless — a cinematic memory of antiquity."
-    },
-    {
-        "name": "史诗",
-        "prompt": "The still image awakens with motion: distant clouds move slowly, banners wave softly in the wind. Light shifts gently across vast landscapes. The camera glides with slow majesty, revealing grandeur in stillness. Epic yet calm — sharp, stable, and full of reverence."
-    },
-    {
-        "name": "浪漫",
-        "prompt": "The still image awakens with motion: petals drift in soft golden air, hair and fabric move gently. The camera lingers slowly between glances and reflections, every movement tender and smooth. Warm, cinematic, and crystal clear — filled with timeless love."
-    },
-    {
-        "name": "自然",
-        "prompt": "The still image awakens with motion: sunlight filters through leaves, ripples widen slowly across water, clouds drift in quiet rhythm. The camera follows gently, holding clarity and focus. Calm, organic, and cinematic — nature breathing in slow motion."
-    },
-    {
-        "name": "科技",
-        "prompt": "The still image awakens with motion: neon pulses slowly, holographic reflections ripple with light. The camera glides in controlled, slow precision — smooth and stable. A futuristic calm filled with depth, clarity, and quiet energy."
-    },
-    {
-        "name": "灵性",
-        "prompt": "The still image awakens with motion: divine light descends softly, mist stirs with sacred calm. The camera moves slowly and reverently, unveiling stillness and grace. Ethereal and luminous — a meditative vision of transcendent peace."
-    },
-    {
-        "name": "时间流逝",
-        "prompt": "The still image awakens with motion: light changes gently, shadows lengthen, and clouds drift slowly. The camera moves subtly, preserving clarity as moments flow by. A serene unfolding of time — smooth, stable, and poetic."
-    },
-    {
-        "name": "神圣",
-        "prompt": "The still image awakens with motion: golden rays descend through the mist, touching sacred symbols. The camera ascends slowly, as if carried by gentle divine wind. A clear, majestic, and tranquil revelation — cinematic holiness in stillness."
-    }
+    {"name": "歌唱 (Singing)", "prompt": "The person sings, with slow movement of the body and hands."},
+    {"name": "转镜 (Rotate)", "prompt": "The camera rotates slowly around the scene."},
+    {"name": "延时 (Time-lapse)", "prompt": "Time passes in the picture. Light shifts, shadows lengthen, and the change is gradual, like a time-lapse."},
+    {"name": "轻动 (Gentle)", "prompt": "The still picture wakes gently. Mist drifts, light moves softly, and the camera drifts slowly. Keep it calm and stable."},
+    {"name": "梦幻 (Dream)", "prompt": "The picture moves like a dream. Colors soften, light bends through haze, and the camera floats."},
+    {"name": "古风 (Antiquity)", "prompt": "An antique Chinese scene in motion: mist over tiled roofs and silk, water and leaves stirring slowly."},
+    {"name": "史诗 (Epic)", "prompt": "An epic, calm motion: distant clouds and banners move, and the camera glides slowly across a vast place."},
+    {"name": "浪漫 (Romance)", "prompt": "A romantic motion: petals, hair, and fabric move gently. The camera lingers."},
+    {"name": "自然 (Nature)", "prompt": "Nature breathes: sunlight through leaves, slow ripples on water, clouds drifting."},
+    {"name": "科技 (Futuristic)", "prompt": "A quiet futuristic motion: light pulses slowly, reflections ripple, and the camera glides in a straight, stable line."},
+    {"name": "神圣 (Sacred)", "prompt": "A sacred, still motion: soft light descends through mist. The camera moves slowly and does not rush."},
 ]
+
+VIDEO_FLOW_MOTION_CHOICES = (("", "（空）"),) + tuple(
+    (item["name"], item["name"]) for item in ANIMATION_PROMPTS
+)
+
+
+def _video_flow_motion_line(motion: str) -> str:
+    """空选择不写动画。选了某一项，就把那一句效果写进提示词。"""
+    text = (motion or "").strip()
+    if not text:
+        return ""
+    for item in ANIMATION_PROMPTS:
+        if item["name"] == text:
+            return f"** Motion: {item['prompt']}"
+    return ""
 
 
 

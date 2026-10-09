@@ -16,22 +16,20 @@ from . import file_util
 
 
 LM_STUDIO = "qwen/qwen3.5-9b"
-#LM_STUDIO = "gemma-4-e4b-it"
 #OLLAMA = "qwen3.5:9b"
 OLLAMA = "gemma4:26b"
 
-GPT_MINI = "deepseek-flash" #"gpt-5-nano"
+GPT_MINI = "deepseek-flash"
 
-#GPT_MINI = "gpt-4o-mini"
-GEMINI_2_0_FLASH = "gemini-2.0-flash"  # 免费
-#GEMINI_2_5_FLASH = "gemini-2.5-pro-preview-06-05"  # 付费
+GEMINI = "gemini-3.5-flash-lite"
+
 MANUAL = "manual"
 
 MODELS = {
     GPT_MINI : {
         "url": "https://api.deepseek.com/v1" #"https://api.openai.com/v1"
     },
-    GEMINI_2_0_FLASH : {
+    GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
     },
     OLLAMA : {
@@ -58,7 +56,7 @@ class LLMApi:
         )
         self.google_client = OpenAI(
             api_key = os.getenv("GOOGLE_API_KEY", ""),
-            base_url =  MODELS[GPT_MINI]["url"],
+            base_url =  MODELS[GEMINI]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.ollama_client = OpenAI(
@@ -137,12 +135,12 @@ class LLMApi:
 
 
     # { "topic_category": "心智成长与存在焦虑", "topic_subtype": "觉醒期与意义崩塌", "tags": "我开始怀疑以前相信的一切, 努力好像不一定 有回报, 我看清规则却更迷茫" }
-    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True) -> Union[Dict, List]:
+    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True, *, images=None) -> Union[Dict, List]:
         max_retries = 1
         for attempt in range(max_retries):
             try:
-                content = self.generate_text(system_prompt, user_prompt)
-                if not content:
+                content = self.generate_text(system_prompt, user_prompt, images=images)
+                if not isinstance(content, str) or not content.strip():
                     return [] if expect_list else {}
 
                 if content and content.strip():
@@ -224,6 +222,7 @@ class LLMApi:
     def _create_vision_messages(
         self, system_prompt: str, image_path: str, user_prompt: str = ""
     ) -> List[Dict]:
+        """旧的看图请求。手动窗口现在只展示图片供复制，模型调用走文字。"""
         data_url = self._image_path_to_data_url(image_path)
         user_content: list[dict] = [
             {
@@ -239,6 +238,34 @@ class LLMApi:
             self.create_message("user", user_content),
         ]
 
+
+    @staticmethod
+    def _image_from_clipboard():
+        """从剪贴板取出一张图，返回独立的一份内存图像。剪贴板里没有图时返回 None。"""
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            return None
+        try:
+            clip = ImageGrab.grabclipboard()
+        except Exception:
+            return None
+        if clip is None:
+            return None
+        try:
+            if isinstance(clip, list):
+                src = next((p for p in clip if isinstance(p, str) and p and os.path.isfile(p)), "")
+                if not src:
+                    return None
+                with Image.open(src) as opened:
+                    opened.load()
+                    return opened.copy()
+            if not hasattr(clip, "copy"):
+                return None
+            clip.load()
+            return clip.copy()
+        except Exception:
+            return None
 
     @staticmethod
     def _copy_image_to_clipboard(image_path: str) -> bool:
@@ -275,13 +302,12 @@ class LLMApi:
                 "stream": False,
             }
             return self.openai_client.chat.completions.create(**request_params)
-        if model == GEMINI_2_0_FLASH:
+        if model == GEMINI:
             request_params = {
                 "model": model,
                 "messages": messages,
                 "temperature": 0.5,
-                "top_p": 0.9,
-                "max_tokens": 262144,
+                "max_tokens": 65536,
                 "stream": False,
             }
             return self.google_client.chat.completions.create(**request_params)
@@ -304,37 +330,21 @@ class LLMApi:
         return self.ollama_client.chat.completions.create(**request_params)
 
 
+    def show_manual_window(self, system_prompt, user_prompt="", *, images=None):
+        """只打开手动窗口，用来复制提示词和图片。不调用模型。
+
+        有返回图时得到内存里的 PIL Image。没有图、文字有内容时得到这段文字。
+        两边都空时得到空字符串，和原来没有贴回时一样。
+        """
+        _model, response = self._show_model_dialog(system_prompt or "", user_prompt or "", image_paths=images)
+        return response
+
     def analyze_image(
         self, analyze_prompt, image_path, user_prompt: str = ""
     ) -> Optional[str]:
-        """根据 prompt 分析图片；Manual 模式弹窗展示 system prompt 与图片供复制。"""
-        if not image_path or not os.path.exists(image_path):
-            print(f"⚠️ 图片不存在: {image_path}")
-            return None
-
-        system_prompt = analyze_prompt or ""
-        user_text = (user_prompt or "").strip()
-        messages = self._create_vision_messages(system_prompt, image_path, user_text)
-
-        try:
-            if self.model == MANUAL or self.model is None:
-                model, manual_response = self._show_model_dialog(
-                    system_prompt,
-                    user_prompt=user_text or None,
-                    image_path=image_path,
-                )
-                if model == MANUAL:
-                    return manual_response
-            else:
-                model = self.model
-
-            response = self._chat_completions(model, messages)
-            return self.parse_response(response)
-        except Exception as e:
-            print(f"❌ 图片分析 API 调用失败: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        """最多 3 张图只在手动窗口里供双击复制。发给模型的仍是文字。"""
+        user_text = (user_prompt or "").strip() or "Continue."
+        return self.generate_text(analyze_prompt or "", user_text, images=image_path)
 
 
     def analyze_image_json(
@@ -347,7 +357,7 @@ class LLMApi:
     ) -> Union[Dict, List]:
         """分析图片并解析为 JSON（与 generate_json 相同的清洗/解析流程）。"""
         content = self.analyze_image(analyze_prompt, image_path, user_prompt=user_prompt)
-        if not content or not str(content).strip():
+        if not isinstance(content, str) or not content.strip():
             return [] if expect_list else {}
 
         content_string = str(content).strip()
@@ -368,7 +378,25 @@ class LLMApi:
         return file_util.parse_json(content_string=content_string, expect_list=expect_list)
 
 
-    def generate_text(self, system_prompt, user_prompt) -> str:
+    @staticmethod
+    def _normalize_image_paths(images) -> list:
+        """一张路径或一个列表，最多留 3 张存在的图。"""
+        if not images:
+            return []
+        if isinstance(images, str):
+            images = [images]
+        kept = []
+        for raw in images:
+            path = (raw or "").strip() if isinstance(raw, str) else ""
+            if not path or not os.path.isfile(path) or path in kept:
+                continue
+            kept.append(path)
+            if len(kept) >= 3:
+                break
+        return kept
+
+
+    def generate_text(self, system_prompt, user_prompt, *, images=None):
         user_prompt = user_prompt or "Continue."
         messages=[
             self.create_message("system", system_prompt),
@@ -376,9 +404,11 @@ class LLMApi:
         ]
 
         try:
-            # popup dialog to ask user choose from GPT_MINI, GEMINI_2_0_FLASH, or MANUAL, return choice as model
+            # popup dialog to ask user choose from GPT_MINI, GEMINI, or MANUAL, return choice as model
             if self.model == MANUAL or self.model is None:
-                model, manual_response = self._show_model_dialog(system_prompt, user_prompt)
+                model, manual_response = self._show_model_dialog(
+                    system_prompt, user_prompt, image_paths=images
+                )
                 if model == MANUAL:
                     return manual_response
             else:
@@ -396,14 +426,13 @@ class LLMApi:
                 response = self.openai_client.chat.completions.create(**request_params)
                 return self.parse_response(response)
 
-            elif model == GEMINI_2_0_FLASH:
+            elif model == GEMINI:
 
                 request_params = {
-                    "model": model,  # 使用确定的模型名称
+                    "model": model,
                     "messages": messages,
-                    "temperature": 0.5, # Low (0.0–0.3) predictable;  Medium (0.4–0.7) creativity & reliability;  High (0.8–1.0) very creative
-                    "top_p": 0.9,
-                    "max_tokens": 262144,
+                    "temperature": 0.5,
+                    "max_tokens": 65536,
                     "stream": False
                 }
                 response = self.google_client.chat.completions.create(**request_params)
@@ -459,14 +488,15 @@ class LLMApi:
         system_prompt,
         user_prompt=None,
         *,
-        image_path: Optional[str] = None,
+        image_paths=None,
     ) -> Tuple[str, Optional[str]]:
-        """弹出对话框：选模型；左栏 System+Response，右栏 Image 或 User Prompt。"""
-        is_image_mode = bool(image_path)
+        """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。"""
+        image_paths = self._normalize_image_paths(image_paths)
+        is_image_mode = bool(image_paths)
         dialog_w = dialog_h = 1000
         parent = self._get_dialog_parent()
         dialog = tk.Toplevel(parent)
-        dialog.title("分析图片 - 选择 LLM 模型" if is_image_mode else "选择 LLM 模型")
+        dialog.title("选择 LLM 模型")
         dialog.geometry(f"{dialog_w}x{dialog_h}")
         dialog.minsize(900, 900)
         dialog.transient(parent)
@@ -497,10 +527,10 @@ class LLMApi:
         model_btn_row = ttk.Frame(model_frame)
         model_btn_row.pack(fill=tk.X)
         for mid, title in [
-            (GPT_MINI, f"GPT Mini ({GPT_MINI})"),
-            (GEMINI_2_0_FLASH, f"Gemini 2.0 Flash ({GEMINI_2_0_FLASH})"),
-            (OLLAMA, f"OLLAMA ({OLLAMA})"),
-            (MANUAL, f"Manual ({MANUAL})"),
+            (GPT_MINI, f"GPT"),
+            (GEMINI, "Gemini"),
+            (OLLAMA, f"OLLAMA"),
+            (MANUAL, f"Manual"),
         ]:
             ttk.Button(
                 model_btn_row,
@@ -518,42 +548,35 @@ class LLMApi:
 
         left_col = ttk.Frame(body, padding=(0, 4))
         left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        left_col.rowconfigure(0, weight=1)
-        left_col.rowconfigure(1, weight=0)
-        left_col.rowconfigure(2, weight=1)
         left_col.columnconfigure(0, weight=1)
+        response_row = 2 if is_image_mode else 1
+        left_col.rowconfigure(0, weight=1)
+        if is_image_mode:
+            left_col.rowconfigure(1, weight=1)
+        left_col.rowconfigure(response_row, weight=1)
 
         system_frame = ttk.LabelFrame(left_col, text="System Prompt", padding=8)
         system_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
-        system_frame.rowconfigure(1, weight=1)
+        system_frame.rowconfigure(0, weight=1)
         system_frame.columnconfigure(0, weight=1)
-        system_label = (
-            "双击复制到剪贴板"
-            if is_image_mode
-            else ""
-        )
-        if system_label:
-            ttk.Label(system_frame, text=system_label, font=("TkDefaultFont", 8)).grid(
-                row=0, column=0, sticky="w", pady=(0, 4)
-            )
-        system_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, height=10)
-        system_text.grid(row=1, column=0, sticky="nsew")
+        system_text = scrolledtext.ScrolledText(system_frame, wrap=tk.WORD, height=8)
+        system_text.grid(row=0, column=0, sticky="nsew")
         if isinstance(system_prompt, str):
             system_text.insert("1.0", system_prompt)
+
+        user_text = None
         if is_image_mode:
-            def on_system_double_click(_event):
-                content = system_text.get("1.0", tk.END).strip()
-                dialog.clipboard_clear()
-                dialog.clipboard_append(content)
-                dialog.update()
-
-            system_text.bind("<Double-Button-1>", on_system_double_click)
-
-        button_frame = ttk.Frame(left_col)
-        button_frame.grid(row=1, column=0, sticky="e", pady=(0, 6))
+            user_frame = ttk.LabelFrame(left_col, text="User Prompt", padding=8)
+            user_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 6))
+            user_frame.rowconfigure(0, weight=1)
+            user_frame.columnconfigure(0, weight=1)
+            user_text = scrolledtext.ScrolledText(user_frame, wrap=tk.WORD, height=8)
+            user_text.grid(row=0, column=0, sticky="nsew")
+            if isinstance(user_prompt, str):
+                user_text.insert("1.0", user_prompt)
 
         response_frame = ttk.LabelFrame(left_col, text="响应 (Response) - 仅 Manual", padding=8)
-        response_frame.grid(row=2, column=0, sticky="nsew")
+        response_frame.grid(row=response_row, column=0, sticky="nsew")
         response_frame.rowconfigure(1, weight=1)
         response_frame.columnconfigure(0, weight=1)
         ttk.Label(response_frame, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8)).grid(
@@ -562,64 +585,76 @@ class LLMApi:
         response_text = scrolledtext.ScrolledText(response_frame, wrap=tk.WORD, height=8)
         response_text.grid(row=1, column=0, sticky="nsew")
 
-        right_title = "Image" if is_image_mode else "User Prompt"
-        right_col = ttk.LabelFrame(body, text=right_title, padding=8)
+        right_col = ttk.Frame(body)
         right_col.grid(row=0, column=1, sticky="nsew")
-        right_col.rowconfigure(1, weight=1)
         right_col.columnconfigure(0, weight=1)
+        response_image = [None]
 
-        user_text = None
         if is_image_mode:
-            ttk.Label(
-                right_col,
-                text=f"{os.path.basename(image_path)}（双击复制图片）",
-                font=("TkDefaultFont", 9, "bold"),
-            ).grid(row=0, column=0, sticky="w", pady=(0, 4))
-            image_holder = ttk.Frame(right_col)
-            image_row = 1
-            image_holder.grid(row=image_row, column=0, sticky="nsew")
+            right_col.rowconfigure(0, weight=2)
+            right_col.rowconfigure(1, weight=1)
+            input_box = ttk.LabelFrame(right_col, text="图片（双击复制这一张）", padding=8)
+            input_box.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+            input_box.columnconfigure(0, weight=1)
             photo_ref = []
-            try:
-                pil_img = Image.open(image_path)
-                thumb_h = 520 if (user_prompt or "").strip() else 880
-                pil_img.thumbnail((420, thumb_h), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(pil_img)
+            thumb_h = {1: 420, 2: 200, 3: 130}[len(image_paths)]
+            for index, path in enumerate(image_paths):
+                input_box.rowconfigure(index, weight=1)
+                slot = ttk.Frame(input_box)
+                slot.grid(row=index, column=0, sticky="nsew", pady=4)
+                ttk.Label(slot, text=os.path.basename(path), font=("TkDefaultFont", 9, "bold")).pack(anchor=tk.W)
+                try:
+                    pil_img = Image.open(path)
+                    pil_img.thumbnail((400, thumb_h), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(pil_img)
+                    photo_ref.append(photo)
+                    image_label = ttk.Label(slot, image=photo)
+                    image_label.pack(anchor=tk.CENTER, expand=True)
+                    image_label.bind(
+                        "<Double-Button-1>",
+                        lambda _e, one=path: self._copy_image_to_clipboard(one),
+                    )
+                except Exception as exc:
+                    ttk.Label(slot, text=f"无法加载图片: {exc}").pack(anchor=tk.W)
+
+            reply_box = ttk.LabelFrame(right_col, text="返回的图（双击从剪贴板粘贴）", padding=8)
+            reply_box.grid(row=1, column=0, sticky="nsew")
+            reply_hint = ttk.Label(reply_box, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8))
+            reply_hint.pack(anchor=tk.W, pady=(0, 4))
+            reply_hit = tk.Frame(reply_box, height=160)
+            reply_hit.pack(fill=tk.BOTH, expand=True)
+            reply_pic = ttk.Label(reply_hit)
+            reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
+
+            def paste_response_image(_event=None):
+                img = self._image_from_clipboard()
+                if img is None:
+                    reply_hint.config(text="剪贴板里没有图片")
+                    return "break"
+                response_image[0] = img
+                thumb = img.copy()
+                thumb.thumbnail((400, 220), Image.Resampling.LANCZOS)
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGBA")
+                photo = ImageTk.PhotoImage(thumb)
                 photo_ref.append(photo)
-                dialog._llm_dialog_photo_ref = photo_ref
-                image_label = ttk.Label(image_holder, image=photo)
-                image_label.pack(anchor=tk.CENTER, expand=True)
-                image_label.bind(
-                    "<Double-Button-1>",
-                    lambda _e: self._copy_image_to_clipboard(image_path),
-                )
-            except Exception as e:
-                ttk.Label(image_holder, text=f"无法加载图片: {e}").pack(anchor=tk.W)
-            if (user_prompt or "").strip():
-                ttk.Label(
-                    right_col,
-                    text="User Prompt（Story JSON，双击复制）",
-                    font=("TkDefaultFont", 9, "bold"),
-                ).grid(row=2, column=0, sticky="w", pady=(8, 4))
-                user_text = scrolledtext.ScrolledText(right_col, wrap=tk.WORD, height=10)
-                user_text.grid(row=3, column=0, sticky="nsew")
-                user_text.insert("1.0", user_prompt)
-                right_col.rowconfigure(image_row, weight=2)
-                right_col.rowconfigure(3, weight=1)
+                reply_pic.configure(image=photo)
+                reply_hint.config(text="已贴上返回的图")
+                return "break"
 
-                def on_user_double_click(_event):
-                    content = user_text.get("1.0", tk.END).strip()
-                    dialog.clipboard_clear()
-                    dialog.clipboard_append(content)
-                    dialog.update()
-
-                user_text.bind("<Double-Button-1>", on_user_double_click)
-            else:
-                right_col.rowconfigure(image_row, weight=1)
+            for widget in (reply_box, reply_hint, reply_hit, reply_pic):
+                widget.bind("<Double-Button-1>", paste_response_image)
+            dialog._llm_dialog_photo_ref = photo_ref
         else:
-            ttk.Label(right_col, text="User Prompt:", font=("TkDefaultFont", 9, "bold")).grid(
+            prompt_box = ttk.LabelFrame(right_col, text="User Prompt", padding=8)
+            prompt_box.grid(row=0, column=0, sticky="nsew")
+            right_col.rowconfigure(0, weight=1)
+            prompt_box.columnconfigure(0, weight=1)
+            prompt_box.rowconfigure(1, weight=1)
+            ttk.Label(prompt_box, text="User Prompt:", font=("TkDefaultFont", 9, "bold")).grid(
                 row=0, column=0, sticky="w", pady=(0, 4)
             )
-            user_text = scrolledtext.ScrolledText(right_col, wrap=tk.WORD, height=20)
+            user_text = scrolledtext.ScrolledText(prompt_box, wrap=tk.WORD, height=20)
             user_text.grid(row=1, column=0, sticky="nsew")
             if isinstance(user_prompt, str):
                 user_text.insert("1.0", user_prompt)
@@ -655,7 +690,7 @@ class LLMApi:
 
         def update_response_visibility():
             if selected_model.get() == MANUAL:
-                response_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+                response_frame.grid(row=response_row, column=0, sticky="nsew", pady=(0, 6))
             else:
                 response_frame.grid_remove()
 
@@ -673,7 +708,11 @@ class LLMApi:
             model = selected_model.get()
             result_model[0] = model
             if model == MANUAL:
-                result_response[0] = response_text.get("1.0", tk.END).strip()
+                text = response_text.get("1.0", tk.END).strip()
+                if response_image[0] is not None:
+                    result_response[0] = response_image[0]
+                else:
+                    result_response[0] = text
                 dialog.clipboard_clear()
                 dialog.clipboard_append(get_request_copy_content())
                 dialog.update()
@@ -691,12 +730,16 @@ class LLMApi:
             dialog.clipboard_append(get_request_copy_content())
             dialog.update()
 
-        ttk.Button(button_frame, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(button_frame, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=5)
+        action_box = ttk.Frame(model_btn_row)
+        action_box.pack(side=tk.RIGHT)
+        ttk.Button(action_box, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
+        ttk.Button(action_box, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
+        ttk.Button(action_box, text="重新拷贝提示词", command=on_copy).pack(side=tk.RIGHT, pady=2)
+        ttk.Separator(model_btn_row, orient=tk.VERTICAL).pack(side=tk.RIGHT, fill=tk.Y, padx=48, pady=2)
 
         on_copy()
         dialog.wait_window()
-        model = result_model[0] if result_model[0] is not None else GPT_MINI
+        model = result_model[0] if result_model[0] is not None else GEMINI
         response = result_response[0] if result_response[0] is not None else None
         return model, response
 

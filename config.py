@@ -129,18 +129,65 @@ def chinese_convert(text, language):
 # 仅当文件缺失或解析失败时使用下方回退列表。
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
-    "pixar-art cartoon + realistic",
-    "pixar-art cartoon",
-    "realistic",
-    "cartoon",
-    "中国画(水墨/花鸟/山水)",
-    "pixar-art cartoon + 中国画(水墨/花鸟/山水)",
-    "realistic + 中国画(水墨/花鸟/山水)",
-    "西洋画(油画/水彩)",
-    "复古(胶片/旧照片)",
-    "黑白连环画",
-    "工笔重彩",
+    "写实 (Realistic)",
+    "三维卡通 (3D Cartoon)",
+    "中国画 (Chinese Painting)",
+    "工笔重彩 (Gongbi)",
+    "水彩 (Watercolor)",
+    "油画 (Oil Painting)",
+    "铅笔素描 (Pencil Drawing)",
+    "黑白连环画 (Ink Comic)",
+    "黏土动画 (Claymation)",
+    "复古胶片 (Vintage Film)",
+    "长曝光 (Long Exposure)",
+    "移轴摄影 (Tilt-shift)",
+    "魔幻现实主义 (Magical Realism)",
+    "奇幻氛围 (Wondrous Atmosphere)",
 ]
+
+# 旧下拉名并进上面的「中文 (English)」，已保存的项目仍能对上。
+_VISUAL_STYLE_ALIASES = {
+    "写实": "写实 (Realistic)",
+    "realistic": "写实 (Realistic)",
+    "三维卡通": "三维卡通 (3D Cartoon)",
+    "pixar-art cartoon": "三维卡通 (3D Cartoon)",
+    "pixar-art cartoon + realistic": "三维卡通 (3D Cartoon)",
+    "cartoon": "三维卡通 (3D Cartoon)",
+    "3D Cartoon Style": "三维卡通 (3D Cartoon)",
+    "中国画": "中国画 (Chinese Painting)",
+    "中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
+    "pixar-art cartoon + 中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
+    "realistic + 中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
+    "工笔重彩": "工笔重彩 (Gongbi)",
+    "水彩": "水彩 (Watercolor)",
+    "Watercolor Painting Style": "水彩 (Watercolor)",
+    "油画": "油画 (Oil Painting)",
+    "西洋画(油画/水彩)": "油画 (Oil Painting)",
+    "Oil Painting Style": "油画 (Oil Painting)",
+    "铅笔素描": "铅笔素描 (Pencil Drawing)",
+    "Pencil Drawing Style": "铅笔素描 (Pencil Drawing)",
+    "黑白连环画": "黑白连环画 (Ink Comic)",
+    "黏土动画": "黏土动画 (Claymation)",
+    "Claymation Style": "黏土动画 (Claymation)",
+    "复古胶片": "复古胶片 (Vintage Film)",
+    "复古(胶片/旧照片)": "复古胶片 (Vintage Film)",
+    "长曝光": "长曝光 (Long Exposure)",
+    "Long Exposure Photography": "长曝光 (Long Exposure)",
+    "移轴摄影": "移轴摄影 (Tilt-shift)",
+    "Tilt-shift Photography": "移轴摄影 (Tilt-shift)",
+    "魔幻现实主义": "魔幻现实主义 (Magical Realism)",
+    "Magical Realism": "魔幻现实主义 (Magical Realism)",
+    "奇幻氛围": "奇幻氛围 (Wondrous Atmosphere)",
+    "Wondrous Atmosphere": "奇幻氛围 (Wondrous Atmosphere)",
+}
+
+
+def match_visual_style(value: str) -> str:
+    """当前列表里的名字原样返回，旧名字换成「中文 (English)」。对不上就返回空。"""
+    raw = (value or "").strip()
+    if raw in VISUAL_STYLE_OPTIONS:
+        return raw
+    return _VISUAL_STYLE_ALIASES.get(raw, "")
 
 # SCENE 窗「对话方式」。顺序即下拉顺序。生成场景 JSON 时整段说明追加到所选 LM 提示词末尾。
 DIALOGUE_MODE_OPTIONS = [

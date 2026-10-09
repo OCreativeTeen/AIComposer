@@ -942,9 +942,11 @@ def apply_queue_item_yt_prefs(item: dict) -> dict:
     if lang not in config.LANGUAGES:
         lang = project_manager.LAST_YT_LANGUAGE if project_manager.LAST_YT_LANGUAGE in config.LANGUAGES else "tw"
 
-    vs = (item.get("visual_style") or prefs.get("visual_style") or project_manager.LAST_VISUAL_STYLE or "").strip()
-    if vs not in config.VISUAL_STYLE_OPTIONS:
-        vs = project_manager.LAST_VISUAL_STYLE
+    vs = config.match_visual_style(
+        item.get("visual_style") or prefs.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""
+    )
+    if not vs:
+        vs = config.VISUAL_STYLE_OPTIONS[0] if config.VISUAL_STYLE_OPTIONS else ""
 
     narr_opts = config.narrator_person_options()
     nar = (item.get("narrator") or prefs.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
