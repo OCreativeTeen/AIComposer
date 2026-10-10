@@ -2851,17 +2851,6 @@ class WorkflowGUI:
             self._apply_editor_pick(pick, stage_download=True)
             return
 
-    def _open_scene_clip_tools(self) -> None:
-        picked = self._ask_near_choices(
-            self.btn_clip_tools,
-            "片段处理",
-            [("import", "导入片段"), ("edit", "编辑当前片段")],
-        )
-        if picked == "import":
-            self.choose_import_video()
-        elif picked == "edit":
-            self._edit_current_scene_clip()
-
     def _edit_current_scene_clip(self) -> None:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         clip = get_file_path(scene, "clip") if scene else ""
@@ -3814,7 +3803,7 @@ class WorkflowGUI:
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
         self.btn_scene_edit = ttk.Button(
-            video_control_frame, text="场景变换", command=self._ask_scene_structure, width=8
+            video_control_frame, text="场景分合", command=self._ask_scene_structure, width=8
         )
         self.btn_scene_edit.pack(side=tk.LEFT, padx=1)
         self.btn_playhead_split = ttk.Button(
@@ -3836,21 +3825,18 @@ class WorkflowGUI:
 
         separator = ttk.Separator(video_control_frame, orient='vertical')
         separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        # 在当前这场和上一场、或和下一场之间插入过渡
-        self.btn_add_scene = ttk.Button(
-            video_control_frame, text="插入过渡", command=self.add_scene_insert, width=8
-        )
-        self.btn_add_scene.pack(side=tk.LEFT, padx=1)
-
-        separator = ttk.Separator(video_control_frame, orient='vertical')
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        self.btn_clip_tools = ttk.Button(
+        ttk.Button(
             video_control_frame,
-            text="片段处理",
+            text="导入片段",
             width=8,
-            command=self._open_scene_clip_tools,
-        )
-        self.btn_clip_tools.pack(side=tk.LEFT, padx=2)
+            command=self.choose_import_video,
+        ).pack(side=tk.LEFT, padx=1)
+        ttk.Button(
+            video_control_frame,
+            text="编辑片段",
+            width=8,
+            command=self._edit_current_scene_clip,
+        ).pack(side=tk.LEFT, padx=1)
         ttk.Button(video_control_frame, text="⏱", command=self.track_recover, width=3).pack(side=tk.RIGHT, padx=(8, 2))
 
         #ttk.Button(video_control_frame, text="背起", command=self.zero_start, width=5).pack(side=tk.LEFT, padx=1)
@@ -3994,6 +3980,13 @@ class WorkflowGUI:
             command=self._ask_scene_split,
         )
         self._scene_split_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self.btn_add_scene = ttk.Button(
+            scene_text_row,
+            text="插入过渡",
+            width=8,
+            command=self.add_scene_insert,
+        )
+        self.btn_add_scene.pack(side=tk.LEFT, padx=(4, 0))
         ttk.Separator(scene_text_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=22)
         ttk.Button(
             scene_text_row,
@@ -6628,7 +6621,7 @@ class WorkflowGUI:
     def _ask_scene_structure(self) -> None:
         picked = self._ask_near_choices(
             self.btn_scene_edit,
-            "场景变换",
+            "场景分合",
             [
                 ("split", "从播放点分离"),
                 ("delete", "删除本场"),
@@ -6648,7 +6641,7 @@ class WorkflowGUI:
         }.get(picked or "")
         if not confirm:
             return
-        if not messagebox.askyesno("场景变换", confirm, parent=self.root):
+        if not messagebox.askyesno("场景分合", confirm, parent=self.root):
             return
         if picked == "split":
             self.split_scene()
@@ -9592,24 +9585,24 @@ class WorkflowGUI:
     def _swap_with_neighbor(self, delta: int) -> None:
         """和上一场或下一场对调位置。两边的内容整场换过去。"""
         if not self.workflow or not self.workflow.scenes:
-            messagebox.showinfo("场景变换", "没有场景。", parent=self.root)
+            messagebox.showinfo("场景分合", "没有场景。", parent=self.root)
             return
         self.update_current_scene()
         other = self.current_scene_index + delta
         if other < 0 or other >= len(self.workflow.scenes):
             messagebox.showinfo(
-                "场景变换",
+                "场景分合",
                 "没有上一场。" if delta < 0 else "没有下一场。",
                 parent=self.root,
             )
             return
         if not self.workflow.swap_scene(self.current_scene_index, other):
-            messagebox.showinfo("场景变换", "这两场没有交换。", parent=self.root)
+            messagebox.showinfo("场景分合", "这两场没有交换。", parent=self.root)
             return
         self.refresh_gui_scenes()
         show_auto_close_popup(
             self.root,
-            "场景变换",
+            "场景分合",
             "已与上一场交换。" if delta < 0 else "已与下一场交换。",
         )
 

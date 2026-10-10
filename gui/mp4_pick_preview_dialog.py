@@ -337,8 +337,8 @@ def ask_mp4_pick_with_trim_preview(
     audio_state = {"clip": None, "fn": "", "armed": False}
     audio_use_var = tk.StringVar(value="replace")
     mix_ratio_var = tk.DoubleVar(value=0.5)
-    fade_in_on = tk.BooleanVar(value=False)
-    fade_out_on = tk.BooleanVar(value=False)
+    fade_in_on = tk.BooleanVar(value=True)
+    fade_out_on = tk.BooleanVar(value=True)
     fade_in_sec = tk.DoubleVar(value=1.0)
     fade_out_sec = tk.DoubleVar(value=1.0)
     audio_edit_widgets: list = []
@@ -447,28 +447,32 @@ def ask_mp4_pick_with_trim_preview(
 
     right = ttk.Frame(body)
     right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    split_av = bool(audio_sources)
+    if split_av:
+        right.rowconfigure(0, weight=2)
+        right.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+        video_pane = ttk.Frame(right)
+        video_pane.grid(row=0, column=0, sticky="nsew")
+        video_pane.rowconfigure(0, weight=1)
+        video_pane.columnconfigure(0, weight=1)
+        audio_pane = ttk.LabelFrame(right, text="音频", padding=6)
+        audio_pane.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+    else:
+        video_pane = right
+        audio_pane = None
 
-    preview_canvas = tk.Canvas(right, bg="black", height=280, highlightthickness=1, highlightbackground="#444")
-    preview_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
-
-    time_lbl = ttk.Label(right, text="")
-    time_lbl.pack(anchor=tk.W)
-
-    trim_box = ttk.LabelFrame(right, text="选中区间", padding=8)
-    trim_box.pack(fill=tk.X, pady=(4, 0))
-
-    spin_row = ttk.Frame(trim_box)
-    spin_row.pack(fill=tk.X, pady=(0, 6))
-    ttk.Label(spin_row, text="起点").pack(side=tk.LEFT, padx=(0, 4))
-    start_spin = ttk.Spinbox(spin_row, from_=0.0, to=9999.0, increment=0.01, width=10)
-    start_spin.pack(side=tk.LEFT, padx=(0, 12))
-    ttk.Label(spin_row, text="终点").pack(side=tk.LEFT, padx=(0, 4))
-    end_spin = ttk.Spinbox(spin_row, from_=0.0, to=9999.0, increment=0.01, width=10)
-    end_spin.pack(side=tk.LEFT, padx=(0, 12))
-    ttk.Button(spin_row, text="设为播放位置→起点", command=lambda: _set_start_playhead()).pack(
-        side=tk.LEFT, padx=(0, 6)
-    )
-    ttk.Button(spin_row, text="设为播放位置→终点", command=lambda: _set_end_playhead()).pack(side=tk.LEFT)
+    preview_canvas = tk.Canvas(video_pane, bg="black", height=280, highlightthickness=1, highlightbackground="#444")
+    time_lbl = ttk.Label(video_pane, text="")
+    trim_box = ttk.LabelFrame(video_pane, text="视频" if split_av else "选中区间", padding=8)
+    if split_av:
+        preview_canvas.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+        time_lbl.grid(row=1, column=0, sticky="w")
+        trim_box.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+    else:
+        preview_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+        time_lbl.pack(anchor=tk.W)
+        trim_box.pack(fill=tk.X, pady=(4, 0))
 
     speed_row = ttk.Frame(trim_box)
     speed_row.pack(fill=tk.X, pady=(0, 6))
@@ -496,6 +500,17 @@ def ask_mp4_pick_with_trim_preview(
 
     timeline = tk.Canvas(trim_box, height=52, bg="#e8e8e8", highlightthickness=0, cursor="hand2")
     timeline.pack(fill=tk.X, pady=(4, 0))
+    audio_time_lbl = None
+    audio_timeline = None
+    audio_at = [0.0]
+    audio_drag = [None]
+    if audio_pane is not None:
+        audio_time_lbl = ttk.Label(audio_pane, text="还没有选择音频")
+        audio_time_lbl.pack(anchor=tk.W)
+        audio_timeline = tk.Canvas(
+            audio_pane, height=44, bg="#e8e8e8", highlightthickness=0, cursor="hand2",
+        )
+        audio_timeline.pack(fill=tk.X, pady=(6, 0))
 
     radio_var = tk.StringVar(value="")
     dest_var = tk.StringVar(value=(dest_options[0][0] if dest_options else ""))
@@ -543,131 +558,143 @@ def ask_mp4_pick_with_trim_preview(
             return audio_state["clip"]
         return clip[0]
 
-    def _snap_time(t: float) -> float:
-        c = _c()
+    def _ui_clip():
+        if split_av:
+            return clip[0]
+        return _c()
+
+    def _snap_time(t: float, c=None) -> float:
+        c = _ui_clip() if c is None else c
+        if c is None:
+            return max(0.0, float(t))
         t = max(0.0, min(float(t), c.duration))
         frame = int(round(t * c.fps))
         frame = max(0, min(frame, c.frame_count - 1))
         return frame / c.fps
 
     def _save_trim() -> None:
-        c = _c()
+        c = _ui_clip()
         if c is None:
             return
-        try:
-            s = float(start_spin.get())
-            e = float(end_spin.get())
-        except (tk.TclError, ValueError):
-            s, e = c.start, c.end
-        s = _snap_time(s)
-        e = _snap_time(e)
+        s = _snap_time(c.start, c)
+        e = _snap_time(c.end, c)
         if e < s + _PREVIEW_MIN_CLIP_SEC:
-            e = _snap_time(s + _PREVIEW_MIN_CLIP_SEC)
+            e = _snap_time(s + _PREVIEW_MIN_CLIP_SEC, c)
         c.start = max(0.0, min(s, c.duration - _PREVIEW_MIN_CLIP_SEC))
         c.end = max(c.start + _PREVIEW_MIN_CLIP_SEC, min(e, c.duration))
 
     def _apply_ui() -> None:
         syncing_ui[0] = True
         try:
-            c = _c()
-            start_spin.config(to=c.duration)
-            end_spin.config(to=c.duration)
-            start_spin.delete(0, tk.END)
-            start_spin.insert(0, f"{c.start:.3f}")
-            end_spin.delete(0, tk.END)
-            end_spin.insert(0, f"{c.end:.3f}")
-            speed_lbl.config(text=f"{c.speed:.1f}×")
-            seg = max(0.0, c.end - c.start)
-            out_dur = seg / max(0.01, c.speed)
-            spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:.1f}）" if abs(c.speed - 1.0) > 0.001 else ""
-            time_lbl.config(
-                text=f"{os.path.basename(c.path)}  ·  {_fmt_time(current_t[0])} / {_fmt_time(c.duration)}  ({c.fps:.2f} fps)"
-            )
-            sel_dur_lbl.config(
-                text=f"选中时长: {_fmt_time(seg)} / 全长 {_fmt_time(c.duration)}{spd_note}"
-            )
+            c = _ui_clip()
+            if c is not None:
+                speed_lbl.config(text=f"{c.speed:.1f}×")
+                seg = max(0.0, c.end - c.start)
+                out_dur = seg / max(0.01, c.speed)
+                spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:.1f}）" if abs(c.speed - 1.0) > 0.001 else ""
+                head = video_at[0] if split_av and focus[0] == "audio" else current_t[0]
+                time_lbl.config(
+                    text=f"{os.path.basename(c.path)}  ·  {_fmt_time(head)} / {_fmt_time(c.duration)}  ({c.fps:.2f} fps)"
+                )
+                sel_dur_lbl.config(
+                    text=f"选中时长: {_fmt_time(seg)} / 全长 {_fmt_time(c.duration)}{spd_note}"
+                )
             _draw_timeline()
+            _draw_audio_bar()
             _refresh_mix_span()
         finally:
             syncing_ui[0] = False
 
-    def _on_spin_commit(_e=None) -> None:
-        if syncing_ui[0]:
-            return
-        _save_trim()
-        _apply_ui()
-
-    for sp in (start_spin, end_spin):
-        sp.bind("<Return>", _on_spin_commit)
-        sp.bind("<FocusOut>", _on_spin_commit)
-
-    def _set_start_playhead() -> None:
-        c = _c()
-        c.start = _snap_time(current_t[0])
-        if c.end <= c.start + _PREVIEW_MIN_CLIP_SEC:
-            c.end = _snap_time(min(c.duration, c.start + _PREVIEW_MIN_CLIP_SEC))
-        _apply_ui()
-
-    def _set_end_playhead() -> None:
-        c = _c()
-        c.end = _snap_time(current_t[0])
-        if c.end <= c.start + _PREVIEW_MIN_CLIP_SEC:
-            c.start = _snap_time(max(0.0, c.end - _PREVIEW_MIN_CLIP_SEC))
-        _apply_ui()
-
     def _speed_up() -> None:
-        c = _c()
+        c = _ui_clip()
+        if c is None:
+            return
         c.speed = round(min(_PREVIEW_SPEED_MAX, c.speed + _PREVIEW_SPEED_STEP), 1)
         _apply_ui()
 
     def _speed_down() -> None:
-        c = _c()
+        c = _ui_clip()
+        if c is None:
+            return
         c.speed = round(max(_PREVIEW_SPEED_MIN, c.speed - _PREVIEW_SPEED_STEP), 1)
         _apply_ui()
 
-    def _time_to_x(t: float) -> float:
-        c = _c()
-        w = max(timeline.winfo_width(), 200)
-        return 2 + (t / c.duration) * (w - 4) if c.duration > 0 else 2.0
+    def _time_to_x(t: float, c=None, canvas=None) -> float:
+        c = _ui_clip() if c is None else c
+        canvas = timeline if canvas is None else canvas
+        w = max(canvas.winfo_width(), 200)
+        if c is None or c.duration <= 0:
+            return 2.0
+        return 2 + (t / c.duration) * (w - 4)
 
-    def _x_to_time(x: float) -> float:
-        c = _c()
-        w = max(timeline.winfo_width(), 200)
+    def _x_to_time(x: float, c=None, canvas=None) -> float:
+        c = _ui_clip() if c is None else c
+        canvas = timeline if canvas is None else canvas
+        w = max(canvas.winfo_width(), 200)
         frac = max(0.0, min(1.0, (x - 2) / max(1, w - 4)))
-        return _snap_time(frac * c.duration)
+        if c is None:
+            return 0.0
+        return _snap_time(frac * c.duration, c)
 
     def _draw_timeline() -> None:
-        c = _c()
+        c = _ui_clip()
         timeline.delete("all")
         w = max(timeline.winfo_width(), 200)
         timeline.create_rectangle(2, 18, w - 2, 34, fill="#c8c8c8", outline="#999")
         if c is None or c.duration <= 0:
             return
-        x0, x1 = _time_to_x(c.start), _time_to_x(c.end)
+        x0, x1 = _time_to_x(c.start, c, timeline), _time_to_x(c.end, c, timeline)
         timeline.create_rectangle(x0, 14, x1, 38, fill="#4a9fd8", outline="#2a6fa0", width=2)
         for x, tag in ((x0, "起点"), (x1, "终点")):
             timeline.create_rectangle(
                 x - _PREVIEW_HANDLE_PX, 10, x + _PREVIEW_HANDLE_PX, 42, fill="#2a6fa0", outline="#1a4f70",
             )
             timeline.create_text(x, 48, text=tag, fill="#333", font=("Arial", 8))
-        if current_t[0] > 0 or playing[0]:
-            xp = _time_to_x(current_t[0])
+        head = video_at[0] if split_av and focus[0] == "audio" else current_t[0]
+        if head > 0 or (playing[0] and focus[0] != "audio"):
+            xp = _time_to_x(head, c, timeline)
             timeline.create_line(xp, 8, xp, 44, fill="#e03030", width=2)
+        _draw_audio_bar()
+
+    def _draw_audio_bar() -> None:
+        if audio_timeline is None:
+            return
+        ac = audio_state.get("clip")
+        audio_timeline.delete("all")
+        w = max(audio_timeline.winfo_width(), 200)
+        audio_timeline.create_rectangle(2, 12, w - 2, 28, fill="#c8c8c8", outline="#999")
+        if ac is None or ac.duration <= 0:
+            if audio_time_lbl is not None:
+                audio_time_lbl.config(text="还没有选择音频")
+            return
+        x0, x1 = _time_to_x(ac.start, ac, audio_timeline), _time_to_x(ac.end, ac, audio_timeline)
+        audio_timeline.create_rectangle(x0, 8, x1, 32, fill="#4a9fd8", outline="#2a6fa0", width=2)
+        for x in (x0, x1):
+            audio_timeline.create_rectangle(
+                x - _PREVIEW_HANDLE_PX, 6, x + _PREVIEW_HANDLE_PX, 34, fill="#2a6fa0", outline="#1a4f70",
+            )
+        head = current_t[0] if focus[0] == "audio" else audio_at[0]
+        if head > 0 or (playing[0] and focus[0] == "audio"):
+            xp = _time_to_x(head, ac, audio_timeline)
+            audio_timeline.create_line(xp, 4, xp, 36, fill="#e03030", width=2)
+        if audio_time_lbl is not None:
+            seg = max(0.0, ac.end - ac.start)
+            audio_time_lbl.config(
+                text=f"{os.path.basename(ac.path)}  ·  {_fmt_time(head)} / {_fmt_time(ac.duration)}  ·  选中 {_fmt_time(seg)}"
+            )
 
     def _show_frame(t: float) -> None:
         c = _c()
-        t = _snap_time(t)
+        if c is None:
+            return
+        t = _snap_time(t, c)
         current_t[0] = t
         if getattr(c, "is_audio", False):
-            cw = max(preview_canvas.winfo_width(), 360)
-            ch = max(preview_canvas.winfo_height(), 200)
-            preview_canvas.delete("all")
-            preview_canvas.create_text(
-                cw // 2, ch // 2, text="音频\n" + os.path.basename(c.path),
-                fill="white", font=("Microsoft YaHei UI", 16), justify=tk.CENTER,
-            )
-            _apply_ui()
+            audio_at[0] = t
+            _draw_audio_bar()
             return
+        if split_av:
+            video_at[0] = t
         cap = cv2.VideoCapture(c.path)
         if not cap.isOpened():
             return
@@ -773,6 +800,8 @@ def ask_mp4_pick_with_trim_preview(
     def _stop_play(release_cap: bool = True) -> None:
         if focus[0] == "video":
             video_at[0] = current_t[0]
+        elif focus[0] == "audio":
+            audio_at[0] = current_t[0]
         playing[0] = False
         play_range_only[0] = False
         if after_id[0]:
@@ -807,7 +836,7 @@ def ask_mp4_pick_with_trim_preview(
         else:
             start_t = max(c.start, min(current_t[0], c.end - (1.0 / c.fps)))
             stop_t, spd = c.end, 1.0
-        start_t, stop_t = _snap_time(start_t), _snap_time(stop_t)
+        start_t, stop_t = _snap_time(start_t, c), _snap_time(stop_t, c)
         if start_t >= stop_t - (1.0 / c.fps):
             messagebox.showwarning("预览", "选中区间过短。", parent=dlg)
             return
@@ -921,30 +950,35 @@ def ask_mp4_pick_with_trim_preview(
 
     def _on_tl_press(event) -> None:
         _save_trim()
-        c = _c()
-        x0, x1 = _time_to_x(c.start), _time_to_x(c.end)
+        if split_av:
+            focus[0] = "video"
+            _stop_play()
+        c = _ui_clip()
+        if c is None:
+            return
+        x0, x1 = _time_to_x(c.start, c, timeline), _time_to_x(c.end, c, timeline)
         x = event.x
         if abs(x - x0) <= _PREVIEW_HANDLE_PX:
             tl_drag[0] = "start"
         elif abs(x - x1) <= _PREVIEW_HANDLE_PX:
             tl_drag[0] = "end"
-        elif x0 < x < x1:
-            tl_drag[0] = "scrub"
         else:
             tl_drag[0] = "scrub"
         _on_tl_drag(event)
 
     def _on_tl_drag(event) -> None:
-        c = _c()
-        t = _x_to_time(event.x)
+        c = _ui_clip()
+        if c is None:
+            return
+        t = _x_to_time(event.x, c, timeline)
         if tl_drag[0] == "start":
-            c.start = _snap_time(min(t, c.end - _PREVIEW_MIN_CLIP_SEC))
+            c.start = _snap_time(min(t, c.end - _PREVIEW_MIN_CLIP_SEC), c)
         elif tl_drag[0] == "end":
-            c.end = _snap_time(max(t, c.start + _PREVIEW_MIN_CLIP_SEC))
+            c.end = _snap_time(max(t, c.start + _PREVIEW_MIN_CLIP_SEC), c)
         elif tl_drag[0] == "scrub":
             current_t[0] = t
-            if focus[0] == "video":
-                video_at[0] = t
+            video_at[0] = t
+            focus[0] = "video"
             _show_frame(t)
             _refresh_mix_span()
             return
@@ -958,6 +992,62 @@ def ask_mp4_pick_with_trim_preview(
     timeline.bind("<B1-Motion>", _on_tl_drag)
     timeline.bind("<ButtonRelease-1>", _on_tl_release)
 
+    def _on_audio_press(event) -> None:
+        ac = audio_state.get("clip")
+        if ac is None or audio_timeline is None:
+            return
+        _stop_play()
+        focus[0] = "audio"
+        x0 = _time_to_x(ac.start, ac, audio_timeline)
+        x1 = _time_to_x(ac.end, ac, audio_timeline)
+        if abs(event.x - x0) <= _PREVIEW_HANDLE_PX:
+            audio_drag[0] = "start"
+        elif abs(event.x - x1) <= _PREVIEW_HANDLE_PX:
+            audio_drag[0] = "end"
+        else:
+            audio_drag[0] = "scrub"
+        _on_audio_drag(event)
+
+    def _on_audio_drag(event) -> None:
+        ac = audio_state.get("clip")
+        if ac is None or audio_timeline is None:
+            return
+        t = _x_to_time(event.x, ac, audio_timeline)
+        if audio_drag[0] == "start":
+            ac.start = _snap_time(min(t, ac.end - _PREVIEW_MIN_CLIP_SEC), ac)
+        elif audio_drag[0] == "end":
+            ac.end = _snap_time(max(t, ac.start + _PREVIEW_MIN_CLIP_SEC), ac)
+        elif audio_drag[0] == "scrub":
+            audio_at[0] = t
+            current_t[0] = t
+            focus[0] = "audio"
+            _draw_audio_bar()
+            _refresh_mix_span()
+            return
+        _draw_audio_bar()
+        _refresh_mix_span()
+
+    def _on_audio_release(_e) -> None:
+        audio_drag[0] = None
+
+    if audio_timeline is not None:
+        audio_timeline.bind("<Configure>", lambda _e: _draw_audio_bar())
+        audio_timeline.bind("<ButtonPress-1>", _on_audio_press)
+        audio_timeline.bind("<B1-Motion>", _on_audio_drag)
+        audio_timeline.bind("<ButtonRelease-1>", _on_audio_release)
+
+        def _on_audio_double(_e) -> None:
+            ac = audio_state.get("clip")
+            if ac is None:
+                return
+            _stop_play()
+            focus[0] = "audio"
+            current_t[0] = ac.start
+            audio_at[0] = ac.start
+            _start_play(range_only=True)
+
+        audio_timeline.bind("<Double-Button-1>", _on_audio_double)
+
     def _on_preview_click(_e) -> None:
         if click_after_id[0]:
             try:
@@ -968,6 +1058,9 @@ def ask_mp4_pick_with_trim_preview(
 
     def _toggle_play() -> None:
         click_after_id[0] = None
+        if split_av and focus[0] != "video":
+            focus[0] = "video"
+            current_t[0] = video_at[0]
         if playing[0]:
             _stop_play()
         else:
@@ -1099,11 +1192,14 @@ def ask_mp4_pick_with_trim_preview(
             audio_state["clip"] = _ClipTrim(full)
         audio_state["armed"] = True
         audio_state["fn"] = fn
-        current_t[0] = audio_state["clip"].start
+        audio_at[0] = audio_state["clip"].start
+        if not split_av:
+            current_t[0] = audio_state["clip"].start
         _sync_mix_btn()
         _sync_audio_edit()
         _apply_ui()
-        _show_frame(audio_state["clip"].start)
+        if not split_av:
+            _show_frame(audio_state["clip"].start)
 
     def _on_list_select(_e=None) -> None:
         sel = listbox.curselection()
