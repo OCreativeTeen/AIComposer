@@ -583,18 +583,78 @@ class WorkflowGUI:
         self._copy_clipboard_text("脚本", config.read_transcript_text_from_video_detail(vd))
 
     def _return_to_story_preview(self) -> None:
-        """故事预览已经开着，就把它拿到前面。拷贝和生成摘要在那个窗口最下面。"""
+        """回到这条的故事预览。预览还没开时，请列表打开它，再拿到前面。"""
         from gui.raise_window import find_story_window, raise_window
 
+        pc = project_manager.PROJECT_CONFIG or {}
+        row = self._load_current_video_detail_row() or {}
+        title = ""
+        keys: list[str] = []
+        for src in (pc, row):
+            if not isinstance(src, dict):
+                continue
+            if not title:
+                title = (src.get("video_title") or src.get("title") or "").strip()
+            for key in ("pid", "id", "url"):
+                val = (src.get(key) or "").strip()
+                if val and val not in keys:
+                    keys.append(val)
+
+        def _matches(hwnd: int) -> bool:
+            if not hwnd or not title:
+                return bool(hwnd) and not title
+            try:
+                import win32gui
+
+                text = win32gui.GetWindowText(int(hwnd)) or ""
+            except Exception:
+                return False
+            return title[:24] in text
+
         hwnd = find_story_window()
-        if not hwnd:
+        if hwnd and _matches(hwnd):
+            raise_window(hwnd)
+            return
+        if not keys:
             messagebox.showinfo(
                 "回到预览",
-                "故事预览还没开。先在列表里双击这一条。",
+                "这条没有能对上列表的编号，预览打不开。",
                 parent=self.root,
             )
             return
-        raise_window(hwnd)
+
+        def work() -> None:
+            from cli.bridge import send_bridge_command
+
+            ok, _msg = send_bridge_command(
+                screen=config.SCREEN_VIDEO_LIST,
+                op="set",
+                field="open_row",
+                value=json.dumps(keys, ensure_ascii=False),
+                timeout_s=8.0,
+            )
+            found = 0
+            if ok:
+                for _ in range(40):
+                    candidate = find_story_window()
+                    if candidate and _matches(candidate):
+                        found = candidate
+                        break
+                    time.sleep(0.15)
+
+            def done() -> None:
+                if found:
+                    raise_window(found)
+                    return
+                messagebox.showinfo(
+                    "回到预览",
+                    "列表窗口要开着，才能从这里打开故事预览。",
+                    parent=self.root,
+                )
+
+            self.root.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _current_feature_row(self) -> dict:
         row = self._load_current_video_detail_row()

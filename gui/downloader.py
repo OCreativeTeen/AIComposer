@@ -7212,14 +7212,6 @@ class MediaGUIManager:
         prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
         return prof if isinstance(prof, dict) else {}
 
-    def _copy_story_text(self, parent, title: str, text: str) -> None:
-        text = (text or "").strip()
-        if not text:
-            messagebox.showinfo(title, "这里没有内容。", parent=parent)
-            return
-        _copy_text_to_clipboard(parent, text)
-        show_auto_close_popup(parent, title, "已拷贝")
-
     def _summarize_scene_list(self, parent, video_detail: dict, scenes: list, *, on_done=None) -> None:
         """用这一条的场景文字生成摘要，拷到剪贴板，并可写回列表的 summary。"""
         if not scenes:
@@ -7927,27 +7919,19 @@ class MediaGUIManager:
             material_row = ttk.Frame(frm)
             material_row.pack(fill=tk.X, pady=(0, 6))
             ttk.Label(material_row, text="材料").pack(side=tk.LEFT, padx=(0, 8))
-            _mat_font = ("Microsoft YaHei UI", 12)
             btn_analyzed = tk.Button(
                 material_row,
                 text="分析报告",
-                font=_mat_font,
-                width=16,
-                padx=16,
-                pady=6,
+                width=8,
                 relief=tk.SUNKEN,
-                bd=2,
+                bd=1,
             )
-            btn_analyzed.pack(side=tk.LEFT, padx=(0, 8))
+            btn_analyzed.pack(side=tk.LEFT, padx=(0, 4))
             btn_pdf = tk.Button(
                 material_row,
                 text="（没有 PDF）",
-                font=_mat_font,
-                width=28,
-                padx=16,
-                pady=6,
                 relief=tk.RAISED,
-                bd=2,
+                bd=1,
             )
             btn_pdf.pack(side=tk.LEFT, padx=(0, 8))
             slide_info_var = None
@@ -7956,7 +7940,8 @@ class MediaGUIManager:
                 slide_info_var = drop_ctx.get("feature_media_var")
             scene_count_var = slide_info_var if slide_info_var is not None else tk.StringVar(value="")
             scene_count_lbl = ttk.Label(material_row, textvariable=scene_count_var)
-            scene_count_lbl.pack(side=tk.LEFT, padx=(4, 8))
+            scene_count_lbl.pack(side=tk.LEFT, padx=(4, 4))
+            ttk.Separator(material_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=28)
             smart_slot = ttk.Frame(material_row)
             smart_slot.pack(side=tk.LEFT, padx=(4, 0))
             scene_ui["smart_slot"] = smart_slot
@@ -8061,7 +8046,6 @@ class MediaGUIManager:
                 )
                 btn_pdf.configure(
                     text=name,
-                    width=max(28, len(name)),
                     state=tk.NORMAL,
                     relief=tk.SUNKEN if on_pdf else tk.RAISED,
                     bg="#d7e6f8" if on_pdf else "#f3f3f3",
@@ -8622,10 +8606,6 @@ class MediaGUIManager:
             _remember_pdf_source = scene_ui["remember_pdf_source"]
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
-            story_footer = None
-            if embedded:
-                story_footer = ttk.Frame(frm)
-                story_footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 2))
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=35, font=("Consolas", 10)
@@ -8633,67 +8613,6 @@ class MediaGUIManager:
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
             scene_ui["tx"] = tx
-            if story_footer is not None:
-                def _analyzed_text() -> str:
-                    raw = video_detail.get("analyzed_content") or ""
-                    return raw if isinstance(raw, str) else str(raw)
-
-                def _poem_text() -> str:
-                    raw = video_detail.get("poem") or ""
-                    if isinstance(raw, str) and raw.strip():
-                        return raw
-                    return str(self._story_profile(video_detail).get("poem") or "")
-
-                def _script_text() -> str:
-                    row = dict(video_detail)
-                    if not (row.get("transcribed_file") or "").strip():
-                        stored = (self._story_profile(video_detail).get("transcribed_file") or "").strip()
-                        if stored:
-                            row["transcribed_file"] = stored
-                    return config.read_transcript_text_from_video_detail(row)
-
-                def _summary_scenes() -> list:
-                    parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
-                    if parsed:
-                        return parsed
-                    sc = video_detail.get("scene_content")
-                    return [item for item in sc if isinstance(item, dict)] if isinstance(sc, list) else []
-
-                sum_btn = ttk.Button(story_footer, text="生成摘要", width=8)
-
-                def _on_summarize() -> None:
-                    sum_btn.config(state=tk.DISABLED)
-
-                    def _enable() -> None:
-                        try:
-                            sum_btn.config(state=tk.NORMAL)
-                        except tk.TclError:
-                            pass
-
-                    self._summarize_scene_list(
-                        dlg, video_detail, _summary_scenes(), on_done=_enable
-                    )
-
-                sum_btn.config(command=_on_summarize)
-                ttk.Button(
-                    story_footer,
-                    text="拷贝分析",
-                    width=8,
-                    command=lambda: self._copy_story_text(dlg, "拷贝分析", _analyzed_text()),
-                ).pack(side=tk.LEFT, padx=2)
-                ttk.Button(
-                    story_footer,
-                    text="拷贝诗歌",
-                    width=8,
-                    command=lambda: self._copy_story_text(dlg, "拷贝诗歌", _poem_text()),
-                ).pack(side=tk.LEFT, padx=2)
-                ttk.Button(
-                    story_footer,
-                    text="拷贝脚本",
-                    width=8,
-                    command=lambda: self._copy_story_text(dlg, "拷贝脚本", _script_text()),
-                ).pack(side=tk.LEFT, padx=2)
-                sum_btn.pack(side=tk.LEFT, padx=2)
 
             def _fill_scene_editor_rest():
                 _SCENE_JSON_CHUNK = 1024
@@ -9049,6 +8968,31 @@ class MediaGUIManager:
                         pady=6,
                         bd=2,
                     )
+                    if embedded:
+                        def _summary_scenes() -> list:
+                            parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
+                            if parsed:
+                                return parsed
+                            sc = video_detail.get("scene_content")
+                            return [item for item in sc if isinstance(item, dict)] if isinstance(sc, list) else []
+
+                        sum_btn = ttk.Button(scene_ui["smart_slot"], text="生成摘要", width=8)
+
+                        def _on_summarize() -> None:
+                            sum_btn.config(state=tk.DISABLED)
+
+                            def _enable() -> None:
+                                try:
+                                    sum_btn.config(state=tk.NORMAL)
+                                except tk.TclError:
+                                    pass
+
+                            self._summarize_scene_list(
+                                dlg, video_detail, _summary_scenes(), on_done=_enable
+                            )
+
+                        sum_btn.config(command=_on_summarize)
+                        sum_btn.pack(side=tk.LEFT, padx=(0, 8))
                     smart_btn.pack(side=tk.LEFT)
 
                     def _offer_pdf_scene_generate(pdf_path: str) -> None:
@@ -11155,9 +11099,9 @@ class MediaGUIManager:
             on_focus(event, low_priority=False)
 
         def on_double_click(event):
-            on_focus(event, low_priority=True)
+            on_focus(event, low_priority=True, prefer_project=True)
 
-        def on_focus(event, low_priority=False):
+        def on_focus(event, low_priority=False, prefer_project=False):
             # 处理鼠标事件和键盘事件
             if hasattr(event, 'y') and event.y:
                 # 鼠标事件：通过坐标识别行
@@ -11180,6 +11124,16 @@ class MediaGUIManager:
                 return
             video_detail = self.get_video_detail(item_tags[0])
             if not video_detail:
+                return
+
+            if prefer_project and (_video_detail_project_pid(video_detail) or "").strip():
+                _open_project_for_video_detail(
+                    video_detail,
+                    dialog,
+                    topic_category=(video_detail.get("topic_category") or "").strip() or None,
+                    topic_subtype=(video_detail.get("topic_subtype") or "").strip() or None,
+                    topic_tags=video_detail.get("tags"),
+                )
                 return
 
             # get index of the selected item & save to a variable
