@@ -231,6 +231,7 @@ def ask_mp4_pick_with_trim_preview(
     dest_options: Optional[list] = None,
     lock_video_source: bool = False,
     audio_edit: bool = False,
+    later_scene_lengths: Optional[list] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -341,6 +342,9 @@ def ask_mp4_pick_with_trim_preview(
     fade_in_sec = tk.DoubleVar(value=1.0)
     fade_out_sec = tk.DoubleVar(value=1.0)
     audio_edit_widgets: list = []
+    span_widgets: list = []
+    mix_span_var = tk.StringVar(value="1")
+    later_lengths = [float(x) for x in (later_scene_lengths or []) if float(x) > 0.05]
     rec = {
         "on": False,
         "chunks": [],
@@ -353,6 +357,7 @@ def ask_mp4_pick_with_trim_preview(
         "time_label": None,
     }
     focus = ["video"]
+    video_at = [0.0]
     if audio_sources:
         usable_audio = [item for item in audio_sources if item.get("folder")]
         if usable_audio:
@@ -420,6 +425,17 @@ def ask_mp4_pick_with_trim_preview(
             fade_out_spin.pack(side=tk.LEFT, padx=(8, 4))
             fade_out_unit = ttk.Label(fade_out_row, text="秒")
             fade_out_unit.pack(side=tk.LEFT)
+            span_row = ttk.Frame(mix_box)
+            span_row.pack(fill=tk.X, pady=(4, 0))
+            span_name = ttk.Label(span_row, text="跨场景")
+            span_name.pack(side=tk.LEFT, padx=(0, 6))
+            span_combo = ttk.Combobox(
+                span_row, textvariable=mix_span_var, width=4, state="readonly", values=("1",),
+            )
+            span_combo.pack(side=tk.LEFT)
+            span_hint = ttk.Label(span_row, text="从播放停住的位置算，这段音频只够这一场")
+            span_hint.pack(side=tk.LEFT, padx=(8, 0))
+            span_widgets.extend([span_name, span_combo, span_hint])
             audio_edit_widgets.extend([
                 ratio_name, ratio_lbl, ratio_scale, fade_in_chk, fade_in_spin, fade_in_unit,
                 fade_out_chk, fade_out_spin, fade_out_unit,
@@ -571,6 +587,7 @@ def ask_mp4_pick_with_trim_preview(
                 text=f"选中时长: {_fmt_time(seg)} / 全长 {_fmt_time(c.duration)}{spd_note}"
             )
             _draw_timeline()
+            _refresh_mix_span()
         finally:
             syncing_ui[0] = False
 
@@ -754,6 +771,8 @@ def ask_mp4_pick_with_trim_preview(
         threading.Thread(target=worker, daemon=True).start()
 
     def _stop_play(release_cap: bool = True) -> None:
+        if focus[0] == "video":
+            video_at[0] = current_t[0]
         playing[0] = False
         play_range_only[0] = False
         if after_id[0]:
@@ -924,7 +943,10 @@ def ask_mp4_pick_with_trim_preview(
             c.end = _snap_time(max(t, c.start + _PREVIEW_MIN_CLIP_SEC))
         elif tl_drag[0] == "scrub":
             current_t[0] = t
+            if focus[0] == "video":
+                video_at[0] = t
             _show_frame(t)
+            _refresh_mix_span()
             return
         _apply_ui()
 
@@ -994,6 +1016,55 @@ def ask_mp4_pick_with_trim_preview(
                 _set_enabled(widget, mixing and bool(fade_out_on.get()))
             else:
                 _set_enabled(widget, mixing)
+        for widget in span_widgets:
+            if widget is span_widgets[1]:
+                widget.config(state="readonly" if mixing else "disabled")
+            else:
+                _set_enabled(widget, mixing)
+
+    def _mix_start_in_output(video) -> float:
+        spd = max(float(video.speed or 1.0), 0.1)
+        span = max(0.0, float(video.end) - float(video.start))
+        t = min(max(float(video_at[0]), float(video.start)), float(video.end))
+        return max(0.0, min((t - float(video.start)) / spd, span / spd))
+
+    def _mix_reach_count() -> int:
+        video = clip[0]
+        ac = audio_state.get("clip")
+        if video is None or ac is None:
+            return 1
+        spd = max(float(video.speed or 1.0), 0.1)
+        video_len = max(0.05, (video.end - video.start) / spd)
+        room = max(0.0, video_len - _mix_start_in_output(video))
+        audio_len = max(0.0, (ac.end - ac.start) / max(float(ac.speed or 1.0), 0.1))
+        remaining = audio_len if room <= 0.05 else audio_len - room
+        if remaining <= 0.05:
+            return 1
+        count = 1
+        for dur in later_lengths:
+            if remaining <= 0.05:
+                break
+            count += 1
+            remaining -= dur
+        return count
+
+    def _refresh_mix_span() -> None:
+        if not audio_edit or not span_widgets:
+            return
+        count = _mix_reach_count()
+        combo = span_widgets[1]
+        combo["values"] = tuple(str(i) for i in range(1, count + 1))
+        try:
+            current = int(mix_span_var.get() or "1")
+        except ValueError:
+            current = 1
+        if current < 1 or current > count:
+            mix_span_var.set(str(min(max(current, 1), count)))
+        hint = span_widgets[2]
+        if count <= 1:
+            hint.config(text="从播放停住的位置算，这段音频只够这一场")
+        else:
+            hint.config(text=f"从播放停住的位置算，最多跨 {count} 场")
 
     def _arm_audio_mix() -> None:
         if audio_state.get("clip") is None:
@@ -1013,9 +1084,10 @@ def ask_mp4_pick_with_trim_preview(
         sel_fn[0] = fn
         if clip[0] is None or os.path.normpath(clip[0].path) != full:
             clip[0] = _ClipTrim(full)
-        current_t[0] = clip[0].start
+            video_at[0] = clip[0].start
+        current_t[0] = video_at[0]
         _apply_ui()
-        _show_frame(clip[0].start)
+        _show_frame(current_t[0])
 
     def _load_audio(fn: str) -> None:
         _save_trim()
@@ -1195,16 +1267,30 @@ def ask_mp4_pick_with_trim_preview(
             fade_in_line = f"开头渐强 {fade_in:.1f} 秒" if fade_in > 0 else "开头不渐强"
             fade_out_line = f"结尾渐弱 {fade_out:.1f} 秒" if fade_out > 0 else "结尾不渐弱"
             video_len = max(0.0, (c.end - c.start) / max(float(c.speed or 1.0), 0.1))
+            mix_at = _mix_start_in_output(c)
+            room = max(0.0, video_len - mix_at)
             audio_len = max(0.0, (ac.end - ac.start) / max(float(ac.speed or 1.0), 0.1))
-            if audio_len > video_len + 0.05:
-                cut_line = "音频比这段视频长，先裁到一样长。渐强在这段开头，渐弱在裁完的结尾。"
+            if audio_len > room + 0.05:
+                cut_line = "这段音频比这一场剩下的时间长，会在这一场结束前裁断，再做渐强渐弱。"
             else:
-                cut_line = "音频不比这段视频长。渐强在音频开头，渐弱在音频自己的结尾。"
+                cut_line = "渐强在混入的开头，渐弱在这段音频自己的结尾。"
+            try:
+                span_n = max(1, int(mix_span_var.get() or "1"))
+            except ValueError:
+                span_n = 1
+            if span_n > 1:
+                cut_line = (
+                    f"从播放停住的位置起，一共混进 {span_n} 场。"
+                    "超出最后一场的部分会在那场结束前裁断。"
+                    "渐强在混入的开头，渐弱在裁完或音频结束的地方。"
+                    "每一场都可以用时钟退回。"
+                )
             plan = (
-                f"你在编辑这段视频，并选了音频。\n"
+                f"你在编辑这段视频，并选了音频。只混进 Clip。\n"
                 f"视频先按 {c.start:.1f}–{c.end:.1f} 秒、速度 {c.speed:.1f} 裁好。\n"
+                f"从播放停住的 {mix_at:.1f} 秒开始混。\n"
                 f"音频：{audio_state.get('fn') or ''}，{ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。\n"
-                f"做法：把这段音频混进视频现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
+                f"做法：把这段音频混进 Clip 现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
                 f"{fade_in_line}，{fade_out_line}。{cut_line}"
             )
         elif audio_edit and c is not None and ac is not None:
@@ -1228,14 +1314,14 @@ def ask_mp4_pick_with_trim_preview(
                 plan = (
                     f"你只选了音频，没有视频。\n"
                     f"音频：{audio_state.get('fn') or ''}\n"
-                    f"做法：只把这段音频处理好后拷进项目，不替换画面。\n"
+                    f"做法：只把这段音频处理好后拷进项目，文件名是原来的名字加上 -1、-2。不替换画面。\n"
                     f"区间 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
                 )
             else:
                 plan = (
                     f"你只选了音频，没有视频。\n"
                     f"音频：{audio_state.get('fn') or ''}\n"
-                    f"做法：只把这段音频原样拷进项目，不裁剪，不改音量，不替换画面。"
+                    f"做法：只把这段音频原样拷进项目，文件名是原来的名字加上 -1、-2。不裁剪，不改音量，不替换画面。"
                 )
         else:
             plan = (
@@ -1326,6 +1412,11 @@ def ask_mp4_pick_with_trim_preview(
                     audio_payload["mix_ratio"] = float(mix_ratio_var.get())
                     audio_payload["fade_in"] = _fade_seconds(fade_in_on, fade_in_sec)
                     audio_payload["fade_out"] = _fade_seconds(fade_out_on, fade_out_sec)
+                    try:
+                        audio_payload["mix_scenes"] = max(1, int(mix_span_var.get() or "1"))
+                    except ValueError:
+                        audio_payload["mix_scenes"] = 1
+                    audio_payload["mix_at"] = _mix_start_in_output(c) if c is not None else 0.0
             result[0] = {
                 "filename": picked[0],
                 "mp4": picked[1],

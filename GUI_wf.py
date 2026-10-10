@@ -2381,6 +2381,25 @@ class WorkflowGUI:
             shutil.copy2(src, dest)
         return dest
 
+    def _next_audio_segment_path(self, src: str, ext: str) -> str:
+        """同一段音频多次导入时，按 原名-1、原名-2 往后排。"""
+        dest_dir = self._project_input_dir("input_audio")
+        stem = os.path.splitext(os.path.basename(src))[0] or "audio"
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        used = []
+        prefix = f"{stem}-"
+        if os.path.isdir(dest_dir):
+            for name in os.listdir(dest_dir):
+                file_stem = os.path.splitext(name)[0]
+                if not file_stem.startswith(prefix):
+                    continue
+                tail = file_stem[len(prefix):]
+                if tail.isdigit():
+                    used.append(int(tail))
+        number = (max(used) + 1) if used else 1
+        return os.path.join(dest_dir, f"{stem}-{number}{ext}")
+
     def _audio_names_in(self, folder: str) -> list:
         if not folder or not os.path.isdir(folder):
             return []
@@ -2467,14 +2486,115 @@ class WorkflowGUI:
         raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
         return mixed, raw or wav
 
+    def _later_story_scenes(self, scene) -> list:
+        story = self.workflow.scenes_in_story(scene) if scene else []
+        try:
+            index = story.index(scene)
+        except ValueError:
+            return []
+        later = []
+        for item in story[index + 1:]:
+            path = item.get("clip") if isinstance(item.get("clip"), str) else ""
+            path = (path or "").strip()
+            if not path or not os.path.isfile(path):
+                break
+            later.append(item)
+        return later
+
+    def _later_scene_lengths(self) -> list[float]:
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        fp = self.workflow.ffmpeg_processor
+        lengths = []
+        for item in self._later_story_scenes(scene):
+            path = (item.get("clip") or "").strip()
+            dur = float(fp.get_duration(path) or 0.0)
+            if dur <= 0.05:
+                break
+            lengths.append(dur)
+        return lengths
+
+    def _blend_audio_across_scenes(self, scene, first_video: str, audio: dict) -> None:
+        from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
+
+        wav = _build_preview_segment_wav(
+            audio.get("path") or "",
+            float(audio.get("start") or 0.0),
+            float(audio.get("end") or 0.0),
+            float(audio.get("speed") or 1.0),
+            1.0,
+        )
+        if not wav:
+            messagebox.showerror("混音", "这段音频处理失败。", parent=self.root)
+            return
+        fp = self.workflow.ffmpeg_processor
+        audio_dur = float(fp.get_duration(wav) or 0.0)
+        if audio_dur <= 0.05:
+            messagebox.showerror("混音", "这段音频没有长度。", parent=self.root)
+            return
+        count = max(1, int(audio.get("mix_scenes") or 1))
+        mix_at = max(0.0, float(audio.get("mix_at") or 0.0))
+        targets = [scene] + self._later_story_scenes(scene)
+        targets = targets[:count]
+        fade_in = float(audio.get("fade_in") or 0.0)
+        fade_out = float(audio.get("fade_out") or 0.0)
+        ratio = float(audio.get("mix_ratio") if audio.get("mix_ratio") is not None else 0.5)
+        offset = 0.0
+        written = 0
+        for index, target in enumerate(targets):
+            video = first_video if index == 0 else (target.get("clip") or "").strip()
+            if not video or not os.path.isfile(video):
+                break
+            video_dur = float(fp.get_duration(video) or 0.0)
+            remaining = audio_dur - offset
+            if video_dur <= 0.05 or remaining <= 0.05:
+                break
+            room = max(0.0, video_dur - mix_at) if index == 0 else video_dur
+            if room <= 0.05:
+                continue
+            mix_len = min(room, remaining)
+            last = index == len(targets) - 1 or offset + mix_len >= audio_dur - 0.05
+            piece = fp.extract_audio_segment(
+                wav,
+                offset,
+                mix_len,
+                fade_in if offset <= 0.05 else 0.0,
+                fade_out if last else 0.0,
+            )
+            if not piece:
+                break
+            mixed = fp.video_audio_mix(
+                video,
+                piece,
+                volume=ratio,
+                audio_mix_position=mix_at if index == 0 else 0.0,
+                match_audio_length=False,
+            )
+            if not mixed or not os.path.isfile(mixed):
+                break
+            raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
+            self._backup_clip_to_scene_back(target)
+            refresh_scene_media(target, "clip", ".mp4", mixed)
+            if raw and os.path.isfile(raw):
+                refresh_scene_media(target, "clip_audio", ".wav", raw, True)
+            offset += mix_len
+            written += 1
+        if not written:
+            messagebox.showerror("混音", "没有混进任何一场。", parent=self.root)
+            return
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, "混音", f"已混进 {written} 场。每一场可以用时钟退回。")
+
     def _apply_editor_pick(self, pick: dict, *, stage_download: bool) -> None:
         if isinstance(pick, dict) and pick.get("audio_only"):
             audio = pick.get("audio") or {}
             src = audio.get("path") or ""
+            if not src or not os.path.isfile(src):
+                messagebox.showerror("音频", "这段音频不在了。", parent=self.root)
+                return
             if audio.get("as_is"):
-                self._intake_import_file(
-                    src, kind="input_audio", move=(audio.get("source") == "download"),
-                )
+                dest = self._next_audio_segment_path(src, os.path.splitext(src)[1] or ".mp3")
+                shutil.copy2(src, dest)
             else:
                 from gui.mp4_pick_preview_dialog import _build_preview_segment_wav
 
@@ -2488,15 +2608,11 @@ class WorkflowGUI:
                 if not wav:
                     messagebox.showerror("音频", "这段音频处理失败。", parent=self.root)
                     return
-                stem = os.path.splitext(os.path.basename(src))[0] or "audio"
-                named = os.path.join(os.path.dirname(wav), f"{stem}.wav")
-                if os.path.abspath(wav) != os.path.abspath(named):
-                    if os.path.exists(named):
-                        os.remove(named)
-                    os.replace(wav, named)
-                    wav = named
-                self._intake_import_file(wav, kind="input_audio", move=True)
-            show_auto_close_popup(self.root, "音频", "已拷进项目。")
+                dest = self._next_audio_segment_path(src, ".wav")
+                if os.path.exists(dest):
+                    os.remove(dest)
+                shutil.move(wav, dest)
+            show_auto_close_popup(self.root, "音频", f"已拷进项目：{os.path.basename(dest)}")
             return
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene or not isinstance(pick, dict):
@@ -2510,6 +2626,9 @@ class WorkflowGUI:
                 kind="input_audio",
                 move=(audio.get("source") == "download"),
             )
+        if audio and audio.get("use") == "mix" and not stage_download:
+            self._blend_audio_across_scenes(scene, mp4, audio)
+            return
         if audio:
             if audio.get("use") == "mix":
                 mp4, mixed_wav = self._blend_audio_into_video(mp4, audio)
@@ -2759,7 +2878,6 @@ class WorkflowGUI:
             self.root,
             use_mp4_video_preview=True,
             build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
-            dest_options=list(self._CLIP_DEST_OPTIONS),
             audio_sources=[{
                 "key": "project",
                 "label": "项目",
@@ -2767,6 +2885,7 @@ class WorkflowGUI:
                 "choices": project_audio_files,
             }],
             audio_edit=True,
+            later_scene_lengths=self._later_scene_lengths(),
         )
         if not isinstance(pick, dict):
             return
