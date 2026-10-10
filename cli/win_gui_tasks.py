@@ -221,6 +221,27 @@ def _pick_summary_candidate(candidates: list[tuple[int, str]]) -> Optional[int]:
     return valid[-1][0]
 
 
+def find_workflow_window(project_pid: str = "") -> Optional[int]:
+    """已经打开的魔法工作流窗口。标题里带 pid 时只对上这一条。"""
+    wanted = (project_pid or "").strip()
+    hits = [
+        (hwnd, title)
+        for hwnd, title in enum_windows_safe(sub="魔法工作流")
+        if "魔法工作流" in (title or "")
+    ]
+    if wanted:
+        for hwnd, title in hits:
+            if wanted in title:
+                return hwnd
+        untitled = [(hwnd, title) for hwnd, title in hits if "|" not in (title or "")]
+        if len(hits) == 1 and untitled:
+            return hits[0][0]
+        return None
+    if len(hits) == 1:
+        return hits[0][0]
+    return None
+
+
 def find_detail_window() -> Optional[int]:
     """Find the STORY window. New titles start with ``STORY |``; old ones used 摘要/拖入."""
     for marker in ("STORY |", "摘要", "拖入"):

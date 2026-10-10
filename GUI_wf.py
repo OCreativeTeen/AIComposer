@@ -225,6 +225,12 @@ class WorkflowGUI:
         if selection_result is False:
             self.root.destroy()
             return
+        file_pid = (
+            (project_manager.PROJECT_CONFIG or {}).get("pid") or initial_pid or ""
+        )
+        file_pid = str(file_pid).strip()
+        if file_pid:
+            self.root.title(f"魔法工作流 | {file_pid}")
         
         # 首先初始化任务状态跟踪 - 增强版
         self.tasks = {}
@@ -426,7 +432,7 @@ class WorkflowGUI:
 
         ttk.Separator(row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6)
         self.btn_copy_project = ttk.Button(
-            row, text="故事内容", width=8, command=self._copy_project_content
+            row, text="回到预览", width=8, command=self._return_to_story_preview
         )
         self.btn_copy_project.pack(side=tk.LEFT, padx=2)
 
@@ -576,25 +582,19 @@ class WorkflowGUI:
                 vd["transcribed_file"] = stored
         self._copy_clipboard_text("脚本", config.read_transcript_text_from_video_detail(vd))
 
-    def _copy_project_content(self) -> None:
-        picked = self._ask_near_choices(
-            self.btn_copy_project,
-            "故事内容",
-            [
-                ("analyze", "拷贝分析"),
-                ("poem", "拷贝诗歌"),
-                ("script", "拷贝脚本"),
-                ("summary", "生成摘要"),
-            ],
-        )
-        if picked == "analyze":
-            self._copy_analyzed_content()
-        elif picked == "poem":
-            self._copy_poem()
-        elif picked == "script":
-            self._copy_script()
-        elif picked == "summary":
-            self._do_speaking_summarize()
+    def _return_to_story_preview(self) -> None:
+        """故事预览已经开着，就把它拿到前面。拷贝和生成摘要在那个窗口最下面。"""
+        from gui.raise_window import find_story_window, raise_window
+
+        hwnd = find_story_window()
+        if not hwnd:
+            messagebox.showinfo(
+                "回到预览",
+                "故事预览还没开。先在列表里双击这一条。",
+                parent=self.root,
+            )
+            return
+        raise_window(hwnd)
 
     def _current_feature_row(self) -> dict:
         row = self._load_current_video_detail_row()

@@ -3773,11 +3773,24 @@ def _list_json_item_matches_pid(item: dict, wanted_pid: str) -> bool:
     return project_manager.list_json_row_workflow_pid(item) == wanted_pid
 
 
+def _focus_open_workflow(pid: str = "") -> bool:
+    """项目窗口已经在，就把它拿到前面，不再另开一个。"""
+    from gui.raise_window import find_workflow_window, raise_window
+
+    hwnd = find_workflow_window(pid)
+    if not hwnd:
+        return False
+    raise_window(hwnd)
+    return True
+
+
 def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
     """另起进程启动 ``GUI_wf.py --open-pid``，与在主窗口用 ``--open-pid`` /「选择项目→打开」后的加载逻辑一致。"""
     pid = (pid or "").strip()
     if not pid:
         return False
+    if _focus_open_workflow(pid):
+        return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
@@ -3797,6 +3810,15 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
     list_json_path = (list_json_path or "").strip()
     if not list_json_path or not os.path.isfile(list_json_path):
         return False
+    try:
+        with open(list_json_path, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        row = rows[int(index)] if isinstance(rows, list) and 0 <= int(index) < len(rows) else None
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, IndexError):
+        row = None
+    open_pid = _video_detail_project_pid(row) if isinstance(row, dict) else ""
+    if _focus_open_workflow(open_pid):
+        return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
@@ -7186,6 +7208,91 @@ class MediaGUIManager:
         threading.Thread(target=work, daemon=True).start()
         return True
 
+    def _story_profile(self, video_detail: dict) -> dict:
+        prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
+        return prof if isinstance(prof, dict) else {}
+
+    def _copy_story_text(self, parent, title: str, text: str) -> None:
+        text = (text or "").strip()
+        if not text:
+            messagebox.showinfo(title, "这里没有内容。", parent=parent)
+            return
+        _copy_text_to_clipboard(parent, text)
+        show_auto_close_popup(parent, title, "已拷贝")
+
+    def _summarize_scene_list(self, parent, video_detail: dict, scenes: list, *, on_done=None) -> None:
+        """用这一条的场景文字生成摘要，拷到剪贴板，并可写回列表的 summary。"""
+        if not scenes:
+            messagebox.showinfo("生成摘要", "这里没有场景内容。", parent=parent)
+            if callable(on_done):
+                on_done()
+            return
+        prof = self._story_profile(video_detail)
+        lang_code = (
+            (prof.get("language") or "").strip()
+            or (getattr(self, "language", "") or "").strip()
+            or "tw"
+        )
+        lang_name = config.llm_language_label(lang_code)
+        system_prompt = config_prompt.SPEAKING_SUMMARY_SYSTEM_PROMPT.format(language=lang_name)
+        user_prompt = json.dumps(scenes, ensure_ascii=False)
+
+        def work() -> None:
+            err = ""
+            out = ""
+            try:
+                out = self.llm_api.generate_text(system_prompt, user_prompt) or ""
+            except Exception as exc:
+                err = str(exc)
+
+            def done() -> None:
+                if callable(on_done):
+                    on_done()
+                if err or not str(out).strip():
+                    messagebox.showerror("生成摘要", err or "没有生成出摘要。", parent=parent)
+                    return
+                self._show_story_summary_editor(parent, video_detail, str(out))
+
+            try:
+                parent.after(0, done)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_story_summary_editor(self, parent, video_detail: dict, text: str) -> None:
+        _copy_text_to_clipboard(parent, text)
+        dlg = tk.Toplevel(parent)
+        dlg.title("生成摘要")
+        dlg.transient(parent)
+        dlg.grab_set()
+        dlg.geometry("720x480")
+        dlg.update_idletasks()
+        px = (dlg.winfo_screenwidth() - 720) // 2
+        py = (dlg.winfo_screenheight() - 480) // 2
+        dlg.geometry(f"720x480+{px}+{py}")
+        ttk.Label(
+            dlg,
+            text="已复制到剪贴板。可编辑后点「保存到故事摘要」，写入这一条列表的 summary。",
+            wraplength=680,
+        ).pack(anchor="w", padx=12, pady=(12, 6))
+        body = scrolledtext.ScrolledText(dlg, wrap=tk.WORD, width=88, height=20, font=("Arial", 10))
+        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        body.insert("1.0", text)
+        btn_f = ttk.Frame(dlg)
+        btn_f.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        def on_save() -> None:
+            saved = body.get("1.0", tk.END).strip()
+            video_detail["summary"] = saved
+            if not self._persist_video_detail_story(video_detail, parent=dlg):
+                return
+            dlg.destroy()
+            messagebox.showinfo("摘要", "概述已写入这一条故事的 summary。", parent=parent)
+
+        ttk.Button(btn_f, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_f, text="保存到故事摘要", command=on_save).pack(side=tk.RIGHT)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
     def _persist_video_detail_story(self, video_detail: dict, *, parent=None) -> bool:
         """将 ``video_detail`` 同步进 ``channel_videos`` 并写入 ``channel_list_json``。"""
@@ -8515,6 +8622,10 @@ class MediaGUIManager:
             _remember_pdf_source = scene_ui["remember_pdf_source"]
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
+            story_footer = None
+            if embedded:
+                story_footer = ttk.Frame(frm)
+                story_footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 2))
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=35, font=("Consolas", 10)
@@ -8522,6 +8633,67 @@ class MediaGUIManager:
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)
             scene_ui["tx"] = tx
+            if story_footer is not None:
+                def _analyzed_text() -> str:
+                    raw = video_detail.get("analyzed_content") or ""
+                    return raw if isinstance(raw, str) else str(raw)
+
+                def _poem_text() -> str:
+                    raw = video_detail.get("poem") or ""
+                    if isinstance(raw, str) and raw.strip():
+                        return raw
+                    return str(self._story_profile(video_detail).get("poem") or "")
+
+                def _script_text() -> str:
+                    row = dict(video_detail)
+                    if not (row.get("transcribed_file") or "").strip():
+                        stored = (self._story_profile(video_detail).get("transcribed_file") or "").strip()
+                        if stored:
+                            row["transcribed_file"] = stored
+                    return config.read_transcript_text_from_video_detail(row)
+
+                def _summary_scenes() -> list:
+                    parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
+                    if parsed:
+                        return parsed
+                    sc = video_detail.get("scene_content")
+                    return [item for item in sc if isinstance(item, dict)] if isinstance(sc, list) else []
+
+                sum_btn = ttk.Button(story_footer, text="生成摘要", width=8)
+
+                def _on_summarize() -> None:
+                    sum_btn.config(state=tk.DISABLED)
+
+                    def _enable() -> None:
+                        try:
+                            sum_btn.config(state=tk.NORMAL)
+                        except tk.TclError:
+                            pass
+
+                    self._summarize_scene_list(
+                        dlg, video_detail, _summary_scenes(), on_done=_enable
+                    )
+
+                sum_btn.config(command=_on_summarize)
+                ttk.Button(
+                    story_footer,
+                    text="拷贝分析",
+                    width=8,
+                    command=lambda: self._copy_story_text(dlg, "拷贝分析", _analyzed_text()),
+                ).pack(side=tk.LEFT, padx=2)
+                ttk.Button(
+                    story_footer,
+                    text="拷贝诗歌",
+                    width=8,
+                    command=lambda: self._copy_story_text(dlg, "拷贝诗歌", _poem_text()),
+                ).pack(side=tk.LEFT, padx=2)
+                ttk.Button(
+                    story_footer,
+                    text="拷贝脚本",
+                    width=8,
+                    command=lambda: self._copy_story_text(dlg, "拷贝脚本", _script_text()),
+                ).pack(side=tk.LEFT, padx=2)
+                sum_btn.pack(side=tk.LEFT, padx=2)
 
             def _fill_scene_editor_rest():
                 _SCENE_JSON_CHUNK = 1024
