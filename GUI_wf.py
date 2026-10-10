@@ -385,7 +385,7 @@ class WorkflowGUI:
         self.btn_clean = ttk.Button(row, text="清理", command=self._open_clean_menu)
         self.btn_clean.pack(side=tk.RIGHT, padx=(4, 0))
         self.btn_finalize = ttk.Button(row, text="成片", command=self._open_finalize_menu)
-        self.btn_finalize.pack(side=tk.RIGHT, padx=(16, 0))
+        self.btn_finalize.pack(side=tk.RIGHT, padx=(20, 0))
 
         ttk.Label(row, text="场景").pack(side=tk.LEFT)
         ttk.Button(row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
@@ -396,7 +396,7 @@ class WorkflowGUI:
         ttk.Button(row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
         ttk.Button(row, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
         ttk.Button(row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=(2, 4))
-        ttk.Label(row, text="│").pack(side=tk.LEFT, padx=(2, 2))
+        ttk.Label(row, text="│").pack(side=tk.LEFT, padx=(3, 3))
         start_btn = ttk.Button(row, text="开始", width=4, command=lambda: self._set_scene_marker("start"))
         start_btn.pack(side=tk.LEFT, padx=(2, 0))
         end_btn = ttk.Button(row, text="结束", width=4, command=lambda: self._set_scene_marker("end"))
@@ -415,12 +415,31 @@ class WorkflowGUI:
         title_frame = ttk.Frame(row)
         title_frame.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(title_frame, text="标题").pack(side=tk.LEFT)
-        self.video_title = ttk.Entry(title_frame, width=14)
+        self.video_title = ttk.Entry(title_frame, width=21)
         self.video_title.pack(side=tk.LEFT, padx=(4, 0))
 
         ttk.Label(row, text="频道").pack(side=tk.LEFT)
         self.shared_channel = ttk.Label(row, width=12, relief="sunken", background="white")
         self.shared_channel.pack(side=tk.LEFT, padx=(4, 8))
+
+        ttk.Label(row, text="分类").pack(side=tk.LEFT, padx=(0, 2))
+        self.topic_category_var = tk.StringVar()
+        self.topic_category_combo = ttk.Combobox(
+            row, textvariable=self.topic_category_var, state="readonly", width=12
+        )
+        self.topic_category_combo.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(row, text="子类").pack(side=tk.LEFT, padx=(0, 2))
+        self.topic_subtype_var = tk.StringVar()
+        self.topic_subtype_combo = ttk.Combobox(
+            row, textvariable=self.topic_subtype_var, state="readonly", width=9
+        )
+        self.topic_subtype_combo.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(row, text="标签").pack(side=tk.LEFT, padx=(0, 2))
+        self.topic_tags_var = tk.StringVar()
+        self.topic_tags_entry = ttk.Entry(row, textvariable=self.topic_tags_var, width=18)
+        self.topic_tags_entry.pack(side=tk.LEFT, padx=(0, 4))
+
+        ttk.Separator(row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=24)
 
         ttk.Label(row, text="尺寸").pack(side=tk.LEFT)
         self._video_size_presets = ("1920×1080", "1080×1920")
@@ -430,7 +449,7 @@ class WorkflowGUI:
         self.video_size_combo.pack(side=tk.LEFT, padx=(4, 8))
         self.video_size_combo.bind("<<ComboboxSelected>>", self._on_video_output_size_selected)
 
-        ttk.Separator(row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Separator(row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=8)
         self.btn_copy_project = ttk.Button(
             row, text="回到预览", width=8, command=self._return_to_story_preview
         )
@@ -10723,6 +10742,7 @@ class WorkflowGUI:
             vw = int(config_data.get('video_width', 1920))
             vh = int(config_data.get('video_height', 1080))
             self._set_video_size_combo_values(vw, vh)
+            self._load_topic_fields(config_data)
                 
             # 加载视频标题
             video_title = config_data.get('video_title', '默认标题')
@@ -10820,6 +10840,9 @@ class WorkflowGUI:
             'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '默认视频标题',
             'video_width': config_data.get('video_width', '1920'),
             'video_height': config_data.get('video_height', '1080'),
+            'topic_category': (self.topic_category_var.get() or "").strip(),
+            'topic_subtype': (self.topic_subtype_var.get() or "").strip(),
+            'tags': self._topic_tags_value(),
             'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
             'dialogue_mode': config.normalize_dialogue_mode(
                 (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
@@ -10866,6 +10889,9 @@ class WorkflowGUI:
                 'video_title': getattr(self, 'video_title', None) and self.video_title.get() or '视频标题',
                 'video_width': config_data.get('video_width', '1920'),
                 'video_height': config_data.get('video_height', '1080'),
+                'topic_category': (self.topic_category_var.get() or "").strip(),
+                'topic_subtype': (self.topic_subtype_var.get() or "").strip(),
+                'tags': self._topic_tags_value(),
                 'visual_style': (self.scene_visual_style.get() or "").strip() or config_data.get("visual_style"),
                 'dialogue_mode': config.normalize_dialogue_mode(
                     (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
@@ -10993,6 +11019,83 @@ class WorkflowGUI:
         if hasattr(self, 'video_title'):
             self.video_title.bind('<KeyRelease>', self.on_video_title_change)
             self.video_title.bind('<FocusOut>', self.on_video_title_change)
+        if hasattr(self, 'topic_category_combo'):
+            self.topic_category_combo.bind('<<ComboboxSelected>>', self._on_topic_category_selected)
+        if hasattr(self, 'topic_subtype_combo'):
+            self.topic_subtype_combo.bind('<<ComboboxSelected>>', self._on_topic_fields_changed)
+        if hasattr(self, 'topic_tags_entry'):
+            self.topic_tags_entry.bind('<FocusOut>', self._on_topic_fields_changed)
+            self.topic_tags_entry.bind('<Return>', self._on_topic_fields_changed)
+
+    def _topic_choice_rows(self) -> list:
+        channel = ""
+        if project_manager.PROJECT_CONFIG:
+            channel = (project_manager.PROJECT_CONFIG.get("channel") or "").strip()
+        if not channel and hasattr(self, "shared_channel"):
+            channel = (self.shared_channel.cget("text") or "").strip()
+        try:
+            choices, categories, _tags = config.load_topics(channel)
+        except Exception:
+            return [], []
+        return list(choices or []), list(categories or [])
+
+    def _subtypes_for_category(self, category: str, choices: list) -> list:
+        subtypes = []
+        for item in choices or []:
+            if not isinstance(item, dict) or item.get("topic_category") != category:
+                continue
+            for subtype_item in item.get("topic_subtypes", []) or []:
+                if not isinstance(subtype_item, dict):
+                    continue
+                name = (subtype_item.get("topic_subtype") or "").strip()
+                if name and name not in subtypes:
+                    subtypes.append(name)
+        return subtypes
+
+    def _topic_tags_value(self):
+        from utility.tags_text import parse_tags_list
+
+        text = (self.topic_tags_var.get() or "").strip() if hasattr(self, "topic_tags_var") else ""
+        return parse_tags_list(text) if text else []
+
+    def _load_topic_fields(self, config_data: dict) -> None:
+        if not hasattr(self, "topic_category_combo"):
+            return
+        choices, categories = self._topic_choice_rows()
+        self._topic_choices = choices
+        category = (config_data.get("topic_category") or "").strip()
+        subtype = (config_data.get("topic_subtype") or "").strip()
+        tags = config_data.get("tags")
+        if isinstance(tags, list):
+            tags_text = " | ".join(str(t) for t in tags if str(t).strip())
+        else:
+            tags_text = (tags or "").strip() if isinstance(tags, str) else ""
+        if category and category not in categories:
+            categories = list(categories) + [category]
+        self.topic_category_combo["values"] = categories
+        self.topic_category_var.set(category)
+        subtypes = self._subtypes_for_category(self.topic_category_var.get(), choices)
+        self.topic_subtype_combo["values"] = subtypes
+        self.topic_subtype_var.set(subtype if subtype in subtypes else "")
+        self.topic_tags_var.set(tags_text)
+
+    def _on_topic_category_selected(self, _event=None) -> None:
+        if self._loading_config:
+            return
+        choices = getattr(self, "_topic_choices", None) or []
+        subtypes = self._subtypes_for_category(self.topic_category_var.get(), choices)
+        self.topic_subtype_combo["values"] = subtypes
+        if self.topic_subtype_var.get() not in subtypes:
+            self.topic_subtype_var.set("")
+        self._on_topic_fields_changed()
+
+    def _on_topic_fields_changed(self, _event=None) -> None:
+        if self._loading_config or not project_manager.PROJECT_CONFIG:
+            return
+        project_manager.PROJECT_CONFIG["topic_category"] = (self.topic_category_var.get() or "").strip()
+        project_manager.PROJECT_CONFIG["topic_subtype"] = (self.topic_subtype_var.get() or "").strip()
+        project_manager.PROJECT_CONFIG["tags"] = self._topic_tags_value()
+        self.save_config()
 
 
     def on_video_title_change(self, event=None):

@@ -110,71 +110,6 @@ def _resolve_combined_prompt_template(
     return lbl, tpl, idx
 
 
-def _instruction_snippet_choices(channel_key: str) -> list[tuple[str, str]]:
-    """从频道 config 读取导向说明可插入片段（无则使用全局默认）。"""
-    return config.get_instruction_snippet_choices(channel_key)
-
-
-def _append_instruction_snippet(text_widget, snippet: str) -> None:
-    snippet = (snippet or "").strip()
-    if not snippet:
-        return
-    current = (text_widget.get("1.0", tk.END) or "").rstrip()
-    new_text = f"{current}\n\n{snippet}" if current else snippet
-    text_widget.delete("1.0", tk.END)
-    text_widget.insert("1.0", new_text)
-
-
-def _build_instruction_snippet_combo(
-    parent,
-    channel_key: str,
-    instruction_tx,
-    *,
-    on_changed=None,
-) -> dict:
-    """在导向说明框旁添加「插入片段」下拉，选中后追加到文本末尾（空一行）。"""
-    choices = _instruction_snippet_choices(channel_key)
-    if not choices:
-        return {}
-    placeholder = "— 选择片段插入 —"
-    ttk.Label(parent, text="").pack(anchor=tk.W)
-    row = ttk.Frame(parent)
-    row.pack(fill=tk.X, pady=(0, 4))
-    ttk.Label(row, text="插入片段").pack(side=tk.LEFT, padx=(0, 5))
-    combo_var = tk.StringVar(value=placeholder)
-    combo = ttk.Combobox(
-        row,
-        textvariable=combo_var,
-        values=[placeholder] + [lbl for lbl, _ in choices],
-        state="readonly",
-        width=36,
-    )
-    combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    label_to_text = {lbl: text for lbl, text in choices}
-    labels = [lbl for lbl, _ in choices]
-
-    def apply_label(sel: str) -> bool:
-        if not sel or sel == placeholder or sel not in label_to_text:
-            return False
-        _append_instruction_snippet(instruction_tx, label_to_text[sel])
-        combo_var.set(placeholder)
-        if on_changed:
-            on_changed()
-        return True
-
-    def on_select(_event=None):
-        apply_label((combo_var.get() or "").strip())
-
-    combo.bind("<<ComboboxSelected>>", on_select)
-    return {
-        "var": combo_var,
-        "labels": labels,
-        "label_to_text": label_to_text,
-        "placeholder": placeholder,
-        "apply": apply_label,
-    }
-
-
 def _pick_prompt_label_from_choices(
     choices: list[tuple[str, str]], *candidates: str
 ) -> str:
@@ -1557,6 +1492,40 @@ def _refresh_summary_window_title(
         title_part = title_part[:72].rstrip() + "…"
     idx_part = f"{idx} - " if str(idx).strip() else ""
     summary_window.title(f"STORY | {idx_part}{title_part}{suf}")
+
+
+def _fit_story_summary_window(summary_window) -> None:
+    """把预览窗高度收到内容底部，场景 JSON 下面不再留空带。"""
+    try:
+        if not summary_window.winfo_exists():
+            return
+    except tk.TclError:
+        return
+    try:
+        summary_window.update_idletasks()
+        bottom = 0
+        for child in summary_window.winfo_children():
+            try:
+                bottom = max(bottom, child.winfo_y() + child.winfo_reqheight())
+            except tk.TclError:
+                continue
+        if bottom < 80:
+            return
+        sw = summary_window.winfo_screenwidth()
+        sh = summary_window.winfo_screenheight()
+        try:
+            chrome = summary_window.winfo_rooty() - summary_window.winfo_y()
+        except tk.TclError:
+            chrome = 0
+        if chrome < 8:
+            chrome = 32
+        width = 1100
+        height = min(max(bottom + chrome + 6, 240), sh - 36)
+        x = max(0, (sw - width) // 2)
+        y = 12
+        summary_window.geometry(f"{width}x{height}+{x}+{y}")
+    except tk.TclError:
+        pass
 
 
 def _parse_scene_json_list(raw) -> list[dict]:
@@ -7846,7 +7815,7 @@ class MediaGUIManager:
             dlg = parent
             self._scene_content_dialog = dlg
             frm = tk.Frame(embed_in, padx=4, pady=2, bg="#f0f0f0")
-            frm.pack(fill=tk.BOTH, expand=True)
+            frm.pack(fill=tk.X, expand=False)
 
         def _dismiss_scene_window() -> None:
             if embedded:
@@ -7898,7 +7867,6 @@ class MediaGUIManager:
             nb_prompt_choices = _prompt_choice_entries(channel_key)
             prompt_row = ttk.Frame(frm)
             prompt_row.pack(fill=tk.X, pady=(0, 6))
-            ttk.Label(prompt_row, text="生成场景").pack(side=tk.LEFT, padx=(0, 5))
             default_prompt_label = _prompt_choice_entries(channel_key)[0][0]
             prompt_combo_var = tk.StringVar(value=default_prompt_label)
             prompt_combo = ttk.Combobox(
@@ -7910,7 +7878,7 @@ class MediaGUIManager:
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
             action_bar = ttk.Frame(prompt_row)
-            action_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(12, 0))
+            action_bar.pack(side=tk.LEFT, fill=tk.X, expand=not embedded, padx=(12, 0))
             scene_ui["action_bar"] = action_bar
 
             material_var = tk.StringVar(value="analyzed")
@@ -7967,9 +7935,37 @@ class MediaGUIManager:
                         f"PDF 已复制到剪贴板，可以粘贴到 AI 工具：\n{os.path.basename(slide)}",
                     )
 
+            _analyzed_edit = {"text": None, "reload": False}
+
+            def _analyzed_widget_text() -> str:
+                raw = (material_preview.get("1.0", "end-1c") or "").strip()
+                if raw == "（这一条没有分析报告）":
+                    return ""
+                hint = "双击这里，把分析报告拷到剪贴板。"
+                if raw.endswith(hint):
+                    raw = raw[: -len(hint)].strip()
+                return raw
+
+            def _read_analyzed_draft():
+                """分析报告正在显示时返回编辑区文字；正在看 PDF 时返回切走前记下的草稿。"""
+                if material_var.get() == "pdf":
+                    return _analyzed_edit["text"]
+                return _analyzed_widget_text()
+
+            if embedded and isinstance(drop_ctx, dict):
+                drop_ctx["read_analyzed_draft"] = _read_analyzed_draft
+
+                def _reload_analyzed_draft():
+                    _analyzed_edit["text"] = None
+                    _analyzed_edit["reload"] = True
+
+                drop_ctx["reload_analyzed_draft"] = _reload_analyzed_draft
+
             def _copy_analyzed_text():
-                raw = video_detail.get("analyzed_content") or ""
-                text = raw if isinstance(raw, str) else str(raw)
+                text = _analyzed_widget_text()
+                if not text and material_var.get() != "analyzed":
+                    raw = video_detail.get("analyzed_content") or ""
+                    text = raw.strip() if isinstance(raw, str) else str(raw).strip()
                 if not text.strip():
                     show_auto_close_popup(dlg, "分析报告", "这一条没有分析报告。")
                     return
@@ -7984,7 +7980,12 @@ class MediaGUIManager:
                 return "break"
 
             material_preview.bind("<Double-Button-1>", _on_material_preview_double)
-            material_preview.bind("<Key>", lambda _event: "break")
+
+            def _on_material_preview_key(_event=None):
+                if material_var.get() == "pdf":
+                    return "break"
+
+            material_preview.bind("<Key>", _on_material_preview_key)
 
             def _pdf_layout_mode() -> str:
                 shown = (pdf_layout_combo.get() or "").strip()
@@ -8004,6 +8005,21 @@ class MediaGUIManager:
             def _fill_material_preview():
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
                 on_pdf = material_var.get() == "pdf"
+                if not _analyzed_edit["reload"]:
+                    current = (material_preview.get("1.0", "end-1c") or "").strip()
+                    pdfish = (
+                        "双击这里，把这份 PDF" in current
+                        or current.startswith("还没有图文 PDF")
+                    )
+                    if current and not pdfish:
+                        kept = current
+                        if kept == "（这一条没有分析报告）":
+                            kept = ""
+                        hint = "双击这里，把分析报告拷到剪贴板。"
+                        if kept.endswith(hint):
+                            kept = kept[: -len(hint)].strip()
+                        _analyzed_edit["text"] = kept
+                _analyzed_edit["reload"] = False
                 material_preview.configure(state=tk.NORMAL)
                 material_preview.delete("1.0", tk.END)
                 if on_pdf and slide:
@@ -8023,13 +8039,13 @@ class MediaGUIManager:
                         "或按点击顺序选择图片，合成一份 PDF。",
                     )
                 else:
-                    raw = video_detail.get("analyzed_content") or ""
-                    text = raw.strip() if isinstance(raw, str) else str(raw).strip()
-                    material_preview.insert(
-                        "1.0",
-                        text or "（这一条没有分析报告）",
-                    )
-                    material_preview.insert(tk.END, "\n\n双击这里，把分析报告拷到剪贴板。")
+                    if _analyzed_edit["text"] is not None:
+                        text = _analyzed_edit["text"]
+                    else:
+                        raw = video_detail.get("analyzed_content") or ""
+                        text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+                    if text:
+                        material_preview.insert("1.0", text)
 
             def _pdf_button_caption() -> str:
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -8127,6 +8143,8 @@ class MediaGUIManager:
                         parent=dlg,
                     ):
                         on_resummarize()
+                        _analyzed_edit["text"] = None
+                        _analyzed_edit["reload"] = True
                         _fill_material_preview()
                 return "break"
 
@@ -8211,9 +8229,6 @@ class MediaGUIManager:
             if nb_prompt_choices:
                 prompt_combo.bind("<<ComboboxSelected>>", _copy_selected_scene_prompt)
 
-            snippet_handle = _build_instruction_snippet_combo(
-                instruction_frm, channel_key, instruction_tx
-            )
             _sync_material_widgets()
 
             from gui.cli_bridge import bind_screen, match_choice, unbind_screen
@@ -8250,16 +8265,6 @@ class MediaGUIManager:
                 instruction_tx.delete("1.0", tk.END)
                 instruction_tx.insert("1.0", value)
                 return True, "instruction set"
-
-            def _set_snippet_early(value: str):
-                labels = list(snippet_handle.get("labels") or [])
-                matched = match_choice(value, labels)
-                if not matched:
-                    return False, "unknown snippet: " + value + "\nchoices: " + " | ".join(labels)
-                apply_fn = snippet_handle.get("apply")
-                if not callable(apply_fn) or not apply_fn(matched):
-                    return False, f"failed to insert snippet {matched}"
-                return True, f"inserted {matched}"
 
             def _get_content_bridge() -> str:
                 txw = scene_ui.get("tx")
@@ -8529,15 +8534,6 @@ class MediaGUIManager:
                         "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
                         "set": _set_instruction_early,
                     },
-                    "snippet": {
-                        "get": lambda: (
-                            snippet_handle.get("var").get()
-                            if snippet_handle.get("var")
-                            else ""
-                        ),
-                        "set": _set_snippet_early,
-                        "choices": lambda: list(snippet_handle.get("labels") or []),
-                    },
                     "prompt": {
                         "get": _scene_prompt_text_now,
                     },
@@ -8583,7 +8579,6 @@ class MediaGUIManager:
                     "instruction_tx": instruction_tx,
                     "visual_style_var": visual_style_var,
                     "visual_style_combo_opts": visual_style_combo_opts,
-                    "snippet_handle": snippet_handle,
                     "dialogue_mode_var": dialogue_mode_var,
                     "dialogue_mode_opts": dialogue_mode_opts,
                     "pdf_layout_mode": _pdf_layout_mode,
@@ -8599,7 +8594,6 @@ class MediaGUIManager:
             instruction_tx = scene_ui["instruction_tx"]
             visual_style_var = scene_ui["visual_style_var"]
             visual_style_combo_opts = scene_ui["visual_style_combo_opts"]
-            snippet_handle = scene_ui["snippet_handle"]
             material_var = scene_ui["material_var"]
             dialogue_mode_var = scene_ui["dialogue_mode_var"]
             dialogue_mode_opts = scene_ui["dialogue_mode_opts"]
@@ -8958,15 +8952,21 @@ class MediaGUIManager:
                         if callable(on_saved):
                             on_saved()
 
-                    smart_btn = tk.Button(
-                        scene_ui["smart_slot"],
+                    smart_style = "StorySmartGenerate.TButton"
+                    ttk.Style().configure(
+                        smart_style,
+                        font=("Microsoft YaHei UI", 9, "bold"),
+                        padding=(11, 6),
+                    )
+                    smart_btn = ttk.Button(
+                        scene_ui["prompt_combo"].master,
                         text="智能生成",
                         command=on_smart_generate,
-                        font=("Microsoft YaHei UI", 12),
-                        width=12,
-                        padx=16,
-                        pady=6,
-                        bd=2,
+                        style=smart_style,
+                        width=11,
+                    )
+                    smart_btn.pack(
+                        side=tk.LEFT, padx=(0, 6), before=scene_ui["prompt_combo"]
                     )
                     if embedded:
                         def _summary_scenes() -> list:
@@ -8993,7 +8993,24 @@ class MediaGUIManager:
 
                         sum_btn.config(command=_on_summarize)
                         sum_btn.pack(side=tk.LEFT, padx=(0, 8))
-                    smart_btn.pack(side=tk.LEFT)
+                    if callable(on_save_story):
+                        title_host = scene_ui["prompt_combo"].master
+                        title_var = None
+                        host_ctx = getattr(dlg, "_summary_drop_ctx", None)
+                        if isinstance(host_ctx, dict):
+                            title_var = host_ctx.get("story_title_var")
+                        if title_var is None:
+                            title_var = tk.StringVar(value=_youtube_row_source_title(video_detail))
+                        ttk.Entry(title_host, textvariable=title_var).pack(
+                            side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 6)
+                        )
+                        ttk.Button(
+                            title_host, text="保存", width=8, command=on_save_story
+                        ).pack(side=tk.LEFT, padx=(0, 8))
+                    if callable(on_regen_project):
+                        ttk.Button(
+                            scene_ui["smart_slot"], text="重新生成项目", command=on_regen_project
+                        ).pack(side=tk.LEFT, padx=(0, 4))
 
                     def _offer_pdf_scene_generate(pdf_path: str) -> None:
                         importer = scene_ui.get("import_slide_pdf")
@@ -9049,39 +9066,31 @@ class MediaGUIManager:
                         btn_row,
                         text="幻灯提示",
                         command=_open_scene_slide_prompt,
-                        font=("Microsoft YaHei UI", 12),
-                        width=12,
-                        padx=16,
-                        pady=6,
+                        font=("Microsoft YaHei UI", 8, "bold"),
+                        width=8,
+                        padx=10,
+                        pady=4,
                         bd=2,
                     )
                     nb_export_btn.pack(side=tk.LEFT, padx=(0, 8))
-                    if callable(on_save_story) or callable(on_regen_project) or callable(on_open_project):
-                        ttk.Separator(btn_row, orient=tk.VERTICAL).pack(
-                            side=tk.LEFT, fill=tk.Y, padx=(36, 36)
-                        )
-                    if callable(on_save_story):
-                        ttk.Button(btn_row, text="保存", width=8, command=on_save_story).pack(
-                            side=tk.LEFT, padx=(8, 0)
-                        )
-                    if callable(on_regen_project):
-                        ttk.Button(btn_row, text="重新生成项目", command=on_regen_project).pack(
-                            side=tk.LEFT, padx=(6, 0)
-                        )
                     if callable(on_open_project):
+                        open_host = scene_ui["prompt_combo"].master
                         open_style = "StoryOpenProject.TButton"
                         ttk.Style().configure(
                             open_style,
-                            font=("Microsoft YaHei UI", 14),
-                            padding=(16, 8),
+                            font=("Microsoft YaHei UI", 9, "bold"),
+                            padding=(10, 5),
                         )
                         ttk.Button(
-                            btn_row,
+                            open_host,
                             text="打开项目",
                             style=open_style,
-                            width=16,
+                            width=10,
                             command=on_open_project,
-                        ).pack(side=tk.LEFT, padx=(8, 0))
+                        ).pack(side=tk.RIGHT, padx=(8, 0))
+                        ttk.Separator(open_host, orient=tk.VERTICAL).pack(
+                            side=tk.RIGHT, fill=tk.Y, padx=(16, 10)
+                        )
                     save_btn = ttk.Button(btn_row, text="保存", command=on_confirm)
                     if not embedded:
                         save_btn.pack(side=tk.LEFT, padx=(0, 8))
@@ -9141,16 +9150,6 @@ class MediaGUIManager:
                     instruction_tx.delete("1.0", tk.END)
                     instruction_tx.insert("1.0", value)
                     return True, "instruction set"
-
-                    def _set_snippet(value: str):
-                        labels = list(snippet_handle.get("labels") or [])
-                        matched = match_choice(value, labels)
-                        if not matched:
-                            return False, "unknown snippet: " + value + "\nchoices: " + " | ".join(labels)
-                        apply_fn = snippet_handle.get("apply")
-                        if not callable(apply_fn) or not apply_fn(matched):
-                            return False, f"failed to insert snippet {matched}"
-                        return True, f"inserted {matched}"
 
                     def _set_content(value: str):
                         tx.delete("1.0", tk.END)
@@ -9321,15 +9320,6 @@ class MediaGUIManager:
                                 "get": lambda: (instruction_tx.get("1.0", tk.END) or "").strip(),
                                 "set": _set_instruction,
                             },
-                            "snippet": {
-                                "get": lambda: (
-                                    snippet_handle.get("var").get()
-                                    if snippet_handle.get("var")
-                                    else ""
-                                ),
-                                "set": _set_snippet,
-                                "choices": lambda: list(snippet_handle.get("labels") or []),
-                            },
                             "content": {
                                 "get": lambda: (tx.get("1.0", tk.END) or "").strip(),
                                 "set": _set_content,
@@ -9365,6 +9355,9 @@ class MediaGUIManager:
 
                 # 这一排和窗口一起出现。场景 JSON 仍按小段写入，避免一次插进大段文字卡住界面。
                 _fill_scene_editor_rest_body()
+                if embedded:
+                    dlg.after_idle(lambda: _fit_story_summary_window(dlg))
+                    dlg.after(250, lambda: _fit_story_summary_window(dlg))
 
             dlg.after_idle(_fill_scene_editor_rest)
 
@@ -11162,11 +11155,6 @@ class MediaGUIManager:
             # 摘要窗口：首次新建，之后 Ctrl+左/右切换条目时复用同一窗口并重建内容
             if summary_window_ref.get("w") and summary_window_ref["w"].winfo_exists():
                 summary_window = summary_window_ref["w"]
-                _sw = summary_window.winfo_screenwidth()
-                _sh = summary_window.winfo_screenheight()
-                summary_window.geometry(
-                    f"1100x{max(720, _sh - 80)}+{max(0, (_sw - 1100) // 2)}+20"
-                )
                 try:
                     from gui.cli_bridge import set_screen_ready
 
@@ -11178,11 +11166,6 @@ class MediaGUIManager:
             else:
                 summary_window = tk.Toplevel(dialog)
                 summary_window_ref["w"] = summary_window
-                _sw = summary_window.winfo_screenwidth()
-                _sh = summary_window.winfo_screenheight()
-                summary_window.geometry(
-                    f"1100x{max(720, _sh - 80)}+{max(0, (_sw - 1100) // 2)}+20"
-                )
                 summary_window.resizable(True, True)
                 summary_window.transient(dialog)
             if not getattr(summary_window, "_summary_drop_ctx", None):
@@ -11194,111 +11177,19 @@ class MediaGUIManager:
             summary_window._summary_drop_ctx["summary_dnd_title_suffix"] = ""
             _refresh_summary_window_title(summary_window, video_detail)
             main_frame = ttk.Frame(summary_window, padding=6)
-            main_frame.pack(fill=tk.BOTH, expand=True)
+            main_frame.pack(fill=tk.BOTH, expand=False)
 
-            _look_vs, _look_talk, _look_nar = _project_look_from_row(video_detail)
-            header = ttk.Frame(main_frame)
-            header.pack(fill=tk.X, pady=(0, 2))
-            row_top = ttk.Frame(header)
-            row_top.pack(fill=tk.X)
+            _look_nar = _project_look_from_row(video_detail)[2]
             source_title_var = tk.StringVar(
                 value=_youtube_row_source_title(video_detail)
             )
-            ttk.Label(row_top, text="标题").pack(side=tk.LEFT, padx=(0, 4))
-            source_title_entry = ttk.Entry(row_top, textvariable=source_title_var)
-            source_title_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-            ttk.Label(row_top, text="风格").pack(side=tk.LEFT, padx=(0, 2))
-            story_style_var = tk.StringVar(value=_look_vs)
-            ttk.Combobox(
-                row_top,
-                textvariable=story_style_var,
-                values=list(config.VISUAL_STYLE_OPTIONS),
-                state="readonly",
-                width=26,
-            ).pack(side=tk.LEFT, padx=(0, 6))
-            ttk.Label(row_top, text="对话").pack(side=tk.LEFT, padx=(0, 2))
-            story_talk_var = tk.StringVar(value=_look_talk)
-            ttk.Combobox(
-                row_top,
-                textvariable=story_talk_var,
-                values=list(config.DIALOGUE_MODE_OPTIONS),
-                state="readonly",
-                width=10,
-            ).pack(side=tk.LEFT, padx=(0, 6))
-            ttk.Label(row_top, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
             story_narrator_var = tk.StringVar(value=_look_nar)
-
-            def _story_narrator_caption(name: str = "") -> str:
-                name = (name or "").strip()
-                if not name or project_manager.actor_is_absent(name):
-                    return "不出现"
-                return name
-
-            def _pick_story_narrator():
-                from GUI_wf import open_narrator_portrait
-
-                def chosen(name: str) -> None:
-                    story_narrator_var.set((name or "").strip())
-
-                open_narrator_portrait(summary_window, story_narrator_var.get(), chosen)
-
-            story_narrator_btn = ttk.Button(
-                row_top,
-                text=_story_narrator_caption(_look_nar),
-                command=_pick_story_narrator,
-            )
-            story_narrator_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-            def _sync_story_narrator_btn(*_a):
-                text = _story_narrator_caption(story_narrator_var.get())
-                try:
-                    story_narrator_btn.config(text=text, width=max(len(text), 12))
-                except tk.TclError:
-                    pass
-
-            def _save_story_look(*_a):
-                _stamp_project_look(
-                    video_detail,
-                    visual_style=story_style_var.get(),
-                    dialogue_mode=story_talk_var.get(),
-                    narrator=story_narrator_var.get(),
-                )
-                try:
-                    _write_channel_list_json_file(
-                        self.downloader.channel_list_json, self.downloader.channel_videos
-                    )
-                except Exception:
-                    pass
-
-            story_style_var.trace_add("write", _save_story_look)
-            story_talk_var.trace_add("write", _save_story_look)
-            story_narrator_var.trace_add("write", _save_story_look)
-            story_narrator_var.trace_add("write", _sync_story_narrator_btn)
-            _sync_story_narrator_btn()
-
             has_project_profile = project_manager.list_json_row_has_project_profile(
                 video_detail
             )
-            ttk.Label(row_top, text="分类").pack(side=tk.LEFT, padx=(0, 2))
             category_var = tk.StringVar(value=topic_category)
-            category_combo = ttk.Combobox(
-                row_top,
-                textvariable=category_var,
-                values=self.topic_categories,
-                state="readonly",
-                width=12,
-            )
-            category_combo.pack(side=tk.LEFT, padx=(0, 6))
-            ttk.Label(row_top, text="子类").pack(side=tk.LEFT, padx=(0, 2))
             subtype_var = tk.StringVar(value=topic_subtype)
-            subtype_combo = ttk.Combobox(
-                row_top, textvariable=subtype_var, values=[], state="readonly", width=9
-            )
-            subtype_combo.pack(side=tk.LEFT, padx=(0, 8))
             tags_var = tk.StringVar(value=topic_tags)
-            tags_entry = ttk.Entry(row_top, textvariable=tags_var, width=16)
-            tags_entry.pack(side=tk.RIGHT, padx=(4, 0))
-            ttk.Label(row_top, text="标签").pack(side=tk.RIGHT, padx=(8, 0))
             feature_media_var = tk.StringVar(value="")
 
             def refresh_feature_media_row():
@@ -11327,36 +11218,21 @@ class MediaGUIManager:
                 summary_window._summary_drop_ctx[
                     "refresh_title_fields"
                 ] = refresh_title_fields
-            
-            def update_subtypes(*args):
-                """根据选择的分类更新子类型选项"""
-                selected_category = category_var.get()
-                subtypes = []
-                if selected_category and self.topic_choices:
-                    for item in self.topic_choices:
-                        if isinstance(item, dict) and item.get('topic_category') == selected_category:
-                            for subtype_item in item.get('topic_subtypes', []):
-                                if isinstance(subtype_item, dict):
-                                    # 从 topic_subtypes 数组中获取每个项的 topic_subtype 字段
-                                    subtype_name = subtype_item.get('topic_subtype', '')
-                                    if subtype_name and subtype_name not in subtypes:
-                                        subtypes.append(subtype_name)
-                subtype_combo['values'] = subtypes
-                # 使用 video_detail 当前值，避免闭包中的 topic_subtype 过时（如 do_re_category 刚更新后）
-                current_subtype = (video_detail.get('topic_subtype') or subtype_var.get() or '').strip()
-                if current_subtype in subtypes:
-                    subtype_var.set(current_subtype)
-                else:
-                    subtype_var.set('')
 
-            # 绑定事件：用 trace 保证主题分类变更时一定触发子类型更新（<<ComboboxSelected>> 在某些环境下可能不触发）
-            def _on_category_var_write(*args):
-                update_subtypes()
-            category_var.trace_add('write', _on_category_var_write)
-            
             # 保存按钮
             def save_story_info():
                 """保存主题信息"""
+                drop_ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                if isinstance(drop_ctx, dict):
+                    read_analyzed = drop_ctx.get("read_analyzed_draft")
+                    if callable(read_analyzed):
+                        drafted = read_analyzed()
+                        if drafted is not None:
+                            text = drafted.strip() if isinstance(drafted, str) else str(drafted).strip()
+                            if text:
+                                video_detail["analyzed_content"] = text
+                            else:
+                                video_detail.pop("analyzed_content", None)
                 _apply_video_detail_titles_from_ui(
                     video_detail,
                     source_title=source_title_var.get(),
@@ -11414,12 +11290,7 @@ class MediaGUIManager:
                         show_auto_close_popup(summary_window, "场景内容", msg or "没有写回场景内容。", kind="error")
                         return
 
-                show_auto_close_popup(summary_window, "成功", "视频名称、主题信息和场景内容已保存")
-
-            def _on_title_entry_return(_event=None):
-                save_story_info()
-
-            source_title_entry.bind("<Return>", _on_title_entry_return)
+                show_auto_close_popup(summary_window, "成功", "名称、分析报告和场景内容已保存")
 
             def _select_tree_row_for_key(target_key: str):
                 u = (target_key or "").strip()
@@ -11591,20 +11462,8 @@ class MediaGUIManager:
             )
             summary_window.bind("<Destroy>", _unbind_story_root)
 
-            # 初始化子类型选项
-            if topic_category:
-                update_subtypes()
-            
-            header_gap = ttk.Frame(main_frame, height=22)
-            header_gap.pack(fill=tk.X)
-            header_gap.pack_propagate(False)
             scene_host = ttk.Frame(main_frame)
-            scene_host.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
-
-            def on_category_change(e):
-                update_subtypes()
-
-            category_combo.bind('<<ComboboxSelected>>', on_category_change)
+            scene_host.pack(fill=tk.X, expand=False)
 
             summary_window._summary_drop_ctx["nav_low_priority"] = low_priority
             if not getattr(summary_window, "_summary_nav_root_bound", False):
@@ -11632,6 +11491,9 @@ class MediaGUIManager:
 
             def _resummarize_from_summary():
                 _resummarize_one_video_detail(video_detail, summary_window)
+
+            if isinstance(summary_window._summary_drop_ctx, dict):
+                summary_window._summary_drop_ctx["story_title_var"] = source_title_var
 
             self.open_content_field_editor(
                 summary_window,
