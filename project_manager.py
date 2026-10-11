@@ -305,7 +305,13 @@ def normalize_scene_content_item_for_workflow(item: dict) -> None:
     if not vo and legacy_vo:
         vo = str(legacy_vo).strip()
     if vo:
-        item["voiceover"] = vo
+        spoken = (item.get("speaking") or "").strip()
+        if "<" not in spoken:
+            if spoken:
+                item["speaking"] = spoken + f" <2> {vo}"
+            else:
+                item["speaking"] = f"<1> {vo}"
+    item.pop("voiceover", None)
     item.pop("narrator", None)
 
 
@@ -606,7 +612,7 @@ def normalize_actor_text(text: str) -> str:
     seen_host = False
     for part in _actor_segments(text):
         if _is_host_segment(part, voices):
-            if seen_host:
+            if seen_host or len(present) >= 4:
                 continue
             seen_host = True
             _base, motion = split_actor_motion(_strip_actor_label(part))
@@ -623,7 +629,7 @@ def normalize_actor_text(text: str) -> str:
         if actor_is_absent(body):
             absent.append(f"人物：{ACTOR_ABSENT}")
             continue
-        if person_n >= 4:
+        if len(present) >= 4:
             continue
         person_n += 1
         present.append(f"人物{person_n}：{body}")
@@ -725,6 +731,20 @@ LAST_YT_LANGUAGE = "tw"
 # 创建项目时的画面比例。没有上次选择时用竖屏。
 LAST_VIDEO_SIZE = "1080x1920"
 _VIDEO_SIZE_CHOICES = ("1920x1080", "1080x1920")
+
+
+def video_size_pair(width=None, height=None) -> tuple[int, int]:
+    """项目里已经写了宽高就用项目的。没有则用上次选择，再没有就是 1080x1920。"""
+    try:
+        w = int(width)
+        h = int(height)
+        if w > 0 and h > 0:
+            return w, h
+    except (TypeError, ValueError):
+        pass
+    if LAST_VIDEO_SIZE == "1920x1080":
+        return 1920, 1080
+    return 1080, 1920
 
 
 def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
@@ -1310,7 +1330,8 @@ class ProjectConfigManager:
                 title = (cfg.get("video_title") or "").strip() or tpid
                 language = cfg.get("language", "zh")
                 channel = cfg.get("channel", "")
-                video_size = f"{cfg.get('video_width', '1920')}x{cfg.get('video_height', '1080')}"
+                vw, vh = video_size_pair(cfg.get("video_width"), cfg.get("video_height"))
+                video_size = f"{vw}x{vh}"
                 ref = encode_list_item_ref(list_path, idx)
                 projects.append(
                     {
@@ -1475,8 +1496,8 @@ class ProjectSelectionDialog:
             'channels': available_channels,
             'default_channel': default_channel,
             'default_title': '',
-            'default_video_width': '1920',
-            'default_video_height': '1080'
+            'default_video_width': '1080',
+            'default_video_height': '1920'
         }
 
         icat = (initial_category or '').strip() or None
@@ -2154,9 +2175,9 @@ class ProjectSelectionDialog:
                 video_width = "1080"
                 video_height = "1920"
             else:
-                # 默认值
-                video_width = self.default_project_config['default_video_width']
-                video_height = self.default_project_config['default_video_height']
+                dw, dh = video_size_pair()
+                video_width = str(dw)
+                video_height = str(dh)
 
             # self.story_result
             self.story_result['pid'] = pid

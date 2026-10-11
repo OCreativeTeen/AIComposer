@@ -43,16 +43,14 @@ class MagicWorkflow:
 
         # Get video dimensions from parameters or load from project config
         if video_width is None or video_height is None:
-            # Try to load from project config
             try:
-                from project_manager import ProjectConfigManager
-                config_manager = ProjectConfigManager(pid)
                 if project_manager.PROJECT_CONFIG:
                     video_width = project_manager.PROJECT_CONFIG.get('video_width')
                     video_height = project_manager.PROJECT_CONFIG.get('video_height')
             except Exception as e:
                 print(f"⚠️  Could not load video dimensions from project config: {e}")
-        
+        video_width, video_height = project_manager.video_size_pair(video_width, video_height)
+
         self.ffmpeg_processor = FfmpegProcessor(pid, language, video_width, video_height)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self.sd_processor = SDProcessor(self)
@@ -381,10 +379,9 @@ class MagicWorkflow:
 
         speaking = from_scene.get("speaking", "")
         caption = from_scene.get("caption", "")
-        voiceover = from_scene.get("voiceover", "")
         from_scene["speaking"] = speaking + "  " + to_scene.get("speaking", "") if ending_punctuation(speaking) else speaking + "... " + to_scene.get("speaking", "")
         from_scene["caption"] = caption + "  " + to_scene.get("caption", "") if ending_punctuation(caption) else caption + "... " + to_scene.get("caption", "")
-        from_scene["voiceover"] = voiceover + "  " + to_scene.get("voiceover", "") if ending_punctuation(voiceover) else voiceover + "... " + to_scene.get("voiceover", "")
+        from_scene.pop("voiceover", None)
         # merged_duration = self.find_duration(from_scene) + self.find_duration(to_scene)
         if from_index > to_index:
             audio_list = [get_file_path(to_scene, "clip_audio"), get_file_path(from_scene, "clip_audio")]
@@ -834,7 +831,8 @@ class MagicWorkflow:
         """新建场景之后：列表上的音频或视频写成所有场景共用的 zero / zero_audio。
 
         音频先转成内部用的 wav，再用第一条场景的 zero 图和这段音频合成 zero 视频。
-        视频直接作为 zero，并从里面抽出 wav 作为 zero_audio。
+        视频直接作为 zero，并从里面抽出 wav 作为 zero_audio，首帧、尾帧作为
+        zero_image、zero_image_last。
         """
         media = self._list_item_media_path()
         if not media or not self.scenes:
@@ -854,10 +852,17 @@ class MagicWorkflow:
             if not wav or not os.path.isfile(wav):
                 print("ZERO: video has no audio track, skip shared zero")
                 return
+            fp = self.ffmpeg_processor
+            first = fp.extract_frame(media, True)
+            last_frame = fp.extract_frame(media, False)
             for scene in scenes:
                 refresh_scene_media(scene, "zero_audio", ".wav", wav, True)
                 refresh_scene_media(scene, "zero", ".mp4", media, True)
-            print(f"ZERO: shared video+audio on {len(scenes)} scenes")
+                if first and os.path.isfile(first):
+                    refresh_scene_media(scene, "zero_image", ".webp", first, True)
+                if last_frame and os.path.isfile(last_frame):
+                    refresh_scene_media(scene, "zero_image_last", ".webp", last_frame, True)
+            print(f"ZERO: shared video+audio+frames on {len(scenes)} scenes")
             return
 
         if ext not in audio_ext:
@@ -936,6 +941,9 @@ class MagicWorkflow:
                 return
         last = len(scenes) - 1
         written = 0
+        reused = 0
+        # 相同起止只编码一次。后面落到同一段的场景直接拷这份结果。
+        span_ready = {}
         for index, scene in enumerate(scenes):
             start = self._scene_time_seconds(scene.get("start"))
             if start is None:
@@ -953,21 +961,35 @@ class MagicWorkflow:
             end = max(start, min(end, duration))
             if end - start <= 0.01:
                 continue
+            key = (round(start, 2), round(end, 2))
+            ready = span_ready.get(key)
+            if ready:
+                for slot, ext, src in ready:
+                    if src and os.path.isfile(src):
+                        refresh_scene_media(scene, slot, ext, src, True)
+                reused += 1
+                written += 1
+                continue
             if is_video:
                 trimmed = fp.trim_video(media, start, end)
                 if not trimmed or not os.path.isfile(trimmed):
                     print(f"CLIP: video cut failed at {start:.2f}")
                     continue
                 refresh_scene_media(scene, "clip", ".mp4", trimmed, True)
+                made = [("clip", ".mp4", trimmed)]
                 wav = fa.extract_audio_from_video(trimmed, "wav")
                 if wav and os.path.isfile(wav):
                     refresh_scene_media(scene, "clip_audio", ".wav", wav, True)
+                    made.append(("clip_audio", ".wav", wav))
                 first = fp.extract_frame(trimmed, True)
                 last_frame = fp.extract_frame(trimmed, False)
                 if first and os.path.isfile(first):
                     refresh_scene_media(scene, "clip_image", ".webp", first, True)
+                    made.append(("clip_image", ".webp", first))
                 if last_frame and os.path.isfile(last_frame):
                     refresh_scene_media(scene, "clip_image_last", ".webp", last_frame, True)
+                    made.append(("clip_image_last", ".webp", last_frame))
+                span_ready[key] = made
                 written += 1
                 continue
             piece = fa.audio_cut_fade(full_wav, start, end - start)
@@ -975,36 +997,20 @@ class MagicWorkflow:
                 print(f"CLIP: audio cut failed at {start:.2f}")
                 continue
             refresh_scene_media(scene, "clip_audio", ".wav", piece, True)
+            made = [("clip_audio", ".wav", piece)]
             image = get_file_path(scene, "clip_image") or get_file_path(scene, "zero_image") or ""
-            if not image or not os.path.isfile(image):
+            if image and os.path.isfile(image):
+                video = fp.image_audio_to_video(image, piece)
+                if video and os.path.isfile(video):
+                    refresh_scene_media(scene, "clip", ".mp4", video, True)
+                    made.append(("clip", ".mp4", video))
+            else:
                 print(f"CLIP: no clip image for scene {index + 1}")
-                written += 1
-                continue
-            video = fp.image_audio_to_video(image, piece)
-            if video and os.path.isfile(video):
-                refresh_scene_media(scene, "clip", ".mp4", video, True)
+            span_ready[key] = made
             written += 1
         if written:
-            print(f"CLIP: cut {written} scenes from media")
+            print(f"CLIP: cut {len(span_ready)} spans for {written} scenes, reused {reused}")
 
-
-    def _project_size_from_image_dims(self, width: int, height: int) -> tuple[int, int]:
-        """宽>=高（约 16:9）→ 1920x1080；否则 → 1080x1920。"""
-        try:
-            w, h = int(width), int(height)
-        except (TypeError, ValueError):
-            return 1920, 1080
-        if w <= 0 or h <= 0:
-            return 1920, 1080
-        if w >= h:
-            return 1920, 1080
-        return 1080, 1920
-
-    def _image_dims(self, image_path: str) -> tuple[int, int]:
-        from PIL import Image
-
-        with Image.open(image_path) as im:
-            return int(im.width), int(im.height)
 
     def _pdf_pages_to_images(self, pdf_path: str, out_dir: str | None = None) -> list[str]:
         """用 PyMuPDF 将 PDF 每页渲成 WebP，返回按页序的绝对路径列表。"""
@@ -1664,31 +1670,6 @@ class MagicWorkflow:
                 scene.pop("group", None)
         return new_name
 
-    def _apply_project_video_size(self, width: int, height: int) -> None:
-        """更新 PROJECT_CONFIG 与 ffmpeg 输出尺寸；尺寸变化时重绑模板底稿。"""
-        nw, nh = int(width), int(height)
-        pc = project_manager.PROJECT_CONFIG
-        cur_w = int((pc or {}).get("video_width") or self.ffmpeg_processor.width or 1920)
-        cur_h = int((pc or {}).get("video_height") or self.ffmpeg_processor.height or 1080)
-        if pc is not None:
-            pc["video_width"] = nw
-            pc["video_height"] = nh
-            try:
-                save_project_config()
-            except Exception as e:
-                print(f"⚠️ 保存 video_width/height 失败: {e}")
-        if (cur_w, cur_h) != (nw, nh):
-            print(f"📐 项目尺寸按封面媒体设为 {nw}x{nh}")
-            try:
-                self.reapply_all_scenes_template_medias(nw, nh)
-            except Exception as e:
-                print(f"⚠️ 按新尺寸重绑模板失败（仍继续设置 clip_image）: {e}")
-                self.ffmpeg_processor = FfmpegProcessor(self.pid, self.language, nw, nh)
-        else:
-            self.ffmpeg_processor.width = nw
-            self.ffmpeg_processor.height = nh
-
-
     def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
         """scene_content 多场景 → PDF 页对 clip_image；单场景 → 封面图作 clip_image。"""
         pc = project_manager.PROJECT_CONFIG
@@ -1719,18 +1700,23 @@ class MagicWorkflow:
                 print(f"⚠️ PDF 未能渲出页面图: {pdf_path}")
                 return
             self._stamp_episode_folder_to_pdf(group_name)
-            try:
-                iw, ih = self._image_dims(page_images[0])
-            except Exception as e:
-                print(f"⚠️ 读取 PDF 首页尺寸失败: {e}")
-                return
-            nw, nh = self._project_size_from_image_dims(iw, ih)
-            self._apply_project_video_size(nw, nh)
             for scene in self.scenes:
                 if isinstance(scene, dict) and not str(scene.get("episode") or "").strip():
                     scene["episode"] = group_name
                     scene.pop("group", None)
-            self.fit_group_to_page_count(group_name, len(page_images), "extend")
+            # 场景自己带 start 时，场数以 scene_content 为准。PDF 页多出来
+            # 不能再复制最后一场，否则复制体会带着同一段起止，后面切原视频会把这一段重编码很多遍。
+            timed = any(
+                isinstance(s, dict) and self._scene_time_seconds(s.get("start")) is not None
+                for s in self.scenes
+            )
+            if timed:
+                print(
+                    f"SLIDE: {len(page_images)} pages, keep "
+                    f"{len(self.group_scene_indices(group_name))} timed scenes"
+                )
+            else:
+                self.fit_group_to_page_count(group_name, len(page_images), "extend")
             written = 0
             for i, scene_i in enumerate(self.group_scene_indices(group_name)):
                 if i >= len(page_images):
@@ -1763,14 +1749,11 @@ class MagicWorkflow:
             cover_video = (pc.get("cover_video") or "").strip()
             if cover and os.path.isfile(cover):
                 try:
-                    iw, ih = self._image_dims(cover)
-                    nw, nh = self._project_size_from_image_dims(iw, ih)
-                    self._apply_project_video_size(nw, nh)
                     ext = os.path.splitext(cover)[1].lower() or ".webp"
                     if ext not in (".webp", ".png", ".jpg", ".jpeg"):
                         ext = ".webp"
                     refresh_scene_media(scene, "clip_image", ext, cover, make_replacement_copy=True)
-                    print(f"✅ 已将封面图设为单场景 clip_image，尺寸 {nw}x{nh}")
+                    print("✅ 已将封面图设为单场景 clip_image")
                 except Exception as e:
                     print(f"⚠️ 设置封面 clip_image 失败: {e}")
             elif not cover_video or not os.path.isfile(cover_video):
@@ -2497,6 +2480,12 @@ class MagicWorkflow:
         - 结束时 ``save_scenes_to_json()``（无场景时仅更新处理器与模板路径缓存）。"""
         vw, vh = int(video_width), int(video_height)
         self.ffmpeg_processor = FfmpegProcessor(self.pid, self.language, vw, vh)
+
+        # 列表上已有音频或视频时，clip / zero 来自这段媒体。
+        # 不能再用频道默认图把已经切好的画面和首尾帧盖掉。
+        if self._list_item_media_path():
+            print(f"SIZE: {vw}x{vh}, keep clip and zero from list media")
+            return
 
         self.background_image, self.background_video, background_music = config.make_backgroud_medias(
             self.pid, self.channel, self.ffmpeg_processor, self.ffmpeg_audio_processor

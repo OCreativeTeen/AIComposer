@@ -700,9 +700,12 @@ def _scene_speech_snapshot(scene: dict | None) -> dict:
     import project_manager
 
     scene = scene if isinstance(scene, dict) else {}
+    speaking = (scene.get("speaking") or "").strip()
+    old_voiceover = (scene.get("voiceover") or "").strip()
+    if old_voiceover and "<" not in speaking:
+        speaking = (speaking + f" <2> {old_voiceover}").strip() if speaking else f"<1> {old_voiceover}"
     return {
-        "speaking": (scene.get("speaking") or "").strip(),
-        "voiceover": (scene.get("voiceover") or "").strip(),
+        "speaking": speaking,
         "visual": (scene.get("visual") or "").strip(),
         "actor": project_manager.actor_text_for_generation(scene.get("actor") or ""),
     }
@@ -761,8 +764,8 @@ def build_scene_speech_transform_prompt(
         return None
     kind, label = picked
     active = project_manager.active_actor_entries(actor_text)
-    first = active[0]
-    second = active[1] if len(active) > 1 else None
+    speakers = active[:3]
+    silent = active[3:4]
 
     def who(row: dict) -> str:
         role = "讲员" if row.get("role") == "host" else (row.get("label") or "人物")
@@ -774,17 +777,19 @@ def build_scene_speech_transform_prompt(
             return "用讲员的旁白口吻，第三人称讲述这场看到的事"
         return "用这个人自己的口气说话"
 
-    slots = [f"第1个是 {who(first)}。speaking 由这个人说，{tone(first)}。"]
-    if second:
-        slots.append(f"第2个是 {who(second)}。voiceover 由这个人说，{tone(second)}。")
-        if kind == "dialogue":
-            slots.append("这两个人在对话：第二个人回应第一个人。这场没有讲员。")
-        elif kind == "person_then_narrator":
-            slots.append("voiceover 是旁白，解说这场，不要把 speaking 里的话再念一遍。")
-        elif kind == "narrator_then_person":
-            slots.append("speaking 先把这场讲清楚，voiceover 里的人再回应。")
-    else:
-        slots.append("只有这一个人。voiceover 写成空字符串。")
+    slots = []
+    for index, row in enumerate(speakers, 1):
+        slots.append(f"<{index}> 是 {who(row)}。这个人开口时用这个口气：{tone(row)}。")
+    if len(speakers) == 1:
+        slots.append("只有这一个人说话。可以不写 <1>。")
+    elif kind == "dialogue":
+        slots.append("这几个人在对话，第二个人回应第一个人。这场没有讲员。")
+    elif kind == "person_then_narrator":
+        slots.append("讲员用旁白口吻解说这场，不要把人物刚说的话再念一遍。")
+    elif kind == "narrator_then_person":
+        slots.append("讲员先把这场讲清楚，人物再回应。")
+    if silent:
+        slots.append(f"第4个是 {who(silent[0])}。这个人只出现在画面里，不要给他台词，不要写 <4>。")
 
     span = 3 if span >= 3 else 2 if span == 2 else 1
     later_scenes = [item for item in (later or []) if isinstance(item, dict)]
@@ -803,9 +808,9 @@ def build_scene_speech_transform_prompt(
         return json.dumps(_scene_speech_snapshot(item), ensure_ascii=False, indent=2)
 
     lines = [
-        "只调整 speaking 和 voiceover，使它们和当前这场 actor 的位置一致。",
-        "第1个出场的人说 speaking。有第2个人时，第2个说 voiceover。没有第2个人时，voiceover 为空。",
-        "仍然只有这两句。可以一来一往，把要说的事都放进这两句里。",
+        "只调整 speaking，使它和当前这场 actor 的位置一致。没有 voiceover。",
+        "speaking 是整段对话。用 <N> 标明 actor 里第几个人在说，从 1 起。开口的最多三个人。第四个只出镜，不说话。",
+        "同一个人继续说，直到下一个 <N>。可以来回说好几次。",
         "名叫「不出现」的人不算。讲员如果是不出现，这场就没有讲员。",
         "visual 是画面描述，原样保留，不要改写，也不要放进返回的 JSON。",
         "actor 不要改，也不要放进返回的 JSON。",
@@ -821,38 +826,38 @@ def build_scene_speech_transform_prompt(
             "故事里发生的事保持不变。场景结构保持不变。",
         ]
         lines.extend([
-            "speaking 和 voiceover 加在一起，用大约 10 到 12 秒说完。不要超过 12 秒。",
+            "speaking 用大约 10 到 12 秒说完。不要超过 12 秒。",
             "10 秒能说完就不要写到 12 秒。",
             "现在的话如果读起来超过 12 秒，就压缩大约两成，只留下这场必须说的事。",
             "现在的话如果太短、几秒就说完，就按这个场景的背景再补一点，让它接近 10 秒。仍然不要超过 12 秒。",
             "补的内容从本场、前一场、后一场已经写出的事里来。不要另编这场没有的情节。",
             "前一场和后一场只作参考。这一场的话要承上启下，接得上刚才发生的事，也通向接下来的事。",
             "不要改写前一场和后一场，也不要把它们的整段情节搬进这一场。",
-            "旁白也这样做：承接上一场，通向下一场，并把人物的身份和关系说清楚。",
+            "讲员的句子也这样做：承接上一场，通向下一场，并把人物的身份和关系说清楚。",
         ])
     elif span == 2:
         lines[0:0] = [
-            "把当前这场和紧接着的下一场合成一段对话，写入当前这场的 speaking 和 voiceover。",
+            "把当前这场和紧接着的下一场合成一段对话，写入当前这场的 speaking。",
             "两场里已经写出的事都要说到，按原来的先后，连成一来一往。",
             "前一场只用来接上刚才的事。再下一场只用来通向后面的事。这两场的整段情节不要搬进对话。",
         ]
         lines.extend([
-            "speaking 和 voiceover 加在一起，用大约 16 到 20 秒说完这两场。不要超过 22 秒。",
+            "speaking 用大约 16 到 20 秒说完这两场。不要超过 22 秒。",
             "两场的话如果太长，就压到这个时长里，两场的关键事仍要留下。",
             "两场的话如果太短，就按这两场已经写出的情景补到接近 16 秒。不要另编没有的情节。",
         ])
     else:
         lines[0:0] = [
-            "把当前这场、下一场、再下一场这三场合成一段对话，写入当前这场的 speaking 和 voiceover。",
+            "把当前这场、下一场、再下一场这三场合成一段对话，写入当前这场的 speaking。",
             "三场里已经写出的事都要说到，按原来的先后，连成一来一往。",
             "前一场只用来接上刚才的事。三场之后的那场只用来通向后面的事。这两场的整段情节不要搬进对话。",
         ]
         lines.extend([
-            "speaking 和 voiceover 加在一起，用大约 22 到 28 秒说完这三场。不要超过 30 秒。",
+            "speaking 用大约 22 到 28 秒说完这三场。不要超过 30 秒。",
             "三场的话如果太长，就压到这个时长里，三场的关键事仍要留下。",
             "三场的话如果太短，就按这三场已经写出的情景补到接近 22 秒。不要另编没有的情节。",
         ])
-    lines.extend(["", *slots, "", "只返回一个 JSON 对象，键只有 speaking 和 voiceover。不要解释。", ""])
+    lines.extend(["", *slots, "", "只返回一个 JSON 对象，键只有 speaking。不要解释。", ""])
     lines.extend([
         "前一场（衔接）：",
         dump(previous if isinstance(previous, dict) else None, empty="（没有前一场）"),

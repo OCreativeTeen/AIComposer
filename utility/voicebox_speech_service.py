@@ -153,8 +153,11 @@ def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
 _VB_SEGMENT_GAP_SEC = 0.15
 # 缓存版本：拼接逻辑变更后须 bump，避免复用错误速率的旧 mp3
 _VB_AUDIO_CACHE_VER = "v2"
-# 文案中的 ``<0.5>`` / ``＜1.25＞`` 等 → 插入对应秒数静音（0.5–1.5 等，同样用 noise.wav 裁切）
-_VB_SILENCE_MARKER_RE = re.compile(r"[<＜](\d+(?:\.\d+)?)[>＞]")
+# 文案中的 ``<0.5>`` / ``＜1.25＞`` 等 → 插入对应秒数静音（必须带小数点）。
+# 不带小数点的 ``<1>`` ``<2>`` 是说话人编号，不能当成静音。
+_VB_SILENCE_MARKER_RE = re.compile(r"[<＜](\d+\.\d+)[>＞]")
+# ``<N>``：actor 名单里的第 N 个人。整数、紧贴括号，没有小数点。
+_VB_SPEAKER_MARK_RE = re.compile(r"[<＜](\d+)[>＞]")
 
 
 def _split_voicebox_segments(text: str) -> List[tuple]:
@@ -192,6 +195,35 @@ def _split_voicebox_segments(text: str) -> List[tuple]:
     if not out and text:
         return [("speech", text)]
     return out
+
+
+def split_speaking_turns(text: str) -> List[tuple]:
+    """把 speaking 按 ``<N>`` 拆成 ``[(人物序号, 这段话), ...]``。
+
+    序号从 1 起，对应 actor 里按书写顺序的第 N 个人。
+    标记前面的文字算第 1 个人。没有新标记时，后面的句子留在同一个人这段里。
+    ``<0.5>`` 这种带小数点的静音标记不会被当成换人。
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    parts = _VB_SPEAKER_MARK_RE.split(text)
+    turns: List[tuple] = []
+    if parts[0].strip():
+        turns.append((1, parts[0].strip()))
+    i = 1
+    while i + 1 < len(parts):
+        try:
+            n = int(parts[i])
+        except (TypeError, ValueError):
+            n = 1
+        body = (parts[i + 1] or "").strip()
+        if body:
+            turns.append((n, body))
+        i += 2
+    if not turns:
+        turns.append((1, text))
+    return turns
 
 
 class VoiceboxService:
@@ -374,6 +406,32 @@ class VoiceboxService:
             return None
         return self._ffmpeg_audio.to_wav(audio_file)
 
+    def synthesize_turns_to_wav(self, turns: List[tuple], language_key: str) -> Optional[str]:
+        """按说话人逐段生成，再拼成一条。
+
+        ``turns`` 是 ``[(speaker, text), ...]``。每一段内部仍按句号拆开并留句间空隙，
+        段与段之间再用同一段空隙接上。换了说话人就换音色。
+        """
+        pieces = [(str(speaker or "").strip(), str(text or "").strip()) for speaker, text in (turns or [])]
+        pieces = [(speaker, text) for speaker, text in pieces if text]
+        if not pieces:
+            return None
+        wavs: List[str] = []
+        for speaker, text in pieces:
+            wav = self.synthesize_speaker_text_to_wav(speaker, text, language_key)
+            if not wav:
+                return None
+            wavs.append(wav)
+        if len(wavs) == 1:
+            return wavs[0]
+        chain: List[str] = []
+        gap = self._segment_gap_wav
+        for i, wav in enumerate(wavs):
+            chain.append(wav)
+            if gap and i + 1 < len(wavs):
+                chain.append(gap)
+        return self._ffmpeg_audio.concat_audios(chain)
+
     def _download_audio_bytes(self, job_id: str, max_wait_sec: float = 300.0) -> Optional[bytes]:
         """GET /audio/{id}，轮询直到拿到非空字节或超时。"""
         deadline = time.time() + max_wait_sec
@@ -403,7 +461,9 @@ class VoiceboxService:
 
         成功时返回 **JSON 字符串**，形如上述对象（含 ``text`` 与 ``duration``；无时长则为 ``null``）。
         """
+        self._last_transcribe_error = ""
         if not file_path or not os.path.isfile(file_path):
+            self._last_transcribe_error = "file not found"
             print(f"Voicebox transcribe: file not found: {file_path}")
             return None
         try:
@@ -414,15 +474,18 @@ class VoiceboxService:
                     timeout=600,
                 )
         except requests.RequestException as e:
+            self._last_transcribe_error = str(e)
             print(f"Voicebox /transcribe error: {e}")
             return None
 
         if r.status_code != 200:
+            self._last_transcribe_error = f"HTTP {r.status_code}: {(r.text or '')[:400]}"
             print(f"Voicebox /transcribe HTTP {r.status_code}: {r.text[:800]}")
             return None
 
         raw = (r.text or "").strip()
         if not raw:
+            self._last_transcribe_error = "empty response"
             return None
 
         data: Any = None

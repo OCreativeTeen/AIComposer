@@ -200,42 +200,45 @@ DIALOGUE_MODE_OPTIONS = [
 _DIALOGUE_MODE_PROMPTS = {
     "解说带一人表演": """
 *** DIALOGUE MODE: narrator with one performer
-    ** This block overrides every host, actor, speaking, and voiceover rule written above.
-    ** Most scenes hold one story person and the third-party narrator (讲员) together.
+    ** This block overrides every host, actor, and speaking rule written above.
+    ** There is no voiceover field.
+    ** speaking is the whole conversation. <N> is the Nth person in actor, from 1, in the written order. Only one 讲员. actor holds at most four people, and 讲员 counts as one of them. At most three people speak. The fourth only appears and has no line. Never write <4>.
+    ** The same person keeps speaking until the next <N>. People may answer each other many times in one scene.
+    ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。"
+    ** Most scenes hold one story person and the third-party narrator (讲员) together. List them in the order they should be numbered.
     ** A few scenes may be two story people talking, with no 讲员 in that scene.
-    ** actor order decides the two lines. The first entry says speaking. The second entry says voiceover.
-    ** The story person may be first: speaking is that person talking, voiceover is the narrator explaining what just happened.
-    ** The 讲员 may be first: speaking is the narrator, voiceover is the story person performing or answering.
-    ** On a two-person scene, list those two 人物 in that same order and leave the 讲员 out.
     ** Use only the host look already named in this prompt for 讲员. Do not invent another storyteller, and do not list the storyteller as 人物.
 """,
     "双人对话为主": """
 *** DIALOGUE MODE: two-person dialogue
-    ** This block overrides every host, actor, speaking, and voiceover rule written above.
+    ** This block overrides every host, actor, and speaking rule written above.
+    ** There is no voiceover field.
+    ** speaking is the whole conversation. <N> is the Nth person in actor, from 1, in the written order. Only one 讲员. actor holds at most four people, and 讲员 counts as one of them. At most three people speak. The fourth only appears and has no line. Never write <4>.
+    ** The same person keeps speaking until the next <N>. Two or three people may trade lines many times inside one scene.
+    ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx。"
     ** Most scenes are two story people talking. Those scenes have no 讲员.
-    ** The first 人物 says speaking. The second 人物 says voiceover.
-    ** A minority of scenes may be carried by the third-party narrator.
-    ** Narrator alone: actor is exactly 讲员 plus the host look already named in this prompt. speaking is the narrator. voiceover is an empty string.
-    ** One story person plus the narrator: the entry listed first says speaking, the entry listed second says voiceover. The narrator may stand first or second.
-    ** Keep those narrator scenes few. The body of the episode is two people talking.
+    ** A minority of scenes may be carried by the third-party narrator. Narrator alone: actor is exactly 讲员 plus the host look already named in this prompt, and speaking uses <1>.
+    ** One story person plus the narrator: list both, in the order their <N> numbers should follow.
+    ** Keep those narrator scenes few. The body of the episode is people talking.
     ** Use only the host look already named in this prompt. Do not invent another storyteller.
 """,
     "只有解说员": """
 *** DIALOGUE MODE: narrator only
-    ** This block overrides every host, actor, speaking, and voiceover rule written above.
+    ** This block overrides every host, actor, and speaking rule written above.
+    ** There is no voiceover field.
     ** Every scene is the third-party narrator alone.
     ** actor is exactly 讲员 plus the host look already named in this prompt. No 人物.
-    ** speaking is the narrator's line.
-    ** voiceover is an empty string in every scene.
+    ** speaking is the narrator's line. Mark it <1>, or leave the marker off when only one person speaks.
     ** There is no second speaker.
 """,
     "只有人物表演": """
 *** DIALOGUE MODE: performers only
-    ** This block overrides every host, actor, speaking, and voiceover rule written above.
-    ** No third-party narrator in any scene. Do not write 讲员.
-    ** One story person: that person says speaking, and voiceover is an empty string.
-    ** Two story people: the first says speaking, the second says voiceover.
-    ** Later people may stay visible and do not take those two lines.
+    ** This block overrides every host, actor, and speaking rule written above.
+    ** There is no voiceover field. Do not write 讲员.
+    ** speaking is the whole conversation. <N> is the Nth 人物 in actor, from 1. actor holds at most four 人物. At most three of them speak. The fourth only appears and has no line. Never write <4>.
+    ** The same person keeps speaking until the next <N>. They may answer each other many times in one scene.
+    ** Example: "<1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。"
+    ** One story person: that person says the whole speaking, as <1> or with no marker.
 """,
 }
 

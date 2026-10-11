@@ -9203,7 +9203,7 @@ class MediaGUIManager:
                             get_scenes=lambda: chosen,
                             get_style=lambda: (visual_style_var.get() or "").strip(),
                             copy_text=copy_text,
-                            host_narrator=project_manager.project_narrator(),
+                            host_narrator=_scene_prompt_narrator(video_detail),
                             main_character=main_character or "",
                             get_video_detail=lambda: video_detail,
                             get_slide_path=lambda: (
@@ -9436,24 +9436,55 @@ class MediaGUIManager:
                         _walk_pdf_drop(frm)
                     if not nb_prompt_choices:
                         smart_btn.config(state=tk.DISABLED)
-                    ttk.Label(btn_row, text="集").pack(side=tk.LEFT, padx=(0, 2))
-                    episode_btn = ttk.Button(
+                    _narr_opts = [
+                        x for x in config.narrator_person_options() if (x or "").strip()
+                    ]
+                    _narr_named = ""
+                    _pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                    if isinstance(_pp, dict):
+                        _narr_named = (_pp.get("narrator") or "").strip()
+                    if not _narr_named:
+                        _narr_named = (video_detail.get("narrator") or "").strip()
+                    if not _narr_named:
+                        _narr_named = (project_manager.LAST_NARRATOR or "").strip()
+                    if _narr_named and _narr_named not in _narr_opts:
+                        _narr_opts = [_narr_named] + _narr_opts
+                    if not _narr_named and _narr_opts:
+                        _narr_named = _narr_opts[0]
+                    narrator_var = tk.StringVar(value=_narr_named)
+                    scene_ui["narrator_var"] = narrator_var
+
+                    def _commit_story_narrator(persist=False):
+                        nar = (narrator_var.get() or "").strip()
+                        if not nar:
+                            return
+                        video_detail["narrator"] = nar
+                        pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                        if isinstance(pp, dict):
+                            pp["narrator"] = nar
+                        project_manager.LAST_NARRATOR = nar
+                        if not persist:
+                            return
+                        try:
+                            config.save_yt_tools_prefs({"narrator": nar})
+                        except Exception:
+                            pass
+                        self._persist_video_detail_story(video_detail, parent=dlg)
+
+                    _commit_story_narrator(False)
+                    ttk.Label(btn_row, text="讲员").pack(side=tk.LEFT, padx=(0, 4))
+                    narrator_combo = ttk.Combobox(
                         btn_row,
-                        text=_episode_choice_label(_episode_choice[0]),
-                        width=6,
-                        command=_cycle_episode_choice,
+                        textvariable=narrator_var,
+                        values=_narr_opts,
+                        state="readonly" if _narr_opts else "disabled",
+                        width=26,
                     )
-                    episode_btn.pack(side=tk.LEFT, padx=(0, 6))
-                    scene_ui["episode_btn"] = episode_btn
-                    ttk.Label(btn_row, text="场").pack(side=tk.LEFT, padx=(0, 2))
-                    scene_index_btn = ttk.Button(
-                        btn_row,
-                        text=_scene_index_button_label(_scene_copy_index[0]),
-                        width=5,
-                        command=_cycle_scene_copy_index,
+                    narrator_combo.pack(side=tk.LEFT, padx=(0, 8))
+                    narrator_combo.bind(
+                        "<<ComboboxSelected>>",
+                        lambda _e: _commit_story_narrator(True),
                     )
-                    scene_index_btn.pack(side=tk.LEFT, padx=(0, 4))
-                    scene_ui["scene_index_btn"] = scene_index_btn
                     nb_export_btn = tk.Button(
                         btn_row,
                         text="幻灯提示",

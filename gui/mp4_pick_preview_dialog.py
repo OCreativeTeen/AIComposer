@@ -1345,7 +1345,13 @@ def ask_mp4_pick_with_trim_preview(
             messagebox.showerror("区间无效", "结束时间必须大于开始时间。", parent=dlg)
             return
         vol_line = "音量是 1 倍，不改大小。" if abs(vol - 1.0) < 0.001 else f"音量调到 {vol:.1f} 倍。"
-        dest_name = {"clip": "Clip", "narration": "旁白", "zero": "Zero"}.get(
+        dest_name = {
+            "clip": "Clip",
+            "narration": "旁白",
+            "zero": "Zero 整集",
+            "zero_episode": "Zero 整集",
+            "zero_scene": "Zero 本场",
+        }.get(
             dest_var.get() if dest_options else "", "当前片段",
         )
 
