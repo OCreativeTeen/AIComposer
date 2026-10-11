@@ -3935,6 +3935,10 @@ def _list_json_item_matches_pid(item: dict, wanted_pid: str) -> bool:
     return project_manager.list_json_row_workflow_pid(item) == wanted_pid
 
 
+_workflow_launch_guard: dict[str, float] = {}
+_workflow_launch_guard_lock = threading.Lock()
+
+
 def _focus_open_workflow(pid: str = "") -> bool:
     """项目窗口已经在，就把它拿到前面，不再另开一个。"""
     from gui.raise_window import find_workflow_window, raise_window
@@ -3946,25 +3950,61 @@ def _focus_open_workflow(pid: str = "") -> bool:
     return True
 
 
+def _begin_workflow_launch(pid: str) -> bool:
+    """窗口已经在，或这一条正在启动，就不再另开。返回 True 时调用方才去启动进程。"""
+    pid = (pid or "").strip()
+    if not pid:
+        return False
+    if _focus_open_workflow(pid):
+        with _workflow_launch_guard_lock:
+            _workflow_launch_guard.pop(pid, None)
+        return False
+    now = time.monotonic()
+    with _workflow_launch_guard_lock:
+        if now < _workflow_launch_guard.get(pid, 0.0):
+            return False
+        _workflow_launch_guard[pid] = now + 25.0
+    return True
+
+
+def _release_workflow_launch(pid: str) -> None:
+    with _workflow_launch_guard_lock:
+        _workflow_launch_guard.pop((pid or "").strip(), None)
+
+
+def _watch_workflow_launch(pid: str) -> None:
+    """窗口一出来就放开，关掉以后可以马上再开。出不来就等到保护时间结束。"""
+    pid = (pid or "").strip()
+    deadline = time.monotonic() + 25.0
+    while time.monotonic() < deadline:
+        time.sleep(0.4)
+        if _focus_open_workflow(pid):
+            break
+    _release_workflow_launch(pid)
+
+
 def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
     """另起进程启动 ``GUI_wf.py --open-pid``，与在主窗口用 ``--open-pid`` /「选择项目→打开」后的加载逻辑一致。"""
     pid = (pid or "").strip()
     if not pid:
         return False
-    if _focus_open_workflow(pid):
+    if not _begin_workflow_launch(pid):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
+        _release_workflow_launch(pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", f"找不到工作流脚本：\n{script}", kind="error")
         return False
     cmd = [sys.executable, script, "--open-pid", pid]
     try:
         subprocess.Popen(cmd, cwd=repo_root)
-        return True
     except Exception as e:
+        _release_workflow_launch(pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
+    threading.Thread(target=_watch_workflow_launch, args=(pid,), daemon=True).start()
+    return True
 
 
 def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=None) -> bool:
@@ -3979,20 +4019,24 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
     except (OSError, json.JSONDecodeError, TypeError, ValueError, IndexError):
         row = None
     open_pid = _video_detail_project_pid(row) if isinstance(row, dict) else ""
-    if _focus_open_workflow(open_pid):
+    if open_pid and not _begin_workflow_launch(open_pid):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
     if not os.path.isfile(script):
+        _release_workflow_launch(open_pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", f"找不到工作流脚本：\n{script}", kind="error")
         return False
     cmd = [sys.executable, script, "--open-from-list-json", os.path.normpath(list_json_path), str(int(index))]
     try:
         subprocess.Popen(cmd, cwd=repo_root)
-        return True
     except Exception as e:
+        _release_workflow_launch(open_pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
+    if open_pid:
+        threading.Thread(target=_watch_workflow_launch, args=(open_pid,), daemon=True).start()
+    return True
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。
 

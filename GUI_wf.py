@@ -1408,6 +1408,41 @@ class WorkflowGUI:
             stem = stem.replace(ch, "_")
         return stem.strip(" .")
 
+    def _ensure_actor_voice_sample(self, name: str, role: str, picked: str = "") -> str:
+        """按预览里选中的声音名生成一句试听，存到 avatar/voice，文件名就是这个声音名。"""
+        voice_name = project_manager.resolve_actor_voice(name) or (name or "").strip()
+        bits = [part.strip() for part in voice_name.split("/") if part.strip()]
+        lang = bits[2].lower() if len(bits) >= 3 else "chinese"
+        if lang not in ("chinese", "english"):
+            lang = "chinese"
+        look = "/".join(bits[:3]) if len(bits) >= 3 else voice_name
+        chosen = (picked or "").strip() or config_prompt.chosen_actor_voice(name, role)
+        stem = self._portrait_stem(chosen)
+        if not stem:
+            raise RuntimeError("这一位没有可选的声音")
+        folder = os.path.join(config.AVATAR_PATH, "voice")
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, stem + ".wav")
+        if os.path.isfile(dest) and os.path.getsize(dest) > 100:
+            return dest
+        line = "你好, 请问我能帮你做些什么?" if lang == "chinese" else "Hi how are you doing?"
+        service = getattr(self, "speech_service", None)
+        if service is None:
+            pid = getattr(getattr(self, "workflow", None), "pid", None) or "avatar"
+            service = VoiceboxService(pid)
+            self.speech_service = service
+        from utility.voicebox_speech_service import VOICES, _ensure_voices_for_project
+
+        _ensure_voices_for_project(getattr(service, "pid", "") or "avatar")
+        speaker = chosen if any(
+            str(row.get("name") or "").strip().lower() == chosen.lower() for row in VOICES
+        ) else look
+        wav = service.synthesize_speaker_text_to_wav(speaker, line, "en" if lang == "english" else "zh")
+        if not wav or not os.path.isfile(wav):
+            raise RuntimeError("声音没有生成")
+        safe_copy_overwrite(wav, dest)
+        return dest
+
     @staticmethod
     def _narrator_portrait_path(name: str) -> str:
         """voices.json 的 name 把 / 换成 _，对应 avatar 目录里的 png。"""
@@ -1648,6 +1683,8 @@ class WorkflowGUI:
         voice_var = tk.StringVar()
         voice_box = ttk.Combobox(voice_row, textvariable=voice_var, state="readonly", width=18)
         voice_box.pack(side=tk.LEFT)
+        hear_btn = ttk.Button(voice_row, text="听声音")
+        hear_btn.pack(side=tk.LEFT, padx=(8, 0))
         hint_var = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=hint_var, wraplength=640).pack(pady=(0, 8))
         holder = {
@@ -1660,8 +1697,8 @@ class WorkflowGUI:
             "override_name": "",
             "voice_ready": False,
         }
-        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。全改讲员把讲稿收成只在开头标〈1〉，后面不再换人。"
-        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物只在这一边。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
+        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。全改讲员把讲稿收成只在开头标〈1〉，后面不再换人。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
+        person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
 
         def remember_voice(name: str, voice: str) -> None:
             pc = project_manager.PROJECT_CONFIG
@@ -1709,6 +1746,51 @@ class WorkflowGUI:
                 return
             name = names_now[holder["index"]]
             remember_voice(name, voice_var.get().strip())
+
+        def preview_voice() -> None:
+            names_now = holder["names"]
+            if not names_now:
+                return
+            name = holder.get("override_name") or names_now[holder["index"]]
+            if not name or project_manager.actor_is_absent(name):
+                messagebox.showinfo("听声音", "这一位没有声音。", parent=dlg)
+                return
+            hear_btn.state(["disabled"])
+            role = "host" if holder.get("mode") == "host" else "person"
+            picked = voice_var.get().strip()
+
+            def work() -> None:
+                try:
+                    path = self._ensure_actor_voice_sample(name, role, picked)
+                except Exception as exc:
+                    err = str(exc)
+
+                    def failed(msg=err) -> None:
+                        hear_btn.state(["!disabled"])
+                        messagebox.showerror("听声音", msg, parent=dlg)
+
+                    dlg.after(0, failed)
+                    return
+
+                def play(sample=path) -> None:
+                    hear_btn.state(["!disabled"])
+                    try:
+                        if not pygame.mixer.get_init():
+                            pygame.mixer.init()
+                        old = holder.get("preview_channel")
+                        if old is not None:
+                            old.stop()
+                        sound = pygame.mixer.Sound(sample)
+                        holder["preview_sound"] = sound
+                        holder["preview_channel"] = sound.play()
+                    except Exception as exc:
+                        messagebox.showerror("听声音", str(exc), parent=dlg)
+
+                dlg.after(0, play)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        hear_btn.configure(command=preview_voice)
 
         def show_at(i: int) -> None:
             holder["override_name"] = ""
@@ -1849,7 +1931,7 @@ class WorkflowGUI:
             dlg.grab_release()
             try:
                 before = list(holder["names"])
-                self._add_manual_scene_person(dlg)
+                self._add_manual_scene_person(dlg, actor_entry)
             finally:
                 try:
                     dlg.grab_set()
@@ -1889,16 +1971,15 @@ class WorkflowGUI:
                 dlg.title("讲员")
                 hint_var.set(host_hint)
                 switch_btn.config(text="切换成人物")
-                add_btn.pack_forget()
                 if not force_btn.winfo_ismapped():
                     force_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if delete_btn else cancel_btn)
-                return
-            dlg.title("人物")
-            hint_var.set(person_hint)
-            switch_btn.config(text="切换成讲员")
-            force_btn.pack_forget()
+            else:
+                dlg.title("人物")
+                hint_var.set(person_hint)
+                switch_btn.config(text="切换成讲员")
+                force_btn.pack_forget()
             if not add_btn.winfo_ismapped():
-                add_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if actor_entry else cancel_btn)
+                add_btn.pack(side=tk.LEFT, padx=6, before=delete_btn if delete_btn else cancel_btn)
 
         def toggle_domain() -> None:
             if holder["mode"] == "host":
@@ -2138,23 +2219,85 @@ class WorkflowGUI:
         box.wait_window()
         return result["body"]
 
-    def _add_manual_scene_person(self, parent) -> None:
+    def _present_actor_rows(self) -> list:
+        return [
+            row for row in self._scene_actor_rows()
+            if not project_manager.actor_is_absent(row.get("body") or "")
+        ]
+
+    def _actor_slot_index(self, entry: dict | None) -> int:
+        rows = self._scene_actor_rows()
+        if not rows:
+            return -1
+        if not entry:
+            return len(rows) - 1
+        target_role = entry.get("role")
+        target_body, _motion = project_manager.split_actor_motion(entry.get("body") or "")
+        for index, row in enumerate(rows):
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            same = row.get("role") == target_role and (target_role == "host" or body == target_body)
+            if same:
+                return index
+        return len(rows) - 1
+
+    def _add_manual_scene_person(self, parent, after_entry: dict | None = None) -> None:
         scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
         if not scene:
             messagebox.showinfo("增加人物", "先打开一场。", parent=parent)
-            return
-        people = [
-            row for row in self._scene_actor_rows()
-            if row.get("role") == "person" and not project_manager.actor_is_absent(row.get("body") or "")
-        ]
-        if len(people) >= 4:
-            messagebox.showinfo("增加人物", "这一场最多四个人物。", parent=parent)
             return
         body = self._ask_manual_person(parent)
         if not body:
             return
         rows = list(self._scene_actor_rows())
-        rows.append({"role": "person", "label": "人物", "body": body})
+        present = self._present_actor_rows()
+        new_row = {"role": "person", "label": "人物", "body": body}
+        current_index = self._actor_slot_index(after_entry)
+        present_index_of_current = None
+        seen = 0
+        for index, row in enumerate(rows):
+            if project_manager.actor_is_absent(row.get("body") or ""):
+                continue
+            if index == current_index:
+                present_index_of_current = seen
+            seen += 1
+        choices = []
+        for index, row in enumerate(present):
+            who, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            mark = "（当前）" if index == present_index_of_current else ""
+            choices.append((f"slot{index}", f"替换第{index + 1}位{mark}：{who}"))
+        if len(present) >= 4:
+            choices.append(("append", "放在最后，换掉第四个"))
+        else:
+            choices.append(("append", "放在最后"))
+        picked = askchoice("新的人放在哪里", choices, parent)
+        if not picked:
+            return
+        place = picked[1]
+        if place == "append":
+            if len(present) >= 4:
+                seen = 0
+                for index, row in enumerate(rows):
+                    if project_manager.actor_is_absent(row.get("body") or ""):
+                        continue
+                    seen += 1
+                    if seen == 4:
+                        rows[index] = new_row
+                        break
+            else:
+                rows.append(new_row)
+        elif place.startswith("slot"):
+            try:
+                slot = int(place[4:])
+            except ValueError:
+                return
+            seen = 0
+            for index, row in enumerate(rows):
+                if project_manager.actor_is_absent(row.get("body") or ""):
+                    continue
+                if seen == slot:
+                    rows[index] = new_row
+                    break
+                seen += 1
         self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
 
     def review_project_narrator(self, current: str | None = None, on_confirm=None, actor_entry=None, parent=None) -> None:
@@ -6179,9 +6322,18 @@ class WorkflowGUI:
         if not left.strip() or not right.strip():
             messagebox.showinfo("换人", "请点在这段文字的中间。", parent=self.root)
             return "break"
+        actor_text = (getattr(self, "_actor_text", "") or scene.get("actor") or "")
+        present = 0
+        for row in project_manager.actor_entries(actor_text):
+            if not project_manager.actor_is_absent(row.get("body") or ""):
+                present += 1
+        present = min(3, present)
+        if present < 1:
+            messagebox.showinfo("换人", "这一场还没有人物。", parent=self.root)
+            return "break"
         picked = askchoice(
             "从这里换成哪一个人？",
-            [("1", "第1人"), ("2", "第2人"), ("3", "第3人")],
+            [(str(number), f"第{number}人") for number in range(1, present + 1)],
             parent=self.root,
         )
         if not picked:
