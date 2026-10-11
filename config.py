@@ -1273,13 +1273,15 @@ def load_yt_tools_prefs() -> dict:
 
 
 def save_yt_tools_prefs(prefs: dict) -> None:
-    """保存 YT 工具欢迎屏选择到 ``aiagent/YT_tools_prefs.json``。"""
+    """保存 YT 工具欢迎屏选择到 ``aiagent/YT_tools_prefs.json``。只更新传入的键，其余习惯保留。"""
     if not isinstance(prefs, dict):
         return
     try:
         ensure_aiagent_path()
+        stored = load_yt_tools_prefs()
+        stored.update(prefs)
         with open(YT_TOOLS_PREFS_JSON, "w", encoding="utf-8") as f:
-            json.dump(prefs, f, ensure_ascii=False, indent=2)
+            json.dump(stored, f, ensure_ascii=False, indent=2)
     except OSError as e:
         print(f"⚠️ 无法写入 YT 工具偏好: {YT_TOOLS_PREFS_JSON}: {e}")
 
@@ -2283,13 +2285,13 @@ CHANNEL_CONFIG = {
         },
 
         "scenes_prompt_choices": [
+            ("Series . Podcast", config_channel.COUNSELING_TALK_SCENES),
+            ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
+            ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
             ("Short Story", config_channel.COUNSELING_STORY_SHORT),
             ("2 Step Story", config_channel.COUNSELING_STORY_2STEP),
             ("3 Step Story", config_channel.COUNSELING_STORY_3STEP),
             ("4 Step Story", config_channel.COUNSELING_STORY_4STEP),
-            ("Talk", config_channel.COUNSELING_TALK_SCENES),
-            ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
-            ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
         ],
 
         "channel_prompt": {

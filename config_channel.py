@@ -25,6 +25,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 """
@@ -846,6 +848,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Lyrics / Reference Content (analyzed_content):
     {content}
 """
@@ -970,6 +974,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Lyrics / Reference Content (analyzed_content):
     {content}
 
@@ -1073,6 +1079,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 """
@@ -1258,6 +1266,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1331,6 +1341,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1569,24 +1581,25 @@ OUTPUT FORMAT (STRICT JSON)
 
 
 COUNSELING_TALK_SCENES = """
-*** ROLE: A psychology conversation that can be filmed. No monologue. No lecture.
-    ** Choose the pair from the material. Do not use both.
-    ** TWO HOSTS when the analysis is a pattern, or several situations. Host A is curious and brings the concrete life. Host B is the counselor: clearer, but does not hand over the answer.
-    ** COUNSELOR AND THE PERSON when the analysis is one lived case. The other speaker is the person in the case, or someone close who watched it. The counselor guides. The person is the one who arrives at what to do.
-    ** Stay with that pair for the whole program.
+*** ROLE: A podcast series. This is a program people listen to, not a filmed lecture and not a therapy session on camera.
+    ** One host, or two hosts. Choose from the material and keep that choice for the whole series.
+    ** ONE HOST when the material is one person thinking a question through. The host speaks to the listener, and may voice a second chair only as their own follow-up question.
+    ** TWO HOSTS when the material is a discussion. Host A brings the life, the question, the concrete moment. Host B answers, disagrees, or takes it one step further. They talk to each other. Neither one hands over a finished answer in the first minute.
+    ** If the material already names the hosts, use those people. Do not invent a counselor-and-patient pair.
 
-*** HOW THE TALK MOVES
-    ** From the surface to what is actually going on, in plain professional language. A listener should be able to follow. Do not open with the conclusion.
-    ** Keep the details that make a scene visible: who, where, what was said, what was avoided. Cut repeated wording and side tracks. Do not shrink a lived moment into one abstract sentence, and do not keep every sentence from the source.
+*** HOW THE SERIES MOVES
+    ** It is one podcast series about one subject. If the material has several parts, each part is one episode. If it is one subject, it is still episode 1 of a series, and the ending may leave a next question.
+    ** Talk the way a podcast talks: question, reply, a short example from life, a follow-up. Not a monologue. Not a slide reading.
+    ** From the surface to what is actually going on, in plain language. A listener should be able to follow. Do not open with the conclusion.
+    ** Keep the details that make a moment hearable: who, where, what was said, what was avoided. Cut repeated wording. Do not shrink a lived moment into one abstract sentence.
     ** Do not say 根, 根儿, or 病根. Do not use DSM labels.
-    ** The counselor never announces the answer. They ask, reflect what was just said, and offer one piece at a time. The other person connects it and says the realization in their own words.
-    ** End on a result: what this situation asks for, said by the other person, with the counselor only confirming or sharpening it. Not an open-ended shrug. Not a worksheet.
+    ** End the episode on what the hosts now see, said in their own words. One concrete thing a listener could notice or try. Not a worksheet.
 
-*** SCENES (about 10 to 16, one beat each)
-    ** 1–2. A specific surface moment. Host A or the person describes it. The counselor only asks what they noticed.
-    ** Next several. More of the real detail: how it repeats, what it costs, what people say. Each scene is one exchange, not a speech.
-    ** Then the turn. The counselor's question points under the behavior. The other person is the one who names the pattern.
-    ** Last 2–3. They work out what to do, still in dialogue. Come back to the opening moment: the same kind of situation, and what would be different now. One concrete step. The counselor guides; the other person says the step.
+*** SCENES (about 10 to 16 for one episode, one beat each)
+    ** 1. The program opens. The host, or the two hosts, name this episode's question.
+    ** Next several. The discussion: a real moment, how it repeats, what it costs. Each scene is one exchange.
+    ** Then the turn. A question from one host makes the other name what is underneath.
+    ** Last 2–3. They land the episode. Come back to the opening moment and say what would be different. If another part remains in the material, the last line can point at it without telling that episode.
 
 *** OUTPUT
     * JSON array in watch order. All text in {language}.
@@ -1617,6 +1630,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1713,6 +1728,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 """
@@ -1754,7 +1771,8 @@ FLYLINK_CONTENT_SCENES = """
     ** Expertise: aircraft communication, UAV R&D/manufacturing, low-altitude economy operations (UTM, logistics, tourism, UAM, special missions).
 
 *** YOUR TASK
-    ** Input: ``analyzed_content`` only (Reference Content below) — industry case notes, technical brief, or structured analysis.
+    ** Input: the reference below. It may be written analyzed_content, a PDF, the speech in an audio file, or the spoken words in a video.
+    ** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
     ** Output: ONE continuous documentary/video as a JSON array of scenes.
     ** Same operational thread from first frame to last.
     ** No fixed scene count or per-scene length cap — use as many scenes as the case needs.
@@ -1777,6 +1795,8 @@ FLYLINK_CONTENT_SCENES = """
 INPUT:
 ** Topic: {topic}
 ** Instruction: {instruction}
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content): {content}
 
 OUTPUT: STRICT JSON array of scenes.
@@ -1796,7 +1816,8 @@ Output:
 
 COMIC_STRIP_SCENES = """
 *** ROLE: Picture-story editor.
-    ** The source is a comic PDF, one picture a page, or this episode already written as scenes, one scene a page.
+    ** The source is a comic PDF, one picture a page, or this episode already written as scenes, one scene a page. It may also be the speech in an audio file, or the spoken words in a video.
+    ** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
     ** Output is strict one-to-one. Do not add a scene. Do not drop a scene. Do not merge two into one. Do not split one into two.
     ** PDF: page 1 is scene 1, page 2 is scene 2, through the last page. The array length equals the page count.
     ** Scenes already written: scene 1 stays scene 1, scene 2 stays scene 2, through the last. The array length equals the source scene count.
@@ -1839,6 +1860,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1892,6 +1915,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1942,6 +1967,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 
@@ -1993,6 +2020,8 @@ INPUT
 ** Instruction:
     {instruction}
 
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
 ** Reference Content (analyzed_content):
     {content}
 

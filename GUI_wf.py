@@ -927,8 +927,13 @@ class WorkflowGUI:
                     messagebox.showerror("错误", f"视频处理失败：{err}", parent=self.root)
                 else:
                     scene[track + "_status"] = track_status
+                    if track == "zero":
+                        self._share_zero_across_episode(scene)
                     self.workflow.save_scenes_to_json()
                     self.refresh_gui_scenes()
+                    if track == "zero":
+                        n = len(self.workflow.scenes_in_story(scene) or [])
+                        show_auto_close_popup(self.root, "Zero", f"已写入这一集的 {n} 个场景。")
 
             try:
                 self.root.after(0, done)
@@ -2753,9 +2758,29 @@ class WorkflowGUI:
         refresh_scene_media(scene, dest, ".mp4", mp4)
         if wav and os.path.isfile(wav):
             refresh_scene_media(scene, dest + "_audio", ".wav", wav, True)
+        if dest == "zero":
+            self._share_zero_across_episode(scene)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
-        show_auto_close_popup(self.root, "片段", "已写回这一场。")
+        if dest == "zero":
+            n = len(self.workflow.scenes_in_story(scene) or [])
+            show_auto_close_popup(self.root, "Zero", f"已写入这一集的 {n} 个场景。")
+        else:
+            show_auto_close_popup(self.root, "片段", "已写回这一场。")
+
+    def _share_zero_across_episode(self, scene) -> None:
+        """导入到 ZERO 时，同一集里的每一场都换成这一份。"""
+        if not scene or not self.workflow:
+            return
+        zero = get_file_path(scene, "zero")
+        zero_audio = get_file_path(scene, "zero_audio")
+        for other in self.workflow.scenes_in_story(scene) or []:
+            if other is scene:
+                continue
+            if zero and os.path.isfile(zero):
+                refresh_scene_media(other, "zero", ".mp4", zero, True)
+            if zero_audio and os.path.isfile(zero_audio):
+                refresh_scene_media(other, "zero_audio", ".wav", zero_audio, True)
 
     def _download_mp4_source(self) -> tuple[str, list]:
         suffixes = (".mp4",)
@@ -11554,8 +11579,7 @@ class WorkflowGUI:
             topic=topic,
             narrator=narrator,
         )
-        if kind == "pdf":
-            prompt = _prompt_text_for_material(prompt, "pdf")
+        prompt = _prompt_text_for_material(prompt, "pdf" if kind == "pdf" else "analyzed")
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(prompt)

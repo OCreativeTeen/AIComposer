@@ -630,6 +630,147 @@ def _is_summary_pdf_file_path(path: str) -> bool:
 
 
 GEN_VIDEO_SLIDE_KEY = "slide"
+STORY_MEDIA_KEY = "media"
+_TEXT_DROP_SUFFIXES = (".txt", ".md", ".markdown", ".text", ".rst", ".log", ".csv")
+_AUDIO_DROP_SUFFIXES = (
+    ".mp3",
+    ".wav",
+    ".wave",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".oga",
+    ".wma",
+    ".opus",
+    ".aiff",
+    ".aif",
+    ".mp2",
+)
+_VIDEO_DROP_SUFFIXES = (".mp4", ".m4v", ".mov")
+
+
+def _drop_suffix(path: str) -> str:
+    return os.path.splitext(path or "")[1].lower()
+
+
+def _is_plain_text_file_path(path: str) -> bool:
+    return _drop_suffix(path) in _TEXT_DROP_SUFFIXES
+
+
+def _media_kind_for_path(path: str) -> str:
+    ext = _drop_suffix(path)
+    if ext in _AUDIO_DROP_SUFFIXES:
+        return "audio"
+    if ext in _VIDEO_DROP_SUFFIXES:
+        return "video"
+    return ""
+
+
+def _read_plain_text_file(path: str) -> str:
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _find_item_media_file(video: dict) -> str:
+    if not isinstance(video, dict):
+        return ""
+    stored = (video.get(STORY_MEDIA_KEY) or "").strip()
+    if stored and os.path.isfile(stored):
+        return os.path.abspath(stored)
+    return ""
+
+
+def _strip_markdown_embedded_images(text: str) -> tuple[str, int]:
+    """丢掉 Markdown 里嵌进去的图片原始数据。正文留下，base64 不要。"""
+    import re
+
+    data_uri = re.compile(
+        r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
+        re.IGNORECASE,
+    )
+    removed = 0
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        if line.startswith("（另有 ") and "嵌入图片" in line and "不展开" in line:
+            continue
+        if "<data:image/" in line and ";base64," in line and len(line) > 2000:
+            removed += 1
+            continue
+        cleaned, n = data_uri.subn("", line)
+        removed += n
+        if cleaned.strip() != line.strip() and not cleaned.strip():
+            continue
+        kept.append(cleaned)
+    body = "\n".join(kept).strip()
+    return body, removed
+
+
+def _media_duration_seconds(path: str) -> float:
+    """这条音频或视频的真实长度，秒，保留两位。量不到就返回 0。"""
+    import shutil
+    import subprocess
+
+    path = (path or "").strip()
+    if not path or not os.path.isfile(path):
+        return 0.0
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return 0.0
+    try:
+        out = subprocess.run(
+            [
+                ffprobe, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=nw=1:nk=1", path,
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+        return max(0.0, round(float((out.stdout or "").strip() or 0), 2))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def _media_length_line(path: str) -> str:
+    seconds = _media_duration_seconds(path)
+    if seconds <= 0:
+        return ""
+    n = f"{seconds:.2f}"
+    return (
+        f"Recording length: {n} seconds. N = {n}. "
+        f"This audio or video ends at {n}. "
+        f"Every start and every end must be from 0.00 to {n}, two decimal places. "
+        f"The largest number in the whole array is {n}, and it is only the last scene's end. "
+        f"Any start or end above {n} is wrong. Every scene needs start < end. "
+        f"One scene's end is the next scene's start."
+    )
+
+
+def _media_source_blurb(path: str) -> str:
+    kind = _media_kind_for_path(path)
+    name = os.path.basename(path)
+    length = _media_length_line(path)
+    tail = f"\n{length}" if length else ""
+    if kind == "audio":
+        return (
+            f"Audio file: {name}\n"
+            "The content of this item is the speech in this audio file. "
+            "Use what is spoken. Do not treat this as a written article or a PDF."
+            + tail
+        )
+    if kind == "video":
+        return (
+            f"Video file: {name}\n"
+            "The content of this item is the spoken words in this video. "
+            "Use the speech. Do not use the pictures as the script."
+            + tail
+        )
+    return ""
 
 
 def _pdf_page_count(pdf_path: str) -> int:
@@ -1004,11 +1145,63 @@ def _dialogue_mode_from_row(vd, cfg=None) -> str:
     return _project_look_from_row(vd, cfg)[1]
 
 
+_MEDIA_SCENE_TIMING_NOTE = (
+    "When this run splits the recording into more than one scene, every scene object "
+    "must include \"start\" and \"end\": seconds on that file, two decimal places. "
+    "0.00 is the first moment of the file. N is the Recording length of this file. "
+    "Write the scenes from 0.00 up to N. Every scene needs start < end. "
+    "The next scene's start equals this scene's end. The last scene's end is exactly N. "
+    "Before you return the JSON, read every start and every end. "
+    "If any number is greater than N, that timeline is wrong. Write it again so every "
+    "number sits inside 0.00 to N. Do not put N only on the last end while earlier "
+    "scenes run past N. A start of 709.00 with an end of 485.48 is wrong."
+)
+
+
 def _prompt_text_for_material(prompt: str, material: str) -> str:
-    """PDF 材料时，提示词里不再把这份材料称作 analyzed_content。"""
-    if (material or "") != "pdf" or not prompt:
+    """按这次选中的材料，说明内容来自文字、PDF、音频里的话，还是视频里的话。"""
+    if not prompt:
         return prompt
-    return prompt.replace("analyzed_content", "the PDF")
+    kind = (material or "analyzed").strip().lower()
+    notes = {
+        "analyzed": (
+            "Content source for this run: analyzed_content, the written text in Reference Content. "
+            "An item may instead supply a PDF, an audio file, or a video file. "
+            "If the source is audio, the content is the speech in that recording. "
+            "If the source is video, the content is the spoken words in that video, not the pictures. "
+            "This run uses the written analysis."
+        ),
+        "pdf": (
+            "Content source for this run: a PDF file. Read the PDF for the pictures and any text. "
+            "An item may instead supply written analyzed_content, an audio file, or a video file. "
+            "If the source is audio, use the speech in the recording. "
+            "If the source is video, use the spoken words, not the pictures. "
+            "This run uses the PDF."
+        ),
+        "audio": (
+            "Content source for this run: an audio file. The material is the speech in that recording. "
+            "Use what is spoken. Do not treat it as a written article or a PDF. "
+            "An item may instead supply written analyzed_content, a PDF, or a video whose content is its spoken words. "
+            "This run uses the audio.\n"
+            + _MEDIA_SCENE_TIMING_NOTE
+        ),
+        "video": (
+            "Content source for this run: a video file. The material is the speech in that video. "
+            "Use the spoken words. Do not use the pictures as the script. "
+            "An item may instead supply written analyzed_content, a PDF, or an audio recording. "
+            "This run uses the video.\n"
+            + _MEDIA_SCENE_TIMING_NOTE
+        ),
+    }
+    names = {
+        "pdf": "the PDF",
+        "audio": "the audio recording",
+        "video": "the video",
+    }
+    note = notes.get(kind) or notes["analyzed"]
+    if kind in names:
+        prompt = prompt.replace("analyzed_content", names[kind])
+    return prompt.rstrip() + "\n\n" + note + "\n"
 
 
 def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: str) -> str:
@@ -7036,6 +7229,7 @@ class MediaGUIManager:
         instruction: str = "",
         content_override: str | None = None,
         dialogue_mode: str = "",
+        attachment: str = "",
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
@@ -7050,7 +7244,9 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
-        parsed = self.llm_api.generate_json(prompt, "", expect_list=True)
+        parsed = self.llm_api.generate_json(
+            prompt, "", expect_list=True, attachment=(attachment or "").strip() or None
+        )
         if isinstance(parsed, dict):
             one = _normalize_scene_dict_entry(parsed)
             return [one] if one else None
@@ -7078,6 +7274,7 @@ class MediaGUIManager:
         on_title_updated=None,
         content_override: str | None = None,
         dialogue_mode: str = "",
+        attachment: str = "",
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         channel_key = self._channel_config_key()
@@ -7112,6 +7309,7 @@ class MediaGUIManager:
                     instruction=instr,
                     content_override=content_override,
                     dialogue_mode=dialogue_mode,
+                    attachment=attachment,
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -7901,7 +8099,14 @@ class MediaGUIManager:
                 relief=tk.RAISED,
                 bd=1,
             )
-            btn_pdf.pack(side=tk.LEFT, padx=(0, 8))
+            btn_pdf.pack(side=tk.LEFT, padx=(0, 4))
+            btn_media = tk.Button(
+                material_row,
+                text="媒体",
+                relief=tk.RAISED,
+                bd=1,
+            )
+            btn_media.pack(side=tk.LEFT, padx=(0, 8))
             slide_info_var = None
             drop_ctx = getattr(dlg, "_summary_drop_ctx", None)
             if isinstance(drop_ctx, dict):
@@ -7947,8 +8152,8 @@ class MediaGUIManager:
                 return raw
 
             def _read_analyzed_draft():
-                """分析报告正在显示时返回编辑区文字；正在看 PDF 时返回切走前记下的草稿。"""
-                if material_var.get() == "pdf":
+                """分析报告正在显示时返回编辑区文字；正在看 PDF 或媒体时返回切走前记下的草稿。"""
+                if material_var.get() != "analyzed":
                     return _analyzed_edit["text"]
                 return _analyzed_widget_text()
 
@@ -7975,6 +8180,16 @@ class MediaGUIManager:
             def _on_material_preview_double(_event=None):
                 if material_var.get() == "pdf":
                     _copy_slide_pdf()
+                elif material_var.get() == "media":
+                    media_path = _find_item_media_file(video_detail)
+                    if not media_path:
+                        show_auto_close_popup(dlg, "媒体", "这一条还没有音频或视频。")
+                    elif _copy_file_to_clipboard_hdrop(dlg, media_path):
+                        show_auto_close_popup(
+                            dlg,
+                            "已复制",
+                            f"文件已拷到剪贴板，可以粘贴到别处：\n{os.path.basename(media_path)}",
+                        )
                 else:
                     _copy_analyzed_text()
                 return "break"
@@ -7982,7 +8197,7 @@ class MediaGUIManager:
             material_preview.bind("<Double-Button-1>", _on_material_preview_double)
 
             def _on_material_preview_key(_event=None):
-                if material_var.get() == "pdf":
+                if material_var.get() in ("pdf", "media"):
                     return "break"
 
             material_preview.bind("<Key>", _on_material_preview_key)
@@ -8010,6 +8225,9 @@ class MediaGUIManager:
                     pdfish = (
                         "双击这里，把这份 PDF" in current
                         or current.startswith("还没有图文 PDF")
+                        or current.startswith("音频：")
+                        or current.startswith("视频：")
+                        or current.startswith("还没有媒体")
                     )
                     if current and not pdfish:
                         kept = current
@@ -8038,14 +8256,46 @@ class MediaGUIManager:
                         "双击上面的 PDF 按钮，从下载文件夹选择一份 PDF，"
                         "或按点击顺序选择图片，合成一份 PDF。",
                     )
+                elif material_var.get() == "media":
+                    media_path = _find_item_media_file(video_detail)
+                    kind = _media_kind_for_path(media_path)
+                    if media_path and kind == "audio":
+                        material_preview.insert(
+                            "1.0",
+                            f"音频：{os.path.basename(media_path)}\n\n"
+                            "双击这里，把这个音频文件拷到剪贴板。\n"
+                            "再拖一个音频或 mp4 进来，会换掉这一个。",
+                        )
+                    elif media_path and kind == "video":
+                        material_preview.insert(
+                            "1.0",
+                            f"视频：{os.path.basename(media_path)}\n\n"
+                            "双击这里，把这个视频文件拷到剪贴板。\n"
+                            "再拖一个音频或 mp4 进来，会换掉这一个。",
+                        )
+                    else:
+                        material_preview.insert(
+                            "1.0",
+                            "还没有媒体。\n\n"
+                            "把音频（mp3、wav、m4a 等）或 mp4 拖到这里。"
+                            "一条只保留一个媒体文件，新的会换掉原来的。",
+                        )
                 else:
                     if _analyzed_edit["text"] is not None:
                         text = _analyzed_edit["text"]
                     else:
                         raw = video_detail.get("analyzed_content") or ""
                         text = raw.strip() if isinstance(raw, str) else str(raw).strip()
-                    if text:
-                        material_preview.insert("1.0", text)
+                    body, removed = _strip_markdown_embedded_images(text)
+                    if removed and _analyzed_edit["text"] is None:
+                        video_detail["analyzed_content"] = body
+                        _analyzed_edit["text"] = body
+                        try:
+                            persist(video_detail, parent=dlg)
+                        except Exception:
+                            pass
+                    if body:
+                        material_preview.insert("1.0", body)
 
             def _pdf_button_caption() -> str:
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -8053,18 +8303,33 @@ class MediaGUIManager:
                     return "（没有 PDF）"
                 return os.path.basename(slide)
 
+            def _media_button_caption() -> str:
+                media_path = _find_item_media_file(video_detail)
+                if not media_path:
+                    return "媒体"
+                name = os.path.basename(media_path)
+                if len(name) > 22:
+                    name = name[:21] + "…"
+                return name
+
             def _paint_material_buttons():
-                on_pdf = material_var.get() == "pdf"
+                mode = material_var.get()
                 name = _pdf_button_caption()
                 btn_analyzed.configure(
-                    relief=tk.RAISED if on_pdf else tk.SUNKEN,
-                    bg="#f3f3f3" if on_pdf else "#d7e6f8",
+                    relief=tk.SUNKEN if mode == "analyzed" else tk.RAISED,
+                    bg="#d7e6f8" if mode == "analyzed" else "#f3f3f3",
                 )
                 btn_pdf.configure(
                     text=name,
                     state=tk.NORMAL,
-                    relief=tk.SUNKEN if on_pdf else tk.RAISED,
-                    bg="#d7e6f8" if on_pdf else "#f3f3f3",
+                    relief=tk.SUNKEN if mode == "pdf" else tk.RAISED,
+                    bg="#d7e6f8" if mode == "pdf" else "#f3f3f3",
+                )
+                btn_media.configure(
+                    text=_media_button_caption(),
+                    state=tk.NORMAL,
+                    relief=tk.SUNKEN if mode == "media" else tk.RAISED,
+                    bg="#d7e6f8" if mode == "media" else "#f3f3f3",
                 )
 
             def _import_slide_pdf(pdf_path: str) -> None:
@@ -8111,6 +8376,81 @@ class MediaGUIManager:
                             pass
 
             scene_ui["import_slide_pdf"] = _import_slide_pdf
+
+            def _import_analyzed_text_file(text_path: str) -> None:
+                try:
+                    text = (_read_plain_text_file(text_path) or "").strip()
+                except OSError as exc:
+                    messagebox.showerror("文本", f"读不了这个文件：\n{exc}", parent=dlg)
+                    return
+                if not text:
+                    messagebox.showwarning("文本", "这个文件是空的。", parent=dlg)
+                    return
+                ext = os.path.splitext(text_path)[1].lower()
+                removed = 0
+                if ext in (".md", ".markdown"):
+                    text, removed = _strip_markdown_embedded_images(text)
+                    if not text:
+                        messagebox.showwarning("文本", "去掉嵌入图片之后，这个文件没有正文了。", parent=dlg)
+                        return
+                video_detail["analyzed_content"] = text
+                _analyzed_edit["text"] = text
+                _analyzed_edit["reload"] = True
+                material_var.set("analyzed")
+                _sync_material_widgets()
+                persist(video_detail, parent=dlg)
+                note = f"已用这个文件替换分析报告：\n{os.path.basename(text_path)}"
+                if removed:
+                    note += f"\n\n嵌入图片已去掉（{removed} 处），没有写进分析报告。"
+                show_auto_close_popup(dlg, "分析报告", note)
+
+            def _import_item_media(src_path: str) -> None:
+                kind = _media_kind_for_path(src_path)
+                if not kind:
+                    return
+                channel_dir = (self.channel_path or "").strip()
+                if not channel_dir:
+                    messagebox.showerror("媒体", "没有频道目录，不能保存这个文件。", parent=dlg)
+                    return
+                dest_dir = os.path.join(channel_dir, "Download", "media")
+                try:
+                    os.makedirs(dest_dir, exist_ok=True)
+                    stem, ext = os.path.splitext(os.path.basename(src_path))
+                    from utility.file_util import make_safe_file_name
+
+                    row_id = (video_detail.get("id") or "item").strip() or "item"
+                    safe_stem = make_safe_file_name(stem, title_length=48)
+                    dest = os.path.join(dest_dir, f"{row_id}_{safe_stem}{ext.lower()}")
+                    if not safe_copy_overwrite(src_path, dest):
+                        raise OSError("复制失败")
+                    dest = os.path.abspath(dest)
+                    old = (video_detail.get(STORY_MEDIA_KEY) or "").strip()
+                    video_detail[STORY_MEDIA_KEY] = dest
+                    if old:
+                        old_abs = os.path.abspath(old)
+                        same_dir = os.path.normcase(os.path.dirname(old_abs)) == os.path.normcase(
+                            os.path.abspath(dest_dir)
+                        )
+                        if same_dir and os.path.normcase(old_abs) != os.path.normcase(dest) and os.path.isfile(old_abs):
+                            try:
+                                os.remove(old_abs)
+                            except OSError:
+                                pass
+                except Exception as exc:
+                    messagebox.showerror("媒体", f"无法保存这个文件：\n{exc}", parent=dlg)
+                    return
+                material_var.set("media")
+                _sync_material_widgets()
+                persist(video_detail, parent=dlg)
+                kind_name = "音频" if kind == "audio" else "视频"
+                show_auto_close_popup(
+                    dlg,
+                    "媒体",
+                    f"这条的{kind_name}已换成：\n{os.path.basename(dest)}",
+                )
+
+            scene_ui["import_analyzed_text_file"] = _import_analyzed_text_file
+            scene_ui["import_item_media"] = _import_item_media
 
             def _sync_material_widgets(*_args):
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -8170,6 +8510,12 @@ class MediaGUIManager:
             btn_pdf.bind("<ButtonPress-1>", _on_pdf_press)
             btn_pdf.bind("<Double-Button-1>", _on_pdf_double)
 
+            def _on_media_press(_event=None):
+                material_var.set("media")
+                return "break"
+
+            btn_media.bind("<ButtonPress-1>", _on_media_press)
+
             material_var.trace_add("write", _on_material_selected)
             _sync_material_widgets()
 
@@ -8190,14 +8536,22 @@ class MediaGUIManager:
             )
             instruction_tx.pack(fill=tk.X, pady=(0, 4))
 
+            def _selected_material_kind() -> str:
+                mode = material_var.get()
+                if mode == "pdf":
+                    return "pdf"
+                if mode == "media":
+                    return _media_kind_for_path(_find_item_media_file(video_detail)) or "audio"
+                return "analyzed"
+
             def _scene_prompt_text_now() -> str:
                 sel = (prompt_combo_var.get() or "").strip()
                 if not sel or not nb_prompt_choices:
                     return ""
                 instr = (instruction_tx.get("1.0", tk.END) or "").strip()
-                use_pdf = material_var.get() == "pdf"
+                kind = _selected_material_kind()
                 override = None
-                if use_pdf:
+                if kind == "pdf":
                     cached = _remember_pdf_source()
                     override = cached.get("text") or ""
                     extra = _pdf_scene_generation_instruction(
@@ -8206,6 +8560,9 @@ class MediaGUIManager:
                         _pdf_layout_mode() if "series" in sel.lower() else "ai",
                     )
                     instr = (instr + "\n\n" + extra).strip() if instr else extra
+                elif material_var.get() == "media":
+                    media_path = _find_item_media_file(video_detail)
+                    override = _media_source_blurb(media_path) if media_path else ""
                 try:
                     _, prompt = self._combined_prompt_text_for_label(
                         video_detail,
@@ -8214,7 +8571,7 @@ class MediaGUIManager:
                         content_override=override,
                         dialogue_mode=(dialogue_mode_var.get() or "").strip(),
                     )
-                    return _prompt_text_for_material(prompt, "pdf" if use_pdf else "analyzed") or ""
+                    return _prompt_text_for_material(prompt, kind) or ""
                 except Exception:
                     return ""
 
@@ -8583,6 +8940,7 @@ class MediaGUIManager:
                     "dialogue_mode_opts": dialogue_mode_opts,
                     "pdf_layout_mode": _pdf_layout_mode,
                     "scene_prompt_text_now": _scene_prompt_text_now,
+                    "selected_material_kind": _selected_material_kind,
                 }
             )
             dlg.after(50, _build_editor_ui_rest)
@@ -8600,6 +8958,7 @@ class MediaGUIManager:
             _remember_pdf_source = scene_ui["remember_pdf_source"]
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
+            _selected_material_kind = scene_ui["selected_material_kind"]
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=35, font=("Consolas", 10)
@@ -8870,13 +9229,14 @@ class MediaGUIManager:
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
+                        kind = _selected_material_kind()
                         override = None
-                        if material_var.get() == "pdf":
+                        if kind == "pdf":
                             cached = _remember_pdf_source()
                             if not (cached.get("text") or "").strip():
                                 messagebox.showwarning(
                                     "PDF",
-                                    "这条没有可用的 PDF 文字，材料请改回 analyzed content。",
+                                    "这条没有可用的 PDF。",
                                     parent=dlg,
                                 )
                                 return
@@ -8887,6 +9247,24 @@ class MediaGUIManager:
                                 _pdf_layout_mode() if "series" in label.lower() else "ai",
                             )
                             user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
+                        elif material_var.get() == "media":
+                            media_path = _find_item_media_file(video_detail)
+                            if not media_path:
+                                messagebox.showwarning(
+                                    "媒体",
+                                    "先把音频或 mp4 拖到材料区。",
+                                    parent=dlg,
+                                )
+                                return
+                            override = _media_source_blurb(media_path)
+                        source_note = _prompt_text_for_material(" ", kind).strip()
+                        if source_note:
+                            user_instr = (user_instr + "\n\n" + source_note).strip() if user_instr else source_note
+                        attachment = ""
+                        if kind == "pdf":
+                            attachment = _find_gen_video_slide_for_row(video_detail)
+                        elif material_var.get() == "media":
+                            attachment = _find_item_media_file(video_detail)
                         self._run_scene_smart_generate_async(
                             dlg,
                             video_detail,
@@ -8900,6 +9278,7 @@ class MediaGUIManager:
                             on_title_updated=on_title_updated,
                             content_override=override,
                             dialogue_mode=(dialogue_mode_var.get() or "").strip(),
+                            attachment=attachment,
                         )
 
                     def on_persist_keep_open():
@@ -9020,10 +9399,23 @@ class MediaGUIManager:
                     def _on_scene_pdf_drop(event):
                         master = getattr(event, "widget", None) or dlg
                         paths = _dnd_normalize_file_paths(master, getattr(event, "data", None))
-                        pdfs = [p for p in paths if p.lower().endswith(".pdf")]
-                        if not pdfs:
+                        if not paths:
                             return
-                        _offer_pdf_scene_generate(pdfs[0])
+                        text_file = next((p for p in paths if _is_plain_text_file_path(p)), "")
+                        pdf_file = next((p for p in paths if p.lower().endswith(".pdf")), "")
+                        media_file = next((p for p in paths if _media_kind_for_path(p)), "")
+                        if text_file:
+                            importer = scene_ui.get("import_analyzed_text_file")
+                            if callable(importer):
+                                importer(text_file)
+                            return
+                        if media_file:
+                            importer = scene_ui.get("import_item_media")
+                            if callable(importer):
+                                importer(media_file)
+                            return
+                        if pdf_file:
+                            _offer_pdf_scene_generate(pdf_file)
 
                     if DND_FILES and callable(getattr(dlg, "drop_target_register", None)):
                         def _bind_pdf_drop(widget):

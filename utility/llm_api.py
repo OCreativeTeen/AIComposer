@@ -135,11 +135,11 @@ class LLMApi:
 
 
     # { "topic_category": "心智成长与存在焦虑", "topic_subtype": "觉醒期与意义崩塌", "tags": "我开始怀疑以前相信的一切, 努力好像不一定 有回报, 我看清规则却更迷茫" }
-    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True, *, images=None) -> Union[Dict, List]:
+    def generate_json(self, system_prompt, user_prompt, output_path=None, expect_list=True, *, images=None, attachment=None) -> Union[Dict, List]:
         max_retries = 1
         for attempt in range(max_retries):
             try:
-                content = self.generate_text(system_prompt, user_prompt, images=images)
+                content = self.generate_text(system_prompt, user_prompt, images=images, attachment=attachment)
                 if not isinstance(content, str) or not content.strip():
                     return [] if expect_list else {}
 
@@ -396,7 +396,7 @@ class LLMApi:
         return kept
 
 
-    def generate_text(self, system_prompt, user_prompt, *, images=None):
+    def generate_text(self, system_prompt, user_prompt, *, images=None, attachment=None):
         user_prompt = user_prompt or "Continue."
         messages=[
             self.create_message("system", system_prompt),
@@ -407,7 +407,7 @@ class LLMApi:
             # popup dialog to ask user choose from GPT_MINI, GEMINI, or MANUAL, return choice as model
             if self.model == MANUAL or self.model is None:
                 model, manual_response = self._show_model_dialog(
-                    system_prompt, user_prompt, image_paths=images
+                    system_prompt, user_prompt, image_paths=images, attachment=attachment
                 )
                 if model == MANUAL:
                     return manual_response
@@ -483,16 +483,135 @@ class LLMApi:
             return None
 
 
+    @staticmethod
+    def _attachment_kind(path: str) -> str:
+        ext = os.path.splitext(path or "")[1].lower()
+        if ext == ".pdf":
+            return "pdf"
+        if ext in (".mp3", ".wav", ".wave", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".wma", ".opus", ".aiff", ".aif"):
+            return "audio"
+        if ext in (".mp4", ".m4v", ".mov", ".mkv", ".webm"):
+            return "video"
+        return ""
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total = max(0, int(round(seconds)))
+        return f"{total // 60}:{total % 60:02d}"
+
+    def _probe_media_seconds(self, path: str) -> float:
+        import shutil
+        import subprocess
+
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                out = subprocess.run(
+                    [
+                        ffprobe, "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=nw=1:nk=1", path,
+                    ],
+                    capture_output=True, text=True, timeout=20,
+                )
+                return max(0.0, float((out.stdout or "").strip() or 0))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+        if self._attachment_kind(path) == "audio":
+            try:
+                import pygame
+
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                return float(pygame.mixer.Sound(path).get_length() or 0)
+            except Exception:
+                return 0.0
+        return 0.0
+
+    def _pdf_preview_image(self, path: str):
+        try:
+            import fitz
+        except ImportError:
+            return None, 0
+        try:
+            doc = fitz.open(path)
+        except Exception:
+            return None, 0
+        try:
+            pages = len(doc)
+            if pages <= 0:
+                return None, 0
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(0.45, 0.45), alpha=False)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            return img, pages
+        except Exception:
+            return None, 0
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+    def _video_preview_image(self, path: str):
+        import shutil
+        import subprocess
+        import tempfile
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None
+        fd, out = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-ss", "0.5", "-i", path, "-frames:v", "1", out],
+                capture_output=True, timeout=30,
+            )
+            if not os.path.isfile(out) or os.path.getsize(out) <= 0:
+                return None
+            with Image.open(out) as img:
+                img.load()
+                return img.copy()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        finally:
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+
+    def _copy_path_to_clipboard(self, path: str) -> bool:
+        import struct
+
+        abs_path = os.path.normpath(os.path.abspath(path))
+        try:
+            import win32clipboard  # type: ignore
+
+            payload = (abs_path + "\0\0").encode("utf-16-le")
+            data = struct.pack("Iiiii", 20, 0, 0, 0, 1) + payload
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_HDROP, data)
+            win32clipboard.CloseClipboard()
+            return True
+        except Exception as exc:
+            print(f"复制文件到剪贴板失败: {exc}")
+            return False
+
     def _show_model_dialog(
         self,
         system_prompt,
         user_prompt=None,
         *,
         image_paths=None,
+        attachment=None,
     ) -> Tuple[str, Optional[str]]:
-        """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。"""
+        """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。"""
         image_paths = self._normalize_image_paths(image_paths)
-        is_image_mode = bool(image_paths)
+        attachment = (attachment or "").strip()
+        if attachment and not os.path.isfile(attachment):
+            attachment = ""
+        file_kind = self._attachment_kind(attachment) if attachment else ""
+        is_image_mode = bool(image_paths) or bool(file_kind)
         dialog_w = dialog_h = 1000
         parent = self._get_dialog_parent()
         dialog = tk.Toplevel(parent)
@@ -590,7 +709,183 @@ class LLMApi:
         right_col.columnconfigure(0, weight=1)
         response_image = [None]
 
-        if is_image_mode:
+        if file_kind:
+            right_col.rowconfigure(0, weight=2)
+            right_col.rowconfigure(1, weight=1)
+            titles = {"pdf": "PDF", "audio": "音频", "video": "视频"}
+            input_box = ttk.LabelFrame(right_col, text=titles.get(file_kind, "文件"), padding=8)
+            input_box.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+            name = os.path.basename(attachment)
+            seconds = self._probe_media_seconds(attachment) if file_kind in ("audio", "video") else 0
+            pages = 0
+            preview = None
+            if file_kind == "pdf":
+                preview, pages = self._pdf_preview_image(attachment)
+                detail = f"{name}\n{pages} 页" if pages else name
+                hint_text = "单击或双击，把这份 PDF 拷到剪贴板"
+            elif file_kind == "audio":
+                length = self._format_duration(seconds) if seconds else "时长未知"
+                detail = f"音频  {name}\n时长 {length}"
+                hint_text = "单击拷贝。双击播放，再双击停止"
+            else:
+                preview = self._video_preview_image(attachment)
+                length = self._format_duration(seconds) if seconds else "时长未知"
+                detail = f"视频  {name}\n时长 {length}"
+                hint_text = "单击拷贝。双击播放，再双击停止"
+            info = ttk.Label(input_box, text=detail, font=("TkDefaultFont", 11, "bold"), justify=tk.LEFT)
+            info.pack(anchor=tk.W, pady=(0, 6))
+            hint = ttk.Label(input_box, text=hint_text, font=("TkDefaultFont", 9))
+            hint.pack(anchor=tk.W, pady=(0, 6))
+            photo_ref = []
+            if preview is not None:
+                preview.thumbnail((460, 280), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(preview)
+                photo_ref.append(photo)
+                pic = ttk.Label(input_box, image=photo)
+                pic.pack(anchor=tk.CENTER, expand=True)
+            else:
+                pic = ttk.Label(input_box, text="")
+            play = {"on": False, "proc": None}
+
+            def _stop_playback():
+                play["on"] = False
+                proc = play.get("proc")
+                if proc is not None and proc.poll() is None:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                play["proc"] = None
+                try:
+                    import pygame
+
+                    if pygame.mixer.get_init():
+                        pygame.mixer.music.stop()
+                except Exception:
+                    pass
+
+            def _stop_attachment(_event=None):
+                _stop_playback()
+                try:
+                    hint.config(text=hint_text)
+                except tk.TclError:
+                    pass
+
+            def _on_dialog_destroy(event=None):
+                if event is not None and getattr(event, "widget", None) is not dialog:
+                    return
+                _stop_playback()
+
+            def _attachment_playing() -> bool:
+                proc = play.get("proc")
+                if proc is not None and proc.poll() is None:
+                    return True
+                try:
+                    import pygame
+
+                    if pygame.mixer.get_init() and pygame.mixer.music.get_busy():
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def _start_attachment():
+                if file_kind == "audio":
+                    try:
+                        import pygame
+
+                        if not pygame.mixer.get_init():
+                            pygame.mixer.init()
+                        pygame.mixer.music.load(attachment)
+                        pygame.mixer.music.play()
+                        play["on"] = True
+                        hint.config(text="正在播放。再双击停止")
+                        return
+                    except Exception:
+                        pass
+                import shutil
+                import subprocess
+
+                ffplay = shutil.which("ffplay")
+                if not ffplay:
+                    hint.config(text="没有找到播放器")
+                    return
+                cmd = [ffplay, "-autoexit", "-loglevel", "quiet"]
+                if file_kind == "audio":
+                    cmd.append("-nodisp")
+                cmd.append(attachment)
+                try:
+                    play["proc"] = subprocess.Popen(cmd)
+                    play["on"] = True
+                    hint.config(text="正在播放。再双击停止")
+                except OSError:
+                    hint.config(text="没有找到播放器")
+
+            def _copy_attachment():
+                if self._copy_path_to_clipboard(attachment):
+                    hint.config(text="已拷到剪贴板。可以粘到别处")
+                else:
+                    hint.config(text="拷贝失败")
+
+            click_wait = {"id": None}
+
+            def _on_attachment_click(_event=None):
+                if click_wait["id"] is not None:
+                    try:
+                        dialog.after_cancel(click_wait["id"])
+                    except tk.TclError:
+                        pass
+                click_wait["id"] = dialog.after(280, _copy_attachment)
+
+            def _on_attachment_double(_event=None):
+                if click_wait["id"] is not None:
+                    try:
+                        dialog.after_cancel(click_wait["id"])
+                    except tk.TclError:
+                        pass
+                    click_wait["id"] = None
+                if file_kind == "pdf":
+                    _copy_attachment()
+                elif _attachment_playing():
+                    _stop_attachment()
+                else:
+                    _start_attachment()
+                return "break"
+
+            for widget in (input_box, info, hint, pic):
+                widget.bind("<Button-1>", _on_attachment_click)
+                widget.bind("<Double-Button-1>", _on_attachment_double)
+            dialog.bind("<Destroy>", _on_dialog_destroy, add="+")
+            dialog._llm_dialog_photo_ref = photo_ref
+
+            reply_box = ttk.LabelFrame(right_col, text="返回的图（双击从剪贴板粘贴）", padding=8)
+            reply_box.grid(row=1, column=0, sticky="nsew")
+            reply_hint = ttk.Label(reply_box, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8))
+            reply_hint.pack(anchor=tk.W, pady=(0, 4))
+            reply_hit = tk.Frame(reply_box, height=160)
+            reply_hit.pack(fill=tk.BOTH, expand=True)
+            reply_pic = ttk.Label(reply_hit)
+            reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
+
+            def paste_response_image(_event=None):
+                img = self._image_from_clipboard()
+                if img is None:
+                    reply_hint.config(text="剪贴板里没有图片")
+                    return "break"
+                response_image[0] = img
+                thumb = img.copy()
+                thumb.thumbnail((400, 220), Image.Resampling.LANCZOS)
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGBA")
+                photo = ImageTk.PhotoImage(thumb)
+                photo_ref.append(photo)
+                reply_pic.configure(image=photo)
+                reply_hint.config(text="已贴上返回的图")
+                return "break"
+
+            for widget in (reply_box, reply_hint, reply_hit, reply_pic):
+                widget.bind("<Double-Button-1>", paste_response_image)
+        elif is_image_mode:
             right_col.rowconfigure(0, weight=2)
             right_col.rowconfigure(1, weight=1)
             input_box = ttk.LabelFrame(right_col, text="图片（双击复制这一张）", padding=8)

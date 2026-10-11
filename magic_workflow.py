@@ -518,6 +518,8 @@ class MagicWorkflow:
                 original_video_clip, start_time=start_time, end_time=start_time + sdef["section_duration"]
             )
             refresh_scene_media(new_scene, "clip", ".mp4", trimmed_video)
+            if new_scene is not current_scene:
+                self._copy_zero_slots(current_scene, new_scene)
             
             start_time += sdef["section_duration"]
         
@@ -572,9 +574,24 @@ class MagicWorkflow:
         current_scene["id"] = max_section_id + 1
         next_scene["speaking"] = original_content     #original_content[int(len(original_content)*(1.0-current_ratio)):]
         next_scene["id"] = max_section_id + 2
+        self._copy_zero_slots(current_scene, next_scene)
 
         self.save_scenes_to_json()
         return True
+
+    def _copy_zero_slots(self, source: dict, dest: dict) -> None:
+        """新场景另存一份和来源相同的 ZERO，不把 ZERO 按时间切开。"""
+        if not isinstance(source, dict) or not isinstance(dest, dict) or source is dest:
+            return
+        for key, ext in (
+            ("zero", ".mp4"),
+            ("zero_audio", ".wav"),
+            ("zero_image", ".webp"),
+            ("zero_image_last", ".webp"),
+        ):
+            path = get_file_path(source, key)
+            if path and os.path.isfile(path):
+                refresh_scene_media(dest, key, os.path.splitext(path)[1] or ext, path, True)
 
     def trim_scene_at_position(self, n, position, trim_audio):
         """只留播放位置前面的一段。选音频就切声音、画面不动；不选就切画面，声音再贴回去。"""
@@ -795,8 +812,180 @@ class MagicWorkflow:
 
         # 从 PROJECT_CONFIG 封面媒体填充 clip_image，并按首图宽高比设定横/竖屏尺寸
         self._apply_cover_media_to_scenes(scene_list)
+        self._apply_item_media_as_shared_zero()
+        self._apply_item_media_as_scene_clips()
 
         self.save_scenes_to_json()
+
+    def _list_item_media_path(self) -> str:
+        """这条列表上的音频或视频。没有文件时返回空字符串。"""
+        cfg = project_manager.PROJECT_CONFIG
+        if not isinstance(cfg, dict):
+            return ""
+        _path, _ix, row = project_manager.find_project_topic_list_row(cfg)
+        if not isinstance(row, dict):
+            return ""
+        media = (row.get("media") or "").strip()
+        if media and os.path.isfile(media):
+            return os.path.abspath(media)
+        return ""
+
+    def _apply_item_media_as_shared_zero(self) -> None:
+        """新建场景之后：列表上的音频或视频写成所有场景共用的 zero / zero_audio。
+
+        音频先转成内部用的 wav，再用第一条场景的 zero 图和这段音频合成 zero 视频。
+        视频直接作为 zero，并从里面抽出 wav 作为 zero_audio。
+        """
+        media = self._list_item_media_path()
+        if not media or not self.scenes:
+            return
+        ext = os.path.splitext(media)[1].lower()
+        audio_ext = {
+            ".mp3", ".wav", ".wave", ".m4a", ".aac", ".flac", ".ogg", ".oga",
+            ".wma", ".opus", ".aiff", ".aif", ".mp2",
+        }
+        video_ext = {".mp4", ".m4v", ".mov"}
+        scenes = [s for s in self.scenes if isinstance(s, dict)]
+        if not scenes:
+            return
+
+        if ext in video_ext:
+            wav = self.ffmpeg_audio_processor.extract_audio_from_video(media, "wav")
+            if not wav or not os.path.isfile(wav):
+                print("ZERO: video has no audio track, skip shared zero")
+                return
+            for scene in scenes:
+                refresh_scene_media(scene, "zero_audio", ".wav", wav, True)
+                refresh_scene_media(scene, "zero", ".mp4", media, True)
+            print(f"ZERO: shared video+audio on {len(scenes)} scenes")
+            return
+
+        if ext not in audio_ext:
+            return
+        if ext in (".wav", ".wave"):
+            wav = media
+        else:
+            wav = self.ffmpeg_audio_processor.to_wav(media)
+        if not wav or not os.path.isfile(wav):
+            print("ZERO: audio convert failed, skip shared zero")
+            return
+        image = ""
+        for scene in scenes:
+            image = get_file_path(scene, "zero_image") or ""
+            if image and os.path.isfile(image):
+                break
+        if not image or not os.path.isfile(image):
+            print("ZERO: no zero image, skip shared zero")
+            return
+        video = self.ffmpeg_processor.image_audio_to_video(image, wav)
+        if not video or not os.path.isfile(video):
+            print("ZERO: image+audio video failed, skip shared zero")
+            return
+        for scene in scenes:
+            refresh_scene_media(scene, "zero_audio", ".wav", wav, True)
+            refresh_scene_media(scene, "zero", ".mp4", video, True)
+        print(f"ZERO: shared image+audio on {len(scenes)} scenes")
+
+    @staticmethod
+    def _scene_time_seconds(value):
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return None
+
+    def _apply_item_media_as_scene_clips(self) -> None:
+        """场景上有 start 时，按原媒体的起止把每一场切成自己的 clip。
+
+        视频：切出的一段就是 clip，抽出的声音是 clip_audio，这一段的首帧和尾帧是
+        clip_image、clip_image_last。音频：按同样的起止切出 clip_audio，再用这一场
+        已有的 clip_image 和这段声音合成 clip。最后一场从它的 start 接到媒体结尾。
+        """
+        media = self._list_item_media_path()
+        scenes = [s for s in (self.scenes or []) if isinstance(s, dict)]
+        if not media or not scenes:
+            return
+        if not any(self._scene_time_seconds(s.get("start")) is not None for s in scenes):
+            return
+        ext = os.path.splitext(media)[1].lower()
+        video_ext = {".mp4", ".m4v", ".mov"}
+        audio_ext = {
+            ".mp3", ".wav", ".wave", ".m4a", ".aac", ".flac", ".ogg", ".oga",
+            ".wma", ".opus", ".aiff", ".aif", ".mp2",
+        }
+        is_video = ext in video_ext
+        is_audio = ext in audio_ext
+        if not is_video and not is_audio:
+            return
+        fp = self.ffmpeg_processor
+        fa = self.ffmpeg_audio_processor
+        duration = float(fp.get_duration(media) or fa.get_duration(media) or 0.0)
+        if duration <= 0.05:
+            print("CLIP: media has no duration, skip scene cuts")
+            return
+        full_wav = media
+        if is_audio and ext not in (".wav", ".wave"):
+            full_wav = fa.to_wav(media) or ""
+            if not full_wav or not os.path.isfile(full_wav):
+                print("CLIP: audio convert failed, skip scene cuts")
+                return
+        last = len(scenes) - 1
+        written = 0
+        for index, scene in enumerate(scenes):
+            start = self._scene_time_seconds(scene.get("start"))
+            if start is None:
+                continue
+            if index == last:
+                end = round(duration, 2)
+            else:
+                end = self._scene_time_seconds(scene.get("end"))
+                if end is None:
+                    nxt = self._scene_time_seconds(scenes[index + 1].get("start"))
+                    end = nxt
+            if end is None:
+                continue
+            start = max(0.0, min(start, duration))
+            end = max(start, min(end, duration))
+            if end - start <= 0.01:
+                continue
+            if is_video:
+                trimmed = fp.trim_video(media, start, end)
+                if not trimmed or not os.path.isfile(trimmed):
+                    print(f"CLIP: video cut failed at {start:.2f}")
+                    continue
+                refresh_scene_media(scene, "clip", ".mp4", trimmed, True)
+                wav = fa.extract_audio_from_video(trimmed, "wav")
+                if wav and os.path.isfile(wav):
+                    refresh_scene_media(scene, "clip_audio", ".wav", wav, True)
+                first = fp.extract_frame(trimmed, True)
+                last_frame = fp.extract_frame(trimmed, False)
+                if first and os.path.isfile(first):
+                    refresh_scene_media(scene, "clip_image", ".webp", first, True)
+                if last_frame and os.path.isfile(last_frame):
+                    refresh_scene_media(scene, "clip_image_last", ".webp", last_frame, True)
+                written += 1
+                continue
+            piece = fa.audio_cut_fade(full_wav, start, end - start)
+            if not piece or not os.path.isfile(piece):
+                print(f"CLIP: audio cut failed at {start:.2f}")
+                continue
+            refresh_scene_media(scene, "clip_audio", ".wav", piece, True)
+            image = get_file_path(scene, "clip_image") or get_file_path(scene, "zero_image") or ""
+            if not image or not os.path.isfile(image):
+                print(f"CLIP: no clip image for scene {index + 1}")
+                written += 1
+                continue
+            video = fp.image_audio_to_video(image, piece)
+            if video and os.path.isfile(video):
+                refresh_scene_media(scene, "clip", ".mp4", video, True)
+            written += 1
+        if written:
+            print(f"CLIP: cut {written} scenes from media")
 
 
     def _project_size_from_image_dims(self, width: int, height: int) -> tuple[int, int]:
@@ -2251,6 +2440,11 @@ class MagicWorkflow:
             if next_root_id < 10000:
                 next_root_id = 10000
 
+        src_zero = get_file_path(story, "zero") if isinstance(story, dict) else ""
+        src_zero_audio = get_file_path(story, "zero_audio") if isinstance(story, dict) else ""
+        src_zero_image = get_file_path(story, "zero_image") if isinstance(story, dict) else ""
+        src_zero_image_last = get_file_path(story, "zero_image_last") if isinstance(story, dict) else ""
+
         story = story.copy()
         story.pop("narrator", None)
         story["id"] = next_root_id
@@ -2274,6 +2468,16 @@ class MagicWorkflow:
         refresh_scene_media(story, "clip", ".mp4", zero, True)
         refresh_scene_media(story, "clip_audio", ".wav", zero_audio, True)
         refresh_scene_media(story, "clip_image", ".webp", zero_image, True)
+
+        # 从已有场景往里加时，ZERO 跟来源那场走，不用频道模板盖掉。
+        if src_zero and os.path.isfile(src_zero):
+            refresh_scene_media(story, "zero", ".mp4", src_zero, True)
+        if src_zero_audio and os.path.isfile(src_zero_audio):
+            refresh_scene_media(story, "zero_audio", ".wav", src_zero_audio, True)
+        if src_zero_image and os.path.isfile(src_zero_image):
+            refresh_scene_media(story, "zero_image", ".webp", src_zero_image, True)
+        if src_zero_image_last and os.path.isfile(src_zero_image_last):
+            refresh_scene_media(story, "zero_image_last", ".webp", src_zero_image_last, True)
 
 
         if not self.scenes:

@@ -722,10 +722,14 @@ LAST_VISUAL_STYLE = config.VISUAL_STYLE_OPTIONS[0]
 
 LAST_YT_LANGUAGE = "tw"
 
+# 创建项目时的画面比例。没有上次选择时用竖屏。
+LAST_VIDEO_SIZE = "1080x1920"
+_VIDEO_SIZE_CHOICES = ("1920x1080", "1080x1920")
+
 
 def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     """用 ``YT_tools_prefs.json`` 覆盖内存中的 LAST_*（若值合法）。"""
-    global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE
+    global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE, LAST_VIDEO_SIZE
     prefs = prefs if prefs is not None else config.load_yt_tools_prefs()
     if not prefs:
         return {}
@@ -742,6 +746,10 @@ def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     narr_opts = config.narrator_person_options()
     if nar and nar in narr_opts:
         LAST_NARRATOR = nar
+
+    size = (prefs.get("video_size") or "").strip()
+    if size in _VIDEO_SIZE_CHOICES:
+        LAST_VIDEO_SIZE = size
 
     return prefs
 
@@ -1725,7 +1733,7 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
         resolution_frame = ttk.Frame(top_fields_row)
         resolution_frame.pack(side=tk.LEFT, padx=(0, 0))
-        resolution_var = tk.StringVar(value="1080x1920")
+        resolution_var = tk.StringVar(value=LAST_VIDEO_SIZE)
         ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
@@ -2106,6 +2114,10 @@ class ProjectSelectionDialog:
             pid = pid_entry.get().strip()
             title = title_entry.get().strip()
             resolution = resolution_var.get()
+            if resolution in _VIDEO_SIZE_CHOICES:
+                global LAST_VIDEO_SIZE
+                LAST_VIDEO_SIZE = resolution
+                config.save_yt_tools_prefs({"video_size": resolution})
             
             if not pid:
                 messagebox.showerror("错误", "请输入项目ID")

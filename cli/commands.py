@@ -934,7 +934,7 @@ def scene_lm_choice_labels_fallback() -> list[str]:
         "Mini Story",
         "Long Story",
         "Content to Scenes",
-        "Talk",
+        "Series.Podcast",
         "Conversation",
     ]
 
