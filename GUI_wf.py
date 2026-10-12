@@ -1580,8 +1580,14 @@ class WorkflowGUI:
             return ""
         return "<1> " + body
 
-    def _force_speaking_to_host(self, scope: str) -> None:
+    def _force_speaking_to_host(self, scope: str, narrator: str = "") -> None:
         if not getattr(self, "workflow", None):
+            return
+        narrator = (narrator or "").strip()
+        if project_manager.actor_is_absent(narrator):
+            narrator = (project_manager.project_narrator() or "").strip()
+        if project_manager.actor_is_absent(narrator):
+            messagebox.showinfo("全改讲员", "先选定一个讲员。", parent=self.root)
             return
         current = self.workflow.get_scene_by_index(self.current_scene_index)
         if not isinstance(current, dict):
@@ -1595,12 +1601,20 @@ class WorkflowGUI:
         else:
             targets = [current]
         changed = 0
+        actor_changed = 0
         for scene in targets:
             old = (scene.get("speaking") or "").strip()
             new = self._speaking_as_host_only(old)
             if new != old:
                 scene["speaking"] = new
                 changed += 1
+            old_actor = (scene.get("actor") or "").strip()
+            new_actor = project_manager.normalize_actor_text(
+                project_manager.actor_with_host(old_actor, narrator)
+            )
+            if new_actor != project_manager.normalize_actor_text(old_actor):
+                scene["actor"] = new_actor
+                actor_changed += 1
         if hasattr(self, "scene_speaking"):
             loading = getattr(self, "_scene_widgets_loading", False)
             self._scene_widgets_loading = True
@@ -1609,6 +1623,7 @@ class WorkflowGUI:
                 self.scene_speaking.insert("1.0", current.get("speaking") or "")
             finally:
                 self._scene_widgets_loading = loading
+        self._set_actor_text(current.get("actor") or "")
         self.workflow.save_scenes_to_json()
         if scope == "episode":
             where = "这一集"
@@ -1619,7 +1634,7 @@ class WorkflowGUI:
         show_auto_close_popup(
             self.root,
             "全改讲员",
-            f"已把{where}的 {changed} 场讲稿改成只由讲员说。",
+            f"已把{where}的讲员换成 {narrator}。讲员改了 {actor_changed} 场，讲稿改了 {changed} 场。",
         )
 
     def _review_actor_person(self, body: str) -> None:
@@ -1697,7 +1712,7 @@ class WorkflowGUI:
             "override_name": "",
             "voice_ready": False,
         }
-        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。全改讲员把讲稿收成只在开头标〈1〉，后面不再换人。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
+        host_hint = "左右键在讲员里换。讲员是 D:\\AI_MEDIA\\avatar 里那一份固定名单。最左表示这场没有讲员，名单里不写。拷贝图案拷当前图，并问怎么进出画面。拷贝背景拷白板，人还在，只是不进画面。全改讲员把选定范围内每一场的讲员换成当前这一位，讲稿收成只在开头标〈1〉。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。"
         person_hint = "左右键在这个项目的人物里换。人物图片在项目的 avatar 目录。增加人物时可以换掉某一位，或不换就放在最后。已经四个人时，放在最后会换掉第四个。没有图片时拷贝用白板。Ctrl+V 可以贴上形象。"
 
         def remember_voice(name: str, voice: str) -> None:
@@ -1964,7 +1979,12 @@ class WorkflowGUI:
                     pass
             if not picked:
                 return
-            self._force_speaking_to_host(picked[1])
+            if holder.get("override_name"):
+                narrator = holder["override_name"]
+            else:
+                names_now = holder["names"]
+                narrator = (names_now[holder["index"]] if names_now else "") or ""
+            self._force_speaking_to_host(picked[1], narrator)
 
         def apply_domain_chrome() -> None:
             if holder["mode"] == "host":
@@ -2300,6 +2320,45 @@ class WorkflowGUI:
                 seen += 1
         self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
 
+    def _ask_apply_narrator_to_all_scenes(self, name: str, parent=None) -> None:
+        """上面的讲员换了以后，问要不要把每一场已有的讲员换成这一位。"""
+        workflow = getattr(self, "workflow", None)
+        scenes = [s for s in (getattr(workflow, "scenes", None) or []) if isinstance(s, dict)]
+        if not scenes:
+            return
+        target = (name or "").strip()
+        if project_manager.actor_is_absent(target):
+            target = ""
+        pending = []
+        for scene in scenes:
+            old = (scene.get("actor") or "").strip()
+            if not project_manager.actor_host_name(old):
+                continue
+            new = project_manager.actor_with_host(old, target)
+            if new == old:
+                continue
+            pending.append((scene, new))
+        if not pending:
+            return
+        who = target or "不出现"
+        ok = messagebox.askyesno(
+            "讲员",
+            f"上面的讲员已换成 {who}。\n要把每一场里的讲员都换成这一位吗？\n有 {len(pending)} 场会改。人物不动。",
+            parent=parent or self.root,
+        )
+        if not ok:
+            return
+        for scene, new in pending:
+            scene["actor"] = new
+        workflow.save_scenes_to_json()
+        current = None
+        try:
+            current = workflow.get_scene_by_index(self.current_scene_index)
+        except Exception:
+            current = None
+        if isinstance(current, dict):
+            self._set_actor_text(current.get("actor") or "")
+
     def review_project_narrator(self, current: str | None = None, on_confirm=None, actor_entry=None, parent=None) -> None:
         """左右键翻讲员头像。默认写回项目 narrator；传入 on_confirm 则交给调用方。"""
         win = parent or self.root
@@ -2323,6 +2382,7 @@ class WorkflowGUI:
             project_manager.LAST_NARRATOR = name
             save_project_config(parent=win)
             self._refresh_narrator_button(name)
+            self.root.after(10, lambda n=name: self._ask_apply_narrator_to_all_scenes(n))
 
         self._open_portrait_dialog(
             title="讲员",
@@ -4537,7 +4597,7 @@ class WorkflowGUI:
         episode_btn_row.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(episode_btn_row, text="延长").pack(side=tk.LEFT)
         self.extension_var = tk.StringVar(value="0")
-        self.extension_values = ["0", "0.2", "0.3", "0.5", "1.0"]
+        self.extension_values = ["0", "0.4", "0.6", "0.8"]
         self.extension_combobox = ttk.Combobox(
             episode_btn_row,
             textvariable=self.extension_var,
@@ -5751,7 +5811,7 @@ class WorkflowGUI:
             fv = float(ext_val) if ext_val is not None else 0.0
         except (TypeError, ValueError):
             fv = 0.0
-        allowed = getattr(self, "extension_values", ("0", "0.2", "0.3", "0.5", "1.0"))
+        allowed = getattr(self, "extension_values", ("0", "0.4", "0.6", "0.8"))
         for s in allowed:
             try:
                 if abs(fv - float(s)) < 1e-6:

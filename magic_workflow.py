@@ -2258,8 +2258,9 @@ class MagicWorkflow:
 
         for i, v in enumerate(video_segments):
             video_path = f"{final_video_dir}/{i:04d}.mp4"
-            if v["extend"] > 0.0 and with_transitions:
-                # create new function to extend the clip (simple extend last frame (if extend > 0.0))
+            # 场景上的延长：末帧定格、声音补静音，接在这一场后面，场与场之间就是这段停顿。
+            # 带转场时，后面还会再固定延长 1 秒，淡入淡出用掉其中 0.5 秒，这段停顿仍留在转场前面。
+            if v["extend"] > 0.0:
                 v_temp = self.ffmpeg_processor.extend_video(v["path"], v["extend"])
             else:
                 v_temp = v["path"]
