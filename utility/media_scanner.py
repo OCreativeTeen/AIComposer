@@ -296,8 +296,9 @@ class MediaScanner:
         return gen_video
 
 
-    def video_simple_replacement(self, current_scene, video_path_in, wav_path_in, audio_choice, media_type):
+    def video_simple_replacement(self, current_scene, video_path_in, wav_path_in, audio_choice, media_type, mix_volume: float = 0.5):
         """处理视频替换与音轨策略。video_path_in 为（可能已缩放的）候选视频；wav_path_in 为与源片对应、已做音量等处理的临时 wav，若为 None 则从 video_path_in 抽取。"""
+        print(f"🎚️ 导入视频声音方式: audio_choice={audio_choice!r}, 轨道={media_type}")
         input_video = self.workflow.ffmpeg_processor.resize_video(video_path_in, width=None, height=self.workflow.ffmpeg_processor.height)
         current_scene[media_type + "_fps"] = self.workflow.ffmpeg_processor.get_video_fps(input_video)
         current_scene[media_type + "_status"] = "ORIG"
@@ -337,6 +338,22 @@ class MediaScanner:
             self.last_image_replacement(current_scene, scene_video, media_type)
         elif audio_choice == "replace_trim":
             input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, scene_audio, True, "trim")
+            oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
+            self.last_image_replacement(current_scene, scene_video, media_type)
+        elif audio_choice == "overlay":
+            # 混音：这一场现有音频保持 100%，导入视频的声音按用户选的比例（10%–100%，默认 50%）混进去。
+            # 导入视频从头按原速放；比这一场长就裁掉多出来的，比这一场短就用最后一帧定格延长。
+            ap = self.workflow.ffmpeg_audio_processor
+            mixed = None
+            if input_audio and os.path.isfile(input_audio):
+                mixed = ap.audio_mix(scene_audio, 1.0, 0.0, input_audio, max(0.1, min(1.0, float(mix_volume))))
+            if not mixed or not os.path.isfile(mixed):
+                raise RuntimeError("混音失败：没能把导入视频的声音混进这一场的音频。")
+            print(f"🎚️ 混音完成: {mixed}")
+            input_video = self.workflow.ffmpeg_processor.add_audio_to_video(input_video, mixed, True, "trim")
+            # 工作流里播放和后续合成用的是这一场的 *_audio 文件，混好的声音也要写回去，
+            # 不然只有 mp4 里带着混音，界面上听到的还是原来的声音。
+            refresh_scene_media(current_scene, media_type + "_audio", ".wav", mixed)
             oldv, scene_video = refresh_scene_media(current_scene, media_type, ".mp4", input_video)
             self.last_image_replacement(current_scene, scene_video, media_type)
         else: # mix

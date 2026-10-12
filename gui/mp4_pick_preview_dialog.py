@@ -513,6 +513,7 @@ def ask_mp4_pick_with_trim_preview(
         audio_timeline.pack(fill=tk.X, pady=(6, 0))
 
     radio_var = tk.StringVar(value="")
+    mix_level_var = tk.IntVar(value=50)
     dest_var = tk.StringVar(value=(dest_options[0][0] if dest_options else ""))
     source_var = tk.StringVar(value=(current["key"] if sources else ""))
     if sources:
@@ -1426,10 +1427,26 @@ def ask_mp4_pick_with_trim_preview(
                     f"做法：只把这段音频原样拷进项目，文件名是原来的名字加上 -1、-2。不裁剪，不改音量，不替换画面。"
                 )
         else:
+            sound_mode = radio_var.get() if radio_holder[0] else ""
+            if sound_mode == "overlay":
+                how = (
+                    f"做法：把这段视频的声音按 {int(mix_level_var.get())}% 混进 {dest_name} 现有的声音（现有的保持 100%）。"
+                    f"画面换成这段视频，从头按原速播放；比现有的长就裁掉多出来的，"
+                    f"比现有的短就用最后一帧定格到结束。"
+                )
+            elif sound_mode == "replace_speed":
+                how = (
+                    f"做法：用这段视频替换 {dest_name} 的画面，但声音保留现有的，"
+                    f"视频会伸缩到和现有声音一样长。"
+                )
+            elif sound_mode == "keep":
+                how = f"做法：用这段视频的画面和它自带的声音，替换 {dest_name} 上现有的画面和声音。"
+            else:
+                how = f"做法：用这段视频替换 {dest_name} 上现有的画面和声音。"
             plan = (
                 f"你只选了视频，没有另外的音频。\n"
                 f"视频：{sel_fn[0]}\n"
-                f"做法：用这段视频替换 {dest_name} 上现有的画面和声音。\n"
+                f"{how}\n"
                 f"区间 {c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。{vol_line}"
             )
         decided = _ask_plan(
@@ -1525,6 +1542,7 @@ def ask_mp4_pick_with_trim_preview(
                 "wav": picked[2],
                 "action": action,
                 "radio": radio_var.get() if radio_holder[0] else "",
+                "mix_volume": max(10, min(100, int(mix_level_var.get()))) / 100.0,
                 "source": source_var.get() if sources else "",
                 "dest": dest_var.get() if dest_options else "",
                 "audio": audio_payload,
@@ -1695,8 +1713,9 @@ def ask_mp4_pick_with_trim_preview(
             widget.destroy()
         spec = radio_holder[0]
         if spec:
-            radio_title, radio_options = spec
-            radio_var.set(radio_options[0][0])
+            radio_title, radio_options = spec[0], spec[1]
+            default_radio = spec[2] if len(spec) > 2 else radio_options[0][0]
+            radio_var.set(default_radio)
             ttk.Label(extra_host, text=radio_title, style="PickChoice.TLabel").pack(
                 side=tk.LEFT, padx=(0, 8)
             )
@@ -1708,6 +1727,40 @@ def ask_mp4_pick_with_trim_preview(
                     variable=radio_var,
                     style="PickChoice.TRadiobutton",
                 ).pack(side=tk.LEFT, padx=(0, 12))
+            if any(value == "overlay" for value, _label in radio_options):
+                # 混音时：导入视频的声音占多大（10%–100%，默认 50%）。只在选了“混音”时显示。
+                mix_box = ttk.Frame(extra_host)
+                ttk.Label(mix_box, text="导入声音", style="PickChoice.TLabel").pack(
+                    side=tk.LEFT, padx=(0, 6)
+                )
+                mix_pct_text = tk.StringVar()
+
+                def _on_mix_level(_v=None) -> None:
+                    pct = int(round(float(mix_level_var.get()) / 5.0)) * 5
+                    pct = max(10, min(100, pct))
+                    mix_level_var.set(pct)
+                    mix_pct_text.set(f"{pct}%")
+
+                ttk.Scale(
+                    mix_box, from_=10, to=100, orient=tk.HORIZONTAL, length=140,
+                    variable=mix_level_var, command=_on_mix_level,
+                ).pack(side=tk.LEFT)
+                ttk.Label(mix_box, textvariable=mix_pct_text, width=5,
+                          style="PickChoice.TLabel").pack(side=tk.LEFT, padx=(6, 0))
+                _on_mix_level()
+
+                def _show_mix_level(*_a) -> None:
+                    try:
+                        if radio_var.get() == "overlay":
+                            if not mix_box.winfo_ismapped():
+                                mix_box.pack(side=tk.LEFT, padx=(6, 0))
+                        else:
+                            mix_box.pack_forget()
+                    except tk.TclError:
+                        pass
+
+                radio_var.trace_add("write", _show_mix_level)
+                _show_mix_level()
         ttk.Button(btn_host, text="取消", command=_close).pack(side=tk.RIGHT, padx=(6, 0))
         actions = confirm_holder[0]
         confirm_anchor[0] = None

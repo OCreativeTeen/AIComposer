@@ -800,12 +800,23 @@ class WorkflowGUI:
         if not clip_path or not os.path.isfile(clip_path):
             return False
         scene["back"] = clip_path
-        audio_path = scene.get("clip_audio") if isinstance(scene.get("clip_audio"), str) else ""
-        audio_path = audio_path.strip()
+        raw_audio = scene.get("clip_audio")
+        audio_path = raw_audio.strip() if isinstance(raw_audio, str) else ""
+        if not audio_path or not os.path.isfile(audio_path):
+            audio_path = get_file_path(scene, "clip_audio") or ""
         if audio_path and os.path.isfile(audio_path):
             scene["back_audio"] = audio_path
         else:
             scene.pop("back_audio", None)
+        # 导入视频会连带换掉结束图，一起记下来，恢复时一并退回。
+        raw_last = scene.get("clip_image_last")
+        last_path = raw_last.strip() if isinstance(raw_last, str) else ""
+        if not last_path or not os.path.isfile(last_path):
+            last_path = get_file_path(scene, "clip_image_last") or ""
+        if last_path and os.path.isfile(last_path):
+            scene["back_image_last"] = last_path
+        else:
+            scene.pop("back_image_last", None)
         return True
 
 
@@ -838,10 +849,18 @@ class WorkflowGUI:
         refresh_scene_media(current_scene, "clip", ".mp4", back_path)
         if audio_path:
             refresh_scene_media(current_scene, "clip_audio", ".wav", audio_path, True)
+        last_path = current_scene.get("back_image_last") or ""
+        if isinstance(last_path, str) and last_path.strip() and os.path.isfile(last_path.strip()):
+            last_path = last_path.strip()
+            refresh_scene_media(
+                current_scene, "clip_image_last", os.path.splitext(last_path)[1] or ".webp", last_path, True
+            )
         current_scene.pop("back", None)
         current_scene.pop("back_audio", None)
+        current_scene.pop("back_image_last", None)
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
+        show_auto_close_popup(self.root, "恢复", "已恢复到导入之前的视频和声音。")
 
 
     def reset_track_offset(self):
@@ -951,6 +970,7 @@ class WorkflowGUI:
         *,
         track_status: str,
         share_episode: bool | None = None,
+        mix_volume: float = 0.5,
     ):
         """在后台线程执行 ``video_simple_replacement``（内含 resize、混音等密集 FFmpeg），避免主界面假死。"""
         if share_episode is None:
@@ -960,7 +980,7 @@ class WorkflowGUI:
             err = None
             try:
                 self.media_scanner.video_simple_replacement(
-                    scene, tmp_mp4, tmp_wav, audio_choice, track
+                    scene, tmp_mp4, tmp_wav, audio_choice, track, mix_volume=mix_volume
                 )
             except Exception as e:
                 err = str(e)
@@ -3095,6 +3115,7 @@ class WorkflowGUI:
             self._video_simple_replacement_async(
                 scene, mp4, wav, pick.get("radio") or "keep", track,
                 track_status="ENH2", share_episode=share_episode,
+                mix_volume=float(pick.get("mix_volume") or 0.5),
             )
             return
         if stage_download and source in ("download", "project"):
@@ -3113,6 +3134,13 @@ class WorkflowGUI:
                 track,
             )
             if res:
+                if audio:
+                    # 另选了音频：视频已经带着这条音频，原样写入。
+                    res["audio_choice"] = "keep"
+                else:
+                    res["audio_choice"] = (pick.get("radio") or "").strip()
+                res["mix_volume"] = float(pick.get("mix_volume") or 0.5)
+                print(f"🎚️ 导入视频：对话框传回的声音方式 radio={pick.get('radio')!r}, 采用={res['audio_choice']!r}")
                 self._apply_download_video_result(res, track, share_episode=share_episode)
             return
         refresh_scene_media(scene, track, ".mp4", mp4)
@@ -3232,21 +3260,25 @@ class WorkflowGUI:
                     scene, temp_adj_mp4, temp_adj_wav, track, place_mode
                 )
                 return
-            picked = askchoice(
-                "下载视频替换：音频如何处理？",
-                [
-                    ("keep", "保留输入自带音频"),
-                    ("replace_speed", "场景音轨替换/SPEED"),
-                    ("replace_trim", "场景音轨替换/TRIM"),
-                    ("keep_trim", "保留输入自带音频/TRIM"),
-                    ("mix", "ZERO混音伸缩"),
-                    ("mix_flat", "ZERO混音平铺"),
-                ],
-                self.root,
-            )
-            if picked is None:
-                return
-            _, audio_choice = picked
+            preset = (res.get("audio_choice") or "").strip()
+            if preset in ("keep", "replace_speed", "replace_trim", "overlay"):
+                audio_choice = preset
+            else:
+                picked = askchoice(
+                    "下载视频替换：音频如何处理？",
+                    [
+                        ("keep", "保留输入自带音频"),
+                        ("replace_speed", "场景音轨替换/SPEED"),
+                        ("replace_trim", "场景音轨替换/TRIM"),
+                        ("keep_trim", "保留输入自带音频/TRIM"),
+                        ("mix", "ZERO混音伸缩"),
+                        ("mix_flat", "ZERO混音平铺"),
+                    ],
+                    self.root,
+                )
+                if picked is None:
+                    return
+                _, audio_choice = picked
             self._video_simple_replacement_async(
                 scene,
                 temp_adj_mp4,
@@ -3255,6 +3287,7 @@ class WorkflowGUI:
                 track,
                 track_status="ORIG",
                 share_episode=share_episode,
+                mix_volume=float(res.get("mix_volume") or 0.5),
             )
             return
 
@@ -3280,13 +3313,21 @@ class WorkflowGUI:
         video_actions = [
             ("replace", "替换"),
         ]
+        # 声音：原声 = 用导入视频自带的声音；配声 = 用本场现有音频，视频伸缩去配它；
+        # 混音 = 本场音频 100% 加上导入视频的声音 66%，视频原速，长裁短定格。
+        # 项目、下载、频道三个来源都一样。
+        sound_radios = (
+            "声音",
+            [("keep", "原声"), ("replace_speed", "配声"), ("overlay", "混音")],
+            "replace_speed",
+        )
         sources = [
             {
                 "key": "project",
                 "label": "项目",
                 "folder": project_folder,
                 "choices": project_files,
-                "radios": None,
+                "radios": sound_radios,
                 "confirm_actions": video_actions,
             },
             {
@@ -3294,7 +3335,7 @@ class WorkflowGUI:
                 "label": "下载",
                 "folder": download_folder,
                 "choices": download_files,
-                "radios": None,
+                "radios": sound_radios,
                 "confirm_actions": video_actions,
             },
             {
@@ -3302,7 +3343,7 @@ class WorkflowGUI:
                 "label": "频道",
                 "folder": channel_folder,
                 "choices": channel_files,
-                "radios": ("声音", [("keep", "原声"), ("replace_speed", "配声")]),
+                "radios": sound_radios,
                 "confirm_actions": [("replace", "替换")],
             },
         ]
@@ -3708,6 +3749,10 @@ class WorkflowGUI:
             targets = story[start:]
         else:
             targets = [scene_anchor]
+        self._run_still_clip_videos(targets)
+
+    def _run_still_clip_videos(self, targets: list) -> None:
+        """后台给这些场景用 clip_image 加 clip_audio 重做静态 clip 视频，做完弹出结果。"""
         if not targets:
             messagebox.showwarning("生场视频", "没有可用场景", parent=self.root)
             return
@@ -6864,6 +6909,16 @@ class WorkflowGUI:
         if not plan["split"]:
             split_btn.state(["disabled"])
 
+        def run_split_scene() -> None:
+            close()
+            if messagebox.askyesno("分成两场", "从这个播放位置把这一场分成前后两场？", parent=self.root):
+                self.split_scene()
+
+        scene_split_btn = ttk.Button(dlg, text="从这里分成前后两场", command=run_split_scene)
+        scene_split_btn.pack(fill=tk.X, padx=14, pady=3)
+        if plan["play"] <= 0.08 or plan["play"] >= plan["duration"] - 0.08:
+            scene_split_btn.state(["disabled"])
+
         head_btn = ttk.Button(
             dlg,
             text=(plan["head"] or {}).get("label") or "移到前一场",
@@ -6882,14 +6937,18 @@ class WorkflowGUI:
         if not plan["tail"] or next_scene is None:
             tail_btn.state(["disabled"])
 
+        # 只搬画面和声音，讲稿不动，所以不受“同一集”限制：上一场、下一场是别的集也可以。
+        any_prev = self.workflow.get_previous_scene(self.current_scene_index)
+        any_next = self.workflow.get_next_scene(self.current_scene_index)
+
         media_prev_btn = ttk.Button(dlg, text="移至上一场", command=lambda: run_media("head"))
         media_prev_btn.pack(fill=tk.X, padx=14, pady=3)
-        if not plan.get("media_prev") or prev_scene is None:
+        if not plan.get("media_prev") or any_prev is None:
             media_prev_btn.state(["disabled"])
 
         media_next_btn = ttk.Button(dlg, text="移至下一场", command=lambda: run_media("tail"))
         media_next_btn.pack(fill=tk.X, padx=14, pady=3)
-        if not plan.get("media_next") or next_scene is None:
+        if not plan.get("media_next") or any_next is None:
             media_next_btn.state(["disabled"])
 
         def run_trim(drop_head: bool) -> None:
@@ -7031,6 +7090,10 @@ class WorkflowGUI:
         if not scene or not plan:
             return
         prev_scene, next_scene = self._adjacent_story_scenes(scene)
+        if media_only:
+            # 只搬画面和声音，不动讲稿：旁边那场是下一集或上一集的也可以。
+            prev_scene = self.workflow.get_previous_scene(self.current_scene_index)
+            next_scene = self.workflow.get_next_scene(self.current_scene_index)
         neighbor = prev_scene if where == "head" else next_scene
         if media_only:
             allowed = plan.get("media_prev") if where == "head" else plan.get("media_next")
@@ -8970,7 +9033,6 @@ class WorkflowGUI:
             self.btn_scene_edit,
             "场景分合",
             [
-                ("split", "从播放点分离"),
                 ("delete", "删除本场"),
                 ("merge_next", "与下一场合并"),
                 ("merge_prev", "与上一场合并"),
@@ -8979,7 +9041,6 @@ class WorkflowGUI:
             ],
         )
         confirm = {
-            "split": "从播放点把这一场分成前后两场？",
             "delete": "删除这一场？删掉以后回不来。",
             "merge_next": "把这一场和下一场合成一场？",
             "merge_prev": "把上一场和这一场合成一场？",
@@ -8990,9 +9051,7 @@ class WorkflowGUI:
             return
         if not messagebox.askyesno("场景分合", confirm, parent=self.root):
             return
-        if picked == "split":
-            self.split_scene()
-        elif picked == "delete":
+        if picked == "delete":
             self._delete_current_scene()
         elif picked == "merge_next":
             self._merge_with_neighbor(1)
@@ -10914,15 +10973,14 @@ class WorkflowGUI:
                 messagebox.showinfo("放入", "这一帧没有缩放好。", parent=self.root)
                 return
             refresh_scene_media(scene, image_type, ".webp", frame)
-            if image_type == "clip_image":
-                self.workflow.write_scene_page_png(scene, scene.get("clip_image") or frame)
+            self._pool_clip_slot_image(scene, image_type, scene.get(image_type) or frame)
             self.workflow.save_scenes_to_json()
             self.display_image_on_canvas_for_track(image_type)
-            show_auto_close_popup(
-                self.root,
-                "放入",
-                "已用这条视频的尾帧换上" if is_last else "已用这条视频的首帧换上",
-            )
+            done_text = "已用这条视频的尾帧换上" if is_last else "已用这条视频的首帧换上"
+            if image_type == "clip_image":
+                self._after_clip_image_changed(scene, done_text + "，并加进了本集图片库。")
+            else:
+                show_auto_close_popup(self.root, "放入", done_text)
         finally:
             try:
                 self.root.config(cursor="")
@@ -10952,11 +11010,13 @@ class WorkflowGUI:
             messagebox.showinfo("放入", empty, parent=self.root)
             return
         refresh_scene_media(scene, image_type, ".webp", source, True)
-        if image_type == "clip_image":
-            self.workflow.write_scene_page_png(scene, scene.get("clip_image") or source)
+        self._pool_clip_slot_image(scene, image_type, scene.get(image_type) or source)
         self.workflow.save_scenes_to_json()
         self.display_image_on_canvas_for_track(image_type)
-        show_auto_close_popup(self.root, "放入", "已用旁边那场的图换上")
+        if image_type == "clip_image":
+            self._after_clip_image_changed(scene, "已用旁边那场的图换上，并加进了本集图片库。")
+        else:
+            show_auto_close_popup(self.root, "放入", "已用旁边那场的图换上")
 
     def _shift_preview_slot_image(self, image_type: str, img_paths: list[str]) -> None:
         """起始：旧起始挪到结束，新图放起始。结束：旧结束挪到起始，新图放结束。"""
@@ -10981,20 +11041,24 @@ class WorkflowGUI:
             old_path = scene.get(last_key) or ""
             if old_path and os.path.isfile(old_path):
                 refresh_scene_media(scene, start_key, ".webp", old_path, True)
-                if start_key == "clip_image":
-                    self.workflow.write_scene_page_png(scene, scene.get(start_key) or old_path)
+                self._pool_clip_slot_image(scene, start_key, scene.get(start_key) or old_path)
             refresh_scene_media(scene, last_key, ".webp", file_path, True)
+            self._pool_clip_slot_image(scene, last_key, scene.get(last_key) or file_path)
         else:
             old_path = scene.get(start_key) or ""
             if old_path and os.path.isfile(old_path):
                 refresh_scene_media(scene, last_key, ".webp", old_path, True)
             refresh_scene_media(scene, start_key, ".webp", file_path, True)
-            if start_key == "clip_image":
-                self.workflow.write_scene_page_png(scene, file_path)
+            self._pool_clip_slot_image(scene, start_key, file_path)
         self.workflow.save_scenes_to_json()
         self.display_image_on_canvas_for_track(start_key)
         self.display_image_on_canvas_for_track(last_key)
-        show_auto_close_popup(self.root, "放入", "已把旧图挪到另一端，新图放在你点的这一格")
+        if start_key == "clip_image":
+            self._after_clip_image_changed(
+                scene, "已把旧图挪到另一端，新图放在你点的这一格，并加进了本集图片库。"
+            )
+        else:
+            show_auto_close_popup(self.root, "放入", "已把旧图挪到另一端，新图放在你点的这一格")
 
     def _copy_preview_slot_image(self, image_type: str) -> None:
         current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -11091,7 +11155,7 @@ class WorkflowGUI:
         if not pages:
             messagebox.showwarning("页图", "这份 PDF 没有拆出页面。", parent=self.root)
             return
-        self.workflow.compact_episode_pages(group_name)
+        # 只是翻页查看，不整理页码：PDF 有几页就能看几页，不受本集场数限制。
         pages = self._episode_page_pngs(group_name)
         start_idx = 0
         try:
@@ -11488,12 +11552,13 @@ class WorkflowGUI:
 
         for scene in selected_scens:
             refresh_scene_media(scene, image_type, ".webp", file_path, True)
-            if image_type == "clip_image":
-                self.workflow.write_scene_page_png(scene, file_path)
+            self._pool_clip_slot_image(scene, image_type, file_path)
 
         self.workflow.save_scenes_to_json()
         self.display_image_on_canvas_for_track(image_type)
         print(f"✅ 已更新 {image_type}: {os.path.basename(file_path)}")
+        if image_type == "clip_image" and selected_scens and selected_scens[0]:
+            self._after_clip_image_changed(selected_scens[0], "已换上新的 clip 图片，并加进了本集图片库。")
 
     def on_image_drop(self, event, image_type):
         """处理图片拖放事件
@@ -13203,7 +13268,7 @@ class WorkflowGUI:
 
 
     def bind_scene_navigation_shortcuts(self):
-        """全局：Ctrl+Shift+←/→ 上一/下一场景；Ctrl+Shift+Alt+←/→ 首/末场景。"""
+        """全局：Ctrl+←/→ 和 Ctrl+Shift+←/→ 上一/下一场景；Ctrl+Shift+Alt+←/→ 首/末场景。"""
         def _has_scenes():
             return getattr(self, "workflow", None) and getattr(self.workflow, "scenes", None)
 
@@ -13231,6 +13296,28 @@ class WorkflowGUI:
             self.last_scene()
             return "break"
 
+        def _plain_ctrl_ok(event) -> bool:
+            """Ctrl+←/→ 翻场景：只在主窗口里生效；讲话框里 Ctrl+←/→ 另有用途（挪字），不拦。"""
+            widget = getattr(event, "widget", None)
+            if widget is None:
+                return True
+            if widget is getattr(self, "scene_speaking", None):
+                return False
+            try:
+                return widget.winfo_toplevel() is self.root
+            except (tk.TclError, AttributeError):
+                return False
+
+        def _ctrl_prev(event=None):
+            if event is not None and not _plain_ctrl_ok(event):
+                return
+            return _prev(event)
+
+        def _ctrl_next(event=None):
+            if event is not None and not _plain_ctrl_ok(event):
+                return
+            return _next(event)
+
         for seq in (
             "<Control-Shift-Left>",
             "<Control-Shift-KP_Left>",
@@ -13241,6 +13328,11 @@ class WorkflowGUI:
             "<Control-Shift-KP_Right>",
         ):
             self.root.bind_all(seq, _next)
+        # 更快的翻页：Ctrl+←/→ 上一/下一场景
+        for seq in ("<Control-Left>", "<Control-KP_Left>"):
+            self.root.bind_all(seq, _ctrl_prev)
+        for seq in ("<Control-Right>", "<Control-KP_Right>"):
+            self.root.bind_all(seq, _ctrl_next)
         # Alt 左右键在部分 Tk 下需写成 Alt-Control-Shift（与 Control-Shift-Alt 等价）
         for seq in (
             "<Control-Shift-Alt-Left>",
@@ -13739,8 +13831,20 @@ class WorkflowGUI:
         if not pages:
             messagebox.showwarning("PDF", "这份 PDF 没有拆出页面。", parent=self.root)
             return
-        print(f"✅ PDF 已拆成 {len(pages)} 页：{folder}")
-        self._open_pdf_page_review(folder, pages, group_name, os.path.basename(pdf_path))
+        print(f"✅ PDF 已拆成 {len(pages)} 页，加进第 {group_name} 集图片库：{folder}")
+        all_pages = self._episode_page_pngs(group_name)
+        start_idx = 0
+        try:
+            first_new = os.path.abspath(pages[0])
+            for i, path in enumerate(all_pages):
+                if os.path.abspath(path) == first_new:
+                    start_idx = i
+                    break
+        except (IndexError, OSError):
+            start_idx = 0
+        self._open_pdf_page_review(
+            folder, all_pages, group_name, os.path.basename(pdf_path), initial_index=start_idx
+        )
 
     def _episode_page_pngs(self, group_name: str) -> list[str]:
         """media/<episode>/ 里按页码排好的页面图。"""
@@ -14047,6 +14151,42 @@ class WorkflowGUI:
         scene.pop("group_page", None)
         scene.pop("group_pdf", None)
 
+    def _pool_clip_slot_image(self, scene: dict, image_type: str, image_path: str) -> None:
+        """clip 的起始图或结束图换了以后，加进这一集的图片库：接在最大编号后面，不覆盖。
+
+        起始图记成这一场的页；结束图只放进库里，不改这一场的页。
+        """
+        if image_type not in ("clip_image", "clip_image_last"):
+            return
+        if not isinstance(scene, dict) or not image_path or not os.path.isfile(image_path):
+            return
+        self.workflow.write_scene_page_png(
+            scene, image_path, tag_scene=(image_type == "clip_image")
+        )
+
+    def _after_clip_image_changed(self, scene: dict, summary: str) -> None:
+        """起始图换了以后，问要不要用新图加这一场的音频重做 clip 视频（没有音频就不问）。"""
+        audio = get_file_path(scene, "clip_audio") if isinstance(scene, dict) else ""
+        if not audio or not os.path.isfile(audio):
+            show_auto_close_popup(self.root, "放入", summary)
+            return
+        self.root.after(200, lambda: self._offer_still_videos_after_pdf([scene], summary))
+
+    def _offer_still_videos_after_pdf(self, scenes: list, summary: str) -> None:
+        """页图写进 clip_image 之后，问要不要用新图加音频重做这些场景的 clip 视频。"""
+        scenes = [s for s in scenes if isinstance(s, dict)]
+        if not scenes:
+            messagebox.showinfo("PDF", summary, parent=self.root)
+            return
+        if messagebox.askyesno(
+            "重新生成 clip 视频",
+            f"{summary}\n\n"
+            f"要不要用新的 clip 图片加各场景的 clip 音频，重新生成这 {len(scenes)} 场的 clip 视频？\n"
+            "选“是”会替换原来的 clip 视频；没有 clip 音频的场景会跳过。",
+            parent=self.root,
+        ):
+            self._run_still_clip_videos(scenes)
+
     def _open_pdf_page_review(
         self,
         folder: str,
@@ -14069,12 +14209,45 @@ class WorkflowGUI:
         canvas.pack(fill=tk.BOTH, expand=True)
         status = ttk.Label(dlg, text="", anchor="w")
         status.pack(fill=tk.X, padx=8, pady=(6, 2))
+        usage_lbl = tk.Label(dlg, text="", anchor="w", font=("Microsoft YaHei UI", 11, "bold"))
+        usage_lbl.pack(fill=tk.X, padx=8, pady=(0, 2))
+        hint_lbl = tk.Label(dlg, text="", anchor="w", fg="#1a4fa0")
+        hint_lbl.pack(fill=tk.X, padx=8, pady=(0, 2))
         path_lbl = ttk.Label(dlg, text=folder, anchor="w")
         path_lbl.pack(fill=tk.X, padx=8)
 
+        def _forward_hint(page_i: int) -> str:
+            """“写到本集结束”按下去会写哪几场，不会超出本集。"""
+            indices = self.workflow.group_scene_indices(group_name)
+            cur = self.current_scene_index
+            if cur not in indices:
+                return f"当前场景不在第 {group_name} 集，不能“写到本集结束”。"
+            pos = indices.index(cur)
+            left_scenes = len(indices) - pos
+            left_pages = len(pages) - page_i
+            n = min(left_scenes, left_pages)
+            return (
+                f"写到本集结束：从当前场景（本集第 {pos + 1} 场）起，写到本集第 {pos + n} 场"
+                f"（本集共 {len(indices)} 场），用 {n} 张图；"
+                + ("本集最后一场到此为止。" if left_pages >= left_scenes else "图先用完。")
+            )
+
         def _scene_label() -> str:
             n = len(self.workflow.group_scene_indices(group_name))
-            return f"第 {group_name} 集 · {pdf_name} · 本集 {n} 个场景"
+            return f"第 {group_name} 集 · 本集 {n} 个场景"
+
+        def _page_users(page_no: int) -> list[str]:
+            """这一页被本集哪些场景用着，返回类似 '本集第 3 场（全部第 12 场）' 的说明。"""
+            users: list[str] = []
+            for pos, gi in enumerate(self.workflow.group_scene_indices(group_name), start=1):
+                scene = self.workflow.scenes[gi]
+                try:
+                    n = int(scene.get("episode_page") or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                if n == page_no:
+                    users.append(f"本集第 {pos} 场（全部第 {gi + 1} 场）")
+            return users
 
         def _show_page(_event=None):
             if showing[0] or not dlg.winfo_exists():
@@ -14086,6 +14259,11 @@ class WorkflowGUI:
                 showing[0] = False
 
         def _show_page_body():
+            # 每次都重新读文件夹，总页数以文件夹里实际有的图为准，和场景数无关。
+            fresh = self._episode_page_pngs(group_name)
+            if fresh:
+                pages[:] = fresh
+            idx[0] = max(0, min(idx[0], len(pages) - 1))
             i = idx[0]
             path = pages[i]
             try:
@@ -14105,18 +14283,51 @@ class WorkflowGUI:
             photo_holder[0] = photo
             canvas.delete("all")
             canvas.create_image(cw // 2, ch // 2, image=photo)
-            status.config(text=f"第 {i + 1} / {len(pages)} 页   {os.path.basename(path)}    {_scene_label()}")
+            page_no = _page_number(i)
+            users = _page_users(page_no)
+            if users:
+                usage_text = f"第 {page_no} 页 → 已分给：" + "、".join(users)
+                usage_color = "#0a6b0a"
+                badge = "场景：" + "、".join(u.split("（")[0] for u in users)
+                badge_color = "#7CFC7C"
+            else:
+                usage_text = f"第 {page_no} 页 → 还没有被任何场景使用"
+                usage_color = "#b00020"
+                badge = "还没有被任何场景使用"
+                badge_color = "#FF8A80"
+            usage_lbl.config(text=usage_text, fg=usage_color)
+            hint_lbl.config(text=_forward_hint(i))
+            canvas.create_text(
+                13, 13, text=badge, anchor="nw", fill="#000000", font=("Microsoft YaHei UI", 14, "bold")
+            )
+            canvas.create_text(
+                11, 11, text=badge, anchor="nw", fill=badge_color, font=("Microsoft YaHei UI", 14, "bold")
+            )
+            status.config(
+                text=(
+                    f"本集文件夹共 {len(pages)} 张图，当前第 {i + 1} / {len(pages)} 张"
+                    f"（{os.path.basename(path)}）    {_scene_label()}"
+                )
+            )
 
         def _step(delta: int):
+            fresh = self._episode_page_pngs(group_name)
+            if fresh:
+                pages[:] = fresh
             idx[0] = (idx[0] + delta) % len(pages)
             _show_page()
+
+        def _page_number(i: int) -> int:
+            """第 i 张图在 PDF 里的页码（文件名里的数字）。"""
+            stem = os.path.splitext(os.path.basename(pages[i]))[0]
+            return int(stem) if stem.isdigit() else i + 1
 
         def _assign_current():
             scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not scene:
                 messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
                 return
-            page_no = idx[0] + 1
+            page_no = _page_number(idx[0])
             try:
                 self._assign_scene_clip_image_from_file(scene, pages[idx[0]])
                 self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
@@ -14126,27 +14337,37 @@ class WorkflowGUI:
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
             dlg.destroy()
-            show_auto_close_popup(
-                self.root, "PDF", f"第 {page_no} 页已写入当前场景（第 {group_name} 集）"
+            self.root.after(
+                50,
+                lambda sc=[scene], msg=f"第 {page_no} 页已写入当前场景（第 {group_name} 集）。": (
+                    self._offer_still_videos_after_pdf(sc, msg)
+                ),
             )
 
         def _assign_forward():
-            """从正在看的这一页起，写入当前场景和本集后面的场景。场数不改。"""
+            """从正在看的这一页起，写入当前场景和本集后面的场景。场数不改。
+
+            写到本集最后一场，或者页用完为止，两者先到的那个。场景比页数多时，多出的场景不动。
+            """
             scene_i = self.current_scene_index
             if scene_i < 0 or scene_i >= len(self.workflow.scenes):
                 messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
                 return
             page_i = idx[0]
             written = 0
-            first_page = page_i + 1
+            first_page = _page_number(page_i)
+            last_page_no = first_page
+            written_scenes: list = []
             try:
                 while scene_i < len(self.workflow.scenes) and page_i < len(pages):
                     scene = self.workflow.scenes[scene_i]
                     if not isinstance(scene, dict) or self.workflow.scene_group(scene) != group_name:
                         break
                     self._assign_scene_clip_image_from_file(scene, pages[page_i])
-                    self._tag_scene_pdf_page(scene, group_name, page_i + 1, pdf_name)
+                    last_page_no = _page_number(page_i)
+                    self._tag_scene_pdf_page(scene, group_name, last_page_no, pdf_name)
                     written += 1
+                    written_scenes.append(scene)
                     scene_i += 1
                     page_i += 1
                 self.workflow.save_scenes_to_json()
@@ -14154,13 +14375,15 @@ class WorkflowGUI:
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
-            last_page_no = first_page + written - 1 if written else first_page
             dlg.destroy()
-            show_auto_close_popup(
-                self.root,
-                "PDF",
+            summary = (
                 f"从第 {first_page} 页起，写入了当前场景及本集后面共 {written} 场"
-                + (f"（到第 {last_page_no} 页）" if written else ""),
+                + (f"（到第 {last_page_no} 页）" if written else "")
+                + "。"
+            )
+            self.root.after(
+                50,
+                lambda sc=list(written_scenes), msg=summary: self._offer_still_videos_after_pdf(sc, msg),
             )
 
         bar = ttk.Frame(dlg)
@@ -14207,6 +14430,7 @@ class WorkflowGUI:
             self.refresh_gui_scenes()
             self.display_image_on_canvas_for_track("clip_image")
             print(f"✅ 已更新 clip_image（拖放）: {os.path.basename(file_path)}")
+            self._after_clip_image_changed(scene, "已换上拖入的图片，并加进了本集图片库。")
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("错误", f"更新 clip_image 失败: {e}", parent=self.root)
 

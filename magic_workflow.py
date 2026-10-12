@@ -182,6 +182,10 @@ class MagicWorkflow:
             if isinstance(back_audio, str) and back_audio.strip() and os.path.exists(back_audio.strip()):
                 valid_media_files.append(back_audio.strip())
 
+            back_image_last = scene.get("back_image_last") or ""
+            if isinstance(back_image_last, str) and back_image_last.strip() and os.path.exists(back_image_last.strip()):
+                valid_media_files.append(back_image_last.strip())
+
             speaker_audio = get_file_path(scene, "speaker_audio")
             if speaker_audio:
                 valid_media_files.append(speaker_audio)
@@ -1098,7 +1102,7 @@ class MagicWorkflow:
             print(f"CLIP: cut {len(span_ready)} spans for {written} scenes, reused {reused}")
 
 
-    def _pdf_pages_to_images(self, pdf_path: str, out_dir: str | None = None) -> list[str]:
+    def _pdf_pages_to_images(self, pdf_path: str, out_dir: str | None = None, start_number: int = 1) -> list[str]:
         """用 PyMuPDF 将 PDF 每页渲成 WebP，返回按页序的绝对路径列表。"""
         import fitz  # PyMuPDF
         import tempfile
@@ -1125,7 +1129,7 @@ class MagicWorkflow:
             for i in range(len(doc)):
                 page = doc.load_page(i)
                 pix = page.get_pixmap(matrix=zoom, alpha=False)
-                out_path = os.path.join(dest_dir, f"{i + 1}.webp")
+                out_path = os.path.join(dest_dir, f"{int(start_number) + i}.webp")
                 mode = "RGB" if pix.n >= 3 else "L"
                 Image.frombytes(mode, (pix.width, pix.height), pix.samples).save(
                     out_path, "WEBP", quality=_PAGE_WEBP_QUALITY, method=4
@@ -1211,18 +1215,19 @@ class MagicWorkflow:
         return highest + 1
 
     def export_pdf_pages_to_group(self, pdf_path: str, group_name: str) -> tuple[str, list[str]]:
-        """把 PDF 每一页渲成 1.webp、2.webp…，放进项目 media/<episode>/。"""
+        """把 PDF 每一页渲成 webp，接在这一集图片库已有的最大编号后面。
+
+        图片库只增不减：不删、不覆盖已有的图。返回的是这次新拆出来的页。
+        """
         group_name = (group_name or "").strip() or "1"
         folder = os.path.join(config.get_media_path(self.pid), group_name)
         os.makedirs(folder, exist_ok=True)
+        highest = 0
         for name in os.listdir(folder):
             stem, ext = os.path.splitext(name)
             if stem.isdigit() and ext.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                try:
-                    os.remove(os.path.join(folder, name))
-                except OSError:
-                    pass
-        pages = self._pdf_pages_to_images(pdf_path, out_dir=folder)
+                highest = max(highest, int(stem))
+        pages = self._pdf_pages_to_images(pdf_path, out_dir=folder, start_number=highest + 1)
         return folder, pages
 
     def _copy_slide_pdf_into_episode(self, slide_pdf: str, episode: str) -> str:
@@ -1301,8 +1306,18 @@ class MagicWorkflow:
         now = time.time()
         os.utime(folder, (now, now))
 
-    def write_scene_page_png(self, scene: dict, image_path: str, *, force_new_page: bool = False) -> None:
-        """把这张图写成这一集文件夹里对应页的 webp，并改文件夹时间。页码可以不连续。"""
+    def write_scene_page_png(
+        self,
+        scene: dict,
+        image_path: str,
+        *,
+        force_new_page: bool = False,
+        tag_scene: bool = True,
+    ) -> None:
+        """把这张图加进这一集的图片库（接在最大编号后面，不覆盖已有的图）。
+
+        tag_scene 为 False 时只把图放进库里，不改这一场记的页码（例如结束图）。
+        """
         from PIL import Image
 
         if not isinstance(scene, dict) or not image_path or not os.path.isfile(image_path):
@@ -1311,6 +1326,8 @@ class MagicWorkflow:
         folder = self.episode_media_dir(episode)
         os.makedirs(folder, exist_ok=True)
         page = None
+        if not tag_scene:
+            force_new_page = True
         if not force_new_page:
             try:
                 page = int(scene.get("episode_page") or 0)
@@ -1318,6 +1335,12 @@ class MagicWorkflow:
                 page = None
             if page is not None and page <= 0:
                 page = None
+        if page is not None:
+            # 图片库里已有这个编号的图就不覆盖，改成接在最大编号后面存成新的一页。
+            for ext in (".webp", ".jpg", ".jpeg", ".png"):
+                if os.path.isfile(os.path.join(folder, f"{page}{ext}")):
+                    page = None
+                    break
         if page is None:
             used: set[int] = set()
             for path in self._episode_png_paths(episode):
@@ -1332,7 +1355,8 @@ class MagicWorkflow:
                 if n > 0:
                     used.add(n)
             page = (max(used) if used else 0) + 1
-            scene["episode_page"] = page
+            if tag_scene:
+                scene["episode_page"] = page
         dest = os.path.join(folder, f"{page}.webp")
         if os.path.splitext(image_path)[1].lower() == ".webp":
             if os.path.abspath(image_path) != os.path.abspath(dest):
@@ -1348,14 +1372,17 @@ class MagicWorkflow:
                     os.remove(old)
                 except OSError:
                     pass
-        scene["episode"] = episode
-        scene["episode_pdf"] = f"{episode}.pdf"
+        if tag_scene:
+            scene["episode"] = episode
+            scene["episode_pdf"] = f"{episode}.pdf"
         self.touch_episode_media(episode)
 
     def release_scene_page_png(self, scene: dict) -> None:
-        """删场景时去掉它对应的那一页 png。同一页还被别的场景用着就留下。"""
+        """删场景时不再删图：这一集的图片是个库，图一直留着，可以再分给别的场景。"""
         if not isinstance(scene, dict):
             return
+        self.touch_episode_media(self.scene_group(scene))
+        return
         episode = self.scene_group(scene)
         try:
             page = int(scene.get("episode_page") or 0)
@@ -1386,7 +1413,8 @@ class MagicWorkflow:
         self.touch_episode_media(episode)
 
     def compact_episode_pages(self, episode: str) -> None:
-        """删掉场景留下的页码空洞补上。剩下的场景按顺序改成第 1、2、3 页，页面文件一起改名。"""
+        """页码和场数没有关系：这一集的图片是个库，页码有空洞没关系，不再改名也不删图。"""
+        return
         episode = (episode or "").strip() or "1"
         scenes = [
             s for s in self.scenes or []
@@ -1410,6 +1438,9 @@ class MagicWorkflow:
                 if ext.lower() in (".webp", ".jpg", ".jpeg", ".png") and stem.isdigit():
                     file_nums.append(int(stem))
         file_nums = sorted(set(file_nums))
+        # PDF 的页数可以比场景多。有页面图没被任何场景用到时不整理，免得改名时把它们盖掉。
+        if any(n not in order for n in file_nums):
+            return
         dense = file_nums == list(range(1, len(file_nums) + 1))
         if dense and all(old == new for new, old in enumerate(order, start=1)):
             return
@@ -1966,7 +1997,8 @@ class MagicWorkflow:
                     print(f"⚠️ 场景 {scene_i} 设置 clip_image 失败: {e}")
                     continue
                 scene["episode"] = group_name
-                scene["episode_page"] = i + 1
+                page_stem = os.path.splitext(os.path.basename(page_images[i]))[0]
+                scene["episode_page"] = int(page_stem) if page_stem.isdigit() else i + 1
                 scene["episode_pdf"] = pdf_name
                 scene.pop("group", None)
                 scene.pop("group_page", None)
