@@ -803,6 +803,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "marker_start",
     "marker_end",
     "actor_voices",
+    "final_video_speed",
 })
 
 # 列表行外层字段（不落进 project_profile，由 sync_channel_list_item_from_full_config 写入/同步）

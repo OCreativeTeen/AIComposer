@@ -2219,7 +2219,13 @@ class MagicWorkflow:
                 self.sd_processor.sound_to_video(prompt=right_prompt, file_prefix=right_file_prefix, image_path=right_image, sound_path=sound_path, animate_mode=animate_mode, silence=False)
 
 
-    def finalize_video(self, with_transitions, replace_final_audio_with_zero=False, scene_start=None, scene_end=None):
+    def finalize_video(self, with_transitions, replace_final_audio_with_zero=False, scene_start=None, scene_end=None, speed=1.0):
+        try:
+            speed = float(speed or 1.0)
+        except (TypeError, ValueError):
+            speed = 1.0
+        if speed <= 0:
+            speed = 1.0
         scenes = self.scenes
         n_all = len(scenes)
         if scene_start is not None and scene_end is not None and n_all:
@@ -2242,6 +2248,12 @@ class MagicWorkflow:
             #    #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 
             v = self.ffmpeg_processor.add_audio_to_video(s["clip"], s["clip_audio"], True)
+            # 先整体变速（画面和声音同步），后面的延长和转场都按变速后的长度算。
+            if abs(speed - 1.0) > 0.001:
+                sped = self.ffmpeg_processor.trim_video(v, speed=speed)
+                if not sped:
+                    raise RuntimeError(f"变速失败：{s.get('id', '')}")
+                v = sped
             #video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":ext})
             video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
 

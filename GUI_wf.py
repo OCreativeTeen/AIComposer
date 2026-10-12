@@ -3886,8 +3886,10 @@ class WorkflowGUI:
             turns.append((voice, text))
         return turns
 
+    _MIN_SECTION_GAP_SEC = 0.3
+
     def _clip_wav_from_speaking_timing(self, scene):
-        """按每段的时间生成。两段之间空档大于 0.1 秒时，用静音素材补上这段空档。
+        """按每段的时间生成。两段之间一定补静音：记录里的空档，小于 0.3 秒按 0.3 秒。
 
         没有可用的时间记录时返回 None，调用方改走整段生成。
         记录在但某段生成失败时返回 False。
@@ -3946,9 +3948,8 @@ class WorkflowGUI:
             chain.append(wav)
             if index + 1 >= len(rows):
                 continue
-            gap = rows[index + 1][0] - end
-            if gap <= 0.1:
-                continue
+            # 两段之间的空档用记录里的间隔。小于 0.3 秒就按 0.3 秒，不能太短。
+            gap = max(self._MIN_SECTION_GAP_SEC, rows[index + 1][0] - end)
             silence = ap.make_silence(gap)
             if not silence:
                 return False
@@ -5200,20 +5201,80 @@ class WorkflowGUI:
         except Exception as e:
             messagebox.showerror("Video播放", f"无法打开播放器：{e}", parent=self.root)
 
-    def run_finalize_video(self):
-        picked = askchoice(
-            "最终视频生成方式",
-            [
-                ("plain_zero", "无转场，用ZERO音轨"),
-                ("plain", "无转场 (简单拼接)"),
-                ("transitions", "带转场"),
-                ("transitions_zero", "带转场，用ZERO音轨"),
-            ],
-            self.root,
+    _FINAL_SPEED_CHOICES = tuple(f"{0.70 + 0.05 * i:.2f}" for i in range(13))
+
+    def _ask_final_video_options(self):
+        """最终视频生成方式，上面带一个速度。返回 (mode, speed)，取消返回 None。"""
+        pc = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+        try:
+            saved = float(pc.get("final_video_speed") or 1.0)
+        except (TypeError, ValueError):
+            saved = 1.0
+        saved = max(0.7, min(1.3, saved))
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("最终视频生成方式")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        result = {"value": None}
+
+        frame = ttk.Frame(dlg, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="最终视频生成方式", font=("Arial", 12, "bold")).pack(pady=(4, 10))
+
+        speed_row = ttk.Frame(frame)
+        speed_row.pack(pady=(0, 10))
+        ttk.Label(speed_row, text="速度").pack(side=tk.LEFT, padx=(0, 6))
+        speed_var = tk.StringVar(value=f"{saved:.2f}")
+        ttk.Combobox(
+            speed_row,
+            textvariable=speed_var,
+            values=list(self._FINAL_SPEED_CHOICES),
+            width=6,
+        ).pack(side=tk.LEFT)
+        ttk.Label(speed_row, text="倍。每一场先按这个速度变快或变慢，再延长，再转场。").pack(
+            side=tk.LEFT, padx=(6, 0)
         )
+
+        def pick(mode: str) -> None:
+            try:
+                speed = float((speed_var.get() or "1").strip())
+            except ValueError:
+                messagebox.showwarning("速度", "速度要写成数字，例如 0.9 或 1.1。", parent=dlg)
+                return
+            if speed < 0.5 or speed > 2.0:
+                messagebox.showwarning("速度", "速度请写在 0.5 到 2.0 之间。", parent=dlg)
+                return
+            result["value"] = (mode, speed)
+            dlg.destroy()
+
+        for mode, label in (
+            ("plain_zero", "无转场，用ZERO音轨"),
+            ("plain", "无转场 (简单拼接)"),
+            ("transitions", "带转场"),
+            ("transitions_zero", "带转场，用ZERO音轨"),
+        ):
+            ttk.Button(frame, text=label, width=44, command=lambda m=mode: pick(m)).pack(pady=3)
+        ttk.Button(frame, text="取消", width=20, command=dlg.destroy).pack(pady=(12, 2))
+
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dlg.winfo_reqwidth()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dlg.winfo_reqheight()) // 2)
+        dlg.geometry(f"+{x}+{y}")
+        dlg.wait_window()
+        picked = result["value"]
+        if picked and isinstance(project_manager.PROJECT_CONFIG, dict):
+            project_manager.PROJECT_CONFIG["final_video_speed"] = round(picked[1], 3)
+            save_project_config(parent=self.root)
+        return picked
+
+    def run_finalize_video(self):
+        picked = self._ask_final_video_options()
         if picked is None:
             return
-        _, mode = picked
+        mode, final_speed = picked
         if mode == "transitions":
             with_transitions, replace_final_audio_with_zero = True, False
         elif mode == "transitions_zero":
@@ -5235,12 +5296,16 @@ class WorkflowGUI:
         def run_task():
             try:
                 start, end = self._marker_scene_bounds()
-                self.log_to_output(self.video_output, f"视频生成：第 {start + 1}–{end + 1} 场")
+                self.log_to_output(
+                    self.video_output,
+                    f"视频生成：第 {start + 1}–{end + 1} 场，速度 {final_speed:.2f} 倍",
+                )
                 self.workflow.finalize_video(
                     with_transitions,
                     replace_final_audio_with_zero,
                     scene_start=start,
                     scene_end=end,
+                    speed=final_speed,
                 )
                 self.log_to_output(self.video_output, "✅ 最终视频生成完成！")
                 self.tasks[task_id]["status"] = "完成"

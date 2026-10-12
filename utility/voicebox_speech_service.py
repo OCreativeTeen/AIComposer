@@ -150,9 +150,9 @@ def _vb_normalize_ascii_punctuation_to_cjk(s: str) -> str:
 
 
 # 逐句 TTS 后拼接时，句间静音（秒）；来自 noise.wav 裁切，见 FfmpegAudioProcessor.make_silence
-_VB_SEGMENT_GAP_SEC = 0.15
+_VB_SEGMENT_GAP_SEC = 0.2
 # 缓存版本：拼接逻辑变更后须 bump，避免复用错误速率的旧 mp3
-_VB_AUDIO_CACHE_VER = "v2"
+_VB_AUDIO_CACHE_VER = "v3"
 # 文案中的 ``<0.5>`` / ``＜1.25＞`` 等 → 插入对应秒数静音（必须带小数点）。
 # 不带小数点的 ``<1>`` ``<2>`` 是说话人编号，不能当成静音。
 _VB_SILENCE_MARKER_RE = re.compile(r"[<＜](\d+\.\d+)[>＞]")
