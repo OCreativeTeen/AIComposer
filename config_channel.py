@@ -1,5 +1,4 @@
 
-
 SCENE_SPLIT_MANY = """
 把下面这一场拆成若干场。每一场只有一个 speaking，没有 voiceover。
 
@@ -1240,10 +1239,10 @@ COUNSELING_SERIES_COUNSELOR_FRAME = """
 
 *** OUTPUT
     * One JSON array in watch order. All text in {language}.
-    * Every scene object MUST include "episode": a string "1", "2", "3", … with no other text.
-    * PATH A: scene 1 caption is the program title. No "第N集". Every scene, including the remedy, is "episode": "1".
-    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". Every scene of case N (open, story, close) is "episode": "N".
-    * PATH B remedy scenes are captioned "方案 · " and share the next number after the last case. Three cases → remedy is "episode": "4".
+    * Every scene object MUST include "episode" (a string "1", "2", "3", … with no other text). It follows the EPISODES block: 5 to 15 scenes per episode.
+    * PATH A: scene 1 caption is the program title. No "第N集". The episode numbers come from the EPISODES block. When the whole program is 15 scenes or fewer, every scene, including the remedy, is "episode": "1".
+    * PATH B: episode open is "第N集 · ". Episode close is "第N集 · 承接". Every scene of case N (open, story, close) is "episode": "N" when that case holds 5 to 15 scenes.
+    * PATH B remedy scenes are captioned "方案 · " and share the next number after the last case. Three cases → remedy is "episode": "4". If the remedy holds fewer than 5 scenes, the EPISODES block decides where it goes.
 
 [
     {{
@@ -1287,11 +1286,11 @@ COUNSELING_SERIES_STORY_ONLY = """
     ** When a picture or a PDF page shows the person, the age band comes from the face and body: kids, youth, teenager, mature, or senior. The words rarely state an age. Do not write a number. A name from the picture or the text goes last. The same person keeps one age band.
     ** Exactly one story person and the host: the last part is ``讲员：{narrator}``. The host's lines stay inside ``speaking`` with that person's ``<N>``.
 
-*** PATH A — one story. Every scene "episode": "1".
+*** PATH A — one story. When the whole program is 15 scenes or fewer it is one episode, every scene "episode": "1". A longer one follows the EPISODES block.
     ** Start — 1 scene. Caption is the program title. The host's lines in speaking names the problem and enters this life. No remedy.
     ** Story — 5 to 8 consecutive scenes. Same people. From how the life was, through the problem in detail, to where they are stuck.
     ** End — 1 scene. The host's lines in speaking holds what we saw and leaves a question. No method yet.
-    ** Remedy — several scenes, still "episode": "1".
+    ** Remedy — several scenes, still in the same episode while it holds 15 scenes or fewer.
         * 2 to 3 scenes with the host's lines in speaking: take the problem apart, then the response, step by step.
         * Then 2 to 3 scenes with the same people: one concrete step per scene, shown, not announced.
 
@@ -1304,7 +1303,7 @@ COUNSELING_SERIES_STORY_ONLY = """
     ** End — 1 scene. Caption "第N集 · 承接". "episode": "N".
         * The host's lines in speaking: not a plot summary and not an answer. A question that points under the problem. No method. No "next time".
         * If another case follows, the last line can lead into the next start. If this is the last case, the question stays open for the remedy.
-    ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case (three cases → "4").
+    ** Only after every case: remedy. Caption "方案 · ". "episode" is the next number after the last case (three cases → "4"), unless the EPISODES block says otherwise.
         * 2 to 3 scenes, the host's lines in speaking: unpack the shared problem across the lives just shown.
         * Then each response in its own short run. Say which episodes it fits. One may fit only some; another may fit all.
         * When a response is shown in a life, 2 to 3 scenes with those people, one step per scene. The host's lines in speaking may be one short line, not a speech.
@@ -1317,7 +1316,7 @@ COUNSELING_SERIES_STORY_ONLY = """
 
 *** OUTPUT
     * One JSON array in watch order. All text in {language}.
-    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field.
+    * Every scene includes "episode": "1", "2", "3", … and nothing else in that field. It follows the EPISODES block: 5 to 15 scenes per episode.
 
 [
     {{
@@ -1580,14 +1579,14 @@ COUNSELING_TALK_SCENES = """
     ** One guest, or two. At most three people speak. A fourth person may sit in the picture and does not speak. Never write <4>.
 
 *** HOW THE SERIES MOVES
-    ** It is one podcast series about one subject. If the material has several parts, each part is one episode. If it is one subject, it is still episode 1 of a series, and the ending may leave a next question.
+    ** It is one podcast series about one subject. If the material has several parts, each part is one episode. If it is one subject, it is still episode 1 of a series, and the ending may leave a next question. The EPISODES block decides how the scenes group into episodes.
     ** Talk the way a podcast talks: question, reply, a short example from life, a follow-up. Not a monologue. Not a slide reading.
     ** From the surface to what is actually going on, in plain language. A listener should be able to follow. Do not open with the conclusion.
     ** Keep the details that make a moment hearable: who, where, what was said, what was avoided. Cut repeated wording. Do not shrink a lived moment into one abstract sentence.
     ** Do not say 根, 根儿, or 病根. Do not use DSM labels.
     ** End the episode on what they now see, said in their own words. One concrete thing a listener could notice or try. Not a worksheet.
 
-*** SCENES (about 10 to 16 for one episode, one beat each)
+*** SCENES (5 to 15 for each episode, one beat each)
     ** 1. The program opens. The 讲员 and the guest name this episode's question. They are already talking about someone else's situation. Nobody performs it.
     ** Next several. They discuss a real moment from that other life: how it repeats, what it costs. Each scene is one exchange between the 讲员 and the guest. The people they mention stay offstage.
     ** Then the turn. A question from the 讲员 makes the guest name what is underneath. Still a discussion, still no performance.
@@ -1602,9 +1601,11 @@ COUNSELING_TALK_SCENES = """
     * visual is the room where the 讲员 and the guests sit and talk. No words on the image. Do not show the story being acted.
     * The scene is only the 讲员: actor is exactly ``讲员：{narrator}``. No 人物.
     * caption: scene 1 is the program title; later scenes are short beat titles.
+    * Every scene includes "episode", set by the EPISODES block: 5 to 15 scenes per episode.
 
 [
     {{
+        "episode": "1",
         "caption": "Program title on scene 1. In {language}.",
         "visual": "The room, how they face each other, and any cut. No on-image text. In {language}.",
         "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
@@ -1823,7 +1824,7 @@ COMIC_STRIP_SCENES = """
     ** Story scenes: list everyone in the picture, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last, ``woman/mature/chinese/封氏``. Look at each person in the picture and set the age band from the face and body: kids, youth, teenager, mature, or senior. The words on the page rarely give an age. Do not write a number. A name, when the picture or the words give one, goes last. The same person keeps that age band in every scene. There is no voiceover field. ``speaking`` holds every line. ``<N>`` is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Add ``讲员：{narrator}`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
 
 *** STORY
-    ** One episode. Every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
+    ** The scenes group into episodes by the EPISODES block: 5 to 15 scenes per episode. A story of 15 scenes or fewer is one episode, every scene "episode": "1". Do not add a host scene before or after. The first page is scene 1. The last page is the last scene.
     ** ``speaking`` and ``speaking`` sound like people talking: natural, vivid, not a summary.
     ** ``visual`` is that same picture, made vivid: place, light, faces, the action that hits the eye. When the shot should move, say so (push in, pull back, pan, hold). No words on the image.
 
@@ -2017,5 +2018,44 @@ INPUT
 def comic_condense_prompt(act_count: int) -> str:
     """把连环画这一集收成固定幕数。幕数先写死，留下给列表和工作流填的占位符。"""
     return _COMIC_CONDENSE_SCENES.replace("{act_count}", str(int(act_count)))
+
+
+# 系列节目和连环画「照来源分场」：PDF 一页一个场景；音频和视频按句子和意思切，每场一个独立的点，长度不定。
+# 同一批场景再按内容分集：每集 5 到 15 场，episode 只填集号 1、2、3。
+# 文字里不能出现单个花括号，这些提示词会被 format。
+SOURCE_SCENE_RULES = """
+*** SCENES FOLLOW THE SOURCE NAMED FOR THIS RUN
+    ** These rules decide how many scenes there are and where they cut. When the source is a PDF, an audio file, or a video, they replace any scene count written above.
+    ** Written text. The scene count and the cuts are free, as written above. Still, one scene is one independent point told in a few whole sentences. Its length is whatever that point needs, so scenes differ in length. Do not make a scene that is only a few words, and do not pile a whole page of talk into one scene.
+    ** PDF. Each page is a picture, like a picture-story book. One page is one scene, in page order. The array length equals the page count. Do not merge two pages. Do not split one page. Do not add a scene and do not drop one. Whatever the program needs, such as the host's or the counselor's opening, the closing, or the remedy, is written inside the scenes of the pages it belongs to. It does not get extra scenes. Each scene follows what its own page shows.
+    ** Audio file or video. The content is the speech. Take the words that are spoken, understand them, then cut the timeline into scenes by meaning.
+        * Cut by meaning and by sentence, never by length. Do not choose a length first. Read the speech, find where one independent point is finished, and end the scene at the end of the sentence that finishes it. Then read the timestamp of that sentence end and write it as "end". A scene starts where a sentence starts and ends where a sentence ends. Never cut in the middle of a sentence, not even to make a scene shorter or longer.
+        * One scene is one independent point: a few whole sentences, often two to six, that make one thing clear on their own, or one level of a larger matter. Its length is whatever the speech gives, so it may be 8 seconds or 45 seconds. Scenes must NOT all have the same length. If most of your scenes come out the same length, or round numbers like 50.00 keep repeating, you cut by length. Discard the cuts and cut by sentences again.
+        * Keep a scene short enough to hold one point. If one point runs longer than about 60 seconds, split it by level at a sentence end. Do not make a scene under about 8 seconds unless that single sentence is a point of its own. If a small piece is left at the end, join it to the scene before it. A whole recording that holds only one point is one scene.
+        * When the speaker moves on to another matter or another direction, that is the next scene.
+        * When one matter runs long, split it by level. Each scene makes one level clear. Do not mix two matters or two levels in one scene.
+        * Keep the order of the speech. Read across the scenes and the story, or the levels, must be clear from one scene to the next, with no confusion in between.
+        * Every scene carries start and end, in seconds on the file's own timeline, as written in the INPUT section. Do not add a scene that has no speech behind it.
+
+*** EPISODES: GROUP THE SCENES (every source)
+    ** There may be many scenes, so group them. An episode is a run of consecutive scenes that talk about the same matter or the same side of a matter, or that do the same thing, so the run stands on its own as one small part. The scenes inside one episode may each show a different side of that matter, one side per scene.
+    ** Each episode has at least 5 scenes and at most 15 scenes. Cut by meaning first and stay inside that range. If a matter gives fewer than 5 scenes, join it to the neighbouring episode whose content is closest. If it gives more than 15, split it where the matter turns. When the whole source gives fewer than 5 scenes, it is one episode. Check the count of every episode before you answer.
+    ** Fill "episode" on every scene: "1", "2", "3", and so on in watch order, as a string and nothing else. The scenes of one episode sit next to each other and share the same number. Do not interleave episodes.
+    ** This block alone decides the "episode" number and how many scenes an episode holds. It replaces any one-episode wording or episode count written above. When the structure above already makes one case or one part an episode, keep it as an episode as long as it holds 5 to 15 scenes. A caption that says 第N集 uses the same N as that scene's "episode".
+"""
+
+
+def _with_source_scene_rules(prompt: str) -> str:
+    """把来源分场规则放在 INPUT 之前。"""
+    marker = "\n--------------------------------------------------\nINPUT\n"
+    if marker not in prompt:
+        return prompt
+    return prompt.replace(marker, "\n" + SOURCE_SCENE_RULES.strip("\n") + "\n" + marker, 1)
+
+
+COUNSELING_TALK_SCENES = _with_source_scene_rules(COUNSELING_TALK_SCENES)
+COUNSELING_SERIES_COUNSELOR_FRAME = _with_source_scene_rules(COUNSELING_SERIES_COUNSELOR_FRAME)
+COUNSELING_SERIES_STORY_ONLY = _with_source_scene_rules(COUNSELING_SERIES_STORY_ONLY)
+COMIC_STRIP_SCENES = _with_source_scene_rules(COMIC_STRIP_SCENES)
 
 

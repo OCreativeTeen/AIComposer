@@ -341,12 +341,35 @@ class WorkflowGUI:
             language = project_manager.PROJECT_CONFIG.get('language')
             channel = project_manager.PROJECT_CONFIG.get('channel')
 
-            self.workflow = MagicWorkflow(self.get_pid(), language, channel, video_width, video_height)
-            #self.speech_service = MinimaxSpeechService(self.get_pid())
-            self.speech_service = VoiceboxService(self.workflow.pid)
-            
-            current_gui_title = self.video_title.get().strip()
-            self.workflow.post_init(current_gui_title)
+            # 第一次打开没有 scenes.json，要从媒体切场景、合成视频，可能几分钟。先把窗口亮出来说明。
+            busy_label = None
+            try:
+                if not os.path.exists(config.get_scenes_path(self.get_pid())):
+                    busy_label = tk.Label(
+                        self.root,
+                        text="正在准备项目：切分音频、合成每一场的视频。\n场景多时要几分钟，请稍候，窗口会自己出来。",
+                        font=("Microsoft YaHei", 14),
+                        padx=40,
+                        pady=30,
+                        justify=tk.CENTER,
+                    )
+                    busy_label.place(relx=0.5, rely=0.5, anchor="center")
+                    self.root.update()
+            except Exception:
+                busy_label = None
+            try:
+                self.workflow = MagicWorkflow(self.get_pid(), language, channel, video_width, video_height)
+                #self.speech_service = MinimaxSpeechService(self.get_pid())
+                self.speech_service = VoiceboxService(self.workflow.pid)
+
+                current_gui_title = self.video_title.get().strip()
+                self.workflow.post_init(current_gui_title)
+            finally:
+                if busy_label is not None:
+                    try:
+                        busy_label.destroy()
+                    except tk.TclError:
+                        pass
             
             # 初始化YouTube GUI管理器（第二参数为频道 key/id，非 channel_path；路径在 MediaGUIManager 内解析）
             self.youtube_gui = MediaGUIManager(
@@ -512,7 +535,7 @@ class WorkflowGUI:
         if (nw, nh) == (cur_w, cur_h):
             return
 
-        has_list_media = bool(wf._list_item_media_path())
+        has_list_media = bool(wf.project_source_media_path() or wf._row_media_path())
         if has_list_media:
             size_note = "这条已有音频或视频，各场的 clip 和 zero 保持不动。"
         else:
@@ -1056,10 +1079,10 @@ class WorkflowGUI:
         if track == "clip" and where == "prepend":
             added = float(fp.get_duration(new_video) or 0.0)
             if added > 0.05:
-                timing = scene.get("speaking_timing")
-                if isinstance(timing, list):
+                record = self._timing_record(scene)
+                if record is not None:
                     shifted = []
-                    for item in timing:
+                    for item in record["sections"]:
                         if not isinstance(item, dict):
                             continue
                         row = dict(item)
@@ -1072,7 +1095,7 @@ class WorkflowGUI:
                             except (TypeError, ValueError):
                                 pass
                         shifted.append(row)
-                    scene["speaking_timing"] = shifted
+                    self._store_timing(scene, shifted, record.get("text") or "")
 
     def _clip_overlay_ffmpeg_batch_async(
         self,
@@ -3116,10 +3139,11 @@ class WorkflowGUI:
         for other in self.workflow.scenes_in_story(scene) or []:
             if other is scene:
                 continue
-            if zero and os.path.isfile(zero):
-                refresh_scene_media(other, "zero", ".mp4", zero, True)
-            if zero_audio and os.path.isfile(zero_audio):
-                refresh_scene_media(other, "zero_audio", ".wav", zero_audio, True)
+            # 同一集共用一份，其它场景直接指向同一个文件，不再拷贝。
+            if zero and os.path.isfile(zero) and scene.get("zero"):
+                other["zero"] = scene["zero"]
+            if zero_audio and os.path.isfile(zero_audio) and scene.get("zero_audio"):
+                other["zero_audio"] = scene["zero_audio"]
 
     def _download_mp4_source(self) -> tuple[str, list]:
         suffixes = (".mp4",)
@@ -3888,6 +3912,32 @@ class WorkflowGUI:
 
     _MIN_SECTION_GAP_SEC = 0.3
 
+    # speaking_timing 只有一个字段：{"text": 记下时间时的 speaking, "sections": [每段 speaker/start/end/text]}。
+    # text 和 speaking 不一样，就说明 speaking 后来被改过，这份时间不能再用。
+    @staticmethod
+    def _timing_record(scene) -> dict | None:
+        """场景上的时间记录（不管 speaking 有没有被改过）。没有记录返回 None。"""
+        stored = scene.get("speaking_timing") if isinstance(scene, dict) else None
+        if isinstance(stored, dict) and isinstance(stored.get("sections"), list):
+            return stored
+        return None
+
+    @classmethod
+    def _timing_sections(cls, scene) -> list | None:
+        """当前 speaking 仍然有效的时间段。没有记录、或 speaking 已经被改过，返回 None。"""
+        record = cls._timing_record(scene)
+        if record is None:
+            return None
+        if (record.get("text") or "").strip() != (scene.get("speaking") or "").strip():
+            return None
+        return record["sections"]
+
+    @staticmethod
+    def _store_timing(scene, sections: list, text: str | None = None) -> None:
+        """写入时间记录。text 不给就用现在的 speaking。"""
+        stamp = scene.get("speaking") if text is None else text
+        scene["speaking_timing"] = {"text": (stamp or "").strip(), "sections": sections}
+
     def _clip_wav_from_speaking_timing(self, scene):
         """按每段的时间生成。两段之间一定补静音：记录里的空档，小于 0.3 秒按 0.3 秒。
 
@@ -3895,11 +3945,8 @@ class WorkflowGUI:
         记录在但某段生成失败时返回 False。
         成功时返回 (wav, 每段讲话的起止)。起点仍是原来的起点，结束点改成这段真实语音的长度。静音只留在两段中间，不写进下一段的起点。
         """
-        text = (scene.get("speaking") or "").strip()
-        stored = scene.get("speaking_timing")
-        if not isinstance(stored, list) or not stored:
-            return None
-        if (scene.get("speaking_timing_text") or "").strip() != text:
+        stored = self._timing_sections(scene)
+        if not stored:
             return None
         entries = project_manager.actor_entries(scene.get("actor") or "")
         bodies = [(row.get("body") or "").strip() for row in entries if (row.get("body") or "").strip()]
@@ -3997,8 +4044,7 @@ class WorkflowGUI:
         if not ok:
             return "fail"
         if timing:
-            scene["speaking_timing"] = timing
-            scene["speaking_timing_text"] = (scene.get("speaking") or "").strip()
+            self._store_timing(scene, timing)
         return "ok"
 
     def remove_secondary_track(self):
@@ -4632,7 +4678,14 @@ class WorkflowGUI:
             text="贴回本集",
             width=8,
             command=self.paste_episode_scenes,
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        self._slide_prompt_btn = ttk.Button(
+            episode_btn_row,
+            text="幻灯提示",
+            width=8,
+            command=self._open_slide_prompt_flow,
+        )
+        self._slide_prompt_btn.pack(side=tk.LEFT)
 
         scene_gap = ttk.Frame(right_panel, height=24)
         scene_gap.pack(side=tk.TOP)
@@ -6172,9 +6225,8 @@ class WorkflowGUI:
         self._speech_sections = []
         if scene and duration > 0:
             text = (scene.get("speaking") or "").strip()
-            stored = scene.get("speaking_timing")
-            stored_text = scene.get("speaking_timing_text")
-            if isinstance(stored, list) and (stored_text or "") == text:
+            stored = self._timing_sections(scene)
+            if stored is not None:
                 self._speech_sections = self._sections_from_stored(stored, text)
             elif text:
                 self._detect_and_store_speaking_timing(scene, text, duration)
@@ -6384,8 +6436,7 @@ class WorkflowGUI:
                 continue
         speaking = self._speaking_from_sections(cleaned)
         scene["speaking"] = speaking
-        scene["speaking_timing"] = cleaned
-        scene["speaking_timing_text"] = speaking
+        self._store_timing(scene, cleaned, speaking)
         for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
             scene.pop(key, None)
 
@@ -6468,8 +6519,8 @@ class WorkflowGUI:
         except (TypeError, ValueError):
             return "break"
         sections = []
-        stored = scene.get("speaking_timing")
-        if isinstance(stored, list) and (scene.get("speaking_timing_text") or "").strip() == (scene.get("speaking") or "").strip():
+        stored = self._timing_sections(scene)
+        if stored is not None:
             sections = self._sections_from_stored(stored, text)
         if len(sections) != len(spans):
             duration = float(self._clip_duration(scene) or 0.0)
@@ -6977,9 +7028,8 @@ class WorkflowGUI:
                 })
             except (TypeError, ValueError):
                 continue
-        scene["speaking_timing"] = timing
-        if "speaking_timing_text" not in scene:
-            scene["speaking_timing_text"] = (scene.get("speaking") or "").strip()
+        record = self._timing_record(scene)
+        self._store_timing(scene, timing, record.get("text") if record is not None else None)
 
     def _split_sections_at_cut(self, sections, where: str, cut: float) -> tuple[list, list]:
         """按播放头切开时间段。被切开的那一段，文字留在这一场剩下的部分上。"""
@@ -7066,8 +7116,8 @@ class WorkflowGUI:
 
     def _attach_media_timing(self, neighbor, moved, where: str, old_len: float, moved_len: float) -> None:
         text = (neighbor.get("speaking") or "").strip()
-        stored = neighbor.get("speaking_timing")
-        has_record = isinstance(stored, list) and (neighbor.get("speaking_timing_text") or "") == text
+        stored = self._timing_sections(neighbor)
+        has_record = stored is not None
         existing = self._sections_from_stored(stored, text) if has_record else []
         if where == "head":
             placed = []
@@ -7156,7 +7206,6 @@ class WorkflowGUI:
         fresh = self._retimed_speaking_sections(scene)
         if fresh is None:
             scene.pop("speaking_timing", None)
-            scene.pop("speaking_timing_text", None)
 
     def _retimed_speaking_sections(self, scene) -> list | None:
         """按这场讲稿的字数，对照现在的声音长短，重新写下每段时间。相邻又是同一个人的，合成一段。"""
@@ -7185,16 +7234,15 @@ class WorkflowGUI:
                 })
             except (TypeError, ValueError):
                 continue
-        scene["speaking_timing"] = timing
-        scene["speaking_timing_text"] = text
+        self._store_timing(scene, timing, text)
         for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
             scene.pop(key, None)
         return timing
 
     def _attach_sections_to_neighbor(self, neighbor, moved, where: str, old_len: float, moved_len: float) -> None:
         text = (neighbor.get("speaking") or "").strip()
-        stored = neighbor.get("speaking_timing")
-        has_record = isinstance(stored, list) and (neighbor.get("speaking_timing_text") or "") == text
+        stored = self._timing_sections(neighbor)
+        has_record = stored is not None
         if not has_record:
             piece = self._speaking_from_sections(moved)
             if piece:
@@ -7203,7 +7251,6 @@ class WorkflowGUI:
                 else:
                     neighbor["speaking"] = (piece + text).strip()
             neighbor.pop("speaking_timing", None)
-            neighbor.pop("speaking_timing_text", None)
             return
         existing = self._sections_from_stored(stored, text)
         if where == "head":
@@ -7573,9 +7620,8 @@ class WorkflowGUI:
                 })
             except (TypeError, ValueError):
                 continue
-        scene["speaking_timing"] = timing
-        if "speaking_timing_text" not in scene:
-            scene["speaking_timing_text"] = (scene.get("speaking") or "").strip()
+        record = self._timing_record(scene)
+        self._store_timing(scene, timing, record.get("text") if record is not None else None)
         for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
             scene.pop(key, None)
         self.workflow.save_scenes_to_json()
@@ -7680,8 +7726,7 @@ class WorkflowGUI:
         if bounds is None:
             return
         if bounds[1] <= bounds[0]:
-            scene["speaking_timing"] = []
-            scene["speaking_timing_text"] = text
+            self._store_timing(scene, [], text)
             self._speech_sections = []
             for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end"):
                 scene.pop(key, None)
@@ -7691,7 +7736,7 @@ class WorkflowGUI:
         sections = self._allocate_speaking_timing(text, bounds[0], bounds[1])
         self._speech_sections = sections
         self._clamp_speech_spans()
-        scene["speaking_timing_text"] = text
+        self._store_timing(scene, [], text)
         self._save_speech_spans()
 
     def _speech_span_double(self, event) -> None:
@@ -8246,9 +8291,9 @@ class WorkflowGUI:
     def _merged_timing_rows(self, scene: dict) -> list[tuple]:
         """按已有时间记录取出每一段。连着的同一人先合成一段，起点取更早的，终点取更晚的。"""
         speaking = (scene.get("speaking") or "").strip()
-        stored = scene.get("speaking_timing")
+        stored = self._timing_sections(scene)
         rows = []
-        if isinstance(stored, list) and stored and (scene.get("speaking_timing_text") or "").strip() == speaking:
+        if stored:
             for item in stored:
                 if not isinstance(item, dict):
                     continue
@@ -8338,13 +8383,12 @@ class WorkflowGUI:
         if not spoken:
             return "no_text"
         scene["speaking"] = f"<1> {spoken}"
-        scene["speaking_timing"] = [{
+        self._store_timing(scene, [{
             "speaker": 1,
             "start": 0.0,
             "end": round(duration, 2),
             "text": spoken,
-        }]
-        scene["speaking_timing_text"] = scene["speaking"]
+        }])
         return "ok"
 
     def _transcribe_scene_clip(self, scene: dict, engine: str) -> str:
@@ -8392,7 +8436,7 @@ class WorkflowGUI:
         if not parts_out:
             return "no_text"
         scene["speaking"] = "".join(f"<{speaker}> {text}" for _start, _end, speaker, text in parts_out)
-        scene["speaking_timing"] = [
+        self._store_timing(scene, [
             {
                 "speaker": speaker,
                 "start": round(start, 2),
@@ -8400,8 +8444,7 @@ class WorkflowGUI:
                 "text": text,
             }
             for start, end, speaker, text in parts_out
-        ]
-        scene["speaking_timing_text"] = scene["speaking"]
+        ])
         return "ok"
 
     def _transcribe_span_audio(self, key: str, start: float, end: float, engine: str = "whisper") -> None:
@@ -10886,11 +10929,19 @@ class WorkflowGUI:
     def _open_clip_image_pdf_review(self, scene: dict) -> None:
         """本集 PDF 已拆则直接审阅；还没拆就先拆进 media/<episode>/ 再审阅。"""
         pdf_path = self._resolve_scene_episode_pdf(scene)
-        if not pdf_path:
-            return
         group_name = self.workflow.scene_group(scene)
         pages = self._episode_page_pngs(group_name)
         folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        if not pdf_path and not pages:
+            messagebox.showinfo(
+                "页图",
+                f"第 {group_name} 集没有 PDF，也没有拆好的页面图。\n"
+                "先把 PDF 拖到视频画布上，再双击这里翻页。",
+                parent=self.root,
+            )
+            return
+        if not pdf_path:
+            pdf_path = self.workflow.episode_pdf_path(group_name)
         if not pages:
             try:
                 self.root.config(cursor="watch")
@@ -12118,6 +12169,55 @@ class WorkflowGUI:
             ),
         )
 
+    def _open_slide_prompt_flow(self) -> None:
+        """幻灯提示：只取当前场景所在这一集的场景，选叙事风格后拷提示词。"""
+        from gui.slide_prompt_dialog import open_slide_prompt_dialog
+
+        self.update_current_scene()
+        if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
+            messagebox.showwarning("幻灯提示", "没有当前场景", parent=self.root)
+            return
+
+        def episode_scenes() -> list:
+            self.update_current_scene()
+            if not self.workflow:
+                return []
+            cur = self.workflow.get_scene_by_index(self.current_scene_index)
+            if not isinstance(cur, dict):
+                return []
+            return [s for s in self.workflow.scenes_in_story(cur) if isinstance(s, dict)]
+
+        def copy_text(text: str) -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+
+        pc = project_manager.PROJECT_CONFIG or {}
+
+        def get_style() -> str:
+            return (
+                (self.scene_visual_style.get() or "").strip()
+                or (pc.get("visual_style") or "").strip()
+                or config.VISUAL_STYLE_OPTIONS[0]
+            )
+
+        def get_place() -> tuple:
+            return (
+                (self.setting_region.get() or "").strip(),
+                (self.setting_era.get() or "").strip(),
+            )
+
+        open_slide_prompt_dialog(
+            self.root,
+            getattr(self, "_slide_prompt_btn", None),
+            get_scenes=episode_scenes,
+            get_style=get_style,
+            copy_text=copy_text,
+            host_narrator=project_manager.project_narrator(),
+            get_place=get_place,
+            main_character="",
+        )
+
     _SCENE_IMPORT_ALWAYS_KEYS = frozenset({
         "speaking", "caption", "voiceover", "visual", "actor",
         "clip_animation", "narration_animation", "extension", "cinematography",
@@ -12316,7 +12416,7 @@ class WorkflowGUI:
             for key in ("speaking", "voiceover", "visual", "actor", "caption"):
                 if key in item and item.get(key) is not None:
                     piece[key] = item.get(key)
-            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end", "speaking_timing", "speaking_timing_text"):
+            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end", "speaking_timing"):
                 piece.pop(key, None)
             piece["clip_status"] = "ORIG"
             new_scenes.append(piece)
@@ -12376,8 +12476,6 @@ class WorkflowGUI:
         full = float(self.workflow.ffmpeg_audio_processor.get_duration(audio) or 0.0)
         if full > 0:
             segments[-1]["end"] = full
-            start = float(segments[-1].get("start") or 0.0)
-            segments[-1]["duration"] = max(0.0, full - start)
         if len(segments) < 2:
             messagebox.showinfo(title, "没有拆成多场，这一场保持原样。", parent=self.root)
             return
@@ -12385,11 +12483,24 @@ class WorkflowGUI:
         if len(pieces) < 2:
             messagebox.showinfo(title, "没有拆成多场，这一场保持原样。", parent=self.root)
             return
+        # 转录的起止是相对这一场声音的。场景上的 start/end 只记原始媒体的位置：
+        # 这一场本来有，就加上它的起点；本来没有（不是从原始媒体来的），就不写。
+        base_start = self.workflow._scene_time_seconds(scene.get("start"))
         try:
             self._cut_transcript_scenes(pieces, video, audio)
         except Exception as exc:
             messagebox.showerror(title, f"切开失败: {exc}", parent=self.root)
             return
+        for piece in pieces:
+            local_start = self.workflow._scene_time_seconds(piece.get("start"))
+            local_end = self.workflow._scene_time_seconds(piece.get("end"))
+            if base_start is None or local_start is None or local_end is None:
+                piece.pop("start", None)
+                piece.pop("end", None)
+            else:
+                piece["start"] = round(base_start + local_start, 2)
+                piece["end"] = round(base_start + local_end, 2)
+            piece.pop("duration", None)
         self.workflow.replace_scene_with_others(index, pieces)
         for piece in pieces:
             piece["clip_status"] = "ORIG"
@@ -12417,14 +12528,15 @@ class WorkflowGUI:
                 piece["visual"] = item.get("visual")
             if item.get("speaker") is not None:
                 piece["narrator"] = item.get("speaker")
-            for key in ("start", "end", "duration"):
+            for key in ("start", "end"):
                 if key in item and item.get(key) is not None:
                     piece[key] = item.get(key)
+            piece.pop("duration", None)
             if "start" in item and "end" in item:
                 piece.pop("narrator_audio", None)
                 piece.pop("clip_audio", None)
                 piece.pop("clip", None)
-            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end", "speaking_timing", "speaking_timing_text"):
+            for key in ("speaking_start", "speaking_end", "voiceover_start", "voiceover_end", "speaking_timing"):
                 piece.pop(key, None)
             pieces.append(piece)
         return pieces
@@ -12435,9 +12547,9 @@ class WorkflowGUI:
         fa = self.workflow.ffmpeg_audio_processor
         for i, item in enumerate(pieces):
             try:
-                duration = float(item.get("duration") or 0.0)
                 start = float(item.get("start") or 0.0)
                 end = float(item.get("end") or 0.0)
+                duration = end - start
             except (TypeError, ValueError):
                 duration = 0.0
                 start = 0.0
@@ -13802,10 +13914,10 @@ class WorkflowGUI:
             except Exception as e:  # noqa: BLE001
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
+            dlg.destroy()
             show_auto_close_popup(
-                dlg, "PDF", f"第 {page_no} 页已写入当前场景（第 {group_name} 集）"
+                self.root, "PDF", f"第 {page_no} 页已写入当前场景（第 {group_name} 集）"
             )
-            _show_page()
 
         def _assign_forward():
             """从正在看的这一页起，写入当前场景和本集后面的场景。场数不改。"""
@@ -13832,13 +13944,13 @@ class WorkflowGUI:
                 messagebox.showerror("PDF", f"写入 clip_image 失败：{e}", parent=dlg)
                 return
             last_page_no = first_page + written - 1 if written else first_page
+            dlg.destroy()
             show_auto_close_popup(
-                dlg,
+                self.root,
                 "PDF",
                 f"从第 {first_page} 页起，写入了当前场景及本集后面共 {written} 场"
                 + (f"（到第 {last_page_no} 页）" if written else ""),
             )
-            _show_page()
 
         bar = ttk.Frame(dlg)
         bar.pack(fill=tk.X, padx=8, pady=8)
@@ -14108,20 +14220,11 @@ class WorkflowGUI:
             else:
                 target["extension"] = ext_val
 
-        story_scenes = self.workflow.scenes_in_story(scene)
-        if len(story_scenes) > 1:
-            if messagebox.askyesno(
-                "延长秒数",
-                "是否将本延长秒数设置应用到当前故事的全部场景？\n"
-                "选择「否」则仅修改当前场景。",
-                parent=self.root,
-            ):
-                for s in story_scenes:
-                    _apply_extension_to_scene(s, val)
-            else:
-                _apply_extension_to_scene(scene, val)
-        else:
-            _apply_extension_to_scene(scene, val)
+        # 选一次，写进每一个场景的 extension，不再逐场重选，也不再询问。
+        for s in self.workflow.scenes:
+            if isinstance(s, dict):
+                _apply_extension_to_scene(s, val)
+        _apply_extension_to_scene(scene, val)
 
         self.workflow.save_scenes_to_json()
 

@@ -214,6 +214,12 @@ class MagicWorkflow:
                 valid_media_files.append(narration_image_last)
 
 
+        # 项目保存的原始音频/视频不属于任何一场，但永远要留着。
+        source_media = os.path.basename(str(project_manager.PROJECT_CONFIG.get("source_media") or "").strip()) \
+            if isinstance(project_manager.PROJECT_CONFIG, dict) else ""
+        if source_media:
+            valid_media_files.append(config.get_media_path(self.pid) + "/" + source_media)
+
         # list all files inside the project_path/media folder
         all_media_files = []
         for file in os.listdir(config.get_media_path(self.pid)):
@@ -333,7 +339,6 @@ class MagicWorkflow:
             clip_video = get_file_path(current_scene, "clip")
             duration = self.ffmpeg_processor.get_duration(clip_video)
 
-        current_scene["duration"] = duration
         return duration
 
 
@@ -771,6 +776,11 @@ class MagicWorkflow:
                     changed = True
                 if story_scene.pop("narrator", None) is not None:
                     changed = True
+                # 旧项目留下的没用字段：environment 没人读，duration 总能从媒体量出来。
+                if story_scene.pop("environment", None) is not None:
+                    changed = True
+                if story_scene.pop("duration", None) is not None:
+                    changed = True
                 if not story_scene.get("caption"):
                     story_scene["caption"] = config.get_channel_config(self.channel)["channel_name"]
                     changed = True
@@ -814,8 +824,25 @@ class MagicWorkflow:
 
         self.save_scenes_to_json()
 
-    def _list_item_media_path(self) -> str:
-        """这条列表上的音频或视频。没有文件时返回空字符串。"""
+    _SOURCE_AUDIO_EXT = frozenset({
+        ".mp3", ".wav", ".wave", ".m4a", ".aac", ".flac", ".ogg", ".oga",
+        ".wma", ".opus", ".aiff", ".aif", ".mp2",
+    })
+    _SOURCE_VIDEO_EXT = frozenset({".mp4", ".m4v", ".mov"})
+
+    def project_source_media_path(self) -> str:
+        """项目里保存的原始音频/视频（``source_media`` 记的是 media 下的文件名）。没有就返回空字符串。"""
+        cfg = project_manager.PROJECT_CONFIG
+        if not isinstance(cfg, dict):
+            return ""
+        name = os.path.basename(str(cfg.get("source_media") or "").strip())
+        if not name:
+            return ""
+        path = os.path.join(config.get_media_path(self.pid), name)
+        return os.path.abspath(path) if os.path.isfile(path) else ""
+
+    def _row_media_path(self) -> str:
+        """这条列表行上写着的媒体文件。没有文件时返回空字符串。"""
         cfg = project_manager.PROJECT_CONFIG
         if not isinstance(cfg, dict):
             return ""
@@ -827,14 +854,52 @@ class MagicWorkflow:
             return os.path.abspath(media)
         return ""
 
+    def _original_media_path(self) -> str:
+        """这个项目的原始音频或视频。
+
+        项目里已经存了一份就用项目里的。还没存，就把列表行上的音频或视频拷进项目
+        media 下，并在项目配置 ``source_media`` 里记下文件名。场景上的 start/end
+        指的就是这份文件上的位置，列表里的原文件以后怎么挪都不影响。
+        纯文字或 PDF 没有原始媒体，返回空字符串。
+        """
+        saved = self.project_source_media_path()
+        if saved:
+            return saved
+        media = self._row_media_path()
+        if not media:
+            return ""
+        ext = os.path.splitext(media)[1].lower()
+        if ext not in self._SOURCE_AUDIO_EXT and ext not in self._SOURCE_VIDEO_EXT:
+            return media
+        folder = config.get_media_path(self.pid)
+        stem = re.sub(r'[\\/:*?"<>|\s]+', "_", os.path.splitext(os.path.basename(media))[0]).strip("_") or "media"
+        name = f"source_{stem}{ext}"
+        dest = os.path.join(folder, name)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            if os.path.abspath(dest) != media:
+                safe_copy_overwrite(media, dest)
+        except OSError as exc:
+            print(f"SOURCE: copy original media failed ({exc}), use list file")
+            return media
+        cfg = project_manager.PROJECT_CONFIG
+        if isinstance(cfg, dict):
+            cfg["source_media"] = name
+            try:
+                save_project_config()
+            except Exception as exc:  # noqa: BLE001
+                print(f"SOURCE: save project config failed: {exc}")
+        print(f"SOURCE: original media kept in project: {name}")
+        return os.path.abspath(dest)
+
     def _apply_item_media_as_shared_zero(self) -> None:
         """新建场景之后：列表上的音频或视频写成所有场景共用的 zero / zero_audio。
 
         音频先转成内部用的 wav，再用第一条场景的 zero 图和这段音频合成 zero 视频。
         视频直接作为 zero，并从里面抽出 wav 作为 zero_audio，首帧、尾帧作为
-        zero_image、zero_image_last。
+        zero_image、zero_image_last。原始媒体先存进项目（见 ``_original_media_path``）。
         """
-        media = self._list_item_media_path()
+        media = self._original_media_path()
         if not media or not self.scenes:
             return
         ext = os.path.splitext(media)[1].lower()
@@ -855,14 +920,13 @@ class MagicWorkflow:
             fp = self.ffmpeg_processor
             first = fp.extract_frame(media, True)
             last_frame = fp.extract_frame(media, False)
-            for scene in scenes:
-                refresh_scene_media(scene, "zero_audio", ".wav", wav, True)
-                refresh_scene_media(scene, "zero", ".mp4", media, True)
-                if first and os.path.isfile(first):
-                    refresh_scene_media(scene, "zero_image", ".webp", first, True)
-                if last_frame and os.path.isfile(last_frame):
-                    refresh_scene_media(scene, "zero_image_last", ".webp", last_frame, True)
-            print(f"ZERO: shared video+audio+frames on {len(scenes)} scenes")
+            self._share_one_media(scenes, "zero_audio", ".wav", wav)
+            self._share_one_media(scenes, "zero", ".mp4", media)
+            if first and os.path.isfile(first):
+                self._share_one_media(scenes, "zero_image", ".webp", first)
+            if last_frame and os.path.isfile(last_frame):
+                self._share_one_media(scenes, "zero_image_last", ".webp", last_frame)
+            print(f"ZERO: shared video+audio+frames on {len(scenes)} scenes (one file each, no copies)")
             return
 
         if ext not in audio_ext:
@@ -886,10 +950,29 @@ class MagicWorkflow:
         if not video or not os.path.isfile(video):
             print("ZERO: image+audio video failed, skip shared zero")
             return
+        self._share_one_media(scenes, "zero_audio", ".wav", wav)
+        self._share_one_media(scenes, "zero", ".mp4", video)
+        # zero 的图既是开头图，也是结尾图，所有场景共用同一张。
+        self._share_one_media(scenes, "zero_image", ".webp", image)
+        self._share_one_media(scenes, "zero_image_last", ".webp", image)
+        print(f"ZERO: shared image+audio on {len(scenes)} scenes (one file each, no copies)")
+
+    @staticmethod
+    def _share_one_media(scenes, slot, ext, source) -> str:
+        """整集共用的背景只存一份。第一场放进项目，其余场景直接指向同一个文件，不再各拷一份。"""
+        owner = None
         for scene in scenes:
-            refresh_scene_media(scene, "zero_audio", ".wav", wav, True)
-            refresh_scene_media(scene, "zero", ".mp4", video, True)
-        print(f"ZERO: shared image+audio on {len(scenes)} scenes")
+            if isinstance(scene, dict):
+                owner = scene
+                break
+        if owner is None:
+            return ""
+        refresh_scene_media(owner, slot, ext, source, True)
+        path = owner.get(slot) or ""
+        for scene in scenes:
+            if isinstance(scene, dict) and scene is not owner:
+                scene[slot] = path
+        return path
 
     @staticmethod
     def _scene_time_seconds(value):
@@ -910,8 +993,9 @@ class MagicWorkflow:
         视频：切出的一段就是 clip，抽出的声音是 clip_audio，这一段的首帧和尾帧是
         clip_image、clip_image_last。音频：按同样的起止切出 clip_audio，再用这一场
         已有的 clip_image 和这段声音合成 clip。最后一场从它的 start 接到媒体结尾。
+        start/end 是项目里保存的那份原始媒体上的位置。
         """
-        media = self._list_item_media_path()
+        media = self._original_media_path()
         scenes = [s for s in (self.scenes or []) if isinstance(s, dict)]
         if not media or not scenes:
             return
@@ -948,6 +1032,7 @@ class MagicWorkflow:
             start = self._scene_time_seconds(scene.get("start"))
             if start is None:
                 continue
+            print(f"CLIP: scene {index + 1}/{len(scenes)} (start {start:.2f})", flush=True)
             if index == last:
                 end = round(duration, 2)
             else:
@@ -2444,7 +2529,8 @@ class MagicWorkflow:
         story = story.copy()
         story.pop("narrator", None)
         story["id"] = next_root_id
-        story["environment"] = ""
+        story.pop("environment", None)
+        story.pop("duration", None)
         if story_level:
             story["episode"] = self.next_group_name()
             story.pop("group", None)
@@ -2496,7 +2582,7 @@ class MagicWorkflow:
 
         # 列表上已有音频或视频时，clip / zero 来自这段媒体。
         # 不能再用频道默认图把已经切好的画面和首尾帧盖掉。
-        if self._list_item_media_path():
+        if self.project_source_media_path() or self._row_media_path():
             print(f"SIZE: {vw}x{vh}, keep clip and zero from list media")
             return
 

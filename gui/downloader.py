@@ -1145,7 +1145,28 @@ def _dialogue_mode_from_row(vd, cfg=None) -> str:
     return _project_look_from_row(vd, cfg)[1]
 
 
+_MEDIA_SCENE_LENGTH_NOTE = (
+    "Scene size for a recording: cut by meaning and by sentence, never by length. "
+    "Do not choose a length first. Read the speech, find where one independent point is finished, "
+    "and end the scene at the end of the sentence that finishes it. Then read the timestamp of that sentence end "
+    "and write it as end. A scene starts where a sentence starts and ends where a sentence ends. "
+    "Never cut in the middle of a sentence, not even to make a scene shorter or longer. "
+    "One scene is one independent point: a few whole sentences, often two to six, "
+    "that make one thing clear on their own, or one level of a larger matter. "
+    "Its length is whatever the speech gives, so it may be 8 seconds or 45 seconds. "
+    "Scenes must not all have the same length. If most scenes come out the same length, "
+    "or round numbers like 50.00 keep repeating, you cut by length: discard the cuts and cut by sentences again. "
+    "When the speaker moves to another matter or another direction, that is the next scene. "
+    "If one point runs longer than about 60 seconds, split it by level at a sentence end. "
+    "Do not make a scene under about 8 seconds unless that single sentence is a point of its own. "
+    "Do not mix two matters or two levels in one scene, and keep the order of the speech, "
+    "so the story or the levels stay clear from one scene to the next. "
+    "If a small piece is left at the end, join it to the scene before it. "
+    "A recording that holds only one point is one scene."
+)
+
 _MEDIA_SCENE_TIMING_NOTE = (
+    _MEDIA_SCENE_LENGTH_NOTE + " "
     "When this run splits the recording into more than one scene, every scene object "
     "must include \"start\" and \"end\": seconds on that file, two decimal places. "
     "0.00 is the first moment of the file. N is the Recording length of this file. "
@@ -1215,9 +1236,17 @@ def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: 
         "and take the age band from how the person looks: kids, youth, teenager, mature, or senior. "
         "Do not write an age number. The same person keeps one age band."
     )
-    if mode == "page" or "series" not in label.lower():
-        return line + f" One scene per page, in order: {n} scenes."
-    return line + " You may add a counselor opening and closing around the story."
+    line += (
+        f" One scene per page, in page order: exactly {n} scenes. "
+        "Do not merge two pages, do not split one page, do not add a scene, do not drop one. "
+        "The scene count equals the page count."
+    )
+    if "series" in label.lower():
+        line += (
+            " The program frame (the host's or counselor's opening and closing, the remedy) "
+            "is carried inside the scenes of the pages it belongs to. It does not get extra scenes."
+        )
+    return line
 
 
 def _gen_video_slide_pdf_dest_filename(video_detail: dict | None) -> str:
@@ -3950,8 +3979,11 @@ def _focus_open_workflow(pid: str = "") -> bool:
     return True
 
 
-def _begin_workflow_launch(pid: str) -> bool:
-    """窗口已经在，或这一条正在启动，就不再另开。返回 True 时调用方才去启动进程。"""
+def _begin_workflow_launch(pid: str, parent=None) -> bool:
+    """窗口已经在，或这一条正在启动，就不再另开。返回 True 时调用方才去启动进程。
+
+    第一次打开要从媒体切场景、合成视频，窗口要等几分钟才出来，这段时间一直算在启动中，
+    直到窗口出现或那个进程退出。"""
     pid = (pid or "").strip()
     if not pid:
         return False
@@ -3959,11 +3991,21 @@ def _begin_workflow_launch(pid: str) -> bool:
         with _workflow_launch_guard_lock:
             _workflow_launch_guard.pop(pid, None)
         return False
-    now = time.monotonic()
     with _workflow_launch_guard_lock:
-        if now < _workflow_launch_guard.get(pid, 0.0):
-            return False
-        _workflow_launch_guard[pid] = now + 25.0
+        busy = pid in _workflow_launch_guard
+        if not busy:
+            _workflow_launch_guard[pid] = float("inf")
+    if busy:
+        if parent is not None:
+            try:
+                show_auto_close_popup(
+                    parent,
+                    "魔法工作流",
+                    "这个项目正在打开。第一次要切场景、合成视频，要等几分钟，窗口出来前请不要再点。",
+                )
+            except Exception:
+                pass
+        return False
     return True
 
 
@@ -3972,12 +4014,13 @@ def _release_workflow_launch(pid: str) -> None:
         _workflow_launch_guard.pop((pid or "").strip(), None)
 
 
-def _watch_workflow_launch(pid: str) -> None:
-    """窗口一出来就放开，关掉以后可以马上再开。出不来就等到保护时间结束。"""
+def _watch_workflow_launch(pid: str, proc=None) -> None:
+    """窗口一出来就放开，关掉以后可以马上再开。进程退出了也放开。"""
     pid = (pid or "").strip()
-    deadline = time.monotonic() + 25.0
-    while time.monotonic() < deadline:
-        time.sleep(0.4)
+    while True:
+        time.sleep(0.5)
+        if proc is not None and proc.poll() is not None:
+            break
         if _focus_open_workflow(pid):
             break
     _release_workflow_launch(pid)
@@ -3988,7 +4031,7 @@ def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
     pid = (pid or "").strip()
     if not pid:
         return False
-    if not _begin_workflow_launch(pid):
+    if not _begin_workflow_launch(pid, parent):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
@@ -3998,12 +4041,12 @@ def _launch_gui_wf_open_pid(pid: str, *, parent=None) -> bool:
         return False
     cmd = [sys.executable, script, "--open-pid", pid]
     try:
-        subprocess.Popen(cmd, cwd=repo_root)
+        proc = subprocess.Popen(cmd, cwd=repo_root)
     except Exception as e:
         _release_workflow_launch(pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
-    threading.Thread(target=_watch_workflow_launch, args=(pid,), daemon=True).start()
+    threading.Thread(target=_watch_workflow_launch, args=(pid, proc), daemon=True).start()
     return True
 
 
@@ -4019,7 +4062,7 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
     except (OSError, json.JSONDecodeError, TypeError, ValueError, IndexError):
         row = None
     open_pid = _video_detail_project_pid(row) if isinstance(row, dict) else ""
-    if open_pid and not _begin_workflow_launch(open_pid):
+    if open_pid and not _begin_workflow_launch(open_pid, parent):
         return True
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.join(repo_root, "GUI_wf.py")
@@ -4029,13 +4072,13 @@ def _launch_gui_wf_from_list_json(list_json_path: str, index: int, *, parent=Non
         return False
     cmd = [sys.executable, script, "--open-from-list-json", os.path.normpath(list_json_path), str(int(index))]
     try:
-        subprocess.Popen(cmd, cwd=repo_root)
+        proc = subprocess.Popen(cmd, cwd=repo_root)
     except Exception as e:
         _release_workflow_launch(open_pid)
         show_auto_close_popup(parent, "无法启动魔法工作流", str(e), kind="error")
         return False
     if open_pid:
-        threading.Thread(target=_watch_workflow_launch, args=(open_pid,), daemon=True).start()
+        threading.Thread(target=_watch_workflow_launch, args=(open_pid, proc), daemon=True).start()
     return True
 def _video_youtube_id(v):
     """从频道视频项解析 YouTube 视频 id（11 位）。
@@ -8168,7 +8211,7 @@ class MediaGUIManager:
                 width=28,
                 values=["由 AI 判断场数", "每一页一个场景"],
             )
-            pdf_layout_combo.set("由 AI 判断场数")
+            pdf_layout_combo.set("每一页一个场景")
 
             material_preview = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=10, font=("Arial", 10)
@@ -8499,11 +8542,8 @@ class MediaGUIManager:
             def _sync_material_widgets(*_args):
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
                 series = "series" in (prompt_combo_var.get() or "").lower()
+                # PDF 一律一页一个场景，不再让人选。
                 pdf_layout_combo.pack_forget()
-                if material_var.get() == "pdf" and series and slide:
-                    pdf_layout_combo.pack(side=tk.LEFT, before=scene_count_lbl)
-                    if not (pdf_layout_combo.get() or "").strip():
-                        pdf_layout_combo.set("由 AI 判断场数")
                 _paint_material_buttons()
                 _fill_material_preview()
 
@@ -9228,33 +9268,6 @@ class MediaGUIManager:
                             return
                         return filtered if idx < 0 else [filtered[idx]]
 
-                    def _open_scene_slide_prompt():
-                        from gui.slide_prompt_dialog import open_slide_prompt_dialog
-
-                        chosen = _chosen_export_scenes()
-                        if not chosen:
-                            return
-
-                        def copy_text(text: str, kind: str = "image/flow") -> None:
-                            _copy_text_to_clipboard(dlg, text)
-                            cp = (channel_path or self.channel_path or "").strip()
-                            if text and cp:
-                                channel_clipboard_append_item(cp, text, kind)
-
-                        open_slide_prompt_dialog(
-                            dlg,
-                            nb_export_btn,
-                            get_scenes=lambda: chosen,
-                            get_style=lambda: (visual_style_var.get() or "").strip(),
-                            copy_text=copy_text,
-                            host_narrator=_scene_prompt_narrator(video_detail),
-                            main_character=main_character or "",
-                            get_video_detail=lambda: video_detail,
-                            get_slide_path=lambda: (
-                                _find_gen_video_slide_for_row(video_detail) or ""
-                            ).strip(),
-                        )
-
                     def _busy(btn):
                         try:
                             btn.config(state=tk.DISABLED)
@@ -9529,17 +9542,6 @@ class MediaGUIManager:
                         "<<ComboboxSelected>>",
                         lambda _e: _commit_story_narrator(True),
                     )
-                    nb_export_btn = tk.Button(
-                        btn_row,
-                        text="幻灯提示",
-                        command=_open_scene_slide_prompt,
-                        font=("Microsoft YaHei UI", 8, "bold"),
-                        width=8,
-                        padx=10,
-                        pady=4,
-                        bd=2,
-                    )
-                    nb_export_btn.pack(side=tk.LEFT, padx=(0, 8))
                     if callable(on_open_project):
                         open_host = scene_ui["prompt_combo"].master
                         open_style = "StoryOpenProject.TButton"
