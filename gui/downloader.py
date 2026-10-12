@@ -11485,15 +11485,8 @@ class MediaGUIManager:
                 return
             folder = config.resolve_project_dir(old_pid, create=False)
             if os.path.isdir(folder):
-                try:
-                    shutil.rmtree(folder)
-                except OSError as exc:
-                    messagebox.showerror(
-                        "重新生成项目",
-                        f"无法删除原项目文件：\n{folder}\n\n{exc}",
-                        parent=parent,
-                    )
-                    return
+                # 尽量删。被别的进程占用删不掉的文件就留在原地，以后手工删，不阻止重新生成。
+                shutil.rmtree(folder, ignore_errors=True)
             vd.pop(project_manager.PROJECT_PROFILE_KEY, None)
             vd.pop("project_id", None)
             vd.pop("project_pid", None)

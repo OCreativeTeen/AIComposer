@@ -255,47 +255,6 @@ SLIDE_FLOW_TEXT_CHOICES = (
     ("none", "不加"),
     ("keywords", "背景关键字"),
 )
-SLIDE_FLOW_VISUAL_CHOICES = (
-    ("use", "用场景描述"),
-    ("none", "不用场景描述（只看 speaking）"),
-)
-SLIDE_FLOW_CAST_CHOICES = (
-    ("story", "故事人物（在画面里演故事）"),
-    ("guest", "嘉宾（和讲员在故事外谈论）"),
-)
-
-SLIDE_FLOW_ACTOR_SPEAKING_NOTE = """
-Each scene has ``actor`` and ``speaking``. Other fields such as start and end are not part of the picture.
-``actor`` lists the people in order, joined by |. Place 1 is the first entry, place 2 the second, and so on.
-``讲员`` is the narrator (the host). ``人物1``, ``人物2`` and so on are the other people. A person not listed in ``actor`` is not in the picture.
-``speaking`` is the whole talk of the scene. ``<1>``, ``<2>``, ``<3>`` mark who speaks: the number is that person's place in ``actor``. The same person keeps talking until the next ``<N>``. A number with a decimal point such as ``<0.5>`` is a pause in seconds, nobody speaks.
-Use ``speaking`` to know who says what, and to draw the mood in faces, eyes, posture, and gesture. Someone who speaks is shown speaking; the others listen or react. A person in ``actor`` who never speaks still appears when the scene needs them.
-""".strip()
-
-SLIDE_FLOW_VISUAL_USE_NOTE = (
-    "``Scene visual`` already describes the picture: place, action, and camera angle. Follow it. "
-    "Use ``speaking`` for the feeling."
-)
-SLIDE_FLOW_VISUAL_NONE_NOTE = (
-    "These scenes have no scene description. Invent the place, the action, and the camera angle yourself, "
-    "only from what is said in ``speaking`` and who is listed in ``actor``. "
-    "Each scene's picture must still show the matter that scene talks about."
-)
-
-SLIDE_FLOW_CAST_STORY_NOTE = """
-The 人物 entries in ``actor`` are characters INSIDE the story. The picture shows them acting out the story in its place: their faces, bodies, and actions carry what ``speaking`` says.
-The 讲员, when listed, is a storyteller OUTSIDE the story. A line spoken by the 讲员 is commentary on the story, not something a character says.
-Most of the time the 讲员 does not appear: the picture is the story being acted. Only when the 讲员 line explains, sums up, or quotes may the 讲员 step into the picture as an outsider, clearly apart from the story people (at the edge of the frame, in the foreground, or as a small inset). The next scene goes back to the story.
-When ``actor`` has no 讲员, only the characters act. Do not add a host.
-""".strip()
-
-SLIDE_FLOW_CAST_GUEST_NOTE = """
-Everyone in ``actor`` is a person OUTSIDE the story: the 讲员 (host) and the 人物 entries are guests. Together they talk about the story, the idea, or the content. None of them is a character inside it. Do not show them acting out the story.
-The background and most of the frame show what they are talking about: the story's place and moments, or the idea made visible. The host and guests may appear in the picture (for example around a table, or in the foreground), or the picture may leave them out when the subject reads better alone. Choose scene by scene.
-When they do appear, the one who speaks is shown speaking and the others listen. Keep each person's look the same from scene to scene.
-""".strip()
-
-
 SLIDE_FLOW_NARRATIVE_CHOICES = (
     ("story", "故事（人物在画面里表演）"),
     ("narration", "叙事（图案和背景文字，人物少或没有）"),
@@ -303,22 +262,22 @@ SLIDE_FLOW_NARRATIVE_CHOICES = (
     ("exec", "高管简报"),
 )
 
-# 叙事风格：这套幻灯片最终要表达什么，用什么形式表达。
+# 叙事风格：这套幻灯片最终要表达什么，用什么形式表达。具体怎么用 visual、speaking、actor，见下面各风格的规则。
 SLIDE_FLOW_NARRATIVE_NOTES = {
     "story": """
 Narrative style: STORY. The slides tell a story through people.
 Goal: the audience follows a story that people live in front of them.
-Form: every picture shows people in the scene, acting and interacting. Their faces, bodies, gestures, and what passes between them carry the moment. The place and a few props support them. Do not replace the people with symbols or diagrams.
+Form: every picture shows the people of the story in their place, acting and interacting. Their faces, bodies, gestures, and what passes between them carry the moment. The place and a few props support them. Do not replace the people with symbols or diagrams.
 """.strip(),
     "narration": """
 Narrative style: NARRATION. The slides narrate the story or the idea with pictures, not with acting.
 Goal: the audience understands what is being told, with the pictures doing the telling.
-Form: few people, or none. Say it with images: places, objects, symbols, metaphors, diagrams, and strong composition. Where the text rule below allows it, short background words carry the point. If a person appears, they are small or secondary, and they do not perform a dialogue.
+Form: few people, or none. Say it with images: places, objects, symbols, metaphors, diagrams, and strong composition. Where the text rule below allows it, short background words carry the point.
 """.strip(),
     "tech": """
 Narrative style: TECHNICAL SOLUTION REPORT. The deck is a technical solution presentation for clients or decision-makers.
 Goal: the audience grasps the architecture, the flow, and the value of the solution step by step.
-Form: each picture is a clean presentation slide. It is an architecture, flow, sequence, comparison, or component diagram that shows what that scene's speaking explains, laid out in reading order, top to bottom and left to right, with the relations between parts drawn. Do not draw the speaker. No story scene and no decoration without meaning.
+Form: each picture is a clean presentation slide. It is an architecture, flow, sequence, comparison, or component diagram that shows what that scene explains, laid out in reading order, top to bottom and left to right, with the relations between parts drawn. No story scene and no decoration without meaning.
 """.strip(),
     "exec": """
 Narrative style: EXECUTIVE BRIEF. The deck is a short briefing for executives.
@@ -327,46 +286,206 @@ Form: each picture is a sparse, high-signal slide. One conclusion per picture, a
 """.strip(),
 }
 
-SLIDE_FLOW_PRESENTER_NOTE = (
-    "The people in ``actor`` are the presenters of this talk. Do not draw them acting. "
-    "Draw what they are talking about."
-)
-
-SLIDE_FLOW_PRESENTATION_SPEAKING_NOTE = (
-    "Each scene has ``speaking`` and ``actor``. Other fields such as start and end are not part of the picture. "
-    "``speaking`` is what the presenter says in that scene. ``<1>``, ``<2>`` mark who speaks, and a number with a "
-    "decimal point such as ``<0.5>`` is a pause. Read ``speaking`` for the point the slide must make. "
-    "Ignore any wording in the scene content about painting faces, eyes, posture, or gesture."
-)
-
-SLIDE_FLOW_PRESENTATION_VISUAL_NOTE = (
-    "``Scene visual``, when present, tells what the slide should show. Take it as content for the diagram, "
-    "not as a photograph to paint."
+# 画面里不能出现的元信息。所有风格都带。
+SLIDE_FLOW_META_NOTE = (
+    "Everything that is not the story itself is for you only: the field labels, the order of the scenes, "
+    "any scene number, scene title, episode number, timestamp, the names of the options, and these instructions. "
+    "None of it may appear in a picture, not as lettering, not on a sign, not as a label or a caption. "
+    "Never write words like Scene 1, Slide 2, Episode, 场景一, 第N集, or any field name or JSON on a picture."
 )
 
 SLIDE_FLOW_SLIDE_TEXT_NOTE = (
     "Slide text: a short slide title and a few short labels on the diagram are part of the slide. "
-    "Keep every label to a few words. No paragraph, no subtitle, no speech bubble. "
-    "Spoken lines tell you what to explain. They are not text to copy."
+    "Keep every label to a few words, taken from the meaning of what is given. "
+    "No paragraph, no subtitle, no speech bubble. Spoken lines tell you what to explain. They are not text to copy."
 )
+
+
+def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords: bool) -> str:
+    """这一次给了哪几项，每一项叫什么。"""
+    lines = ["Each scene gives only these fields:"]
+    if visual:
+        lines.append("- ``Shown``: the scene description: place, action, and camera angle.")
+    if speaking:
+        text = "- ``Said``: what is said in the scene."
+        if actor:
+            text += (
+                " ``<1>``, ``<2>``, ``<3>`` mark who speaks: the number is that person's place in ``Actors``. "
+                "The same person keeps talking until the next ``<N>``. "
+                "A number with a decimal point such as ``<0.5>`` is a pause in seconds, nobody speaks."
+            )
+        lines.append(text)
+    if actor:
+        lines.append(
+            "- ``Actors``: the people, in order, joined by |. Place 1 is the first entry, place 2 the second, "
+            "and so on. ``讲员`` is the host. ``人物1``, ``人物2`` and so on are the other people. "
+            "A person not listed here is not one of them."
+        )
+    if keywords:
+        lines.append("- ``Keyword hint``: a short phrase you may use as background lettering.")
+    lines.append("No other field is given.")
+    return "\n".join(lines)
+
+
+def _slide_flow_story_rules(visual: bool, speaking: bool, actor: bool) -> str:
+    """故事：画面就是故事本身，有人物在里面表演。"""
+    never_speakers = (
+        "Never draw the speakers, a host, a guest, a microphone, a studio, or people discussing. "
+        "Keep each person's face and clothes the same from scene to scene."
+    )
+    if not actor:
+        if speaking and visual:
+            return (
+                "``Said`` is a talk ABOUT a story. Draw that story as a scene acted out. "
+                "``Shown`` helps: it gives the place and the look of the scene, and helps you express what ``Said`` talks about. "
+                "Where ``Shown`` is silent, take it from ``Said``. "
+                "Add the people the story needs, invented from what is said. They act it out. " + never_speakers
+            )
+        if speaking:
+            return (
+                "``Said`` is a talk ABOUT a story. Understand it and draw that story as a scene acted out: "
+                "its place, its people, what they do, the mood. "
+                "Invent the people the story needs from what is said. They act it out. " + never_speakers
+            )
+        return (
+            "Show the story exactly as ``Shown`` tells it: its place, its people, their actions, the camera angle. "
+            "Follow it. The people in it are the people of the story."
+        )
+    lines = [
+        "``Actors`` is the cast. The 人物 entries are the actors of the story: they are IN the picture, "
+        "in the story's place, acting it out with faces, bodies, and actions. "
+        "The 讲员, when listed, is a third party OUTSIDE the story: a commentator who introduces, sets up, "
+        "comments on, or sums up the story."
+    ]
+    if visual:
+        lines.append("Put the actors inside the ``Shown`` scene. Follow its place, action, and camera angle.")
+    elif speaking:
+        lines.append("Invent the place and the action from ``Said``.")
+    if speaking:
+        lines.append(
+            "A line marked with a 人物's number is spoken by that actor inside the story: show that actor speaking "
+            "and the others listening or reacting. A line marked with the 讲员's number is commentary, not something "
+            "a story character says."
+        )
+    lines.append(
+        "When the 讲员 is shown, he or she stands clearly apart from the story people: at the edge of the frame, "
+        "in the foreground, or as a small inset, while the story goes on. When the 讲员 is not part of a scene, "
+        "the picture is just the story acted."
+    )
+    lines.append(
+        "If ``Actors`` lists only the 讲员 and no 人物, invent the people of the story from what is given. "
+        "If there is no 讲员, only the story's actors appear. Do not add a host."
+    )
+    return "\n".join(lines)
+
+
+def _slide_flow_narration_rules(visual: bool, speaking: bool, actor: bool) -> str:
+    """叙事：用图案、物件和背景文字讲，人物少。"""
+    lines = []
+    if visual and speaking:
+        lines.append(
+            "``Shown`` gives the picture. ``Said`` gives the meaning that the picture and the background words must carry."
+        )
+    elif speaking:
+        lines.append(
+            "``Said`` is the narration. Carry its meaning in the picture through images: places, objects, symbols, "
+            "metaphors, diagrams, composition."
+        )
+    else:
+        lines.append("Follow ``Shown`` as the picture.")
+    if not actor:
+        lines.append(
+            "No speaker is drawn. If the matter needs a person, show only a few, small, as the people of that matter, "
+            "never in a dialogue."
+        )
+        return "\n".join(lines)
+    lines.append(
+        "``Actors``: the 讲员 is the narrator who tells and comments on this matter. Show the narrator as a storyteller, "
+        "small, at the edge or in the foreground, not in the middle of the picture. "
+        "The 人物 entries, if any, are guests, not people of the matter: they sit or stand beside the narrator "
+        "and talk it over with the narrator. They are few and small."
+    )
+    if speaking:
+        lines.append("The person whose number marks a line is shown speaking it. The others listen.")
+    lines.append("The picture itself stays an image of the matter, not of a conversation.")
+    return "\n".join(lines)
+
+
+def _slide_flow_report_rules(visual: bool, speaking: bool, actor: bool) -> str:
+    """技术方案汇报和高管简报：一页一页的汇报画面。"""
+    lines = []
+    if visual:
+        lines.append("``Shown`` says what the slide shows. Use it as content for the diagram, not as a photograph to paint.")
+    if speaking:
+        lines.append("``Said`` is the point the slide must make. Read it and put that point on the slide.")
+    if not actor:
+        lines.append("No person is drawn.")
+        return "\n".join(lines)
+    lines.append(
+        "``Actors``: the 讲员 is the presenter, and the 人物 entries are the other people in the meeting. "
+        "Show them only as small figures beside the slide, the presenter pointing at it. "
+        "The slide stays the main thing."
+    )
+    if speaking:
+        lines.append("The person whose number marks a line is shown speaking it. The others listen.")
+    return "\n".join(lines)
+
+
+def slide_flow_scene_payload(
+    scenes: list,
+    *,
+    use_visual: bool,
+    use_speaking: bool,
+    use_actor: bool,
+    keywords: bool,
+) -> list[dict]:
+    """幻灯提示用的场景内容：只留用户勾选的项，去掉场景编号、起止时间等元信息。
+
+    没有 actor 时，speaking 里的 ``<N>`` 说话人标记一起去掉。
+    """
+    out: list[dict] = []
+    for scene in scenes:
+        base = _notebooklm_scene_content_base(scene)
+        lines: list[str] = []
+        caption = (base.get("caption") or "").strip()
+        if keywords and caption:
+            lines.append(f"Keyword hint: {caption}")
+        vis = (base.get("visual") or "").strip()
+        if use_visual and vis:
+            lines.append(f"Shown: {vis}")
+        actor = (base.get("actor") or "").strip()
+        if use_actor and actor:
+            lines.append(f"Actors: {actor}")
+        if use_speaking:
+            speaking = (base.get("speaking") or "").strip()
+            voiceover = (base.get("voiceover") or "").strip()
+            if not use_actor:
+                speaking = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", speaking)
+                speaking = re.sub(r"[ \t]{2,}", " ", speaking).strip()
+            if speaking:
+                lines.append(f"Said: {speaking}")
+            if voiceover:
+                lines.append(f"Also said: {voiceover}")
+        out.append({"show_this_content": "\n".join(lines)} if lines else {})
+    return out
 
 
 def slide_flow_choice_label(
     target: str,
     text: str,
-    visual: str = "use",
-    cast: str = "story",
+    visual: bool = True,
+    speaking: bool = True,
+    actor: bool = False,
     narrative: str = "story",
 ) -> str:
-    """把叙事风格、幻灯目标、画面文字、场景描述和人物身份的选择写成一行。"""
+    """把这一次的选择写成一行，给人看。"""
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     target_label = dict(SLIDE_FLOW_TARGET_CHOICES).get(target, target)
-    visual_label = "不用场景描述" if visual == "none" else "用场景描述"
-    if narrative in ("tech", "exec"):
-        return f"{narrative_label} · {target_label} · {visual_label}"
-    text_label = "背景关键字" if text == "keywords" else "不加文字"
-    cast_label = "嘉宾" if cast == "guest" else "故事人物"
-    return f"{narrative_label} · {target_label} · {text_label} · {visual_label} · {cast_label}"
+    fields = [name for name, on in (("visual", visual), ("speaking", speaking), ("actor", actor)) if on]
+    parts = [narrative_label, target_label, "+".join(fields)]
+    if narrative not in ("tech", "exec"):
+        parts.append("背景关键字" if text == "keywords" else "不加文字")
+    return " · ".join(parts)
 
 
 def build_slide_flow_prompt(
@@ -379,30 +498,37 @@ def build_slide_flow_prompt(
     region: str = "",
     era: str = "",
     main_character: str = "",
-    visual: str = "use",
-    cast: str = "story",
+    use_visual: bool = True,
+    use_speaking: bool = True,
+    use_actor: bool = False,
     narrative: str = "story",
 ) -> str:
-    """按叙事风格、单图或幻灯片、画面上的字、是否用场景描述、人物身份，组装这一次的幻灯提示词。"""
+    """按叙事风格，以及勾选了 visual、speaking、actor 中的哪几项，组装这一次的幻灯提示词。
+
+    每种叙事风格对三项的用法不同，见 ``_slide_flow_*_rules``。至少要选 visual 或 speaking。
+    """
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
     if target not in {k for k, _ in SLIDE_FLOW_TARGET_CHOICES}:
         target = "slideshow"
     if text not in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES}:
         text = "none"
-    if visual not in {k for k, _ in SLIDE_FLOW_VISUAL_CHOICES}:
-        visual = "use"
-    if cast not in {k for k, _ in SLIDE_FLOW_CAST_CHOICES}:
-        cast = "story"
-    if narrative == "story":
-        cast = "story"
+    use_visual = bool(use_visual)
+    use_speaking = bool(use_speaking)
+    use_actor = bool(use_actor)
+    if not (use_visual or use_speaking):
+        raise ValueError("至少要选场景描述或讲话中的一项。")
     presentation = narrative in ("tech", "exec")
+    keywords = text == "keywords" and not presentation
     style = (visual_style or "").strip() or "realistic"
-    variant = "single" if target == "single" else "slideshow"
     scenes = scene_content if isinstance(scene_content, list) else []
     json_content = json.dumps(
-        scene_payload_for_notebooklm_export(
-            scenes, "image", variant, use_visual=(visual != "none")
+        slide_flow_scene_payload(
+            scenes,
+            use_visual=use_visual,
+            use_speaking=use_speaking,
+            use_actor=use_actor,
+            keywords=keywords,
         ),
         ensure_ascii=False,
         indent=2,
@@ -448,45 +574,40 @@ def build_slide_flow_prompt(
     lines.append("")
     lines.append(SLIDE_FLOW_NARRATIVE_NOTES[narrative])
     lines.append("")
-    if presentation:
-        lines.append(SLIDE_FLOW_PRESENTATION_SPEAKING_NOTE)
-        if visual != "none":
-            lines.append(SLIDE_FLOW_PRESENTATION_VISUAL_NOTE)
-    else:
-        lines.append(SLIDE_FLOW_ACTOR_SPEAKING_NOTE)
-        lines.append(SLIDE_FLOW_VISUAL_NONE_NOTE if visual == "none" else SLIDE_FLOW_VISUAL_USE_NOTE)
+    lines.append(_slide_flow_inputs_note(use_visual, use_speaking, use_actor, keywords))
     lines.append("")
-    if presentation:
-        lines.append(SLIDE_FLOW_PRESENTER_NOTE)
+    if narrative == "story":
+        lines.append(_slide_flow_story_rules(use_visual, use_speaking, use_actor))
+    elif narrative == "narration":
+        lines.append(_slide_flow_narration_rules(use_visual, use_speaking, use_actor))
     else:
-        lines.append(SLIDE_FLOW_CAST_GUEST_NOTE if cast == "guest" else SLIDE_FLOW_CAST_STORY_NOTE)
-        lines.append("")
+        lines.append(_slide_flow_report_rules(use_visual, use_speaking, use_actor))
+    if use_actor:
         host = (host_narrator or "").strip()
         if host:
-            lines.append(
-                f"The host chosen for this project is {host}. The 讲员 entry in ``actor`` is this person. "
-                "Draw the 讲员 only as the choice above says."
-            )
-        else:
-            lines.append("No host was chosen. Do not add a visible host unless a 讲员 is listed in ``actor``.")
+            lines.append(f"The host chosen for this project is {host}. The 讲员 entry in ``Actors`` is this person.")
         look = (main_character or "").strip()
         if look:
             lines.append(f"Keep this cast readable and consistent: {look}.")
+    if not presentation:
         lines.append("Faces, posture, and gesture match the feeling of the scene.")
 
+    lines.append("")
     if presentation:
         lines.append(SLIDE_FLOW_SLIDE_TEXT_NOTE)
-    elif text == "keywords":
+    elif keywords:
         lines.extend([
             "Do not add captions, subtitles, or speech bubbles.",
-            "If one very short phrase is essential, place it as large sparse lettering in the background, behind the people.",
+            "Background lettering is allowed: a few large, sparse words behind the people or objects, one to four words per picture, only when a word truly carries the point.",
+            "Take the words from the meaning of what is given, or from the keyword hint, in the language of the talk. Never take them from the scene list itself.",
             "One word or a few words. Never a sentence. Never a paragraph.",
         ])
     else:
         lines.extend([
             "Do not put words on the picture. No subtitle, no caption, no annotation, no speech bubble, no background writing.",
-            "Spoken lines tell you the mood and the body. They are not text to draw.",
+            "What is said tells you the mood and the body. It is not text to draw.",
         ])
+    lines.append(SLIDE_FLOW_META_NOTE)
 
     if not presentation:
         phrase = setting_place_phrase(region, era)
@@ -495,10 +616,9 @@ def build_slide_flow_prompt(
                 f"Place and period: {phrase}. "
                 "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
             )
+    if use_actor:
         lines.extend(["", ACTOR_AGE_LOOK])
     parts = {
-        "Visual_Style": style,
-        "Slide_choices": slide_flow_choice_label(target, text, visual, cast, narrative),
         "Instruction_for_image": "\n".join(lines),
         "Story_Scene_Content": json_content,
     }

@@ -1,8 +1,9 @@
-"""幻灯提示：叙事风格、单图或幻灯片，以及画面上的字。在工作流「本集内容」里打开。"""
+"""幻灯提示：叙事风格、单图或幻灯片、画面文字，以及写进提示词的 visual、speaking、actor。在工作流「本集内容」里打开。"""
 
 from __future__ import annotations
 
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 
 import config
@@ -11,8 +12,32 @@ import project_manager
 from gui.video_prompt_dialog import _place_popup_near
 
 
-# 记住上次的选择，下次打开直接用。
-_LAST_CHOICE = {"narrative": "story", "visual": "use", "cast": "story"}
+_DEFAULT_CHOICE = {
+    "narrative": "story",
+    "target": "slideshow",
+    "text": "none",
+    "visual": True,
+    "speaking": True,
+    "actor": False,
+}
+
+
+def _clean_choice(saved) -> dict:
+    """把项目里存的选择补全、校验，不认识的值用默认。"""
+    choice = dict(_DEFAULT_CHOICE)
+    if not isinstance(saved, dict):
+        return choice
+    for key, allowed in (
+        ("narrative", {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}),
+        ("target", {k for k, _ in config_prompt.SLIDE_FLOW_TARGET_CHOICES}),
+        ("text", {k for k, _ in config_prompt.SLIDE_FLOW_TEXT_CHOICES}),
+    ):
+        if saved.get(key) in allowed:
+            choice[key] = saved[key]
+    for key in ("visual", "speaking", "actor"):
+        if key in saved:
+            choice[key] = bool(saved[key])
+    return choice
 
 
 def open_slide_prompt_dialog(
@@ -25,13 +50,21 @@ def open_slide_prompt_dialog(
     host_narrator: str = "",
     get_place=None,
     main_character: str = "",
+    saved_choice=None,
+    save_choice=None,
 ) -> None:
-    """先选叙事风格，再选目标和画面文字。按一次「拷贝提示词」就拷走并关闭。"""
+    """先选叙事风格，再选目标、画面文字和写进提示词的内容。
+
+    ``saved_choice`` 是项目里记下的上次选择；``save_choice(dict)`` 在关窗或拷贝时把当前选择记回项目。
+    按一次「拷贝提示词」就拷走并关闭。
+    """
     dlg = tk.Toplevel(parent)
     dlg.title("幻灯提示")
     dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
+
+    last = _clean_choice(saved_choice)
 
     main = ttk.Frame(dlg, padding=10)
     main.pack(fill=tk.BOTH, expand=True)
@@ -39,14 +72,15 @@ def open_slide_prompt_dialog(
     hint.pack(anchor=tk.W)
     groups = ttk.Frame(main)
     groups.pack(anchor=tk.W, pady=(8, 8))
-    actions = ttk.Frame(main)
-    actions.pack(fill=tk.X)
+    bottom = ttk.Frame(main)
+    bottom.pack(fill=tk.X)
 
-    narrative_var = tk.StringVar(value=_LAST_CHOICE["narrative"])
-    target_var = tk.StringVar(value="slideshow")
-    text_var = tk.StringVar(value="none")
-    visual_var = tk.StringVar(value=_LAST_CHOICE["visual"])
-    cast_var = tk.StringVar(value=_LAST_CHOICE["cast"])
+    narrative_var = tk.StringVar(value=last["narrative"])
+    target_var = tk.StringVar(value=last["target"])
+    text_var = tk.StringVar(value=last["text"])
+    visual_var = tk.BooleanVar(value=last["visual"])
+    speaking_var = tk.BooleanVar(value=last["speaking"])
+    actor_var = tk.BooleanVar(value=last["actor"])
 
     narrative_box = ttk.LabelFrame(groups, text="叙事风格", padding=(8, 4))
     narrative_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
@@ -66,25 +100,17 @@ def open_slide_prompt_dialog(
         btn.pack(anchor=tk.W)
         text_buttons.append(btn)
 
-    story_groups = ttk.Frame(main)
-    story_groups.pack(anchor=tk.W, pady=(0, 8), fill=tk.X)
-    visual_box = ttk.LabelFrame(story_groups, text="场景描述 (visual)", padding=(8, 4))
-    visual_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
-    cast_box = ttk.LabelFrame(story_groups, text="人物身份 (actor)", padding=(8, 4))
-    cast_box.pack(side=tk.LEFT, anchor=tk.N)
-    for value, label in config_prompt.SLIDE_FLOW_VISUAL_CHOICES:
-        ttk.Radiobutton(visual_box, text=label, value=value, variable=visual_var).pack(anchor=tk.W)
-    cast_buttons = []
-    for value, label in config_prompt.SLIDE_FLOW_CAST_CHOICES:
-        btn = ttk.Radiobutton(cast_box, text=label, value=value, variable=cast_var)
-        btn.pack(anchor=tk.W)
-        cast_buttons.append(btn)
+    options = ttk.LabelFrame(bottom, text="写进提示词的内容", padding=(8, 4))
+    options.pack(side=tk.LEFT, anchor=tk.S)
+    ttk.Checkbutton(options, text="场景描述 (visual)", variable=visual_var).pack(anchor=tk.W)
+    ttk.Checkbutton(options, text="讲话 (speaking)", variable=speaking_var).pack(anchor=tk.W)
+    ttk.Checkbutton(options, text="人物 (actor)", variable=actor_var).pack(anchor=tk.W)
 
     hints = {
-        "story": "故事：人物在画面里表演，靠脸、动作和互动讲故事。人物身份固定按故事人物。",
-        "narration": "叙事：人物少或没有，用图案、物件和背景文字讲。人物身份可以选。",
-        "tech": "技术方案汇报：每张是一页架构、流程或对比图，按讲稿顺序排。画面文字和人物身份不用选。",
-        "exec": "高管简报：每张一个结论，一个数字或图标。画面文字和人物身份不用选。",
+        "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",
+        "narration": "叙事：用图案、物件和背景文字讲，人物少。有 actor 时，讲员是叙述者，其他人物是嘉宾。",
+        "tech": "技术方案汇报：每张是一页架构、流程或对比图。有 actor 时，讲员是汇报人。",
+        "exec": "高管简报：每张一个结论，一个数字或图标。有 actor 时，讲员是汇报人。",
     }
 
     def refresh_choices(*_args) -> None:
@@ -92,13 +118,37 @@ def open_slide_prompt_dialog(
         presentation = narrative in ("tech", "exec")
         for btn in text_buttons:
             btn.configure(state=("disabled" if presentation else "normal"))
-        cast_locked = presentation or narrative == "story"
-        for btn in cast_buttons:
-            btn.configure(state=("disabled" if cast_locked else "normal"))
         single = "单图把这些场景画进一张图。" if target_var.get() == "single" else "幻灯片是每场一张图。"
-        hint.config(text=f"{hints.get(narrative, '')}\n{single}选好后按「拷贝提示词」。")
+        hint.config(
+            text=f"{hints.get(narrative, '')}\n{single}场景描述和讲话至少选一项。选好后按「拷贝提示词」。"
+        )
+
+    def remember() -> None:
+        """把当前选择记回项目，下次打开直接用。"""
+        if save_choice is None:
+            return
+        try:
+            save_choice(
+                {
+                    "narrative": narrative_var.get(),
+                    "target": target_var.get(),
+                    "text": text_var.get(),
+                    "visual": bool(visual_var.get()),
+                    "speaking": bool(speaking_var.get()),
+                    "actor": bool(actor_var.get()),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 记不下来不影响拷贝
+            print(f"幻灯提示：选择没有记下：{exc}")
+
+    def close() -> None:
+        remember()
+        dlg.destroy()
 
     def copy_prompt() -> None:
+        if not (visual_var.get() or speaking_var.get()):
+            messagebox.showwarning("幻灯提示", "场景描述和讲话至少要选一项。", parent=dlg)
+            return
         scenes = [s for s in (get_scenes() or []) if isinstance(s, dict)]
         if not scenes:
             messagebox.showwarning("幻灯提示", "没有可用场景", parent=dlg)
@@ -117,8 +167,9 @@ def open_slide_prompt_dialog(
                 narrative=narrative_var.get(),
                 target=target_var.get(),
                 text=text_var.get(),
-                visual=visual_var.get(),
-                cast=cast_var.get(),
+                use_visual=bool(visual_var.get()),
+                use_speaking=bool(speaking_var.get()),
+                use_actor=bool(actor_var.get()),
                 visual_style=style,
                 scene_content=scenes,
                 host_narrator=host_narrator or "",
@@ -134,12 +185,22 @@ def open_slide_prompt_dialog(
         except (tk.TclError, OSError):
             messagebox.showwarning("幻灯提示", "提示词没有放进剪贴板。", parent=dlg)
             return
-        _LAST_CHOICE["narrative"] = narrative_var.get()
-        _LAST_CHOICE["visual"] = visual_var.get()
-        _LAST_CHOICE["cast"] = cast_var.get()
-        dlg.destroy()
+        close()
 
-    ttk.Button(actions, text="拷贝提示词", command=copy_prompt).pack(side=tk.LEFT)
+    # 拷贝按钮放在右边，字比默认大 30%，加粗。
+    base_font = tkfont.nametofont("TkDefaultFont")
+    big_font = tkfont.Font(
+        family=base_font.actual("family"),
+        size=max(1, round(abs(base_font.actual("size")) * 1.3)),
+        weight="bold",
+    )
+    dlg._slide_copy_font = big_font  # 防止字体对象被回收
+    ttk.Style().configure("SlideCopy.TButton", font=big_font, padding=(18, 10))
+    ttk.Button(bottom, text="拷贝提示词", style="SlideCopy.TButton", command=copy_prompt).pack(
+        side=tk.RIGHT, anchor=tk.S
+    )
+
+    dlg.protocol("WM_DELETE_WINDOW", close)
     narrative_var.trace_add("write", refresh_choices)
     target_var.trace_add("write", refresh_choices)
     refresh_choices()

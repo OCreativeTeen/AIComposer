@@ -3651,6 +3651,105 @@ class WorkflowGUI:
             s = s.rsplit(" | ", 1)[0].strip()
         return s.strip()
 
+    def _make_still_clip_video(self, scene: dict) -> str:
+        """用 clip_image 加 clip_audio 做一段静态画面的视频，写成这一场的 clip。
+
+        返回 ``ok``、``no_image``、``no_audio`` 或 ``fail``。
+        """
+        image = get_file_path(scene, "clip_image")
+        audio = get_file_path(scene, "clip_audio")
+        if not image or not os.path.isfile(image):
+            return "no_image"
+        if not audio or not os.path.isfile(audio):
+            return "no_audio"
+        try:
+            video = self.workflow.ffmpeg_processor.image_audio_to_video(image, audio, 1)
+        except Exception as exc:  # noqa: BLE001
+            print(f"静态视频生成出错 (id={scene.get('id')}): {exc}")
+            return "fail"
+        if not video or not os.path.isfile(video):
+            return "fail"
+        refresh_scene_media(scene, "clip", ".mp4", video)
+        return "ok"
+
+    def choose_clip_video_scope(self):
+        """生场视频：默认用 clip_image 加 clip_audio 做静态画面视频；WAN 生成留在最后一项。"""
+        choices = [
+            (("still", "single"), "静态画面 + 声音：仅当前场景"),
+            (("still", "story"), "静态画面 + 声音：本集从这一场起"),
+            (("still", "all"), "静态画面 + 声音：全部场景"),
+            (("wan", "single"), "WAN 生成视频（以后再用）：当前场景"),
+        ]
+        picked = askchoice(
+            "生场视频：请选择方式与范围\n（取消 = 放弃）",
+            choices,
+            parent=self.root,
+        )
+        if picked is None:
+            return
+        _lbl, (method, scope) = picked
+        if not self.workflow:
+            return
+        scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not scene_anchor:
+            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
+            return
+        if method == "wan":
+            self.regenerate_video("clip", False)
+            return
+
+        self.update_current_scene()
+        if scope == "all":
+            targets = [s for s in (self.workflow.scenes or []) if isinstance(s, dict)]
+        elif scope == "story":
+            story = self.workflow.scenes_in_story(scene_anchor) or []
+            ids = [id(s) for s in story]
+            start = ids.index(id(scene_anchor)) if id(scene_anchor) in ids else 0
+            targets = story[start:]
+        else:
+            targets = [scene_anchor]
+        if not targets:
+            messagebox.showwarning("生场视频", "没有可用场景", parent=self.root)
+            return
+        if getattr(self, "_clip_video_worker_busy", False):
+            messagebox.showinfo("提示", "已有生场视频任务进行中，请稍候。", parent=self.root)
+            return
+        self._clip_video_worker_busy = True
+        root = self.root
+
+        def work():
+            ok = 0
+            skipped: list[str] = []
+            for s in targets:
+                sid = s.get("id", "?")
+                out = self._make_still_clip_video(s)
+                if out == "ok":
+                    ok += 1
+                elif out == "no_image":
+                    skipped.append(f"id={sid}：没有 clip image")
+                elif out == "no_audio":
+                    skipped.append(f"id={sid}：没有 clip 音频")
+                else:
+                    skipped.append(f"id={sid}：合成失败")
+
+            def finish():
+                self._clip_video_worker_busy = False
+                self.workflow.save_scenes_to_json()
+                self.refresh_gui_scenes()
+                tail = "\n".join(skipped[:12])
+                if len(skipped) > 12:
+                    tail += f"\n…另有 {len(skipped) - 12} 条"
+                msg = f"已生成 {ok} / {len(targets)} 个场景的静态视频。"
+                if tail:
+                    msg += "\n\n跳过：\n" + tail
+                    messagebox.showwarning("生场视频", msg, parent=root)
+                else:
+                    messagebox.showinfo("生场视频", msg, parent=root)
+
+            root.after(0, finish)
+
+        threading.Thread(target=work, daemon=True).start()
+
     def choose_clip_audio_scope(self):
         """生主轨 clip 音频：当前场景，或从这一场起的本集。后台线程执行。"""
         clip_choices = [
@@ -4612,6 +4711,19 @@ class WorkflowGUI:
         ttk.Label(look_row1, text="时代").pack(side=tk.LEFT)
         self.setting_era = ttk.Combobox(look_row1, width=8, state="readonly")
         self.setting_era.pack(side=tk.LEFT, padx=(4, 0))
+        # 延长对所有场景生效（见 _on_extension_change），所以放在全场内容里。
+        ttk.Label(look_row1, text="延长").pack(side=tk.LEFT, padx=(10, 0))
+        self.extension_var = tk.StringVar(value="0")
+        self.extension_values = ["0", "0.4", "0.6", "0.8"]
+        self.extension_combobox = ttk.Combobox(
+            look_row1,
+            textvariable=self.extension_var,
+            values=self.extension_values,
+            state="readonly",
+            width=4,
+        )
+        self.extension_combobox.pack(side=tk.LEFT, padx=(4, 0))
+        self.extension_combobox.bind("<<ComboboxSelected>>", lambda e: self._on_extension_change())
         ttk.Label(look_row2, text="选择").pack(side=tk.LEFT, padx=(0, 4))
         self._narrator_avatar_btn = ttk.Button(
             look_row2,
@@ -4642,19 +4754,9 @@ class WorkflowGUI:
         episode_tools_frame.pack(side=tk.TOP, fill=tk.X)
         episode_btn_row = ttk.Frame(episode_tools_frame)
         episode_btn_row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(episode_btn_row, text="延长").pack(side=tk.LEFT)
-        self.extension_var = tk.StringVar(value="0")
-        self.extension_values = ["0", "0.4", "0.6", "0.8"]
-        self.extension_combobox = ttk.Combobox(
-            episode_btn_row,
-            textvariable=self.extension_var,
-            values=self.extension_values,
-            state="readonly",
-            width=5,
-        )
-        self.extension_combobox.pack(side=tk.LEFT, padx=(4, 0))
-        self.extension_combobox.bind("<<ComboboxSelected>>", lambda e: self._on_extension_change())
-        ttk.Separator(episode_btn_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=22)
+        self.episode_label = ttk.Label(episode_btn_row, text="第 1 集", width=12)
+        self.episode_label.pack(side=tk.LEFT)
+        ttk.Separator(episode_btn_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=12)
         ttk.Button(
             episode_btn_row,
             text="拷贝提示",
@@ -4685,7 +4787,13 @@ class WorkflowGUI:
             width=8,
             command=self._open_slide_prompt_flow,
         )
-        self._slide_prompt_btn.pack(side=tk.LEFT)
+        self._slide_prompt_btn.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(
+            episode_btn_row,
+            text="调整集",
+            width=8,
+            command=self.open_adjust_episode_dialog,
+        ).pack(side=tk.LEFT)
 
         scene_gap = ttk.Frame(right_panel, height=24)
         scene_gap.pack(side=tk.TOP)
@@ -4696,8 +4804,13 @@ class WorkflowGUI:
 
         row_number = 1
 
-        scene_text_row = ttk.Frame(self.video_edit_frame)
-        scene_text_row.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+        # 本场内容的按钮分两排：第一排改文字，第二排出提示和生成媒体。
+        scene_text_box = ttk.Frame(self.video_edit_frame)
+        scene_text_box.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+        scene_text_row = ttk.Frame(scene_text_box)
+        scene_text_row.pack(side=tk.TOP, anchor=tk.W)
+        scene_prompt_row = ttk.Frame(scene_text_box)
+        scene_prompt_row.pack(side=tk.TOP, anchor=tk.W, pady=(4, 0))
         self._scene_speech_btn = ttk.Button(
             scene_text_row,
             text="场景变换",
@@ -4719,29 +4832,34 @@ class WorkflowGUI:
             command=self.add_scene_insert,
         )
         self.btn_add_scene.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Separator(scene_text_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=22)
         self._nb_picture_btn = ttk.Button(
-            scene_text_row,
+            scene_prompt_row,
             text="图片提示",
             width=8,
             command=self._open_picture_prompt_flow,
         )
         self._nb_picture_btn.pack(side=tk.LEFT)
         self._nb_story_video_btn = ttk.Button(
-            scene_text_row,
+            scene_prompt_row,
             text="视频提示",
             width=8,
             command=self._open_video_prompt_flow,
         )
         self._nb_story_video_btn.pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(
-            scene_text_row,
+            scene_prompt_row,
+            text="生场视频",
+            width=8,
+            command=self.choose_clip_video_scope,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(
+            scene_prompt_row,
             text="生场音频",
             width=8,
             command=self.choose_clip_audio_scope,
         ).pack(side=tk.LEFT, padx=(4, 0))
         self.btn_clip_transcribe = ttk.Button(
-            scene_text_row,
+            scene_prompt_row,
             text="音频转录",
             width=8,
             command=self.choose_clip_transcribe_scope,
@@ -4807,7 +4925,7 @@ class WorkflowGUI:
         self.clip_animate = tk.StringVar(value="")
         ttk.Label(
             track_tools_frame,
-            text="主动画、次动画、增主轨、WAN（生场视频）已停用。sd_processor 里的生成和增强代码还留着，界面上先不接。",
+            text="主动画、次动画、增主轨已停用。sd_processor 里的生成和增强代码还留着，界面上先不接。WAN 在「生场视频」里还能选。",
             wraplength=640,
         ).pack(side=tk.LEFT)
 
@@ -5943,6 +6061,7 @@ class WorkflowGUI:
         if len(self.workflow.scenes) == 0:
             self.scene_label.config(text="0 / 0")
             self._refresh_marker_label()
+            self._refresh_episode_label()
             self.clear_scene_fields()
             self.clear_video_preview()
             self._refresh_speech_span_bar()
@@ -5955,9 +6074,23 @@ class WorkflowGUI:
             self._scene_widgets_loading = False
             self._refresh_speech_span_bar()
 
+    def _refresh_episode_label(self):
+        """本集内容左上角：当前场景属于第几集。"""
+        label = getattr(self, "episode_label", None)
+        if label is None:
+            return
+        text = "第 - 集"
+        wf = getattr(self, "workflow", None)
+        if wf and wf.scenes:
+            scene = wf.get_scene_by_index(self.current_scene_index)
+            if isinstance(scene, dict):
+                text = f"第 {wf.scene_group(scene)} 集"
+        label.config(text=text)
+
     def _update_scene_display_impl(self):
         self.scene_label.config(text=f"{self.current_scene_index + 1} / {len(self.workflow.scenes)}")
         self._refresh_marker_label()
+        self._refresh_episode_label()
         scene_data = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene_data:
             self._scene_form_scene = None
@@ -12207,9 +12340,18 @@ class WorkflowGUI:
                 (self.setting_era.get() or "").strip(),
             )
 
+        def save_choice(choice: dict) -> None:
+            cfg = project_manager.PROJECT_CONFIG
+            if not isinstance(cfg, dict) or cfg.get("slide_prompt") == choice:
+                return
+            cfg["slide_prompt"] = choice
+            save_project_config(parent=self.root)
+
         open_slide_prompt_dialog(
             self.root,
             getattr(self, "_slide_prompt_btn", None),
+            saved_choice=(project_manager.PROJECT_CONFIG or {}).get("slide_prompt"),
+            save_choice=save_choice,
             get_scenes=episode_scenes,
             get_style=get_style,
             copy_text=copy_text,
@@ -13502,6 +13644,75 @@ class WorkflowGUI:
         self.workflow.save_scenes_to_json()
         self.refresh_gui_scenes()
         show_auto_close_popup(self.root, "拆集", f"从当前场景起为第 {new_name} 集")
+
+    def open_adjust_episode_dialog(self):
+        """手动调整集的边界：前面的场景归上一集，或从本场起归下一集。"""
+        if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
+            messagebox.showwarning("调整集", "请先选中一个场景。", parent=self.root)
+            return
+        self.update_current_scene()
+        index = self.current_scene_index
+        scenes = self.workflow.scenes or []
+        start, end = self.workflow.episode_run_bounds(index)
+        cur_name = self.workflow.scene_group(scenes[index])
+        prev_name = self.workflow.scene_group(scenes[start - 1]) if start > 0 else ""
+        next_name = self.workflow.scene_group(scenes[end + 1]) if end + 1 < len(scenes) else ""
+        before = index - start + 1  # 本集开头到当前场景，含当前场景
+        after = end - index + 1  # 当前场景到本集结尾，含当前场景
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("调整集")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        main = ttk.Frame(dlg, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            main,
+            text=(
+                f"现在是第 {cur_name} 集，当前是本集第 {before + 1} 场，"
+                f"本集共 {end - start + 1} 场。"
+            ),
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        def run(direction: str) -> None:
+            target, reason = self.workflow.move_to_adjacent_episode(index, direction)
+            if not target:
+                messagebox.showwarning("调整集", reason, parent=dlg)
+                return
+            self.workflow.save_scenes_to_json()
+            dlg.destroy()
+            self.refresh_gui_scenes()
+            show_auto_close_popup(self.root, "调整集", f"已归到第 {target} 集")
+
+        prev_ok = bool(prev_name)
+        next_ok = bool(next_name)
+        prev_text = (
+            f"本集开头到当前场景的 {before} 场，归到上一集（第 {prev_name} 集）"
+            if prev_ok
+            else "本集开头到当前场景归到上一集"
+        )
+        next_text = (
+            f"当前场景到本集结尾的 {after} 场，归到下一集（第 {next_name} 集）"
+            if next_ok
+            else "当前场景到本集结尾归到下一集"
+        )
+        prev_btn = ttk.Button(main, text=prev_text, command=lambda: run("prev"))
+        prev_btn.pack(fill=tk.X, pady=(0, 6))
+        next_btn = ttk.Button(main, text=next_text, command=lambda: run("next"))
+        next_btn.pack(fill=tk.X)
+        if not prev_ok:
+            prev_btn.state(["disabled"])
+            ttk.Label(main, text="没有上一集。", foreground="#888888").pack(anchor=tk.W, pady=(6, 0))
+        if not next_ok:
+            next_btn.state(["disabled"])
+            ttk.Label(main, text="没有下一集。", foreground="#888888").pack(anchor=tk.W, pady=(6, 0))
+        ttk.Button(main, text="取消", command=dlg.destroy).pack(anchor=tk.E, pady=(10, 0))
+        try:
+            dlg.geometry(f"+{self.root.winfo_rootx() + 80}+{self.root.winfo_rooty() + 120}")
+        except tk.TclError:
+            pass
+        dlg.grab_set()
 
     def _on_media_drop_pdf(self, pdf_path: str) -> None:
         """视频画布拖入 PDF：按当前 episode 拆成 1.webp、2.webp…，再打开翻页预览。"""

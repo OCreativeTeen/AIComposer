@@ -12,6 +12,7 @@ import json
 import shutil
 import re
 import time
+import tempfile
 
 # 连环画页面图和再合成的 PDF 都用这份 JPEG。质量压低一些，避免 PNG 把文件撑得太大。
 _PAGE_JPEG_QUALITY = 60
@@ -1754,6 +1755,153 @@ class MagicWorkflow:
                 scene["episode"] = "1"
                 scene.pop("group", None)
         return new_name
+
+    def episode_run_bounds(self, index: int) -> tuple[int, int]:
+        """当前场景所在这一集的起止下标（连续的同一集）。没有返回 (-1, -1)。"""
+        scenes = self.scenes or []
+        if index < 0 or index >= len(scenes):
+            return -1, -1
+        name = self.scene_group(scenes[index])
+        start = index
+        while start > 0 and self.scene_group(scenes[start - 1]) == name:
+            start -= 1
+        end = index
+        while end + 1 < len(scenes) and self.scene_group(scenes[end + 1]) == name:
+            end += 1
+        return start, end
+
+    def move_to_adjacent_episode(self, index: int, direction: str) -> tuple[str, str]:
+        """手动调整集的边界。
+
+        direction == "prev"：本集开头到当前场景（含当前场景）并进上一集（接在上一集最后）。
+        direction == "next"：本集里从当前场景（含）起到本集结束的场景并进下一集（放在下一集最前）。
+        页面图跟着场景走，两集的页码按场景顺序重排。成功返回 (目标集号, "")，否则返回 ("", 原因)。
+        """
+        scenes = self.scenes or []
+        start, end = self.episode_run_bounds(index)
+        if start < 0:
+            return "", "没有当前场景。"
+        cur_name = self.scene_group(scenes[index])
+        if direction == "prev":
+            if start == 0:
+                return "", "没有上一集。"
+            moved = list(range(start, index + 1))
+            target = self.scene_group(scenes[start - 1])
+        elif direction == "next":
+            if end >= len(scenes) - 1:
+                return "", "没有下一集。"
+            moved = list(range(index, end + 1))
+            target = self.scene_group(scenes[end + 1])
+        else:
+            return "", "不认识的方向。"
+        if not target or target == cur_name:
+            return "", "找不到相邻的集。"
+
+        affected = [cur_name, target]
+        snapshot: dict[int, tuple[str, int]] = {}
+        for sc in scenes:
+            if not isinstance(sc, dict):
+                continue
+            ep = self.scene_group(sc)
+            if ep not in affected:
+                continue
+            try:
+                page = int(sc.get("episode_page") or 0)
+            except (TypeError, ValueError):
+                page = 0
+            snapshot[id(sc)] = (ep, page)
+
+        # 同一集的场景共用一份 zero：搬过来的场景用目标集里的那一份。
+        ref = next(
+            (
+                s for s in scenes
+                if isinstance(s, dict)
+                and self.scene_group(s) == target
+                and id(s) not in {id(scenes[i]) for i in moved}
+                and (s.get("zero") or s.get("zero_audio"))
+            ),
+            None,
+        )
+        for i in moved:
+            sc = scenes[i]
+            sc["episode"] = target
+            sc.pop("group", None)
+            sc.pop("group_page", None)
+            sc.pop("group_pdf", None)
+            if ref is not None:
+                for key in ("zero", "zero_audio"):
+                    if ref.get(key):
+                        sc[key] = ref[key]
+
+        # 两集的页面图按场景顺序重排：先拷到临时目录，再删原文件，再放到新位置。
+        image_exts = (".webp", ".jpg", ".jpeg", ".png")
+        media = config.get_media_path(self.pid)
+        assigned: dict[tuple[str, int, str], int] = {}
+        new_pages: list[tuple[dict, int]] = []
+        counters = {name: 0 for name in affected}
+        for sc in scenes:
+            if not isinstance(sc, dict):
+                continue
+            ep = self.scene_group(sc)
+            if ep not in affected or id(sc) not in snapshot:
+                continue
+            old_ep, old_page = snapshot[id(sc)]
+            if old_page <= 0:
+                continue
+            key = (old_ep, old_page, ep)
+            if key not in assigned:
+                counters[ep] += 1
+                assigned[key] = counters[ep]
+            new_pages.append((sc, assigned[key]))
+
+        tmp_dir = ""
+        staged: list[tuple[str, str, int, str]] = []
+        sources: set[tuple[str, int]] = set()
+        if assigned:
+            os.makedirs(media, exist_ok=True)
+            tmp_dir = tempfile.mkdtemp(prefix=".regroup_", dir=media)
+            for (old_ep, old_page, dest_ep), new_page in assigned.items():
+                sources.add((old_ep, old_page))
+                src_dir = self.episode_media_dir(old_ep)
+                for ext in image_exts:
+                    src = os.path.join(src_dir, f"{old_page}{ext}")
+                    if not os.path.isfile(src):
+                        continue
+                    stage = os.path.join(tmp_dir, f"{len(staged)}{ext}")
+                    shutil.copy2(src, stage)
+                    staged.append((stage, dest_ep, new_page, ext))
+            for old_ep, old_page in sources:
+                src_dir = self.episode_media_dir(old_ep)
+                for ext in image_exts:
+                    src = os.path.join(src_dir, f"{old_page}{ext}")
+                    if os.path.isfile(src):
+                        try:
+                            os.remove(src)
+                        except OSError:
+                            pass
+            for stage, dest_ep, new_page, ext in staged:
+                dest_dir = self.episode_media_dir(dest_ep)
+                os.makedirs(dest_dir, exist_ok=True)
+                dest = os.path.join(dest_dir, f"{new_page}{ext}")
+                try:
+                    os.replace(stage, dest)
+                except OSError:
+                    shutil.copy2(stage, dest)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        for sc, page in new_pages:
+            sc["episode_page"] = page
+
+        for sc in scenes:
+            if isinstance(sc, dict) and "episode_pdf" in sc and self.scene_group(sc) in affected:
+                sc["episode_pdf"] = f"{self.scene_group(sc)}.pdf"
+        if not any(isinstance(s, dict) and self.scene_group(s) == cur_name for s in scenes):
+            try:
+                os.rmdir(self.episode_media_dir(cur_name))
+            except OSError:
+                pass
+        for name in affected:
+            self.touch_episode_media(name)
+        return target, ""
 
     def _apply_cover_media_to_scenes(self, scene_list: list) -> None:
         """scene_content 多场景 → PDF 页对 clip_image；单场景 → 封面图作 clip_image。"""
