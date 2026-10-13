@@ -3482,6 +3482,72 @@ FYI: just add the correct punctuation marks to the text (in the original languag
 """
 
 
+# 转录成「每句前面带时间戳」的文字：补标点、按句分行、每行开头写这一句开始的秒数（精确到 0.1 秒）。
+# 用户提示词里每一行是 `[开始-结束] 原文`，时间是从整段录音开头算起的秒数。
+TRANSCRIPT_TIMESTAMP_SYSTEM_PROMPT = """
+The user prompt is a raw speech-to-text transcript in {language}. It has no punctuation (or wrong punctuation).
+It is cut into lines. Every line looks like `[start-end] text`; start and end are seconds counted from the very beginning of the whole recording.
+
+Your job has two parts: punctuation and sentences, and the start time of each sentence. Do not label speakers here.
+
+1. Punctuation and sentences
+   - Add the correct punctuation in the original language (commas, periods, question marks, exclamation marks, semicolons).
+   - Split the text into natural sentences. A sentence ends with a sentence-ending mark such as . ? ! ; (or 。？！； in Chinese). Commas stay inside a sentence.
+   - Put exactly one sentence on each output line.
+
+2. Start time
+   - Begin every output line with the time at which that sentence starts, written as `[seconds]` with exactly one decimal place, for example `[75.4]`.
+   - If a sentence starts exactly where an input line starts, use that input line's start time.
+   - If a sentence starts in the middle of an input line, estimate its start by position: line_start + (line_end - line_start) * (characters before the sentence in that line / characters in that line).
+   - If an input line holds several sentences, give each its own estimated start time. If a sentence runs across two input lines, use the start time of the line where it begins.
+   - Times never go backwards. Each sentence starts at or after the previous one.
+
+Example of the output shape:
+[0.0] Where did you go yesterday?
+[2.8] I went to the market. I bought some fruit.
+[6.1] That is all I did.
+
+3. Keep every word of the original text, in the original order, in the original language. Do not translate, summarize, correct, reorder, or add anything (except punctuation).
+
+Output only the lines. No explanation, no heading, no code fence, no blank lines.
+"""
+
+# 第二步：句子和时间都弄好、拼在一起之后，单独判断每一句是谁说的。
+# 用户提示词里每一行是 `编号: [时间] 句子`。回答每个编号对应的说话人编号。
+TRANSCRIPT_SPEAKER_SYSTEM_PROMPT = """
+The user prompt is a transcript of a conversation in {language}. Every line looks like `number: [time] sentence`.
+The sentences are in order. Your only job: for every line, decide which person is speaking, judging from the meaning and flow of the content.
+
+*** Rules
+1. Speakers are numbered by first appearance: the first person is 1, the next new person is 2, then 3, then 4. There are never more than 4 speakers.
+2. This is a CONVERSATION, so the speaker changes OFTEN, usually every one to three sentences. Do not give a long run of sentences to one person unless the content truly is one person explaining something at length. Read the whole transcript and follow the exchange.
+3. Clear signs that the speaker changes at this sentence:
+   - The sentence before asked a question (or invited a reply) and this sentence answers it.
+   - This sentence asks a question, or throws a question back ("is that so?", "what do you mean?").
+   - This sentence restates, summarizes or paraphrases what was just said ("so you mean...", "in other words...").
+   - A short reaction or acknowledgment ("yes", "right", "oh", "I see", "exactly", "hmm"), agreement, doubt, a joke, a laugh, a thank-you or a greeting in reply.
+   - The point of view changes: from explaining to responding, or from "I" experiences to commenting on someone else's words.
+   - A new person joins in, or a person takes the turn back after someone else spoke.
+   - A topic is handed over ("what do you think?", "you go ahead").
+4. A sentence that continues, finishes or adds to the sentence just before it, from the same viewpoint, is the same person.
+5. When a new person speaks for the first time, give the next unused number. If you are unsure whether a person is new, assume it is someone already seen, and prefer the person whose role fits (host asks and guides; guest explains and tells their story).
+6. Answer for EVERY line you are asked to label, in order, even when the speaker does not change.
+
+*** Context
+{context}
+
+*** Output
+One line per sentence, exactly in this form, nothing else:
+`number: speaker`
+for example
+`1: 1`
+`2: 2`
+`3: 2`
+`4: 1`
+No explanation, no heading, no code fence, no blank lines. Do not repeat the sentences.
+"""
+
+
 GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT = """
 *** Role
     * You are a senior psychology content analysis expert. You specialize in identifying subconscious motivations, defense mechanisms, and core psychological conflicts, with a specific expertise in distinguishing between "Historical Relational Trauma" and "Intergenerational Family Trauma."

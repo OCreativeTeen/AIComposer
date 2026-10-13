@@ -205,7 +205,7 @@ class WorkflowGUI:
         self.current_scene_index = 0
 
         self.llm_api = llm_api.LLMApi()
-        self.llm_api_local = llm_api.LLMApi(llm_api.GEMINI)
+        self.llm_api_local = llm_api.LLMApi(llm_api.TEXT_MODEL)
 
         # 显示项目选择对话框（或 --open-pid 时直接加载指定项目）
         if initial_pid:
@@ -3962,6 +3962,18 @@ class WorkflowGUI:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _transcribe_engine(self) -> str | None:
+        """用哪一种转录，由 config.TRANSCRIBE_ENGINE 决定（"whisper" 或 "voicebox"），不再问用户。"""
+        engine = str(getattr(config, "TRANSCRIBE_ENGINE", "whisper") or "").strip().lower()
+        if engine not in ("whisper", "voicebox"):
+            messagebox.showerror(
+                "音频转录",
+                f"config.py 里的 TRANSCRIBE_ENGINE 写的是 {engine!r}，只能是 \"whisper\" 或 \"voicebox\"。",
+                parent=self.root,
+            )
+            return None
+        return engine
+
     def choose_clip_transcribe_scope(self):
         """把主轨声音转成讲稿。范围是本场、本集，或全部场。"""
         picked = askchoice(
@@ -3978,13 +3990,8 @@ class WorkflowGUI:
         _label, scope = picked
         if scope not in ("scene", "episode", "all"):
             return
-        engine = self._ask_near_choices(
-            self.btn_clip_transcribe,
-            "音频转录",
-            [("whisper", "本机 Whisper"), ("voicebox", "Voicebox")],
-            "用哪一种把声音转成文字。两种都会补上标点。",
-        )
-        if engine not in ("whisper", "voicebox"):
+        engine = self._transcribe_engine()
+        if engine is None:
             return
         if getattr(self, "_clip_transcribe_busy", False):
             messagebox.showinfo("音频转录", "上一次转录还在进行。", parent=self.root)
@@ -8229,13 +8236,8 @@ class WorkflowGUI:
             self._copy_span_audio(key, float(start), float(end))
             return
         if choice["action"] == "transcribe":
-            engine = self._ask_near_choices(
-                self.speech_span_canvas,
-                "转成文字",
-                [("whisper", "本机 Whisper"), ("voicebox", "Voicebox")],
-                "这一段声音用哪一种转写。两种都会补上标点。",
-            )
-            if not engine:
+            engine = self._transcribe_engine()
+            if engine is None:
                 return
             if getattr(self, "_span_regen_busy", False):
                 messagebox.showinfo(title, "上一段还在处理。", parent=self.root)
@@ -8511,7 +8513,7 @@ class WorkflowGUI:
         system = config_prompt.SRT_REORGANIZATION_SYSTEM_PROMPT.format(language=lang_label)
         try:
             from utility import llm_api
-            raw = llm_api.LLMApi(llm_api.GEMINI).generate_text(system, text)
+            raw = llm_api.LLMApi(llm_api.TEXT_MODEL).generate_text(system, text)
         except Exception as exc:
             print(f"span punctuate failed: {type(exc).__name__}: {exc}")
             return text

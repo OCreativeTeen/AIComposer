@@ -805,6 +805,7 @@ PROJECT_PROFILE_STORAGE_KEYS = frozenset({
     "actor_voices",
     "final_video_speed",
     "source_media",
+    "source_transcript",
     "slide_prompt",
 })
 
@@ -1480,7 +1481,7 @@ class ProjectSelectionDialog:
         self.config_manager = config_manager
         self.youtube_gui = youtube_gui
         self.selected_config = None
-        self.llm_api_local = LLMApi(llm_api.GEMINI)
+        self.llm_api_local = LLMApi(llm_api.TEXT_MODEL)
         # 与频道 topics.json / tags.json 对应；create_new_project 内「添加标签」等闭包依赖
         self.topics_data = []
         self.tag_features_map = {}

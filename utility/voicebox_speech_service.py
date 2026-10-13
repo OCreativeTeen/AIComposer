@@ -35,6 +35,33 @@ DEFAULT_BASE_URL = "http://192.168.1.36:17493"
 DEFAULT_PROFILE_ID = "5c3b89e6-7eab-4809-8145-ba1c995e8abe"
 
 
+def _transcribe_segments(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """从 /transcribe 的响应里取分段时间。认得常见写法，取不到返回空列表。"""
+    for key in ("segments", "chunks", "results", "timestamps"):
+        raw = data.get(key)
+        if not isinstance(raw, list):
+            continue
+        out: List[Dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or item.get("caption") or item.get("transcript") or "").strip()
+            start = item.get("start", item.get("start_time"))
+            end = item.get("end", item.get("end_time"))
+            if start is None and isinstance(item.get("timestamp"), (list, tuple)) and len(item["timestamp"]) == 2:
+                start, end = item["timestamp"]
+            try:
+                start_f = float(start)
+                end_f = float(end)
+            except (TypeError, ValueError):
+                continue
+            if text and end_f >= start_f:
+                out.append({"start": start_f, "end": end_f, "text": text})
+        if out:
+            return out
+    return []
+
+
 def _transcribe_result_json(text: str, duration: Any = None) -> str:
     """统一为 JSON 字符串，含 ``text`` 与 ``duration``（无则 ``null``）。"""
     payload: Dict[str, Any] = {"text": text}
@@ -451,7 +478,7 @@ class VoiceboxService:
         print(f"Voicebox: timeout downloading audio for id={job_id}: {last_err}")
         return None
 
-    def transcribe(self, file_path: str) -> Optional[str]:
+    def transcribe(self, file_path: str, with_timestamps: bool = False) -> Optional[str]:
         """
         POST /transcribe，multipart 字段名 ``file``。
 
@@ -460,6 +487,10 @@ class VoiceboxService:
             {"text": "…", "duration": 10.05425}
 
         成功时返回 **JSON 字符串**，形如上述对象（含 ``text`` 与 ``duration``；无时长则为 ``null``）。
+
+        ``with_timestamps=True`` 时，如果服务端的响应里带了分段时间（``segments`` / ``chunks`` / ``results``，
+        每项有开始、结束和文字），返回的 JSON 里会多一个 ``segments``：``[{"start", "end", "text"}, ...]``，
+        时间单位是秒。服务端没有给分段时间时，结果和原来一样，只有 ``text`` 与 ``duration``。
         """
         self._last_transcribe_error = ""
         if not file_path or not os.path.isfile(file_path):
@@ -512,7 +543,12 @@ class VoiceboxService:
 
         for key in ("text", "transcript", "result", "transcription", "content"):
             if key in data and data[key] is not None:
-                return _transcribe_result_json(str(data[key]).strip(), data.get("duration"))
+                result = json.loads(_transcribe_result_json(str(data[key]).strip(), data.get("duration")))
+                if with_timestamps:
+                    segments = _transcribe_segments(data)
+                    if segments:
+                        result["segments"] = segments
+                return json.dumps(result, ensure_ascii=False)
         return json.dumps(data, ensure_ascii=False)
 
     def string_to_code(self, input_string: str) -> str:

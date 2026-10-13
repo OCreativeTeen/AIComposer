@@ -11,6 +11,7 @@ import config
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
 import tkinter.ttk as ttk
+from tkinter import messagebox
 from PIL import Image, ImageTk
 from . import file_util
 
@@ -24,6 +25,10 @@ GPT_MINI = "deepseek-flash"
 GEMINI = "gemini-3.5-flash-lite"
 
 MANUAL = "manual"
+
+# 代码里原来写死用 Gemini 的文字类调用（补标点、分析、改写、生成场景等），统一用这个模型。
+# Gemini 失败率高，现在换成 DeepSeek Flash。想换回 Gemini，把这一行改成 GEMINI。
+TEXT_MODEL = GPT_MINI
 
 MODELS = {
     GPT_MINI : {
@@ -50,7 +55,8 @@ class LLMApi:
         self.model = model
 
         self.openai_client = OpenAI(
-            api_key = os.getenv("OPENAI_API_KEY", ""),
+            # DeepSeek 的密钥。优先读 DEEPSEEK_API_KEY，没有再读老名字 OPENAI_API_KEY。
+            api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
             base_url = MODELS[GPT_MINI]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
@@ -396,23 +402,47 @@ class LLMApi:
         return kept
 
 
-    def generate_text(self, system_prompt, user_prompt, *, images=None, attachment=None):
+    def generate_text(self, system_prompt, user_prompt, *, images=None, attachment=None, _force_model=None):
+        """生成文字。
+
+        - 指定了模型（不是 None、不是 MANUAL）：直接用它。
+        - 没指定模型（LLMApi()）：
+            * 纯文字（没有图片、没有要手动贴的音频/视频/PDF）：先自动用 TEXT_MODEL（DeepSeek Flash），
+              失败（报错或空回答）才打开手动窗口，让人处理。
+            * 有图片或附件：直接打开手动窗口，和原来一样。
+        - MANUAL：总是打开手动窗口。
+        """
         user_prompt = user_prompt or "Continue."
         messages=[
             self.create_message("system", system_prompt),
             self.create_message("user", user_prompt)
         ]
+        base_model = _force_model or self.model
 
         try:
+            if base_model is None and _force_model is None:
+                has_media = bool(self._normalize_image_paths(images)) or bool(attachment)
+                if not has_media:
+                    answer = self.generate_text(
+                        system_prompt, user_prompt, _force_model=TEXT_MODEL
+                    )
+                    if isinstance(answer, str) and answer.strip():
+                        return answer
+                    print(f"⚠️ 自动调用 {TEXT_MODEL} 没成功，转到手动窗口。")
+                    if TEXT_MODEL == GPT_MINI and not (
+                        os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+                    ):
+                        print("⚠️ 没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
+
             # popup dialog to ask user choose from GPT_MINI, GEMINI, or MANUAL, return choice as model
-            if self.model == MANUAL or self.model is None:
+            if base_model == MANUAL or base_model is None:
                 model, manual_response = self._show_model_dialog(
                     system_prompt, user_prompt, image_paths=images, attachment=attachment
                 )
                 if model == MANUAL:
                     return manual_response
             else:
-                model = self.model
+                model = base_model
 
             # 准备请求参数（在确定模型后设置）
             if model == GPT_MINI:
@@ -821,9 +851,200 @@ class LLMApi:
                 except OSError:
                     hint.config(text="没有找到播放器")
 
+            transcript = {"path": "", "running": False}
+
+            def _run_transcribe():
+                """后台一段一段转录，再把带时间戳的文字文件放进剪贴板，换掉刚才拷的媒体。"""
+                import threading
+
+                import project_manager
+                from utility import media_transcript
+
+                engine = str(getattr(config, "TRANSCRIBE_ENGINE", "whisper") or "").strip().lower()
+                if engine not in ("whisper", "voicebox"):
+                    messagebox.showerror(
+                        "转录",
+                        f"config.py 里的 TRANSCRIBE_ENGINE 写的是 {engine!r}，只能是 \"whisper\" 或 \"voicebox\"。",
+                        parent=dialog,
+                    )
+                    return
+                cfg = project_manager.PROJECT_CONFIG if isinstance(project_manager.PROJECT_CONFIG, dict) else {}
+                pid = str(cfg.get("pid") or getattr(project_manager, "pid", "") or "")
+                language = str(cfg.get("language") or "zh")
+                out_dir = None
+                if pid:
+                    try:
+                        out_dir = config.get_temp_path(pid)
+                    except Exception:  # noqa: BLE001
+                        out_dir = None
+                # 文字稿放在媒体旁边，文件名和媒体一样（只是扩展名 .txt）。媒体所在文件夹写不了才放临时目录。
+                media_dir = os.path.dirname(os.path.abspath(attachment))
+                if media_dir and os.access(media_dir, os.W_OK):
+                    out_dir = media_dir
+
+                state = {"done": False, "cancel": False, "error": "", "path": "", "message": "正在准备转录…",
+                         "notes": []}
+                # 转录里调用 LLM 失败一次，就转到手动模式：请这里（主线程）打开 LLM 手动窗口。
+                bridge = media_transcript.ManualBridge(lambda: state["cancel"])
+                prog = tk.Toplevel(dialog)
+                prog.title("转录中")
+                prog.transient(dialog)
+                prog.resizable(False, False)
+                body_box = ttk.Frame(prog, padding=14)
+                body_box.pack(fill=tk.BOTH, expand=True)
+                prog_label = ttk.Label(body_box, text=state["message"], width=44, justify=tk.LEFT)
+                prog_label.pack(anchor=tk.W)
+                bar = ttk.Progressbar(body_box, length=320, mode="determinate", maximum=1, value=0)
+                bar.pack(fill=tk.X, pady=(8, 8))
+
+                def _cancel():
+                    state["cancel"] = True
+                    prog_label.config(text="正在取消…")
+
+                ttk.Button(body_box, text="取消", command=_cancel).pack(anchor=tk.E)
+                prog.protocol("WM_DELETE_WINDOW", _cancel)
+                prog.update_idletasks()
+                try:
+                    px = dialog.winfo_rootx() + (dialog.winfo_width() - prog.winfo_reqwidth()) // 2
+                    py = dialog.winfo_rooty() + (dialog.winfo_height() - prog.winfo_reqheight()) // 3
+                    prog.geometry(f"+{max(0, px)}+{max(0, py)}")
+                except tk.TclError:
+                    pass
+                prog.grab_set()
+                transcript["running"] = True
+
+                def _progress(done: int, total: int, message: str):
+                    if message:
+                        state["message"] = message
+                    state["ratio"] = (done / total) if total else 0.0
+
+                def _work():
+                    try:
+                        state["path"] = media_transcript.transcribe_media_with_timestamps(
+                            attachment,
+                            engine=engine,
+                            pid=pid,
+                            language=language,
+                            out_dir=out_dir,
+                            progress=_progress,
+                            cancelled=lambda: state["cancel"],
+                            notes=state["notes"],
+                            manual_llm=bridge.call,
+                        )
+                    except InterruptedError:
+                        state["error"] = "cancelled"
+                    except Exception as exc:  # noqa: BLE001
+                        state["error"] = str(exc) or type(exc).__name__
+                    state["done"] = True
+
+                def _finish():
+                    transcript["running"] = False
+                    try:
+                        prog.grab_release()
+                        prog.destroy()
+                    except tk.TclError:
+                        pass
+                    try:
+                        dialog.grab_set()
+                    except tk.TclError:
+                        pass
+                    if state["error"] == "cancelled":
+                        hint.config(text="已取消转录。媒体还在剪贴板里")
+                        return
+                    if state["error"]:
+                        hint.config(text="转录失败。媒体还在剪贴板里")
+                        messagebox.showerror("转录", state["error"], parent=dialog)
+                        return
+                    transcript["path"] = state["path"]
+                    if state["notes"]:
+                        messagebox.showwarning(
+                            "转录：有一部分没做好",
+                            "文字稿已经写出来了，但是：\n\n" + "\n".join(state["notes"]),
+                            parent=dialog,
+                        )
+                    if self._copy_path_to_clipboard(state["path"]):
+                        hint.config(text=f"转录文字已拷到剪贴板：{os.path.basename(state['path'])}")
+                        messagebox.showinfo(
+                            "转录",
+                            "转好了。剪贴板里现在是带时间戳的文字文件：\n"
+                            + os.path.basename(state["path"]),
+                            parent=dialog,
+                        )
+                    else:
+                        hint.config(text="转录好了，但文字文件没能拷进剪贴板")
+
+                def _poll():
+                    try:
+                        if not prog.winfo_exists():
+                            return
+                        prog_label.config(text=state["message"])
+                        bar.config(value=float(state.get("ratio", 0.0)))
+                    except tk.TclError:
+                        return
+                    if bridge.pending():
+                        def _before_manual(what):
+                            state["message"] = f"自动调用没成功（{what}），请在手动窗口里处理…"
+                            try:
+                                prog_label.config(text=state["message"])
+                                prog.grab_release()
+                            except tk.TclError:
+                                pass
+
+                        def _after_manual():
+                            try:
+                                prog.grab_set()
+                            except tk.TclError:
+                                pass
+
+                        bridge.serve(_before_manual, _after_manual)
+                    if state["done"]:
+                        _finish()
+                        return
+                    dialog.after(200, _poll)
+
+                threading.Thread(target=_work, daemon=True).start()
+                dialog.after(200, _poll)
+
+            def _offer_transcribe():
+                if transcript["running"]:
+                    return
+                if not messagebox.askyesno(
+                    "转录",
+                    "媒体已经拷到剪贴板了。\n\n要不要进一步把里面的声音转成文字？\n"
+                    "文字每一句前面带时间戳（精确到 0.1 秒）。转好以后，剪贴板里的内容会换成这份文字文件。",
+                    parent=dialog,
+                ):
+                    return
+                done_path = transcript.get("path") or ""
+                if done_path and os.path.isfile(done_path):
+                    if self._copy_path_to_clipboard(done_path):
+                        hint.config(text=f"转录文字已拷到剪贴板：{os.path.basename(done_path)}")
+                    return
+                _run_transcribe()
+
             def _copy_attachment():
+                if file_kind in ("audio", "video"):
+                    from utility import media_transcript
+
+                    existing = media_transcript.find_transcript_for_media(attachment)
+                    if existing:
+                        # 已经有文字稿：让用户选拷媒体还是拷文字稿，不再问要不要转录。
+                        choice = media_transcript.ask_copy_choice(
+                            dialog, os.path.basename(attachment), os.path.basename(existing)
+                        )
+                        if not choice:
+                            return
+                        target = existing if choice == "transcript" else attachment
+                        if self._copy_path_to_clipboard(target):
+                            what = "文字稿" if choice == "transcript" else "媒体"
+                            hint.config(text=f"{what}已拷到剪贴板：{os.path.basename(target)}")
+                        else:
+                            hint.config(text="拷贝失败")
+                        return
                 if self._copy_path_to_clipboard(attachment):
                     hint.config(text="已拷到剪贴板。可以粘到别处")
+                    if file_kind in ("audio", "video"):
+                        dialog.after(30, _offer_transcribe)
                 else:
                     hint.config(text="拷贝失败")
 

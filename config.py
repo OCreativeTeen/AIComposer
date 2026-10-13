@@ -752,6 +752,27 @@ def find_matched_file(folder, prefix, post, kernel=None, used_files=None):
 # 字幕下载失败时，是否 fallback 到下载音频并用 Whisper 转录（默认关闭）
 TRANSCRIBE_FALLBACK_TO_AUDIO = True
 
+# 工作流里「音频转录」和「这一段转成文字」用哪一种把声音转成文字：
+#   "whisper"  = 本机 Whisper
+#   "voicebox" = 调 Voicebox 的 /transcribe 接口
+# 想换的话直接改这一行，不用重启其它东西，重新打开工作流窗口就生效。
+TRANSCRIBE_ENGINE = "whisper"
+
+# 长音频/视频转录成「带时间戳的文字」时，每一小段多少秒；一段一段转，再合起来。
+TRANSCRIBE_CHUNK_SECONDS = 600
+# 补标点、按句标时间交给 LLM 时，一次处理多少小段（太多会超长，太少调用次数多）。
+# 每小段 600 秒（10 分钟），1 小段 = 10 分钟左右的话，一次交给 LLM。
+# （小段从 300 秒加到 600 秒后，这里从 2 改成 1，保证每次交给 LLM 的仍是 10 分钟左右。）
+TRANSCRIBE_LLM_BATCH_CHUNKS = 1
+# 最后一步「判断每一句是谁说的」是单独的一次 LLM 调用，整段文字一起给它（上下文更全）。
+# 文字太长时，按这个字数（含时间等）分成几个窗口，后一个窗口会带上前面已判断的几句。
+TRANSCRIBE_SPEAKER_MAX_CHARS = 40000
+# 补标点、判断说话人这两步自动调用 LLM（DeepSeek）时，失败了自动重试几次。1 = 不重试。
+# 失败（模型忙返回 503、没返回等）一次，就转到手动模式：打开 LLM 手动窗口，让人处理后把结果贴回来；
+# 下一次 LLM 调用仍然先试自动。想先自动多试几次再转手动，把这个数改大
+# （每次重试前多等 6 秒：6、12、18 秒…）。
+TRANSCRIBE_LLM_RETRIES = 1
+
 
 # =============================================================================
 # 基础路径配置

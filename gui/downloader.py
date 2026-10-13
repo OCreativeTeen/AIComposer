@@ -631,6 +631,7 @@ def _is_summary_pdf_file_path(path: str) -> bool:
 
 GEN_VIDEO_SLIDE_KEY = "slide"
 STORY_MEDIA_KEY = "media"
+STORY_TRANSCRIPT_KEY = "transcript"
 _TEXT_DROP_SUFFIXES = (".txt", ".md", ".markdown", ".text", ".rst", ".log", ".csv")
 _AUDIO_DROP_SUFFIXES = (
     ".mp3",
@@ -685,6 +686,34 @@ def _find_item_media_file(video: dict) -> str:
     if stored and os.path.isfile(stored):
         return os.path.abspath(stored)
     return ""
+
+
+def _find_item_transcript_file(video: dict) -> str:
+    """这条的媒体文字稿（带时间戳、说话人）。没有或文件不在就返回空字符串。"""
+    if not isinstance(video, dict):
+        return ""
+    stored = (video.get(STORY_TRANSCRIPT_KEY) or "").strip()
+    if stored and os.path.isfile(stored):
+        return os.path.abspath(stored)
+    # 记录里没有时，看媒体旁边有没有同名的 .txt（文字稿和媒体同名，只是扩展名不同）。
+    media = _find_item_media_file(video)
+    if media:
+        guess = os.path.splitext(media)[0] + ".txt"
+        if os.path.isfile(guess):
+            return os.path.abspath(guess)
+    return ""
+
+
+def _item_transcript_text(video: dict) -> tuple[str, str]:
+    """(文字稿路径, 文字稿内容)。没有文字稿或内容是空的，返回 ("", "")。"""
+    path = _find_item_transcript_file(video)
+    if not path:
+        return "", ""
+    try:
+        text = _read_plain_text_file(path).strip()
+    except OSError:
+        return "", ""
+    return (path, text) if text else ("", "")
 
 
 def _strip_markdown_embedded_images(text: str) -> tuple[str, int]:
@@ -771,6 +800,30 @@ def _media_source_blurb(path: str) -> str:
             + tail
         )
     return ""
+
+
+def _transcript_source_blurb(media_path: str, transcript_text: str) -> str:
+    """有文字稿时，{content} 直接放文字稿，不再附上媒体。"""
+    kind = _media_kind_for_path(media_path)
+    word = "video" if kind == "video" else "audio"
+    length = _media_length_line(media_path)
+    tail = f"\n{length}" if length else ""
+    return (
+        f"{word.capitalize()} file: {os.path.basename(media_path)}\n"
+        f"Below is the written transcript of the speech in this {word}. "
+        "The recording itself is not attached; work from this transcript."
+        + tail
+        + "\n\n"
+        + transcript_text
+    )
+
+
+def _media_material_override(video: dict, media_path: str) -> str:
+    """选了媒体：有文字稿就用文字稿，没有再用媒体本身。"""
+    _tpath, text = _item_transcript_text(video)
+    if text:
+        return _transcript_source_blurb(media_path, text)
+    return _media_source_blurb(media_path)
 
 
 def _pdf_page_count(pdf_path: str) -> int:
@@ -1146,23 +1199,24 @@ def _dialogue_mode_from_row(vd, cfg=None) -> str:
 
 
 _MEDIA_SCENE_LENGTH_NOTE = (
-    "Scene size for a recording: cut by meaning and by sentence, never by length. "
-    "Do not choose a length first. Read the speech, find where one independent point is finished, "
-    "and end the scene at the end of the sentence that finishes it. Then read the timestamp of that sentence end "
-    "and write it as end. A scene starts where a sentence starts and ends where a sentence ends. "
-    "Never cut in the middle of a sentence, not even to make a scene shorter or longer. "
-    "One scene is one independent point: a few whole sentences, often two to six, "
-    "that make one thing clear on their own, or one level of a larger matter. "
-    "Its length is whatever the speech gives, so it may be 8 seconds or 45 seconds. "
-    "Scenes must not all have the same length. If most scenes come out the same length, "
-    "or round numbers like 50.00 keep repeating, you cut by length: discard the cuts and cut by sentences again. "
-    "When the speaker moves to another matter or another direction, that is the next scene. "
-    "If one point runs longer than about 60 seconds, split it by level at a sentence end. "
-    "Do not make a scene under about 8 seconds unless that single sentence is a point of its own. "
-    "Do not mix two matters or two levels in one scene, and keep the order of the speech, "
+    "Scene size for a recording: about 30 seconds, never shorter than 15 seconds and never longer than 50 seconds. "
+    "Most scenes land between 20 and 40 seconds. So a recording of N seconds has about N divided by 30 scenes: "
+    "a 10-minute recording has about 20 scenes, a 20-minute recording about 40. "
+    "Do not write a handful of long scenes. A podcast or a long talk is many scenes. "
+    "A scene starts at the start time of its first sentence. Its end is the start time of the first sentence "
+    "of the next scene, and the last scene ends at N. Its length is end minus start. "
+    "Work this subtraction for every scene before you answer. A scene under 15 seconds must be joined to the "
+    "neighbour whose matter is closest. A scene over 50 seconds must be split at a sentence end. "
+    "Then check the scene count against N divided by 30. "
+    "Never cut in the middle of a sentence. Inside the 15 to 50 second window, cut where a small point is finished, "
+    "where a question has been answered, or where the matter turns. "
+    "If one single sentence runs longer than 50 seconds by itself, it stays whole as its own scene. "
+    "Scenes need not be equal and the ends follow the sentence times, so do not repeat round numbers "
+    "such as 30.00 or 60.00 as ends. "
+    "Do not mix two matters in one scene, and keep the order of the speech, "
     "so the story or the levels stay clear from one scene to the next. "
-    "If a small piece is left at the end, join it to the scene before it. "
-    "A recording that holds only one point is one scene."
+    "A recording shorter than 15 seconds is one scene. "
+    "Many scenes means several episodes: the episode rules of the prompt group them, 5 to 15 scenes per episode."
 )
 
 _MEDIA_SCENE_TIMING_NOTE = (
@@ -1213,8 +1267,50 @@ def _prompt_text_for_material(prompt: str, material: str) -> str:
             "This run uses the video.\n"
             + _MEDIA_SCENE_TIMING_NOTE
         ),
+        "transcript": (
+            "Content source for this run: the written transcript of an audio or video recording, "
+            "given in Reference Content. The recording itself is not attached. "
+            "Every media item is worked from its transcript.\n"
+            "How to read the transcript:\n"
+            "- Every line is one sentence. It starts with its start time [hh:mm:ss.s] "
+            "(hours:minutes:seconds.tenths) on the recording.\n"
+            "- A speaker mark such as <1> or <2> comes right after the time, only on the sentence where "
+            "the speaker changes. A sentence without a mark is spoken by the same person as the sentence before it. "
+            "The first line is always <1>. There are at most 4 speakers.\n"
+            "Scenes from the transcript:\n"
+            "- Group whole sentences into scenes. A scene never cuts a sentence. Every scene is about 30 seconds, "
+            "never under 15 and never over 50 seconds; a recording of N seconds has about N divided by 30 scenes.\n"
+            "- You know the exact start time of every sentence, so you can measure. Walk down the transcript from the "
+            "start of a scene and find the sentence start that is closest to 30 seconds later, preferring a sentence end "
+            "where a small point is finished or a question has been answered, inside the 15 to 50 second window. "
+            "That sentence start is the next scene's start. Compute end minus start for every scene, convert times to "
+            "seconds first, and fix any scene outside 15 to 50 seconds before you answer.\n"
+            "- A scene's \"start\" is the start time of its first sentence. Its \"end\" is the start time of the "
+            "first sentence of the next scene, so each scene's end equals the next scene's start. "
+            "The first scene starts at 0.00. The last scene ends at N, the Recording length.\n"
+            "- Write start and end in seconds with two decimal places: convert [hh:mm:ss.s] to seconds "
+            "(for example [00:01:15.4] is 75.40). Take these numbers from the transcript times. Do not guess them.\n"
+            "Speakers in the scenes:\n"
+            "- Put the speaker marks into each scene's \"speaking\" using the same <N> format as this prompt's "
+            "speaking field. Use the transcript's own numbers: transcript speaker <N> is written as <N>, "
+            "and the same person keeps the same number in every scene.\n"
+            "- Write a mark at the start of every scene's speaking for the person who says its first sentence, "
+            "even when the transcript line has no mark there. Then write a new mark only where the speaker changes, "
+            "at the same sentence as in the transcript.\n"
+            "- The actor list of each scene follows the numbers used in that scene's speaking. "
+            "Place N in the actor list is the person marked <N>: <1> is the first entry, <2> the second, "
+            "<3> the third, and so on. Look at the highest number used in the scene's speaking; "
+            "the actor list must have that many entries, in order, so every <N> that appears points to the right person. "
+            "If a scene uses only <2>, the actor list still has place 1 (the person who is <1> in the transcript) "
+            "and place 2. Name each person by this prompt's own actor rules (for example the host and the guests), "
+            "and a person keeps the same place in every scene.\n"
+            "The episode rules of this prompt are not changed by any of this. "
+            "This run uses the transcript.\n"
+            + _MEDIA_SCENE_TIMING_NOTE
+        ),
     }
     names = {
+        "transcript": "the transcript",
         "pdf": "the PDF",
         "audio": "the audio recording",
         "video": "the video",
@@ -6907,7 +7003,7 @@ class MediaGUIManager:
         self.language = self._input_language  # 与 config.LANGUAGES 键一致（欢迎屏已选）
         _dl_lang = 'en' if self._input_language == 'en' else 'zh'  # yt-dlp 字幕常用 en/zh
         
-        self.llm_api_local = llm_api.LLMApi(llm_api.GEMINI)
+        self.llm_api_local = llm_api.LLMApi(llm_api.TEXT_MODEL)
         self.llm_api = llm_api.LLMApi()
 
         # 创建YoutubeDownloader实例
@@ -8271,12 +8367,25 @@ class MediaGUIManager:
                     media_path = _find_item_media_file(video_detail)
                     if not media_path:
                         show_auto_close_popup(dlg, "媒体", "这一条还没有音频或视频。")
-                    elif _copy_file_to_clipboard_hdrop(dlg, media_path):
-                        show_auto_close_popup(
-                            dlg,
-                            "已复制",
-                            f"文件已拷到剪贴板，可以粘贴到别处：\n{os.path.basename(media_path)}",
-                        )
+                    else:
+                        target = media_path
+                        transcript_path = _find_item_transcript_file(video_detail)
+                        if transcript_path:
+                            from utility import media_transcript
+
+                            choice = media_transcript.ask_copy_choice(
+                                dlg, os.path.basename(media_path), os.path.basename(transcript_path)
+                            )
+                            if not choice:
+                                return "break"
+                            if choice == "transcript":
+                                target = transcript_path
+                        if _copy_file_to_clipboard_hdrop(dlg, target):
+                            show_auto_close_popup(
+                                dlg,
+                                "已复制",
+                                f"文件已拷到剪贴板，可以粘贴到别处：\n{os.path.basename(target)}",
+                            )
                 else:
                     _copy_analyzed_text()
                 return "break"
@@ -8346,17 +8455,21 @@ class MediaGUIManager:
                 elif material_var.get() == "media":
                     media_path = _find_item_media_file(video_detail)
                     kind = _media_kind_for_path(media_path)
+                    transcript_path = _find_item_transcript_file(video_detail)
+                    transcript_line = (
+                        f"文字稿：{os.path.basename(transcript_path)}\n" if transcript_path else ""
+                    )
                     if media_path and kind == "audio":
                         material_preview.insert(
                             "1.0",
-                            f"音频：{os.path.basename(media_path)}\n\n"
+                            f"音频：{os.path.basename(media_path)}\n{transcript_line}\n"
                             "双击这里，把这个音频文件拷到剪贴板。\n"
                             "再拖一个音频或 mp4 进来，会换掉这一个。",
                         )
                     elif media_path and kind == "video":
                         material_preview.insert(
                             "1.0",
-                            f"视频：{os.path.basename(media_path)}\n\n"
+                            f"视频：{os.path.basename(media_path)}\n{transcript_line}\n"
                             "双击这里，把这个视频文件拷到剪贴板。\n"
                             "再拖一个音频或 mp4 进来，会换掉这一个。",
                         )
@@ -8513,6 +8626,23 @@ class MediaGUIManager:
                     dest = os.path.abspath(dest)
                     old = (video_detail.get(STORY_MEDIA_KEY) or "").strip()
                     video_detail[STORY_MEDIA_KEY] = dest
+                    # 换了媒体，原来的文字稿就对不上了：同一个文件夹里的删掉，记录清掉。
+                    old_transcript = (video_detail.pop(STORY_TRANSCRIPT_KEY, "") or "").strip()
+                    stale = [p for p in (old_transcript, os.path.splitext(old)[0] + ".txt" if old else "") if p]
+                    new_transcript = os.path.splitext(dest)[0] + ".txt"
+                    for cand in stale:
+                        t_abs = os.path.abspath(cand)
+                        if os.path.normcase(t_abs) == os.path.normcase(new_transcript):
+                            continue  # 同名媒体重新拖进来，文字稿留着
+                        if not os.path.isfile(t_abs):
+                            continue
+                        if os.path.normcase(os.path.dirname(t_abs)) == os.path.normcase(os.path.abspath(dest_dir)):
+                            try:
+                                os.remove(t_abs)
+                            except OSError:
+                                pass
+                    if os.path.isfile(new_transcript):
+                        video_detail[STORY_TRANSCRIPT_KEY] = os.path.abspath(new_transcript)
                     if old:
                         old_abs = os.path.abspath(old)
                         same_dir = os.path.normcase(os.path.dirname(old_abs)) == os.path.normcase(
@@ -8535,9 +8665,86 @@ class MediaGUIManager:
                     "媒体",
                     f"这条的{kind_name}已换成：\n{os.path.basename(dest)}",
                 )
+                if not _find_item_transcript_file(video_detail):
+                    _offer_item_transcript(dest, dest_dir)
+
+            def _offer_item_transcript(media_path: str, dest_dir: str) -> None:
+                """问用户要不要把这段声音转成带时间戳、带说话人的文字稿；要的话转好存在媒体旁边，记进这一行。"""
+                if not messagebox.askyesno(
+                    "转录",
+                    "要不要把这段声音转成文字稿？\n\n"
+                    "文字稿每一句前面有时间戳，并标出是谁在说话。\n"
+                    "转好的文字稿存在媒体文件旁边，建项目时会跟媒体一起拷进项目。",
+                    parent=dlg,
+                ):
+                    return
+                _run_item_transcript(media_path, dest_dir)
+
+            def _run_item_transcript(media_path: str, dest_dir: str) -> bool:
+                """转录并记进这一行。成功返回 True；取消或失败返回 False。"""
+                from utility import media_transcript
+
+                downloader = getattr(self, "downloader", None)
+                pid = str(getattr(downloader, "pid", "") or getattr(self, "pid", "") or "")
+                language = str(getattr(downloader, "language", "") or getattr(self, "language", "") or "zh")
+                path, error = media_transcript.transcribe_with_progress_dialog(
+                    dlg, media_path, pid=pid, language=language, out_dir=dest_dir
+                )
+                if error == "cancelled":
+                    show_auto_close_popup(dlg, "转录", "已取消，这一条没有文字稿。")
+                    return False
+                if error:
+                    messagebox.showerror("转录", error, parent=dlg)
+                    return False
+                video_detail[STORY_TRANSCRIPT_KEY] = os.path.abspath(path)
+                _sync_material_widgets()
+                persist(video_detail, parent=dlg)
+                show_auto_close_popup(
+                    dlg,
+                    "转录",
+                    f"文字稿已存好，和媒体在同一个文件夹：\n{os.path.abspath(path)}",
+                )
+                return True
+
+            def _require_media_transcript(media_path: str) -> bool:
+                """智能生成前：没有文字稿就提醒用户必须先转录；已有文字稿就确认是用它还是重新转录。
+
+                返回 True 表示可以接着生成；取消、转录取消或失败返回 False。
+                """
+                existing, existing_text = _item_transcript_text(video_detail)
+                if existing_text:
+                    from utility import media_transcript
+
+                    choice = media_transcript.ask_choice(
+                        dlg,
+                        "文字稿",
+                        "这条媒体已经有文字稿了：\n"
+                        f"{os.path.basename(existing)}\n\n"
+                        "用现有的文字稿生成场景，还是重新转录一遍？\n"
+                        "（重新转录会覆盖现有的文字稿。）",
+                        [("use", "用现有文字稿"), ("redo", "重新转录")],
+                    )
+                    if choice == "use":
+                        return True
+                    if choice == "redo":
+                        return _run_item_transcript(
+                            media_path, os.path.dirname(os.path.abspath(media_path))
+                        )
+                    return False
+                if not messagebox.askyesno(
+                    "需要文字稿",
+                    "这条媒体还没有文字稿。\n\n"
+                    "媒体的场景一律根据文字稿生成：文字稿里有每一句的精确时间和说话的人，"
+                    "场景的起止时间和人物转换才准。\n\n"
+                    "现在就去转录吗？转好以后会接着生成场景。",
+                    parent=dlg,
+                ):
+                    return False
+                return _run_item_transcript(media_path, os.path.dirname(os.path.abspath(media_path)))
 
             scene_ui["import_analyzed_text_file"] = _import_analyzed_text_file
             scene_ui["import_item_media"] = _import_item_media
+            scene_ui["require_media_transcript"] = _require_media_transcript
 
             def _sync_material_widgets(*_args):
                 slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
@@ -8625,6 +8832,8 @@ class MediaGUIManager:
                 if mode == "pdf":
                     return "pdf"
                 if mode == "media":
+                    if _item_transcript_text(video_detail)[1]:
+                        return "transcript"
                     return _media_kind_for_path(_find_item_media_file(video_detail)) or "audio"
                 return "analyzed"
 
@@ -8646,7 +8855,9 @@ class MediaGUIManager:
                     instr = (instr + "\n\n" + extra).strip() if instr else extra
                 elif material_var.get() == "media":
                     media_path = _find_item_media_file(video_detail)
-                    override = _media_source_blurb(media_path) if media_path else ""
+                    if media_path and not _item_transcript_text(video_detail)[1]:
+                        return ""  # 媒体一律按文字稿处理；没有文字稿就还不能出提示词
+                    override = _media_material_override(video_detail, media_path) if media_path else ""
                 try:
                     _, prompt = self._combined_prompt_text_for_label(
                         video_detail,
@@ -8661,6 +8872,16 @@ class MediaGUIManager:
 
             def _copy_selected_scene_prompt(_event=None):
                 text = (_scene_prompt_text_now() or "").strip()
+                if (
+                    not text
+                    and material_var.get() == "media"
+                    and _find_item_media_file(video_detail)
+                    and not _item_transcript_text(video_detail)[1]
+                ):
+                    show_auto_close_popup(
+                        dlg, "生成场景", "这条媒体还没有文字稿。点「智能生成」时会先帮你转录。"
+                    )
+                    return
                 if not text:
                     show_auto_close_popup(dlg, "生成场景", "这一项没有可拷贝的提示词。")
                     return
@@ -9043,6 +9264,7 @@ class MediaGUIManager:
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
             _selected_material_kind = scene_ui["selected_material_kind"]
+            _require_media_transcript = scene_ui["require_media_transcript"]
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
                 frm, wrap=tk.WORD, width=100, height=35, font=("Consolas", 10)
@@ -9313,14 +9535,18 @@ class MediaGUIManager:
                                     parent=dlg,
                                 )
                                 return
-                            override = _media_source_blurb(media_path)
+                            if not _require_media_transcript(media_path):
+                                return
+                            kind = _selected_material_kind()
+                            override = _media_material_override(video_detail, media_path)
                         source_note = _prompt_text_for_material(" ", kind).strip()
                         if source_note:
                             user_instr = (user_instr + "\n\n" + source_note).strip() if user_instr else source_note
                         attachment = ""
                         if kind == "pdf":
                             attachment = _find_gen_video_slide_for_row(video_detail)
-                        elif material_var.get() == "media":
+                        elif material_var.get() == "media" and kind != "transcript":
+                            # 有文字稿就直接用文字稿，不再附媒体；没有再附媒体本身。
                             attachment = _find_item_media_file(video_detail)
                         self._run_scene_smart_generate_async(
                             dlg,

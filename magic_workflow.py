@@ -224,6 +224,11 @@ class MagicWorkflow:
             if isinstance(project_manager.PROJECT_CONFIG, dict) else ""
         if source_media:
             valid_media_files.append(config.get_media_path(self.pid) + "/" + source_media)
+        # 原始音频/视频的文字稿（带时间戳、说话人）也一样，永远留着。
+        source_transcript = os.path.basename(str(project_manager.PROJECT_CONFIG.get("source_transcript") or "").strip()) \
+            if isinstance(project_manager.PROJECT_CONFIG, dict) else ""
+        if source_transcript:
+            valid_media_files.append(config.get_media_path(self.pid) + "/" + source_transcript)
 
         # list all files inside the project_path/media folder
         all_media_files = []
@@ -925,6 +930,7 @@ class MagicWorkflow:
         self._apply_cover_media_to_scenes(scene_list)
         self._apply_item_media_as_shared_zero()
         self._apply_item_media_as_scene_clips()
+        self._copy_item_transcript_to_project()
 
         self.save_scenes_to_json()
 
@@ -957,6 +963,68 @@ class MagicWorkflow:
         if media and os.path.isfile(media):
             return os.path.abspath(media)
         return ""
+
+    def project_source_transcript_path(self) -> str:
+        """项目里保存的文字稿（``source_transcript`` 记的是 media 下的文件名）。没有就返回空字符串。"""
+        cfg = project_manager.PROJECT_CONFIG
+        if not isinstance(cfg, dict):
+            return ""
+        name = os.path.basename(str(cfg.get("source_transcript") or "").strip())
+        if not name:
+            return ""
+        path = os.path.join(config.get_media_path(self.pid), name)
+        return os.path.abspath(path) if os.path.isfile(path) else ""
+
+    def _copy_item_transcript_to_project(self) -> str:
+        """列表行上的文字稿（``transcript``）拷进项目 media 下，并在项目配置 ``source_transcript`` 记下文件名。
+
+        和原始音频/视频一样，项目自己留一份，列表里的原文件以后怎么挪都不影响。
+        列表行没有文字稿就什么都不做。返回项目里的文字稿路径，没有就返回空字符串。
+        """
+        cfg = project_manager.PROJECT_CONFIG
+        if not isinstance(cfg, dict):
+            return ""
+        _path, _ix, row = project_manager.find_project_topic_list_row(cfg)
+        listed = ""
+        if isinstance(row, dict):
+            listed = str(row.get("transcript") or "").strip()
+        if not listed or not os.path.isfile(listed):
+            # 记录里没有，就看列表媒体旁边有没有同名的 .txt。
+            media = self._row_media_path()
+            guess = os.path.splitext(media)[0] + ".txt" if media else ""
+            listed = guess if guess and os.path.isfile(guess) else ""
+        if not listed:
+            return self.project_source_transcript_path()
+        listed = os.path.abspath(listed)
+        # 项目里的文字稿和项目里的原始媒体同名，只是扩展名是 .txt。
+        saved_media = os.path.basename(str(cfg.get("source_media") or "").strip())
+        if saved_media:
+            name = os.path.splitext(saved_media)[0] + ".txt"
+        else:
+            stem = re.sub(r'[\\/:*?"<>|\s]+', "_", os.path.splitext(os.path.basename(listed))[0]).strip("_") or "transcript"
+            name = f"source_{stem}.txt"
+        folder = config.get_media_path(self.pid)
+        dest = os.path.join(folder, name)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            if os.path.normcase(os.path.abspath(dest)) != os.path.normcase(listed):
+                safe_copy_overwrite(listed, dest)
+        except OSError as exc:
+            print(f"SOURCE: copy transcript failed ({exc})")
+            return ""
+        old = os.path.basename(str(cfg.get("source_transcript") or "").strip())
+        if old and old != name:
+            old_path = os.path.join(folder, old)
+            if os.path.isfile(old_path):
+                safe_remove(old_path)
+        if cfg.get("source_transcript") != name:
+            cfg["source_transcript"] = name
+            try:
+                save_project_config()
+            except Exception as exc:  # noqa: BLE001
+                print(f"SOURCE: save project config failed: {exc}")
+        print(f"SOURCE: transcript kept in project: {name}")
+        return os.path.abspath(dest)
 
     def _original_media_path(self) -> str:
         """这个项目的原始音频或视频。
@@ -994,6 +1062,7 @@ class MagicWorkflow:
             except Exception as exc:  # noqa: BLE001
                 print(f"SOURCE: save project config failed: {exc}")
         print(f"SOURCE: original media kept in project: {name}")
+        self._copy_item_transcript_to_project()
         return os.path.abspath(dest)
 
     def _apply_item_media_as_shared_zero(self) -> None:
