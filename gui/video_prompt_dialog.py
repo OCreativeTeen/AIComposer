@@ -60,25 +60,46 @@ def open_video_prompt_dialog(
     get_image=None,
     copy_image=None,
     open_manual=None,
+    simple_actions=None,
 ) -> None:
-    """先选画面、背景、演进、运镜、动画。选好后打开手动窗口，里面放提示词和画面。"""
+    """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选画面、背景、演进、运镜、动画，
+    再打开手动窗口，里面放提示词和画面）。
+
+    simple_actions: [(按钮文字, 回调), ...]，点了就关掉本窗口再调用回调。
+    """
     opened = [s for s in (get_scenes() or []) if isinstance(s, dict)]
     transition = opened[0].get("transition") if opened else None
     is_transition = isinstance(transition, dict) and bool(transition)
 
     dlg = tk.Toplevel(parent)
-    dlg.title("视频提示")
+    dlg.title("生场视频")
     dlg.transient(parent)
     dlg.resizable(False, False)
     dlg.withdraw()
 
     main = ttk.Frame(dlg, padding=10)
     main.pack(fill=tk.BOTH, expand=True)
-    hint = ttk.Label(main, wraplength=560, justify=tk.LEFT)
+
+    if simple_actions:
+        simple_box = ttk.LabelFrame(main, text="简单：静态画面 + 声音", padding=(8, 6))
+        simple_box.pack(fill=tk.X, pady=(0, 10))
+
+        def _run_simple(callback) -> None:
+            dlg.destroy()
+            callback()
+
+        for text, callback in simple_actions:
+            ttk.Button(
+                simple_box, text=text, command=lambda cb=callback: _run_simple(cb)
+            ).pack(side=tk.LEFT, padx=(0, 6))
+
+    advanced = ttk.LabelFrame(main, text="高级：生成视频提示（交给 LLM）", padding=(8, 6))
+    advanced.pack(fill=tk.BOTH, expand=True)
+    hint = ttk.Label(advanced, wraplength=560, justify=tk.LEFT)
     hint.pack(anchor=tk.W)
-    body = ttk.Frame(main)
+    body = ttk.Frame(advanced)
     body.pack(fill=tk.BOTH, expand=True, pady=(8, 8))
-    actions = ttk.Frame(main)
+    actions = ttk.Frame(advanced)
     actions.pack(fill=tk.X)
 
     frame_var = tk.StringVar(value="two" if is_transition else "one")

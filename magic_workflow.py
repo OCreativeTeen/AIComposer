@@ -372,6 +372,80 @@ class MagicWorkflow:
         return start_time_in_story, clip_duration, story_duration, indx, len(ss), s == ss[-1]
 
 
+    # 合并前备份：只放在项目目录下的 merge_backup（不在 media 和 temp 里，清理媒体不会动它）。
+    # 只留最近一次合并，下一次合并会把它盖掉。
+    _MERGE_BACKUP_FIELDS = ("clip", "clip_audio")
+
+    def _merge_backup_dir(self) -> str:
+        return os.path.join(config.get_project_path(self.pid), "merge_backup")
+
+    def save_merge_backup(self, from_scene, to_scene, from_first: bool, first_index: int) -> None:
+        """记下合并前的两场。画面和声音拷一份放进备份目录，其余内容存在 merge.json。"""
+        folder = self._merge_backup_dir()
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
+        ordered = [from_scene, to_scene] if from_first else [to_scene, from_scene]
+        snapshots = []
+        for tag, scene in zip(("first", "second"), ordered):
+            snap = copy.deepcopy(scene)
+            for field in self._MERGE_BACKUP_FIELDS:
+                src = get_file_path(scene, field)
+                if src and os.path.isfile(src):
+                    dst = os.path.join(folder, f"{tag}_{field}{os.path.splitext(src)[1] or '.bin'}")
+                    shutil.copy2(src, dst)
+                    snap[field] = dst
+                else:
+                    snap.pop(field, None)
+            snapshots.append(snap)
+        record = {
+            "kept_id": from_scene.get("id"),
+            "removed_id": to_scene.get("id"),
+            "first_index": int(first_index),
+            "scenes": snapshots,
+        }
+        with open(os.path.join(folder, "merge.json"), "w", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=False, indent=2)
+
+    def merge_backup_info(self) -> dict | None:
+        """最近一次合并的备份记录；没有或读不了返回 None。"""
+        path = os.path.join(self._merge_backup_dir(), "merge.json")
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                record = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(record, dict) or len(record.get("scenes") or []) != 2:
+            return None
+        return record
+
+    def clear_merge_backup(self) -> None:
+        shutil.rmtree(self._merge_backup_dir(), ignore_errors=True)
+
+    def restore_merge_backup(self, kept_scene) -> int | None:
+        """把合并后的这一场换回合并前的两场。成功返回前一场的位置，否则返回 None。"""
+        record = self.merge_backup_info()
+        if not record or kept_scene not in self.scenes:
+            return None
+        if kept_scene.get("id") != record.get("kept_id"):
+            return None
+        if any(s.get("id") == record.get("removed_id") for s in self.scenes if isinstance(s, dict)):
+            return None
+        restored = []
+        for snap in record["scenes"]:
+            scene = copy.deepcopy(snap)
+            for field in self._MERGE_BACKUP_FIELDS:
+                src = snap.get(field)
+                scene.pop(field, None)
+                if src and os.path.isfile(src):
+                    refresh_scene_media(scene, field, os.path.splitext(src)[1] or ".mp4", src, True)
+            restored.append(scene)
+        index = self.scenes.index(kept_scene)
+        self.replace_scene_with_others(index, restored)
+        self.clear_merge_backup()
+        return index
+
     def merge_scene(self, from_index, to_index):
         if not (from_index-to_index==1 or from_index-to_index==-1):
             return False
@@ -387,6 +461,15 @@ class MagicWorkflow:
 
         to_scene = self.scenes[to_index]
 
+        # 合并会删掉一场，先把两场整份记下来，之后按 ⏱ 可以恢复成合并前的两场。
+        try:
+            self.save_merge_backup(from_scene, to_scene, from_index < to_index, min(from_index, to_index))
+        except Exception as exc:  # noqa: BLE001 备份失败不挡住合并，只是以后恢复不了
+            print(f"⚠️ 合并前的备份没有做成，这次合并之后不能恢复：{exc}")
+        # 合并以后，保留下来这一场之前的单场备份作废，⏱ 只认合并前的备份。
+        for key in ("back", "back_audio", "back_image_last", "back_with"):
+            from_scene.pop(key, None)
+
         speaking = from_scene.get("speaking", "")
         caption = from_scene.get("caption", "")
         from_scene["speaking"] = speaking + "  " + to_scene.get("speaking", "") if ending_punctuation(speaking) else speaking + "... " + to_scene.get("speaking", "")
@@ -401,8 +484,24 @@ class MagicWorkflow:
             video_list = [get_file_path(from_scene, "clip"), get_file_path(to_scene, "clip")]
 
         same_main_scenes = self.scenes_in_story(from_scene)
-        refresh_scene_media(from_scene, "clip_audio", ".wav",  self.ffmpeg_audio_processor.concat_audios(audio_list))
-        refresh_scene_media(from_scene, "clip", ".mp4",  self.ffmpeg_processor.concat_videos(video_list, True))
+        # 保留下来的是 from_scene（与上一场合并时是上一场，与下一场合并时是当前这一场）。
+        # 先只合并声音，再用保留下来这一场自己的 clip 图加上合并后的声音重新生成视频，
+        # 不去拼接两段旧画面；没有 clip 图时才退回拼接画面。
+        merged_audio = self.ffmpeg_audio_processor.concat_audios(audio_list)
+        keep_image = get_file_path(from_scene, "clip_image")
+        merged_video = None
+        if merged_audio and os.path.isfile(merged_audio) and keep_image and os.path.isfile(keep_image):
+            try:
+                merged_video = self.ffmpeg_processor.image_audio_to_video(keep_image, merged_audio, 1)
+            except Exception as exc:  # noqa: BLE001
+                print(f"合并后用 clip 图重新生成视频失败，改用拼接：{exc}")
+                merged_video = None
+            if merged_video and not os.path.isfile(merged_video):
+                merged_video = None
+        if not merged_video:
+            merged_video = self.ffmpeg_processor.concat_videos(video_list, True)
+        refresh_scene_media(from_scene, "clip_audio", ".wav", merged_audio)
+        refresh_scene_media(from_scene, "clip", ".mp4", merged_video)
 
         self.release_scene_page_png(to_scene)
         del self.scenes[to_index]

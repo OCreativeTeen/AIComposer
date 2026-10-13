@@ -19,6 +19,7 @@ _DEFAULT_CHOICE = {
     "visual": True,
     "speaking": True,
     "actor": False,
+    "actor_override": config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0],
 }
 
 
@@ -37,6 +38,8 @@ def _clean_choice(saved) -> dict:
     for key in ("visual", "speaking", "actor"):
         if key in saved:
             choice[key] = bool(saved[key])
+    if saved.get("actor_override") in {label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES}:
+        choice["actor_override"] = saved["actor_override"]
     return choice
 
 
@@ -81,6 +84,7 @@ def open_slide_prompt_dialog(
     visual_var = tk.BooleanVar(value=last["visual"])
     speaking_var = tk.BooleanVar(value=last["speaking"])
     actor_var = tk.BooleanVar(value=last["actor"])
+    override_var = tk.StringVar(value=last["actor_override"])
 
     narrative_box = ttk.LabelFrame(groups, text="叙事风格", padding=(8, 4))
     narrative_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
@@ -104,7 +108,16 @@ def open_slide_prompt_dialog(
     options.pack(side=tk.LEFT, anchor=tk.S)
     ttk.Checkbutton(options, text="场景描述 (visual)", variable=visual_var).pack(anchor=tk.W)
     ttk.Checkbutton(options, text="讲话 (speaking)", variable=speaking_var).pack(anchor=tk.W)
-    ttk.Checkbutton(options, text="人物 (actor)", variable=actor_var).pack(anchor=tk.W)
+    actor_row = ttk.Frame(options)
+    actor_row.pack(anchor=tk.W, fill=tk.X)
+    ttk.Checkbutton(actor_row, text="人物 (actor)", variable=actor_var).pack(side=tk.LEFT)
+    # 换成别的人物：不选就用故事里原来的人物；选了就把画面里的人物族裔和年代覆盖掉。
+    override_labels = [label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES]
+    ttk.Label(actor_row, text="  换成").pack(side=tk.LEFT)
+    override_box = ttk.Combobox(
+        actor_row, textvariable=override_var, values=override_labels, state="readonly", width=20
+    )
+    override_box.pack(side=tk.LEFT, padx=(4, 0))
 
     hints = {
         "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",
@@ -136,6 +149,7 @@ def open_slide_prompt_dialog(
                     "visual": bool(visual_var.get()),
                     "speaking": bool(speaking_var.get()),
                     "actor": bool(actor_var.get()),
+                    "actor_override": override_var.get(),
                 }
             )
         except Exception as exc:  # noqa: BLE001 记不下来不影响拷贝
@@ -176,6 +190,7 @@ def open_slide_prompt_dialog(
                 region=region or "",
                 era=era or "",
                 main_character=main_character or "",
+                actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
             )
         except ValueError as exc:
             messagebox.showerror("幻灯提示", str(exc), parent=dlg)

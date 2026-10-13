@@ -502,8 +502,11 @@ def build_slide_flow_prompt(
     use_speaking: bool = True,
     use_actor: bool = False,
     narrative: str = "story",
+    actor_override: str = "",
 ) -> str:
     """按叙事风格，以及勾选了 visual、speaking、actor 中的哪几项，组装这一次的幻灯提示词。
+
+    ``actor_override`` 是 ``SLIDE_FLOW_ACTOR_OVERRIDES`` 里的英文描述，不为空时覆盖画面里人物的族裔和年代。
 
     每种叙事风格对三项的用法不同，见 ``_slide_flow_*_rules``。至少要选 visual 或 speaking。
     """
@@ -616,6 +619,20 @@ def build_slide_flow_prompt(
                 f"Place and period: {phrase}. "
                 "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
             )
+    override = (actor_override or "").strip()
+    if override and not presentation:
+        if use_actor:
+            lines.append(
+                f"People override: draw every person in the pictures as {override}. "
+                "Keep each person's name, role, gender, and age from ``Actors``, "
+                "but ignore any ethnicity, nationality, or period that the actor descriptions suggest. "
+                "Face, skin, hair, and clothing all follow this override, and stay the same for the same person."
+            )
+        else:
+            lines.append(
+                f"People override: every person who appears in the pictures is {override}. "
+                "Face, skin, hair, and clothing all follow this, and stay the same for the same person."
+            )
     if use_actor:
         lines.extend(["", ACTOR_AGE_LOOK])
     parts = {
@@ -623,6 +640,28 @@ def build_slide_flow_prompt(
         "Story_Scene_Content": json_content,
     }
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+# 幻灯提示里覆盖画面人物的选项。值为 (界面名, 写进提示词的英文)；第一项空字符串表示不覆盖。
+SLIDE_FLOW_ACTOR_OVERRIDES: list[tuple[str, str]] = [
+    ("不覆盖（用原来的人物）", ""),
+    ("中国人 · 现代", "modern Chinese people of today"),
+    ("中国人 · 唐朝", "Chinese people of the Tang dynasty, in Tang dynasty clothing and hairstyles"),
+    ("中国人 · 宋朝", "Chinese people of the Song dynasty, in Song dynasty clothing and hairstyles"),
+    ("中国人 · 明朝", "Chinese people of the Ming dynasty, in Ming dynasty clothing and hairstyles"),
+    ("中国人 · 清朝", "Chinese people of the Qing dynasty, in Qing dynasty clothing and hairstyles"),
+    ("中国人 · 民国", "Chinese people of Republican China in the 1920s and 1930s, in period clothing"),
+    ("中国人 · 70年代", "ordinary Chinese people of the 1970s, in plain 1970s clothing"),
+    ("日本人 · 现代", "modern Japanese people of today"),
+    ("日本人 · 江户时代", "Japanese people of the Edo period, in Edo period clothing and hairstyles"),
+    ("日本人 · 明治时代", "Japanese people of the Meiji period, in Meiji period clothing"),
+    ("西方人 · 现代", "modern Western people of today, of European descent"),
+    ("西方人 · 罗马时代", "people of the Roman Empire, in Roman clothing"),
+    ("西方人 · 中世纪", "people of medieval Europe, in medieval clothing"),
+    ("西方人 · 二战时期", "Western people of the Second World War era, in 1940s clothing"),
+    ("黑人 · 现代", "modern Black people of African descent, of today"),
+    ("原始部落人", "people of a traditional tribal community, in tribal dress, before modern cities"),
+]
 
 # 图片变换：先选地域，时代只列出这一地域里的项。值为 (界面名, 写进提示词的英文)。
 SETTING_PLACES: dict[str, dict] = {

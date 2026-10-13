@@ -420,30 +420,8 @@ class WorkflowGUI:
         self.btn_finalize = ttk.Button(row, text="成片", command=self._open_finalize_menu)
         self.btn_finalize.pack(side=tk.RIGHT, padx=(20, 0))
 
-        ttk.Label(row, text="场景").pack(side=tk.LEFT)
-        ttk.Button(row, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row, text="◀", width=3, command=self.prev_scene).pack(side=tk.LEFT, padx=2)
-        self.scene_label = ttk.Label(row, text="0 / 0", width=7)
-        self.scene_label.pack(side=tk.LEFT, padx=2)
-        ttk.Button(row, text="▶", width=3, command=self.next_scene).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=(2, 4))
-        ttk.Label(row, text="│").pack(side=tk.LEFT, padx=(3, 3))
-        start_btn = ttk.Button(row, text="开始", width=4, command=lambda: self._set_scene_marker("start"))
-        start_btn.pack(side=tk.LEFT, padx=(2, 0))
-        end_btn = ttk.Button(row, text="结束", width=4, command=lambda: self._set_scene_marker("end"))
-        end_btn.pack(side=tk.LEFT, padx=(2, 0))
-        start_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
-        end_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
-        self.marker_label = ttk.Label(row, text="", width=9)
-        self.marker_label.pack(side=tk.LEFT, padx=(2, 6))
-
-        pid_frame = ttk.Frame(row)
-        pid_frame.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(pid_frame, text="PID").pack(side=tk.LEFT)
-        self.shared_pid = ttk.Label(pid_frame, width=16, relief="sunken", background="white")
-        self.shared_pid.pack(side=tk.LEFT, padx=(4, 0))
+        # 场景切换按钮和“开始/结束”标记都在右边“全场内容”标题旁边；上一场/下一场用 Alt+←/→。
+        # PID 已经显示在窗口标题上，这里不再重复显示。
 
         title_frame = ttk.Frame(row)
         title_frame.pack(side=tk.LEFT, padx=(0, 8))
@@ -800,6 +778,15 @@ class WorkflowGUI:
         if not clip_path or not os.path.isfile(clip_path):
             return False
         scene["back"] = clip_path
+        # 合并过的这一场又被改了，⏱ 应该先退这一步，之前合并前的备份作废。
+        try:
+            info = self.workflow.merge_backup_info()
+            if info and info.get("kept_id") == scene.get("id"):
+                self.workflow.clear_merge_backup()
+        except Exception as exc:  # noqa: BLE001
+            print(f"清理合并备份失败: {exc}")
+        # 新的备份先当成只改这一场；如果是一次动作改了几场，动作结束后由 _link_back_group 重新连起来。
+        scene.pop("back_with", None)
         raw_audio = scene.get("clip_audio")
         audio_path = raw_audio.strip() if isinstance(raw_audio, str) else ""
         if not audio_path or not os.path.isfile(audio_path):
@@ -826,7 +813,58 @@ class WorkflowGUI:
         if not current_scene:
             messagebox.showwarning("警告", "没有当前场景")
             return
-        back = current_scene.get("back") or ""
+        # 一次动作改了几场（比如把一段挪到旁边那场），这几场要一起恢复。
+        linked = []
+        own_id = self._scene_id_of(current_scene)
+        for other_id in current_scene.get("back_with") or []:
+            for other in self.workflow.scenes or []:
+                if (
+                    isinstance(other, dict)
+                    and other is not current_scene
+                    and self._scene_id_of(other) == other_id
+                    and own_id in (other.get("back_with") or [])
+                ):
+                    linked.append(other)
+                    break
+        if not self._restore_scene_back(current_scene):
+            if self._restore_merge(current_scene):
+                return
+            messagebox.showwarning("警告", "没有可恢复的上一步视频")
+            return
+        restored = 1
+        for other in linked:
+            if self._restore_scene_back(other):
+                restored += 1
+        self.workflow.save_scenes_to_json()
+        self.refresh_gui_scenes()
+        if restored > 1:
+            show_auto_close_popup(self.root, "恢复", f"已把这次动作改过的 {restored} 场一起恢复到之前的视频和声音。")
+        else:
+            show_auto_close_popup(self.root, "恢复", "已恢复到导入之前的视频和声音。")
+
+    def _restore_merge(self, scene) -> bool:
+        """这一场是最近一次合并留下的，就把它换回合并前的两场。"""
+        info = self.workflow.merge_backup_info()
+        if not info or info.get("kept_id") != scene.get("id"):
+            return False
+        if not messagebox.askyesno(
+            "恢复合并", "把这一场拆回合并之前的两场？", parent=self.root
+        ):
+            return True
+        index = self.workflow.restore_merge_backup(scene)
+        if index is None:
+            messagebox.showwarning("恢复合并", "合并前的备份已经对不上了，没法恢复。", parent=self.root)
+            return True
+        self._cancel_scene_debounce_timer()
+        self.current_scene_index = index
+        self.workflow.save_scenes_to_json()
+        self._refresh_gui_scenes_impl()
+        show_auto_close_popup(self.root, "恢复合并", "已恢复成合并之前的两场。")
+        return True
+
+    def _restore_scene_back(self, scene) -> bool:
+        """把一场的主轨退回备份：画面、声音和结束图。没有可恢复的备份返回 False。"""
+        back = scene.get("back") or ""
         if not isinstance(back, str):
             back = ""
         back_path = ""
@@ -836,31 +874,29 @@ class WorkflowGUI:
                 back_path = part
                 break
         if not back_path:
-            messagebox.showwarning("警告", "没有可恢复的上一步视频")
-            return
+            return False
 
-        audio_path = current_scene.get("back_audio") or ""
+        audio_path = scene.get("back_audio") or ""
         if not isinstance(audio_path, str):
             audio_path = ""
         audio_path = audio_path.strip()
         if audio_path and not os.path.isfile(audio_path):
             audio_path = ""
 
-        refresh_scene_media(current_scene, "clip", ".mp4", back_path)
+        refresh_scene_media(scene, "clip", ".mp4", back_path)
         if audio_path:
-            refresh_scene_media(current_scene, "clip_audio", ".wav", audio_path, True)
-        last_path = current_scene.get("back_image_last") or ""
+            refresh_scene_media(scene, "clip_audio", ".wav", audio_path, True)
+        last_path = scene.get("back_image_last") or ""
         if isinstance(last_path, str) and last_path.strip() and os.path.isfile(last_path.strip()):
             last_path = last_path.strip()
             refresh_scene_media(
-                current_scene, "clip_image_last", os.path.splitext(last_path)[1] or ".webp", last_path, True
+                scene, "clip_image_last", os.path.splitext(last_path)[1] or ".webp", last_path, True
             )
-        current_scene.pop("back", None)
-        current_scene.pop("back_audio", None)
-        current_scene.pop("back_image_last", None)
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-        show_auto_close_popup(self.root, "恢复", "已恢复到导入之前的视频和声音。")
+        scene.pop("back", None)
+        scene.pop("back_audio", None)
+        scene.pop("back_image_last", None)
+        scene.pop("back_with", None)
+        return True
 
 
     def reset_track_offset(self):
@@ -3713,22 +3749,8 @@ class WorkflowGUI:
         refresh_scene_media(scene, "clip", ".mp4", video)
         return "ok"
 
-    def choose_clip_video_scope(self):
-        """生场视频：默认用 clip_image 加 clip_audio 做静态画面视频；WAN 生成留在最后一项。"""
-        choices = [
-            (("still", "single"), "静态画面 + 声音：仅当前场景"),
-            (("still", "story"), "静态画面 + 声音：本集从这一场起"),
-            (("still", "all"), "静态画面 + 声音：全部场景"),
-            (("wan", "single"), "WAN 生成视频（以后再用）：当前场景"),
-        ]
-        picked = askchoice(
-            "生场视频：请选择方式与范围\n（取消 = 放弃）",
-            choices,
-            parent=self.root,
-        )
-        if picked is None:
-            return
-        _lbl, (method, scope) = picked
+    def _run_clip_video(self, method: str, scope: str):
+        """生场视频：用 clip_image 加 clip_audio 做静态画面视频（method=still）；WAN 生成留着以后用。"""
         if not self.workflow:
             return
         scene_anchor = self.workflow.get_scene_by_index(self.current_scene_index)
@@ -4727,7 +4749,21 @@ class WorkflowGUI:
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right_panel.pack_propagate(False)
 
-        ai_tools_frame = ttk.LabelFrame(right_panel, text="全场内容", padding=(8, 2))
+        # 标题旁边放“第一场 / 最后一场”两个按钮。
+        ai_title = ttk.Frame(right_panel)
+        ttk.Label(ai_title, text="全场内容").pack(side=tk.LEFT)
+        ttk.Button(ai_title, text="⏮", width=3, command=self.first_scene).pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Button(ai_title, text="⏭", width=3, command=self.last_scene).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(ai_title, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=2)
+        start_btn = ttk.Button(ai_title, text="开始", width=4, command=lambda: self._set_scene_marker("start"))
+        start_btn.pack(side=tk.LEFT, padx=(0, 0))
+        end_btn = ttk.Button(ai_title, text="结束", width=4, command=lambda: self._set_scene_marker("end"))
+        end_btn.pack(side=tk.LEFT, padx=(2, 0))
+        start_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
+        end_btn.bind("<Button-3>", lambda _e: self._clear_scene_markers())
+        self.marker_label = ttk.Label(ai_title, text="", width=9)
+        self.marker_label.pack(side=tk.LEFT, padx=(4, 0))
+        ai_tools_frame = ttk.LabelFrame(right_panel, labelwidget=ai_title, padding=(8, 2))
         ai_tools_frame.pack(side=tk.TOP, fill=tk.X)
         self._ai_tools_frame = ai_tools_frame
         look_row1 = ttk.Frame(ai_tools_frame)
@@ -4795,13 +4831,17 @@ class WorkflowGUI:
         episode_gap = ttk.Frame(right_panel, height=24)
         episode_gap.pack(side=tk.TOP)
         episode_gap.pack_propagate(False)
-        episode_tools_frame = ttk.LabelFrame(right_panel, text="本集内容", padding=(8, 2))
+        # 标题旁边放“第几集”和上一集 / 下一集按钮。
+        episode_title = ttk.Frame(right_panel)
+        ttk.Label(episode_title, text="本集内容").pack(side=tk.LEFT)
+        self.episode_label = ttk.Label(episode_title, text="第 1 集")
+        self.episode_label.pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Button(episode_title, text="⏪", width=3, command=self.prev_episode).pack(side=tk.LEFT, padx=2)
+        ttk.Button(episode_title, text="⏩", width=3, command=self.next_episode).pack(side=tk.LEFT, padx=2)
+        episode_tools_frame = ttk.LabelFrame(right_panel, labelwidget=episode_title, padding=(8, 2))
         episode_tools_frame.pack(side=tk.TOP, fill=tk.X)
         episode_btn_row = ttk.Frame(episode_tools_frame)
         episode_btn_row.pack(side=tk.TOP, fill=tk.X)
-        self.episode_label = ttk.Label(episode_btn_row, text="第 1 集", width=12)
-        self.episode_label.pack(side=tk.LEFT)
-        ttk.Separator(episode_btn_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=12)
         ttk.Button(
             episode_btn_row,
             text="拷贝提示",
@@ -4843,7 +4883,13 @@ class WorkflowGUI:
         scene_gap = ttk.Frame(right_panel, height=24)
         scene_gap.pack(side=tk.TOP)
         scene_gap.pack_propagate(False)
-        self.video_edit_frame = ttk.LabelFrame(right_panel, text="本场内容", padding=10)
+        # 标题旁边显示当前是第几场 / 一共几场。
+        scene_title = ttk.Frame(right_panel)
+        self._scene_title_label = ttk.Label(scene_title, text="本场内容")
+        self._scene_title_label.pack(side=tk.LEFT)
+        self.scene_label = ttk.Label(scene_title, text="0 / 0")
+        self.scene_label.pack(side=tk.LEFT, padx=(8, 0))
+        self.video_edit_frame = ttk.LabelFrame(right_panel, labelwidget=scene_title, padding=10)
         self.video_edit_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.video_edit_frame.columnconfigure(1, weight=1)
 
@@ -4854,22 +4900,17 @@ class WorkflowGUI:
         scene_text_box.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
         scene_text_row = ttk.Frame(scene_text_box)
         scene_text_row.pack(side=tk.TOP, anchor=tk.W)
-        scene_prompt_row = ttk.Frame(scene_text_box)
-        scene_prompt_row.pack(side=tk.TOP, anchor=tk.W, pady=(4, 0))
+        # 出提示和生成媒体的按钮接在同一排后面，中间一条分隔线（见下面 btn_add_scene 之后）。
+        scene_prompt_row = ttk.Frame(scene_text_row)
+        # 场景变换和场景拆分合在同一个窗口里：上面变换，下面拆分。
         self._scene_speech_btn = ttk.Button(
             scene_text_row,
-            text="场景变换",
+            text="变换/拆分",
             width=8,
-            command=self._ask_scene_speech_transform,
+            command=self._ask_scene_transform_or_split,
         )
         self._scene_speech_btn.pack(side=tk.LEFT)
-        self._scene_split_btn = ttk.Button(
-            scene_text_row,
-            text="场景拆分",
-            width=8,
-            command=self._ask_scene_split,
-        )
-        self._scene_split_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._scene_split_btn = self._scene_speech_btn
         self.btn_add_scene = ttk.Button(
             scene_text_row,
             text="插入过渡",
@@ -4877,6 +4918,8 @@ class WorkflowGUI:
             command=self.add_scene_insert,
         )
         self.btn_add_scene.pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Separator(scene_text_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
+        scene_prompt_row.pack(side=tk.LEFT)
         self._nb_picture_btn = ttk.Button(
             scene_prompt_row,
             text="图片提示",
@@ -4886,17 +4929,11 @@ class WorkflowGUI:
         self._nb_picture_btn.pack(side=tk.LEFT)
         self._nb_story_video_btn = ttk.Button(
             scene_prompt_row,
-            text="视频提示",
+            text="生场视频",
             width=8,
             command=self._open_video_prompt_flow,
         )
         self._nb_story_video_btn.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(
-            scene_prompt_row,
-            text="生场视频",
-            width=8,
-            command=self.choose_clip_video_scope,
-        ).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(
             scene_prompt_row,
             text="生场音频",
@@ -6186,7 +6223,7 @@ class WorkflowGUI:
         #else:
         #    self.scene_cinematography.insert("1.0", cinematography_value)
         status = scene_data.get("clip_status", "")
-        self.video_edit_frame.config(text=f"本场内容: {status}" if status else "本场内容")
+        self._scene_title_label.config(text=f"本场内容: {status}" if status else "本场内容")
         self.video_edit_frame.update()
 
     def format_time_with_centisec(self, sec):
@@ -6791,8 +6828,8 @@ class WorkflowGUI:
         tail = None
         if not sections:
             if 0.12 <= play <= duration - 0.12:
-                head = {"cut": round(play, 2), "label": "把播放位置前面的空白移到前一场", "speech": False}
-                tail = {"cut": round(play, 2), "label": "把播放位置后面的空白移到后一场", "speech": False}
+                head = {"cut": round(play, 2), "label": "把播放位置前面的空白移到前一场（含讲稿）", "speech": False}
+                tail = {"cut": round(play, 2), "label": "把播放位置后面的空白移到后一场（含讲稿）", "speech": False}
         else:
             first = sections[0]
             last = sections[-1]
@@ -6803,27 +6840,27 @@ class WorkflowGUI:
             if play < first_start - 0.001:
                 head = {
                     "cut": round(first_start, 2),
-                    "label": "把前面的空白移到前一场",
+                    "label": "把前面的空白移到前一场（含讲稿）",
                     "speech": False,
                 }
             elif hit == 0:
                 blank = "连同前面的空白" if first_start >= 0.12 else ""
                 head = {
                     "cut": round(first_end, 2),
-                    "label": f"把第一段{blank}移到前一场",
+                    "label": f"把第一段{blank}移到前一场（含讲稿）",
                     "speech": True,
                 }
             if play > last_end + 0.001:
                 tail = {
                     "cut": round(last_end, 2),
-                    "label": "把后面的空白移到后一场",
+                    "label": "把后面的空白移到后一场（含讲稿）",
                     "speech": False,
                 }
             elif hit == len(sections) - 1:
                 blank = "连同后面的空白" if duration - last_end >= 0.12 else ""
                 tail = {
                     "cut": round(last_start, 2),
-                    "label": f"把最后一段{blank}移到后一场",
+                    "label": f"把最后一段{blank}移到后一场（含讲稿）",
                     "speech": True,
                 }
         split_ok = False
@@ -6921,7 +6958,7 @@ class WorkflowGUI:
 
         head_btn = ttk.Button(
             dlg,
-            text=(plan["head"] or {}).get("label") or "移到前一场",
+            text=(plan["head"] or {}).get("label") or "把前面的内容移到前一场（含讲稿）",
             command=lambda: run_shift("head"),
         )
         head_btn.pack(fill=tk.X, padx=14, pady=3)
@@ -6930,7 +6967,7 @@ class WorkflowGUI:
 
         tail_btn = ttk.Button(
             dlg,
-            text=(plan["tail"] or {}).get("label") or "移到后一场",
+            text=(plan["tail"] or {}).get("label") or "把后面的内容移到后一场（含讲稿）",
             command=lambda: run_shift("tail"),
         )
         tail_btn.pack(fill=tk.X, padx=14, pady=3)
@@ -6941,12 +6978,12 @@ class WorkflowGUI:
         any_prev = self.workflow.get_previous_scene(self.current_scene_index)
         any_next = self.workflow.get_next_scene(self.current_scene_index)
 
-        media_prev_btn = ttk.Button(dlg, text="移至上一场", command=lambda: run_media("head"))
+        media_prev_btn = ttk.Button(dlg, text="把播放点前面的画面和声音移到上一场（只移媒体）", command=lambda: run_media("head"))
         media_prev_btn.pack(fill=tk.X, padx=14, pady=3)
         if not plan.get("media_prev") or any_prev is None:
             media_prev_btn.state(["disabled"])
 
-        media_next_btn = ttk.Button(dlg, text="移至下一场", command=lambda: run_media("tail"))
+        media_next_btn = ttk.Button(dlg, text="把播放点后面的画面和声音移到下一场（只移媒体）", command=lambda: run_media("tail"))
         media_next_btn.pack(fill=tk.X, padx=14, pady=3)
         if not plan.get("media_next") or any_next is None:
             media_next_btn.state(["disabled"])
@@ -7036,10 +7073,12 @@ class WorkflowGUI:
     def _scene_clip_files(self, scene) -> tuple[str, str]:
         video = get_file_path(scene, "clip") if scene else ""
         if not video or not os.path.isfile(video):
-            return "", ""
+            video = ""
         audio = get_file_path(scene, "clip_audio") if scene else ""
-        if not audio or not os.path.isfile(audio):
+        if (not audio or not os.path.isfile(audio)) and video:
             audio = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(video) or ""
+        if not video:
+            return "", (audio if audio and os.path.isfile(audio) else "")
         if not audio or not os.path.isfile(audio):
             return video, ""
         return video, audio
@@ -7070,11 +7109,55 @@ class WorkflowGUI:
             return "", ""
         return muxed, merged_audio
 
-    def _install_clip_files(self, scene, video: str, audio: str) -> None:
+    def _join_neighbor_media(
+        self, still_image: str, video_n: str, audio_n: str, video_m: str, audio_m: str, *, front: bool
+    ):
+        """把挪过来的这一段接到旁边那场。front=True 时挪来的段放在旁边那场前面，否则放后面。
+
+        有 ``still_image`` 时：只把两段声音接长，用旁边那场自己的 clip 图加上接长后的声音重新生成视频，
+        不拼接画面（画面拼起来没有意义，原来的画面反正要作废）。没有图时才退回拼接画面。
+        返回 ``(视频, 声音)``，失败返回 ``("", "")``。
+        """
+        if still_image and os.path.isfile(still_image):
+            ap = self.workflow.ffmpeg_audio_processor
+            pair = [audio_m, audio_n] if front else [audio_n, audio_m]
+            joined_a = ap.concat_audios(pair)
+            if not joined_a or not os.path.isfile(joined_a):
+                return "", ""
+            video = self.workflow.ffmpeg_processor.image_audio_to_video(still_image, joined_a, 1)
+            if not video or not os.path.isfile(video):
+                return "", ""
+            return video, joined_a
+        if front:
+            return self._join_clip_files(video_m, audio_m, video_n, audio_n)
+        return self._join_clip_files(video_n, audio_n, video_m, audio_m)
+
+    def _scene_id_of(self, scene) -> int | None:
+        try:
+            return int(scene.get("id"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _link_back_group(self, *scenes) -> None:
+        """一次动作改了几场，就让这几场的备份互相记住，按 ⏱ 时一起恢复。"""
+        ids = [self._scene_id_of(s) for s in scenes]
+        for scene, own in zip(scenes, ids):
+            if not isinstance(scene, dict):
+                continue
+            others = [i for i in ids if i is not None and i != own]
+            if others:
+                scene["back_with"] = others
+            else:
+                scene.pop("back_with", None)
+
+    def _install_clip_files(self, scene, video: str, audio: str, *, keep_images: bool = False) -> None:
         self._backup_clip_to_scene_back(scene)
         refresh_scene_media(scene, "clip", ".mp4", video, True)
         if audio and os.path.isfile(audio):
             refresh_scene_media(scene, "clip_audio", ".wav", audio, True)
+        if keep_images:
+            # 视频是用这一场自己的 clip 图重新生成的，起始图和结束图都不用换。
+            return
         fp = self.workflow.ffmpeg_processor
         saved = get_file_path(scene, "clip")
         first = fp.extract_frame(saved, True) if saved else None
@@ -7109,8 +7192,15 @@ class WorkflowGUI:
         if not video or not audio:
             messagebox.showinfo("挪动", "这一场没有画面或声音。", parent=self.root)
             return
-        if not other_video or not other_audio:
-            messagebox.showinfo("挪动", "旁边那场没有画面或声音。", parent=self.root)
+        # 旁边那场的画面不拼接，只把声音接长，再用它自己的 clip 图加上新声音重新生成视频。
+        # 所以旁边那场只要有声音和一张 clip 图就够；没有 clip 图时才退回拼接画面。
+        neighbor_image = get_file_path(neighbor, "clip_image")
+        use_still = bool(neighbor_image and os.path.isfile(neighbor_image))
+        if not other_audio:
+            messagebox.showinfo("挪动", "旁边那场没有声音。", parent=self.root)
+            return
+        if not use_still and not other_video:
+            messagebox.showinfo("挪动", "旁边那场没有 clip 图，也没有画面。", parent=self.root)
             return
         sections = plan["sections"]
         self._release_preview_lock()
@@ -7132,17 +7222,23 @@ class WorkflowGUI:
                 ):
                     error = "画面或声音没有切开。"
                 elif where == "head":
-                    joined_v, joined_a = self._join_clip_files(other_video, other_audio, head_v, head_a)
+                    joined_v, joined_a = self._join_neighbor_media(
+                        neighbor_image if use_still else "", other_video, other_audio, head_v, head_a, front=False
+                    )
                     if not joined_v:
                         error = "没有接到前一场。"
                     else:
-                        payload = {"neighbor_v": joined_v, "neighbor_a": joined_a, "keep_v": tail_v, "keep_a": tail_a}
+                        payload = {"neighbor_v": joined_v, "neighbor_a": joined_a, "keep_v": tail_v, "keep_a": tail_a,
+                                   "still": use_still}
                 else:
-                    joined_v, joined_a = self._join_clip_files(tail_v, tail_a, other_video, other_audio)
+                    joined_v, joined_a = self._join_neighbor_media(
+                        neighbor_image if use_still else "", other_video, other_audio, tail_v, tail_a, front=True
+                    )
                     if not joined_v:
                         error = "没有接到后一场。"
                     else:
-                        payload = {"neighbor_v": joined_v, "neighbor_a": joined_a, "keep_v": head_v, "keep_a": head_a}
+                        payload = {"neighbor_v": joined_v, "neighbor_a": joined_a, "keep_v": head_v, "keep_a": head_a,
+                                   "still": use_still}
             except Exception as exc:
                 error = str(exc)
 
@@ -7166,8 +7262,11 @@ class WorkflowGUI:
     def _apply_shifted_clip(self, scene, neighbor, where: str, cut: float, sections, payload) -> None:
         old_neighbor_len = float(self._clip_duration(neighbor) or 0.0)
         try:
-            self._install_clip_files(neighbor, payload["neighbor_v"], payload["neighbor_a"])
+            self._install_clip_files(
+                neighbor, payload["neighbor_v"], payload["neighbor_a"], keep_images=bool(payload.get("still"))
+            )
             self._install_clip_files(scene, payload["keep_v"], payload["keep_a"])
+            self._link_back_group(scene, neighbor)
         except Exception as exc:
             messagebox.showerror("挪动", str(exc), parent=self.root)
             return
@@ -7281,8 +7380,11 @@ class WorkflowGUI:
     def _apply_shifted_media(self, scene, neighbor, where: str, cut: float, sections, payload) -> None:
         """只搬画面和声音。讲稿不动。长短变了以后，这一场和接到的那场都按字数重新标时间。"""
         try:
-            self._install_clip_files(neighbor, payload["neighbor_v"], payload["neighbor_a"])
+            self._install_clip_files(
+                neighbor, payload["neighbor_v"], payload["neighbor_a"], keep_images=bool(payload.get("still"))
+            )
             self._install_clip_files(scene, payload["keep_v"], payload["keep_a"])
+            self._link_back_group(scene, neighbor)
         except Exception as exc:
             messagebox.showerror("挪动", str(exc), parent=self.root)
             return
@@ -9042,8 +9144,8 @@ class WorkflowGUI:
         )
         confirm = {
             "delete": "删除这一场？删掉以后回不来。",
-            "merge_next": "把这一场和下一场合成一场？",
-            "merge_prev": "把上一场和这一场合成一场？",
+            "merge_next": "把这一场和下一场合成一场？\n合并之后可以按 ⏱ 恢复成两场（只记最近一次合并）。",
+            "merge_prev": "把上一场和这一场合成一场？\n合并之后可以按 ⏱ 恢复成两场（只记最近一次合并）。",
             "swap_next": "把这一场和下一场对调？",
             "swap_prev": "把这一场和上一场对调？",
         }.get(picked or "")
@@ -12365,6 +12467,12 @@ class WorkflowGUI:
             open_manual=lambda prompt, images: self.llm_api.show_manual_window(
                 prompt, "", images=images
             ),
+            simple_actions=[
+                ("仅当前场景", lambda: self._run_clip_video("still", "single")),
+                ("本集从这一场起", lambda: self._run_clip_video("still", "story")),
+                ("全部场景", lambda: self._run_clip_video("still", "all")),
+                ("WAN 生成（以后再用）", lambda: self._run_clip_video("wan", "single")),
+            ],
         )
 
     def _open_slide_prompt_flow(self) -> None:
@@ -12471,20 +12579,70 @@ class WorkflowGUI:
                 applied += 1
         return applied
 
-    def _ask_scene_speech_transform(self) -> None:
-        """场景变换：选改一场、两场还是三场，直接调用语言模型，结果写回这一场。"""
-        picked = self._ask_near_choices(
-            self._scene_speech_btn,
-            "场景变换",
-            [
-                ("1", "只改这一场的讲话和旁白"),
-                ("2", "这一场和下一场合成一段"),
-                ("3", "这一场连后面两场合成一段"),
-            ],
-            hint="按现在的人物重写说法。结果直接写回这一场的讲话和旁白。",
+    def _ask_scene_transform_or_split(self) -> None:
+        """一个窗口两部分：上面是场景变换，空一行，下面是场景拆分。点一项就执行。"""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("变换 / 拆分")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        dlg.withdraw()
+        holder = {"value": None}
+        frame = ttk.Frame(dlg, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        def pick(value: str) -> None:
+            holder["value"] = value
+            dlg.destroy()
+
+        def text_width(text: str) -> int:
+            return sum(2 if ord(ch) > 127 else 1 for ch in text) + 2
+
+        sections = [
+            (
+                "场景变换",
+                "按现在的人物重写说法。结果直接写回这一场的讲话和旁白。",
+                [
+                    ("t1", "只改这一场的讲话和旁白"),
+                    ("t2", "这一场和下一场合成一段"),
+                    ("t3", "这一场连后面两场合成一段"),
+                ],
+            ),
+            (
+                "场景拆分",
+                "文字拆分只改说法，每场复制原来的整段。音频转录按每句的起止，把画面和声音切开。",
+                [
+                    ("s_content", "按文字内容拆分，媒体照原样复制"),
+                    ("s_audio", "音频转录拆分，按语句切开画面和声音"),
+                ],
+            ),
+        ]
+        width = max(
+            [text_width(label) for _t, _h, items in sections for _v, label in items]
+            + [text_width("取消"), 12]
         )
-        if picked in ("1", "2", "3"):
-            self.apply_scene_speech_transform(int(picked))
+        for i, (head, hint, items) in enumerate(sections):
+            if i:
+                ttk.Frame(frame, height=14).pack(fill=tk.X)
+            ttk.Label(frame, text=head).pack(anchor=tk.W, pady=(0, 4))
+            ttk.Label(frame, text=hint, wraplength=360, justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 6))
+            for value, label in items:
+                ttk.Button(frame, text=label, width=width, command=lambda v=value: pick(v)).pack(
+                    fill=tk.X, pady=2
+                )
+        ttk.Button(frame, text="取消", width=width, command=dlg.destroy).pack(fill=tk.X, pady=(12, 0))
+        self._place_popup_near(dlg, self._scene_speech_btn, below=False)
+        dlg.grab_set()
+        dlg.wait_window()
+        picked = holder["value"]
+        if picked in ("t1", "t2", "t3"):
+            self.apply_scene_speech_transform(int(picked[1]))
+        elif picked == "s_content":
+            self.split_scene_content_by_llm()
+        elif picked == "s_audio":
+            self.split_scene_by_transcription()
+
+    def _ask_scene_speech_transform(self) -> None:
+        self._ask_scene_transform_or_split()
 
     def apply_scene_speech_transform(self, span: int = 1) -> None:
         """按当前 actor 重写说法。span 为 2 或 3 时把后面连续几场并进这一场的讲话和旁白。"""
@@ -12545,20 +12703,8 @@ class WorkflowGUI:
         show_auto_close_popup(self.root, title, "已写回这一场的讲话和旁白")
 
     def _ask_scene_split(self) -> None:
-        """场景拆分：直接调用语言模型，把这一场的文字拆成多场。媒体整段复制。"""
-        picked = self._ask_near_choices(
-            self._scene_split_btn,
-            "场景拆分",
-            [
-                ("content", "按文字内容拆分，媒体照原样复制"),
-                ("audio", "音频转录拆分，按语句切开画面和声音"),
-            ],
-            hint="文字拆分只改说法，每场复制原来的整段。音频转录按每句的起止，把画面和声音切开。",
-        )
-        if picked == "content":
-            self.split_scene_content_by_llm()
-        elif picked == "audio":
-            self.split_scene_by_transcription()
+        """场景拆分和场景变换合在一个窗口里。"""
+        self._ask_scene_transform_or_split()
 
     def split_scene_content_by_llm(self) -> None:
         title = "场景拆分"
@@ -13268,7 +13414,7 @@ class WorkflowGUI:
 
 
     def bind_scene_navigation_shortcuts(self):
-        """全局：Ctrl+←/→ 和 Ctrl+Shift+←/→ 上一/下一场景；Ctrl+Shift+Alt+←/→ 首/末场景。"""
+        """全局：Alt+←/→ 和 Ctrl+Shift+←/→ 上一/下一场景；Ctrl+Shift+Alt+←/→ 首/末场景。"""
         def _has_scenes():
             return getattr(self, "workflow", None) and getattr(self.workflow, "scenes", None)
 
@@ -13296,25 +13442,23 @@ class WorkflowGUI:
             self.last_scene()
             return "break"
 
-        def _plain_ctrl_ok(event) -> bool:
-            """Ctrl+←/→ 翻场景：只在主窗口里生效；讲话框里 Ctrl+←/→ 另有用途（挪字），不拦。"""
+        def _alt_ok(event) -> bool:
+            """Alt+←/→ 翻场景：只在主窗口里生效（含讲话框，讲话框里 Ctrl+←/→ 另有用途，所以翻场景用 Alt）。"""
             widget = getattr(event, "widget", None)
             if widget is None:
                 return True
-            if widget is getattr(self, "scene_speaking", None):
-                return False
             try:
                 return widget.winfo_toplevel() is self.root
             except (tk.TclError, AttributeError):
                 return False
 
-        def _ctrl_prev(event=None):
-            if event is not None and not _plain_ctrl_ok(event):
+        def _alt_prev(event=None):
+            if event is not None and not _alt_ok(event):
                 return
             return _prev(event)
 
-        def _ctrl_next(event=None):
-            if event is not None and not _plain_ctrl_ok(event):
+        def _alt_next(event=None):
+            if event is not None and not _alt_ok(event):
                 return
             return _next(event)
 
@@ -13328,11 +13472,11 @@ class WorkflowGUI:
             "<Control-Shift-KP_Right>",
         ):
             self.root.bind_all(seq, _next)
-        # 更快的翻页：Ctrl+←/→ 上一/下一场景
-        for seq in ("<Control-Left>", "<Control-KP_Left>"):
-            self.root.bind_all(seq, _ctrl_prev)
-        for seq in ("<Control-Right>", "<Control-KP_Right>"):
-            self.root.bind_all(seq, _ctrl_next)
+        # 更快的翻页：Alt+←/→ 上一/下一场景（Ctrl+←/→ 留给文本框移动光标和讲话框挪字）
+        for seq in ("<Alt-Left>", "<Alt-KP_Left>", "<Alt-Key-Left>"):
+            self.root.bind_all(seq, _alt_prev)
+        for seq in ("<Alt-Right>", "<Alt-KP_Right>", "<Alt-Key-Right>"):
+            self.root.bind_all(seq, _alt_next)
         # Alt 左右键在部分 Tk 下需写成 Alt-Control-Shift（与 Control-Shift-Alt 等价）
         for seq in (
             "<Control-Shift-Alt-Left>",
