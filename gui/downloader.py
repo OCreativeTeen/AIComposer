@@ -9870,13 +9870,30 @@ class MediaGUIManager:
                             _, img_prompt = self._combined_prompt_text_for_label(
                                 video_detail, label, prompt_params=step_params
                             )
-                            step_no = step_params.get("steps") or 1
-                            video_prompt = config_prompt.build_step_image_video_clipbody(
-                                visual_style=str(
-                                    step_params.get("visual_style")
-                                    or project_manager.LAST_VISUAL_STYLE
-                                    or ""
-                                ),
+                            try:
+                                step_no = max(1, int(step_params.get("steps") or 1))
+                            except (TypeError, ValueError):
+                                step_no = 1
+                            scene_list = _parse_scene_json_list(tx.get("1.0", tk.END) or "") or []
+                            style_now = str(
+                                step_params.get("visual_style")
+                                or project_manager.LAST_VISUAL_STYLE
+                                or ""
+                            )
+
+                            # 第 2 步的提示词：沿用「生场视频」的提示词构建函数，选项用默认
+                            # （单画面、不加背景文字、风格不变、不指定运镜和动画），按第 k 场的内容拼。
+                            video_scene = (
+                                [scene_list[step_no - 1]] if step_no <= len(scene_list) else []
+                            )
+                            video_prompt = config_prompt.build_video_flow_prompt(
+                                frames="one",
+                                background="none",
+                                evolve="keep",
+                                visual_style=style_now,
+                                scene_content=video_scene,
+                                language=getattr(self, "language", "") or "",
+                                host_narrator=_project_look_from_row(video_detail)[2],
                             )
 
                             def _on_workflow_image(step_idx, step_title, pil_img):
@@ -9914,7 +9931,7 @@ class MediaGUIManager:
                                         "images": [img],
                                     },
                                     {
-                                        "title": "第 1 步的图 → 视频",
+                                        "title": f"第 {step_no} 步的图 → 视频",
                                         "system": video_prompt,
                                     },
                                 ],

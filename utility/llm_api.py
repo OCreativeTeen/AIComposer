@@ -373,12 +373,14 @@ class LLMApi:
 
         ``steps`` 是一个列表，每一步是下面两种之一：
 
-        - 字典：``{"title": 步骤名, "system": 提示词, "user": 用户提示词（可省）, "images": [图片路径]（可省）}``
+        - 字典：``{"title": 步骤名, "system": 提示词, "user": 用户提示词（可省）, "images": [图片路径]（可省）,
+          "attachment": PDF/音频/视频路径（可省）}``
         - 函数：``fn(results) -> 上面那种字典，或 None（跳过这一步）``。``results`` 是前面已经做完的各步结果，
           所以后面一步的提示词可以按前面一步的回答现拼。
 
-        每一步都打开一个手动窗口（只有手动，没有选模型按钮）：提示词先自动拷到剪贴板；
-        有 ``images`` 才显示图；没有就不显示（比如第二步用第一步生成的图，那张图已经在 AI 工具里了，不用再摆出来）。
+        这是通用的：每一步的提示词和带的图 / 文件都由调用方一次写好传进来，这里不认识任何具体业务。
+        每一步都打开同一个手动窗口（只有手动，没有选模型按钮）：提示词先自动拷到剪贴板；
+        有 ``images`` 或 ``attachment`` 才显示；没有就不显示。
         不是最后一步时「确定」写成「下一步」。点「取消」或关窗就停下，后面的步骤不再打开。
 
         ``on_image_response`` 是可选回调：``fn(step_index, step_title, pil_image) -> str | None``。
@@ -401,6 +403,7 @@ class LLMApi:
                 step.get("system") or "",
                 step.get("user") or "",
                 image_paths=step.get("images"),
+                attachment=step.get("attachment"),
                 title=window_title,
                 ok_text="完成" if is_last else "下一步 ▶",
                 cancel_text="取消流程",
