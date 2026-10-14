@@ -477,30 +477,71 @@ def build_soul(channel, topic_category, topic_subtype, max_chars: int | None = N
 
 SOUL_BLOCK_RULES = """*** CORE-INSIGHT (background lens, NOT content) ***
 The notes below are this channel's private lens. They are NOT source material and NOT a script.
-    ** The story/reference above is the primary content. Tell THAT story explicitly, concretely and naturally: its people, events, words and turns.
-    ** Use the lens only silently, to choose what to notice, how to interpret it, what to emphasize, the tone (warm, non-judgmental, clear) and where the program heads (a small, real next step).
+    ** {primary}
+    ** Use the lens only silently, to choose what to notice, how to interpret it, what to emphasize, the tone ({tone}) and where it heads ({direction}).
     ** Never quote, name or paraphrase the lens: no terms, metaphors, labels, headings, or slogans from it may appear in the output. A viewer must not be able to tell these notes exist.
-    ** Do not add sermons, value statements or lessons that the story itself does not support. If the lens does not fit this story, ignore it; the story always wins.
-    ** Let this story's own specifics drive the structure, scenes, examples and ending, so every program is different. Do not reuse a fixed arc or stock phrases.
-    ** The lens never changes the template's format, JSON schema, scene count or roles. Output language stays {language}.
-    ** {faith_rule}
+    ** Do not add sermons, value statements or lessons that the source itself does not support. If the lens does not fit this source, ignore it; the source always wins.
+    ** Let this source's own specifics drive the structure, scenes, examples and ending, so every program is different. Do not reuse a fixed arc or stock phrases.
+    ** The lens never changes the template's format, JSON schema, scene count or roles. Output language stays {language}.{faith_rule}
 --- lens (do not output) ---
 {digest}
 --- end lens ---"""
 
 SOUL_BLOCK_RULES_SHORT = """*** CORE-INSIGHT (background lens, NOT content) ***
-    ** The story above is the content; tell it concretely. The lens below only silently shapes interpretation, emphasis, tone and direction; ignore it if it does not fit.
-    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the story does not support. Let this story's specifics shape the structure.
-    ** Keep the template's format, JSON schema and roles. Output language: {language}. {faith_rule}
+    ** {primary_short} The lens below only silently shapes interpretation, emphasis, tone ({tone}) and direction; ignore it if it does not fit.
+    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the source does not support. Let this source's specifics shape the structure.
+    ** Keep the template's format, JSON schema and roles. Output language: {language}.{faith_rule}
 --- lens (do not output) ---
 {digest}
 --- end lens ---"""
+
+# 各频道在 CORE-INSIGHT 规则里的措辞（按 channel_id）；未列出的频道用 _default。
+SOUL_CHANNEL_STYLE = {
+    "_default": dict(
+        primary="The story/reference above is the primary content. Tell THAT story explicitly, concretely and naturally: its people, events, words and turns.",
+        primary_short="The story above is the content; tell it concretely.",
+        tone="the channel's own voice",
+        direction="where the story naturally leads",
+        faith=False,
+    ),
+    "counseling": dict(
+        tone="warm, non-judgmental, clear",
+        direction="a small, real next step",
+        faith=True,
+    ),
+    "comic": dict(
+        tone="a vivid storyteller: suspense, rhythm, living characters",
+        direction="a satisfying turn and a lingering ending",
+    ),
+    "flylink": dict(
+        primary="The document/reference above is the primary content. Present ITS facts, figures, cases and claims accurately and concretely; never add facts, numbers or customers it does not contain.",
+        primary_short="The document above is the content; present its facts accurately and add none.",
+        tone="clear, credible, evidence-based, never hype",
+        direction="a clear, concrete next step for the audience",
+    ),
+    "music_story": dict(
+        primary="The story/reference above is the primary content and the song's source. Keep its specific emotions, images and turns recognizable, expressed through imagery and mood rather than retold line by line.",
+        primary_short="The story above is the song's source; keep its specific emotions and images recognizable, through imagery rather than retelling.",
+        tone="imagistic, emotional, restrained, never preachy",
+        direction="the song's emotional arc",
+    ),
+}
 
 _SOUL_FAITH_RULE_ON_SHORT = "Faith story: faith language only as its people use it; no preaching."
 _SOUL_FAITH_RULE_OFF_SHORT = "Not a Faith story: no religious language."
 
 _SOUL_FAITH_RULE_ON = "This story is in the Faith category: faith language may be used, but only as the story's own people use it; do not preach or add doctrine."
 _SOUL_FAITH_RULE_OFF = "This story is NOT in the Faith category: use no religious or faith language at all; express any underlying values only as ordinary human dignity, limits, growth and response."
+
+
+def _soul_channel_style(channel) -> dict:
+    try:
+        cid = config.get_channel_id(channel) if channel else ""
+    except Exception:
+        cid = channel or ""
+    style = dict(SOUL_CHANNEL_STYLE["_default"])
+    style.update(SOUL_CHANNEL_STYLE.get(cid) or SOUL_CHANNEL_STYLE.get(channel or "") or {})
+    return style
 
 
 SOUL_MIN_CHARS = 600  # 故事很短时 soul 摘要的下限
@@ -512,7 +553,7 @@ def build_soul_prompt_block(channel, topic_category, topic_subtype, language: st
     """场景生成提示词末尾追加的幕后 soul 块；无 soul 时返回空串。
 
     ``story_chars``：故事正文长度。摘要不超过故事长度（夹在 SOUL_MIN_CHARS..SOUL_DIGEST_MAX_CHARS），
-    避免短故事被 soul 淹没。
+    避免短故事被 soul 淹没。规则措辞按频道取 ``SOUL_CHANNEL_STYLE``；信仰规则只用于设置了 faith 的频道。
     """
     cap = SOUL_DIGEST_MAX_CHARS
     if story_chars is not None:
@@ -526,16 +567,22 @@ def build_soul_prompt_block(channel, topic_category, topic_subtype, language: st
         return ""
     if not digest:
         return ""
-    is_faith = (topic_category or "").strip().lower().startswith("faith")
-    if short:
-        return SOUL_BLOCK_RULES_SHORT.format(
-            language=(language or "the requested language"),
-            faith_rule=_SOUL_FAITH_RULE_ON_SHORT if is_faith else _SOUL_FAITH_RULE_OFF_SHORT,
-            digest=digest,
-        )
-    return SOUL_BLOCK_RULES.format(
+    st = _soul_channel_style(channel)
+    faith_rule = ""
+    if st.get("faith"):
+        is_faith = (topic_category or "").strip().lower().startswith("faith")
+        if short:
+            faith_rule = " " + (_SOUL_FAITH_RULE_ON_SHORT if is_faith else _SOUL_FAITH_RULE_OFF_SHORT)
+        else:
+            faith_rule = "\n    ** " + (_SOUL_FAITH_RULE_ON if is_faith else _SOUL_FAITH_RULE_OFF)
+    tpl = SOUL_BLOCK_RULES_SHORT if short else SOUL_BLOCK_RULES
+    return tpl.format(
+        primary=st["primary"],
+        primary_short=st["primary_short"],
+        tone=st["tone"],
+        direction=st["direction"],
         language=(language or "the requested language"),
-        faith_rule=_SOUL_FAITH_RULE_ON if is_faith else _SOUL_FAITH_RULE_OFF,
+        faith_rule=faith_rule,
         digest=digest,
     )
 
