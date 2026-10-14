@@ -1354,55 +1354,6 @@ def _image_material_override(video_detail: dict) -> str:
     )
 
 
-def _show_step_image_prompt_dialog(
-    parent, prompt: str, image_path: str = "", *, title: str = "图片分解"
-) -> None:
-    """图片提示词窗（图片分解 / 场景总图）：提示词先拷到剪贴板；有图时可再拷图片 / 打开图片。"""
-    _copy_text_to_clipboard(parent, prompt or "")
-    image_path = (image_path or "").strip()
-    win = tk.Toplevel(parent)
-    win.title(f"{title} · 提示词" + (" + 图片" if image_path else ""))
-    win.transient(parent)
-    frm = ttk.Frame(win, padding=10)
-    frm.pack(fill=tk.BOTH, expand=True)
-    ttk.Label(
-        frm,
-        text=(
-            "提示词已拷到剪贴板。把它和下面这张图片一起交给 AI 图片工具（这里不调用任何图片 API）。"
-            if image_path
-            else "提示词已拷到剪贴板。把它交给 AI 图片工具（这里不调用任何图片 API）。"
-        ),
-        wraplength=640,
-    ).pack(anchor=tk.W, pady=(0, 6))
-    if image_path:
-        ttk.Label(frm, text=f"图片：{image_path}", wraplength=640).pack(anchor=tk.W, pady=(0, 6))
-    tx = scrolledtext.ScrolledText(frm, wrap=tk.WORD, width=80, height=12, font=("Arial", 10))
-    tx.pack(fill=tk.BOTH, expand=True)
-    tx.insert("1.0", prompt or "")
-    row = ttk.Frame(frm)
-    row.pack(fill=tk.X, pady=(8, 0))
-
-    def _copy_prompt():
-        _copy_text_to_clipboard(win, tx.get("1.0", "end-1c"))
-        show_auto_close_popup(win, title, "提示词已拷到剪贴板。")
-
-    def _copy_image():
-        if _copy_file_to_clipboard_hdrop(win, image_path):
-            show_auto_close_popup(win, title, "图片已拷到剪贴板，可以粘贴到 AI 工具。")
-
-    def _open_image():
-        try:
-            os.startfile(image_path)
-        except (OSError, AttributeError) as exc:
-            messagebox.showerror("打开失败", f"{image_path}\n\n{exc}", parent=win)
-
-    ttk.Button(row, text="拷贝提示词", command=_copy_prompt).pack(side=tk.LEFT, padx=(0, 6))
-    if image_path:
-        ttk.Button(row, text="拷贝图片", command=_copy_image).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(row, text="打开图片", command=_open_image).pack(side=tk.LEFT, padx=(0, 6))
-    ttk.Button(row, text="关闭", command=win.destroy).pack(side=tk.RIGHT)
-
-
 def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: str) -> str:
     """选 PDF 时加在每一条场景提示词上，只说页数和场数，不逐页罗列。"""
     label = (prompt_label or "").strip()
@@ -9819,7 +9770,8 @@ class MediaGUIManager:
                                     parent=dlg,
                                 )
                                 return
-                            _show_step_image_prompt_dialog(dlg, img_prompt, "", title="场景总图")
+                            # 不调图片 API：打开 LLM 手动窗口（提示词在左），人把提示词拿去处理。
+                            self.llm_api.show_manual_window(img_prompt, "")
                             return
                         if config_channel.is_step_image_label(label):
                             # 图片分解不调 LLM / 图片 API：给出提示词 + 封面图片，用户自己带到 AI 图片工具。
@@ -9834,10 +9786,35 @@ class MediaGUIManager:
                                 img = (_find_gen_video_webp_for_row(video_detail) or "").strip()
                                 if not img:
                                     return
+                            step_params = _scene_prompt_params()
                             _, img_prompt = self._combined_prompt_text_for_label(
-                                video_detail, label, prompt_params=_scene_prompt_params()
+                                video_detail, label, prompt_params=step_params
                             )
-                            _show_step_image_prompt_dialog(dlg, img_prompt, img)
+                            step_no = step_params.get("steps") or 1
+                            video_prompt = config_prompt.build_step_image_video_clipbody(
+                                visual_style=str(
+                                    step_params.get("visual_style")
+                                    or project_manager.LAST_VISUAL_STYLE
+                                    or ""
+                                ),
+                            )
+                            # 两步手动流程（LLM 手动窗口，不调任何图片 / 视频 API）：
+                            # 第 1 步：提示词在左，封面图片在右，做第 k 步细节图；
+                            # 第 2 步：用第 1 步的图做视频，只放提示词（那张图已经在 AI 工具里）。
+                            self.llm_api.show_manual_workflow(
+                                [
+                                    {
+                                        "title": f"封面图 → 第 {step_no} 步细节图",
+                                        "system": img_prompt,
+                                        "images": [img],
+                                    },
+                                    {
+                                        "title": "第 1 步的图 → 视频",
+                                        "system": video_prompt,
+                                    },
+                                ],
+                                title="图片分解",
+                            )
                             return
                         if kind == "image":
                             override = _image_material_override(video_detail)

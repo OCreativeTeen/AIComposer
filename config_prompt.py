@@ -2280,6 +2280,20 @@ def build_step_image_clipbody(step: int = 1, *, visual_style: str = "", main_cha
     )
 
 
+# 图片分解的第 2 步：用第 1 步生成的细节图做视频。图上有标题和文字，所以用「文字不动、只有旁白」的那条。
+# 想换一种，把这里改成上面 DIRECT_VIDEO_* 里的别的常量。
+STEP_IMAGE_VIDEO_INSTRUCTION = DIRECT_VIDEO_STATIC_NARRATION
+
+
+def build_step_image_video_clipbody(*, visual_style: str = "", main_character: str = "") -> str:
+    """图片分解第 2 步：第 1 步生成的细节图 → 视频的指令（图本身已经在 AI 工具里，窗口里不再放图）。"""
+    return build_direct_video_clipbody(
+        instruction=STEP_IMAGE_VIDEO_INSTRUCTION,
+        main_character=main_character,
+        visual_style=visual_style,
+    )
+
+
 SLIDE_ANALYSIS_OUTPUT_FORMAT = """
 Output: as json array like
 

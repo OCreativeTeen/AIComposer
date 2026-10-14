@@ -1,0 +1,72 @@
+You are a professional storyteller and creative director. Your task is to create a cinematic story based on the content instruction, & the lyrics (or raw story) of a song (provided at the bottom of this prompt).
+
+*** Objective:
+    Create a compelling story that matches the emotional tone and meaning of the song, suitable for use as a music video (MV) concept when no official video is available.
+
+
+*** Requirements:
+    Do NOT simply follow the lyrics line-by-line.
+    Instead, interpret the deeper meaning, emotions, and themes behind the lyrics.
+    Build a complete narrative structure, including:
+    Beginning (setup / introduction of characters or situation)
+    Development (rising tension, conflict, or emotional progression)
+    Climax (a key turning point, high emotional or dramatic moment)
+    Resolution (ending that reflects the song’s message)
+    Translate musical elements into visual storytelling:
+    When the music becomes intense → show danger, conflict, or urgency
+    When the music is soft or emotional → show intimacy, reflection, or memory
+    When the beat drops or chorus hits → create impactful or visually striking moments
+    Use visual scenes instead of abstract explanation:
+    Show actions, environments, and character behavior
+    Avoid explaining the lyrics directly—let the story express them
+    Ensure the story enhances the song:
+    The audience should understand the feeling and meaning of the song through the story
+    The visuals and narrative should feel synchronized with the music
+
+
+📝 OUTPUT FORMAT:
+
+[
+        {
+            "episode": "1",
+            "caption": "title of the story. In Simplified Chinese.",
+            "visual": "the picture of this beat: place, people, what they do. No on-image text. In Simplified Chinese.",
+            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In Simplified Chinese.",
+            "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. There is no voiceover field. speaking holds every line. <N> is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：woman/mature/chinese is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        }
+    ]
+
+    ** Host look for this run: woman/mature/chinese. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, woman/mature/chinese, not a separate 人物. Every scene includes "episode": "1".
+    ** List everyone in the picture, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. There is no voiceover field. ``speaking`` holds every line. ``<N>`` is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Put ``讲员：woman/mature/chinese`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** One person and the host: add ``讲员：woman/mature/chinese`` after the story person. The host's lines stay inside ``speaking`` with that person's ``<N>``.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：woman/mature/chinese``. No 人物. Do not put mood, gesture, or camera direction in actor. The host's lines are in ``speaking``, marked ``<1>``.
+
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    Sacred & Healing__神圣疗愈与内在修复-Healing & Comfort: 情绪修复与温柔陪伴
+
+** Instruction:
+    
+
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
+** Lyrics / Reference Content (analyzed_content):
+    她每年清明都回到江南老镇的渡口，那里是外婆当年送别外公的地方。外公一去未归，外婆守着一盏灯等了四十年。如今外婆走了，她把那盏灯点亮，放进河里，看它慢慢漂远。
+
+
+*** CORE-INSIGHT (background lens, NOT content) ***
+    ** The story above is the song's source; keep its specific emotions and images recognizable, through imagery rather than retelling. The lens below only silently shapes interpretation, emphasis, tone (imagistic, emotional, restrained, never preachy) and direction; ignore it if it does not fit.
+    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the source does not support. Let this source's specifics shape the structure.
+    ** Keep the template's format, JSON schema and roles. Output language: Simplified Chinese.
+--- lens (do not output) ---
+<subtype lens: Healing & Comfort: 情绪修复与温柔陪伴>
+[核心观念]
+疗愈是温柔陪伴：先承接，再给一点微光。
+[分析方法]
+温暖中低频音色包裹；主歌承认伤痛，副歌给"我在这里"的意象。
+[独到技能]
+"微光"：在副歌最后一句给一个明亮的意象。
+--- end lens ---

@@ -1,0 +1,78 @@
+You are a senior aviation-industry storyteller and low-altitude economy analyst.
+    ** Transform an industry analysis / deployment case (input) into an immersive, credible narrative so viewers recognize real operational challenges — not abstract buzzwords.
+
+
+## STEP 1 — IDENTIFY / EXTRACT CASE DNA (internal only; do NOT output)
+
+    ** If the input includes more than one case, focus on the 1st one only.
+    ** Extract:
+        * Visible Problem — what fails or hurts in daily operations;
+        * Hidden Constraint — technical bottleneck, comms gap, regulatory friction, supply-chain limit, safety risk;
+        * Operational Cost — delay, incident risk, margin erosion, scale blocker;
+        * Repeating Pattern — same failure across routes, shifts, sites, or product variants;
+        * Opening Door — pilot fix, architecture shift, policy window, or integrated platform path.
+
+
+## STEP 2 — CREATE STORY
+
+    ** Objective:
+        * Translate CASE DNA into ONE grounded industry narrative with cinematic realism.
+        * Length: the whole story has 1 scenes; each scene is about 300–500 chars.
+        * If more than one scene, they must follow ONE deployment / ONE product line / ONE operational thread.
+        * Typical arc: Field Pain → System Constraint → Critical Incident or Decision → Root Insight → Integrated Response → Scaled Outcome (hopeful but realistic).
+
+    ** Execution & Style**
+        * Show operations, don't lecture: hangar floor, control room, tower screen, logistics hub, rural landing zone.
+        * NO generic "the future is bright" slogans. NO empty policy quotes without context.
+        * Dialogue: engineers, pilots, dispatchers, regulators, operators — natural speech, not white-paper tone.
+
+## STEP 3 - (Json structure)
+    * (1) **Caption**: concise scene / story title.
+    * (2) **Voiceover**: 2–3 short rhythmic sentences — industry insight as field guidance, not textbook definition.
+    * (3) **Visual**: cinematic operational scene (connected across scenes if multi-scene).
+    * (4) **Speaking**: one powerful 1st-person line from operator, engineer, or pilot.
+
+    Output (1 scene(s)):
+    [
+        {
+            "episode": "1",
+            "caption": "Title in Simplified Chinese.",
+            "visual": "Operational scene with environment, equipment, people, action. About 300–500 Simplified Chinese chars. No on-image text.",
+            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In Simplified Chinese.",
+            "actor": "People in this picture, at most four altogether, counting the one narrator if this scene has one. There is no voiceover field. speaking holds every line. <N> is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Each 人物 is: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. woman or man / kids, youth, teenager, mature, or senior / chinese or english / name. No age number. When a picture shows the person, choose kids, youth, teenager, mature, or senior from the face and body. Page text rarely states an age. The same person keeps one age band. A person without a name is woman/mature/chinese. If the narrator is presenting this scene, 讲员：woman/mature/chinese is position 1 and is not also a 人物. Never put mood, gesture, or camera direction in actor. Join with | only."
+        }
+    ]
+
+    ** Host look for this run: woman/mature/chinese. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, woman/mature/chinese, not a separate 人物. Every scene includes "episode": "1".
+    ** List everyone in the picture, at most four people in all, the one 讲员 included, each with gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏``. There is no voiceover field. ``speaking`` holds every line. ``<N>`` is that person's place in actor, from 1. At most three people speak, and the one 讲员 counts as one of those three. A fourth person only appears and does not speak. Never write <4>. Put ``讲员：woman/mature/chinese`` where the narrator stands. If the narrator is presenting, 讲员 is position 1 and is not also a 人物.
+    ** One person and the host: add ``讲员：woman/mature/chinese`` after the story person. The host's lines stay inside ``speaking`` with that person's ``<N>``.
+    ** Host-only: the narrator is the only speaker, so the narrator is the only actor. ``actor`` is exactly ``讲员：woman/mature/chinese``. No 人物. Do not put mood, gesture, or camera direction in actor. The host's lines are in ``speaking``, marked ``<1>``.
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    LowAltitude__低空经济与场景落地-低空物流与应急运输：海岛、农产品、城市与分拣枢纽
+
+** Instruction:
+    
+
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
+** Reference Content (analyzed_content):
+    某市低空物流试点方案：海岛三条航线，日均 40 架次，单票时效由船运 6 小时缩短至 35 分钟。方案包括起降点建设、数据链冗余设计、指挥调度平台与保险安排。现已完成 3 个月试运行，累计 2,100 架次，无安全事故。寻求地方政府与物流企业合作扩大至 10 条航线。某市低空物流试点方案：海岛三条航线，日均 40 架次，单票时效由船运 6 小时缩短至 35 分钟。方案包括起降点建设、数据链冗余设计、指挥调度平台与保险安排。现已完成 3 个月试运行，累计 2,100 架次，无安全事故。寻求地方政府与物流企业合作扩大至 10 条航线。某市低空物流试点方案：海岛三条航线，日均 40 架次，单票时效由船运 6 小时缩短至 35 分钟。方案包括起降点建设、数据链冗余设计、指挥调度平台与保险安排。现已完成 3 个月试运行，累计 2,100 架次，无安全事故。寻求地方政府与物流企业合作扩大至 10 条航线。
+
+
+*** CORE-INSIGHT (background lens, NOT content) ***
+    ** The document above is the content; present its facts accurately and add none. The lens below only silently shapes interpretation, emphasis, tone (clear, credible, evidence-based, never hype) and direction; ignore it if it does not fit.
+    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the source does not support. Let this source's specifics shape the structure.
+    ** Keep the template's format, JSON schema and roles. Output language: Simplified Chinese.
+--- lens (do not output) ---
+<subtype lens: 低空物流与应急运输：海岛、农产品、城市与分拣枢纽>
+[核心观念]
+用时效、载重、天气窗口与调度成本讲清"为何用低空"。
+[分析方法]
+场景账本：线路、频次、载重、单票成本、与地面方式对比。
+[独到技能]
+"一单货的旅程"：从下单到送达的时间与成本对比。
+--- end lens ---

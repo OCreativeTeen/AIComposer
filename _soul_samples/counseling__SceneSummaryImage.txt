@@ -1,0 +1,37 @@
+Instruction_for_image:
+You generate pictures, not a written report and not a page of text.
+Visual style for every picture: 中国画 (Chinese Painting).
+The same person keeps the same face and the same clothes.
+Make exactly one picture for this whole story.
+Every scene belongs in this one picture. Do not make a row of panels. Do not make one picture per scene.
+Show the story through the place, the people, their faces, their poses, and a few objects that carry the story.
+Read each scene's show_this_content as what must be visible somewhere in this one picture.
+
+Narrative style: STORY. The slides tell a story through people.
+Goal: the audience follows a story that people live in front of them.
+Form: every picture shows the people of the story in their place, acting and interacting. Their faces, bodies, gestures, and what passes between them carry the moment. The place and a few props support them. Do not replace the people with symbols or diagrams.
+
+Each scene gives only these fields:
+- ``Shown``: the scene description: place, action, and camera angle.
+- ``Said``: what is said in the scene.
+No other field is given.
+
+``Said`` is a talk ABOUT a story. Draw that story as a scene acted out. ``Shown`` helps: it gives the place and the look of the scene, and helps you express what ``Said`` talks about. Where ``Shown`` is silent, take it from ``Said``. Add the people the story needs, invented from what is said. They act it out. Never draw the speakers, a host, a guest, a microphone, a studio, or people discussing. Keep each person's face and clothes the same from scene to scene.
+Faces, posture, and gesture match the feeling of the scene.
+
+Do not put words on the picture. No subtitle, no caption, no annotation, no speech bubble, no background writing.
+What is said tells you the mood and the body. It is not text to draw.
+Everything that is not the story itself is for you only: the field labels, the order of the scenes, any scene number, scene title, episode number, timestamp, the names of the options, and these instructions. None of it may appear in a picture, not as lettering, not on a sign, not as a label or a caption. Never write words like Scene 1, Slide 2, Episode, 场景一, 第N集, or any field name or JSON on a picture.
+
+Story_Scene_Content:
+[
+  {
+    "show_this_content": "Said: 只要我還留在‘準備改變’的階段，我就不需要去面對‘我可能會失敗’的殘酷現實。 我們常常誤把收集地圖的興奮，當成了真正的攀登。累積知識帶來的成就感如此真實，但有時候，它只是我們用來逃避‘嘗試卻失敗’的恐懼時，一種更體面、更溫柔的隱藏方式。"
+  },
+  {
+    "show_this_content": "Said: 視頻裡的一切看起來都那麼流暢，可當我自己一動手，才發現每一步都沉重得讓人想逃。 真正的蛻變，是無法在忙碌生活的背景音裡免費獲取的。當我們把自我提升當作做家務時的背景音樂，大腦會偷懶地以為自己已經習得，從而拒绝再去支付現實中真正行動所需的笨拙、摩擦與痛苦。"
+  },
+  {
+    "show_this_content": "Said: 我不再收集地圖了。這一次，我允許自己在真實的土地上摔跤。 當我們將‘娛樂’與‘真正的勞作’剝離開來時，療癒就開始了。改變從不是一場圍觀，它需要你先踩進現實的泥潭裡，看清自己具體卡在哪裡，然後才去尋找解決它的工具。珍視自己那笨拙的微小產出，勝過崇拜完美的被動輸入。"
+  }
+]

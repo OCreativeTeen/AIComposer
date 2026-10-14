@@ -1,0 +1,6 @@
+Instruction_for_direct_video_generation:
+Generate detailed-single-step-image from the single input scene image.
+** According to the steps/section in the image, give me the step 2 image (with title, no step show in the image)
+
+Visual_Style:
+三维卡通 (3D Cartoon)
