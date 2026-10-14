@@ -14,6 +14,22 @@ from typing import Any
 
 WORKFLOW_KEY = "workflow"
 
+
+def _primary_cover_from_detail(video_detail: dict | None) -> str:
+    """从 video_detail 读取主封面图路径，兼容旧单值和新数组格式。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    raw = video_detail.get("cover_image")
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list) and raw:
+        first = raw[0]
+        if isinstance(first, str):
+            return first.strip()
+    return ""
+
 STAGE_INIT = "INIT"
 STAGE_GEMINI_DONE = "GEMINI_DONE"
 STAGE_INFOGRAPHIC_PENDING = "INFOGRAPHIC_PENDING"
@@ -224,7 +240,7 @@ def restore_session_fields(session) -> None:
     session.gemini_pick = int(wf.get("gemini_picked") or 0)
     session.cover_path = str(
         wf.get("cover_selected_path")
-        or (getattr(session, "video_detail", None) or {}).get("cover_image")
+        or _primary_cover_from_detail(getattr(session, "video_detail", None))
         or wf.get("selected_infographic_image")
         or ""
     )
@@ -369,7 +385,7 @@ def infer_stage(video_detail: dict | None) -> str:
     )
 
     cover = str(
-        row.get("cover_image") or wf.get("selected_infographic_image") or ""
+        _primary_cover_from_detail(row) or wf.get("selected_infographic_image") or ""
     ).strip()
     info = str(wf.get("infographic_status") or INFO_NONE).strip().upper()
 

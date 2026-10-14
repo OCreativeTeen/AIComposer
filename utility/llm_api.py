@@ -336,16 +336,39 @@ class LLMApi:
         return self.ollama_client.chat.completions.create(**request_params)
 
 
-    def show_manual_window(self, system_prompt, user_prompt="", *, images=None):
+    def show_manual_window(
+        self,
+        system_prompt,
+        user_prompt="",
+        *,
+        images=None,
+        on_image_response=None,
+    ):
         """只打开手动窗口，用来复制提示词和图片。不调用模型。
 
         有返回图时得到内存里的 PIL Image。没有图、文字有内容时得到这段文字。
         两边都空时得到空字符串，和原来没有贴回时一样。
+
+        ``on_image_response`` 是可选回调：``fn(pil_image) -> str | None``。
+        当返回图片（PIL Image）时调用，返回保存后的路径或 None。
         """
-        _model, response = self._show_model_dialog(system_prompt or "", user_prompt or "", image_paths=images)
+        _model, response = self._show_model_dialog(
+            system_prompt or "", user_prompt or "", image_paths=images
+        )
+        if response is not None and callable(on_image_response) and hasattr(response, "save"):
+            try:
+                on_image_response(response)
+            except Exception as exc:
+                print(f"⚠️ on_image_response 回调失败: {exc}")
         return response
 
-    def show_manual_workflow(self, steps, *, title: str = "手动流程") -> List[Dict[str, Any]]:
+    def show_manual_workflow(
+        self,
+        steps,
+        *,
+        title: str = "手动流程",
+        on_image_response=None,
+    ) -> List[Dict[str, Any]]:
         """一连串的手动窗口（一个小小的提示词流程）。不调用任何模型。
 
         ``steps`` 是一个列表，每一步是下面两种之一：
@@ -358,8 +381,12 @@ class LLMApi:
         有 ``images`` 才显示图；没有就不显示（比如第二步用第一步生成的图，那张图已经在 AI 工具里了，不用再摆出来）。
         不是最后一步时「确定」写成「下一步」。点「取消」或关窗就停下，后面的步骤不再打开。
 
-        返回已经做完的各步结果，每个是 ``{"title", "response", "cancelled"}``：
+        ``on_image_response`` 是可选回调：``fn(step_index, step_title, pil_image) -> str | None``。
+        当某一步返回图片（PIL Image）时调用，返回保存后的路径或 None。
+
+        返回已经做完的各步结果，每个是 ``{"title", "response", "cancelled", "saved_path"}``：
         ``response`` 是贴回的文字、贴回的图（PIL Image），或 None。取消的那一步 ``cancelled`` 为 True，是列表最后一个。
+        ``saved_path`` 是 ``on_image_response`` 返回的路径（若有图片且回调返回了路径）。
         """
         results: List[Dict[str, Any]] = []
         total = len(steps or [])
@@ -380,7 +407,21 @@ class LLMApi:
                 manual_only=True,
             )
             cancelled = bool(getattr(self, "_last_dialog_cancelled", False))
-            results.append({"title": name, "response": None if cancelled else response, "cancelled": cancelled})
+            saved_path = None
+            if not cancelled and response is not None and callable(on_image_response):
+                if hasattr(response, "save"):
+                    try:
+                        saved_path = on_image_response(index, name, response)
+                    except Exception as exc:
+                        print(f"⚠️ on_image_response 回调失败: {exc}")
+            result_entry = {
+                "title": name,
+                "response": None if cancelled else response,
+                "cancelled": cancelled,
+            }
+            if saved_path:
+                result_entry["saved_path"] = saved_path
+            results.append(result_entry)
             if cancelled:
                 break
         return results

@@ -1256,6 +1256,100 @@ def list_json_row_workflow_pid(item: dict) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# cover_image 数组支持
+# ---------------------------------------------------------------------------
+
+def get_cover_images(item: dict) -> list[str]:
+    """读取 cover_image 字段，兼容旧的单值字符串和新的数组格式。
+
+    返回存在的图片路径列表（绝对路径）。空列表表示无封面。
+    """
+    if not isinstance(item, dict):
+        return []
+    raw = item.get("cover_image")
+    if raw is None:
+        return []
+    paths: list[str] = []
+    if isinstance(raw, str):
+        p = raw.strip()
+        if p and os.path.isfile(p):
+            paths.append(os.path.abspath(p))
+    elif isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, str):
+                p = entry.strip()
+                if p and os.path.isfile(p):
+                    paths.append(os.path.abspath(p))
+    return paths
+
+
+def get_primary_cover_image(item: dict) -> str:
+    """获取主封面图路径（列表第一张），兼容旧格式。不存在时返回空字符串。"""
+    covers = get_cover_images(item)
+    return covers[0] if covers else ""
+
+
+def set_cover_images(item: dict, paths: list[str]) -> None:
+    """设置 cover_image 为路径数组。自动去重并保留顺序。"""
+    if not isinstance(item, dict):
+        return
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for p in paths or []:
+        if not isinstance(p, str):
+            continue
+        p = p.strip()
+        if not p:
+            continue
+        key = os.path.normcase(os.path.normpath(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(p)
+    if cleaned:
+        item["cover_image"] = cleaned
+    else:
+        item.pop("cover_image", None)
+
+
+def append_cover_image(item: dict, path: str) -> bool:
+    """追加一张封面到 cover_image 数组末尾。返回是否成功添加（已存在则跳过）。"""
+    if not isinstance(item, dict):
+        return False
+    p = (path or "").strip()
+    if not p:
+        return False
+    existing = get_cover_images(item)
+    key = os.path.normcase(os.path.normpath(p))
+    for e in existing:
+        if os.path.normcase(os.path.normpath(e)) == key:
+            return False
+    existing.append(p)
+    set_cover_images(item, existing)
+    return True
+
+
+def migrate_cover_image_to_array(item: dict) -> bool:
+    """将旧的单值 cover_image 迁移为数组格式。返回是否进行了迁移。"""
+    if not isinstance(item, dict):
+        return False
+    raw = item.get("cover_image")
+    if raw is None:
+        return False
+    if isinstance(raw, list):
+        return False
+    if isinstance(raw, str):
+        p = raw.strip()
+        if p:
+            item["cover_image"] = [p]
+            return True
+        else:
+            item.pop("cover_image", None)
+            return True
+    return False
+
+
 def resolve_video_detail_cover_media(video_detail: dict) -> dict:
     """从 video detail / 列表行解析封面图、幻灯片 PDF、成片 MP4 绝对路径。
 
@@ -1273,11 +1367,11 @@ def resolve_video_detail_cover_media(video_detail: dict) -> dict:
     except Exception as e:
         print(f"⚠️ resolve_video_detail_cover_media: {e}")
         cover = slide = video = ""
-        stored_cover = (video_detail.get("cover_image") or "").strip()
+        stored_cover = get_primary_cover_image(video_detail)
         stored_slide = (video_detail.get("slide") or "").strip()
         stored_video = (video_detail.get("video") or "").strip()
-        if stored_cover and os.path.isfile(stored_cover):
-            cover = os.path.abspath(stored_cover)
+        if stored_cover:
+            cover = stored_cover
         if stored_slide and os.path.isfile(stored_slide):
             slide = os.path.abspath(stored_slide)
         if stored_video and os.path.isfile(stored_video):

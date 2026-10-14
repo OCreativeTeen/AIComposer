@@ -46,7 +46,7 @@ def cover_image_title_for_publish(video_detail: dict | None) -> str:
     """封面图文件名（无扩展名），来自 ``cover_image`` 路径（NotebookLM artifact 标题）。"""
     if not isinstance(video_detail, dict):
         return ""
-    path = (video_detail.get("cover_image") or "").strip()
+    path = project_manager.get_primary_cover_image(video_detail)
     if not path:
         return ""
     stem, _ = os.path.splitext(os.path.basename(path))

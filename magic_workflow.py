@@ -2107,7 +2107,7 @@ class MagicWorkflow:
         pc = project_manager.PROJECT_CONFIG
         if not isinstance(pc, dict):
             return
-        if not (pc.get("cover_image") or pc.get("slide") or pc.get("cover_video")):
+        if not (project_manager.get_cover_images(pc) or pc.get("slide") or pc.get("cover_video")):
             project_manager.hydrate_config_cover_media(pc)
 
         n_scenes = len(self.scenes)
@@ -2178,9 +2178,9 @@ class MagicWorkflow:
         # 单场景：封面图 → clip_image；封面成片 → clip
         if n_scenes == 1:
             scene = self.scenes[0]
-            cover = (pc.get("cover_image") or "").strip()
+            cover = project_manager.get_primary_cover_image(pc)
             cover_video = (pc.get("cover_video") or "").strip()
-            if cover and os.path.isfile(cover):
+            if cover:
                 try:
                     ext = os.path.splitext(cover)[1].lower() or ".webp"
                     if ext not in (".webp", ".png", ".jpg", ".jpeg"):
