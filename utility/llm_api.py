@@ -738,6 +738,7 @@ class LLMApi:
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.columnconfigure(0, weight=1)
         response_image = [None]
+        paste_image_handler = [None]  # 当前窗口「返回的图」区的粘贴函数（附件 / 图片 / 纯文字三种布局都有）
 
         if file_kind:
             right_col.rowconfigure(0, weight=2)
@@ -1106,6 +1107,7 @@ class LLMApi:
 
             for widget in (reply_box, reply_hint, reply_hit, reply_pic):
                 widget.bind("<Double-Button-1>", paste_response_image)
+            paste_image_handler[0] = paste_response_image
         elif is_image_mode:
             right_col.rowconfigure(0, weight=2)
             right_col.rowconfigure(1, weight=1)
@@ -1161,6 +1163,7 @@ class LLMApi:
             for widget in (reply_box, reply_hint, reply_hit, reply_pic):
                 widget.bind("<Double-Button-1>", paste_response_image)
             dialog._llm_dialog_photo_ref = photo_ref
+            paste_image_handler[0] = paste_response_image
         else:
             prompt_box = ttk.LabelFrame(right_col, text="User Prompt", padding=8)
             prompt_box.grid(row=0, column=0, sticky="nsew")
@@ -1174,6 +1177,63 @@ class LLMApi:
             user_text.grid(row=1, column=0, sticky="nsew")
             if isinstance(user_prompt, str):
                 user_text.insert("1.0", user_prompt)
+
+            # 纯文字窗口也能贴回一张图（与图片模式同样的「返回的图」区）。
+            right_col.rowconfigure(0, weight=3)
+            right_col.rowconfigure(1, weight=1)
+            prompt_box.grid_configure(pady=(0, 6))
+            photo_ref = []
+            reply_box = ttk.LabelFrame(right_col, text="返回的图（双击或 Ctrl+V 从剪贴板粘贴）", padding=8)
+            reply_box.grid(row=1, column=0, sticky="nsew")
+            reply_hint = ttk.Label(reply_box, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8))
+            reply_hint.pack(anchor=tk.W, pady=(0, 4))
+            reply_hit = tk.Frame(reply_box, height=120)
+            reply_hit.pack(fill=tk.BOTH, expand=True)
+            reply_pic = ttk.Label(reply_hit)
+            reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
+
+            def paste_response_image(_event=None):
+                img = self._image_from_clipboard()
+                if img is None:
+                    reply_hint.config(text="剪贴板里没有图片")
+                    return "break"
+                response_image[0] = img
+                thumb = img.copy()
+                thumb.thumbnail((400, 220), Image.Resampling.LANCZOS)
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGBA")
+                photo = ImageTk.PhotoImage(thumb)
+                photo_ref.append(photo)
+                reply_pic.configure(image=photo)
+                reply_hint.config(text="已贴上返回的图")
+                return "break"
+
+            for widget in (reply_box, reply_hint, reply_hit, reply_pic):
+                widget.bind("<Double-Button-1>", paste_response_image)
+            dialog._llm_dialog_photo_ref = photo_ref
+            paste_image_handler[0] = paste_response_image
+
+        def _clipboard_has_text() -> bool:
+            try:
+                return bool((dialog.clipboard_get() or "").strip())
+            except tk.TclError:
+                return False
+
+        def on_ctrl_v_image(_event=None):
+            """Ctrl+V：剪贴板里是图片（没有文字）时贴到「返回的图」区；有文字时照常贴文字。
+
+            绑定在对话框（toplevel 绑定标签）上，文本框自己的粘贴先执行；剪贴板只有图时那一步什么也不贴。
+            """
+            handler = paste_image_handler[0]
+            if handler is None or _clipboard_has_text():
+                return None
+            if self._image_from_clipboard() is None:
+                return None
+            handler()
+            return "break"
+
+        dialog.bind("<Control-v>", on_ctrl_v_image, add="+")
+        dialog.bind("<Control-V>", on_ctrl_v_image, add="+")
 
         def on_response_double_click_paste(_event):
             try:
