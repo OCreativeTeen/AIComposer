@@ -29,7 +29,9 @@ def _clean_choice(saved) -> dict:
         return choice
     if saved.get("task") in {k for k, _ in config_prompt.PICTURE_FLOW_TASK_CHOICES}:
         choice["task"] = saved["task"]
-    if saved.get("text") in {k for k, _ in config_prompt.PICTURE_FLOW_TEXT_CHOICES}:
+    if saved.get("text") == "remove":
+        choice["text"] = "express"
+    elif saved.get("text") in {k for k, _ in config_prompt.PICTURE_FLOW_TEXT_CHOICES}:
         choice["text"] = saved["text"]
     if saved.get("narrative") in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
         choice["narrative"] = saved["narrative"]

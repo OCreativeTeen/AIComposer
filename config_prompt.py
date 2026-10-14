@@ -263,10 +263,14 @@ NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
 # 幻灯提示窗只做幻灯片（slideshow）；"single" 只留给故事窗「场景总图」（build_scene_summary_image_prompt）。
 _SLIDE_FLOW_TARGET_LABELS = {"single": "单图", "slideshow": "幻灯片"}
-SLIDE_FLOW_TEXT_CHOICES = (
-    ("none", "不加"),
-    ("keywords", "背景关键字"),
+# 图片、幻灯、视频共用。去掉文字不是留一块白板。
+FLOW_CAPTION_CHOICES = (
+    ("keep", "保留"),
+    ("erase", "去掉文字"),
+    ("keywords", "关键字作背景"),
+    ("express", "用画面讲"),
 )
+SLIDE_FLOW_TEXT_CHOICES = FLOW_CAPTION_CHOICES
 SLIDE_FLOW_NARRATIVE_CHOICES = (
     ("story", "故事（人物在画面里表演）"),
     ("narration", "叙事（图案和背景文字，人物少或没有）"),
@@ -496,7 +500,7 @@ def slide_flow_choice_label(
     fields = [name for name, on in (("visual", visual), ("speaking", speaking), ("actor", actor)) if on]
     parts = [narrative_label, target_label, "+".join(fields)]
     if narrative not in ("tech", "exec"):
-        parts.append("背景关键字" if text == "keywords" else "不加文字")
+        parts.append(dict(FLOW_CAPTION_CHOICES).get(text, text))
     return " · ".join(parts)
 
 
@@ -526,8 +530,8 @@ def build_slide_flow_prompt(
         narrative = "story"
     if target not in _SLIDE_FLOW_TARGET_LABELS:
         target = "slideshow"
-    if text not in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES}:
-        text = "none"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
     use_visual = bool(use_visual)
     use_speaking = bool(use_speaking)
     use_actor = bool(use_actor)
@@ -610,18 +614,8 @@ def build_slide_flow_prompt(
     lines.append("")
     if presentation:
         lines.append(SLIDE_FLOW_SLIDE_TEXT_NOTE)
-    elif keywords:
-        lines.extend([
-            "Do not add captions, subtitles, or speech bubbles.",
-            "Background lettering is allowed: a few large, sparse words behind the people or objects, one to four words per picture, only when a word truly carries the point.",
-            "Take the words from the meaning of what is given, or from the keyword hint, in the language of the talk. Never take them from the scene list itself.",
-            "One word or a few words. Never a sentence. Never a paragraph.",
-        ])
     else:
-        lines.extend([
-            "Do not put words on the picture. No subtitle, no caption, no annotation, no speech bubble, no background writing.",
-            "What is said tells you the mood and the body. It is not text to draw.",
-        ])
+        lines.append(flow_caption_rule(text))
     lines.append(SLIDE_FLOW_META_NOTE)
 
     if not presentation:
@@ -670,7 +664,7 @@ def build_scene_summary_image_prompt(
     """
     return build_slide_flow_prompt(
         target="single",
-        text="none",
+        text="erase",
         narrative="story",
         use_visual=True,
         use_speaking=True,
@@ -900,10 +894,7 @@ PICTURE_FLOW_TASK_CHOICES = (
     ("restyle", "转成项目风格"),
     ("extract", "人物提取"),
 )
-PICTURE_FLOW_TEXT_CHOICES = (
-    ("keep", "保留"),
-    ("remove", "去掉"),
-)
+PICTURE_FLOW_TEXT_CHOICES = FLOW_CAPTION_CHOICES
 
 
 def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> str:
@@ -911,7 +902,7 @@ def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> s
     if task == "extract":
         return "人物提取"
     task_label = dict(PICTURE_FLOW_TASK_CHOICES).get(task, task)
-    text_label = "去掉说明文字" if text == "remove" else "保留说明文字"
+    text_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
     label = f"{task_label} · {text_label}"
     style = (visual_style or "").strip()
     if style:
@@ -919,17 +910,38 @@ def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> s
     return label
 
 
-def _picture_flow_text_rule(remove_text: bool) -> str:
-    if remove_text:
+def flow_caption_rule(text: str) -> str:
+    """说明文字的三种处理，外加保留。图片、幻灯、视频用同一段。"""
+    if text == "keywords":
         return (
-            "Remove the explanation text. "
-            "Story pictures and comic pages often have captions beside the picture, under it, or in a box, "
-            "telling what the scene means or which part of the story this is. "
-            "Those words are not part of the drawing. Remove them. "
-            "Fill those areas with the picture that belongs there: paper, sky, wall, ground, or the rest of the illustration. "
-            "Do not leave empty boxes. Do not redraw the story."
+            "Take the explanation text off the picture. Do not leave an empty board, a blank panel, "
+            "or a ring of decoration around nothing.\n"
+            "From that text, keep only a few short keywords. Draw them as artistic lettering in the background, "
+            "blended into the place, behind the subject. One word or a short phrase. Never a sentence. Never a paragraph. "
+            "Never a caption bar. They only set the mood and mark the point.\n"
+            "The meaning itself is shown in the middle, through the people, the place, or the story. "
+            "The center is full. It is not blank."
         )
-    return "Keep any words already drawn in the picture. They stay part of the picture."
+    if text == "express":
+        return (
+            "No letters anywhere. No keyword, no caption, no subtitle, no background writing, no speech bubble.\n"
+            "Do not leave an empty board in the middle, and do not leave a ring of decoration around a blank center.\n"
+            "Show what that text meant through the people, the place, or the story, in the middle of the picture. "
+            "The center carries the meaning. It stays full."
+        )
+    if text == "erase":
+        return (
+            "Remove the explanation text: captions beside the picture, under it, or in a box. "
+            "Those words are not part of the drawing.\n"
+            "Do not leave an empty board, a blank panel, or a hole. "
+            "Continue the same picture through that area: the place, the people, and the objects that belong there.\n"
+            "Do not add new lettering."
+        )
+    return "Keep any words already drawn in the picture. They stay part of the picture. Do not add a new caption."
+
+
+def _picture_flow_text_rule(text: str) -> str:
+    return flow_caption_rule(text)
 
 
 def _picture_flow_refs() -> str:
@@ -1096,7 +1108,7 @@ def build_picture_flow_prompt(
             f"Restyle the whole picture into this target style: {style}.",
             "Faces, clothes, the place, and the objects all take that style."
             + ("" if story_on else " The story in the picture stays the same."),
-            _picture_flow_text_rule(text == "remove"),
+            _picture_flow_text_rule(text),
         ]
         if phrase:
             lines.append(
@@ -1128,7 +1140,7 @@ def build_picture_flow_prompt(
             "Color the picture more fully.",
             f"Shift only a little toward this project style: {style}.",
             "The original style is still what you see. This is not a full change into that style.",
-            _picture_flow_text_rule(text == "remove"),
+            _picture_flow_text_rule(text),
         ]
         if phrase:
             lines.append(
@@ -1890,12 +1902,16 @@ def video_flow_choice_label(
     camera: str = "none",
     motion: str = "",
     narrative: str = "story",
+    text: str = "erase",
 ) -> str:
     """把这几组选择写成一行，供窗口标题和提示词开头使用。"""
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     frame_label = dict(VIDEO_FLOW_FRAME_CHOICES).get(frames, frames)
-    bg_label = dict(VIDEO_FLOW_BACKGROUND_CHOICES).get(background, background)
-    parts = [narrative_label, frame_label, bg_label]
+    caption_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
+    parts = [narrative_label, frame_label, caption_label]
+    if text == "keep":
+        bg_label = dict(VIDEO_FLOW_BACKGROUND_CHOICES).get(background, background)
+        parts.append(bg_label)
     if frames != "two":
         evolve_label = dict(VIDEO_FLOW_EVOLVE_CHOICES).get(evolve, evolve)
         parts.append(evolve_label)
@@ -1977,8 +1993,9 @@ def _video_flow_instruction(
     camera: str = "none",
     motion: str = "",
     narrative: str = "story",
+    text: str = "erase",
 ) -> str:
-    """按这一次的画面、背景、演进和叙事风格，只写用得上的那几段。"""
+    """按这一次的画面、背景、演进、叙事风格和说明文字，只写用得上的那几段。"""
     style = (visual_style or "").strip() or "realistic"
     chunks: list[str] = []
     if frames == "two":
@@ -2032,26 +2049,31 @@ def _video_flow_instruction(
             )
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
     chunks.append(_video_narrative_speech(narrative))
     chunks.append(_video_narrative_block(narrative))
-    if background == "art_text":
-        chunks.append(
-            """** In the deep background, behind the people, place a few artistic words. They belong to the picture, not to a subtitle bar.
+    if text == "keep":
+        if background == "art_text":
+            chunks.append(
+                """** In the deep background, behind the people, place a few artistic words. They belong to the picture, not to a subtitle bar.
 ** Take only the shortest keywords from ``speaking`` and ``voiceover``. A word or a short phrase. Never a sentence. Never a paragraph.
 ** Draw the letters in a hand that fits the picture. Do not cover faces.
 ** Do not turn the spoken lines into captions."""
-        )
-    elif background == "bubble":
-        chunks.append(
-            """** A small thought bubble may appear, as if a person is thinking. One bubble at a time.
+            )
+        elif background == "bubble":
+            chunks.append(
+                """** A small thought bubble may appear, as if a person is thinking. One bubble at a time.
 ** The bubble holds a keyword or a very short phrase from ``speaking`` or ``voiceover``. It sits near that person and does not cover the face.
 ** It is not a subtitle bar and not a paragraph. If there is no short phrase to think, show no bubble."""
-        )
-    else:
-        chunks.append(
-            """** Do not put words on the picture. No background writing, no thought bubble, no subtitle, no title card.
+            )
+        else:
+            chunks.append(
+                """** Do not put words on the picture. No background writing, no thought bubble, no subtitle, no title card.
 ** ``speaking`` and ``voiceover`` are not text to draw."""
-        )
+            )
+    else:
+        chunks.append(flow_caption_rule(text))
     chunks.append(_video_flow_camera_line(camera))
     motion_line = _video_flow_motion_line(motion)
     if motion_line:
@@ -2184,8 +2206,9 @@ def build_video_flow_prompt(
     camera: str = "none",
     motion: str = "",
     narrative: str = "story",
+    text: str = "erase",
 ) -> str:
-    """按画面数量、背景文字、单画面演进、运镜、动画效果和叙事风格，组装这一次的视频提示词。"""
+    """按画面数量、背景文字、单画面演进、运镜、动画效果、叙事风格和说明文字，组装这一次的视频提示词。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
@@ -2199,6 +2222,8 @@ def build_video_flow_prompt(
         motion = ""
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
     if frames == "two":
         evolve = "keep"
     style = (visual_style or "").strip() or "realistic"
@@ -2210,7 +2235,7 @@ def build_video_flow_prompt(
         indent=2,
     )
     instruction = _video_flow_instruction(
-        frames, background, evolve, style, camera, motion, narrative
+        frames, background, evolve, style, camera, motion, narrative, text
     )
     voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
@@ -2227,7 +2252,7 @@ def build_video_flow_prompt(
     parts = {
         "Visual_Style": style,
         "Video_choices": video_flow_choice_label(
-            frames, background, evolve, camera, motion, narrative
+            frames, background, evolve, camera, motion, narrative, text
         ),
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,
@@ -2334,8 +2359,9 @@ def build_transition_video_prompt(
     language: str = "",
     host_narrator: str = "",
     narrative: str = "story",
+    text: str = "erase",
 ) -> str:
-    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。叙事风格与普通视频同一套。"""
+    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。叙事风格与说明文字与普通视频同一套。"""
     style = (visual_style or "").strip() or "realistic"
     chosen = transition if isinstance(transition, dict) else {}
     scenes = scene_content if isinstance(scene_content, list) else []
@@ -2346,9 +2372,12 @@ def build_transition_video_prompt(
     )
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
+    if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
+        text = "erase"
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
+    caption_label = dict(FLOW_CAPTION_CHOICES).get(text, text)
     instruction = _transition_video_instruction(chosen, style)
-    instruction = instruction + "\n\n" + _video_narrative_block(narrative)
+    instruction = instruction + "\n\n" + _video_narrative_block(narrative) + "\n\n" + flow_caption_rule(text)
     voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
     audio = "\n".join(
@@ -2364,7 +2393,7 @@ def build_transition_video_prompt(
     choice_lines = _transition_video_choice_lines(chosen)
     parts = {
         "Visual_Style": style,
-        "Video_choices": f"{narrative_label} · 过渡 · 起始画面到终止画面",
+        "Video_choices": f"{narrative_label} · {caption_label} · 过渡 · 起始画面到终止画面",
         "Transition_choices": choice_lines or "（这场没有记下选择）",
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,

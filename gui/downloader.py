@@ -9888,10 +9888,14 @@ class MediaGUIManager:
                             )
                             saved_video = (project_manager.PROJECT_CONFIG or {}).get("video_prompt")
                             video_narrative = "story"
+                            video_text = "erase"
                             if isinstance(saved_video, dict):
                                 picked = saved_video.get("narrative")
                                 if picked in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
                                     video_narrative = picked
+                                picked_text = saved_video.get("text")
+                                if picked_text in {k for k, _ in config_prompt.FLOW_CAPTION_CHOICES}:
+                                    video_text = picked_text
                             video_prompt = config_prompt.build_video_flow_prompt(
                                 frames="one",
                                 background="none",
@@ -9901,6 +9905,7 @@ class MediaGUIManager:
                                 language=getattr(self, "language", "") or "",
                                 host_narrator=_project_look_from_row(video_detail)[2],
                                 narrative=video_narrative,
+                                text=video_text,
                             )
 
                             def _on_workflow_image(step_idx, step_title, pil_img):

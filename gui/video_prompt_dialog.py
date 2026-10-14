@@ -106,11 +106,16 @@ def open_video_prompt_dialog(
     actions.pack(fill=tk.X)
 
     saved_narrative = "story"
+    saved_text = "erase"
     if isinstance(saved_choice, dict):
         picked = saved_choice.get("narrative")
         if picked in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
             saved_narrative = picked
+        picked_text = saved_choice.get("text")
+        if picked_text in {k for k, _ in config_prompt.FLOW_CAPTION_CHOICES}:
+            saved_text = picked_text
     narrative_var = tk.StringVar(value=saved_narrative)
+    text_var = tk.StringVar(value=saved_text)
     frame_var = tk.StringVar(value="two" if is_transition else "one")
     bg_var = tk.StringVar(value="none")
     evolve_var = tk.StringVar(value="keep")
@@ -121,7 +126,11 @@ def open_video_prompt_dialog(
 
     narrative_row = ttk.Frame(body)
     narrative_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 8))
-    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 0))
+    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 8))
+    text_box = ttk.LabelFrame(narrative_row, text="说明文字", padding=(8, 4))
+    text_box.pack(side=tk.LEFT, anchor=tk.N)
+    for value, label in config_prompt.FLOW_CAPTION_CHOICES:
+        ttk.Radiobutton(text_box, text=label, value=value, variable=text_var).pack(anchor=tk.W)
 
     groups = ttk.Frame(body)
     if not is_transition:
@@ -134,8 +143,11 @@ def open_video_prompt_dialog(
 
     background_box = ttk.LabelFrame(groups, text="背景", padding=(8, 4))
     background_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+    bg_buttons = []
     for value, label in config_prompt.VIDEO_FLOW_BACKGROUND_CHOICES:
-        ttk.Radiobutton(background_box, text=label, value=value, variable=bg_var).pack(anchor=tk.W)
+        btn = ttk.Radiobutton(background_box, text=label, value=value, variable=bg_var)
+        btn.pack(anchor=tk.W)
+        bg_buttons.append(btn)
 
     evolve_box = ttk.LabelFrame(groups, text="演进", padding=(8, 4))
     evolve_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
@@ -167,7 +179,7 @@ def open_video_prompt_dialog(
         ttk.Label(summary, text="\n".join(lines), justify=tk.LEFT).pack(anchor=tk.W)
 
     def current_choice() -> dict:
-        return {"narrative": narrative_var.get()}
+        return {"narrative": narrative_var.get(), "text": text_var.get()}
 
     def remember() -> None:
         if save_choice is None:
@@ -181,11 +193,14 @@ def open_video_prompt_dialog(
         two = frame_var.get() == "two"
         for btn in evolve_buttons:
             btn.configure(state=("disabled" if two else "normal"))
+        keep_words = text_var.get() == "keep"
+        for btn in bg_buttons:
+            btn.configure(state=("normal" if keep_words else "disabled"))
         go.config(text="打开提示")
         if is_transition or two:
-            hint.config(text="叙事风格决定这段视频怎么讲。多画面用起始画面和终止画面。选好后打开提示窗口，两张图和提示词都在里面。选择会记下。")
+            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理：去掉文字会补上原来的画面，关键字作背景只留几个字在后面，用画面讲则中间用人物或场景把意思演出来。多画面用起始画面和终止画面。选好后打开提示窗口。选择会记下。")
         else:
-            hint.config(text="叙事风格决定这段视频怎么讲。单画面先选定演进。运镜选默认就不写镜头怎么动。选好后打开提示窗口。选择会记下。")
+            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理。选「保留」时，背景里的不加、背景文字、思想泡泡才生效。运镜选默认就不写镜头怎么动。选好后打开提示窗口。选择会记下。")
 
     def close() -> None:
         remember()
@@ -209,6 +224,7 @@ def open_video_prompt_dialog(
                     language=language or "",
                     host_narrator=host_narrator or "",
                     narrative=narrative_var.get(),
+                    text=text_var.get(),
                 )
             else:
                 prompt = config_prompt.build_video_flow_prompt(
@@ -222,6 +238,7 @@ def open_video_prompt_dialog(
                     camera=camera_var.get(),
                     motion=motion_var.get(),
                     narrative=narrative_var.get(),
+                    text=text_var.get(),
                 )
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
@@ -255,6 +272,7 @@ def open_video_prompt_dialog(
     go.pack(side=tk.LEFT)
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
+    text_var.trace_add("write", refresh_choices)
     refresh_choices()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

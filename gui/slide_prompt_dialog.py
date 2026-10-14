@@ -15,7 +15,7 @@ from gui.video_prompt_dialog import _place_popup_near
 _DEFAULT_CHOICE = {
     "narrative": "story",
     "target": "slideshow",  # 只做幻灯片；旧项目里存的 "single" 也按幻灯片
-    "text": "none",
+    "text": "erase",
     "visual": True,
     "speaking": True,
     "actor": False,
@@ -34,6 +34,8 @@ def _clean_choice(saved) -> dict:
     ):
         if saved.get(key) in allowed:
             choice[key] = saved[key]
+    if saved.get("text") == "none":
+        choice["text"] = "erase"
     for key in ("visual", "speaking", "actor"):
         if key in saved:
             choice[key] = bool(saved[key])
@@ -132,7 +134,7 @@ def open_slide_prompt_dialog(
 
     pack_narrative_choices(groups, narrative_var)
 
-    text_box = ttk.LabelFrame(groups, text="画面文字", padding=(8, 4))
+    text_box = ttk.LabelFrame(groups, text="说明文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
     text_buttons = []
     for value, label in config_prompt.SLIDE_FLOW_TEXT_CHOICES:
