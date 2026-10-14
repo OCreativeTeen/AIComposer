@@ -20,6 +20,22 @@ from storyproducer import workflow as wfstore
 
 _FULLWIDTH = str.maketrans("０１２３４５６７８９", "0123456789")
 
+
+def _primary_cover_image(video_detail: dict | None) -> str:
+    """从 video_detail 读取主封面图路径，兼容旧单值和新数组格式。"""
+    if not isinstance(video_detail, dict):
+        return ""
+    raw = video_detail.get("cover_image")
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list) and raw:
+        first = raw[0]
+        if isinstance(first, str):
+            return first.strip()
+    return ""
+
 _ALIASES = {
     "nbp": "notebooklm",
     "nblm": "notebooklm",
@@ -117,7 +133,7 @@ class StoryEngine:
             f"visual_style: {s.visual_style or '（未选）'}\n"
             f"narrator: {s.narrator or '（未选）'}\n"
             f"scene_content: {sc} 场\n"
-            f"cover_image: {os.path.basename(str((s.video_detail or {}).get('cover_image') or s.cover_path or '')) or '（未选）'}\n"
+            f"cover_image: {os.path.basename(_primary_cover_image(s.video_detail) or s.cover_path or '') or '（未选）'}\n"
             f"nbi: {wf.get('nbi_index') or s.nbi_index or '—'}\n"
             f"grv variant: {wf.get('grv_variant') or s.grv_variant}"
         )
@@ -148,6 +164,25 @@ class StoryEngine:
         if ok and isinstance(self.session.video_detail, dict):
             self.session.video_detail[field] = value
         return ok, msg
+
+    def _append_cover_image(self, cover_path: str) -> tuple[bool, str]:
+        """追加一张封面图到 cover_image 数组。"""
+        vd = self.session.video_detail
+        if not isinstance(vd, dict):
+            return False, "no video_detail"
+        raw = vd.get("cover_image")
+        paths: list[str] = []
+        if isinstance(raw, str) and raw.strip():
+            paths.append(raw.strip())
+        elif isinstance(raw, list):
+            for p in raw:
+                if isinstance(p, str) and p.strip():
+                    paths.append(p.strip())
+        norm = cover_path.strip()
+        key = os.path.normcase(os.path.normpath(norm))
+        if not any(os.path.normcase(os.path.normpath(p)) == key for p in paths):
+            paths.append(norm)
+        return self._persist_field("cover_image", paths)
 
     def _patch_wf(self, patch: dict) -> dict:
         return wfstore.persist_workflow(self.session.video_detail, patch)
@@ -736,9 +771,7 @@ class StoryEngine:
                 dest = _cover_dest_from_install_msg(msg) if ok else ""
                 cover_image = dest or path
                 if ok and cover_image:
-                    self._persist_field("cover_image", cover_image)
-                    if isinstance(self.session.video_detail, dict):
-                        self.session.video_detail["cover_image"] = cover_image
+                    self._append_cover_image(cover_image)
                 self.session.cover_path = (cover_image if ok else path) or path
                 wf_patch = {
                     "step": "cover_picked",

@@ -716,10 +716,10 @@ class WorkflowGUI:
         for src in (pc, row):
             if not isinstance(src, dict):
                 continue
-            stored_cover = (src.get("cover_image") or "").strip()
+            stored_cover = project_manager.get_primary_cover_image(src)
             stored_slide = (src.get("slide") or "").strip()
-            if not cover and stored_cover and os.path.isfile(stored_cover):
-                cover = os.path.abspath(stored_cover)
+            if not cover and stored_cover:
+                cover = stored_cover
             if not slide and stored_slide and os.path.isfile(stored_slide):
                 slide = os.path.abspath(stored_slide)
         if not cover:
@@ -12163,8 +12163,30 @@ class WorkflowGUI:
                 hint.config(text="先选定画风和说明文字。选好后打开提示窗口，当前图和提示词都在里面。封面处理选「无」。")
 
         def open_manual(prompt: str, images: list[str]) -> None:
+            def _on_image_response(pil_img):
+                _mgr, vd, _story_raw, ch_path = self._cover_prompt_context()
+                if not isinstance(vd, dict):
+                    return
+                ch = (getattr(self.workflow, "channel", None) or "").strip()
+                from gui.downloader import save_pil_image_to_cover_array
+                ok, dest, _err = save_pil_image_to_cover_array(
+                    pil_img,
+                    vd,
+                    channel=ch,
+                    filename_hint="picture_flow",
+                )
+                if ok and dest:
+                    project_manager.save_project_config()
+                    show_auto_close_popup(
+                        self.root,
+                        "图片提示",
+                        f"返回的图片已保存到封面列表：\n{os.path.basename(dest)}",
+                    )
+
             dlg.destroy()
-            self.llm_api.show_manual_window(prompt, "", images=images)
+            self.llm_api.show_manual_window(
+                prompt, "", images=images, on_image_response=_on_image_response
+            )
 
         def on_go() -> None:
             cover_key = cover_var.get()
@@ -12290,6 +12312,26 @@ class WorkflowGUI:
                 or config.VISUAL_STYLE_OPTIONS[0]
             )
 
+        def _on_video_image_response(pil_img):
+            _mgr, vd, _story_raw, ch_path = self._cover_prompt_context()
+            if not isinstance(vd, dict):
+                return
+            ch = (getattr(self.workflow, "channel", None) or "").strip()
+            from gui.downloader import save_pil_image_to_cover_array
+            ok, dest, _err = save_pil_image_to_cover_array(
+                pil_img,
+                vd,
+                channel=ch,
+                filename_hint="video_prompt",
+            )
+            if ok and dest:
+                project_manager.save_project_config()
+                show_auto_close_popup(
+                    self.root,
+                    "视频提示",
+                    f"返回的图片已保存到封面列表：\n{os.path.basename(dest)}",
+                )
+
         open_video_prompt_dialog(
             self.root,
             self._nb_story_video_btn,
@@ -12301,7 +12343,7 @@ class WorkflowGUI:
             get_image=get_image,
             copy_image=lambda path: bool(self.copy_image_to_clipboard(path, silent=True)),
             open_manual=lambda prompt, images: self.llm_api.show_manual_window(
-                prompt, "", images=images
+                prompt, "", images=images, on_image_response=_on_video_image_response
             ),
             simple_actions=[
                 ("仅当前场景", lambda: self._run_clip_video("still", "single")),

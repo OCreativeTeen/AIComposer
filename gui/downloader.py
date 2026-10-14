@@ -2298,9 +2298,59 @@ def save_cover_image_as_gen_video_webp(
                     pass
     if out_ok:
         if isinstance(video_detail, dict):
-            video_detail["cover_image"] = out_ok
+            project_manager.append_cover_image(video_detail, out_ok)
         return True, out_ok, ""
     return False, "", err_msg or "保存封面失败"
+
+
+def save_pil_image_to_cover_array(
+    pil_image,
+    video_detail: dict,
+    *,
+    channel: str = "",
+    pid: str = "yt_img",
+    lang: str = "zh",
+    filename_hint: str = "",
+) -> tuple[bool, str, str]:
+    """将 PIL Image 保存为临时文件，加水印并追加到 cover_image 数组。
+
+    Returns ``(ok, dest_abs, error_msg)``.
+    """
+    import tempfile
+    from PIL import Image
+
+    if not isinstance(video_detail, dict):
+        return False, "", "invalid video_detail"
+    if pil_image is None or not hasattr(pil_image, "save"):
+        return False, "", "invalid PIL image"
+
+    hint = (filename_hint or "").strip()
+    if not hint:
+        hint = f"workflow_image_{int(time.time())}"
+    hint = make_safe_file_name(hint)
+    if not hint.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        hint = hint + ".png"
+
+    fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(hint)[1] or ".png")
+    os.close(fd)
+    try:
+        pil_image.save(tmp_path)
+    except Exception as exc:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return False, "", f"保存临时图片失败: {exc}"
+
+    ok, dest, err = save_cover_image_as_gen_video_webp(
+        tmp_path,
+        video_detail,
+        channel=channel,
+        pid=pid,
+        lang=lang,
+        cleanup_source=True,
+    )
+    return ok, dest, err
 
 
 def accept_summary_cover_image(
@@ -4353,11 +4403,11 @@ def _find_gen_video_mp4_for_row(video: dict) -> str:
 
 
 def _find_gen_video_webp_for_row(video: dict) -> str:
-    """封面：优先故事 ``cover_image``，否则 ``gen_video/<id>.webp``。"""
+    """封面：优先故事 ``cover_image``（首张），否则 ``gen_video/<id>.webp``。"""
     if isinstance(video, dict):
-        stored = (video.get("cover_image") or "").strip()
-        if stored and os.path.isfile(stored):
-            return os.path.abspath(stored)
+        stored = project_manager.get_primary_cover_image(video)
+        if stored:
+            return stored
     gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
     if not gen_dir:
         return ""
@@ -8981,7 +9031,7 @@ class MediaGUIManager:
                         dest = os.path.join(gen_dir, os.path.basename(image_path))
                         if os.path.abspath(dest) != os.path.abspath(image_path):
                             safe_copy_overwrite(image_path, dest)
-                        video_detail["cover_image"] = os.path.abspath(dest)
+                        project_manager.append_cover_image(video_detail, os.path.abspath(dest))
                     except Exception as exc:
                         messagebox.showerror("图片", f"无法保存这张图片：\n{exc}", parent=dlg)
                         return
@@ -8997,8 +9047,9 @@ class MediaGUIManager:
                     except Exception:
                         pass
                 persist(video_detail, parent=dlg)
+                primary_cover = project_manager.get_primary_cover_image(video_detail)
                 show_auto_close_popup(
-                    dlg, "图片", f"封面图片已挂到这一条：\n{os.path.basename(video_detail.get('cover_image') or '')}"
+                    dlg, "图片", f"封面图片已挂到这一条：\n{os.path.basename(primary_cover) if primary_cover else ''}"
                 )
 
             def _pick_cover_image() -> None:
@@ -9770,8 +9821,37 @@ class MediaGUIManager:
                                     parent=dlg,
                                 )
                                 return
+                            def _on_scene_summary_image(pil_img):
+                                ok, dest, _err = save_pil_image_to_cover_array(
+                                    pil_img,
+                                    video_detail,
+                                    channel=self._channel_config_key(),
+                                    filename_hint="scene_summary",
+                                )
+                                if ok and dest:
+                                    persist(video_detail, parent=dlg)
+                                    drop_ctx2 = getattr(dlg, "_summary_drop_ctx", None)
+                                    refresh_media = (
+                                        drop_ctx2.get("refresh_feature_media_row")
+                                        if isinstance(drop_ctx2, dict)
+                                        else None
+                                    )
+                                    if callable(refresh_media):
+                                        try:
+                                            refresh_media()
+                                        except Exception:
+                                            pass
+                                    show_auto_close_popup(
+                                        dlg,
+                                        "场景总图",
+                                        f"返回的图片已保存到封面列表：\n{os.path.basename(dest)}",
+                                    )
+
                             # 不调图片 API：打开 LLM 手动窗口（提示词在左），人把提示词拿去处理。
-                            self.llm_api.show_manual_window(img_prompt, "")
+                            # 返回的图片会通过 on_image_response 回调保存到 cover_image 数组。
+                            self.llm_api.show_manual_window(
+                                img_prompt, "", on_image_response=_on_scene_summary_image
+                            )
                             return
                         if config_channel.is_step_image_label(label):
                             # 图片分解不调 LLM / 图片 API：给出提示词 + 封面图片，用户自己带到 AI 图片工具。
@@ -9798,10 +9878,35 @@ class MediaGUIManager:
                                     or ""
                                 ),
                             )
+
+                            def _on_workflow_image(step_idx, step_title, pil_img):
+                                ok, dest, _err = save_pil_image_to_cover_array(
+                                    pil_img,
+                                    video_detail,
+                                    channel=self._channel_config_key(),
+                                    filename_hint=f"step_{step_no}_{step_idx + 1}",
+                                )
+                                if ok and dest:
+                                    persist(video_detail, parent=dlg)
+                                    drop_ctx2 = getattr(dlg, "_summary_drop_ctx", None)
+                                    refresh_media = (
+                                        drop_ctx2.get("refresh_feature_media_row")
+                                        if isinstance(drop_ctx2, dict)
+                                        else None
+                                    )
+                                    if callable(refresh_media):
+                                        try:
+                                            refresh_media()
+                                        except Exception:
+                                            pass
+                                    return dest
+                                return None
+
                             # 两步手动流程（LLM 手动窗口，不调任何图片 / 视频 API）：
                             # 第 1 步：提示词在左，封面图片在右，做第 k 步细节图；
                             # 第 2 步：用第 1 步的图做视频，只放提示词（那张图已经在 AI 工具里）。
-                            self.llm_api.show_manual_workflow(
+                            # 返回的图片会通过 on_image_response 回调保存到 cover_image 数组。
+                            results = self.llm_api.show_manual_workflow(
                                 [
                                     {
                                         "title": f"封面图 → 第 {step_no} 步细节图",
@@ -9814,7 +9919,17 @@ class MediaGUIManager:
                                     },
                                 ],
                                 title="图片分解",
+                                on_image_response=_on_workflow_image,
                             )
+                            saved_any = any(
+                                r.get("saved_path") for r in results if isinstance(r, dict)
+                            )
+                            if saved_any:
+                                show_auto_close_popup(
+                                    dlg,
+                                    "图片分解",
+                                    "返回的图片已保存到封面列表。",
+                                )
                             return
                         if kind == "image":
                             override = _image_material_override(video_detail)
