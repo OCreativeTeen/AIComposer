@@ -528,7 +528,11 @@ def ask_publish_title_and_description(
         value=SOURCE_SUMMARY,
         command=lambda: _load_source_raw(show_empty_warning=True),
     )
-    rb_summary.pack(side=tk.LEFT, padx=(0, 10))
+    rb_summary.pack(side=tk.LEFT, padx=(0, 4))
+    regen_summary_btn = ttk.Button(src_row, text="重新生成", width=10)
+    regen_summary_btn.pack(side=tk.LEFT, padx=(0, 10))
+    if not scenes:
+        regen_summary_btn.state(["disabled"])
     rb_analyzed = ttk.Radiobutton(
         src_row,
         text="分析内容",
@@ -588,6 +592,7 @@ def ask_publish_title_and_description(
         desc_box,
         text="默认填本条 summary；没有 summary 时再按审阅文稿 → 场景 speaking/voiceover → 分析内容 → 场景 JSON；"
         "选定来源后编辑区显示原始素材（可改）。"
+        "summary 旁的「重新生成」按整集场景内容，用 DeepSeek 写成大约五六句的视频介绍。"
         "点「生成描述概述」由 LLM 根据编辑区内容生成简短 YouTube 描述；"
         "双击编辑区可用剪贴板替换全文。勾选 poem 时，确认发布前会自动在描述下方追加诗歌。",
         wraplength=800,
@@ -610,9 +615,54 @@ def ask_publish_title_and_description(
         state = tk.DISABLED if busy else tk.NORMAL
         try:
             gen_btn.config(state=state)
+            if scenes:
+                regen_summary_btn.state(["!disabled"] if not busy else ["disabled"])
             dlg.config(cursor="watch" if busy else "")
         except tk.TclError:
             pass
+
+    def on_regenerate_summary():
+        source_text = full_scene_content_text(scenes)
+        if not source_text:
+            messagebox.showwarning("提示", "场景内容为空，无法重新生成 summary。", parent=dlg)
+            return
+        prompt = config_prompt.YOUTUBE_SUMMARY_FROM_SCENES_PROMPT.format(language=llm_label)
+
+        def worker():
+            err = [None]
+            text = [""]
+            try:
+                import utility.llm_api as llm_api
+
+                out = llm_api.LLMApi(llm_api.TEXT_MODEL).generate_text(prompt, source_text)
+                text[0] = config.chinese_convert(out or "", lang).strip()
+            except Exception as e:
+                err[0] = e
+
+            def done():
+                nonlocal item_summary
+                _set_busy(False)
+                if err[0] is not None:
+                    messagebox.showerror("生成失败", str(err[0]), parent=dlg)
+                    return
+                if not text[0]:
+                    messagebox.showwarning("提示", "DeepSeek 未返回有效介绍。", parent=dlg)
+                    return
+                item_summary = text[0]
+                try:
+                    rb_summary.state(["!disabled"])
+                except tk.TclError:
+                    pass
+                source_var.set(SOURCE_SUMMARY)
+                desc_tx.delete("1.0", tk.END)
+                desc_tx.insert("1.0", text[0])
+
+            dlg.after(0, done)
+
+        _set_busy(True)
+        threading.Thread(target=worker, daemon=True).start()
+
+    regen_summary_btn.config(command=on_regenerate_summary)
 
     def on_generate():
         source_text = (desc_tx.get("1.0", tk.END) or "").strip()

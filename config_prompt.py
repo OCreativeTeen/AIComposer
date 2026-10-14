@@ -193,6 +193,20 @@ Output only the final narrative description in {language}.
 """
 
 
+YOUTUBE_SUMMARY_FROM_SCENES_PROMPT = """
+You write the YouTube description for one video, in {language}.
+
+The user message is the whole program, scene by scene: what is shown and what is said.
+
+Write 5 or 6 sentences. No more. Not a paragraph longer than that.
+Tell a viewer, in plain words, what this video is about: the subject, the situation, and where it arrives.
+Do not retell every scene. Do not quote the script. Do not open with a title line.
+
+No bullet points. No hashtags. No markdown. No "subscribe".
+Output only those sentences in {language}.
+"""
+
+
 
 
 speaking_PROMPT = """

@@ -22,19 +22,21 @@ LM_STUDIO = "qwen/qwen3.5-9b"
 #OLLAMA = "qwen3.5:9b"
 OLLAMA = "gemma4:26b"
 
-GPT_MINI = "deepseek-flash"
+# 本机 Strata 上已加载的模型。/v1/models 的 id，上下文 65536，只收文字。
+GPT_MINI = "qwen3.8-flash-next-iq3_xxs"
 
 GEMINI = "gemini-3.5-flash-lite"
 
 MANUAL = "manual"
 
-# 代码里原来写死用 Gemini 的文字类调用（补标点、分析、改写、生成场景等），统一用这个模型。
-# Gemini 失败率高，现在换成 DeepSeek Flash。想换回 Gemini，把这一行改成 GEMINI。
+# 纯文字、不是手动窗口的调用都走这一台本机 Strata。带图片或附件的仍然先开手动窗口。
 TEXT_MODEL = GPT_MINI
+# 生成长度上限。模型总窗口是 65536，提示词也算在里面，所以回答不要占满。
+STRATA_MAX_TOKENS = 32768
 
 MODELS = {
     GPT_MINI : {
-        "url": "https://api.deepseek.com/v1" #"https://api.openai.com/v1"
+        "url": "http://192.168.1.185:8080/v1"
     },
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -57,8 +59,7 @@ class LLMApi:
         self.model = model
 
         self.openai_client = OpenAI(
-            # DeepSeek 的密钥。优先读 DEEPSEEK_API_KEY，没有再读老名字 OPENAI_API_KEY。
-            api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
+            api_key = os.getenv("STRATA_API_KEY", ""),
             base_url = MODELS[GPT_MINI]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
@@ -301,15 +302,19 @@ class LLMApi:
             return False
 
 
+    def _strata_request(self, model: str, messages: List[Dict]) -> Dict:
+        """本机 Strata（Qwen）的请求。关掉思考，否则回答会空着、只剩 reasoning。"""
+        return {
+            "model": model,
+            "messages": messages,
+            "max_tokens": STRATA_MAX_TOKENS,
+            "stream": False,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        }
+
     def _chat_completions(self, model: str, messages: List[Dict]) -> Any:
         if model == GPT_MINI:
-            request_params = {
-                "model": model,
-                "messages": messages,
-                "max_completion_tokens": 131072,
-                "stream": False,
-            }
-            return self.openai_client.chat.completions.create(**request_params)
+            return self.openai_client.chat.completions.create(**self._strata_request(model, messages))
         if model == GEMINI:
             request_params = {
                 "model": model,
@@ -493,7 +498,7 @@ class LLMApi:
 
         - 指定了模型（不是 None、不是 MANUAL）：直接用它。
         - 没指定模型（LLMApi()）：
-            * 纯文字（没有图片、没有要手动贴的音频/视频/PDF）：先自动用 TEXT_MODEL（DeepSeek Flash），
+            * 纯文字（没有图片、没有要手动贴的音频/视频/PDF）：先自动用 TEXT_MODEL（本机 Strata），
               失败（报错或空回答）才打开手动窗口，让人处理。
             * 有图片或附件：直接打开手动窗口，和原来一样。
         - MANUAL：总是打开手动窗口。
@@ -515,10 +520,8 @@ class LLMApi:
                     if isinstance(answer, str) and answer.strip():
                         return answer
                     print(f"⚠️ 自动调用 {TEXT_MODEL} 没成功，转到手动窗口。")
-                    if TEXT_MODEL == GPT_MINI and not (
-                        os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
-                    ):
-                        print("⚠️ 没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
+                    if TEXT_MODEL == GPT_MINI and not os.getenv("STRATA_API_KEY"):
+                        print("⚠️ 没有找到 Strata 密钥：请在 .env 里加一行 STRATA_API_KEY=你的密钥。")
 
             # popup dialog to ask user choose from GPT_MINI, GEMINI, or MANUAL, return choice as model
             if base_model == MANUAL or base_model is None:
@@ -532,14 +535,9 @@ class LLMApi:
 
             # 准备请求参数（在确定模型后设置）
             if model == GPT_MINI:
-                
-                request_params = {
-                    "model": model,  # 使用确定的模型名称
-                    "messages": messages,
-                    "max_completion_tokens": 131072,
-                    "stream": False
-                }
-                response = self.openai_client.chat.completions.create(**request_params)
+                response = self.openai_client.chat.completions.create(
+                    **self._strata_request(model, messages)
+                )
                 return self.parse_response(response)
 
             elif model == GEMINI:
@@ -837,7 +835,7 @@ class LLMApi:
         model_btn_row = ttk.Frame(model_frame)
         model_btn_row.pack(fill=tk.X)
         for mid, btn_title in ([] if manual_only else [
-            (GPT_MINI, f"GPT"),
+            (GPT_MINI, "Strata"),
             (GEMINI, "Gemini"),
             (OLLAMA, f"OLLAMA"),
             (MANUAL, f"Manual"),
