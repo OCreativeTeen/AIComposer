@@ -8400,8 +8400,23 @@ class MediaGUIManager:
             _sync_series_episode_choices()
             series_total_var.trace_add("write", _sync_series_episode_choices)
 
+            # 步数下拉两用：Step Story = 共几场（默认 3），图片分解 = 取第几步（默认 1）；各自记住自己的值。
+            _step_memory = {"story": str(config_channel.STEP_STORY_DEFAULT), "image": "1"}
+            _step_kind = [None]
+
             def _sync_dynamic_prompt_widgets(*_a):
                 sel = (prompt_combo_var.get() or "").strip()
+                kind = (
+                    "image" if config_channel.is_step_image_label(sel)
+                    else "story" if config_channel.is_step_story_label(sel)
+                    else None
+                )
+                if kind != _step_kind[0]:
+                    if _step_kind[0] is not None:
+                        _step_memory[_step_kind[0]] = step_count_var.get() or _step_memory[_step_kind[0]]
+                    if kind is not None:
+                        step_count_var.set(_step_memory[kind])
+                    _step_kind[0] = kind
                 step_frm.pack_forget()
                 series_frm.pack_forget()
                 if config_channel.is_step_story_label(sel) or config_channel.is_step_image_label(sel):
