@@ -247,10 +247,8 @@ NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
-SLIDE_FLOW_TARGET_CHOICES = (
-    ("single", "单图"),
-    ("slideshow", "幻灯片"),
-)
+# 幻灯提示窗只做幻灯片（slideshow）；"single" 只留给故事窗「场景总图」（build_scene_summary_image_prompt）。
+_SLIDE_FLOW_TARGET_LABELS = {"single": "单图", "slideshow": "幻灯片"}
 SLIDE_FLOW_TEXT_CHOICES = (
     ("none", "不加"),
     ("keywords", "背景关键字"),
@@ -480,7 +478,7 @@ def slide_flow_choice_label(
 ) -> str:
     """把这一次的选择写成一行，给人看。"""
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
-    target_label = dict(SLIDE_FLOW_TARGET_CHOICES).get(target, target)
+    target_label = _SLIDE_FLOW_TARGET_LABELS.get(target, target)
     fields = [name for name, on in (("visual", visual), ("speaking", speaking), ("actor", actor)) if on]
     parts = [narrative_label, target_label, "+".join(fields)]
     if narrative not in ("tech", "exec"):
@@ -512,7 +510,7 @@ def build_slide_flow_prompt(
     """
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
-    if target not in {k for k, _ in SLIDE_FLOW_TARGET_CHOICES}:
+    if target not in _SLIDE_FLOW_TARGET_LABELS:
         target = "slideshow"
     if text not in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES}:
         text = "none"
@@ -653,7 +651,7 @@ def build_scene_summary_image_prompt(
 ) -> str:
     """故事窗「场景总图」：把全部 scene_content 画成一张完整的总图。
 
-    就是幻灯提示（gui/slide_prompt_dialog）选「单图」时的同一个 ``build_slide_flow_prompt``，
+    用幻灯提示同一个 ``build_slide_flow_prompt`` 的 ``target="single"`` 分支（幻灯提示窗本身只做幻灯片），
     用它的默认选择：叙事=故事、画面文字=不加、写进 visual + speaking。
     """
     return build_slide_flow_prompt(
