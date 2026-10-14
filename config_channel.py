@@ -1004,6 +1004,170 @@ Output format:
 """
 
 
+# ---------------------------------------------------------------------------
+# 动态场景模板：Step Story（步数可选）与「直接生成系列节目」（第 k 集 / 共 N 集）
+# 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
+# ---------------------------------------------------------------------------
+STEP_STORY_LABEL = "Step Story"
+STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 2, 6, 3
+SERIES_DIRECT_LABEL = "直接生成系列节目 (Series Direct)"
+SERIES_DIRECT_MAX_EPISODES, SERIES_DIRECT_DEFAULT_EPISODES = 12, 3
+
+
+def build_step_story(core: str, steps: int = STEP_STORY_DEFAULT, length: str = "150–300") -> str:
+    """``*_STORY_CORE`` → N 场故事模板（2/3/4 与旧常量逐字相同）。"""
+    try:
+        n = int(steps)
+    except (TypeError, ValueError):
+        n = STEP_STORY_DEFAULT
+    n = max(1, min(n, 12))
+    return core.replace("###LENGTH###", length).replace("###STEP###", str(n))
+
+
+def _clamp_episode(k, n) -> tuple[int, int]:
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = SERIES_DIRECT_DEFAULT_EPISODES
+    n = max(1, min(n, SERIES_DIRECT_MAX_EPISODES))
+    try:
+        k = int(k)
+    except (TypeError, ValueError):
+        k = 1
+    return max(1, min(k, n)), n
+
+
+SERIES_DIRECT_CORE = """
+*** ROLE: Writer and host of a recorded series program. The material below describes the WHOLE series. Write ONLY episode ###K### of ###N###.
+
+## STEP 1 — PLAN EPISODE ###K### (internal only; do NOT output)
+    ** From the material alone, work out how the series falls into ###N### episodes, then for episode ###K###: its theme, its key points, any dialogue or examples the material already gives for it, and where it stops and ###OTHERS### begin.
+    ** Use only what belongs to episode ###K###. Do not write ###OTHERS###. Do not add facts, cases or teachings the material does not contain.
+
+## STEP 2 — WRITE EPISODE ###K###
+    ** A complete, detailed script that can be recorded as is: real spoken lines, not an outline.
+    ** Flow: title → opening → dialogue → explanation → connection to daily life → transitions → ending → teaser (only when a next episode follows). Keep the existing dialogue of the material, made natural to say aloud.
+###CONTINUITY###
+    ** Voice: first person, natural and warm, the way people really talk. Tell it as a story; no numbered lists, no headings read aloud.
+    ** Never mention the material, a PDF, a document, a book or "the source". Speak as if this is simply our program.
+
+## STEP 3 — SCENES FOR THE VIDEO
+    ** The script is cut into scenes in watch order, about 8 to 15 scenes, one beat of the script per scene (opening, each dialogue run, each explanation, life connection, ending, teaser). Transitions sit inside the scenes they join.
+    ** Every scene has "episode": "###K###". The first scene's caption is "第###K###集 · " + the episode title; other captions are short scene titles.
+    ** Host look for this run: {narrator}. The host or explainer is this 讲员, not a separate 人物. A host-only scene: ``actor`` is exactly ``讲员：{narrator}`` and the lines are marked ``<1>``.
+    ** visual: a film-still of the place and how the people act on each other, and a cut or another angle when the picture should move. No words on the image.
+    ** One scene per page does NOT apply: when the source is a PDF, it describes the whole series; take only episode ###K###'s part. Omit start and end.
+
+*** OUTPUT
+    * One JSON array, all text in {language}:
+
+[
+    {{
+        "episode": "###K###",
+        "caption": "第###K###集 · title in {language}.",
+        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "speaking": "The whole spoken text of this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx。<1> xxx。 In {language}.",
+        "actor": "Everyone visible, at most four, the one 讲员 included, joined with | only. Each 人物 is gender/age band/ethnicity/name: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. Age band is kids, youth, teenager, mature, or senior; no number. If the narrator presents this scene, 讲员：{narrator} is position 1. Never put mood, gesture, or camera direction in actor."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Series material (analyzed_content, or the PDF named for this run):
+    {content}
+"""
+
+
+def _series_continuity(k: int, n: int) -> str:
+    lines = []
+    if n == 1:
+        lines.append("This is a single-episode program: open it (greet, say what we will walk through) and close it fully. No teaser.")
+    else:
+        if k == 1:
+            lines.append(f"Episode 1 opens the series: greet the audience, say in a few natural sentences what these {n} episodes will walk through and why it matters, then enter this episode's theme.")
+        else:
+            lines.append(f"Carry on from episode {k - 1}: open with one or two natural sentences that pick up where we left off. No full recap.")
+        if k < n:
+            lines.append(f"Leave a hook for episode {k + 1}: a short teaser or question pointing to its theme, without explaining its content.")
+        else:
+            lines.append(f"This is the last episode: close the whole series, gather in a few natural sentences what the {n} episodes walked through, and leave one warm, concrete takeaway. No teaser.")
+    return "\n".join("    ** " + x for x in lines)
+
+
+def _series_others(k: int, n: int) -> str:
+    others = [str(i) for i in range(1, n + 1) if i != k]
+    if not others:
+        return "nothing else"
+    if len(others) == 1:
+        return f"episode {others[0]}"
+    return "episodes " + ", ".join(others[:-1]) + " and " + others[-1]
+
+
+def build_series_direct(episode: int = 1, episodes: int = SERIES_DIRECT_DEFAULT_EPISODES) -> str:
+    """「直接生成系列节目」：只生成第 k 集（共 N 集），承上启下。"""
+    k, n = _clamp_episode(episode, episodes)
+    return (
+        SERIES_DIRECT_CORE.replace("###CONTINUITY###", _series_continuity(k, n))
+        .replace("###OTHERS###", _series_others(k, n))
+        .replace("###K###", str(k))
+        .replace("###N###", str(n))
+    )
+
+
+SERIES_DIRECT_DEFAULT = build_series_direct(1, SERIES_DIRECT_DEFAULT_EPISODES)
+
+_LEGACY_STEP_RE = __import__("re").compile(r"^\s*([1-9])\s*step\s*story\s*$", __import__("re").I)
+
+
+def legacy_step_label(label: str) -> int | None:
+    """旧的 ``"3 Step Story"`` label → 步数；不是就返回 None。"""
+    m = _LEGACY_STEP_RE.match(label or "")
+    return int(m.group(1)) if m else None
+
+
+def is_step_story_label(label: str) -> bool:
+    return (label or "").strip() == STEP_STORY_LABEL
+
+
+def is_series_direct_label(label: str) -> bool:
+    return (label or "").strip() == SERIES_DIRECT_LABEL
+
+
+def resolve_dynamic_scene_template(label: str, template: str, params: dict | None = None) -> str:
+    """按下拉 label + 参数（steps / episode / episodes）现拼模板；其它 label 原样返回。"""
+    params = params or {}
+    if is_step_story_label(label):
+        core = _STEP_STORY_CORES.get(template)
+        if core:
+            return build_step_story(core, params.get("steps") or STEP_STORY_DEFAULT)
+    elif is_series_direct_label(label):
+        return build_series_direct(
+            params.get("episode") or 1,
+            params.get("episodes") or SERIES_DIRECT_DEFAULT_EPISODES,
+        )
+    return template
+
+
+def visual_style_prompt_block(visual_style: str) -> str:
+    """所选画面风格写进场景提示词（风格名取自 config.VISUAL_STYLE_OPTIONS）。"""
+    vs = (visual_style or "").strip()
+    if not vs:
+        return ""
+    return (
+        f"Visual_Style: {vs}\n"
+        f"    ** Write every \"visual\" so it can be drawn in this style ({vs}): its look, light, colour and texture. "
+        "Do not name the style inside the JSON text."
+    )
+
+
+
 COUNSELING_STORY_CORE = """
 You are a psychological counselor and master of high-empathy storytelling. 
     ** Your task is to transform a deep psychological analysis report / case-study (input) into an emotionally immersive / authentic human story so listeners recognize themselves through narrative—not psychology. 
@@ -1078,11 +1242,11 @@ INPUT
     {content}
 """
 
-COUNSELING_STORY_2STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
-COUNSELING_STORY_3STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
-COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
-COUNSELING_STORY_5STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "5")
-COUNSELING_STORY_6STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "6")
+COUNSELING_STORY_2STEP = build_step_story(COUNSELING_STORY_CORE, 2)
+COUNSELING_STORY_3STEP = build_step_story(COUNSELING_STORY_CORE, 3)
+COUNSELING_STORY_4STEP = build_step_story(COUNSELING_STORY_CORE, 4)
+COUNSELING_STORY_5STEP = build_step_story(COUNSELING_STORY_CORE, 5)
+COUNSELING_STORY_6STEP = build_step_story(COUNSELING_STORY_CORE, 6)
 
 COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
 
@@ -1402,9 +1566,9 @@ INPUT
     {content}
 """
 
-FLYLINK_STORY_2STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
-FLYLINK_STORY_3STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
-FLYLINK_STORY_4STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
+FLYLINK_STORY_2STEP = build_step_story(FLYLINK_STORY_CORE, 2)
+FLYLINK_STORY_3STEP = build_step_story(FLYLINK_STORY_CORE, 3)
+FLYLINK_STORY_4STEP = build_step_story(FLYLINK_STORY_CORE, 4)
 FLYLINK_STORY_LONG = FLYLINK_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
 FLYLINK_STORY_SHORT = FLYLINK_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
 FLYLINK_STORY_MINI = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "1")
@@ -1737,3 +1901,10 @@ COUNSELING_SERIES_STORY_ONLY = _with_source_scene_rules(COUNSELING_SERIES_STORY_
 COMIC_STRIP_SCENES = _with_source_scene_rules(COMIC_STRIP_SCENES)
 
 
+COUNSELING_STORY_STEP = build_step_story(COUNSELING_STORY_CORE, STEP_STORY_DEFAULT)
+FLYLINK_STORY_STEP = build_step_story(FLYLINK_STORY_CORE, STEP_STORY_DEFAULT)
+# 默认（3 步）模板字符串 → 所属 core；Step Story 换步数时据此重拼。
+_STEP_STORY_CORES = {
+    COUNSELING_STORY_STEP: COUNSELING_STORY_CORE,
+    FLYLINK_STORY_STEP: FLYLINK_STORY_CORE,
+}

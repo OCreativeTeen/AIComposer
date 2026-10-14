@@ -12,6 +12,7 @@ import glob
 import copy
 
 import config
+import config_channel
 import config_prompt
 from datetime import datetime, timedelta, timezone
 
@@ -238,8 +239,12 @@ def _build_notebooklm_prompt_for_row(
     topic_subtype: str = "",
     content_override: str | None = None,
     dialogue_mode: str = "",
+    visual_style: str = "",
 ) -> str:
-    """按频道模板 + 列表行数据拼 NotebookLM / LLM 提示词（``{content}`` = analyzed_content）。"""
+    """按频道模板 + 列表行数据拼 NotebookLM / LLM 提示词（``{content}`` = analyzed_content）。
+
+    ``visual_style``：故事窗所选画面风格（config.VISUAL_STYLE_OPTIONS），非空时写进提示词。
+    """
     ctx = _notebooklm_prompt_context_from_video_detail(
         mgr, video_detail, instruction=instruction
     )
@@ -266,6 +271,9 @@ def _build_notebooklm_prompt_for_row(
     talk = config.dialogue_mode_instruction(dialogue_mode) if dialogue_mode else ""
     if talk:
         prompt = (prompt or "").rstrip() + "\n\n" + talk + "\n"
+    style_block = config_channel.visual_style_prompt_block(visual_style)
+    if style_block and (visual_style or "").strip().lower() not in (prompt or "").lower():
+        prompt = (prompt or "").rstrip() + "\n\n" + style_block + "\n"
     # 频道 soul：放在故事内容与模板规则之后，作为幕后视角（无 soul 目录的频道为空）
     soul_block = project_manager.build_soul_prompt_block(
         getattr(mgr, "channel", None) or mgr._channel_config_key(),
@@ -7372,14 +7380,28 @@ class MediaGUIManager:
         instruction: str = "",
         content_override: str | None = None,
         dialogue_mode: str = "",
+        prompt_params: dict | None = None,
     ) -> tuple[str, str]:
-        """按频道 LM 提示 label 生成完整 prompt 文本（``{content}`` = analyzed_content）。"""
+        """按频道 LM 提示 label 生成完整 prompt 文本（``{content}`` = analyzed_content）。
+
+        ``prompt_params``（可选）：``steps``（Step Story 步数）、``episode`` / ``episodes``
+        （直接生成系列节目 第 k 集 / 共 N 集）、``visual_style``（画面风格）。不传 = 旧行为。
+        """
         channel_key = self._channel_config_key()
+        params = dict(prompt_params or {})
+        legacy = config_channel.legacy_step_label(prompt_label or "")
+        if legacy and not any(
+            (l or "").strip() == (prompt_label or "").strip()
+            for l, _ in _prompt_choice_entries(channel_key)
+        ):
+            prompt_label = config_channel.STEP_STORY_LABEL
+            params.setdefault("steps", legacy)
         lbl, template, idx = _resolve_combined_prompt_template(
             channel_key, label=prompt_label
         )
         if not template:
             return "", ""
+        template = config_channel.resolve_dynamic_scene_template(lbl, template, params)
         cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
         prompt = _build_notebooklm_prompt_for_row(
             self,
@@ -7393,6 +7415,7 @@ class MediaGUIManager:
             topic_subtype=sub,
             content_override=content_override,
             dialogue_mode=dialogue_mode,
+            visual_style=str(params.get("visual_style") or ""),
         )
         return lbl, prompt
 
@@ -7423,6 +7446,7 @@ class MediaGUIManager:
         content_override: str | None = None,
         dialogue_mode: str = "",
         attachment: str = "",
+        prompt_params: dict | None = None,
     ) -> list | None:
         """用所选 LM 提示生成 scene_content array。默认 {content} 为 analyzed_content。"""
         has_override = content_override is not None and str(content_override).strip()
@@ -7434,6 +7458,7 @@ class MediaGUIManager:
             instruction=instruction,
             content_override=content_override,
             dialogue_mode=dialogue_mode,
+            prompt_params=prompt_params,
         )
         if not (prompt or "").strip():
             return None
@@ -7468,6 +7493,7 @@ class MediaGUIManager:
         content_override: str | None = None,
         dialogue_mode: str = "",
         attachment: str = "",
+        prompt_params: dict | None = None,
     ) -> bool:
         """智能生成 scene_content：替换现有内容并自动保存。"""
         channel_key = self._channel_config_key()
@@ -7503,6 +7529,7 @@ class MediaGUIManager:
                     content_override=content_override,
                     dialogue_mode=dialogue_mode,
                     attachment=attachment,
+                    prompt_params=prompt_params,
                 )
             except Exception as ex:
                 err_msg = str(ex)
@@ -8268,6 +8295,66 @@ class MediaGUIManager:
                 width=28,
             )
             prompt_combo.pack(side=tk.LEFT, padx=(0, 8))
+            # Step Story：步数；直接生成系列节目：共 N 集 / 第 k 集。只在选中对应模板时显示。
+            step_count_var = tk.StringVar(value=str(config_channel.STEP_STORY_DEFAULT))
+            step_frm = ttk.Frame(prompt_row)
+            ttk.Label(step_frm, text="步数").pack(side=tk.LEFT, padx=(0, 2))
+            step_count_combo = ttk.Combobox(
+                step_frm,
+                textvariable=step_count_var,
+                values=[
+                    str(i)
+                    for i in range(config_channel.STEP_STORY_MIN, config_channel.STEP_STORY_MAX + 1)
+                ],
+                state="readonly",
+                width=3,
+            )
+            step_count_combo.pack(side=tk.LEFT)
+            series_total_var = tk.StringVar(value=str(config_channel.SERIES_DIRECT_DEFAULT_EPISODES))
+            series_ep_var = tk.StringVar(value="1")
+            series_frm = ttk.Frame(prompt_row)
+            ttk.Label(series_frm, text="共").pack(side=tk.LEFT, padx=(0, 2))
+            series_total_combo = ttk.Combobox(
+                series_frm,
+                textvariable=series_total_var,
+                values=[str(i) for i in range(1, config_channel.SERIES_DIRECT_MAX_EPISODES + 1)],
+                state="readonly",
+                width=3,
+            )
+            series_total_combo.pack(side=tk.LEFT)
+            ttk.Label(series_frm, text="集  第").pack(side=tk.LEFT, padx=(2, 2))
+            series_ep_combo = ttk.Combobox(
+                series_frm, textvariable=series_ep_var, state="readonly", width=3
+            )
+            series_ep_combo.pack(side=tk.LEFT)
+            ttk.Label(series_frm, text="集").pack(side=tk.LEFT, padx=(2, 0))
+
+            def _int_of(var, default: int) -> int:
+                try:
+                    return int((var.get() or "").strip())
+                except (TypeError, ValueError):
+                    return default
+
+            def _sync_series_episode_choices(*_a):
+                n = max(1, _int_of(series_total_var, config_channel.SERIES_DIRECT_DEFAULT_EPISODES))
+                series_ep_combo.configure(values=[str(i) for i in range(1, n + 1)])
+                if _int_of(series_ep_var, 1) > n:
+                    series_ep_var.set(str(n))
+
+            _sync_series_episode_choices()
+            series_total_var.trace_add("write", _sync_series_episode_choices)
+
+            def _sync_dynamic_prompt_widgets(*_a):
+                sel = (prompt_combo_var.get() or "").strip()
+                step_frm.pack_forget()
+                series_frm.pack_forget()
+                if config_channel.is_step_story_label(sel):
+                    step_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
+                elif config_channel.is_series_direct_label(sel):
+                    series_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
+
+            prompt_combo_var.trace_add("write", _sync_dynamic_prompt_widgets)
+            _sync_dynamic_prompt_widgets()
             action_bar = ttk.Frame(prompt_row)
             action_bar.pack(side=tk.LEFT, fill=tk.X, expand=not embedded, padx=(12, 0))
             scene_ui["action_bar"] = action_bar
@@ -8827,6 +8914,59 @@ class MediaGUIManager:
             dialogue_mode_var = tk.StringVar(value=_talk_cur)
             dialogue_mode_opts = list(config.DIALOGUE_MODE_OPTIONS)
 
+            # 画面风格：与新建项目 / 欢迎屏同一份 config.VISUAL_STYLE_OPTIONS；默认取项目配置。
+            style_frm = ttk.Frame(prompt_row)
+            ttk.Label(style_frm, text="风格").pack(side=tk.LEFT, padx=(0, 2))
+            visual_style_combo = ttk.Combobox(
+                style_frm,
+                textvariable=visual_style_var,
+                values=visual_style_combo_opts,
+                state="readonly" if visual_style_combo_opts else "disabled",
+                width=20,
+            )
+            visual_style_combo.pack(side=tk.LEFT)
+            style_frm.pack(side=tk.LEFT, padx=(0, 8), before=action_bar)
+
+            def _commit_visual_style(_e=None):
+                vs = config.match_visual_style(visual_style_var.get() or "")
+                if not vs:
+                    return
+                video_detail["visual_style"] = vs
+                pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                if isinstance(pp, dict):
+                    pp["visual_style"] = vs
+                project_manager.LAST_VISUAL_STYLE = vs
+                try:
+                    persist(video_detail, parent=dlg)
+                except Exception:
+                    pass
+
+            visual_style_combo.bind("<<ComboboxSelected>>", _commit_visual_style)
+
+            def _scene_prompt_params() -> dict:
+                return {
+                    "steps": _int_of(step_count_var, config_channel.STEP_STORY_DEFAULT),
+                    "episode": _int_of(series_ep_var, 1),
+                    "episodes": _int_of(
+                        series_total_var, config_channel.SERIES_DIRECT_DEFAULT_EPISODES
+                    ),
+                    "visual_style": (visual_style_var.get() or "").strip(),
+                }
+
+            def _pdf_instruction_for(label: str, pages: int) -> str:
+                if config_channel.is_series_direct_label(label):
+                    p = _scene_prompt_params()
+                    return (
+                        f"The PDF has {int(pages)} pages and describes the whole series. "
+                        f"Read it all, then use only the part for episode {p['episode']} of {p['episodes']}. "
+                        "One scene per page does not apply."
+                    )
+                return _pdf_scene_generation_instruction(
+                    label,
+                    int(pages),
+                    _pdf_layout_mode() if "series" in label.lower() else "ai",
+                )
+
             ttk.Label(frm, text="导向说明（{instruction}，可选）：").pack(
                 anchor=tk.W, pady=(0, 2)
             )
@@ -8857,11 +8997,7 @@ class MediaGUIManager:
                 if kind == "pdf":
                     cached = _remember_pdf_source()
                     override = cached.get("text") or ""
-                    extra = _pdf_scene_generation_instruction(
-                        sel,
-                        int(cached.get("pages") or 0),
-                        _pdf_layout_mode() if "series" in sel.lower() else "ai",
-                    )
+                    extra = _pdf_instruction_for(sel, int(cached.get("pages") or 0))
                     instr = (instr + "\n\n" + extra).strip() if instr else extra
                 elif material_var.get() == "media":
                     media_path = _find_item_media_file(video_detail)
@@ -8875,6 +9011,7 @@ class MediaGUIManager:
                         instruction=instr,
                         content_override=override,
                         dialogue_mode=(dialogue_mode_var.get() or "").strip(),
+                        prompt_params=_scene_prompt_params(),
                     )
                     return _prompt_text_for_material(prompt, kind) or ""
                 except Exception:
@@ -8900,6 +9037,8 @@ class MediaGUIManager:
 
             if nb_prompt_choices:
                 prompt_combo.bind("<<ComboboxSelected>>", _copy_selected_scene_prompt)
+                for _w in (step_count_combo, series_total_combo, series_ep_combo, visual_style_combo):
+                    _w.bind("<<ComboboxSelected>>", _copy_selected_scene_prompt, add="+")
 
             _sync_material_widgets()
 
@@ -9256,6 +9395,8 @@ class MediaGUIManager:
                     "pdf_layout_mode": _pdf_layout_mode,
                     "scene_prompt_text_now": _scene_prompt_text_now,
                     "selected_material_kind": _selected_material_kind,
+                    "scene_prompt_params": _scene_prompt_params,
+                    "pdf_instruction_for": _pdf_instruction_for,
                 }
             )
             dlg.after(50, _build_editor_ui_rest)
@@ -9272,6 +9413,8 @@ class MediaGUIManager:
             dialogue_mode_opts = scene_ui["dialogue_mode_opts"]
             _remember_pdf_source = scene_ui["remember_pdf_source"]
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
+            _scene_prompt_params = scene_ui["scene_prompt_params"]
+            _pdf_instruction_for = scene_ui["pdf_instruction_for"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
             _selected_material_kind = scene_ui["selected_material_kind"]
             _require_media_transcript = scene_ui["require_media_transcript"]
@@ -9530,11 +9673,7 @@ class MediaGUIManager:
                                 )
                                 return
                             override = cached["text"]
-                            extra = _pdf_scene_generation_instruction(
-                                label,
-                                int(cached.get("pages") or 0),
-                                _pdf_layout_mode() if "series" in label.lower() else "ai",
-                            )
+                            extra = _pdf_instruction_for(label, int(cached.get("pages") or 0))
                             user_instr = (user_instr + "\n\n" + extra).strip() if user_instr else extra
                         elif material_var.get() == "media":
                             media_path = _find_item_media_file(video_detail)
@@ -9572,6 +9711,7 @@ class MediaGUIManager:
                             content_override=override,
                             dialogue_mode=(dialogue_mode_var.get() or "").strip(),
                             attachment=attachment,
+                            prompt_params=_scene_prompt_params(),
                         )
 
                     def on_persist_keep_open():
