@@ -8233,34 +8233,6 @@ class MediaGUIManager:
         )
 
 
-    def _copy_notebooklm_scene_gen_instruction(
-        self,
-        *,
-        parent,
-        video_detail: dict,
-        scene_content: list,
-        nb_mode: str,
-        main_character: str = "",
-        channel_path: str = "",
-    ) -> bool:
-        """兼容旧调用：``slideshow`` → ``image/slideshow``；``speak`` → ``video/act_one``。"""
-        mode = "image" if nb_mode == "slideshow" else nb_mode
-        variant = ""
-        if mode == "speak":
-            mode = "video"
-            variant = "act_one"
-        if "/" in mode:
-            mode, variant = mode.split("/", 1)
-        return self._copy_notebooklm_scene_instruction(
-            parent=parent,
-            video_detail=video_detail,
-            scenes=scene_content,
-            nb_mode=mode,
-            nb_variant=variant,
-            main_character=main_character,
-            channel_path=channel_path,
-        )
-
     def _show_scene_content_editor(
         self,
         parent,
@@ -9795,63 +9767,6 @@ class MediaGUIManager:
                             _scene_copy_index[0] = -1 if nxt >= n else nxt
                         _sync_choice_buttons()
                         _copy_selected_scenes_to_clipboard()
-
-                    def _copy_scene_instruction(nb_mode: str, nb_variant: str = ""):
-                        scenes = _scene_list_from_editor()
-                        if scenes is None:
-                            messagebox.showwarning(
-                                "无 Scene JSON",
-                                "请先在编辑区填写有效的 scene_content JSON 数组。",
-                                parent=dlg,
-                            )
-                            return
-                        self._copy_notebooklm_scene_instruction(
-                            parent=dlg,
-                            video_detail=video_detail,
-                            scenes=scenes,
-                            nb_mode=nb_mode,
-                            nb_variant=nb_variant,
-                            main_character=main_character,
-                            channel_path=channel_path or self.channel_path or "",
-                            scene_index=_scene_copy_index[0],
-                            visual_style=(visual_style_var.get() or "").strip(),
-                            episode=_episode_choice[0],
-                        )
-
-                    def _chosen_export_scenes():
-                        scenes = _scene_list_from_editor()
-                        if scenes is None:
-                            messagebox.showwarning(
-                                "无 Scene JSON",
-                                "请先在编辑区填写有效的 scene_content JSON 数组。",
-                                parent=dlg,
-                            )
-                            return
-                        filtered = _filter_scenes_by_episode(scenes, _episode_choice[0])
-                        ep_label = _episode_choice_label(_episode_choice[0])
-                        if not filtered:
-                            messagebox.showwarning(
-                                "该集没有场景",
-                                f"第 {ep_label} 集在当前 scene_content 里没有场景。\n"
-                                "请把集选回「全部」，或改 JSON 里的 episode。",
-                                parent=dlg,
-                            )
-                            return
-                        idx = _scene_copy_index[0]
-                        if idx >= len(filtered):
-                            scope = (
-                                f"全部场景共 {len(filtered)} 条"
-                                if _episode_choice_is_all(_episode_choice[0])
-                                else f"第 {ep_label} 集共 {len(filtered)} 条"
-                            )
-                            messagebox.showwarning(
-                                "场景索引超出范围",
-                                f"当前要第 {idx + 1} 个场景，但{scope}。\n"
-                                "请点击场按钮调整，或改为 All。",
-                                parent=dlg,
-                            )
-                            return
-                        return filtered if idx < 0 else [filtered[idx]]
 
                     def _busy(btn):
                         try:
