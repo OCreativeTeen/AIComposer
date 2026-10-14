@@ -1333,10 +1333,65 @@ def _prompt_text_for_material(prompt: str, material: str) -> str:
         "audio": "the audio recording",
         "video": "the video",
     }
+    notes["image"] = (
+        "Content source for this run: one attached image (the item's cover image). "
+        "Read the picture for the people, the place, any text and the steps or sections it shows. "
+        "This run uses the image."
+    )
     note = notes.get(kind) or notes["analyzed"]
     if kind in names:
         prompt = prompt.replace("analyzed_content", names[kind])
     return prompt.rstrip() + "\n\n" + note + "\n"
+
+
+def _image_material_override(video_detail: dict) -> str:
+    """材料选「封面图片」时 ``{content}`` 的说明（图片本身作为附件发给 LLM）。"""
+    img = _find_gen_video_webp_for_row(video_detail) if isinstance(video_detail, dict) else ""
+    name = os.path.basename(img) if img else "(none)"
+    return (
+        f"The content is the attached image ({name}). Read the picture itself: its people, place, "
+        "any text and the steps or sections it shows. Build the scenes from what the image shows."
+    )
+
+
+def _show_step_image_prompt_dialog(parent, prompt: str, image_path: str) -> None:
+    """图片分解：显示提示词 + 图片路径；提示词先拷到剪贴板，可再拷图片 / 打开图片。"""
+    _copy_text_to_clipboard(parent, prompt or "")
+    win = tk.Toplevel(parent)
+    win.title("图片分解 · 提示词 + 图片")
+    win.transient(parent)
+    frm = ttk.Frame(win, padding=10)
+    frm.pack(fill=tk.BOTH, expand=True)
+    ttk.Label(
+        frm,
+        text="提示词已拷到剪贴板。把它和下面这张图片一起交给 AI 图片工具（这里不调用任何图片 API）。",
+        wraplength=640,
+    ).pack(anchor=tk.W, pady=(0, 6))
+    ttk.Label(frm, text=f"图片：{image_path}", wraplength=640).pack(anchor=tk.W, pady=(0, 6))
+    tx = scrolledtext.ScrolledText(frm, wrap=tk.WORD, width=80, height=12, font=("Arial", 10))
+    tx.pack(fill=tk.BOTH, expand=True)
+    tx.insert("1.0", prompt or "")
+    row = ttk.Frame(frm)
+    row.pack(fill=tk.X, pady=(8, 0))
+
+    def _copy_prompt():
+        _copy_text_to_clipboard(win, tx.get("1.0", "end-1c"))
+        show_auto_close_popup(win, "图片分解", "提示词已拷到剪贴板。")
+
+    def _copy_image():
+        if _copy_file_to_clipboard_hdrop(win, image_path):
+            show_auto_close_popup(win, "图片分解", "图片已拷到剪贴板，可以粘贴到 AI 工具。")
+
+    def _open_image():
+        try:
+            os.startfile(image_path)
+        except (OSError, AttributeError) as exc:
+            messagebox.showerror("打开失败", f"{image_path}\n\n{exc}", parent=win)
+
+    ttk.Button(row, text="拷贝提示词", command=_copy_prompt).pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(row, text="拷贝图片", command=_copy_image).pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(row, text="打开图片", command=_open_image).pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(row, text="关闭", command=win.destroy).pack(side=tk.RIGHT)
 
 
 def _pdf_scene_generation_instruction(prompt_label: str, page_count: int, mode: str) -> str:
@@ -7401,6 +7456,12 @@ class MediaGUIManager:
         )
         if not template:
             return "", ""
+        if config_channel.is_step_image_label(lbl):
+            # 图片分解：只出图片指令（无 {content} / soul），图片由用户带到 AI 图片工具。
+            return lbl, config_prompt.build_step_image_clipbody(
+                params.get("steps") or 1,
+                visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
+            )
         template = config_channel.resolve_dynamic_scene_template(lbl, template, params)
         cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
         prompt = _build_notebooklm_prompt_for_row(
@@ -8298,7 +8359,8 @@ class MediaGUIManager:
             # Step Story：步数；直接生成系列节目：共 N 集 / 第 k 集。只在选中对应模板时显示。
             step_count_var = tk.StringVar(value=str(config_channel.STEP_STORY_DEFAULT))
             step_frm = ttk.Frame(prompt_row)
-            ttk.Label(step_frm, text="步数").pack(side=tk.LEFT, padx=(0, 2))
+            step_lbl = ttk.Label(step_frm, text="步数")
+            step_lbl.pack(side=tk.LEFT, padx=(0, 2))
             step_count_combo = ttk.Combobox(
                 step_frm,
                 textvariable=step_count_var,
@@ -8348,7 +8410,11 @@ class MediaGUIManager:
                 sel = (prompt_combo_var.get() or "").strip()
                 step_frm.pack_forget()
                 series_frm.pack_forget()
-                if config_channel.is_step_story_label(sel):
+                if config_channel.is_step_story_label(sel) or config_channel.is_step_image_label(sel):
+                    # Step Story：共几场；图片分解：取图里的第几步
+                    step_lbl.configure(
+                        text="第几步" if config_channel.is_step_image_label(sel) else "步数"
+                    )
                     step_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
                 elif config_channel.is_series_direct_label(sel):
                     series_frm.pack(side=tk.LEFT, padx=(0, 8), after=prompt_combo)
@@ -8380,6 +8446,14 @@ class MediaGUIManager:
                 bd=1,
             )
             btn_pdf.pack(side=tk.LEFT, padx=(0, 4))
+            # 封面图片：复用行上的 ``cover_image``（与摘要窗拖图 / 粘贴封面同一字段）。
+            btn_image = tk.Button(
+                material_row,
+                text="（没有图片）",
+                relief=tk.RAISED,
+                bd=1,
+            )
+            btn_image.pack(side=tk.LEFT, padx=(0, 4))
             btn_media = tk.Button(
                 material_row,
                 text="媒体",
@@ -8458,6 +8532,12 @@ class MediaGUIManager:
                 show_auto_close_popup(dlg, "已复制", "分析报告已拷到剪贴板。")
 
             def _on_material_preview_double(_event=None):
+                if material_var.get() == "image":
+                    if (_find_gen_video_webp_for_row(video_detail) or "").strip():
+                        _open_cover_image_for_row(dlg, video_detail)
+                    else:
+                        _pick_cover_image()
+                    return "break"
                 if material_var.get() == "pdf":
                     _copy_slide_pdf()
                 elif material_var.get() == "media":
@@ -8490,7 +8570,7 @@ class MediaGUIManager:
             material_preview.bind("<Double-Button-1>", _on_material_preview_double)
 
             def _on_material_preview_key(_event=None):
-                if material_var.get() in ("pdf", "media"):
+                if material_var.get() in ("pdf", "media", "image"):
                     return "break"
 
             material_preview.bind("<Key>", _on_material_preview_key)
@@ -8521,6 +8601,8 @@ class MediaGUIManager:
                         or current.startswith("音频：")
                         or current.startswith("视频：")
                         or current.startswith("还没有媒体")
+                        or current.startswith("封面图片：")
+                        or current.startswith("还没有封面图片")
                     )
                     if current and not pdfish:
                         kept = current
@@ -8549,6 +8631,20 @@ class MediaGUIManager:
                         "双击上面的 PDF 按钮，从下载文件夹选择一份 PDF，"
                         "或按点击顺序选择图片，合成一份 PDF。",
                     )
+                elif material_var.get() == "image":
+                    img = (_find_gen_video_webp_for_row(video_detail) or "").strip()
+                    if img:
+                        material_preview.insert(
+                            "1.0",
+                            f"封面图片：{os.path.basename(img)}\n{img}\n\n"
+                            "双击这里，打开这张图片。\n"
+                            "双击上面的图片按钮，可以换一张图片。",
+                        )
+                    else:
+                        material_preview.insert(
+                            "1.0",
+                            "还没有封面图片。\n\n双击上面的「（没有图片）」按钮，选一张图片挂到这一条。",
+                        )
                 elif material_var.get() == "media":
                     media_path = _find_item_media_file(video_detail)
                     kind = _media_kind_for_path(media_path)
@@ -8600,6 +8696,13 @@ class MediaGUIManager:
                     return "（没有 PDF）"
                 return os.path.basename(slide)
 
+            def _image_button_caption() -> str:
+                img = (_find_gen_video_webp_for_row(video_detail) or "").strip()
+                if not img:
+                    return "（没有图片）"
+                name = os.path.basename(img)
+                return name if len(name) <= 22 else name[:21] + "…"
+
             def _media_button_caption() -> str:
                 media_path = _find_item_media_file(video_detail)
                 if not media_path:
@@ -8621,6 +8724,12 @@ class MediaGUIManager:
                     state=tk.NORMAL,
                     relief=tk.SUNKEN if mode == "pdf" else tk.RAISED,
                     bg="#d7e6f8" if mode == "pdf" else "#f3f3f3",
+                )
+                btn_image.configure(
+                    text=_image_button_caption(),
+                    state=tk.NORMAL,
+                    relief=tk.SUNKEN if mode == "image" else tk.RAISED,
+                    bg="#d7e6f8" if mode == "image" else "#f3f3f3",
                 )
                 btn_media.configure(
                     text=_media_button_caption(),
@@ -8893,6 +9002,74 @@ class MediaGUIManager:
                         _import_slide_pdf(picked)
                 return "break"
 
+            _image_press = {"was_on": False, "when": 0}
+
+            def _import_cover_image(image_path: str) -> None:
+                """挂一张图片到这一条：与摘要窗封面同一流程（加水印 → gen_video/*.webp → cover_image）；
+                没有水印配置时退回原图复制到 gen_video。"""
+                ok, dest, err = save_cover_image_as_gen_video_webp(
+                    image_path,
+                    video_detail,
+                    channel=self._channel_config_key(),
+                )
+                if not ok:
+                    try:
+                        gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
+                        if not gen_dir:
+                            raise OSError(err or "没有 gen_video 目录")
+                        os.makedirs(gen_dir, exist_ok=True)
+                        dest = os.path.join(gen_dir, os.path.basename(image_path))
+                        if os.path.abspath(dest) != os.path.abspath(image_path):
+                            safe_copy_overwrite(image_path, dest)
+                        video_detail["cover_image"] = os.path.abspath(dest)
+                    except Exception as exc:
+                        messagebox.showerror("图片", f"无法保存这张图片：\n{exc}", parent=dlg)
+                        return
+                material_var.set("image")
+                _sync_material_widgets()
+                drop_ctx2 = getattr(dlg, "_summary_drop_ctx", None)
+                refresh_media = (
+                    drop_ctx2.get("refresh_feature_media_row") if isinstance(drop_ctx2, dict) else None
+                )
+                if callable(refresh_media):
+                    try:
+                        refresh_media()
+                    except Exception:
+                        pass
+                persist(video_detail, parent=dlg)
+                show_auto_close_popup(
+                    dlg, "图片", f"封面图片已挂到这一条：\n{os.path.basename(video_detail.get('cover_image') or '')}"
+                )
+
+            def _pick_cover_image() -> None:
+                picked = filedialog.askopenfilename(
+                    parent=dlg,
+                    title="选择封面图片",
+                    filetypes=[
+                        ("图片", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"),
+                        ("所有文件", "*.*"),
+                    ],
+                )
+                if picked:
+                    _import_cover_image(picked)
+
+            scene_ui["import_cover_image"] = _import_cover_image
+
+            def _on_image_press(event=None):
+                now = int(getattr(event, "time", 0) or 0)
+                if now - _image_press["when"] > 450:
+                    _image_press["was_on"] = material_var.get() == "image"
+                _image_press["when"] = now
+                material_var.set("image")
+                return "break"
+
+            def _on_image_double(_event=None):
+                if _image_press["was_on"] or not (_find_gen_video_webp_for_row(video_detail) or "").strip():
+                    _pick_cover_image()
+                return "break"
+
+            btn_image.bind("<ButtonPress-1>", _on_image_press)
+            btn_image.bind("<Double-Button-1>", _on_image_double)
             btn_analyzed.bind("<ButtonPress-1>", _on_analyzed_press)
             btn_analyzed.bind("<Double-Button-1>", _on_analyzed_double)
             btn_pdf.bind("<ButtonPress-1>", _on_pdf_press)
@@ -8981,6 +9158,8 @@ class MediaGUIManager:
                 mode = material_var.get()
                 if mode == "pdf":
                     return "pdf"
+                if mode == "image":
+                    return "image"
                 if mode == "media":
                     if _item_transcript_text(video_detail)[1]:
                         return "transcript"
@@ -8994,7 +9173,14 @@ class MediaGUIManager:
                 instr = (instruction_tx.get("1.0", tk.END) or "").strip()
                 kind = _selected_material_kind()
                 override = None
-                if kind == "pdf":
+                if config_channel.is_step_image_label(sel):
+                    _, prompt = self._combined_prompt_text_for_label(
+                        video_detail, sel, prompt_params=_scene_prompt_params()
+                    )
+                    return prompt or ""
+                if kind == "image":
+                    override = _image_material_override(video_detail)
+                elif kind == "pdf":
                     cached = _remember_pdf_source()
                     override = cached.get("text") or ""
                     extra = _pdf_instruction_for(sel, int(cached.get("pages") or 0))
@@ -9397,6 +9583,7 @@ class MediaGUIManager:
                     "selected_material_kind": _selected_material_kind,
                     "scene_prompt_params": _scene_prompt_params,
                     "pdf_instruction_for": _pdf_instruction_for,
+                    "pick_cover_image": _pick_cover_image,
                 }
             )
             dlg.after(50, _build_editor_ui_rest)
@@ -9415,6 +9602,7 @@ class MediaGUIManager:
             _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_params = scene_ui["scene_prompt_params"]
             _pdf_instruction_for = scene_ui["pdf_instruction_for"]
+            _pick_cover_image = scene_ui["pick_cover_image"]
             _scene_prompt_text_now = scene_ui["scene_prompt_text_now"]
             _selected_material_kind = scene_ui["selected_material_kind"]
             _require_media_transcript = scene_ui["require_media_transcript"]
@@ -9663,7 +9851,27 @@ class MediaGUIManager:
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
                         kind = _selected_material_kind()
                         override = None
-                        if kind == "pdf":
+                        if config_channel.is_step_image_label(label):
+                            # 图片分解不调 LLM / 图片 API：给出提示词 + 封面图片，用户自己带到 AI 图片工具。
+                            img = (_find_gen_video_webp_for_row(video_detail) or "").strip()
+                            if not img:
+                                if messagebox.askyesno(
+                                    "图片分解",
+                                    "这一条还没有封面图片。现在选一张吗？",
+                                    parent=dlg,
+                                ):
+                                    _pick_cover_image()
+                                img = (_find_gen_video_webp_for_row(video_detail) or "").strip()
+                                if not img:
+                                    return
+                            _, img_prompt = self._combined_prompt_text_for_label(
+                                video_detail, label, prompt_params=_scene_prompt_params()
+                            )
+                            _show_step_image_prompt_dialog(dlg, img_prompt, img)
+                            return
+                        if kind == "image":
+                            override = _image_material_override(video_detail)
+                        elif kind == "pdf":
                             cached = _remember_pdf_source()
                             if not (cached.get("text") or "").strip():
                                 messagebox.showwarning(
@@ -9694,6 +9902,8 @@ class MediaGUIManager:
                         attachment = ""
                         if kind == "pdf":
                             attachment = _find_gen_video_slide_for_row(video_detail)
+                        elif kind == "image":
+                            attachment = _find_gen_video_webp_for_row(video_detail)
                         elif material_var.get() == "media" and kind != "transcript":
                             # 有文字稿就直接用文字稿，不再附媒体；没有再附媒体本身。
                             attachment = _find_item_media_file(video_detail)

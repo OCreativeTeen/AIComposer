@@ -2168,10 +2168,21 @@ Generate detailed-single-step-image from the single input scene image.
 ** According to the steps/section in the image, give me the step ###STEP### image (with title, no step show in the image)
 """
 
-DIRECT_STEP_1_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "1")
-DIRECT_STEP_2_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "2")
-DIRECT_STEP_3_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "3")
-DIRECT_STEP_4_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "4")
+
+
+def build_direct_step_image(step: int = 1) -> str:
+    """单图 → 第 ``step`` 步的细节图指令（DIRECT_STEP_n_IMAGE 与旧常量逐字相同）。"""
+    try:
+        k = int(step)
+    except (TypeError, ValueError):
+        k = 1
+    return DIRECT_STEP_IMAGE_CORE.replace("###STEP###", str(max(1, k)))
+
+
+DIRECT_STEP_1_IMAGE = build_direct_step_image(1)
+DIRECT_STEP_2_IMAGE = build_direct_step_image(2)
+DIRECT_STEP_3_IMAGE = build_direct_step_image(3)
+DIRECT_STEP_4_IMAGE = build_direct_step_image(4)
 
 
 DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
@@ -2232,6 +2243,15 @@ def build_direct_video_clipbody(
     if voices:
         parts["Speaking_voices"] = voices
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+def build_step_image_clipbody(step: int = 1, *, visual_style: str = "", main_character: str = "") -> str:
+    """故事窗「图片分解 (Step Image)」：第 k 步细节图的指令（与 Direct Video 剪贴板同格式，带画面风格）。"""
+    return build_direct_video_clipbody(
+        instruction=build_direct_step_image(step),
+        main_character=main_character,
+        visual_style=visual_style,
+    )
 
 
 SLIDE_ANALYSIS_OUTPUT_FORMAT = """

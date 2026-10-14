@@ -149,6 +149,13 @@ def build_gemini_prompt(
             break
     if not template:
         return ""
+    if config_channel.is_step_image_label(want):
+        # 图片分解：只出图片指令（不拼 {content} / soul）；图片本身由调用方附带。
+        import config_prompt
+
+        return config_prompt.build_step_image_clipbody(
+            steps or 1, visual_style=(visual_style or "").strip()
+        )
     template = config_channel.resolve_dynamic_scene_template(
         want, template, {"steps": steps, "episode": episode, "episodes": episodes}
     )

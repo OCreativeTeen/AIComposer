@@ -1009,18 +1009,25 @@ Output format:
 # 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
 # ---------------------------------------------------------------------------
 STEP_STORY_LABEL = "Step Story"
-STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 2, 6, 3
+STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 3
+STEP_IMAGE_LABEL = "图片分解 (Step Image)"
+STEP_IMAGE_TEMPLATE_MARK = "[[STEP_IMAGE]] 单图 → 第 k 步细节图；提示词由 config_prompt.build_step_image_clipbody 现拼。"
 SERIES_DIRECT_LABEL = "直接生成系列节目 (Series Direct)"
 SERIES_DIRECT_MAX_EPISODES, SERIES_DIRECT_DEFAULT_EPISODES = 12, 3
 
 
-def build_step_story(core: str, steps: int = STEP_STORY_DEFAULT, length: str = "150–300") -> str:
-    """``*_STORY_CORE`` → N 场故事模板（2/3/4 与旧常量逐字相同）。"""
+def build_step_story(core: str, steps: int = STEP_STORY_DEFAULT, length: str | None = None) -> str:
+    """``*_STORY_CORE`` → N 场故事模板。
+
+    1 步 = 旧 Short Story（每场 300–500 字）；2 步起每场 150–300 字（与旧 N Step 常量逐字相同）。
+    """
     try:
         n = int(steps)
     except (TypeError, ValueError):
         n = STEP_STORY_DEFAULT
     n = max(1, min(n, 12))
+    if length is None:
+        length = "300–500" if n == 1 else "150–300"
     return core.replace("###LENGTH###", length).replace("###STEP###", str(n))
 
 
@@ -1128,8 +1135,14 @@ _LEGACY_STEP_RE = __import__("re").compile(r"^\s*([1-9])\s*step\s*story\s*$", __
 
 def legacy_step_label(label: str) -> int | None:
     """旧的 ``"3 Step Story"`` label → 步数；不是就返回 None。"""
+    if (label or "").strip().lower() == "short story":
+        return 1  # Short Story 已并入 Step Story（1 步）
     m = _LEGACY_STEP_RE.match(label or "")
     return int(m.group(1)) if m else None
+
+
+def is_step_image_label(label: str) -> bool:
+    return (label or "").strip() == STEP_IMAGE_LABEL
 
 
 def is_step_story_label(label: str) -> bool:
@@ -1248,7 +1261,7 @@ COUNSELING_STORY_4STEP = build_step_story(COUNSELING_STORY_CORE, 4)
 COUNSELING_STORY_5STEP = build_step_story(COUNSELING_STORY_CORE, 5)
 COUNSELING_STORY_6STEP = build_step_story(COUNSELING_STORY_CORE, 6)
 
-COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+COUNSELING_STORY_SHORT = build_step_story(COUNSELING_STORY_CORE, 1)
 
 
 
@@ -1570,7 +1583,7 @@ FLYLINK_STORY_2STEP = build_step_story(FLYLINK_STORY_CORE, 2)
 FLYLINK_STORY_3STEP = build_step_story(FLYLINK_STORY_CORE, 3)
 FLYLINK_STORY_4STEP = build_step_story(FLYLINK_STORY_CORE, 4)
 FLYLINK_STORY_LONG = FLYLINK_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
-FLYLINK_STORY_SHORT = FLYLINK_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+FLYLINK_STORY_SHORT = build_step_story(FLYLINK_STORY_CORE, 1)
 FLYLINK_STORY_MINI = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "1")
 
 
