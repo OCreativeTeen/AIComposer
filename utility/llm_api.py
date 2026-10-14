@@ -7,6 +7,8 @@ from openai import OpenAI
 import time
 import os
 import httpx
+import threading
+import queue
 import config
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
@@ -667,6 +669,59 @@ class LLMApi:
             print(f"复制文件到剪贴板失败: {exc}")
             return False
 
+    def _show_model_dialog_from_thread(
+        self,
+        system_prompt,
+        user_prompt=None,
+        *,
+        image_paths=None,
+        attachment=None,
+        title: str = "",
+        ok_text: str = "确定",
+        cancel_text: str = "取消",
+        manual_only: bool = False,
+    ) -> Tuple[str, Optional[str]]:
+        """从后台线程安全地调用 _show_model_dialog。
+
+        将对话框调度到主线程执行，并等待结果返回。
+        """
+        result_queue: queue.Queue = queue.Queue()
+
+        def run_on_main_thread():
+            try:
+                result = self._show_model_dialog(
+                    system_prompt,
+                    user_prompt,
+                    image_paths=image_paths,
+                    attachment=attachment,
+                    title=title,
+                    ok_text=ok_text,
+                    cancel_text=cancel_text,
+                    manual_only=manual_only,
+                )
+                result_queue.put(("ok", result))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        try:
+            root = tk._default_root
+            if root is None:
+                self._last_dialog_cancelled = True
+                return MANUAL, None
+            root.after(0, run_on_main_thread)
+        except Exception:
+            self._last_dialog_cancelled = True
+            return MANUAL, None
+
+        try:
+            status, value = result_queue.get(timeout=600)
+            if status == "error":
+                raise value
+            return value
+        except queue.Empty:
+            self._last_dialog_cancelled = True
+            return MANUAL, None
+
     def _show_model_dialog(
         self,
         system_prompt,
@@ -685,6 +740,17 @@ class LLMApi:
         GPT / Gemini / OLLAMA / Manual 四个选模型按钮，只能走手动（多步手动流程用）。
         关窗后 ``self._last_dialog_cancelled`` 记着这次是不是取消（点取消或直接关窗）。
         """
+        if threading.current_thread() is not threading.main_thread():
+            return self._show_model_dialog_from_thread(
+                system_prompt,
+                user_prompt,
+                image_paths=image_paths,
+                attachment=attachment,
+                title=title,
+                ok_text=ok_text,
+                cancel_text=cancel_text,
+                manual_only=manual_only,
+            )
         self._last_dialog_cancelled = True
         image_paths = self._normalize_image_paths(image_paths)
         attachment = (attachment or "").strip()
