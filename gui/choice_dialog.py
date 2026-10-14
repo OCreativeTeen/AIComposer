@@ -479,6 +479,7 @@ def _askchoice_media_preview_mp4_video(
     lock_video_source: bool = False,
     audio_edit: bool = False,
     later_scene_lengths: Optional[list] = None,
+    initial_source: Optional[str] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """MP4 专用：列表 + 裁剪起止/变速/音量预览；确定时调用 build_volume_adjusted_pair。"""
     from gui.mp4_pick_preview_dialog import ask_mp4_pick_with_trim_preview
@@ -497,6 +498,7 @@ def _askchoice_media_preview_mp4_video(
         lock_video_source=lock_video_source,
         audio_edit=audio_edit,
         later_scene_lengths=later_scene_lengths,
+        initial_source=initial_source,
     )
 
 
@@ -516,6 +518,7 @@ def askchoice_media_preview(
     lock_video_source=False,
     audio_edit=False,
     later_scene_lengths=None,
+    initial_source=None,
 ) -> Union[str, dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
     带预览的媒体选择对话框（支持 mp4 与图片）。
@@ -543,6 +546,7 @@ def askchoice_media_preview(
             lock_video_source=lock_video_source,
             audio_edit=audio_edit,
             later_scene_lengths=later_scene_lengths,
+            initial_source=initial_source,
         )
 
     if parent is None:

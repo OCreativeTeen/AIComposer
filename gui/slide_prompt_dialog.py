@@ -42,6 +42,52 @@ def _clean_choice(saved) -> dict:
     return choice
 
 
+def pack_narrative_choices(parent, narrative_var, *, title: str = "叙事风格", padx=(0, 8)):
+    """叙事风格单选。图片提示、幻灯提示、生场视频用同一组选项。"""
+    box = ttk.LabelFrame(parent, text=title, padding=(8, 4))
+    box.pack(side=tk.LEFT, anchor=tk.N, padx=padx)
+    buttons = []
+    for value, label in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES:
+        btn = ttk.Radiobutton(box, text=label, value=value, variable=narrative_var)
+        btn.pack(anchor=tk.W)
+        buttons.append(btn)
+    return box, buttons
+
+
+def pack_scene_field_choices(
+    parent,
+    visual_var,
+    speaking_var,
+    actor_var,
+    override_var,
+    *,
+    title: str = "写进提示词的内容",
+):
+    """visual / speaking / actor 勾选，外加「换成」人物覆盖。两个提示窗用这一份。"""
+    options = ttk.LabelFrame(parent, text=title, padding=(8, 4))
+    options.pack(side=tk.LEFT, anchor=tk.S)
+    buttons = []
+    for text, var in (
+        ("场景描述 (visual)", visual_var),
+        ("讲话 (speaking)", speaking_var),
+    ):
+        btn = ttk.Checkbutton(options, text=text, variable=var)
+        btn.pack(anchor=tk.W)
+        buttons.append(btn)
+    # 换成别的人物：不选就用故事里原来的人物；选了就把画面里的人物族裔和年代覆盖掉。
+    row = ttk.Frame(options)
+    row.pack(anchor=tk.W, fill=tk.X)
+    actor_btn = ttk.Checkbutton(row, text="人物 (actor)", variable=actor_var)
+    actor_btn.pack(side=tk.LEFT)
+    buttons.append(actor_btn)
+    ttk.Label(row, text="  换成").pack(side=tk.LEFT)
+    labels = [label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES]
+    ttk.Combobox(
+        row, textvariable=override_var, values=labels, state="readonly", width=20
+    ).pack(side=tk.LEFT, padx=(4, 0))
+    return options, buttons
+
+
 def open_slide_prompt_dialog(
     parent,
     anchor,
@@ -84,10 +130,7 @@ def open_slide_prompt_dialog(
     actor_var = tk.BooleanVar(value=last["actor"])
     override_var = tk.StringVar(value=last["actor_override"])
 
-    narrative_box = ttk.LabelFrame(groups, text="叙事风格", padding=(8, 4))
-    narrative_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
-    for value, label in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES:
-        ttk.Radiobutton(narrative_box, text=label, value=value, variable=narrative_var).pack(anchor=tk.W)
+    pack_narrative_choices(groups, narrative_var)
 
     text_box = ttk.LabelFrame(groups, text="画面文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
@@ -97,20 +140,7 @@ def open_slide_prompt_dialog(
         btn.pack(anchor=tk.W)
         text_buttons.append(btn)
 
-    options = ttk.LabelFrame(bottom, text="写进提示词的内容", padding=(8, 4))
-    options.pack(side=tk.LEFT, anchor=tk.S)
-    ttk.Checkbutton(options, text="场景描述 (visual)", variable=visual_var).pack(anchor=tk.W)
-    ttk.Checkbutton(options, text="讲话 (speaking)", variable=speaking_var).pack(anchor=tk.W)
-    actor_row = ttk.Frame(options)
-    actor_row.pack(anchor=tk.W, fill=tk.X)
-    ttk.Checkbutton(actor_row, text="人物 (actor)", variable=actor_var).pack(side=tk.LEFT)
-    # 换成别的人物：不选就用故事里原来的人物；选了就把画面里的人物族裔和年代覆盖掉。
-    override_labels = [label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES]
-    ttk.Label(actor_row, text="  换成").pack(side=tk.LEFT)
-    override_box = ttk.Combobox(
-        actor_row, textvariable=override_var, values=override_labels, state="readonly", width=20
-    )
-    override_box.pack(side=tk.LEFT, padx=(4, 0))
+    pack_scene_field_choices(bottom, visual_var, speaking_var, actor_var, override_var)
 
     hints = {
         "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",

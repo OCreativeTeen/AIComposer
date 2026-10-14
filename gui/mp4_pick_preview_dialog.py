@@ -232,6 +232,7 @@ def ask_mp4_pick_with_trim_preview(
     lock_video_source: bool = False,
     audio_edit: bool = False,
     later_scene_lengths: Optional[list] = None,
+    initial_source: Optional[str] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -247,7 +248,9 @@ def ask_mp4_pick_with_trim_preview(
             if cv2 is None and parent:
                 messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
             return None
-        current = next((item for item in sources if item.get("key") == "project"), sources[0])
+        current = next((item for item in sources if item.get("key") == initial_source), None)
+        if current is None:
+            current = next((item for item in sources if item.get("key") == "project"), sources[0])
         folder_path = current["folder"]
         choices = list(current.get("choices") or [])
         radios = current.get("radios")
@@ -494,6 +497,23 @@ def ask_mp4_pick_with_trim_preview(
         variable=volume_var, command=lambda _: _on_volume_change(), showvalue=0, length=220,
     )
     vol_slider.pack(side=tk.LEFT, padx=(8, 0))
+
+    video_fade_in_on = tk.BooleanVar(value=False)
+    video_fade_out_on = tk.BooleanVar(value=False)
+    video_fade_in_sec = tk.DoubleVar(value=1.0)
+    video_fade_out_sec = tk.DoubleVar(value=1.0)
+    if audio_edit:
+        def _pack_video_fade(parent, label: str, flag, seconds) -> None:
+            row = ttk.Frame(parent)
+            row.pack(fill=tk.X, pady=(0, 4))
+            ttk.Checkbutton(row, text=label, variable=flag).pack(side=tk.LEFT)
+            ttk.Spinbox(
+                row, from_=0.5, to=3.0, increment=0.5, width=6, textvariable=seconds,
+            ).pack(side=tk.LEFT, padx=(8, 4))
+            ttk.Label(row, text="秒，最长 3 秒").pack(side=tk.LEFT)
+
+        _pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
+        _pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
 
     sel_dur_lbl = ttk.Label(trim_box, text="选中时长: —", foreground="#0a5a9e")
     sel_dur_lbl.pack(anchor=tk.W, pady=(0, 4))
@@ -1546,6 +1566,8 @@ def ask_mp4_pick_with_trim_preview(
                 "source": source_var.get() if sources else "",
                 "dest": dest_var.get() if dest_options else "",
                 "audio": audio_payload,
+                "video_fade_in": min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec)) if audio_edit else 0.0,
+                "video_fade_out": min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec)) if audio_edit else 0.0,
             }
         else:
             result[0] = picked

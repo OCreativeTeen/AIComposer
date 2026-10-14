@@ -932,6 +932,77 @@ def _picture_flow_refs() -> str:
     )
 
 
+def _picture_story_lines(
+    *,
+    narrative: str,
+    use_visual: bool,
+    use_speaking: bool,
+    use_actor: bool,
+    host_narrator: str,
+    main_character: str,
+    actor_override: str,
+    region: str,
+    era: str,
+) -> list[str]:
+    """当前这一场的叙事风格。规则与幻灯提示同一套。
+
+    和幻灯不同的只有这一点：图已经在手上。``Shown`` 只作这张图的画面参考，故事靠 ``Said`` 来讲。
+    """
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
+    lines = [
+        "Narrative style. This one picture presents the current scene in the chosen style.",
+        "The attached picture is the picture you work on.",
+        "``Shown``, when it is given, is only a reference for the place, the angle, and the look. "
+        "The story does not depend on it. If it is absent, the attached picture is enough.",
+        "``Said``, when it is given, is the story itself: how it develops, the background, and the words the people say.",
+        "When the story needs a person who is not yet in the picture, add that person.",
+        "When ``Actors`` is given, each person follows that entry: woman or man, chinese or english, and the age band.",
+        "",
+        SLIDE_FLOW_NARRATIVE_NOTES[narrative],
+        "",
+        _slide_flow_inputs_note(use_visual, use_speaking, use_actor, False),
+        "",
+    ]
+    if narrative == "story":
+        lines.append(_slide_flow_story_rules(use_visual, use_speaking, use_actor))
+    elif narrative == "narration":
+        lines.append(_slide_flow_narration_rules(use_visual, use_speaking, use_actor))
+    else:
+        lines.append(_slide_flow_report_rules(use_visual, use_speaking, use_actor))
+    if use_actor:
+        host = (host_narrator or "").strip()
+        if host:
+            lines.append(f"The host chosen for this project is {host}. The 讲员 entry in ``Actors`` is this person.")
+        look = (main_character or "").strip()
+        if look:
+            lines.append(f"Keep this cast readable and consistent: {look}.")
+    presentation = narrative in ("tech", "exec")
+    if not presentation:
+        phrase = setting_place_phrase(region, era)
+        if phrase:
+            lines.append(
+                f"Place and period: {phrase}. "
+                "Clothing, buildings, streets, objects, and faces must belong to this place and this time."
+            )
+    override = (actor_override or "").strip()
+    if override and not presentation:
+        if use_actor:
+            lines.append(
+                f"People override: draw every person in the picture as {override}. "
+                "Keep each person's name, role, gender, and age from ``Actors``, "
+                "but ignore any ethnicity, nationality, or period that the actor descriptions suggest."
+            )
+        else:
+            lines.append(
+                f"People override: every person who appears in the picture is {override}."
+            )
+    if use_actor:
+        lines.extend(["", ACTOR_AGE_LOOK])
+    lines.extend(["", SLIDE_FLOW_META_NOTE])
+    return lines
+
+
 def build_picture_flow_prompt(
     *,
     task: str,
@@ -939,12 +1010,33 @@ def build_picture_flow_prompt(
     visual_style: str = "",
     region: str = "",
     era: str = "",
+    narrative: str = "story",
+    use_visual: bool = True,
+    use_speaking: bool = True,
+    use_actor: bool = False,
+    scene_content: list | None = None,
+    host_narrator: str = "",
+    main_character: str = "",
+    actor_override: str = "",
 ) -> str:
-    """按画风处理和说明文字，组装这一次的图片提示词。人物提取用固定提示。"""
+    """按画风改变、说明文字，以及叙事风格，组装这一次的图片提示词。
+
+    叙事风格与幻灯提示同一套，以及 visual / speaking / actor 的勾选。
+    人物提取不用叙事风格。其余情况三项至少要选一项。
+    """
     if task not in {k for k, _ in PICTURE_FLOW_TASK_CHOICES}:
         task = "keep"
     if text not in {k for k, _ in PICTURE_FLOW_TEXT_CHOICES}:
         text = "keep"
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
+    use_visual = bool(use_visual)
+    use_speaking = bool(use_speaking)
+    use_actor = bool(use_actor)
+    scenes = [s for s in (scene_content or []) if isinstance(s, dict)]
+    story_on = task != "extract" and bool(scenes) and (use_visual or use_speaking or use_actor)
+    if task != "extract" and not (use_visual or use_speaking or use_actor):
+        raise ValueError("场景描述、讲话、人物至少要选一项。")
     style = (visual_style or "").strip()
     if task != "extract" and not style:
         raise ValueError("请先在项目里选定画面风格。")
@@ -972,13 +1064,24 @@ def build_picture_flow_prompt(
         body = "\n".join(lines)
         label = picture_flow_choice_label("extract", text)
     elif task == "restyle":
+        people_line = (
+            "The story description below decides the people and what they do. Add a person when the story needs one."
+            if story_on
+            else "Do not add people. Do not change who is doing what."
+        )
+        moment_line = (
+            "Keep the same composition, unless the story description below asks for a change."
+            if story_on
+            else "Keep the same composition, the same people, the same action, and the same story moment."
+        )
         lines = [
             "Make one still picture from the attached picture.",
-            "Keep the same composition, the same people, the same action, and the same story moment.",
-            "Do not add people. Do not change who is doing what.",
+            moment_line,
+            people_line,
             "Do not keep the original drawing style.",
             f"Restyle the whole picture into this target style: {style}.",
-            "Faces, clothes, the place, and the objects all take that style. The story in the picture stays the same.",
+            "Faces, clothes, the place, and the objects all take that style."
+            + ("" if story_on else " The story in the picture stays the same."),
             _picture_flow_text_rule(text == "remove"),
         ]
         if phrase:
@@ -990,10 +1093,20 @@ def build_picture_flow_prompt(
         body = "\n".join(lines)
         label = picture_flow_choice_label("restyle", text, style)
     else:
+        people_line = (
+            "The story description below decides the people and what they do. Add a person when the story needs one."
+            if story_on
+            else "Do not add people. Do not change who is doing what."
+        )
+        moment_line = (
+            "Keep the same composition, unless the story description below asks for a change."
+            if story_on
+            else "Keep the same composition, the same people, the same action, and the same story moment."
+        )
         lines = [
             "Make one still picture from the attached picture.",
-            "Keep the same composition, the same people, the same action, and the same story moment.",
-            "Do not add people. Do not change who is doing what.",
+            moment_line,
+            people_line,
             "Keep the original painting style. "
             "If the picture is Chinese watercolor, it stays Chinese watercolor. "
             "If it is gouache, it stays gouache. "
@@ -1011,6 +1124,38 @@ def build_picture_flow_prompt(
         lines.extend(["", _picture_flow_refs()])
         body = "\n".join(lines)
         label = picture_flow_choice_label("keep", text, style)
+    if story_on:
+        label = label + " · " + slide_flow_choice_label(
+            "single", "none", use_visual, use_speaking, use_actor, narrative
+        )
+        lines.extend(["", *_picture_story_lines(
+            narrative=narrative,
+            use_visual=use_visual,
+            use_speaking=use_speaking,
+            use_actor=use_actor,
+            host_narrator=host_narrator,
+            main_character=main_character,
+            actor_override=actor_override,
+            region=region,
+            era=era,
+        )])
+        body = "\n".join(lines)
+        payload = json.dumps(
+            slide_flow_scene_payload(
+                scenes[:1],
+                use_visual=use_visual,
+                use_speaking=use_speaking,
+                use_actor=use_actor,
+                keywords=False,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+        return (
+            f"Picture_choices:\n{label}\n\n"
+            f"Instruction_for_image:\n{body}\n\n"
+            f"Story_Scene_Content:\n{payload}"
+        )
     return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
 
 
@@ -1725,12 +1870,18 @@ VIDEO_FLOW_CAMERA_CHOICES = (
 
 
 def video_flow_choice_label(
-    frames: str, background: str, evolve: str, camera: str = "none", motion: str = ""
+    frames: str,
+    background: str,
+    evolve: str,
+    camera: str = "none",
+    motion: str = "",
+    narrative: str = "story",
 ) -> str:
     """把这几组选择写成一行，供窗口标题和提示词开头使用。"""
+    narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     frame_label = dict(VIDEO_FLOW_FRAME_CHOICES).get(frames, frames)
     bg_label = dict(VIDEO_FLOW_BACKGROUND_CHOICES).get(background, background)
-    parts = [frame_label, bg_label]
+    parts = [narrative_label, frame_label, bg_label]
     if frames != "two":
         evolve_label = dict(VIDEO_FLOW_EVOLVE_CHOICES).get(evolve, evolve)
         parts.append(evolve_label)
@@ -1763,10 +1914,57 @@ def _video_flow_camera_line(camera: str) -> str:
     )
 
 
+def _video_narrative_speech(narrative: str) -> str:
+    """叙事风格决定这一段里谁说话、画面怎么长。"""
+    if narrative == "narration":
+        return """** Narrative style is narration. Few people, or none. Do not stage a dialogue. Do not walk a new person in.
+** Carry the meaning with places, objects, symbols, and how they move.
+** A 讲员 may speak ``speaking`` or ``voiceover`` as narration. Story people stay quiet.
+** ``visual`` is only a reference for the place, the angle, and the look.
+** One voice at a time. No music."""
+    if narrative in ("tech", "exec"):
+        return """** Narrative style is a presentation. The diagram or the brief is the main thing, not a story scene.
+** A 讲员 may speak the point in ``speaking`` or ``voiceover``. Other people, if shown, stay small and listen. Do not walk a new person in.
+** ``visual`` says what the diagram shows. It is not a photograph to act out.
+** One voice at a time. No music."""
+    return """** Narrative style is story. The people of the story act it out in the clip.
+** Read ``actor`` from left to right. Skip anyone named 不出现. Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
+** A 人物 speaks that entry's line inside the story. That mouth moves only for that line. The others listen or react.
+** A 讲员 speaks commentary and stands apart from the story people.
+** ``speaking`` and ``voiceover`` are also how the story develops, and its background. Show that development, not only the spoken words.
+** ``visual`` is only a reference for the place, the angle, and the look. The story does not depend on it.
+** ``actor`` gives each person's gender, nationality, and age. When the story needs a person who is not yet in the frame, that person may enter.
+** One voice at a time. No music."""
+
+
+def _video_narrative_block(narrative: str) -> str:
+    """和幻灯、图片同一套叙事风格。场景 JSON 的字段名在这里对上 Shown / Said / Actors。"""
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
+    if narrative == "story":
+        rules = _slide_flow_story_rules(True, True, True)
+    elif narrative == "narration":
+        rules = _slide_flow_narration_rules(True, True, True)
+    else:
+        rules = _slide_flow_report_rules(True, True, True)
+    return "\n\n".join([
+        "This is one moving clip of the current scene. The narrative style decides how it develops.",
+        "In Story_Scene_Content, ``visual`` is Shown, ``speaking`` and ``voiceover`` together are Said, and ``actor`` is Actors.",
+        SLIDE_FLOW_NARRATIVE_NOTES[narrative],
+        rules,
+    ])
+
+
 def _video_flow_instruction(
-    frames: str, background: str, evolve: str, visual_style: str, camera: str = "none", motion: str = ""
+    frames: str,
+    background: str,
+    evolve: str,
+    visual_style: str,
+    camera: str = "none",
+    motion: str = "",
+    narrative: str = "story",
 ) -> str:
-    """按这一次的画面、背景、演进选择，只写用得上的那几段。"""
+    """按这一次的画面、背景、演进和叙事风格，只写用得上的那几段。"""
     style = (visual_style or "").strip() or "realistic"
     chunks: list[str] = []
     if frames == "two":
@@ -1776,13 +1974,13 @@ def _video_flow_instruction(
 ** Carry that change with action, facial expression, and the place itself.
 ** Picture 1's look is the start. Picture 2's look is the end. Do not invent another visual style between them.
 ** Pictures after picture 2, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
-** A 人物 reference only shows who is already in these frames. Do not walk a 人物 in or out."""
+** A 人物 reference only shows who that person is."""
         )
     else:
         chunks.append(
-            """** One scene picture is attached. Picture 1 is the only scene. Keep the same place and the same people.
+            """** One scene picture is attached. Picture 1 is the only scene. Keep the same place.
 ** Pictures after picture 1, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
-** A 人物 reference only shows who is already in picture 1. Do not walk a 人物 in or out."""
+** A 人物 reference only shows who that person is."""
         )
         if evolve == "to_style":
             chunks.append(
@@ -1818,7 +2016,10 @@ def _video_flow_instruction(
 ** Still show action, facial expression, and the scene change in ``visual``, inside the original style.
 ** The change stays gentle. The audience remains in the same picture."""
             )
-    chunks.append(NOTEBOOKLM_VIDEO_ACT_SPEECH.strip())
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
+    chunks.append(_video_narrative_speech(narrative))
+    chunks.append(_video_narrative_block(narrative))
     if background == "art_text":
         chunks.append(
             """** In the deep background, behind the people, place a few artistic words. They belong to the picture, not to a subtitle bar.
@@ -1968,8 +2169,9 @@ def build_video_flow_prompt(
     host_narrator: str = "",
     camera: str = "none",
     motion: str = "",
+    narrative: str = "story",
 ) -> str:
-    """按画面数量、背景文字、单画面演进、运镜和动画效果，组装这一次的视频提示词。"""
+    """按画面数量、背景文字、单画面演进、运镜、动画效果和叙事风格，组装这一次的视频提示词。"""
     if frames not in {k for k, _ in VIDEO_FLOW_FRAME_CHOICES}:
         frames = "one"
     if background not in {k for k, _ in VIDEO_FLOW_BACKGROUND_CHOICES}:
@@ -1981,6 +2183,8 @@ def build_video_flow_prompt(
     motion = (motion or "").strip()
     if motion not in {item["name"] for item in ANIMATION_PROMPTS}:
         motion = ""
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
     if frames == "two":
         evolve = "keep"
     style = (visual_style or "").strip() or "realistic"
@@ -1991,7 +2195,9 @@ def build_video_flow_prompt(
         ensure_ascii=False,
         indent=2,
     )
-    instruction = _video_flow_instruction(frames, background, evolve, style, camera, motion)
+    instruction = _video_flow_instruction(
+        frames, background, evolve, style, camera, motion, narrative
+    )
     voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
     audio = "\n".join(
@@ -2006,7 +2212,9 @@ def build_video_flow_prompt(
     )
     parts = {
         "Visual_Style": style,
-        "Video_choices": video_flow_choice_label(frames, background, evolve, camera, motion),
+        "Video_choices": video_flow_choice_label(
+            frames, background, evolve, camera, motion, narrative
+        ),
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,
         "Story_Scene_Content": json_content,
@@ -2111,8 +2319,9 @@ def build_transition_video_prompt(
     transition: dict,
     language: str = "",
     host_narrator: str = "",
+    narrative: str = "story",
 ) -> str:
-    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。"""
+    """过渡场景的视频提示。普通场景仍用 ``build_video_flow_prompt``。叙事风格与普通视频同一套。"""
     style = (visual_style or "").strip() or "realistic"
     chosen = transition if isinstance(transition, dict) else {}
     scenes = scene_content if isinstance(scene_content, list) else []
@@ -2121,7 +2330,11 @@ def build_transition_video_prompt(
         ensure_ascii=False,
         indent=2,
     )
+    if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
+        narrative = "story"
+    narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
     instruction = _transition_video_instruction(chosen, style)
+    instruction = instruction + "\n\n" + _video_narrative_block(narrative)
     voices = speaking_voice_lines(scenes)
     lang_note = _audio_language_instruction(language)
     audio = "\n".join(
@@ -2137,7 +2350,7 @@ def build_transition_video_prompt(
     choice_lines = _transition_video_choice_lines(chosen)
     parts = {
         "Visual_Style": style,
-        "Video_choices": "过渡 · 起始画面到终止画面",
+        "Video_choices": f"{narrative_label} · 过渡 · 起始画面到终止画面",
         "Transition_choices": choice_lines or "（这场没有记下选择）",
         "Instruction_for_video_generation": video,
         "Instruction_for_audio_generation": audio,

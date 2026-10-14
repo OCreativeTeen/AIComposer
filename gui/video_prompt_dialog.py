@@ -1,4 +1,4 @@
-"""视频提示：先选画面、背景、演进、运镜、动画，再打开手动窗口。"""
+"""视频提示：先选叙事风格、画面、背景、演进、运镜、动画，再打开手动窗口。"""
 
 from __future__ import annotations
 
@@ -61,11 +61,14 @@ def open_video_prompt_dialog(
     copy_image=None,
     open_manual=None,
     simple_actions=None,
+    saved_choice=None,
+    save_choice=None,
 ) -> None:
-    """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选画面、背景、演进、运镜、动画，
+    """生场视频：上面是简单做法（静态画面 + 声音），下面是高级做法（先选叙事风格、画面、背景、演进、运镜、动画，
     再打开手动窗口，里面放提示词和画面）。
 
     simple_actions: [(按钮文字, 回调), ...]，点了就关掉本窗口再调用回调。
+    ``saved_choice`` 记下上次的叙事风格；关窗或打开提示时 ``save_choice(dict)`` 记回去。
     """
     opened = [s for s in (get_scenes() or []) if isinstance(s, dict)]
     transition = opened[0].get("transition") if opened else None
@@ -102,11 +105,23 @@ def open_video_prompt_dialog(
     actions = ttk.Frame(advanced)
     actions.pack(fill=tk.X)
 
+    saved_narrative = "story"
+    if isinstance(saved_choice, dict):
+        picked = saved_choice.get("narrative")
+        if picked in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
+            saved_narrative = picked
+    narrative_var = tk.StringVar(value=saved_narrative)
     frame_var = tk.StringVar(value="two" if is_transition else "one")
     bg_var = tk.StringVar(value="none")
     evolve_var = tk.StringVar(value="keep")
     camera_var = tk.StringVar(value="none")
     motion_var = tk.StringVar(value="")
+
+    from gui.slide_prompt_dialog import pack_narrative_choices
+
+    narrative_row = ttk.Frame(body)
+    narrative_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 8))
+    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 0))
 
     groups = ttk.Frame(body)
     if not is_transition:
@@ -151,15 +166,30 @@ def open_video_prompt_dialog(
                 lines.append(f"{key}：{value}")
         ttk.Label(summary, text="\n".join(lines), justify=tk.LEFT).pack(anchor=tk.W)
 
+    def current_choice() -> dict:
+        return {"narrative": narrative_var.get()}
+
+    def remember() -> None:
+        if save_choice is None:
+            return
+        try:
+            save_choice(current_choice())
+        except Exception as exc:  # noqa: BLE001
+            print(f"视频提示：选择没有记下：{exc}")
+
     def refresh_choices(*_args) -> None:
         two = frame_var.get() == "two"
         for btn in evolve_buttons:
             btn.configure(state=("disabled" if two else "normal"))
         go.config(text="打开提示")
         if is_transition or two:
-            hint.config(text="多画面用起始画面和终止画面。选好后打开提示窗口，两张图和提示词都在里面。")
+            hint.config(text="叙事风格决定这段视频怎么讲。多画面用起始画面和终止画面。选好后打开提示窗口，两张图和提示词都在里面。选择会记下。")
         else:
-            hint.config(text="单画面先选定演进。运镜选默认就不写镜头怎么动。选好后打开提示窗口，起始画面和提示词都在里面。")
+            hint.config(text="叙事风格决定这段视频怎么讲。单画面先选定演进。运镜选默认就不写镜头怎么动。选好后打开提示窗口。选择会记下。")
+
+    def close() -> None:
+        remember()
+        dlg.destroy()
 
     def on_go() -> None:
         scenes = [s for s in (get_scenes() or []) if isinstance(s, dict)]
@@ -178,6 +208,7 @@ def open_video_prompt_dialog(
                     transition=transition,
                     language=language or "",
                     host_narrator=host_narrator or "",
+                    narrative=narrative_var.get(),
                 )
             else:
                 prompt = config_prompt.build_video_flow_prompt(
@@ -190,6 +221,7 @@ def open_video_prompt_dialog(
                     host_narrator=host_narrator or "",
                     camera=camera_var.get(),
                     motion=motion_var.get(),
+                    narrative=narrative_var.get(),
                 )
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
@@ -214,12 +246,14 @@ def open_video_prompt_dialog(
                 "这一场没有" + "、".join(missing) + "。提示窗口里只放已有的图。",
                 parent=dlg,
             )
+        remember()
         dlg.destroy()
         if callable(open_manual):
             open_manual(prompt, images)
 
     go = ttk.Button(actions, text="打开提示", command=on_go)
     go.pack(side=tk.LEFT)
+    dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     refresh_choices()
     near = anchor if anchor is not None else parent
