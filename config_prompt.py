@@ -247,10 +247,8 @@ NOTEBOOKLM_IMAGE_SINGLE_INSTRUCTION = """
 
 NOTEBOOKLM_SLIDESHOW_IMAGE_INSTRUCTION = NOTEBOOKLM_IMAGE_SLIDESHOW_INSTRUCTION
 
-SLIDE_FLOW_TARGET_CHOICES = (
-    ("single", "单图"),
-    ("slideshow", "幻灯片"),
-)
+# 幻灯提示窗只做幻灯片（slideshow）；"single" 只留给故事窗「场景总图」（build_scene_summary_image_prompt）。
+_SLIDE_FLOW_TARGET_LABELS = {"single": "单图", "slideshow": "幻灯片"}
 SLIDE_FLOW_TEXT_CHOICES = (
     ("none", "不加"),
     ("keywords", "背景关键字"),
@@ -480,7 +478,7 @@ def slide_flow_choice_label(
 ) -> str:
     """把这一次的选择写成一行，给人看。"""
     narrative_label = dict(SLIDE_FLOW_NARRATIVE_CHOICES).get(narrative, narrative).split("（")[0]
-    target_label = dict(SLIDE_FLOW_TARGET_CHOICES).get(target, target)
+    target_label = _SLIDE_FLOW_TARGET_LABELS.get(target, target)
     fields = [name for name, on in (("visual", visual), ("speaking", speaking), ("actor", actor)) if on]
     parts = [narrative_label, target_label, "+".join(fields)]
     if narrative not in ("tech", "exec"):
@@ -512,7 +510,7 @@ def build_slide_flow_prompt(
     """
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
-    if target not in {k for k, _ in SLIDE_FLOW_TARGET_CHOICES}:
+    if target not in _SLIDE_FLOW_TARGET_LABELS:
         target = "slideshow"
     if text not in {k for k, _ in SLIDE_FLOW_TEXT_CHOICES}:
         text = "none"
@@ -643,6 +641,34 @@ def build_slide_flow_prompt(
 
 
 # 幻灯提示里覆盖画面人物的选项。值为 (界面名, 写进提示词的英文)；第一项空字符串表示不覆盖。
+def build_scene_summary_image_prompt(
+    scene_content: list,
+    *,
+    visual_style: str = "",
+    host_narrator: str = "",
+    region: str = "",
+    era: str = "",
+) -> str:
+    """故事窗「场景总图」：把全部 scene_content 画成一张完整的总图。
+
+    用幻灯提示同一个 ``build_slide_flow_prompt`` 的 ``target="single"`` 分支（幻灯提示窗本身只做幻灯片），
+    用它的默认选择：叙事=故事、画面文字=不加、写进 visual + speaking。
+    """
+    return build_slide_flow_prompt(
+        target="single",
+        text="none",
+        narrative="story",
+        use_visual=True,
+        use_speaking=True,
+        use_actor=False,
+        visual_style=visual_style,
+        scene_content=scene_content,
+        host_narrator=host_narrator,
+        region=region,
+        era=era,
+    )
+
+
 SLIDE_FLOW_ACTOR_OVERRIDES: list[tuple[str, str]] = [
     ("不覆盖（用原来的人物）", ""),
     ("中国人 · 现代", "modern Chinese people of today"),
@@ -2168,10 +2194,21 @@ Generate detailed-single-step-image from the single input scene image.
 ** According to the steps/section in the image, give me the step ###STEP### image (with title, no step show in the image)
 """
 
-DIRECT_STEP_1_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "1")
-DIRECT_STEP_2_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "2")
-DIRECT_STEP_3_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "3")
-DIRECT_STEP_4_IMAGE = DIRECT_STEP_IMAGE_CORE.replace("###STEP###", "4")
+
+
+def build_direct_step_image(step: int = 1) -> str:
+    """单图 → 第 ``step`` 步的细节图指令（DIRECT_STEP_n_IMAGE 与旧常量逐字相同）。"""
+    try:
+        k = int(step)
+    except (TypeError, ValueError):
+        k = 1
+    return DIRECT_STEP_IMAGE_CORE.replace("###STEP###", str(max(1, k)))
+
+
+DIRECT_STEP_1_IMAGE = build_direct_step_image(1)
+DIRECT_STEP_2_IMAGE = build_direct_step_image(2)
+DIRECT_STEP_3_IMAGE = build_direct_step_image(3)
+DIRECT_STEP_4_IMAGE = build_direct_step_image(4)
 
 
 DIRECT_VIDEO_PROMPT_CHOICES: list[tuple[str, str]] = [
@@ -2232,6 +2269,29 @@ def build_direct_video_clipbody(
     if voices:
         parts["Speaking_voices"] = voices
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
+
+
+def build_step_image_clipbody(step: int = 1, *, visual_style: str = "", main_character: str = "") -> str:
+    """故事窗「图片分解 (Step Image)」：第 k 步细节图的指令（与 Direct Video 剪贴板同格式，带画面风格）。"""
+    return build_direct_video_clipbody(
+        instruction=build_direct_step_image(step),
+        main_character=main_character,
+        visual_style=visual_style,
+    )
+
+
+# 图片分解的第 2 步：用第 1 步生成的细节图做视频。图上有标题和文字，所以用「文字不动、只有旁白」的那条。
+# 想换一种，把这里改成上面 DIRECT_VIDEO_* 里的别的常量。
+STEP_IMAGE_VIDEO_INSTRUCTION = DIRECT_VIDEO_STATIC_NARRATION
+
+
+def build_step_image_video_clipbody(*, visual_style: str = "", main_character: str = "") -> str:
+    """图片分解第 2 步：第 1 步生成的细节图 → 视频的指令（图本身已经在 AI 工具里，窗口里不再放图）。"""
+    return build_direct_video_clipbody(
+        instruction=STEP_IMAGE_VIDEO_INSTRUCTION,
+        main_character=main_character,
+        visual_style=visual_style,
+    )
 
 
 SLIDE_ANALYSIS_OUTPUT_FORMAT = """

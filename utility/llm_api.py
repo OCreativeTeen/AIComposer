@@ -345,6 +345,46 @@ class LLMApi:
         _model, response = self._show_model_dialog(system_prompt or "", user_prompt or "", image_paths=images)
         return response
 
+    def show_manual_workflow(self, steps, *, title: str = "手动流程") -> List[Dict[str, Any]]:
+        """一连串的手动窗口（一个小小的提示词流程）。不调用任何模型。
+
+        ``steps`` 是一个列表，每一步是下面两种之一：
+
+        - 字典：``{"title": 步骤名, "system": 提示词, "user": 用户提示词（可省）, "images": [图片路径]（可省）}``
+        - 函数：``fn(results) -> 上面那种字典，或 None（跳过这一步）``。``results`` 是前面已经做完的各步结果，
+          所以后面一步的提示词可以按前面一步的回答现拼。
+
+        每一步都打开一个手动窗口（只有手动，没有选模型按钮）：提示词先自动拷到剪贴板；
+        有 ``images`` 才显示图；没有就不显示（比如第二步用第一步生成的图，那张图已经在 AI 工具里了，不用再摆出来）。
+        不是最后一步时「确定」写成「下一步」。点「取消」或关窗就停下，后面的步骤不再打开。
+
+        返回已经做完的各步结果，每个是 ``{"title", "response", "cancelled"}``：
+        ``response`` 是贴回的文字、贴回的图（PIL Image），或 None。取消的那一步 ``cancelled`` 为 True，是列表最后一个。
+        """
+        results: List[Dict[str, Any]] = []
+        total = len(steps or [])
+        for index, raw in enumerate(steps or []):
+            step = raw(results) if callable(raw) else raw
+            if not isinstance(step, dict):
+                continue
+            name = str(step.get("title") or f"步骤 {index + 1}")
+            is_last = index == total - 1
+            window_title = f"{title} · 第 {index + 1} / {total} 步 · {name}"
+            _model, response = self._show_model_dialog(
+                step.get("system") or "",
+                step.get("user") or "",
+                image_paths=step.get("images"),
+                title=window_title,
+                ok_text="完成" if is_last else "下一步 ▶",
+                cancel_text="取消流程",
+                manual_only=True,
+            )
+            cancelled = bool(getattr(self, "_last_dialog_cancelled", False))
+            results.append({"title": name, "response": None if cancelled else response, "cancelled": cancelled})
+            if cancelled:
+                break
+        return results
+
     def analyze_image(
         self, analyze_prompt, image_path, user_prompt: str = ""
     ) -> Optional[str]:
@@ -634,8 +674,18 @@ class LLMApi:
         *,
         image_paths=None,
         attachment=None,
+        title: str = "",
+        ok_text: str = "确定",
+        cancel_text: str = "取消",
+        manual_only: bool = False,
     ) -> Tuple[str, Optional[str]]:
-        """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。"""
+        """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。
+
+        ``title`` 改窗口标题；``ok_text`` / ``cancel_text`` 改两个按钮上的字；``manual_only`` 为真时不显示
+        GPT / Gemini / OLLAMA / Manual 四个选模型按钮，只能走手动（多步手动流程用）。
+        关窗后 ``self._last_dialog_cancelled`` 记着这次是不是取消（点取消或直接关窗）。
+        """
+        self._last_dialog_cancelled = True
         image_paths = self._normalize_image_paths(image_paths)
         attachment = (attachment or "").strip()
         if attachment and not os.path.isfile(attachment):
@@ -645,7 +695,7 @@ class LLMApi:
         dialog_w = dialog_h = 1000
         parent = self._get_dialog_parent()
         dialog = tk.Toplevel(parent)
-        dialog.title("选择 LLM 模型")
+        dialog.title(title or "选择 LLM 模型")
         dialog.geometry(f"{dialog_w}x{dialog_h}")
         dialog.minsize(900, 900)
         dialog.transient(parent)
@@ -669,21 +719,22 @@ class LLMApi:
         top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         top_frame.columnconfigure(0, weight=1)
 
-        model_frame = ttk.LabelFrame(top_frame, text="选择 LLM 模型", padding=8)
+        model_frame = ttk.LabelFrame(top_frame, text=(title or "选择 LLM 模型"), padding=8)
         model_frame.grid(row=0, column=0, sticky="ew")
         selected_model = tk.StringVar(value=MANUAL)
-        ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
+        if not manual_only:
+            ttk.Label(model_frame, text="点击下方按钮选择模型：", font=("TkDefaultFont", 9)).pack(anchor=tk.W, pady=(0, 4))
         model_btn_row = ttk.Frame(model_frame)
         model_btn_row.pack(fill=tk.X)
-        for mid, title in [
+        for mid, btn_title in ([] if manual_only else [
             (GPT_MINI, f"GPT"),
             (GEMINI, "Gemini"),
             (OLLAMA, f"OLLAMA"),
             (MANUAL, f"Manual"),
-        ]:
+        ]):
             ttk.Button(
                 model_btn_row,
-                text=title,
+                text=btn_title,
                 command=lambda m=mid: selected_model.set(m),
             ).pack(side=tk.LEFT, padx=(0, 6), pady=2)
         model_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="gray30")
@@ -738,6 +789,7 @@ class LLMApi:
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.columnconfigure(0, weight=1)
         response_image = [None]
+        paste_image_handler = [None]  # 当前窗口「返回的图」区的粘贴函数（附件 / 图片 / 纯文字三种布局都有）
 
         if file_kind:
             right_col.rowconfigure(0, weight=2)
@@ -1106,6 +1158,7 @@ class LLMApi:
 
             for widget in (reply_box, reply_hint, reply_hit, reply_pic):
                 widget.bind("<Double-Button-1>", paste_response_image)
+            paste_image_handler[0] = paste_response_image
         elif is_image_mode:
             right_col.rowconfigure(0, weight=2)
             right_col.rowconfigure(1, weight=1)
@@ -1161,6 +1214,7 @@ class LLMApi:
             for widget in (reply_box, reply_hint, reply_hit, reply_pic):
                 widget.bind("<Double-Button-1>", paste_response_image)
             dialog._llm_dialog_photo_ref = photo_ref
+            paste_image_handler[0] = paste_response_image
         else:
             prompt_box = ttk.LabelFrame(right_col, text="User Prompt", padding=8)
             prompt_box.grid(row=0, column=0, sticky="nsew")
@@ -1174,6 +1228,63 @@ class LLMApi:
             user_text.grid(row=1, column=0, sticky="nsew")
             if isinstance(user_prompt, str):
                 user_text.insert("1.0", user_prompt)
+
+            # 纯文字窗口也能贴回一张图（与图片模式同样的「返回的图」区）。
+            right_col.rowconfigure(0, weight=3)
+            right_col.rowconfigure(1, weight=1)
+            prompt_box.grid_configure(pady=(0, 6))
+            photo_ref = []
+            reply_box = ttk.LabelFrame(right_col, text="返回的图（双击或 Ctrl+V 从剪贴板粘贴）", padding=8)
+            reply_box.grid(row=1, column=0, sticky="nsew")
+            reply_hint = ttk.Label(reply_box, text="双击从剪贴板粘贴", font=("TkDefaultFont", 8))
+            reply_hint.pack(anchor=tk.W, pady=(0, 4))
+            reply_hit = tk.Frame(reply_box, height=120)
+            reply_hit.pack(fill=tk.BOTH, expand=True)
+            reply_pic = ttk.Label(reply_hit)
+            reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
+
+            def paste_response_image(_event=None):
+                img = self._image_from_clipboard()
+                if img is None:
+                    reply_hint.config(text="剪贴板里没有图片")
+                    return "break"
+                response_image[0] = img
+                thumb = img.copy()
+                thumb.thumbnail((400, 220), Image.Resampling.LANCZOS)
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGBA")
+                photo = ImageTk.PhotoImage(thumb)
+                photo_ref.append(photo)
+                reply_pic.configure(image=photo)
+                reply_hint.config(text="已贴上返回的图")
+                return "break"
+
+            for widget in (reply_box, reply_hint, reply_hit, reply_pic):
+                widget.bind("<Double-Button-1>", paste_response_image)
+            dialog._llm_dialog_photo_ref = photo_ref
+            paste_image_handler[0] = paste_response_image
+
+        def _clipboard_has_text() -> bool:
+            try:
+                return bool((dialog.clipboard_get() or "").strip())
+            except tk.TclError:
+                return False
+
+        def on_ctrl_v_image(_event=None):
+            """Ctrl+V：剪贴板里是图片（没有文字）时贴到「返回的图」区；有文字时照常贴文字。
+
+            绑定在对话框（toplevel 绑定标签）上，文本框自己的粘贴先执行；剪贴板只有图时那一步什么也不贴。
+            """
+            handler = paste_image_handler[0]
+            if handler is None or _clipboard_has_text():
+                return None
+            if self._image_from_clipboard() is None:
+                return None
+            handler()
+            return "break"
+
+        dialog.bind("<Control-v>", on_ctrl_v_image, add="+")
+        dialog.bind("<Control-V>", on_ctrl_v_image, add="+")
 
         def on_response_double_click_paste(_event):
             try:
@@ -1234,9 +1345,11 @@ class LLMApi:
                 dialog.update()
             else:
                 result_response[0] = None
+            self._last_dialog_cancelled = False
             dialog.destroy()
 
         def on_cancel():
+            self._last_dialog_cancelled = True
             result_model[0] = MANUAL
             result_response[0] = None
             dialog.destroy()
@@ -1248,8 +1361,8 @@ class LLMApi:
 
         action_box = ttk.Frame(model_btn_row)
         action_box.pack(side=tk.RIGHT)
-        ttk.Button(action_box, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
-        ttk.Button(action_box, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
+        ttk.Button(action_box, text=ok_text, command=on_ok).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
+        ttk.Button(action_box, text=cancel_text, command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
         ttk.Button(action_box, text="重新拷贝提示词", command=on_copy).pack(side=tk.RIGHT, pady=2)
         ttk.Separator(model_btn_row, orient=tk.VERTICAL).pack(side=tk.RIGHT, fill=tk.Y, padx=48, pady=2)
 

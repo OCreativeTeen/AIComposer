@@ -1,4 +1,4 @@
-"""幻灯提示：叙事风格、单图或幻灯片、画面文字，以及写进提示词的 visual、speaking、actor。在工作流「本集内容」里打开。"""
+"""幻灯提示（每场一张图的幻灯片）：叙事风格、画面文字，以及写进提示词的 visual、speaking、actor。在工作流「本集内容」里打开。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from gui.video_prompt_dialog import _place_popup_near
 
 _DEFAULT_CHOICE = {
     "narrative": "story",
-    "target": "slideshow",
+    "target": "slideshow",  # 只做幻灯片；旧项目里存的 "single" 也按幻灯片
     "text": "none",
     "visual": True,
     "speaking": True,
@@ -30,7 +30,6 @@ def _clean_choice(saved) -> dict:
         return choice
     for key, allowed in (
         ("narrative", {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}),
-        ("target", {k for k, _ in config_prompt.SLIDE_FLOW_TARGET_CHOICES}),
         ("text", {k for k, _ in config_prompt.SLIDE_FLOW_TEXT_CHOICES}),
     ):
         if saved.get(key) in allowed:
@@ -79,7 +78,6 @@ def open_slide_prompt_dialog(
     bottom.pack(fill=tk.X)
 
     narrative_var = tk.StringVar(value=last["narrative"])
-    target_var = tk.StringVar(value=last["target"])
     text_var = tk.StringVar(value=last["text"])
     visual_var = tk.BooleanVar(value=last["visual"])
     speaking_var = tk.BooleanVar(value=last["speaking"])
@@ -90,11 +88,6 @@ def open_slide_prompt_dialog(
     narrative_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
     for value, label in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES:
         ttk.Radiobutton(narrative_box, text=label, value=value, variable=narrative_var).pack(anchor=tk.W)
-
-    target_box = ttk.LabelFrame(groups, text="目标", padding=(8, 4))
-    target_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
-    for value, label in config_prompt.SLIDE_FLOW_TARGET_CHOICES:
-        ttk.Radiobutton(target_box, text=label, value=value, variable=target_var).pack(anchor=tk.W)
 
     text_box = ttk.LabelFrame(groups, text="画面文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
@@ -131,7 +124,7 @@ def open_slide_prompt_dialog(
         presentation = narrative in ("tech", "exec")
         for btn in text_buttons:
             btn.configure(state=("disabled" if presentation else "normal"))
-        single = "单图把这些场景画进一张图。" if target_var.get() == "single" else "幻灯片是每场一张图。"
+        single = "幻灯片是每场一张图。"
         hint.config(
             text=f"{hints.get(narrative, '')}\n{single}场景描述和讲话至少选一项。选好后按「拷贝提示词」。"
         )
@@ -144,7 +137,7 @@ def open_slide_prompt_dialog(
             save_choice(
                 {
                     "narrative": narrative_var.get(),
-                    "target": target_var.get(),
+                    "target": "slideshow",
                     "text": text_var.get(),
                     "visual": bool(visual_var.get()),
                     "speaking": bool(speaking_var.get()),
@@ -179,7 +172,7 @@ def open_slide_prompt_dialog(
         try:
             prompt = config_prompt.build_slide_flow_prompt(
                 narrative=narrative_var.get(),
-                target=target_var.get(),
+                target="slideshow",
                 text=text_var.get(),
                 use_visual=bool(visual_var.get()),
                 use_speaking=bool(speaking_var.get()),
@@ -217,7 +210,6 @@ def open_slide_prompt_dialog(
 
     dlg.protocol("WM_DELETE_WINDOW", close)
     narrative_var.trace_add("write", refresh_choices)
-    target_var.trace_add("write", refresh_choices)
     refresh_choices()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

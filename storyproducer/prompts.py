@@ -120,20 +120,56 @@ def build_gemini_prompt(
     visual_style: str = "",
     instruction: str = "",
     language: str = "tw",
+    steps: int | None = None,
+    episode: int | None = None,
+    episodes: int | None = None,
 ) -> str:
-    """Assemble the LM template used by scnge (``{content}`` = analyzed_content)."""
+    """Assemble the LM template used by scnge (``{content}`` = analyzed_content).
+
+    ``steps`` (Step Story) / ``episode`` + ``episodes`` (直接生成系列节目) are optional;
+    left at None the old behaviour is kept. A legacy label like ``"5 Step Story"``
+    maps onto ``Step Story`` with that step count.
+    """
     import config
+    import config_channel
 
     rows = lm_choices(channel_id)
+    want = lm_label
+    legacy = config_channel.legacy_step_label(lm_label)
+    if legacy and not any(lbl == lm_label for lbl, _ in rows):
+        want = config_channel.STEP_STORY_LABEL
+        if steps is None:
+            steps = legacy
     template = ""
     sections = 1
     for i, (lbl, tpl) in enumerate(rows):
-        if lbl == lm_label:
+        if lbl == want:
             template = tpl
             sections = i + 1
             break
     if not template:
         return ""
+    if config_channel.is_scene_summary_image_label(want):
+        # 场景总图：scene_content → 一张总图提示词（没有场景时为空）。
+        import config_prompt
+
+        sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+        sc = [s for s in sc if isinstance(s, dict)] if isinstance(sc, list) else []
+        if not sc:
+            return ""
+        return config_prompt.build_scene_summary_image_prompt(
+            sc, visual_style=(visual_style or "").strip()
+        )
+    if config_channel.is_step_image_label(want):
+        # 图片分解：只出图片指令（不拼 {content} / soul）；图片本身由调用方附带。
+        import config_prompt
+
+        return config_prompt.build_step_image_clipbody(
+            steps or 1, visual_style=(visual_style or "").strip()
+        )
+    template = config_channel.resolve_dynamic_scene_template(
+        want, template, {"steps": steps, "episode": episode, "episodes": episodes}
+    )
     vd = video_detail if isinstance(video_detail, dict) else {}
     _cat, _sub, topic = _topic_fields(vd)
     lang = config.llm_language_label(language) if hasattr(config, "llm_language_label") else language
@@ -152,7 +188,16 @@ def build_gemini_prompt(
     )
     vs = (visual_style or "").strip()
     if vs and vs.lower() not in body.lower():
-        body = body.rstrip() + f"\n\nVisual_Style: {vs}\n"
+        body = body.rstrip() + "\n\n" + config_channel.visual_style_prompt_block(vs) + "\n"
+    # 频道 soul：故事之后的幕后视角块（与 gui/downloader._build_notebooklm_prompt_for_row 一致）
+    import project_manager
+
+    soul_block = project_manager.build_soul_prompt_block(
+        channel_id, _cat, _sub, language=lang,
+        story_chars=len((vd.get("analyzed_content") or "").strip()),
+    )
+    if soul_block:
+        body = body.rstrip() + "\n\n\n" + soul_block + "\n"
     return body.strip()
 
 

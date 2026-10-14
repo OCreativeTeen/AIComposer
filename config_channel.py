@@ -1004,6 +1004,189 @@ Output format:
 """
 
 
+# ---------------------------------------------------------------------------
+# 动态场景模板：Step Story（步数可选）与「直接生成系列节目」（第 k 集 / 共 N 集）
+# 下拉里只放一个 label；真正的模板在生成提示词时按参数现拼。
+# ---------------------------------------------------------------------------
+STEP_STORY_LABEL = "Step Story"
+STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 3
+STEP_IMAGE_LABEL = "图片分解 (Step Image)"
+SCENE_SUMMARY_IMAGE_LABEL = "场景总图 (Scene Summary Image)"
+SCENE_SUMMARY_IMAGE_TEMPLATE_MARK = "[[SCENE_SUMMARY_IMAGE]] scene_content → 一张总图；提示词由 config_prompt.build_scene_summary_image_prompt 现拼。"
+STEP_IMAGE_TEMPLATE_MARK = "[[STEP_IMAGE]] 单图 → 第 k 步细节图；提示词由 config_prompt.build_step_image_clipbody 现拼。"
+SERIES_DIRECT_LABEL = "直接生成系列节目 (Series Direct)"
+SERIES_DIRECT_MAX_EPISODES, SERIES_DIRECT_DEFAULT_EPISODES = 12, 3
+
+
+def build_step_story(core: str, steps: int = STEP_STORY_DEFAULT, length: str | None = None) -> str:
+    """``*_STORY_CORE`` → N 场故事模板。
+
+    1 步 = 旧 Short Story（每场 300–500 字）；2 步起每场 150–300 字（与旧 N Step 常量逐字相同）。
+    """
+    try:
+        n = int(steps)
+    except (TypeError, ValueError):
+        n = STEP_STORY_DEFAULT
+    n = max(1, min(n, 12))
+    if length is None:
+        length = "300–500" if n == 1 else "150–300"
+    return core.replace("###LENGTH###", length).replace("###STEP###", str(n))
+
+
+def _clamp_episode(k, n) -> tuple[int, int]:
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = SERIES_DIRECT_DEFAULT_EPISODES
+    n = max(1, min(n, SERIES_DIRECT_MAX_EPISODES))
+    try:
+        k = int(k)
+    except (TypeError, ValueError):
+        k = 1
+    return max(1, min(k, n)), n
+
+
+SERIES_DIRECT_CORE = """
+*** ROLE: Writer and host of a recorded series program. The material below describes the WHOLE series. Write ONLY episode ###K### of ###N###.
+
+## STEP 1 — PLAN EPISODE ###K### (internal only; do NOT output)
+    ** From the material alone, work out how the series falls into ###N### episodes, then for episode ###K###: its theme, its key points, any dialogue or examples the material already gives for it, and where it stops and ###OTHERS### begin.
+    ** Use only what belongs to episode ###K###. Do not write ###OTHERS###. Do not add facts, cases or teachings the material does not contain.
+
+## STEP 2 — WRITE EPISODE ###K###
+    ** A complete, detailed script that can be recorded as is: real spoken lines, not an outline.
+    ** Flow: title → opening → dialogue → explanation → connection to daily life → transitions → ending → teaser (only when a next episode follows). Keep the existing dialogue of the material, made natural to say aloud.
+###CONTINUITY###
+    ** Voice: first person, natural and warm, the way people really talk. Tell it as a story; no numbered lists, no headings read aloud.
+    ** Never mention the material, a PDF, a document, a book or "the source". Speak as if this is simply our program.
+
+## STEP 3 — SCENES FOR THE VIDEO
+    ** The script is cut into scenes in watch order, about 8 to 15 scenes, one beat of the script per scene (opening, each dialogue run, each explanation, life connection, ending, teaser). Transitions sit inside the scenes they join.
+    ** Every scene has "episode": "###K###". The first scene's caption is "第###K###集 · " + the episode title; other captions are short scene titles.
+    ** Host look for this run: {narrator}. The host or explainer is this 讲员, not a separate 人物. A host-only scene: ``actor`` is exactly ``讲员：{narrator}`` and the lines are marked ``<1>``.
+    ** visual: a film-still of the place and how the people act on each other, and a cut or another angle when the picture should move. No words on the image.
+    ** One scene per page does NOT apply: when the source is a PDF, it describes the whole series; take only episode ###K###'s part. Omit start and end.
+
+*** OUTPUT
+    * One JSON array, all text in {language}:
+
+[
+    {{
+        "episode": "###K###",
+        "caption": "第###K###集 · title in {language}.",
+        "visual": "Film-still, the place, their interaction, and any cut. No on-image text. In {language}.",
+        "speaking": "The whole spoken text of this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx。<1> xxx。 In {language}.",
+        "actor": "Everyone visible, at most four, the one 讲员 included, joined with | only. Each 人物 is gender/age band/ethnicity/name: 人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村. Age band is kids, youth, teenager, mature, or senior; no number. If the narrator presents this scene, 讲员：{narrator} is position 1. Never put mood, gesture, or camera direction in actor."
+    }}
+]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    {topic}
+
+** Instruction:
+    {instruction}
+
+** Series material (analyzed_content, or the PDF named for this run):
+    {content}
+"""
+
+
+def _series_continuity(k: int, n: int) -> str:
+    lines = []
+    if n == 1:
+        lines.append("This is a single-episode program: open it (greet, say what we will walk through) and close it fully. No teaser.")
+    else:
+        if k == 1:
+            lines.append(f"Episode 1 opens the series: greet the audience, say in a few natural sentences what these {n} episodes will walk through and why it matters, then enter this episode's theme.")
+        else:
+            lines.append(f"Carry on from episode {k - 1}: open with one or two natural sentences that pick up where we left off. No full recap.")
+        if k < n:
+            lines.append(f"Leave a hook for episode {k + 1}: a short teaser or question pointing to its theme, without explaining its content.")
+        else:
+            lines.append(f"This is the last episode: close the whole series, gather in a few natural sentences what the {n} episodes walked through, and leave one warm, concrete takeaway. No teaser.")
+    return "\n".join("    ** " + x for x in lines)
+
+
+def _series_others(k: int, n: int) -> str:
+    others = [str(i) for i in range(1, n + 1) if i != k]
+    if not others:
+        return "nothing else"
+    if len(others) == 1:
+        return f"episode {others[0]}"
+    return "episodes " + ", ".join(others[:-1]) + " and " + others[-1]
+
+
+def build_series_direct(episode: int = 1, episodes: int = SERIES_DIRECT_DEFAULT_EPISODES) -> str:
+    """「直接生成系列节目」：只生成第 k 集（共 N 集），承上启下。"""
+    k, n = _clamp_episode(episode, episodes)
+    return (
+        SERIES_DIRECT_CORE.replace("###CONTINUITY###", _series_continuity(k, n))
+        .replace("###OTHERS###", _series_others(k, n))
+        .replace("###K###", str(k))
+        .replace("###N###", str(n))
+    )
+
+
+SERIES_DIRECT_DEFAULT = build_series_direct(1, SERIES_DIRECT_DEFAULT_EPISODES)
+
+_LEGACY_STEP_RE = __import__("re").compile(r"^\s*([1-9])\s*step\s*story\s*$", __import__("re").I)
+
+
+def legacy_step_label(label: str) -> int | None:
+    """旧的 ``"3 Step Story"`` label → 步数；不是就返回 None。"""
+    if (label or "").strip().lower() == "short story":
+        return 1  # Short Story 已并入 Step Story（1 步）
+    m = _LEGACY_STEP_RE.match(label or "")
+    return int(m.group(1)) if m else None
+
+
+def is_step_image_label(label: str) -> bool:
+    return (label or "").strip() == STEP_IMAGE_LABEL
+
+
+def is_scene_summary_image_label(label: str) -> bool:
+    return (label or "").strip() == SCENE_SUMMARY_IMAGE_LABEL
+
+
+def is_step_story_label(label: str) -> bool:
+    return (label or "").strip() == STEP_STORY_LABEL
+
+
+def is_series_direct_label(label: str) -> bool:
+    return (label or "").strip() == SERIES_DIRECT_LABEL
+
+
+def resolve_dynamic_scene_template(label: str, template: str, params: dict | None = None) -> str:
+    """按下拉 label + 参数（steps / episode / episodes）现拼模板；其它 label 原样返回。"""
+    params = params or {}
+    if is_step_story_label(label):
+        core = _STEP_STORY_CORES.get(template)
+        if core:
+            return build_step_story(core, params.get("steps") or STEP_STORY_DEFAULT)
+    elif is_series_direct_label(label):
+        return build_series_direct(
+            params.get("episode") or 1,
+            params.get("episodes") or SERIES_DIRECT_DEFAULT_EPISODES,
+        )
+    return template
+
+
+def visual_style_prompt_block(visual_style: str) -> str:
+    """所选画面风格写进场景提示词（风格名取自 config.VISUAL_STYLE_OPTIONS）。"""
+    vs = (visual_style or "").strip()
+    if not vs:
+        return ""
+    return (
+        f"Visual_Style: {vs}\n"
+        f"    ** Write every \"visual\" so it can be drawn in this style ({vs}): its look, light, colour and texture. "
+        "Do not name the style inside the JSON text."
+    )
+
+
+
 COUNSELING_STORY_CORE = """
 You are a psychological counselor and master of high-empathy storytelling. 
     ** Your task is to transform a deep psychological analysis report / case-study (input) into an emotionally immersive / authentic human story so listeners recognize themselves through narrative—not psychology. 
@@ -1078,112 +1261,14 @@ INPUT
     {content}
 """
 
-COUNSELING_STORY_2STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
-COUNSELING_STORY_3STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
-COUNSELING_STORY_4STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
-COUNSELING_STORY_5STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "5")
-COUNSELING_STORY_6STEP = COUNSELING_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "6")
+COUNSELING_STORY_2STEP = build_step_story(COUNSELING_STORY_CORE, 2)
+COUNSELING_STORY_3STEP = build_step_story(COUNSELING_STORY_CORE, 3)
+COUNSELING_STORY_4STEP = build_step_story(COUNSELING_STORY_CORE, 4)
+COUNSELING_STORY_5STEP = build_step_story(COUNSELING_STORY_CORE, 5)
+COUNSELING_STORY_6STEP = build_step_story(COUNSELING_STORY_CORE, 6)
 
-COUNSELING_STORY_SHORT = COUNSELING_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+COUNSELING_STORY_SHORT = build_step_story(COUNSELING_STORY_CORE, 1)
 
-
-
-# 心理咨询场景 prompt 共用：同一 case 一条线，按「呈现→模式→根因→出路」推进，禁止场场换题。
-COUNSELING_UNIFIED_NARRATIVE_SPINE = """
-
-*** SCENE RULES:
-    ** ONE CASE, ONE THREAD (mandatory)
-        * Every scene advances ONE same case only. Forbidden: unrelated vignettes, new protagonists without VO intro, or a fresh "life lesson" each scene.
-        * (Required Narrative Structure Across All Scenes) The audience must not feel they are watching a lesson, they must feel they are watching a human being struggle; Psychological insight emerges naturally through the story.        
-        * SCENE-TO-SCENE CHAIN
-            * Scene 2+: speaking should echo one concrete detail from the previous scene before moving forward.
-            * speaking: dialogue responds to the prior beat; no standalone speech essay.
-            * Host analysis (if present): only about what the audience JUST saw — not a new topic.
-
-    ** Typical THERAPEUTIC STORY SPINE (across all scenes)
-        * progress:
-            * Surface — concrete daily moment; struggle visible in behavior & environment
-            * Pattern — same wound repeats; tension rises; protective strategy becomes obvious (Show, Don't Tell)
-            * Root — rupture, trigger, or mirror moment exposes WHY the pattern exists
-            * Way-out — glimmer of insight, possible repair, or Shadow Question pointing toward healing (felt, not preached)
-        * scenes reference:
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 1 — THE INVISIBLE PROBLEM
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Make the audience emotionally identify with the protagonist before any explanation appears.
-            ** Requirements:
-                * Begin with a concrete life moment.
-                * Show a problem through behavior, not psychology. Do NOT explain the cause yet. The audience should only see symptoms.
-                * Create curiosity: "Why does this person keep doing this?" | Introduce the protagonist's protective strategy.
-                * Examples: people pleasing / perfectionism / emotional avoidance / rescuing others / overworking / proving self-worth / controlling relationships
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 2 — THE REPEATING PAIN
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Reveal the hidden cost of the survival strategy.
-            ** Requirements:
-                * Same pattern repeats in different situations: Stakes become higher / Relationships become strained / Internal suffering becomes visible
-                * Every new scene must answer: "What price is the protagonist paying?"
-                * Show: disappointment / loneliness / resentment / shame / exhaustion / emotional distance / disappointment
-                * The audience should begin to suspect: "This problem is deeper than today's event."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 3 — THE BREAKING POINT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Create an emotionally unforgettable collision. This is the emotional peak of the story.
-            ** Requirements:
-                * A triggering event forces the protagonist's strategy to fail.
-                * The mask can no longer work.
-                * Examples: relationship crisis / betrayal / public humiliation / panic attack / child mirrors parent's wound / important loss / sudden confrontation
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 4 — THE REVEAL
-            ━━━━━━━━━━━━━━━━━━━━
-
-            ** Goal: Expose the root wound.
-            ** Requirements:
-                * The audience finally understands: WHY the protagonist became this way.
-                * Examples: memory / conversation / mirror moment / therapy session / journal / unexpected realization
-                * This moment should create: "Now everything makes sense."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 5 — THE TURNING POINT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Create hope without becoming unrealistic.
-            ** Requirements:
-                * The protagonist experiments with a new response.
-                * Healing begins through action. Not perfection. Not instant healing.
-                * Only one small courageous choice.
-                * Examples: saying no / expressing a feeling / asking for help / setting a boundary / admitting vulnerability
-
-            ━━━━━━━━━━━━━━━━━━━━
-            ACT 6 — THE NEW ENDING
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: Show transformation.
-            ** Requirements:
-                * Create a scene that mirrors Act 1.
-                * Present a similar situation. But now the protagonist responds differently. This proves growth through behavior.
-                * The audience can visibly feel: "Something has changed."
-
-            ━━━━━━━━━━━━━━━━━━━━
-            FINAL REFLECTIVE BEAT
-            ━━━━━━━━━━━━━━━━━━━━
-            ** Goal: End with a gentle human truth. 
-            ** Requirements:
-                * The ending should feel like: emotion first, insight second. Never preach. Never lecture. Never diagnose.
-                * The audience should leave with: emotion first, insight second.
-                * Examples: "Maybe she was never trying to be perfect. Maybe she was trying to be loved."
-
-
-    ** SHOW, DON'T TELL
-        * Psychology via sensory triggers, glances, habits, avoidance — not DSM labels or theory names in visual/speaking.
-
-    ** VISUAL
-        * CLEAN STORY IMAGE (slideshow): frozen film-still for a painte.
-            * Slideshow image content : story via scene + character only 
-            * Only show very critical & short info (if absolutely necessary to express the content, less than 10 characters) as huge font in background)
-        * ``caption`` / ``speaking`` = audio/metadata only — never in ``visual`` as words-to-paint.
-"""
 
 
 COUNSELING_SERIES_COUNSELOR_FRAME = """
@@ -1345,232 +1430,6 @@ INPUT
 """
 
 
-COUNSELING_CASE_SUMMARY = """
-ROLE: Senior Psychological Counselor & TV Host
-    ** You are a senior psychological counselor specializing in Trauma-Informed Care and Systemic Family Therapy.
-    ** And your core-insight ("soul") for the topic '{topic}' is provided in the user prompt under the section titled "core-insight". 
-        * This is not reference material, it is your foundation for a coherent worldview and a stable, consistent psychological-analytic persona. 
-        * It defines: - your value-judgment framework - your trauma-understanding model - your assumptions about human nature - your narrative and therapeutic style principles
-    ** Your task is to transform the provided raw case+analysis content into a single scene (with the speaking by narrator), which present a immersive journey.
-
-RULES:
-    ** In the expression, you may express a deep internal philosophical framework from the "core insight /soul" (in the user-prompt), but:
-        * Do NOT explicitly reference this core insight. Do NOT use its original metaphors, terminology, symbolic labels, or signature language. Do NOT directly explain its conceptual structure.
-        * The insight must be experienced, not announced. The structure must carry it. The story must embody it.
-
-
-INPUT (the original case+analysis content):
-    ** story content text : 
-
---------------------------------------------------
-SCENE FIELDS (one scene in the output array)
---------------------------------------------------
-    ** Output exactly ONE scene in the JSON array (all fields in {language}):
-        1) caption (story title / scene title)
-        2) speaking (Host narrator summary + sub-insights; reflective tone)
-        3) visual (cinematic visual setting — time, weather, architecture, lighting)
-        4) speaking (optional brief host spoken line; ~9 seconds)
-        5) actor (讲员：{narrator}, or 人物1：woman/mature/chinese/封氏)
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-[
-        {{
-            "caption": "A short title capturing the psychological theme. In {language}.",
-            "visual": "Story/scene description, including cinematic setting (time, weather, architecture, lighting). In {language}.",
-            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-            "actor": "讲员：{narrator}"
-        }}
-    ]
-
-"""
-
-
-
-COUNSELING_CASE_DEVELOPMENT = """
-*** ROLE: Senior Psychological Counselor & TV Host
-    ** Trauma-Informed Care, Systemic Family Therapy.
-    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
-
-""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
-
-*** YOUR TASK — case + analysis → TV Special (init_multiple / case deep-dive)
-    ** Input: raw case+analysis (often includes story text plus analytical notes).
-    ** INTENSIFY and DEEPEN — do NOT summarize lightly or produce alternating "story clip / analysis clip" modules.
-    ** Walk source material IN ORDER: each original beat → one or more scenes; story and host analysis are ONE journey.
-    ** The host's lines in speaking analyzes ONLY what the previous visual just showed — analysis emerges from the scene, not a parallel essay.
-
-*** PACING
-    ** speaking ~10 seconds per scene; split long speeches across consecutive scenes (same thread).
-    ** Character scenes and host VO alternate smoothly: character act → host connects & names the pattern (de-pathologized) → next story beat.
-    ** Final scene: Cliffhanger / Shadow Question toward healing — not a neat moral.
-
-*** SCENE FIELDS (all text in {language})
-    1) caption — metadata title only (NOT for image text); scene 1 = whole-story title
-    2) speaking — host bridge + gentle analysis — audio only; never paste into visual
-    3) visual — clean film-still (see VISUAL rules): scene+character express the beat — NO words-to-paint, NO analysis on screen
-    4) speaking — character or host line ~10s — audio only
-    5) actor — 人物1：woman/mature/chinese/封氏 | 讲员：{narrator} when the host is present
-
-INPUT (user prompt bottom):
-    story / case content (e.g. full case description or analysis)
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON — array of scenes, spine A→B→C→D across full output)
---------------------------------------------------
-[
-    {{
-        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-        "visual": "Clean film-still — scene+character, sensory, NO on-image text or story prose. In {language}.",
-        "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-        "actor": "人物1：woman/mature/chinese/封氏 | 讲员：{narrator}"
-    }}
-]
-
-"""
-
-
-
-COUNSELING_STORY_DEVELOPMENT = """
-*** ROLE: Senior Psychological Counselor & TV Host
-    ** Trauma-Informed Care, Systemic Family Therapy.
-    ** Core-insight ("soul") for '{topic}' is in the user prompt under "core-insight".
-
-""" + COUNSELING_UNIFIED_NARRATIVE_SPINE + """
-
-*** YOUR TASK — full raw case-story → TV Special (init_multiple / Full Story)
-    ** Input: complete raw case-story in user prompt.
-    ** Expand IN ORDER into many scenes — ONE immersive film, not fragmented clips.
-    ** Cover spine A→B→C→D across the full output; may use multiple scenes per phase if source is rich.
-    ** Do NOT reset plot, cast, or theme mid-output.
-
-*** PACING & STRUCTURE
-    ** Early scenes (A–B): exposition through dialogue & visual — not backstory dumps.
-    ** Middle (B–C): escalate; split ~10s speaking across consecutive scenes when needed.
-    ** Late (C–D): root rupture then way-out glimmer or Shadow Question — avoid tidy sermon ending.
-    ** speaking in scene 2+: mandatory bridge from previous visual/detail before new insight.
-
-*** SCENE FIELDS (all text in {language})
-    1) caption — metadata title only; scene 1 = whole-story title
-    2) speaking — host bridge + insight — audio only
-    3) visual — clean film-still (see VISUAL rules): pictures tell the story; almost no on-image text
-    4) speaking — character dialogue ~10s — audio only
-    5) actor — 人物1：woman/mature/chinese/封氏 | 讲员：{narrator} when the host is present
-
-INPUT (user prompt bottom):
-    Full raw case-story / complete story description
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON — array of scenes, full spine A→B→C→D)
---------------------------------------------------
-[
-    {{
-        "caption": "Beat title; scene 1 = whole-story title. In {language}.",
-        "visual": "Clean film-still — continues same thread, scene+character, NO on-image text. In {language}.",
-        "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-        "actor": "人物1：woman/mature/chinese/封氏 | 讲员：{narrator}"
-    }}
-]
-
-"""
-
-
-
-COUNSELING_ANALYSIS_DEVELOPMENT = """
-*** Role:
-    ** 你是一位资深的心理咨询师，你的核心洞察力（灵魂/core-insight) 在user-prompt 中的 "core-insight" 章节中。
-    ** 你的任务：将 "raw case+analysis content" (provided in user-prompt) 转化为温暖、有电影感、且具有高度互动性的直播/沙龙式 心理案例分析 视频脚本。
-
-*** Core Task:
-    ** 将提供的心理故事拆解为一系列连贯的“心理分析场景”。
-    ** 每一个场景都必须包含：【场景回顾】->【深度分析】->【听众互动】->【情感承接】。
-
-*** The Interactive Dialogue Loop (确保对话自然流动):
-    1. Acknowledge (承接): 如果不是第一个场景，开头必须先回应上一位听众的分享。例如：“谢谢这位先生刚才分享的那个关于雨天的瞬间，那份孤独感我们都听到了...”
-    2. Analyze (分析): 引导大家看当前场景中的细节，用去病理化的语言解释背后的“自我保护机制”。
-    3. Call to Action (互动提问): 抛出一个温柔的、关于个人经验的问题。例如：“大家在生活中，是否也曾为了维持一份‘完美’而感到精疲力竭？”
-    4. Voiceover (反馈): 此时会出现一位随机听众（男/女）的独白，分享他们受到启发后想到的个人经历。
-
-*** Enhanced Directives:
-    ** 去病理化语言：严禁使用“患者”、“病态”。将 PTSD、回避型人格等解释为“在特定危机时刻，身体为了保护你而演化出的生存策略”。
-    ** 行为细节化：通过感官细节（声音、质感、习惯）来识别心理机制，而不是贴标签。
-    ** 咨询师语气：像一位坐在壁炉边的老友，温和、从容、不带评判。
-
-*** Voiceover (听众独白) 规则 -- The Separation Protocol (听众与故事的分离):
-    ** 听众必须是随机的普通人（指定性别：男先生/女女士）。
-    ** 听众分享的是他们自己生活中的真实片段，而不是对故事角色的评价。
-    * 听众不能提到故事角色的名字，他们只是被咨询师的话触动了。
-
-
-INPUT (the original case+analysis content):
-    ** Include interactive analysis scene includes:
-        1) caption (scene title; 1st scene caption = whole-story title)
-        2) speaking (random audience member sharing a personal life fragment — NOT commenting on story characters; per Separation Protocol)
-        3) visual or story (Story/Scene details, include cinematic salon/live setting — time, weather, architecture, lighting)
-        4) speaking (counselor host: Acknowledge → Analyze → Call to Action; warm, ~10 seconds)
-        5) actor (人物1：woman/mature/chinese/封氏 or 讲员：{narrator})
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-[
-        {{
-            "caption": "A short title for this analysis beat. In {language}.",
-            "visual": "Story/Scene description, including cinematic salon/live setting. In {language}.",
-            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-            "actor": "讲员：{narrator}"
-        }}
-    ]
-
-"""
-
-
-
-COUNSELING_INTRO = """
-*** Role & Persona
-
-    ** You are a senior psychological counselor (specializing in Trauma-Informed Care and Systemic Family Therapy).
-
-    ** And You act as a TV Host to conduct a psychological counseling/self-healing program. Your tone is welcoming yet piercing. 
-
-
-
-*** Core Objective
-    ** For the content provided in the user-prompt, make a VERY brief introduction Script to bridges the gap between the audience and the psychological conflict:
-        * 1. "Welcome": direct address to the audience, welcome them to the program ({channel_name})
-        * 2. "Normalcy": Introduce the "Who" and "Where" based on the content. Describe their life (e.g., a couple preparing for a wedding, a man facing retirement).
-        * 3. "the Shattering Moment":  To grab the audience's attention, identify the specific, shocking scene from the provided text where the psychological conflict explodes. Describe this scene vividly to grab attention.
-            * don't try to give full story cover, just VERY briefly describe the most important / shocking scene vividly to grab attention.
-
-
-INPUT (the original case+analysis content):
-    ** ..完整的故事描述/分析..
-
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT JSON)
---------------------------------------------------
-** Output exactly ONE scene in the JSON array (all fields in {language}):
-    1) caption (intro / story title)
-    2) speaking (host intro: Welcome → Normalcy → Shattering Moment; piercing yet welcoming)
-    3) visual (Story/Scene description, including cinematic visual of the shattering moment — vivid, brief)
-    4) speaking (optional brief host spoken hook; ~9 seconds)
-    5) actor (讲员：{narrator}, or 人物1：woman/mature/chinese/封氏)
-
-[
-        {{
-            "caption": "Intro title — hooks the psychological conflict. In {language}.",
-            "visual": "Story/Scene description, including Vivid cinematic snapshot of the shattering moment. In {language}.",
-            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In {language}.",
-            "actor": "讲员：{narrator}"
-        }}
-    ]
-
-"""
-
-
-
 COUNSELING_TALK_SCENES = """
 *** ROLE: A podcast. The 讲员 and the guests sit together and talk. They are a third party. The whole episode is them discussing someone else's story. There is no performance.
     ** One 讲员 only, and the look is {narrator}. A guest is a 人物, never a second 讲员.
@@ -1726,11 +1585,11 @@ INPUT
     {content}
 """
 
-FLYLINK_STORY_2STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "2")
-FLYLINK_STORY_3STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "3")
-FLYLINK_STORY_4STEP = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "4")
+FLYLINK_STORY_2STEP = build_step_story(FLYLINK_STORY_CORE, 2)
+FLYLINK_STORY_3STEP = build_step_story(FLYLINK_STORY_CORE, 3)
+FLYLINK_STORY_4STEP = build_step_story(FLYLINK_STORY_CORE, 4)
 FLYLINK_STORY_LONG = FLYLINK_STORY_CORE.replace("###LENGTH###", "500–1000").replace("###STEP###", "1")
-FLYLINK_STORY_SHORT = FLYLINK_STORY_CORE.replace("###LENGTH###", "300–500").replace("###STEP###", "1")
+FLYLINK_STORY_SHORT = build_step_story(FLYLINK_STORY_CORE, 1)
 FLYLINK_STORY_MINI = FLYLINK_STORY_CORE.replace("###LENGTH###", "150–300").replace("###STEP###", "1")
 
 
@@ -2061,3 +1920,10 @@ COUNSELING_SERIES_STORY_ONLY = _with_source_scene_rules(COUNSELING_SERIES_STORY_
 COMIC_STRIP_SCENES = _with_source_scene_rules(COMIC_STRIP_SCENES)
 
 
+COUNSELING_STORY_STEP = build_step_story(COUNSELING_STORY_CORE, STEP_STORY_DEFAULT)
+FLYLINK_STORY_STEP = build_step_story(FLYLINK_STORY_CORE, STEP_STORY_DEFAULT)
+# 默认（3 步）模板字符串 → 所属 core；Step Story 换步数时据此重拼。
+_STEP_STORY_CORES = {
+    COUNSELING_STORY_STEP: COUNSELING_STORY_CORE,
+    FLYLINK_STORY_STEP: FLYLINK_STORY_CORE,
+}

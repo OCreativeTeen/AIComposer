@@ -1,0 +1,158 @@
+You are a psychological counselor and master of high-empathy storytelling. 
+    ** Your task is to transform a deep psychological analysis report / case-study (input) into an emotionally immersive / authentic human story so listeners recognize themselves through narrative—not psychology. 
+
+
+## STEP 1 — IDENTIFY / EXTRACT PSYCHOLOGICAL DNA (internal only; do NOT output)
+
+    ** If the input content include more than one case-study / case-story / analysis,  only focus on the 1st one, ignore others)
+    ** Then identify / Extract following psychological DNA : 
+	    * Visible Problem; 
+        * Invisible Knot—wound, unmet need, fear, loyalty, belief, burden, conflict; 
+        * Emotional Cost & Hidden Fear—pain, avoidance, self-sabotage; 
+        * Repeating Life Pattern; 
+        * Healing Door / light at the tunnel — small shift toward movement.
+
+
+## STEP 2 — CREATE STORY
+
+    ** Objective:
+        * Translate the PSYCHOLOGICAL DNA [from STEP 1] into ONE grounded, visceral narrative story, which evoke a profound sense of recognition ("That feels like me") purely through storytelling, without ever explaining the underlying psychology.
+        * Length: the whole (ONE) story has 1 scenes;  each scene' content is about 300–500 char
+		* If more than one Scenes, they should conneced tighly following the emotional development of ONE story (a single relationship). And a typical Narrative Arc can be: Setup - Core Conflict - Shift (subtle turning point) - Ending (hopeful but not "everything solved")
+
+    ** Execution & Style**
+        * Show, Don't Tell: Events are just vehicles; the emotional pattern is the destination. 
+			* NO clinical or academic language. NO therapy speeches, counseling notes.
+			* NO summarizing the "lesson," "moral," or the psychological insight at the end.
+        * Subtextual Dialogue: Keep conversations natural. Characters should talk around their issues.
+        * If two people are in the life, most scenes are both of them. Both people speak inside ``speaking``, each with their own ``<N>``, said aloud, not as a private thought. They may trade lines. Swap who is first from scene to scene. One scene of a person alone is enough. Do not make the whole story a single actor thinking.
+
+## STEP 3 - (Json structure)
+    * (1) **Caption**: poetic, evocative title of the story & scene. 
+    * (2) **Voiceover**: 2–3 short rhythmic sentences—a sigh of relief (not a lecture). Express the psychological insight as gentle life guidance.
+        * Host look chosen for this run: woman/mature/chinese. A third person who explains or tells the story (说书人 / storyteller) is this 讲员, not a separate 人物.
+        * Position 2 says this field. That is the second person, or the narrator when 讲员 is in position 2.
+        * Exactly one story person, and you choose to include the host: this field is the host's line.
+        * The scene is only the host: ``speaking`` is the host, and this field is empty.
+    * (3) **Visual**: the story visual scene (all scenes (if more than 1) should be connected to express ONE story). No words painted on the image.
+        * Include the place, and what the people do to each other: a hand, a step back, walking side by side.
+        * When they move or answer, the picture may change — a cut, another angle, a closer shot. Write that change here so the video can cut.
+    * (4) **Speaking**: one powerful line, the FIRST actor, poignant 1st-person, daily life language.
+    * (5) **Actor**: everyone visible, at most four people in all, the one 讲员 included, then 讲员 if the narrator is in this scene. Join with " | ". Never use ";".
+        * There is no voiceover field. Every line is in ``speaking``, marked with ``<N>``. Only three people speak. The fourth only appears and has no line.
+        * Each 人物 has gender, an age band, an ethnicity, and the name last: ``人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村``.
+        * Age band is kids, youth, teenager, mature, or senior. No age number. Without a name: woman/mature/chinese.
+        * When the source is a picture or a PDF page, read the age band from how that person looks. The words rarely give an age. A name in the picture or the text goes last. The same person keeps that age band in every scene.
+        * If the narrator is presenting this scene, ``讲员：woman/mature/chinese`` is position 1 and is not also a 人物.
+        * Mood, gesture, and camera direction are not people.
+
+    like this (the story has 1 scene (1 json objects)) :
+    [
+        {
+            "caption": "Title in Simplified Chinese.",
+            "visual": "the story scene, their interaction, and any cut or angle change. about 300–500 Simplified Chinese char. No on-image text.",
+            "speaking": "The whole conversation in this scene. There is no voiceover field. Mark who speaks with <N>. N is that person's place in actor, from 1, in the written order. At most three people speak, so <N> is only 1, 2, or 3. The one narrator counts in that order when listed. A fourth person in actor only appears and does not speak. Never write <4>. The same person continues until the next <N>. Example: <1> xxx, xxx。<2> xxx, xxx, xxx。<1> xxx。<3> xxx, xxx, xxx, xxx。 In Simplified Chinese.",
+            "actor": "人物1：woman/mature/chinese/封氏 | 人物2：man/youth/chinese/贾雨村 | 人物3：woman/kids/chinese"
+        }
+    ]
+
+--------------------------------------------------
+INPUT
+--------------------------------------------------
+** Topic:
+    Addiction__行为成瘾与逃避机制-极限脱瘾：欲望冲浪与高强度触发管理
+
+** Instruction:
+    
+
+** The reference may be written text, a PDF, the speech in an audio file, or the spoken words in a video. Use the source named for this run.
+** When that source is an audio file or a video, each scene JSON object has "start" and "end": seconds on that file's own timeline, two decimal places. 0.00 is the first moment of the file. N is the Recording length given for this run. N is the length of this audio or video, and it is the only legal end of the timeline. Write the scenes in order from 0.00 up to N. Every scene must have start < end. The next scene's start equals this scene's end. The last scene's end is exactly N. Before you return the JSON, read every start and every end. If any number is greater than N, discard that timeline and write it again so every number is inside 0.00 to N. Do not park N only on the last end while earlier scenes run past N. A scene with start 709.00 and end 485.48 is wrong: 709 is past the file, and start is after end. Eight minutes is about 480 seconds, so a file near that length cannot contain 560, 631, or 709. When the source is written text or a PDF, omit start and end.
+** Reference Content (analyzed_content):
+    ### 抑郁与性瘾：当痛苦在暗处寻找出口
+
+#### 一、一个惊人的关联：80%的抑郁人群有性瘾
+
+研究表明，80%的抑郁人群都伴有性瘾。这并非巧合，而是一个需要深入理解的心理学现象。为什么抑郁的人会陷入性成瘾？为什么他们会反复沦为“重复的机器”？答案藏在一种叫做“性化防御”的心理机制里。
+
+当一个人被抑郁、焦虑这些负面情绪困住时，他会在不知不觉中把这些不舒服的感觉转化为性冲动。这样做，好像能稍微抓住一点掌控感。简单来说，就是用这种方式来应对痛苦——就像有人压力大了会拼命吃东西，有人会整天躺着不想动。性，对于抑郁的人来说，就像在情绪的浪涛里抓住的一块浮木。
+
+#### 二、性化防御：用感官刺激对抗内心的虚无
+
+这种“性化防御”很容易发生在心理承受能力较弱的人身上。有些被抑郁困扰的人会有性瘾，但对他们来说，性并不是真正想要的——它只是能让他们感觉到快乐的少数方式之一。只有在那样的时刻，他们才能暂时忘了抑郁带来的绝望，得到一点点短暂的快乐和满足。
+
+正常人能从运动、和朋友聊天、工作做出点成绩这些日常小事里找到快乐。这些小确幸就像小溪一样，慢慢滋润着生活。但抑郁的人脑子里很难产生多巴胺，就像快乐按钮失灵了似的，对生活里的一切都提不起劲。这时候，性就成了少数能让他们觉得自己还活着的方式。好像只有在那种强烈的感官刺激里，才能证明自己不是一具空壳。
+
+#### 三、短暂的快乐之后：更深的自责与恶性循环
+
+可是，短暂的快乐过去之后，往往是更深的痛苦。激情退去，空虚、懊悔、责怪自己的感觉，就像潮水一样涌过来，把他们重新拉回抑郁的黑洞里。比如一个被抑郁情绪缠绕的人，明明知道过度不好，也下定决心要改，但习惯的力量太强，再加上偶尔看些刺激的画面，脑子里闪过一些想法，就很容易又犯了。等清醒过来，自责、后悔的感觉就会包围自己。有些人甚至会哭出来，心情也变得比之前更加抑郁。
+
+当这种失败一次又一次发生，人就会越来越不想和人接触。他们会觉得对不起自己，觉得自己没什么用，自信心一点一点被消磨掉。而这些负面情绪，又会让他们更想通过性来获得快感，形成一个无法挣脱的循环：抑郁 → 想找刺激 → 短暂快乐 → 更加自责 → 更抑郁 → 更想依赖性。这个循环，让人很难走出来。
+
+#### 四、看见背后的创伤：所有上瘾行为都源于未被安抚的伤口
+
+要是遇到这种情况，该怎么办呢？心理学上有一个观点：所有上瘾行为的背后，都是没有被好好安抚的创伤。这也是为什么很多人想靠自己克制、逼着自己自律，却很难戒掉的原因。因为要解决的，不是这些行为本身，而是心理那个受过伤的自己。
+
+心理的需求，终究需要我们静下来去倾听、去回应。当你又控制不住做这些事的时候，先别忙着怪自己。试着问问自己：为什么会这样？这个行为背后藏着怎样的痛苦？是小时候想得到的关心没得到？是家里积攒的委屈？还是人生中遇到的重大挫折留下的阴影？这些痛苦可能藏在心里很深很深的地方，不容易发现。但只有当它们被看到、被接受、被支持的时候，你才会自然而然不再依赖这些上瘾行为。
+
+就像一个在黑暗里哭的孩子——当有人温柔地抱着他，理解他的难过，他慢慢就会不哭了。
+
+#### 五、走出困境：寻求专业帮助与建立新的支持系统
+
+对于抑郁又有性瘾的人来说，找专业的心理咨询师帮忙很重要。因为专业的人能引导他们理清心理的创伤，帮他们找到健康的调节情绪的方式，让他们知道：除了性，生活里还有很多能够带来快乐的事情。
+
+同时，身边人的理解和支持也很重要。家人和朋友别带着偏见去指责他们，多给一些关心和耐心，让他们知道自己不是一个人在扛。
+
+除此之外，抑郁的人自己也可以尝试做些积极的改变：培养一个兴趣爱好，把注意力从性瘾上移开；坚持适量的运动，运动能促进多巴胺分泌，让心情好一点；多和人交往，哪怕只是和朋友随便聊聊天，也能缓解孤独和抑郁。
+
+#### 六、结语：当伤口愈合，阳光终会照进来
+
+总的来说，抑郁和性瘾缠在一起，并不是没有办法解决。关键是要找到背后的原因，安抚好心理那个受伤的自己。当心理的创伤慢慢愈合，当你找到了健康的快乐来源，性瘾自然会慢慢减轻。抑郁的乌云也会渐渐散开，让人重新感受到生活的阳光和力量。
+
+
+*** CORE-INSIGHT (background lens, NOT content) ***
+The notes below are this channel's private lens. They are NOT source material and NOT a script.
+    ** The story/reference above is the primary content. Tell THAT story explicitly, concretely and naturally: its people, events, words and turns.
+    ** Use the lens only silently, to choose what to notice, how to interpret it, what to emphasize, the tone (warm, non-judgmental, clear) and where it heads (a small, real next step).
+    ** Never quote, name or paraphrase the lens: no terms, metaphors, labels, headings, or slogans from it may appear in the output. A viewer must not be able to tell these notes exist.
+    ** Do not add sermons, value statements or lessons that the source itself does not support. If the lens does not fit this source, ignore it; the source always wins.
+    ** Let this source's own specifics drive the structure, scenes, examples and ending, so every program is different. Do not reuse a fixed arc or stock phrases.
+    ** The lens never changes the template's format, JSON schema, scene count or roles. Output language stays Simplified Chinese.
+    ** This story is NOT in the Faith category: use no religious or faith language at all; express any underlying values only as ordinary human dignity, limits, growth and response.
+--- lens (do not output) ---
+<base stance>
+- 人本有价值：不由成就、角色、诊断或过错决定；描述行为，不给人贴道德标签。
+- 症状是生存策略：先理解它保护了什么、逃避了什么，再谈改变。
+- 痛先被看见，再谈意义；不急着用道理或金句把痛解释掉。
+- 苦难来源多样（自己的选择、他人的伤害、环境与不公），不把痛苦说成惩罚，也不全归咎个人。
+- 承认限制，同时守住"在限制之内我仍可选择"；从"为什么发生"走向"我可以怎样回应"。
+- 公义与怜悯并行：不纵容伤害，也不苛刻指责；放下报复与设立界限可以同时成立。
+- 人可以改变，但靠觉察与微小可重复的行动，而非一次顿悟或意志硬扛。
+- 姿态：共情先于分析，好奇而非确定，多视角公平，尊重当事人的选择与节奏，诚实而温柔。
+- 方法：看见现象 → 理解功能 → 拆解机制 → 找到一小步出路。
+- 偏好具体胜于空泛：一个场景、一句原话、一个动作，胜过十句大道理。
+
+<category lens: Addiction__行为成瘾与逃避机制>
+[核心观念]
+- 成瘾不是"太喜欢"，而是"没有更好的地方可去"：行为是痛苦调节系统，是情绪避难所。
+- 这些行为"有效但昂贵"：它们确实止痛，只是代价越来越高。
+- 只拿走止痛药不处理伤口，只会复发或换一种成瘾。
+- 真正的改变不是"戒掉"，而是"回到现实"，让现实变得可以待下去。
+- 戒断期的无聊、空虚与焦虑不是退步，是受体与感受力在恢复。
+[分析方法]
+- 问关键问题："如果我不做这个，我现在要面对什么？"找出被逃避的感受。
+- 画出成瘾循环：触发 → 冲动 → 行为 → 短暂缓解 → 自责 → 更多触发。
+- 评估奖赏系统状态：刺激阈值是否上升？普通生活是否已"无聊到无法忍受"？
+- 设计替代路径：真实的掌控感、进展感、连接感从哪里来？
+[避免]
+- 不羞辱、不恐吓（"你的大脑已经坏了"）。
+- 不承诺快速戒断或靠意志硬抗。
+- 物质成瘾或严重抑郁伴随时，提示寻求专业帮助。
+
+<subtype lens: 极限脱瘾：欲望冲浪与高强度触发管理>
+[核心观念]
+色情、游戏等高强度触发下，硬抗会激活更强补偿冲动；冲动有窗口期，可以冲浪而非压抑。
+[分析方法]
+绘制触发地图（时间、情绪、环境）与复发预警信号。
+[独到技能]
+欲望冲浪 + 窗口期管理（15–30 分钟）+ 平静时的前额叶预演。
+--- end lens ---

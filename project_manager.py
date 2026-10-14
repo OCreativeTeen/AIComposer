@@ -331,41 +331,260 @@ def _raw_content_valid_for_create(ac) -> bool:
     return bool(ac.strip())
 
 
-def build_soul(channel, topic_category, topic_subtype):
+# ---------------------------------------------------------------------------
+# Channel soul（三层：根本层 soul_core.md/soul.md + category + subtype）
+# 只生成「精简摘要」，作为幕后视角注入场景提示词；不整份倾倒 md 文件。
+# ---------------------------------------------------------------------------
+SOUL_ROOT_FILES = ("soul_core.md", "soul.md")
+SOUL_ROOT_MAX_CHARS = 700
+SOUL_CATEGORY_SECTIONS = ("核心观念", "分析方法", "避免")
+SOUL_CATEGORY_MAX_CHARS = 700
+SOUL_SUBTYPE_SECTIONS = ("核心观念", "分析方法", "独到技能")
+SOUL_SUBTYPE_MAX_CHARS = 500
+SOUL_DIGEST_MAX_CHARS = 2000  # 三层合计上限（字符）
+
+
+def _soul_md_sections(md_text: str) -> dict:
+    """按 ``## 标题`` 切分 soul md，返回 {标题: 正文}。"""
+    out, cur, buf = {}, None, []
+    for line in (md_text or "").splitlines():
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            if cur is not None:
+                out[cur] = "\n".join(buf).strip()
+            cur, buf = m.group(1).strip(), []
+        elif cur is not None:
+            buf.append(line)
+    if cur is not None:
+        out[cur] = "\n".join(buf).strip()
+    return out
+
+
+def _soul_plain(text: str) -> str:
+    """去掉 markdown 装饰与引用行，压成紧凑的要点文本。"""
+    lines = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith(">") or s.startswith("#") or s == "---":
+            continue
+        s = re.sub(r"\*\*|__|`", "", s)
+        s = re.sub(r"^[-*●]\s*", "- ", s)
+        lines.append(s)
+    return "\n".join(lines)
+
+
+def _soul_clip(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    nl = cut.rfind("\n")
+    cut = (cut[:nl] if nl > limit * 0.5 else cut).rstrip()
+    lines = cut.split("\n")
+    while lines and re.match(r"^\[.+\]$", lines[-1].strip()):
+        lines.pop()  # 不留下没有正文的小节标题
+    return "\n".join(lines).rstrip() + " …"
+
+
+def _soul_pick(md_text: str, wanted: tuple, limit: int) -> str:
+    secs = _soul_md_sections(md_text)
+    parts = []
+    for key in wanted:
+        body = next((v for k, v in secs.items() if k.startswith(key)), "")
+        body = _soul_plain(body)
+        if body:
+            parts.append(f"[{key}]\n{body}")
+    return _soul_clip("\n".join(parts), limit)
+
+
+def _soul_root_digest(channel_path: str) -> str:
+    soul_dir = config.channel_soul_dir_abs(channel_path)
+    for name in SOUL_ROOT_FILES:
+        p = os.path.join(soul_dir, name)
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return _soul_clip(_soul_plain(f.read()), SOUL_ROOT_MAX_CHARS)
+            except Exception:
+                return ""
+    return ""
+
+
+def build_soul(channel, topic_category, topic_subtype, max_chars: int | None = None,
+               short_story: bool = False):
+    """返回 (soul_digest, topic_choices, topic_categories, tag_features_map)。
+
+    soul_digest = 根本层精简 + category(核心观念/分析方法/避免) + subtype(核心观念/分析方法/独到技能)，
+    合计不超过 ``max_chars``（默认 ``SOUL_DIGEST_MAX_CHARS``）；超额时优先保留 subtype，其次 category，最后根本层。subtype 缺失时为 根本层 + category；
+    频道没有 soul 目录时为空串。
+    """
     channel_path = config.get_channel_path(config.get_channel_id(channel)) if channel else None
     topic_choices, topic_categories, tag_features_map = config.load_topics(channel)
+    if not channel_path or not os.path.isdir(config.channel_soul_dir_abs(channel_path)):
+        return '', topic_choices, topic_categories, tag_features_map
 
     topic_category = (topic_category or '').strip()
     topic_subtype = (topic_subtype or '').strip()
 
+    category_soul = subtype_soul = ''
     for topic in topic_choices:
         if not isinstance(topic, dict):
             continue
         cat = topic.get('topic_category') or topic.get('category') or ''
         if cat.strip() != topic_category:
             continue
-        # 先加载 category 级 soul
-        cat_soul_spec = topic.get('soul') or ''
-        category_soul = _load_soul_content(channel_path, cat_soul_spec) if cat_soul_spec else ''
-        # 若有 subtype，再找并加载 subtype 级 soul
-        subtype_soul = ''
+        cat_spec = topic.get('soul') or ''
+        if cat_spec:
+            category_soul = _soul_pick(_load_soul_content(channel_path, cat_spec),
+                                       SOUL_CATEGORY_SECTIONS, SOUL_CATEGORY_MAX_CHARS)
         if topic_subtype:
             for st in topic.get('topic_subtypes') or []:
-                if not isinstance(st, dict):
-                    continue
-                if (st.get('topic_subtype') or '').strip() == topic_subtype:
+                if isinstance(st, dict) and (st.get('topic_subtype') or '').strip() == topic_subtype:
                     sub_spec = st.get('soul') or ''
-                    subtype_soul = _load_soul_content(channel_path, sub_spec) if sub_spec else ''
+                    if sub_spec:
+                        subtype_soul = _soul_pick(_load_soul_content(channel_path, sub_spec),
+                                                  SOUL_SUBTYPE_SECTIONS, SOUL_SUBTYPE_MAX_CHARS)
                     break
-        
-        if subtype_soul:
-            return subtype_soul, topic_choices, topic_categories, tag_features_map
-        else:
-            return category_soul, topic_choices, topic_categories, tag_features_map
-        #parts = [p for p in (category_soul, subtype_soul) if p]
-        #return '\n---\n'.join(parts) if parts else ''
-    return '', topic_choices, topic_categories, tag_features_map  # 未找到匹配的 topic_category
+        break
 
+    if not (category_soul or subtype_soul):
+        # 没有匹配到分类：不注入（避免只有根本层的“空洞说教”）
+        return '', topic_choices, topic_categories, tag_features_map
+
+    budget = max_chars if max_chars else SOUL_DIGEST_MAX_CHARS
+    if short_story:
+        # 短故事：只保留最具体的一层（有 subtype 用 subtype，否则只用 category），不带根本层
+        if subtype_soul:
+            digest = f"<subtype lens: {topic_subtype}>\n" + _soul_clip(subtype_soul, budget)
+        else:
+            digest = f"<category lens: {topic_category}>\n" + _soul_clip(category_soul, budget)
+        return digest, topic_choices, topic_categories, tag_features_map
+    blocks = {}
+    # 预算分配顺序：最具体的 subtype → category → 根本层
+    for key, head, body in (
+        ("sub", f"<subtype lens: {topic_subtype}>\n", subtype_soul),
+        ("cat", f"<category lens: {topic_category}>\n", category_soul),
+        ("root", "<base stance>\n", _soul_root_digest(channel_path)),
+    ):
+        room = budget - len(head) - 2
+        if body and room >= 80:
+            text = head + _soul_clip(body, room)
+            blocks[key] = text
+            budget -= len(text) + 2
+    digest = "\n\n".join(blocks[k] for k in ("root", "cat", "sub") if k in blocks)
+    return digest, topic_choices, topic_categories, tag_features_map
+
+
+SOUL_BLOCK_RULES = """*** CORE-INSIGHT (background lens, NOT content) ***
+The notes below are this channel's private lens. They are NOT source material and NOT a script.
+    ** {primary}
+    ** Use the lens only silently, to choose what to notice, how to interpret it, what to emphasize, the tone ({tone}) and where it heads ({direction}).
+    ** Never quote, name or paraphrase the lens: no terms, metaphors, labels, headings, or slogans from it may appear in the output. A viewer must not be able to tell these notes exist.
+    ** Do not add sermons, value statements or lessons that the source itself does not support. If the lens does not fit this source, ignore it; the source always wins.
+    ** Let this source's own specifics drive the structure, scenes, examples and ending, so every program is different. Do not reuse a fixed arc or stock phrases.
+    ** The lens never changes the template's format, JSON schema, scene count or roles. Output language stays {language}.{faith_rule}
+--- lens (do not output) ---
+{digest}
+--- end lens ---"""
+
+SOUL_BLOCK_RULES_SHORT = """*** CORE-INSIGHT (background lens, NOT content) ***
+    ** {primary_short} The lens below only silently shapes interpretation, emphasis, tone ({tone}) and direction; ignore it if it does not fit.
+    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the source does not support. Let this source's specifics shape the structure.
+    ** Keep the template's format, JSON schema and roles. Output language: {language}.{faith_rule}
+--- lens (do not output) ---
+{digest}
+--- end lens ---"""
+
+# 各频道在 CORE-INSIGHT 规则里的措辞（按 channel_id）；未列出的频道用 _default。
+SOUL_CHANNEL_STYLE = {
+    "_default": dict(
+        primary="The story/reference above is the primary content. Tell THAT story explicitly, concretely and naturally: its people, events, words and turns.",
+        primary_short="The story above is the content; tell it concretely.",
+        tone="the channel's own voice",
+        direction="where the story naturally leads",
+        faith=False,
+    ),
+    "counseling": dict(
+        tone="warm, non-judgmental, clear",
+        direction="a small, real next step",
+        faith=True,
+    ),
+    "comic": dict(
+        tone="a vivid storyteller: suspense, rhythm, living characters",
+        direction="a satisfying turn and a lingering ending",
+    ),
+    "flylink": dict(
+        primary="The document/reference above is the primary content. Present ITS facts, figures, cases and claims accurately and concretely; never add facts, numbers or customers it does not contain.",
+        primary_short="The document above is the content; present its facts accurately and add none.",
+        tone="clear, credible, evidence-based, never hype",
+        direction="a clear, concrete next step for the audience",
+    ),
+    "music_story": dict(
+        primary="The story/reference above is the primary content and the song's source. Keep its specific emotions, images and turns recognizable, expressed through imagery and mood rather than retold line by line.",
+        primary_short="The story above is the song's source; keep its specific emotions and images recognizable, through imagery rather than retelling.",
+        tone="imagistic, emotional, restrained, never preachy",
+        direction="the song's emotional arc",
+    ),
+}
+
+_SOUL_FAITH_RULE_ON_SHORT = "Faith story: faith language only as its people use it; no preaching."
+_SOUL_FAITH_RULE_OFF_SHORT = "Not a Faith story: no religious language."
+
+_SOUL_FAITH_RULE_ON = "This story is in the Faith category: faith language may be used, but only as the story's own people use it; do not preach or add doctrine."
+_SOUL_FAITH_RULE_OFF = "This story is NOT in the Faith category: use no religious or faith language at all; express any underlying values only as ordinary human dignity, limits, growth and response."
+
+
+def _soul_channel_style(channel) -> dict:
+    try:
+        cid = config.get_channel_id(channel) if channel else ""
+    except Exception:
+        cid = channel or ""
+    style = dict(SOUL_CHANNEL_STYLE["_default"])
+    style.update(SOUL_CHANNEL_STYLE.get(cid) or SOUL_CHANNEL_STYLE.get(channel or "") or {})
+    return style
+
+
+SOUL_MIN_CHARS = 600  # 故事很短时 soul 摘要的下限
+SOUL_SHORT_STORY_CHARS = 800  # 故事短于此：只注入最具体一层 + 精简规则
+
+
+def build_soul_prompt_block(channel, topic_category, topic_subtype, language: str = "",
+                            story_chars: int | None = None) -> str:
+    """场景生成提示词末尾追加的幕后 soul 块；无 soul 时返回空串。
+
+    ``story_chars``：故事正文长度。摘要不超过故事长度（夹在 SOUL_MIN_CHARS..SOUL_DIGEST_MAX_CHARS），
+    避免短故事被 soul 淹没。规则措辞按频道取 ``SOUL_CHANNEL_STYLE``；信仰规则只用于设置了 faith 的频道。
+    """
+    cap = SOUL_DIGEST_MAX_CHARS
+    if story_chars is not None:
+        cap = max(SOUL_MIN_CHARS, min(SOUL_DIGEST_MAX_CHARS, int(story_chars)))
+    try:
+        short = story_chars is not None and int(story_chars) < SOUL_SHORT_STORY_CHARS
+        digest, _, _, _ = build_soul(channel, topic_category, topic_subtype, max_chars=cap,
+                                     short_story=short)
+    except Exception as e:
+        print(f"⚠️ build_soul 失败，跳过 soul 注入: {e}")
+        return ""
+    if not digest:
+        return ""
+    st = _soul_channel_style(channel)
+    faith_rule = ""
+    if st.get("faith"):
+        is_faith = (topic_category or "").strip().lower().startswith("faith")
+        if short:
+            faith_rule = " " + (_SOUL_FAITH_RULE_ON_SHORT if is_faith else _SOUL_FAITH_RULE_OFF_SHORT)
+        else:
+            faith_rule = "\n    ** " + (_SOUL_FAITH_RULE_ON if is_faith else _SOUL_FAITH_RULE_OFF)
+    tpl = SOUL_BLOCK_RULES_SHORT if short else SOUL_BLOCK_RULES
+    return tpl.format(
+        primary=st["primary"],
+        primary_short=st["primary_short"],
+        tone=st["tone"],
+        direction=st["direction"],
+        language=(language or "the requested language"),
+        faith_rule=faith_rule,
+        digest=digest,
+    )
 
 
 PROJECT_CONFIG = None
@@ -913,7 +1132,7 @@ def resolve_soul_for_config(cfg: dict) -> str:
     ch = (cfg.get("channel") or "").strip()
     tc = (cfg.get("topic_category") or "").strip()
     ts = (cfg.get("topic_subtype") or "").strip()
-    if not (ch and tc and ts):
+    if not (ch and tc):
         return ""
     soul, _, _, _ = build_soul(ch, tc, ts)
     return soul if isinstance(soul, str) else ""
