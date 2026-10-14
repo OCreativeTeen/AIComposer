@@ -1011,6 +1011,8 @@ Output format:
 STEP_STORY_LABEL = "Step Story"
 STEP_STORY_MIN, STEP_STORY_MAX, STEP_STORY_DEFAULT = 1, 6, 3
 STEP_IMAGE_LABEL = "图片分解 (Step Image)"
+SCENE_SUMMARY_IMAGE_LABEL = "场景总图 (Scene Summary Image)"
+SCENE_SUMMARY_IMAGE_TEMPLATE_MARK = "[[SCENE_SUMMARY_IMAGE]] scene_content → 一张总图；提示词由 config_prompt.build_scene_summary_image_prompt 现拼。"
 STEP_IMAGE_TEMPLATE_MARK = "[[STEP_IMAGE]] 单图 → 第 k 步细节图；提示词由 config_prompt.build_step_image_clipbody 现拼。"
 SERIES_DIRECT_LABEL = "直接生成系列节目 (Series Direct)"
 SERIES_DIRECT_MAX_EPISODES, SERIES_DIRECT_DEFAULT_EPISODES = 12, 3
@@ -1143,6 +1145,10 @@ def legacy_step_label(label: str) -> int | None:
 
 def is_step_image_label(label: str) -> bool:
     return (label or "").strip() == STEP_IMAGE_LABEL
+
+
+def is_scene_summary_image_label(label: str) -> bool:
+    return (label or "").strip() == SCENE_SUMMARY_IMAGE_LABEL
 
 
 def is_step_story_label(label: str) -> bool:

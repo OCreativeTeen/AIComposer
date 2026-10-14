@@ -643,6 +643,34 @@ def build_slide_flow_prompt(
 
 
 # 幻灯提示里覆盖画面人物的选项。值为 (界面名, 写进提示词的英文)；第一项空字符串表示不覆盖。
+def build_scene_summary_image_prompt(
+    scene_content: list,
+    *,
+    visual_style: str = "",
+    host_narrator: str = "",
+    region: str = "",
+    era: str = "",
+) -> str:
+    """故事窗「场景总图」：把全部 scene_content 画成一张完整的总图。
+
+    就是幻灯提示（gui/slide_prompt_dialog）选「单图」时的同一个 ``build_slide_flow_prompt``，
+    用它的默认选择：叙事=故事、画面文字=不加、写进 visual + speaking。
+    """
+    return build_slide_flow_prompt(
+        target="single",
+        text="none",
+        narrative="story",
+        use_visual=True,
+        use_speaking=True,
+        use_actor=False,
+        visual_style=visual_style,
+        scene_content=scene_content,
+        host_narrator=host_narrator,
+        region=region,
+        era=era,
+    )
+
+
 SLIDE_FLOW_ACTOR_OVERRIDES: list[tuple[str, str]] = [
     ("不覆盖（用原来的人物）", ""),
     ("中国人 · 现代", "modern Chinese people of today"),

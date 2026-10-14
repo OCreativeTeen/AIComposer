@@ -2313,6 +2313,7 @@ CHANNEL_CONFIG = {
             ("Series · Counselor", config_channel.COUNSELING_SERIES_COUNSELOR_FRAME),
             ("Series · Story Only", config_channel.COUNSELING_SERIES_STORY_ONLY),
             (config_channel.STEP_STORY_LABEL, config_channel.COUNSELING_STORY_STEP),
+            (config_channel.SCENE_SUMMARY_IMAGE_LABEL, config_channel.SCENE_SUMMARY_IMAGE_TEMPLATE_MARK),
             (config_channel.STEP_IMAGE_LABEL, config_channel.STEP_IMAGE_TEMPLATE_MARK),
             (config_channel.SERIES_DIRECT_LABEL, config_channel.SERIES_DIRECT_DEFAULT),
         ],
@@ -2350,6 +2351,7 @@ CHANNEL_CONFIG = {
 
         "scenes_prompt_choices": [
             (config_channel.STEP_STORY_LABEL, config_channel.FLYLINK_STORY_STEP),
+            (config_channel.SCENE_SUMMARY_IMAGE_LABEL, config_channel.SCENE_SUMMARY_IMAGE_TEMPLATE_MARK),
             (config_channel.STEP_IMAGE_LABEL, config_channel.STEP_IMAGE_TEMPLATE_MARK),
             ("Mini Story", config_channel.FLYLINK_STORY_MINI),
             ("Long Story", config_channel.FLYLINK_STORY_LONG),

@@ -1354,20 +1354,28 @@ def _image_material_override(video_detail: dict) -> str:
     )
 
 
-def _show_step_image_prompt_dialog(parent, prompt: str, image_path: str) -> None:
-    """图片分解：显示提示词 + 图片路径；提示词先拷到剪贴板，可再拷图片 / 打开图片。"""
+def _show_step_image_prompt_dialog(
+    parent, prompt: str, image_path: str = "", *, title: str = "图片分解"
+) -> None:
+    """图片提示词窗（图片分解 / 场景总图）：提示词先拷到剪贴板；有图时可再拷图片 / 打开图片。"""
     _copy_text_to_clipboard(parent, prompt or "")
+    image_path = (image_path or "").strip()
     win = tk.Toplevel(parent)
-    win.title("图片分解 · 提示词 + 图片")
+    win.title(f"{title} · 提示词" + (" + 图片" if image_path else ""))
     win.transient(parent)
     frm = ttk.Frame(win, padding=10)
     frm.pack(fill=tk.BOTH, expand=True)
     ttk.Label(
         frm,
-        text="提示词已拷到剪贴板。把它和下面这张图片一起交给 AI 图片工具（这里不调用任何图片 API）。",
+        text=(
+            "提示词已拷到剪贴板。把它和下面这张图片一起交给 AI 图片工具（这里不调用任何图片 API）。"
+            if image_path
+            else "提示词已拷到剪贴板。把它交给 AI 图片工具（这里不调用任何图片 API）。"
+        ),
         wraplength=640,
     ).pack(anchor=tk.W, pady=(0, 6))
-    ttk.Label(frm, text=f"图片：{image_path}", wraplength=640).pack(anchor=tk.W, pady=(0, 6))
+    if image_path:
+        ttk.Label(frm, text=f"图片：{image_path}", wraplength=640).pack(anchor=tk.W, pady=(0, 6))
     tx = scrolledtext.ScrolledText(frm, wrap=tk.WORD, width=80, height=12, font=("Arial", 10))
     tx.pack(fill=tk.BOTH, expand=True)
     tx.insert("1.0", prompt or "")
@@ -1376,11 +1384,11 @@ def _show_step_image_prompt_dialog(parent, prompt: str, image_path: str) -> None
 
     def _copy_prompt():
         _copy_text_to_clipboard(win, tx.get("1.0", "end-1c"))
-        show_auto_close_popup(win, "图片分解", "提示词已拷到剪贴板。")
+        show_auto_close_popup(win, title, "提示词已拷到剪贴板。")
 
     def _copy_image():
         if _copy_file_to_clipboard_hdrop(win, image_path):
-            show_auto_close_popup(win, "图片分解", "图片已拷到剪贴板，可以粘贴到 AI 工具。")
+            show_auto_close_popup(win, title, "图片已拷到剪贴板，可以粘贴到 AI 工具。")
 
     def _open_image():
         try:
@@ -1389,8 +1397,9 @@ def _show_step_image_prompt_dialog(parent, prompt: str, image_path: str) -> None
             messagebox.showerror("打开失败", f"{image_path}\n\n{exc}", parent=win)
 
     ttk.Button(row, text="拷贝提示词", command=_copy_prompt).pack(side=tk.LEFT, padx=(0, 6))
-    ttk.Button(row, text="拷贝图片", command=_copy_image).pack(side=tk.LEFT, padx=(0, 6))
-    ttk.Button(row, text="打开图片", command=_open_image).pack(side=tk.LEFT, padx=(0, 6))
+    if image_path:
+        ttk.Button(row, text="拷贝图片", command=_copy_image).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(row, text="打开图片", command=_open_image).pack(side=tk.LEFT, padx=(0, 6))
     ttk.Button(row, text="关闭", command=win.destroy).pack(side=tk.RIGHT)
 
 
@@ -7462,6 +7471,19 @@ class MediaGUIManager:
                 params.get("steps") or 1,
                 visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
             )
+        if config_channel.is_scene_summary_image_label(lbl):
+            # 场景总图：全部 scene_content → 一张总图（幻灯提示「单图」同一构建函数）；没有场景时为空。
+            scenes = params.get("scenes")
+            if not isinstance(scenes, list):
+                scenes = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+            scenes = [s for s in (scenes or []) if isinstance(s, dict)] if isinstance(scenes, list) else []
+            if not scenes:
+                return lbl, ""
+            return lbl, config_prompt.build_scene_summary_image_prompt(
+                scenes,
+                visual_style=str(params.get("visual_style") or project_manager.LAST_VISUAL_STYLE or ""),
+                host_narrator=_project_look_from_row(video_detail)[2],
+            )
         template = config_channel.resolve_dynamic_scene_template(lbl, template, params)
         cat, sub, topic = _notebooklm_row_topic_fields(video_detail)
         prompt = _build_notebooklm_prompt_for_row(
@@ -9173,7 +9195,7 @@ class MediaGUIManager:
                 instr = (instruction_tx.get("1.0", tk.END) or "").strip()
                 kind = _selected_material_kind()
                 override = None
-                if config_channel.is_step_image_label(sel):
+                if config_channel.is_step_image_label(sel) or config_channel.is_scene_summary_image_label(sel):
                     _, prompt = self._combined_prompt_text_for_label(
                         video_detail, sel, prompt_params=_scene_prompt_params()
                     )
@@ -9851,6 +9873,24 @@ class MediaGUIManager:
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
                         kind = _selected_material_kind()
                         override = None
+                        if config_channel.is_scene_summary_image_label(label):
+                            # 场景总图不调 LLM / 图片 API：按编辑区（或已存）的 scene_content 出提示词。
+                            scenes = _parse_scene_json_list(tx.get("1.0", tk.END) or "") or []
+                            params = dict(_scene_prompt_params())
+                            if scenes:
+                                params["scenes"] = scenes
+                            _, img_prompt = self._combined_prompt_text_for_label(
+                                video_detail, label, prompt_params=params
+                            )
+                            if not (img_prompt or "").strip():
+                                messagebox.showwarning(
+                                    "场景总图",
+                                    "这一条还没有场景（scene_content 为空）。\n先用其他模板生成场景，再选「场景总图」。",
+                                    parent=dlg,
+                                )
+                                return
+                            _show_step_image_prompt_dialog(dlg, img_prompt, "", title="场景总图")
+                            return
                         if config_channel.is_step_image_label(label):
                             # 图片分解不调 LLM / 图片 API：给出提示词 + 封面图片，用户自己带到 AI 图片工具。
                             img = (_find_gen_video_webp_for_row(video_detail) or "").strip()

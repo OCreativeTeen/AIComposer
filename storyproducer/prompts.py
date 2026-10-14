@@ -149,6 +149,17 @@ def build_gemini_prompt(
             break
     if not template:
         return ""
+    if config_channel.is_scene_summary_image_label(want):
+        # 场景总图：scene_content → 一张总图提示词（没有场景时为空）。
+        import config_prompt
+
+        sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+        sc = [s for s in sc if isinstance(s, dict)] if isinstance(sc, list) else []
+        if not sc:
+            return ""
+        return config_prompt.build_scene_summary_image_prompt(
+            sc, visual_style=(visual_style or "").strip()
+        )
     if config_channel.is_step_image_label(want):
         # 图片分解：只出图片指令（不拼 {content} / soul）；图片本身由调用方附带。
         import config_prompt
