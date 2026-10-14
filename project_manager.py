@@ -410,7 +410,8 @@ def _soul_root_digest(channel_path: str) -> str:
     return ""
 
 
-def build_soul(channel, topic_category, topic_subtype, max_chars: int | None = None):
+def build_soul(channel, topic_category, topic_subtype, max_chars: int | None = None,
+               short_story: bool = False):
     """返回 (soul_digest, topic_choices, topic_categories, tag_features_map)。
 
     soul_digest = 根本层精简 + category(核心观念/分析方法/避免) + subtype(核心观念/分析方法/独到技能)，
@@ -451,6 +452,13 @@ def build_soul(channel, topic_category, topic_subtype, max_chars: int | None = N
         return '', topic_choices, topic_categories, tag_features_map
 
     budget = max_chars if max_chars else SOUL_DIGEST_MAX_CHARS
+    if short_story:
+        # 短故事：只保留最具体的一层（有 subtype 用 subtype，否则只用 category），不带根本层
+        if subtype_soul:
+            digest = f"<subtype lens: {topic_subtype}>\n" + _soul_clip(subtype_soul, budget)
+        else:
+            digest = f"<category lens: {topic_category}>\n" + _soul_clip(category_soul, budget)
+        return digest, topic_choices, topic_categories, tag_features_map
     blocks = {}
     # 预算分配顺序：最具体的 subtype → category → 根本层
     for key, head, body in (
@@ -480,11 +488,23 @@ The notes below are this channel's private lens. They are NOT source material an
 {digest}
 --- end lens ---"""
 
+SOUL_BLOCK_RULES_SHORT = """*** CORE-INSIGHT (background lens, NOT content) ***
+    ** The story above is the content; tell it concretely. The lens below only silently shapes interpretation, emphasis, tone and direction; ignore it if it does not fit.
+    ** Never quote or name its terms, metaphors or labels. No sermons or lessons the story does not support. Let this story's specifics shape the structure.
+    ** Keep the template's format, JSON schema and roles. Output language: {language}. {faith_rule}
+--- lens (do not output) ---
+{digest}
+--- end lens ---"""
+
+_SOUL_FAITH_RULE_ON_SHORT = "Faith story: faith language only as its people use it; no preaching."
+_SOUL_FAITH_RULE_OFF_SHORT = "Not a Faith story: no religious language."
+
 _SOUL_FAITH_RULE_ON = "This story is in the Faith category: faith language may be used, but only as the story's own people use it; do not preach or add doctrine."
 _SOUL_FAITH_RULE_OFF = "This story is NOT in the Faith category: use no religious or faith language at all; express any underlying values only as ordinary human dignity, limits, growth and response."
 
 
 SOUL_MIN_CHARS = 600  # 故事很短时 soul 摘要的下限
+SOUL_SHORT_STORY_CHARS = 800  # 故事短于此：只注入最具体一层 + 精简规则
 
 
 def build_soul_prompt_block(channel, topic_category, topic_subtype, language: str = "",
@@ -498,13 +518,21 @@ def build_soul_prompt_block(channel, topic_category, topic_subtype, language: st
     if story_chars is not None:
         cap = max(SOUL_MIN_CHARS, min(SOUL_DIGEST_MAX_CHARS, int(story_chars)))
     try:
-        digest, _, _, _ = build_soul(channel, topic_category, topic_subtype, max_chars=cap)
+        short = story_chars is not None and int(story_chars) < SOUL_SHORT_STORY_CHARS
+        digest, _, _, _ = build_soul(channel, topic_category, topic_subtype, max_chars=cap,
+                                     short_story=short)
     except Exception as e:
         print(f"⚠️ build_soul 失败，跳过 soul 注入: {e}")
         return ""
     if not digest:
         return ""
     is_faith = (topic_category or "").strip().lower().startswith("faith")
+    if short:
+        return SOUL_BLOCK_RULES_SHORT.format(
+            language=(language or "the requested language"),
+            faith_rule=_SOUL_FAITH_RULE_ON_SHORT if is_faith else _SOUL_FAITH_RULE_OFF_SHORT,
+            digest=digest,
+        )
     return SOUL_BLOCK_RULES.format(
         language=(language or "the requested language"),
         faith_rule=_SOUL_FAITH_RULE_ON if is_faith else _SOUL_FAITH_RULE_OFF,
