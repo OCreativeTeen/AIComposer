@@ -18,10 +18,6 @@ from PIL import Image, ImageTk
 from . import file_util
 
 
-LM_STUDIO = "qwen/qwen3.5-9b"
-#OLLAMA = "qwen3.5:9b"
-OLLAMA = "gemma4:26b"
-
 # 本机 Strata 上已加载的模型。/v1/models 的 id，上下文 65536，只收文字。
 GPT_MINI = "qwen3.8-flash-next-iq3_xxs"
 
@@ -41,15 +37,6 @@ MODELS = {
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
     },
-    OLLAMA : {
-        "url": "http://10.0.0.216:11434/v1"
-    },
-    LM_STUDIO : {
-        "url": "http://10.0.0.216:1234/v1"
-    },
-    MANUAL: {
-        "url": "http://10.0.0.238:11434/v1"
-    }
 }
 
 
@@ -66,26 +53,6 @@ class LLMApi:
         self.google_client = OpenAI(
             api_key = os.getenv("GOOGLE_API_KEY", ""),
             base_url =  MODELS[GEMINI]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
-        )
-        self.ollama_client = OpenAI(
-            api_key="ollama",
-            base_url =  MODELS[OLLAMA]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
-        )
-        self.lm_studio_client = OpenAI(
-            api_key="ollama",
-            base_url =  MODELS[LM_STUDIO]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
-        )
-        #self.ollama_client_2 = OpenAI(
-        #    api_key="ollama",
-        #    base_url =  MODELS[OLLAMA2]["url"],
-        #    http_client = httpx.Client(timeout=httpx.Timeout(180.0))
-        #)
-        self.manal_client = OpenAI(
-            api_key="ollama",
-            base_url =  MODELS[MANUAL]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
     
@@ -324,23 +291,7 @@ class LLMApi:
                 "stream": False,
             }
             return self.google_client.chat.completions.create(**request_params)
-        if model == LM_STUDIO:
-            request_params = {
-                "model": model,
-                "messages": messages,
-                "max_tokens": 262144,
-                "stream": False,
-            }
-            print(f"🔄 使用 LM Studio 模型 ({model}) 分析图片...")
-            return self.lm_studio_client.chat.completions.create(**request_params)
-        request_params = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 262144,
-            "stream": False,
-        }
-        print(f"🔄 使用 OLLAMA 模型 ({model}) 分析图片...")
-        return self.ollama_client.chat.completions.create(**request_params)
+        raise ValueError(f"没有这个模型：{model}")
 
 
     def show_manual_window(
@@ -552,43 +503,8 @@ class LLMApi:
                 response = self.google_client.chat.completions.create(**request_params)
                 return self.parse_response(response)
 
-            elif model == LM_STUDIO:
-
-                request_params = {
-                    "model": model,  # 使用确定的模型名称
-                    "messages": messages,
-                    "max_tokens": 262144,
-                    "stream": False
-                }
-                # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
-                #with open("ollama_request_params.json", "w", encoding="utf-8") as f:
-                #    json.dump(request_params, f, ensure_ascii=False, indent=2)
-
-                print(f"🔄 使用 LM Studio 模型 ({model}) 生成文本...")
-                #if model == OLLAMA2:
-                #    response = self.ollama_client_2.chat.completions.create(**request_params)
-                #else:
-                response = self.lm_studio_client.chat.completions.create(**request_params)
-                return self.parse_response(response)
-
-            else: # model == OLLAMA or model == "gemma3:27b-it-qat":
-
-                request_params = {
-                    "model": model,  # 使用确定的模型名称
-                    "messages": messages,
-                    "max_tokens": 262144,
-                    "stream": False
-                }
-                # OLLAMA 模型使用实际的模型名称（如 "gemma3:27b-it-qat"）
-                #with open("ollama_request_params.json", "w", encoding="utf-8") as f:
-                #    json.dump(request_params, f, ensure_ascii=False, indent=2)
-
-                print(f"🔄 使用 OLLAMA 模型 ({model}) 生成文本...")
-                #if model == OLLAMA2:
-                #    response = self.ollama_client_2.chat.completions.create(**request_params)
-                #else:
-                response = self.ollama_client.chat.completions.create(**request_params)
-                return self.parse_response(response)
+            print(f"❌ 没有这个模型：{model}")
+            return None
 
         except Exception as e:
             print(f"❌ LLM API 调用失败: {type(e).__name__}: {e}")
@@ -779,7 +695,7 @@ class LLMApi:
         """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。
 
         ``title`` 改窗口标题；``ok_text`` / ``cancel_text`` 改两个按钮上的字；``manual_only`` 为真时不显示
-        GPT / Gemini / OLLAMA / Manual 四个选模型按钮，只能走手动（多步手动流程用）。
+        Strata / Gemini / Manual 三个选模型按钮，只能走手动（多步手动流程用）。
         关窗后 ``self._last_dialog_cancelled`` 记着这次是不是取消（点取消或直接关窗）。
         """
         if threading.current_thread() is not threading.main_thread():
@@ -837,8 +753,7 @@ class LLMApi:
         for mid, btn_title in ([] if manual_only else [
             (GPT_MINI, "Strata"),
             (GEMINI, "Gemini"),
-            (OLLAMA, f"OLLAMA"),
-            (MANUAL, f"Manual"),
+            (MANUAL, "Manual"),
         ]):
             ttk.Button(
                 model_btn_row,
