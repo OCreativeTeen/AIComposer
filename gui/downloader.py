@@ -266,6 +266,16 @@ def _build_notebooklm_prompt_for_row(
     talk = config.dialogue_mode_instruction(dialogue_mode) if dialogue_mode else ""
     if talk:
         prompt = (prompt or "").rstrip() + "\n\n" + talk + "\n"
+    # 频道 soul：放在故事内容与模板规则之后，作为幕后视角（无 soul 目录的频道为空）
+    soul_block = project_manager.build_soul_prompt_block(
+        getattr(mgr, "channel", None) or mgr._channel_config_key(),
+        cat,
+        sub,
+        language=ctx.get("language", ""),
+        story_chars=len((ctx.get("content") or "").strip()),
+    )
+    if soul_block:
+        prompt = (prompt or "").rstrip() + "\n\n\n" + soul_block + "\n"
     return prompt
 
 

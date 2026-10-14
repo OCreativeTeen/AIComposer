@@ -153,6 +153,15 @@ def build_gemini_prompt(
     vs = (visual_style or "").strip()
     if vs and vs.lower() not in body.lower():
         body = body.rstrip() + f"\n\nVisual_Style: {vs}\n"
+    # 频道 soul：故事之后的幕后视角块（与 gui/downloader._build_notebooklm_prompt_for_row 一致）
+    import project_manager
+
+    soul_block = project_manager.build_soul_prompt_block(
+        channel_id, _cat, _sub, language=lang,
+        story_chars=len((vd.get("analyzed_content") or "").strip()),
+    )
+    if soul_block:
+        body = body.rstrip() + "\n\n\n" + soul_block + "\n"
     return body.strip()
 
 

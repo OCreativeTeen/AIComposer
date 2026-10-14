@@ -2199,23 +2199,6 @@ class MagicWorkflow:
                 except Exception as e:
                     print(f"⚠️ 设置封面 clip 失败: {e}")
 
-    def remix_conversation(self, current_scene, mode, _content, selected_prompt):
-        refresh_conversation = "content:\n" + _content + "\n\n\nAnd the core-insight ('soul') is: \n" + project_manager.resolve_soul_for_config(project_manager.PROJECT_CONFIG or {})
-        new_scenes = self.llm_api.generate_json(
-            system_prompt=selected_prompt,
-            user_prompt=refresh_conversation,
-            expect_list=True
-        )
-        if not new_scenes or len(new_scenes) == 0:
-            return
-
-        start_id = current_scene.get("id", 0)
-        for i, scene in enumerate(new_scenes):
-            scene["id"] = start_id + 1
-            start_id = scene["id"]
-        return new_scenes
-
-
     def get_image_main_scenes(self):
         """获取所有标记为IMAGE_MAIN的场景，用于制作缩略图"""
         image_main_scenes = []
