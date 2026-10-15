@@ -6,7 +6,6 @@ matplotlib.use('Agg')  # Must be at the TOP of main.py
 import tkinter as tk
 import tkinter.ttk as ttk
 import tkinter.scrolledtext as scrolledtext
-import tkinter.filedialog as filedialog
 import tkinter.messagebox as messagebox
 import os
 import sys
@@ -14,7 +13,7 @@ import subprocess
 import json
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
 import pygame
 import uuid
@@ -26,10 +25,8 @@ from project_manager import ProjectConfigManager, create_project_dialog, refresh
 import project_manager
 from gui.picture_in_picture_dialog import PictureInPictureDialog
 import cv2
-import os
 from utility.file_util import (
     get_file_path,
-    is_video_file,
     is_image_file,
     is_audio_file,
     safe_copy_overwrite,
@@ -38,7 +35,7 @@ from utility.file_util import (
     show_auto_close_popup,
 )
 #from utility.minimax_speech_service import MinimaxSpeechService, EXPRESSION_STYLES
-from utility.voicebox_speech_service import VoiceboxService, EXPRESSION_STYLES, _VB_SPEAKER_MARK_RE, split_speaking_turns
+from utility.voicebox_speech_service import VoiceboxService, _VB_SPEAKER_MARK_RE, split_speaking_turns
 from utility.ffmpeg_processor import FfmpegProcessor
 from gui.wan_prompt_editor_dialog import show_wan_prompt_editor  # 添加这一行
 import tkinterdnd2 as TkinterDnD
@@ -48,13 +45,9 @@ import utility.llm_api as llm_api
 from gui.downloader import MediaGUIManager
 from utility.ffmpeg_processor import resolve_watermark_for_project, resolve_headmark_for_project
 from gui.suno_music_prompt_gui import SunoMusicPromptGUI
-import cv2
-import json
 import copy
 import shutil
-from pathlib import Path
-from gui.choice_dialog import askchoice, askchoice_media_preview, pack_text_buttons, post_nested_clipboard_menu, ask_speaking_concise_review_dialog
-from gui.tag_picker_menu import post_menu_below_widget
+from gui.choice_dialog import askchoice, askchoice_media_preview, post_nested_clipboard_menu, ask_speaking_concise_review_dialog
 from gui.downloader import ask_publish_schedule_dialog
 from gui.publish_metadata_dialog import (
     ask_publish_metadata_then_schedule,
@@ -99,16 +92,6 @@ IMAGE_ACTION_CHOICES = {
 
 
 # Story 片头/片尾包装：菜单选中后复制英文指令到剪贴板；{channel_name} 运行时从 PROJECT_CONFIG.channel 解析
-STORY_PACKAGING_MENU = [
-    ("片头 · 主持", "Starting: Narrator主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片头 · 主持(左)", "Starting: Narrator(Left)主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片头 · 主持(右)", "Starting: Narrator(Right)主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片头 · 纯音乐", "Starting: Narrator主持'{channel_name}'节目 (no talk+background music)"),
-    ("片尾 · 主持", "Ending: Narrator主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片尾 · 主持(左)", "Ending: Narrator(Left)主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片尾 · 主持(右)", "Ending: Narrator(Right)主持'{channel_name}'节目 (Narrator speak, others react only)"),
-    ("片尾 · 纯音乐", "Ending: Narrator主持'{channel_name}'节目 (no talk+background music)"),
-]
 
 
 def _workflow_channel_display_name() -> str:
@@ -126,16 +109,6 @@ def _workflow_channel_display_name() -> str:
 
 
 
-def _normalize_download_suffixes(media_post):
-    """'.mp4' 或 ('.mp3', '.mp4') 等 → 小写后缀元组。"""
-    if isinstance(media_post, str):
-        s = media_post.strip().lower()
-        return (("." + s) if not s.startswith(".") else s,)
-    seq = []
-    for x in media_post:
-        s = str(x).strip().lower()
-        seq.append(("." + s) if not s.startswith(".") else s)
-    return tuple(seq)
 
 
 def _download_folder_list_matching_suffixes(folder_path: str, suffixes: tuple) -> list:
@@ -194,7 +167,7 @@ class WorkflowGUI:
         try:
             pygame.mixer.init()
             self.pygame_mixer_available = True
-        except Exception as e:
+        except Exception:
             self.pygame_mixer_available = False
         
         # 初始化配置加载标志
@@ -206,6 +179,7 @@ class WorkflowGUI:
 
         self.llm_api = llm_api.LLMApi()
         self.llm_api_local = llm_api.LLMApi(llm_api.TEXT_MODEL)
+        self.llm_api_hard = llm_api.LLMApi(llm_api.MODEL_HARD)  # DeepSeek：难任务
 
         # 显示项目选择对话框（或 --open-pid 时直接加载指定项目）
         if initial_pid:
@@ -576,52 +550,10 @@ class WorkflowGUI:
             project_manager.PROJECT_CONFIG or {}
         )
 
-    def _workflow_video_detail_for_edit(self) -> dict:
-        """合并列表行与 ``PROJECT_CONFIG``，供与 downloader 共用的内容编辑弹窗使用。"""
-        pc = project_manager.PROJECT_CONFIG or {}
-        row = self._load_current_video_detail_row()
-        vd = copy.deepcopy(row) if row else {}
-        for field in ("analyzed_content", "scene_content", "url", "title", "id"):
-            val = pc.get(field)
-            if val in (None, "", [], {}):
-                continue
-            if field not in vd or vd.get(field) in (None, "", [], {}):
-                vd[field] = copy.deepcopy(val)
-        file_pid = (pc.get("pid") or "").strip()
-        if file_pid and not (vd.get("id") or "").strip():
-            vd["id"] = file_pid
-        return vd
 
-    def _copy_clipboard_text(self, title: str, text: str) -> None:
-        text = (text or "").strip()
-        if not text:
-            messagebox.showinfo(title, "这里没有内容。", parent=self.root)
-            return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        self.root.update()
-        show_auto_close_popup(self.root, title, "已拷贝")
 
-    def _copy_analyzed_content(self) -> None:
-        vd = self._workflow_video_detail_for_edit()
-        text = vd.get("analyzed_content") if isinstance(vd.get("analyzed_content"), str) else ""
-        self._copy_clipboard_text("分析", text)
 
-    def _copy_poem(self) -> None:
-        pc = project_manager.PROJECT_CONFIG or {}
-        row = self._load_current_video_detail_row() or {}
-        text = (pc.get("poem") or row.get("poem") or "")
-        self._copy_clipboard_text("诗歌", text if isinstance(text, str) else "")
 
-    def _copy_script(self) -> None:
-        row = self._load_current_video_detail_row() or {}
-        pc = project_manager.PROJECT_CONFIG or {}
-        vd = dict(row)
-        if not (vd.get("transcribed_file") or "").strip():
-            stored = (pc.get("transcribed_file") or "").strip()
-            if stored:
-                vd["transcribed_file"] = stored
-        self._copy_clipboard_text("脚本", config.read_transcript_text_from_video_detail(vd))
 
     def _return_to_story_preview(self) -> None:
         """回到这条的故事预览。预览还没开时，请列表打开它，再拿到前面。"""
@@ -748,28 +680,12 @@ class WorkflowGUI:
         """打开SUNO音乐提示词管理窗口"""
         try:
             # 创建SUNO管理窗口
-            suno_gui = SunoMusicPromptGUI(self.root)
+            SunoMusicPromptGUI(self.root)
         except Exception as e:
             messagebox.showerror("错误", f"打开SUNO管理窗口失败: {str(e)}")
             import traceback
             traceback.print_exc()
 
-    def swap_narration(self):
-        """交换第一轨道与旁白轨道"""
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        clip_video_path = get_file_path(current_scene, 'clip')
-        clip_audio_path = get_file_path(current_scene, 'clip_audio')
-        track_path = get_file_path(current_scene, "narration")
-        if not track_path:
-            messagebox.showwarning("警告", "narration 轨道视频文件不存在")
-            return
-        temp_track = self.workflow.ffmpeg_processor.add_audio_to_video(track_path, clip_audio_path)
-
-        refresh_scene_media(current_scene, "narration", '.mp4', clip_video_path)
-        refresh_scene_media(current_scene, "narration_audio", '.wav', clip_audio_path, True)
-
-        refresh_scene_media(current_scene, 'clip', '.mp4', temp_track)
-        self.refresh_gui_scenes()
 
 
     def _backup_clip_to_scene_back(self, scene):
@@ -2137,22 +2053,6 @@ class WorkflowGUI:
         dlg.focus_set()
         dlg.wait_window()
 
-    def _write_actor_motion(self, name: str, motion: str) -> None:
-        """把进出方式写进当前场景里这个人的 actor 名字后面。"""
-        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
-        if not scene:
-            return
-        name = (name or "").strip()
-        motion = (motion or "").strip()
-        if not name or not motion:
-            return
-        entries = project_manager.actor_entries(scene.get("actor") or self._actor_text)
-        for row in entries:
-            base, _old = project_manager.split_actor_motion(row.get("body") or "")
-            if base == name:
-                row["body"] = project_manager._with_actor_motion(base, motion)
-                self._set_actor_text(project_manager.format_actor_entries(entries), save_scene=True)
-                return
 
     def _scene_actor_rows(self) -> list:
         return project_manager.actor_entries(self._actor_text)
@@ -2235,25 +2135,6 @@ class WorkflowGUI:
                 return True
         return False
 
-    def _switch_scene_actor_to_host(self, entry: dict | None, narrator: str) -> None:
-        narrator = (narrator or "").strip() or "不出现"
-        rows = []
-        replaced = False
-        target_role = (entry or {}).get("role")
-        target_body, _motion = project_manager.split_actor_motion((entry or {}).get("body") or "")
-        for row in self._scene_actor_rows():
-            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
-            same = row.get("role") == target_role and (target_role == "host" or body == target_body)
-            if same and not replaced:
-                rows.append({"role": "host", "label": "讲员", "body": narrator})
-                replaced = True
-                continue
-            if row.get("role") == "host":
-                continue
-            rows.append(row)
-        if not replaced:
-            rows.append({"role": "host", "label": "讲员", "body": narrator})
-        self._set_actor_text(project_manager.format_actor_entries(rows), save_scene=True)
 
     def _ask_manual_person(self, parent) -> str:
         """手工加一位人物。名字可空，有名字就写在最后。"""
@@ -2579,249 +2460,7 @@ class WorkflowGUI:
             messagebox.showerror("错误", f"选择文件时出错: {str(e)}")
 
 
-    def _ask_radio_choice(self, title: str, options: list) -> str | None:
-        """选项是 (值, 文字)。确定返回选中的值，取消返回空。"""
-        dlg = tk.Toplevel(self.root)
-        dlg.title(title)
-        dlg.transient(self.root)
-        dlg.resizable(False, False)
-        var = tk.StringVar(value=options[0][0])
-        holder = {"value": None}
-        frame = ttk.Frame(dlg, padding=12)
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text=title).pack(anchor=tk.W, pady=(0, 8))
-        for value, label in options:
-            ttk.Radiobutton(frame, text=label, value=value, variable=var).pack(anchor=tk.W, pady=2)
 
-        def ok() -> None:
-            holder["value"] = var.get()
-            dlg.destroy()
-
-        row = ttk.Frame(frame)
-        row.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(row, text="确定", command=ok).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(row, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
-        dlg.update_idletasks()
-        w, h = dlg.winfo_reqwidth(), dlg.winfo_reqheight()
-        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - w) // 2)
-        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - h) // 2)
-        dlg.geometry(f"+{x}+{y}")
-        dlg.grab_set()
-        dlg.wait_window()
-        return holder["value"]
-
-    def _pick_media_from_download_to_project_folder(
-        self, suffixes_tuple, *, track_rename_key: str, confirm_actions=None, radios=None
-    ):
-        """从用户 Downloads（或 L:）或项目 download 选一文件→整理到项目 download。
-
-        顺序：① ``~/Downloads``（及可选 ``L:``）中新下载的源文件；② 项目 ``download/`` 内已整理好的成片。
-        """
-        suffixes = _normalize_download_suffixes(suffixes_tuple)
-        single_mp4_only = suffixes == (".mp4",)
-        pv_kw: dict = {}
-        if single_mp4_only:
-            pv_kw = {
-                "use_mp4_video_preview": True,
-                "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
-            }
-            if confirm_actions:
-                pv_kw["confirm_actions"] = confirm_actions
-            if radios:
-                pv_kw["radios"] = radios
-        place_mode = None
-        picked_radio = None
-
-        def _unpack_mp4_pick(r):
-            nonlocal place_mode, picked_radio
-            if r is not None and len(r) >= 4:
-                if confirm_actions and radios and len(r) >= 5:
-                    place_mode = r[3]
-                    picked_radio = r[4]
-                elif radios and not confirm_actions:
-                    picked_radio = r[3]
-                else:
-                    place_mode = r[3]
-            return r[0], r[1], r[2]
-
-        title_drive = "从 Downloads 选择视频" if single_mp4_only else "从 Downloads 选择媒体（MP3/MP4）"
-        title_proj = "从项目 download 选择视频" if single_mp4_only else "从项目 download 选择媒体（MP3/MP4）"
-
-        media_path = None
-        temp_adj_mp4 = None
-        temp_adj_wav = None
-
-        scene0 = self.workflow.get_scene_by_index(self.current_scene_index)
-        sid = scene0["id"] if scene0 else 0
-
-        for folder in _external_media_pick_folders():
-            matching = _download_folder_list_matching_suffixes(folder, suffixes)
-            if not matching:
-                continue
-            pick_title = title_drive
-            if folder != _user_downloads_folder():
-                pick_title = "从下载盘选择视频" if single_mp4_only else "从下载盘选择媒体（MP3/MP4）"
-            r = askchoice_media_preview(pick_title, matching, folder, self.root, **pv_kw)
-            if not r:
-                return None
-            if single_mp4_only:
-                fn, temp_adj_mp4, temp_adj_wav = _unpack_mp4_pick(r)
-                media_path = os.path.join(folder, fn)
-            else:
-                media_path = os.path.join(folder, r)
-            break
-
-        download_path = config.get_project_path(self.workflow.pid) + "/download"
-        if not os.path.exists(download_path):
-            os.makedirs(download_path, exist_ok=True)
-
-        if media_path:
-            ext = os.path.splitext(media_path)[1].lower() or (suffixes[0] if suffixes else ".mp4")
-            rename_dest = os.path.join(
-                download_path,
-                f'{(picked_radio or track_rename_key)}_{sid}_{datetime.now().strftime("%H%M%S")}{ext}',
-            )
-            shutil.move(media_path, rename_dest)
-            media_final = rename_dest
-            if (
-                media_final.lower().endswith(".mp4")
-                and not single_mp4_only
-                and (temp_adj_mp4 is None or temp_adj_wav is None)
-            ):
-                dn = os.path.dirname(media_final)
-                bn = os.path.basename(media_final)
-                pv2 = {
-                    "use_mp4_video_preview": True,
-                    "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
-                }
-                rv = askchoice_media_preview(
-                    "确认视频与试听音量",
-                    [bn],
-                    dn,
-                    self.root,
-                    **pv2,
-                )
-                if not rv:
-                    return None
-                _, temp_adj_mp4, temp_adj_wav = rv
-            if media_final.lower().endswith(".mp4"):
-                if temp_adj_mp4 is None or temp_adj_wav is None:
-                    messagebox.showerror(
-                        "错误",
-                        "内部错误：未取得音量处理后的临时视频/音频。",
-                        parent=self.root,
-                    )
-                    return None
-        else:
-            matching = _download_folder_list_matching_suffixes(download_path, suffixes)
-            if matching:
-                r = askchoice_media_preview(title_proj, matching, download_path, self.root, **pv_kw)
-                if not r:
-                    return None
-                if single_mp4_only:
-                    fn, temp_adj_mp4, temp_adj_wav = _unpack_mp4_pick(r)
-                    media_final = os.path.join(download_path, fn)
-                else:
-                    bn = r
-                    media_final = os.path.join(download_path, bn)
-                if (
-                    media_final.lower().endswith(".mp4")
-                    and not single_mp4_only
-                    and (temp_adj_mp4 is None or temp_adj_wav is None)
-                ):
-                    dn = os.path.dirname(media_final)
-                    pv2 = {
-                        "use_mp4_video_preview": True,
-                        "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
-                    }
-                    rv = askchoice_media_preview(
-                        "确认视频与试听音量",
-                        [bn],
-                        dn,
-                        self.root,
-                        **pv2,
-                    )
-                    if not rv:
-                        return None
-                    _, temp_adj_mp4, temp_adj_wav = rv
-                if media_final.lower().endswith(".mp4"):
-                    if temp_adj_mp4 is None or temp_adj_wav is None:
-                        messagebox.showerror(
-                            "错误",
-                            "内部错误：未取得音量处理后的临时视频/音频。",
-                            parent=self.root,
-                        )
-                        return None
-            else:
-                star_patterns = " ".join(f"*{s}" for s in suffixes)
-                ftypes = [("所选格式", star_patterns)] + [(s.upper().lstrip("."), f"*{s}") for s in suffixes]
-                media_path = filedialog.askopenfilename(
-                    title="从磁盘选择文件",
-                    initialdir=_user_downloads_folder()
-                    if os.path.isdir(_user_downloads_folder())
-                    else download_path,
-                    filetypes=ftypes,
-                )
-                if not media_path:
-                    return None
-                low = media_path.lower()
-                if not any(low.endswith(s) for s in suffixes):
-                    messagebox.showerror("错误", "所选文件扩展名不匹配。", parent=self.root)
-                    return None
-                if radios and not picked_radio:
-                    picked_radio = self._ask_radio_choice(radios[0], radios[1])
-                    if not picked_radio:
-                        return None
-                media_final = media_path
-                rename_dest = os.path.join(
-                    download_path,
-                    f'{(picked_radio or track_rename_key)}_{sid}_{datetime.now().strftime("%H%M%S")}{os.path.splitext(media_final)[1].lower()}',
-                )
-                try:
-                    shutil.copy2(media_final, rename_dest)
-                except OSError:
-                    shutil.copy(media_final, rename_dest)
-                media_final = rename_dest
-                if media_final.lower().endswith(".mp4"):
-                    dn = os.path.dirname(media_final)
-                    bn = os.path.basename(media_final)
-                    pv2 = {
-                        "use_mp4_video_preview": True,
-                        "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
-                    }
-                    rv = askchoice_media_preview(
-                        "确认视频与试听音量",
-                        [bn],
-                        dn,
-                        self.root,
-                        **pv2,
-                    )
-                    if not rv:
-                        return None
-                    _, temp_adj_mp4, temp_adj_wav = rv
-
-        lowf = media_final.lower()
-        if lowf.endswith((".mp3", ".wav")):
-            return {"final_path": media_final, "temp_adj_mp4": None, "temp_adj_wav": None}
-
-        if lowf.endswith(".mp4"):
-            if temp_adj_mp4 is None or temp_adj_wav is None:
-                messagebox.showerror(
-                    "错误",
-                    "内部错误：未取得音量处理后的临时视频/音频。",
-                    parent=self.root,
-                )
-                return None
-            return {
-                "final_path": media_final,
-                "temp_adj_mp4": temp_adj_mp4,
-                "temp_adj_wav": temp_adj_wav,
-                "place": place_mode,
-                "track": picked_radio,
-            }
-
-        messagebox.showerror("错误", f"暂不支持的格式：{media_final}", parent=self.root)
-        return None
 
     _CLIP_DEST_OPTIONS = (
         ("clip", "Clip"),
@@ -3477,73 +3116,7 @@ class WorkflowGUI:
             return
         self._apply_editor_pick(pick, stage_download=False)
 
-    def _apply_reviewed_segments_to_current_clip(self, segments: list) -> None:
-        root = self.root
-        scene_index = self.current_scene_index
 
-        def work() -> None:
-            err = ""
-            out = ""
-            temps: list[str] = []
-            try:
-                ff = self.workflow.ffmpeg_processor
-                pieces: list[str] = []
-                for seg in segments:
-                    src = (seg.get("path") or "").strip()
-                    if not src or not os.path.isfile(src):
-                        raise RuntimeError(f"片段不在了：{os.path.basename(src) or src}")
-                    start = float(seg.get("start") or 0.0)
-                    end = float(seg.get("end") or 0.0)
-                    speed = float(seg.get("speed") or 1.0)
-                    if end <= start:
-                        raise RuntimeError(f"区间无效：{os.path.basename(src)}")
-                    piece = ff.trim_video(src, start, end, volume=1.0, speed=speed)
-                    if not piece or not os.path.isfile(piece):
-                        raise RuntimeError(f"处理失败：{os.path.basename(src)}")
-                    temps.append(piece)
-                    pieces.append(piece)
-                if len(pieces) == 1:
-                    out = pieces[0]
-                else:
-                    out = ff.concat_videos(pieces, True) or ""
-                    if out:
-                        temps.append(out)
-                if not out or not os.path.isfile(out):
-                    raise RuntimeError("没有拼出这一场的视频。")
-            except Exception as exc:
-                err = str(exc)
-
-            def done() -> None:
-                if err or not out:
-                    messagebox.showerror("编辑当前片段", err or "没有写回这一场。", parent=root)
-                    return
-                scene = self.workflow.get_scene_by_index(scene_index)
-                if not scene:
-                    messagebox.showerror("编辑当前片段", "这一场已经不在了。", parent=root)
-                    return
-                refresh_scene_media(scene, "clip", ".mp4", out)
-                self.workflow.save_scenes_to_json()
-                self.refresh_gui_scenes()
-                show_auto_close_popup(root, "编辑当前片段", "已写回这一场。")
-
-            root.after(0, done)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def choose_from_download(self, track, media_post=".mp4", radios=None):
-        res = self._pick_media_from_download_to_project_folder(
-            media_post,
-            track_rename_key=track,
-            confirm_actions=[
-                ("replace", "替换"),
-                ("prepend", "前加"),
-                ("append", "后加"),
-            ],
-            radios=radios,
-        )
-        if not res:
-            return
-        self._apply_download_video_result(res, track)
 
     def apply_zero_background_media_from_path(
         self,
@@ -3746,35 +3319,6 @@ class WorkflowGUI:
         return ok, skipped, None
 
 
-    @staticmethod
-    def _strip_narrator_export_markup(raw: str) -> str:
-        """
-        从 Story Content 里为 NotebookLM 拼好的长串中还原讲员简选项（如 woman/qin/chinese）。
-        若 REMIX 等把带「Narrator - … - pop up…」的导出写回场景，再导出会层层套娃，需在展示与导出前剥掉。
-        """
-        if raw is None:
-            return ""
-        s = str(raw).strip()
-        if not s:
-            return ""
-        sfx_not_show = " - not show in the screen, only speaking"
-        sfx_popup = (
-            " - pop up in the screen (if has previous scene, try keep its image back to background, "
-            "while actor (if has) in previous image not speaking)"
-        )
-        while True:
-            if s.endswith(sfx_popup):
-                s = s[: -len(sfx_popup)].rstrip()
-            elif s.endswith(sfx_not_show):
-                s = s[: -len(sfx_not_show)].rstrip()
-            else:
-                break
-        prefix = "Narrator - "
-        while s.startswith(prefix):
-            s = s[len(prefix) :].strip()
-        if " | " in s:
-            s = s.rsplit(" | ", 1)[0].strip()
-        return s.strip()
 
     def _make_still_clip_video(self, scene: dict) -> str:
         """用 clip_image 加 clip_audio 做一段静态画面的视频，写成这一场的 clip。
@@ -3933,7 +3477,7 @@ class WorkflowGUI:
                     except Exception as e:
                         root.after(
                             0,
-                            lambda: (
+                            lambda e=e: (
                                 clear_busy(),
                                 messagebox.showerror("Clip 音频", f"生成失败：{e}", parent=root),
                             ),
@@ -4002,7 +3546,7 @@ class WorkflowGUI:
             except Exception as e:
                 root.after(
                     0,
-                    lambda: (
+                    lambda e=e: (
                         clear_busy(),
                         messagebox.showerror("Clip 音频", f"任务异常：{e}", parent=root),
                     ),
@@ -5270,11 +4814,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def enhance_video(self):
-        for scene in self.workflow.scenes:
-            self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "clip", "30")
-            self.workflow.sd_processor.enhance_clip(self.get_pid(), scene, "narration", "30")
-        self.refresh_gui_scenes()
     
 
     def publish_video(self):
@@ -5355,64 +4894,6 @@ class WorkflowGUI:
             messagebox.showinfo("提示", msg + tg_block, parent=self.root)
 
 
-    def _do_speaking_summarize(self):
-        _lang_code = (project_manager.PROJECT_CONFIG or {}).get("language", "tw")
-        _lang_name = config.llm_language_label(_lang_code)
-        # 
-        system_prompt = config_prompt.SPEAKING_SUMMARY_SYSTEM_PROMPT.format(language=_lang_name)
-        user_prompt = json.dumps(self.workflow.scenes, ensure_ascii=False)
-        try:
-            out = self.llm_api.generate_text(system_prompt, user_prompt)
-        except Exception as e:
-            messagebox.showerror("SUMMARIZE", f"调用模型失败：{e}", parent=self.root)
-            return
-        # copy to clipboard
-        self.root.clipboard_clear()
-        self.root.clipboard_append(out)
-        self.root.update()
-
-        dlg = tk.Toplevel(self.root)
-        dlg.title("SUMMARIZE — 摘要（可编辑）")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.geometry("720x480")
-        dlg.update_idletasks()
-        _px = (dlg.winfo_screenwidth() - 720) // 2
-        _py = (dlg.winfo_screenheight() - 480) // 2
-        dlg.geometry(f"720x480+{_px}+{_py}")
-
-        ttk.Label(
-            dlg,
-            text="已复制到剪贴板。可编辑后点「保存到故事摘要」，写入这一条列表的 summary。",
-            wraplength=680,
-        ).pack(anchor="w", padx=12, pady=(12, 6))
-
-        body = scrolledtext.ScrolledText(dlg, wrap=tk.WORD, width=88, height=20, font=("Arial", 10))
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
-        body.insert("1.0", out)
-
-        btn_f = ttk.Frame(dlg)
-        btn_f.pack(fill=tk.X, padx=12, pady=(0, 12))
-
-        def on_save():
-            text = body.get("1.0", tk.END).strip()
-            if project_manager.PROJECT_CONFIG is None:
-                messagebox.showwarning("摘要", "没有打开的故事，写不进去。", parent=dlg)
-                return
-            project_manager.PROJECT_CONFIG["summary"] = text
-            if not save_project_config(parent=dlg):
-                messagebox.showwarning("摘要", "没有写进故事列表。", parent=dlg)
-                return
-            dlg.destroy()
-            messagebox.showinfo("摘要", "概述已写入这一条故事的 summary。", parent=self.root)
-
-        def on_cancel():
-            dlg.destroy()
-
-        ttk.Button(btn_f, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_f, text="保存到故事摘要", command=on_save).pack(side=tk.RIGHT)
-
-        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
 
 
     def _marker_number(self, key: str, count: int):
@@ -5902,10 +5383,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def get_current_video_time(self):
-        if not self.video_cap:
-            return 0, 0
-        return self.video_cap.get(cv2.CAP_PROP_POS_MSEC) / 1000, self.video_cap.get(cv2.CAP_PROP_FRAME_COUNT) / STANDARD_FPS
 
 
     def play_next_frame(self):
@@ -5931,7 +5408,6 @@ class WorkflowGUI:
             return
             
         # 计算应该播放的帧位置以保持与音频同步
-        total_frames = self.video_cap.get(cv2.CAP_PROP_FRAME_COUNT)
         
         if self.video_start_time:
             # 计算实际经过的时间
@@ -6313,49 +5789,6 @@ class WorkflowGUI:
 
         return current_time, total_time
 
-    def mute_scene_clip_audio(self):
-        """将当前场景整条 clip_audio 替换为等长静音，并写回 clip 视频音轨。"""
-        try:
-            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            if not current_scene:
-                messagebox.showerror("错误", "没有当前场景")
-                return
-
-            self._backup_clip_to_scene_back(current_scene)
-
-            clip_audio_path = get_file_path(current_scene, "clip_audio")
-            if not clip_audio_path or not os.path.exists(clip_audio_path):
-                messagebox.showerror("错误", "找不到主轨音频 clip_audio")
-                return
-
-            total_duration = self.workflow.ffmpeg_processor.get_duration(clip_audio_path)
-            if total_duration <= 0:
-                messagebox.showerror("错误", "无法获取音频时长")
-                return
-
-            silent_wav = self.workflow.ffmpeg_audio_processor.make_silence(total_duration)
-            if not silent_wav or not os.path.exists(silent_wav):
-                messagebox.showerror("错误", "生成静音失败")
-                return
-
-            _, new_audio = refresh_scene_media(
-                current_scene, "clip_audio", ".wav", silent_wav, True
-            )
-
-            clip_video = get_file_path(current_scene, "clip")
-            if clip_video and os.path.exists(clip_video) and new_audio:
-                output_video = self.workflow.ffmpeg_processor.add_audio_to_video(clip_video, new_audio)
-                if output_video:
-                    refresh_scene_media(current_scene, "clip", ".mp4", output_video, True)
-
-            self.workflow.save_scenes_to_json()
-            self.refresh_gui_scenes()
-            messagebox.showinfo("成功", "本场景主轨音频已整条静音")
-            print("✅ 整条 clip_audio 已静音")
-        except Exception as e:
-            error_msg = f"静音失败: {str(e)}"
-            print(f"❌ {error_msg}")
-            messagebox.showerror("错误", error_msg)
 
 
     def update_video_progress_display(self):
@@ -7370,72 +6803,7 @@ class WorkflowGUI:
             "已移到前一场。" if where == "head" else "已移到后一场。",
         )
 
-    def _set_timing_keep_text(self, scene: dict, sections) -> None:
-        """只改时间记录。讲稿原文和原先对齐用的那一份文字保持不动。"""
-        timing = []
-        for section in sections or []:
-            try:
-                timing.append({
-                    "speaker": min(3, max(1, int(section.get("speaker") or 1))),
-                    "start": round(float(section.get("start")), 2),
-                    "end": round(float(section.get("end")), 2),
-                    "text": (section.get("text") or "").strip(),
-                })
-            except (TypeError, ValueError):
-                continue
-        record = self._timing_record(scene)
-        self._store_timing(scene, timing, record.get("text") if record is not None else None)
 
-    def _split_sections_at_cut(self, sections, where: str, cut: float) -> tuple[list, list]:
-        """按播放头切开时间段。被切开的那一段，文字留在这一场剩下的部分上。"""
-        moved = []
-        kept = []
-        for section in sections or []:
-            try:
-                start = float(section.get("start"))
-                end = float(section.get("end"))
-            except (TypeError, ValueError):
-                continue
-            if end - start < 0.05:
-                continue
-            row = dict(section)
-            if where == "head":
-                if end <= cut + 0.02:
-                    row["text"] = ""
-                    moved.append(row)
-                    continue
-                if start >= cut - 0.02:
-                    row["start"] = round(max(0.0, start - cut), 2)
-                    row["end"] = round(end - cut, 2)
-                    kept.append(row)
-                    continue
-                left = dict(row)
-                left["end"] = round(cut, 2)
-                left["text"] = ""
-                moved.append(left)
-                right = dict(row)
-                right["start"] = 0.0
-                right["end"] = round(end - cut, 2)
-                kept.append(right)
-                continue
-            if start >= cut - 0.02:
-                row["start"] = round(max(0.0, start - cut), 2)
-                row["end"] = round(max(0.0, end - cut), 2)
-                row["text"] = ""
-                moved.append(row)
-                continue
-            if end <= cut + 0.02:
-                kept.append(row)
-                continue
-            left = dict(row)
-            left["end"] = round(cut, 2)
-            kept.append(left)
-            right = dict(row)
-            right["start"] = 0.0
-            right["end"] = round(end - cut, 2)
-            right["text"] = ""
-            moved.append(right)
-        return moved, kept
 
     def _apply_shifted_media(self, scene, neighbor, where: str, cut: float, sections, payload) -> None:
         """只搬画面和声音。讲稿不动。长短变了以后，这一场和接到的那场都按字数重新标时间。"""
@@ -7472,55 +6840,7 @@ class WorkflowGUI:
             "前面的画面和声音已接到上一场，时间已重新标好。" if where == "head" else "后面的画面和声音已接到下一场，时间已重新标好。",
         )
 
-    def _attach_media_timing(self, neighbor, moved, where: str, old_len: float, moved_len: float) -> None:
-        text = (neighbor.get("speaking") or "").strip()
-        stored = self._timing_sections(neighbor)
-        has_record = stored is not None
-        existing = self._sections_from_stored(stored, text) if has_record else []
-        if where == "head":
-            placed = []
-            for section in moved:
-                row = dict(section)
-                row["start"] = round(old_len + float(section.get("start") or 0.0), 2)
-                row["end"] = round(old_len + float(section.get("end") or 0.0), 2)
-                placed.append(row)
-            if has_record or placed:
-                self._set_timing_keep_text(neighbor, self._merge_edge_same_speaker(existing, placed))
-            return
-        shifted = []
-        for section in existing:
-            row = dict(section)
-            row["start"] = round(float(section.get("start") or 0.0) + moved_len, 2)
-            row["end"] = round(float(section.get("end") or 0.0) + moved_len, 2)
-            shifted.append(row)
-        if has_record or moved:
-            self._set_timing_keep_text(neighbor, self._merge_edge_same_speaker(list(moved), shifted))
 
-    def _merge_edge_same_speaker(self, leading, following) -> list:
-        """新接上的一段和旁边原有的一段是同一个人时，合成一段。文字留在原来那场。"""
-        leading = list(leading or [])
-        following = list(following or [])
-        if not leading or not following:
-            return leading + following
-        left = leading[-1]
-        right = following[0]
-        try:
-            same = int(left.get("speaker") or 1) == int(right.get("speaker") or 1)
-            start = min(float(left.get("start")), float(right.get("start")))
-            end = max(float(left.get("end")), float(right.get("end")))
-        except (TypeError, ValueError):
-            same = False
-            start = end = 0.0
-        if not same or end <= start:
-            return leading + following
-        text = (right.get("text") or "").strip() or (left.get("text") or "").strip()
-        merged = {
-            "speaker": int(left.get("speaker") or 1),
-            "start": round(start, 2),
-            "end": round(end, 2),
-            "text": text,
-        }
-        return leading[:-1] + [merged] + following[1:]
 
     def _reset_speaking_timing(self) -> None:
         """按这一场讲稿的字数，重新标出每段的起止。"""
@@ -9303,28 +8623,8 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def clean_media_mark(self):
-        """标记清理"""
-        for scene in self.workflow.scenes:
-            scene["clip_animation"] = "S2V"
-
-        self.workflow.save_scenes_to_json()
-        messagebox.showinfo("成功", "标记清理成功！")
 
 
-    def start_video_gen_batch(self):
-        """启动WAN批生成"""
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        previous_scene = self.workflow.get_previous_scene(self.current_scene_index)
-        next_scene = self.workflow.get_next_scene(self.current_scene_index)
-
-        ss = self.workflow.scenes_in_story(current_scene)
-        for scene in ss:
-            self.generate_video(scene, previous_scene, next_scene, "clip")
-            self.generate_video(scene, previous_scene, next_scene, "narration")
-
-        self.refresh_gui_scenes()
-        messagebox.showinfo("成功", "WAN视频批量生成成功！")
 
 
     def _open_finalize_menu(self) -> None:
@@ -9761,7 +9061,7 @@ class WorkflowGUI:
             earlier, later, space, people, speech, effect
         )
         try:
-            parsed = self.llm_api.generate_json(system_prompt, user_prompt, expect_list=False)
+            parsed = self.llm_api_hard.generate_json(system_prompt, user_prompt, expect_list=False)
         except Exception as exc:
             messagebox.showerror("过渡", f"没有拿到结果：{exc}", parent=self.root)
             return
@@ -9782,13 +9082,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         show_auto_close_popup(self.root, "过渡", "过渡文字已写回这一场。")
 
-    def _put_clipboard_speaking(self, text: str) -> None:
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(text)
-            self.root.update_idletasks()
-        except tk.TclError:
-            pass
 
 
     @staticmethod
@@ -10100,28 +9393,6 @@ class WorkflowGUI:
             ]
         return out
 
-    def _show_story_packaging_menu(self) -> None:
-        """Story 片头/片尾包装：选中项复制英文指令到剪贴板。"""
-        channel_name = _workflow_channel_display_name()
-        m = tk.Menu(self.root, tearoff=0)
-        for label, tmpl in STORY_PACKAGING_MENU:
-            text = tmpl.format(channel_name=channel_name)
-
-            def _copy(t=text, lbl=label):
-                try:
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(t)
-                    self.root.update()
-                except tk.TclError:
-                    return
-                show_auto_close_popup(
-                    self.root,
-                    "故事包装",
-                    f"已复制：{lbl}（{channel_name}）",
-                )
-
-            m.add_command(label=label, command=_copy)
-        post_menu_below_widget(m, self._story_packaging_btn)
 
     def on_scene_voiceover_image_action_menu(self, event=None):
         """双击右键（视觉框）：IMAGE_ACTION_CHOICES 两级菜单，选中项复制英文指令到剪贴板。"""
@@ -10151,13 +9422,6 @@ class WorkflowGUI:
         )
 
 
-    def append_scene(self):
-        story_level = self.workflow.last_scene_of_story(self.workflow.get_scene_by_index(self.current_scene_index))
-
-        self.workflow.add_story_scene( self.current_scene_index, self.workflow.get_scene_by_index(self.current_scene_index), story_level, True )
-
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
 
 
     def reverse_video(self):
@@ -10170,36 +9434,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
 
 
-    def get_current_playback_position(self):
-        """
-        获取当前主场景的播放位置（而不是其他轨道的位置）
-        优先级：暂停位置 > 实时播放位置 > 0
-        """
-        # 调试信息
-        has_pause_time = hasattr(self, 'video_pause_time')
-        pause_time_value = self.video_pause_time if has_pause_time else "属性不存在"
-        is_playing = self.video_playing if hasattr(self, 'video_playing') else False
-        
-        # 1. 如果有暂停位置，使用它（最准确）
-        if has_pause_time and self.video_pause_time is not None and self.video_pause_time > 0:
-            print(f"🎬 使用主视频暂停位置: {self.video_pause_time:.2f}s")
-            return self.video_pause_time
-        
-        # 2. 如果正在播放，基于时间计算当前位置
-        if is_playing and hasattr(self, 'video_start_time') and self.video_start_time:
-            try:
-                elapsed = time.time() - self.video_start_time
-                # 如果有累积的暂停时间，加上它
-                total_time = elapsed + (self.video_pause_time if self.video_pause_time else 0)
-                print(f"🎬 使用主视频播放位置（实时计算）: {total_time:.2f}s (当前片段: {elapsed:.2f}s, 累积暂停: {self.video_pause_time or 0:.2f}s)")
-                return total_time
-            except:
-                pass
-        
-        # 3. 默认返回 0
-        print(f"🎬 主视频未播放或无暂停位置，返回 0")
-        print(f"    调试: video_pause_time={pause_time_value}, video_playing={is_playing}")
-        return 0.0
 
 
     def mirror_video(self):
@@ -10232,24 +9466,6 @@ class WorkflowGUI:
         )
 
 
-    def swap_speaking_voiceover(self):
-        """交换当前场景的「讲话」与「旁白」。"""
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            messagebox.showwarning("提示", "没有当前工作流", parent=self.root)
-            return
-        current_scene = self.update_current_scene()
-        if not current_scene:
-            messagebox.showwarning("提示", "没有当前场景", parent=self.root)
-            return
-
-        sp = current_scene.get("speaking") or ""
-        vo = current_scene.get("voiceover") or ""
-        if sp == vo:
-            return
-        current_scene["speaking"] = vo
-        current_scene["voiceover"] = sp
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
 
 
     def add_headmark(self):
@@ -11014,22 +10230,6 @@ class WorkflowGUI:
             return False
 
 
-    def _show_auto_dismiss_tip(self, title: str, message: str, ms: int = 2000):
-        """非模态提示，约 ms 毫秒后自动关闭，无需点确定。"""
-        tip = tk.Toplevel(self.root)
-        tip.title(title)
-        tip.transient(self.root)
-        tip.resizable(False, False)
-        frm = ttk.Frame(tip, padding=16)
-        frm.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frm, text=message, justify=tk.CENTER).pack()
-        tip.update_idletasks()
-        w = tip.winfo_reqwidth()
-        h = tip.winfo_reqheight()
-        rx = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - w) // 2)
-        ry = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - h) // 2)
-        tip.geometry(f"+{rx}+{ry}")
-        tip.after(ms, tip.destroy)
 
 
     def _file_paths_from_clipboard(self) -> list[str]:
@@ -12256,36 +11456,6 @@ class WorkflowGUI:
             print(f"❌ 旁白轨道后退失败: {e}")
     
 
-    def merge_or_delete(self):
-        """合并当前图片与下一张图片"""
-        if len(self.workflow.scenes) == 0:
-            messagebox.showinfo("警告", "⚠️ 无场景")
-            return
-
-        self._cancel_scene_debounce_timer()
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        ss = self.workflow.scenes_in_story(current_scene)
-        if len(ss) <= 1:
-            result = messagebox.askyesnocancel("警告", "⚠️ 删除唯一场景?")
-            if result is True:
-                ss = self.workflow.replace_scene(self.current_scene_index)
-        else:
-            if ss[-1] == current_scene:
-                result = messagebox.askyesnocancel("警告", "⚠️ 删除当前场景?")
-                if result is True:
-                    ss = self.workflow.replace_scene(self.current_scene_index)
-            else:
-                result = messagebox.askyesnocancel("警告", "⚠️ 请选择操作：\n是: 合并场景\n否: 删除场景\n取消: 取消操作")
-                if result is True:
-                    self.workflow.merge_scene(self.current_scene_index, self.current_scene_index+1)
-                else:
-                    result = messagebox.askyesno("警告", "⚠️ 删除当前场景?")
-                    if result:
-                        ss = self.workflow.replace_scene(self.current_scene_index)
-
-        self._cancel_scene_debounce_timer()
-        self._refresh_gui_scenes_impl()
-        messagebox.showinfo("合并场景", "完成")
 
 
     def _swap_with_neighbor(self, delta: int) -> None:
@@ -12312,11 +11482,6 @@ class WorkflowGUI:
             "已与上一场交换。" if delta < 0 else "已与下一场交换。",
         )
 
-    def _current_story_scenes(self) -> list:
-        scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        if not scene:
-            return []
-        return list(self.workflow.scenes_in_story(scene) or [])
 
     def _replace_current_clip_image_from_pil(self, pil_img) -> None:
         """图片提示的手动窗口贴回了一张图：写成当前场景的 clip_image，并刷新预览。"""
@@ -12597,23 +11762,6 @@ class WorkflowGUI:
     })
     _SCENE_IMPORT_SKIP_KEYS = frozenset({"start", "end", "duration", "transition"})
 
-    def _scene_import_extractable_fields(self, scene: dict) -> dict:
-        """从场景 dict 提取可导入/导出的文案字段（作 JSON 编辑初始模板）。"""
-        if not isinstance(scene, dict):
-            return {}
-        keys = (
-        "speaking", "caption", "voiceover", "visual", "actor",
-        "clip_animation", "narration_animation", "extension", "cinematography",
-        )
-        out = {}
-        for k in keys:
-            v = scene.get(k)
-            if v is None:
-                continue
-            if isinstance(v, str) and not v.strip():
-                continue
-            out[k] = v
-        return out
 
     def _apply_scene_import_item(self, scene: dict, raw_item: dict) -> int:
         """将单个 import 元素合并到场景：同名字段覆盖；``speaker`` 映射为 ``actor``。"""
@@ -12699,8 +11847,6 @@ class WorkflowGUI:
         elif picked == "s_audio":
             self.split_scene_by_transcription()
 
-    def _ask_scene_speech_transform(self) -> None:
-        self._ask_scene_transform_or_split()
 
     def apply_scene_speech_transform(self, span: int = 1) -> None:
         """按当前 actor 重写说法。span 为 2 或 3 时把后面连续几场并进这一场的讲话和旁白。"""
@@ -12734,7 +11880,7 @@ class WorkflowGUI:
             return
         _label, text = built
         try:
-            parsed = self.llm_api.generate_json(text, "按要求重写，只返回 JSON 对象。", expect_list=False)
+            parsed = self.llm_api_hard.generate_json(text, "按要求重写，只返回 JSON 对象。", expect_list=False)
         except Exception as exc:
             messagebox.showerror(title, f"变换失败: {exc}", parent=self.root)
             return
@@ -12760,9 +11906,6 @@ class WorkflowGUI:
         self.refresh_gui_scenes()
         show_auto_close_popup(self.root, title, "已写回这一场的讲话和旁白")
 
-    def _ask_scene_split(self) -> None:
-        """场景拆分和场景变换合在一个窗口里。"""
-        self._ask_scene_transform_or_split()
 
     def split_scene_content_by_llm(self) -> None:
         title = "场景拆分"
@@ -12781,7 +11924,7 @@ class WorkflowGUI:
             self.workflow.get_next_scene(index),
         )
         try:
-            raw = self.llm_api.generate_json(text, "按要求拆开，只返回 JSON 数组。", expect_list=True)
+            raw = llm_api.LLMApi(llm_api.MODEL_MANUAL).generate_json(text, "按要求拆开，只返回 JSON 数组。", expect_list=True)
         except Exception as exc:
             messagebox.showerror(title, f"拆分失败: {exc}", parent=self.root)
             return
@@ -13004,122 +12147,6 @@ class WorkflowGUI:
             print(f"fallback frame failed: {exc}")
         return None
 
-    def import_scene_data(self):
-        """从 JSON array 批量导入场景文案：array[0] 对应当前场景，依次向后覆盖同名字段。"""
-        scenes = self.workflow.scenes
-        if not scenes:
-            messagebox.showwarning("Import", "没有可导入的场景。", parent=self.root)
-            return
-
-        self.update_current_scene()
-        start_idx = self.current_scene_index
-
-        preview_items = []
-        for i in range(start_idx, min(start_idx + 8, len(scenes))):
-            extracted = self._scene_import_extractable_fields(scenes[i])
-            preview_items.append(extracted if extracted else {})
-
-        if preview_items:
-            initial_text = json.dumps(preview_items, ensure_ascii=False, indent=2)
-        else:
-            initial_text = '[\n  {\n    "speaking": "",\n    "caption": "",\n    "voiceover": ""\n  }\n]'
-
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Import 场景数据")
-        dlg.geometry("820x620")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.update_idletasks()
-        x = (dlg.winfo_screenwidth() - 820) // 2
-        y = (dlg.winfo_screenheight() - 620) // 2
-        dlg.geometry(f"820x620+{x}+{y}")
-
-        frame = ttk.Frame(dlg, padding=20)
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(
-            frame,
-            text=(
-                f"请输入场景 JSON array（从当前场景 #{start_idx + 1} 起依次应用；"
-                "同名字段覆盖：speaking / caption / voiceover / visual / actor 等）"
-            ),
-            font=("TkDefaultFont", 10, "bold"),
-            wraplength=760,
-        ).pack(anchor=tk.W, pady=(0, 5))
-
-        text_w = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=94, height=28, font=("Consolas", 10))
-        text_w.pack(fill=tk.BOTH, expand=True)
-        text_w.insert(tk.END, initial_text)
-
-        def paste_from_clipboard(_event=None):
-            try:
-                s = safe_clipboard_json_copy(dlg.clipboard_get())
-                if s:
-                    text_w.delete("1.0", tk.END)
-                    text_w.insert(tk.END, s)
-            except tk.TclError:
-                pass
-
-        text_w.bind("<Double-1>", paste_from_clipboard)
-
-        holder = {"text": None, "confirmed": False}
-
-        def on_ok():
-            holder["text"] = text_w.get("1.0", tk.END).strip()
-            holder["confirmed"] = True
-            dlg.destroy()
-
-        def on_cancel():
-            dlg.destroy()
-
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(btn_row, text="取消", command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(btn_row, text="导入", command=on_ok).pack(side=tk.RIGHT)
-        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
-        dlg.wait_window()
-
-        if not holder["confirmed"]:
-            return
-
-        raw_txt = (holder["text"] or "").strip()
-        if not raw_txt:
-            return
-
-        parsed = config.parse_json_from_text(raw_txt)
-        if not isinstance(parsed, list):
-            messagebox.showerror(
-                "Import",
-                "JSON 必须是 array（例如 [{\"speaking\": \"...\"}, ...]）。",
-                parent=self.root,
-            )
-            return
-        if not parsed:
-            messagebox.showwarning("Import", "JSON array 为空，未导入任何场景。", parent=self.root)
-            return
-
-        updated_scenes = 0
-        updated_fields = 0
-        overflow = max(0, len(parsed) - (len(scenes) - start_idx))
-
-        for offset, item in enumerate(parsed):
-            scene_idx = start_idx + offset
-            if scene_idx >= len(scenes):
-                break
-            n = self._apply_scene_import_item(scenes[scene_idx], item)
-            if n > 0:
-                updated_scenes += 1
-                updated_fields += n
-
-        self.workflow.save_scenes_to_json()
-        self.refresh_gui_scenes()
-
-        msg = (
-            f"已从场景 #{start_idx + 1} 起导入 {min(len(parsed), len(scenes) - start_idx)} 项，"
-            f"更新 {updated_scenes} 个场景、共 {updated_fields} 个字段。"
-        )
-        if overflow:
-            msg += f"\n\n注意：JSON 有 {overflow} 项超出可用场景，已忽略。"
-        messagebox.showinfo("Import", msg, parent=self.root)
 
     def _load_project_look_into_controls(self):
         """字体和风格记在项目上，不跟某一场走。"""
@@ -13714,18 +12741,7 @@ class WorkflowGUI:
             self.save_config()
 
 
-    def on_config_change(self, event=None):
-        """当配置发生变化时的回调函数"""
-        # 如果正在加载配置，不要自动保存
-        if hasattr(self, '_loading_config') and self._loading_config:
-            return
-        
-        self.save_config()
 
-    def on_scene_edit(self, event=None):
-        """当场景信息被编辑时的回调（现在不需要）"""
-        # 保存按钮现在总是可用
-        pass
 
 
     def on_scene_field_enter(self, event=None):
@@ -13752,14 +12768,6 @@ class WorkflowGUI:
         self._cancel_scene_debounce_timer()
         self.update_current_scene()
 
-    def on_scene_combobox_return_commit(self, event=None):
-        """下拉框按 Enter：立即写回当前场景与 JSON。"""
-        if getattr(self, "_scene_widgets_loading", False):
-            return
-        if not getattr(self, "workflow", None) or not self.workflow.scenes:
-            return
-        self._cancel_scene_debounce_timer()
-        self.update_current_scene()
 
     def on_scene_field_focus_out(self, event=None):
         """当场景编辑字段失去焦点时的回调"""
@@ -13781,47 +12789,6 @@ class WorkflowGUI:
         self.video_canvas.dnd_bind('<<DragLeave>>', self.on_video_drag_leave)
 
 
-    def handle_image_replacement(self, source_image_path):
-        """处理图像替换"""
-        try:
-            # 导入图像区域选择对话框
-            from gui.image_area_selector_dialog import show_image_area_selector
-            # 显示图像区域选择对话框
-            selected_image_path, vertical_line_position, target_field = show_image_area_selector(
-                self, source_image_path, self.workflow.ffmpeg_processor.width, self.workflow.ffmpeg_processor.height
-            )
-            
-            if selected_image_path is None:
-                return  # 用户取消了选择
-            
-            field_names = {
-                "clip_image": "当前场景图片",
-                "clip_image_last": "最后场景图片"
-            }
-            
-            dialog = messagebox.askyesno("确认替换场景的图像/视频", 
-                                       f"确定要替换 {field_names.get(target_field, target_field)} 吗？\n垂直分割线位置: {vertical_line_position}")
-            if not dialog:
-                # 清理临时文件
-                try:
-                    os.remove(selected_image_path)
-                except:
-                    pass
-                return
-            
-            selected_image_path = self.workflow.ffmpeg_processor.resize_image_smart(selected_image_path)
-
-            current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-            self.workflow.replace_scene_image(current_scene, selected_image_path, vertical_line_position, target_field)
-            
-            # 刷新GUI显示
-            self.refresh_gui_scenes()
-            
-            # 记录操作
-            print(f"✅ 图像已替换到 {field_names.get(target_field, target_field)}，垂直分割线位置: {vertical_line_position}")
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"图像替换失败: {str(e)}")
 
 
     # 视频拖拽相关方法
@@ -14847,22 +13814,10 @@ class WorkflowGUI:
         self.video_canvas.coords("drag_hint", center_x, center_y)
 
 
-    def on_clip_animation_change(self, event=None):
-        current_scene = self.workflow.get_scene_by_index(self.current_scene_index)
-        current_scene["clip_animation"] = self.clip_animate.get()
-        self.workflow.save_scenes_to_json()
 
 
-    def on_scene_field_change(self, field_name, field_value, event=None):
-        self.workflow.get_scene_by_index(self.current_scene_index)[field_name] = field_value 
-        self.workflow.save_scenes_to_json()
 
 
-    def on_narration_animation_change(self, event=None):
-        """处理图像类型选择变化"""
-        self.workflow.get_scene_by_index(self.current_scene_index)["narration_animation"] = self.narration_animation.get()
-        # 标记配置已更改
-        self._config_changed = True
 
     def _on_extension_change(self):
         """延长秒数变化：0 则不写 extension 字段，否则写入 float"""
@@ -14954,11 +13909,6 @@ class WorkflowGUI:
  
 
 
-def open_narrator_portrait(parent, current: str, on_confirm) -> None:
-    """主题列表里选讲员：用工作流同一套头像预览，选定后交给调用方保存。"""
-    host = WorkflowGUI.__new__(WorkflowGUI)
-    host.root = parent
-    host.review_project_narrator(current=current, on_confirm=on_confirm, parent=parent)
 
 
 def main():
@@ -14996,7 +13946,7 @@ def main():
         initial_pid = sys.argv[2]
 
     try:
-        app = WorkflowGUI(root, initial_pid=initial_pid)
+        WorkflowGUI(root, initial_pid=initial_pid)
         root.mainloop()
     except Exception as e:
         import traceback

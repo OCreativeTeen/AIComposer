@@ -437,7 +437,7 @@ class SDProcessor:
                     }
                 }
             ]
-            return self.llm_api.generate_json(system_prompt, user_prompt, "describe_image_response.txt", False)
+            return llm_api.LLMApi(llm_api.MODEL_MANUAL).generate_json(system_prompt, user_prompt, "describe_image_response.txt", False)
 
         except Exception as e:
             print(f"❌ 图片描述失败: {str(e)}")

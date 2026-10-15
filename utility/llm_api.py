@@ -19,20 +19,32 @@ from . import file_util
 
 
 # 本机 Strata 上已加载的模型。/v1/models 的 id，上下文 65536，只收文字。
-GPT_MINI = "qwen3.8-flash-next-iq3_xxs"
+STRATA = "qwen3.8-flash-next-iq3_xxs"
+
+# DeepSeek（云端）：难任务用。密钥 DEEPSEEK_API_KEY（没有再读 OPENAI_API_KEY）。
+GPT_MINI = "deepseek-flash"
+DEEPSEEK = GPT_MINI
 
 GEMINI = "gemini-3.5-flash-lite"
 
 MANUAL = "manual"
 
 # 纯文字、不是手动窗口的调用都走这一台本机 Strata。带图片或附件的仍然先开手动窗口。
-TEXT_MODEL = GPT_MINI
+TEXT_MODEL = STRATA
+
+# 难度分级：简单 -> Strata，难 -> DeepSeek，最难/带图 -> 手动窗口
+MODEL_SIMPLE = STRATA
+MODEL_HARD = GPT_MINI
+MODEL_MANUAL = MANUAL
 # 生成长度上限。模型总窗口是 65536，提示词也算在里面，所以回答不要占满。
 STRATA_MAX_TOKENS = 32768
 
 MODELS = {
-    GPT_MINI : {
+    STRATA : {
         "url": "http://192.168.1.185:8080/v1"
+    },
+    GPT_MINI : {
+        "url": "https://api.deepseek.com/v1"
     },
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -44,9 +56,18 @@ class LLMApi:
 
     def __init__(self, model: str = None):
         self.model = model
+        # 自动调用（Strata / DeepSeek / Gemini）失败时，直接打开手动窗口。
+        # 调用方自己有手动兜底时（如 media_transcript 的 ManualBridge）设成 False，避免开两次。
+        self.manual_fallback = True
+        self._last_source = ""
 
-        self.openai_client = OpenAI(
+        self.strata_client = OpenAI(
             api_key = os.getenv("STRATA_API_KEY", ""),
+            base_url = MODELS[STRATA]["url"],
+            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
+        )
+        self.openai_client = OpenAI(
+            api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
             base_url = MODELS[GPT_MINI]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
@@ -145,6 +166,17 @@ class LLMApi:
 
             except Exception as e:
                 print(f"生成JSON失败: {str(e)}")
+                if self._last_source not in ("", MANUAL) and self.manual_fallback:
+                    # 模型回答了但不是可用的 JSON：同一个提示词转手动窗口一次
+                    failed = self._last_source
+                    manual = self._manual_fallback(system_prompt, user_prompt, images, attachment, failed)
+                    if isinstance(manual, str) and manual.strip():
+                        try:
+                            cleaned = re.sub(r'\s+', ' ', manual.strip().replace("```json", "").replace("```", ""))
+                            return file_util.parse_json(content_string=cleaned, expect_list=expect_list)
+                        except Exception as e2:
+                            print(f"手动结果也不是可用的 JSON: {e2}")
+                    return [] if expect_list else {}
                 # write content_string to file
                 failed_file = config.get_temp_file("debug", "txt", "llm_api_generate_json_failed_content_string")
                 with open(failed_file, "w", encoding="utf-8") as f:
@@ -280,8 +312,11 @@ class LLMApi:
         }
 
     def _chat_completions(self, model: str, messages: List[Dict]) -> Any:
+        if model == STRATA:
+            return self.strata_client.chat.completions.create(**self._strata_request(model, messages))
         if model == GPT_MINI:
-            return self.openai_client.chat.completions.create(**self._strata_request(model, messages))
+            return self.openai_client.chat.completions.create(
+                model=model, messages=messages, temperature=0.5, stream=False)
         if model == GEMINI:
             request_params = {
                 "model": model,
@@ -460,57 +495,56 @@ class LLMApi:
             self.create_message("user", user_prompt)
         ]
         base_model = _force_model or self.model
+        self._last_source = ""
 
+        if base_model is None:
+            has_media = bool(self._normalize_image_paths(images)) or bool(attachment)
+            base_model = MANUAL if has_media else TEXT_MODEL
+
+        if base_model == MANUAL:
+            # 手动窗口（也可以在窗口里点选一个模型）
+            model, manual_response = self._show_model_dialog(
+                system_prompt, user_prompt, image_paths=images, attachment=attachment
+            )
+            if model == MANUAL:
+                self._last_source = MANUAL
+                return manual_response
+        else:
+            model = base_model
+
+        answer = None
         try:
-            if base_model is None and _force_model is None:
-                has_media = bool(self._normalize_image_paths(images)) or bool(attachment)
-                if not has_media:
-                    answer = self.generate_text(
-                        system_prompt, user_prompt, _force_model=TEXT_MODEL
-                    )
-                    if isinstance(answer, str) and answer.strip():
-                        return answer
-                    print(f"⚠️ 自动调用 {TEXT_MODEL} 没成功，转到手动窗口。")
-                    if TEXT_MODEL == GPT_MINI and not os.getenv("STRATA_API_KEY"):
-                        print("⚠️ 没有找到 Strata 密钥：请在 .env 里加一行 STRATA_API_KEY=你的密钥。")
-
-            # popup dialog to ask user choose from GPT_MINI, GEMINI, or MANUAL, return choice as model
-            if base_model == MANUAL or base_model is None:
-                model, manual_response = self._show_model_dialog(
-                    system_prompt, user_prompt, image_paths=images, attachment=attachment
-                )
-                if model == MANUAL:
-                    return manual_response
-            else:
-                model = base_model
-
-            # 准备请求参数（在确定模型后设置）
-            if model == GPT_MINI:
-                response = self.openai_client.chat.completions.create(
-                    **self._strata_request(model, messages)
-                )
-                return self.parse_response(response)
-
-            elif model == GEMINI:
-
-                request_params = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.5,
-                    "max_tokens": 65536,
-                    "stream": False
-                }
-                response = self.google_client.chat.completions.create(**request_params)
-                return self.parse_response(response)
-
-            print(f"❌ 没有这个模型：{model}")
-            return None
-
+            answer = self.parse_response(self._chat_completions(model, messages))
         except Exception as e:
-            print(f"❌ LLM API 调用失败: {type(e).__name__}: {e}")
+            print(f"❌ LLM API 调用失败（{model}）: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
+        if isinstance(answer, str) and answer.strip():
+            self._last_source = model
+            return answer
+
+        print(f"⚠️ 自动调用 {model} 没成功。")
+        if model == STRATA and not os.getenv("STRATA_API_KEY"):
+            print("⚠️ 没有找到 Strata 密钥：请在 .env 里加一行 STRATA_API_KEY=你的密钥。")
+        if model == GPT_MINI and not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")):
+            print("⚠️ 没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
+        return self._manual_fallback(system_prompt, user_prompt, images, attachment, model)
+
+    def _manual_fallback(self, system_prompt, user_prompt, images, attachment, failed_model):
+        """自动调用失败：直接打开手动窗口（只能手动，不再选模型，免得来回绕）。后台线程里会转到主线程。"""
+        if not self.manual_fallback:
             return None
+        print(f"⚠️ {failed_model} 失败，转到手动窗口。")
+        _model, manual_response = self._show_model_dialog(
+            system_prompt,
+            user_prompt,
+            image_paths=images,
+            attachment=attachment,
+            title=f"{failed_model} 没成功，请手动处理",
+            manual_only=True,
+        )
+        self._last_source = MANUAL
+        return manual_response
 
 
     @staticmethod
@@ -751,7 +785,8 @@ class LLMApi:
         model_btn_row = ttk.Frame(model_frame)
         model_btn_row.pack(fill=tk.X)
         for mid, btn_title in ([] if manual_only else [
-            (GPT_MINI, "Strata"),
+            (STRATA, "Strata"),
+            (GPT_MINI, "DeepSeek"),
             (GEMINI, "Gemini"),
             (MANUAL, "Manual"),
         ]):

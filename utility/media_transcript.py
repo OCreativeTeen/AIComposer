@@ -561,10 +561,15 @@ def transcribe_media_with_timestamps(
         service = VoiceboxService(pid)
 
     llm = None
+    hard_llm = None
     try:
         from utility import llm_api
 
-        llm = llm_api.LLMApi(llm_api.TEXT_MODEL)
+        llm = llm_api.LLMApi(llm_api.MODEL_SIMPLE)      # 补标点：简单，用 Strata
+        hard_llm = llm_api.LLMApi(llm_api.MODEL_HARD)   # 判断说话人：难，用 DeepSeek
+        # 这里失败时由 ManualBridge 转手动（主线程），LLMApi 自己不再开手动窗口，免得开两次。
+        llm.manual_fallback = False
+        hard_llm.manual_fallback = False
     except Exception as exc:  # noqa: BLE001
         print(f"LLM 没有准备好，转录结果不补标点、不按句分行：{exc}")
 
@@ -573,6 +578,11 @@ def transcribe_media_with_timestamps(
     if llm is not None or manual_llm is not None:
         def ask(system: str, user: str, what: str) -> Optional[str]:
             return _ask_llm(llm, system, user, check_cancel, what, manual_llm, mode)
+
+    ask_hard = ask
+    if hard_llm is not None or manual_llm is not None:
+        def ask_hard(system: str, user: str, what: str) -> Optional[str]:
+            return _ask_llm(hard_llm, system, user, check_cancel, what, manual_llm, mode)
 
     batch_size = max(1, int(getattr(config, "TRANSCRIBE_LLM_BATCH_CHUNKS", 1) or 1))
     work_dir = tempfile.mkdtemp(prefix="transcribe_")
@@ -631,7 +641,7 @@ def transcribe_media_with_timestamps(
     # 所有句子和时间都弄好、拼在一起之后，最后单独做一次说话人判断（看得到整段对话的上下文）。
     check_cancel()
     report(count, "判断每一句是谁在说话…")
-    labelled_lines = _label_speakers(result_lines, language, ask, check_cancel, stats)
+    labelled_lines = _label_speakers(result_lines, language, ask_hard, check_cancel, stats)
     if notes is not None:
         if ask is None:
             notes.append("LLM 没有准备好：文字稿没有补标点，也没有判断说话人。")

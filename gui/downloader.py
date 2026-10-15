@@ -29,7 +29,6 @@ from utility.file_util import (
     write_json,
     safe_copy_overwrite,
     safe_remove,
-    parse_json,
     make_safe_file_name,
     safe_clipboard_json_copy,
     show_auto_close_popup,
@@ -111,27 +110,6 @@ def _resolve_combined_prompt_template(
     return lbl, tpl, idx
 
 
-def _pick_prompt_label_from_choices(
-    choices: list[tuple[str, str]], *candidates: str
-) -> str:
-    """在 ``[(label, template), ...]`` 中按 label 精确或子串匹配。"""
-    labels = [
-        (lbl or "").strip()
-        for lbl, _ in choices
-        if (lbl or "").strip()
-    ]
-    for want in candidates:
-        want = (want or "").strip()
-        if not want:
-            continue
-        for lbl in labels:
-            if lbl == want:
-                return lbl
-        want_lower = want.lower()
-        for lbl in labels:
-            if want_lower in lbl.lower():
-                return lbl
-    return ""
 
 
 def _scene_entry_heading(entry: dict) -> str:
@@ -139,15 +117,6 @@ def _scene_entry_heading(entry: dict) -> str:
     return project_manager.caption_from_scene_content_item(entry)
 
 
-def _scene_entry_display_text(entry: dict) -> str:
-    """单条 scene JSON 条目 → 可读文本（caption + visual）。"""
-    if not isinstance(entry, dict):
-        return ""
-    title = _scene_entry_heading(entry)
-    body = (entry.get("visual") or entry.get("content") or entry.get("story") or "").strip()
-    if title and body:
-        return f"{title}\n\n{body}"
-    return body or title
 
 
 def _notebooklm_row_topic_fields(video_detail: dict) -> tuple[str, str, str]:
@@ -560,8 +529,6 @@ def _normalize_gen_video_clip_segment(seg) -> dict | None:
     return out
 
 
-def _story_has_reviewable_clips(video_detail: dict) -> bool:
-    return bool(_get_gen_video_clip_segments(video_detail))
 
 
 def _get_gen_video_clip_segments(video_detail: dict) -> list[dict]:
@@ -639,12 +606,8 @@ _SUMMARY_IMAGE_SUFFIXES = (
 )
 
 
-def _is_summary_image_file_path(path: str) -> bool:
-    return (path or "").lower().endswith(_SUMMARY_IMAGE_SUFFIXES)
 
 
-def _is_summary_pdf_file_path(path: str) -> bool:
-    return (path or "").lower().endswith(".pdf")
 
 
 GEN_VIDEO_SLIDE_KEY = "slide"
@@ -1184,36 +1147,8 @@ def _project_look_from_row(vd, cfg=None) -> tuple[str, str, str]:
     )
 
 
-def _stamp_project_look(vd, *, visual_style: str, dialogue_mode: str, narrator: str) -> None:
-    """把风格、对话方式、解说员写回这一条，已有项目配置时一并写入。"""
-    if not isinstance(vd, dict):
-        return
-    vs = config.match_visual_style(visual_style)
-    if not vs and config.VISUAL_STYLE_OPTIONS:
-        vs = config.VISUAL_STYLE_OPTIONS[0]
-    talk = config.normalize_dialogue_mode(dialogue_mode)
-    nar = (narrator or "").strip()
-    if vs:
-        vd["visual_style"] = vs
-        project_manager.LAST_VISUAL_STYLE = vs
-    if talk:
-        vd["dialogue_mode"] = talk
-    if nar:
-        vd["narrator"] = nar
-        project_manager.LAST_NARRATOR = nar
-    pp = vd.get(project_manager.PROJECT_PROFILE_KEY)
-    if isinstance(pp, dict):
-        if vs:
-            pp["visual_style"] = vs
-        if talk:
-            pp["dialogue_mode"] = talk
-        if nar:
-            pp["narrator"] = nar
 
 
-def _dialogue_mode_from_row(vd, cfg=None) -> str:
-    """场景窗或已有项目配置里的对话方式。没有就用第一种。"""
-    return _project_look_from_row(vd, cfg)[1]
 
 
 _MEDIA_SCENE_LENGTH_NOTE = (
@@ -1450,97 +1385,14 @@ def _dnd_paths_splitlist(master_widget, raw) -> list:
         return []
 
 
-def _natural_sort_key(text: str) -> list:
-    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", text)]
 
 
-def _mp4_timestamp_from_filename(path: str) -> float | None:
-    """从常见文件名中提取时间戳（如 20250619_143022）。"""
-    base = os.path.basename(path)
-    m = re.search(r"(\d{8})[_-]?(\d{6})", base)
-    if m:
-        try:
-            return time.mktime(
-                time.strptime(f"{m.group(1)}{m.group(2)}", "%Y%m%d%H%M%S")
-            )
-        except ValueError:
-            pass
-    m = re.search(r"(\d{4})(\d{2})(\d{2})", base)
-    if m:
-        try:
-            return time.mktime(
-                time.strptime("".join(m.groups()), "%Y%m%d")
-            )
-        except ValueError:
-            pass
-    return None
 
 
-def _mp4_chronological_sort_key(path: str) -> tuple:
-    """拼接排序键：优先文件名内时间 → 修改时间 → 创建时间 → 自然文件名。"""
-    name_key = _natural_sort_key(os.path.basename(path))
-    fn_ts = _mp4_timestamp_from_filename(path)
-    if fn_ts is not None:
-        return (0, fn_ts, name_key)
-    try:
-        st = os.stat(path)
-        # Windows: st_ctime 为创建时间；取 mtime/ctime 较早者作「成片先后」近似
-        t = min(st.st_mtime, st.st_ctime)
-        return (1, t, name_key)
-    except OSError:
-        return (2, 0.0, name_key)
 
 
-def _order_mp4_paths_for_concat(paths: list[str]) -> list[str]:
-    """多段 mp4 拼接顺序：按时间从旧到新（文件名时间 / 文件时间，相同时按文件名）。"""
-    if len(paths) <= 1:
-        return list(paths)
-    ordered = sorted(paths, key=_mp4_chronological_sort_key)
-    print("📎 MP4 拼接顺序（旧 → 新）：")
-    for i, p in enumerate(ordered, 1):
-        ts = _mp4_timestamp_from_filename(p)
-        try:
-            st = os.stat(p)
-            tinfo = (
-                f"fn_ts={ts:.0f}" if ts is not None else f"mtime={st.st_mtime:.0f}"
-            )
-        except OSError:
-            tinfo = "?"
-        print(f"  {i}. {os.path.basename(p)}  ({tinfo})")
-    return ordered
 
 
-def _read_clipboard_file_paths() -> list[str]:
-    """从系统剪贴板读取文件路径（Windows 资源管理器复制文件）。"""
-    try:
-        import win32clipboard  # type: ignore
-
-        win32clipboard.OpenClipboard()
-        try:
-            if not win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_HDROP):
-                return []
-            raw = win32clipboard.GetClipboardData(win32clipboard.CF_HDROP)
-        finally:
-            win32clipboard.CloseClipboard()
-    except Exception:
-        return []
-
-    paths: list[str] = []
-    if isinstance(raw, (list, tuple)):
-        paths = [str(p) for p in raw if p]
-    elif isinstance(raw, str) and raw.strip():
-        if "\0" in raw:
-            paths = [p for p in raw.split("\0") if (p or "").strip()]
-        else:
-            paths = [raw.strip()]
-    elif isinstance(raw, bytes):
-        try:
-            text = raw.decode("utf-16-le", errors="ignore")
-            paths = [p for p in text.split("\0") if (p or "").strip()]
-        except Exception:
-            paths = []
-
-    return _collect_unique_file_paths(paths, label="剪贴板")
 
 
 def _dnd_normalize_file_paths(
@@ -1559,269 +1411,18 @@ def _dnd_normalize_file_paths(
     )
 
 
-def _tkinter_dnd_root_capable(widget) -> bool:
-    """文件拖放需要应用根为 ``TkinterDnD.Tk``（纯 ``tk.Tk`` 会显示禁止拖放）。"""
-    if not _TK_DND_AVAILABLE or _TKINTER_DND_TK is None or widget is None:
-        return False
-    w = widget
-    while getattr(w, "master", None) is not None:
-        w = w.master
-    return isinstance(w, _TKINTER_DND_TK)
 
 
-def _flush_accumulated_summary_drop(summary_window: tk.Toplevel) -> None:
-    """合并短时间内多次拖放事件的路径后统一处理。"""
-    summary_window._accumulated_drop_after_id = None
-    buf = getattr(summary_window, "_accumulated_drop_paths", None)
-    setattr(summary_window, "_accumulated_drop_paths", [])
-    if not isinstance(buf, list) or not buf:
-        return
-    paths = _collect_unique_file_paths(buf, label="拖放合并", allow_duplicates=True)
-    mp4_paths = [p for p in paths if p.lower().endswith(".mp4")]
-    image_in = next(
-        (p for p in paths if _is_summary_image_file_path(p)),
-        None,
-    )
-    pdf_in = next(
-        (p for p in paths if _is_summary_pdf_file_path(p)),
-        None,
-    )
-    json_in = next(
-        (p for p in paths if _is_summary_scene_json_file_path(p)),
-        None,
-    )
-    if mp4_paths:
-        _on_summary_mp4_watermark_drop(None, summary_window, mp4_paths=mp4_paths)
-    elif image_in:
-        ctx = getattr(summary_window, "_summary_drop_ctx", None)
-        if isinstance(ctx, dict):
-            _start_summary_cover_webp_save(image_in, summary_window, ctx)
-    elif pdf_in:
-        ctx = getattr(summary_window, "_summary_drop_ctx", None)
-        if isinstance(ctx, dict):
-            _start_summary_slide_pdf_save(pdf_in, summary_window, ctx)
-    elif json_in:
-        ctx = getattr(summary_window, "_summary_drop_ctx", None)
-        if isinstance(ctx, dict):
-            _start_summary_scene_content_json_import(
-                summary_window, ctx, json_path=json_in
-            )
-    else:
-        try:
-            show_auto_close_popup(
-                summary_window,
-                "拖放",
-                "请拖入 .mp4、图片、.pdf 幻灯片或场景 .json。",
-            )
-        except Exception:
-            pass
 
 
-def _register_summary_gen_media_drop_targets(
-    summary_window: tk.Toplevel, content_root: tk.Misc | None
-):
-    """注册摘要窗拖放：``.mp4``（审阅裁剪/排序后拼接）加水印成片；图片转 webp 封面；PDF 存为 slide。"""
-    if not (_TK_DND_AVAILABLE and summary_window):
-        return
-    if not callable(getattr(summary_window, "drop_target_register", None)):
-        return
-
-    def _drop(ev, sw=summary_window):
-        master = getattr(ev, "widget", None) or sw
-        paths = _dnd_normalize_file_paths(master, getattr(ev, "data", None))
-        if not paths:
-            return
-        buf = getattr(sw, "_accumulated_drop_paths", None)
-        if not isinstance(buf, list):
-            buf = []
-        buf.extend(paths)
-        setattr(sw, "_accumulated_drop_paths", buf)
-        aid = getattr(sw, "_accumulated_drop_after_id", None)
-        if aid:
-            try:
-                sw.after_cancel(aid)
-            except tk.TclError:
-                pass
-        sw._accumulated_drop_after_id = sw.after(
-            180, lambda s=sw: _flush_accumulated_summary_drop(s)
-        )
-
-    def _bind_one(w: tk.Misc):
-        try:
-            w.drop_target_register(DND_FILES)
-            w.dnd_bind("<<Drop>>", _drop)
-        except (tk.TclError, AttributeError, Exception):
-            pass
-
-    _bind_one(summary_window)
-    if content_root is not None:
-        _bind_one(content_root)
-
-        def _walk_children(w: tk.Misc):
-            try:
-                for ch in w.winfo_children():
-                    _bind_one(ch)
-                    _walk_children(ch)
-            except tk.TclError:
-                pass
-
-        _walk_children(content_root)
 
 
-def _register_summary_gen_media_paste_bindings(
-    summary_window: tk.Toplevel, content_root: tk.Misc | None
-):
-    """Ctrl+V：粘贴媒体（mp4 / 图片 / PDF）或场景 JSON 文本。"""
-
-    def _paste_target_is_text(widget) -> bool:
-        if widget is None:
-            return False
-        try:
-            cls = widget.winfo_class()
-        except tk.TclError:
-            return False
-        return cls in ("Entry", "TEntry", "Text", "TCombobox", "Spinbox", "TSpinbox")
-
-    def _on_paste_media(event=None):
-        widget = getattr(event, "widget", None)
-        if not _paste_target_is_text(widget):
-            try:
-                widget = summary_window.focus_get()
-            except tk.TclError:
-                widget = None
-        if _paste_target_is_text(widget):
-            return None
-        _on_summary_paste_media_from_clipboard(summary_window)
-        return "break"
-
-    paste_seqs = ("<Control-v>", "<Control-V>")
-
-    def _bind_paste_subtree(widget):
-        for seq in paste_seqs:
-            widget.bind(seq, _on_paste_media, add="+")
-        for ch in widget.winfo_children():
-            _bind_paste_subtree(ch)
-
-    if not getattr(summary_window, "_summary_paste_root_bound", False):
-        for seq in paste_seqs:
-            summary_window.bind(seq, _on_paste_media)
-        summary_window._summary_paste_root_bound = True
-    if content_root is not None:
-        _bind_paste_subtree(content_root)
 
 
-def _on_summary_paste_media_from_clipboard(summary_window: tk.Toplevel) -> None:
-    """粘贴：资源管理器复制的文件，或剪贴板位图 → 与拖放相同。"""
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-
-    file_paths = _read_clipboard_file_paths()
-    mp4_paths = [p for p in file_paths if p.lower().endswith(".mp4")]
-    image_path = next(
-        (p for p in file_paths if _is_summary_image_file_path(p)),
-        None,
-    )
-
-    if mp4_paths:
-        _on_summary_mp4_watermark_drop(
-            None, summary_window, mp4_paths=mp4_paths
-        )
-        return
-    if image_path:
-        _start_summary_cover_webp_save(image_path, summary_window, ctx)
-        return
-    json_path = next(
-        (p for p in file_paths if _is_summary_scene_json_file_path(p)),
-        None,
-    )
-    if json_path:
-        _start_summary_scene_content_json_import(
-            summary_window, ctx, json_path=json_path
-        )
-        return
-    if _try_paste_scene_content_json_from_clipboard(summary_window, ctx):
-        return
-    _on_summary_paste_image_from_clipboard(summary_window)
 
 
-def _on_summary_gen_media_drop(event, summary_window: tk.Toplevel):
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-    master = getattr(event, "widget", None) or summary_window
-    paths = _dnd_normalize_file_paths(
-        master, getattr(event, "data", None), allow_duplicates=True
-    )
-    mp4_paths: list[str] = []
-    image_in = None
-    pdf_in = None
-    json_in = None
-    for p in paths:
-        low = p.lower()
-        if low.endswith(".mp4"):
-            mp4_paths.append(p)
-        elif _is_summary_image_file_path(p) and image_in is None:
-            image_in = p
-        elif _is_summary_pdf_file_path(p) and pdf_in is None:
-            pdf_in = p
-        elif _is_summary_scene_json_file_path(p) and json_in is None:
-            json_in = p
-    if mp4_paths:
-        _on_summary_mp4_watermark_drop(event, summary_window, mp4_paths=mp4_paths)
-    elif image_in:
-        _start_summary_cover_webp_save(image_in, summary_window, ctx)
-    elif pdf_in:
-        _start_summary_slide_pdf_save(pdf_in, summary_window, ctx)
-    elif json_in:
-        _start_summary_scene_content_json_import(
-            summary_window, ctx, json_path=json_in
-        )
-    else:
-        try:
-            show_auto_close_popup(
-                summary_window,
-                "拖放",
-                "请拖入 .mp4、图片、.pdf 幻灯片或场景 .json。",
-            )
-        except Exception:
-            pass
 
 
-def _on_summary_paste_image_from_clipboard(summary_window: tk.Toplevel) -> bool:
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return False
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return False
-    tmp_png = ""
-    try:
-        from PIL import ImageGrab
-
-        im = ImageGrab.grabclipboard()
-        if im is None:
-            return False
-        pid = getattr(mgr, "pid", "") or "yt_img"
-        os.makedirs(config.TEMP_PATH_BASE or ".", exist_ok=True)
-        tmp_png = config.get_temp_file(pid, "png")
-        if hasattr(im, "save"):
-            im.save(tmp_png, format="PNG")
-        else:
-            return False
-    except Exception:
-        return False
-    _start_summary_cover_webp_save(tmp_png, summary_window, ctx, cleanup_source=True)
-    return True
 
 
 def _refresh_summary_window_title(
@@ -2031,23 +1632,6 @@ def _write_channel_list_json_file(list_path: str, data) -> None:
     config.write_channel_list_json(list_path, data)
 
 
-def _apply_titles_to_scene_content_first_entry(video_detail: dict, title: str) -> bool:
-    """若已有 scene_content，将首条 ``caption`` 同步为给定标题。"""
-    vt = (title or "").strip()
-    if not vt or not isinstance(video_detail, dict):
-        return False
-    sc = video_detail.get("scene_content")
-    if not isinstance(sc, list) or not sc or not isinstance(sc[0], dict):
-        return False
-    first = copy.deepcopy(sc[0])
-    project_manager.normalize_scene_content_item_for_workflow(first)
-    first["caption"] = vt
-    first.pop("title", None)
-    first.pop("Title", None)
-    sc = list(sc)
-    sc[0] = first
-    video_detail["scene_content"] = sc
-    return True
 
 
 def _title_from_cover_image_path(image_path: str) -> str:
@@ -2107,14 +1691,6 @@ def _cover_title_preset_options(
     return options
 
 
-def _cover_save_default_video_title(
-    video_detail: dict,
-    *,
-    image_path: str = "",
-) -> str:
-    """封面前对话框默认：保持故事原名。"""
-    _ = image_path
-    return _cover_save_story_title(video_detail)
 
 
 def _apply_video_title_before_cover_save(
@@ -2317,7 +1893,6 @@ def save_pil_image_to_cover_array(
     Returns ``(ok, dest_abs, error_msg)``.
     """
     import tempfile
-    from PIL import Image
 
     if not isinstance(video_detail, dict):
         return False, "", "invalid video_detail"
@@ -2489,125 +2064,8 @@ def accept_summary_cover_image(
     return True, "封面保存中…"
 
 
-def _start_summary_cover_webp_save(
-    image_path: str,
-    summary_window: tk.Toplevel,
-    ctx: dict,
-    *,
-    cleanup_source: bool = False,
-):
-    """图片：加水印转 webp 写入 gen_video（拖放 / 粘贴 — 含确认弹窗）。"""
-    accept_summary_cover_image(
-        image_path,
-        summary_window,
-        ctx,
-        interactive=True,
-        async_ui=True,
-        refresh_ui=True,
-        cleanup_source=cleanup_source,
-    )
 
 
-def _start_summary_slide_pdf_save(
-    pdf_path: str,
-    summary_window: tk.Toplevel,
-    ctx: dict,
-    *,
-    cleanup_source: bool = False,
-):
-    """PDF 幻灯片：复制到 gen_video 并写入 video_detail['slide']。"""
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-    if not pdf_path or not os.path.isfile(pdf_path):
-        return
-
-    par = summary_window if summary_window.winfo_exists() else (
-        getattr(mgr, "root", None) or summary_window.winfo_toplevel()
-    )
-    title_choice = _ask_video_title_before_cover_save_dialog(
-        par, vd, image_path=pdf_path
-    )
-    if title_choice is None:
-        if cleanup_source and pdf_path and os.path.isfile(pdf_path):
-            try:
-                safe_remove(pdf_path)
-            except Exception:
-                pass
-        return
-
-    if not title_choice.get("skip_title_update"):
-        ch_path = getattr(mgr, "channel_path", "") or ""
-        _apply_video_title_before_cover_save(
-            vd,
-            video_title=title_choice.get("video_title", ""),
-            channel_path=ch_path,
-        )
-    if _persist_channel_videos(mgr):
-        rfn_title = ctx.get("refresh_title_fields") if isinstance(ctx, dict) else None
-        if callable(rfn_title):
-            try:
-                rfn_title()
-            except Exception:
-                _refresh_summary_window_title(summary_window, vd)
-        else:
-            _refresh_summary_window_title(summary_window, vd)
-        refresh_tree = ctx.get("refresh_channel_tree") if isinstance(ctx, dict) else None
-        if callable(refresh_tree):
-            try:
-                refresh_tree()
-            except Exception:
-                pass
-
-    gen_dir = getattr(config, "INPUT_MEDIA_GEN_VIDEO_PATH", "") or ""
-    dest_name = _gen_video_slide_pdf_dest_filename(vd)
-
-    def _worker():
-        out_ok = ""
-        err_msg = ""
-        try:
-            os.makedirs(gen_dir, exist_ok=True)
-            dest_abs = os.path.join(gen_dir, dest_name)
-            safe_copy_overwrite(pdf_path, dest_abs)
-            out_ok = os.path.abspath(dest_abs)
-        except Exception as ex:
-            err_msg = str(ex)
-        finally:
-            if cleanup_source and pdf_path and os.path.isfile(pdf_path):
-                try:
-                    safe_remove(pdf_path)
-                except Exception:
-                    pass
-
-        root = getattr(mgr, "root", None) or summary_window.winfo_toplevel()
-
-        def _done_ui():
-            par = summary_window if summary_window.winfo_exists() else root
-            if out_ok:
-                vd[GEN_VIDEO_SLIDE_KEY] = out_ok
-                if _persist_channel_videos(mgr):
-                    rfn_feat = ctx.get("refresh_feature_media_row") if isinstance(ctx, dict) else None
-                    if callable(rfn_feat):
-                        try:
-                            rfn_feat()
-                        except Exception:
-                            pass
-                    show_auto_close_popup(
-                        par,
-                        "幻灯片已保存",
-                        f"PDF 已复制到 gen_video 并记录为 slide：\n{out_ok}",
-                    )
-                else:
-                    show_auto_close_popup(
-                        par, "保存失败", "PDF 已复制但写入频道列表失败。", kind="error"
-                    )
-            elif err_msg:
-                show_auto_close_popup(par, "保存失败", err_msg, kind="error")
-
-        root.after(0, _done_ui)
-
-    threading.Thread(target=_worker, daemon=True).start()
 
 
 def schedule_summary_gen_video_clip_review(
@@ -2732,97 +2190,8 @@ def _run_summary_gen_video_clip_review(
     )
 
 
-def _on_summary_reopen_gen_video_clip_review(summary_window: tk.Toplevel) -> None:
-    """从已保存的片段配置重新打开审阅窗并生成成片。"""
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-    segments = _get_gen_video_clip_segments(vd)
-    if not segments:
-        messagebox.showinfo(
-            "审阅片段",
-            "尚无场景 clip（workflow.grok_video_results）。\n"
-            "请先 grv → grvc 下载各场景 video，或拖入 MP4 完成审阅。",
-            parent=summary_window,
-        )
-        return
-    missing = [
-        s["path"] for s in segments
-        if not os.path.isfile(s.get("path", ""))
-    ]
-    if missing:
-        preview = "\n".join(os.path.basename(p) for p in missing[:6])
-        extra = f"\n…等共 {len(missing)} 个" if len(missing) > 6 else ""
-        if not messagebox.askyesno(
-            "源文件缺失",
-            f"有 {len(missing)} 个片段源文件已不存在，审阅窗将跳过它们：\n{preview}{extra}\n\n是否继续？",
-            parent=summary_window,
-        ):
-            return
-    _run_summary_gen_video_clip_review(
-        summary_window,
-        mgr=mgr,
-        vd=vd,
-        ctx=ctx,
-        initial_segments=segments,
-    )
 
 
-def _on_summary_mp4_watermark_drop(
-    event,
-    summary_window: tk.Toplevel,
-    *,
-    mp4_path: str | None = None,
-    mp4_paths: list[str] | None = None,
-):
-    ctx = getattr(summary_window, "_summary_drop_ctx", None)
-    if not isinstance(ctx, dict):
-        return
-    mgr = ctx.get("mgr")
-    vd = ctx.get("vd")
-    if mgr is None or not isinstance(vd, dict):
-        return
-
-    paths: list[str] = []
-    if mp4_paths:
-        paths = _collect_unique_file_paths(
-            [
-                p for p in mp4_paths
-                if (p or "").strip() and p.lower().endswith(".mp4")
-            ],
-            label="审阅 MP4",
-            allow_duplicates=True,
-        )
-    elif (mp4_path or "").strip():
-        p = os.path.normpath(mp4_path.strip())
-        if os.path.isfile(p) and p.lower().endswith(".mp4"):
-            paths = [p]
-    if not paths:
-        master = getattr(event, "widget", None) or summary_window
-        paths = [
-            p for p in _dnd_normalize_file_paths(
-                master, getattr(event, "data", None), allow_duplicates=True
-            )
-            if p.lower().endswith(".mp4")
-        ]
-    if not paths:
-        try:
-            show_auto_close_popup(summary_window, "拖放", "请拖入 .mp4 文件。")
-        except Exception:
-            pass
-        return
-
-    _run_summary_gen_video_clip_review(
-        summary_window,
-        mgr=mgr,
-        vd=vd,
-        ctx=ctx,
-        mp4_paths=paths,
-    )
 
 
 def _treeview_item_tags_safe(tree, item):
@@ -3088,162 +2457,16 @@ def _read_host_clipboard_text(clipboard_host) -> str:
         return ""
 
 
-def _parse_json_object_from_clipboard_text(text: str):
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, (dict, list)) else None
 
 
-def _scene_json_dedupe_key(data: dict) -> str:
-    try:
-        return json.dumps(data, ensure_ascii=False, sort_keys=True)
-    except (TypeError, ValueError):
-        return repr(data)
 
 
-def program_clipboard_sync_system_clipboard_item(
-    clipboard_host,
-    *,
-    channel_path: str = "",
-) -> str | None:
-    """系统剪贴板有内容且与 program 剪贴板最后一条不同时，追加为 ``system_clipboard`` 条目。"""
-    text = _read_host_clipboard_text(clipboard_host).strip()
-    if not text:
-        return None
-    data = _load_program_clipboard_data()
-    items = data.get("items", []) or []
-    if items and isinstance(items[-1], dict):
-        if (items[-1].get("content") or "").strip() == text:
-            return None
-    return program_clipboard_append_item(text, "system_clipboard", channel_path=channel_path)
 
 
-def ask_cross_channel_clipboard_pick(
-    parent,
-    clipboard_host,
-    channel_path: str = "",
-) -> dict | None:
-    """全频道剪贴板：首项为 Windows 系统剪贴板，其余为 ``program_clipboard.json`` 条目。
-
-    返回可写入 scene_content 的 JSON 对象；取消或无效则返回 None。
-    """
-    entries: list[tuple[str, dict | None, str]] = []
-    choices: list[tuple[str, str]] = []
-
-    sys_text = _read_host_clipboard_text(clipboard_host).strip()
-    if sys_text:
-        sys_parsed = _parse_json_object_from_clipboard_text(sys_text)
-        pv = (sys_text[:48] + "…") if len(sys_text) > 48 else sys_text
-        pv = pv.replace("\n", " ")
-        lbl = f"【Windows 系统剪贴板】 {pv}"
-        if not sys_parsed:
-            lbl += " （非 JSON 对象）"
-        choices.append(("__windows__", lbl))
-        entries.append(("__windows__", sys_parsed, sys_text))
-
-    data = _load_program_clipboard_data()
-    items = _dedupe_program_clipboard_items_by_preview(
-        [x for x in data.get("items", []) if isinstance(x, dict)]
-    )
-    for it in reversed(items):
-        content = (it.get("content") or "").strip()
-        if not content:
-            continue
-        eid = str(it.get("id") or "").strip() or f"item_{len(entries)}"
-        parsed = _parse_json_object_from_clipboard_text(content)
-        src = (it.get("source") or "")[:20]
-        pv = (it.get("preview") or content[:44]).replace("\n", " ")
-        lbl = f"[{src}] {pv}…"
-        if not parsed:
-            lbl += " （非 JSON 对象/数组）"
-        key = f"prog:{eid}"
-        choices.append((key, lbl))
-        entries.append((key, parsed, content))
-
-    if not choices:
-        show_auto_close_popup(
-            parent,
-            "全频道剪贴板",
-            f"无可用条目。\n文件: {_program_clipboard_file()}",
-        )
-        return None
-
-    picked = askchoice("全频道剪贴板", choices, parent=parent)
-    if not picked:
-        return None
-    mode = picked[1]
-    for key, parsed, _raw in entries:
-        if key != mode:
-            continue
-        if parsed:
-            return copy.deepcopy(parsed)
-        messagebox.showwarning(
-            "无效 Scene JSON",
-            "所选内容须为 JSON 对象或数组，才能用于 scene_content 等后续操作。",
-            parent=parent,
-        )
-        return None
-    return None
 
 
-def open_or_refresh_program_clipboard_manager(
-    parent,
-    clipboard_host,
-    *,
-    select_last: bool = False,
-    on_pick=None,
-):
-    """打开或刷新全 program 剪贴板管理窗（列表 + 快捷键）。
-
-    on_pick: 若提供 ``callable(str)``，Enter 仅回调内容（用于填入对话框等），不弹全文窗、不写系统剪贴板。
-    """
-    global _program_clipboard_manager_window
-    win = _program_clipboard_manager_window
-    if win is not None:
-        try:
-            if win.winfo_exists():
-                win.set_on_pick(on_pick)
-                win.refresh(select_last=select_last)
-                win.lift()
-                win.deiconify()
-                win.after(10, lambda: win.listbox.focus_set())
-                return win
-        except tk.TclError:
-            _program_clipboard_manager_window = None
-    nw = ChannelClipboardManagerWindow(
-        parent, clipboard_host, select_last=select_last, on_pick=on_pick
-    )
-    _program_clipboard_manager_window = nw
-
-    def on_destroy(event):
-        global _program_clipboard_manager_window
-        if event.widget is nw and _program_clipboard_manager_window is nw:
-            _program_clipboard_manager_window = None
-
-    nw.bind("<Destroy>", on_destroy)
-    return nw
 
 
-def open_or_refresh_channel_clipboard_manager(
-    parent,
-    channel_path: str,
-    clipboard_host,
-    *,
-    select_last: bool = False,
-    on_pick=None,
-):
-    """兼容旧签名：``channel_path`` 已忽略，剪贴板为 ``BASE_AIAGENT_PATH`` 下全局共享。"""
-    return open_or_refresh_program_clipboard_manager(
-        parent,
-        clipboard_host,
-        select_last=select_last,
-        on_pick=on_pick,
-    )
 
 
 class ChannelClipboardManagerWindow(tk.Toplevel):
@@ -3301,9 +2524,6 @@ class ChannelClipboardManagerWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.listbox.focus_set()
 
-    def set_on_pick(self, on_pick):
-        self.on_pick = on_pick
-        self._sync_pick_ui()
 
     def _sync_pick_ui(self):
         if self.on_pick is not None:
@@ -3914,44 +3134,6 @@ def dedupe_channel_video_list(videos: list) -> list:
     return list(by_key.values())
 
 
-def _topic_split_list_find_pid_for_channel(
-    channel_path: str,
-    *,
-    preferred_topic_category: str,
-    topic_categories,
-    pid: str,
-):
-    """在频道 ``list_by_topic/<主题>.json`` 分表中查找 ``pid``；优先 ``preferred_topic_category``，再遍历 ``topic_categories``。"""
-    pid = (pid or "").strip()
-    if not pid or not channel_path:
-        return None, None
-    ordered = []
-    pt = (preferred_topic_category or "").strip()
-    if pt:
-        ordered.append(pt)
-    for tc in topic_categories or []:
-        c = (tc or "").strip()
-        if c and c not in ordered:
-            ordered.append(c)
-    seen_paths = set()
-    for tc in ordered:
-        path = _topic_category_program_list_path(channel_path, tc)
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
-        if not os.path.isfile(path):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                arr = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(arr, list):
-            continue
-        for item in arr:
-            if _list_json_item_matches_pid(item, pid):
-                return tc, path
-    return None, None
 
 
 def _is_viewing_topic_category_program_list(
@@ -3990,97 +3172,6 @@ def _upsert_topic_category_program_list_row(channel_path: str, topic_category: s
     return path
 
 
-def _clone_channel_video_for_new_project(base: dict, selected_config: dict) -> dict:
-    """基于当前列表项生成新条目：``id`` = 项目 pid，不继承源 ``url`` / ``upload_date``（发布后只写 ``url``）；源链接记入 ``cloned_from_*``。"""
-    if not isinstance(base, dict):
-        raise ValueError("base 无效")
-    if not isinstance(selected_config, dict):
-        raise ValueError("selected_config 无效")
-    pid = (selected_config.get("pid") or "").strip()
-    if not pid:
-        raise ValueError("缺少项目 pid")
-    clone = copy.deepcopy(base)
-    clone["id"] = pid
-    clone.pop("gen_video_stem", None)
-    clone.pop("video_title", None)
-    lang = selected_config.get("language")
-    if lang:
-        clone["language"] = lang
-    if "scene_content" in selected_config:
-        clone["scene_content"] = copy.deepcopy(selected_config["scene_content"])
-    if "analyzed_content" in selected_config:
-        clone["analyzed_content"] = copy.deepcopy(selected_config["analyzed_content"])
-    if "topic_category" in selected_config:
-        tc = selected_config.get("topic_category")
-        clone["topic_category"] = tc if tc else None
-    if "topic_subtype" in selected_config:
-        clone["topic_subtype"] = selected_config.get("topic_subtype")
-    if "tags" in selected_config:
-        tg = selected_config.get("tags")
-        if tg:
-            clone["tags"] = copy.deepcopy(tg)
-        else:
-            clone.pop("tags", None)
-    for k in (
-        "url",
-        "upload_date",
-        "view_count",
-        "duration",
-        "video_path",
-        "audio_path",
-        "transcribed_file",
-        "captions",
-        "publish",
-        "create_date",
-        "content",
-        "summary",
-        "playlist_id",
-        "playlist_index",
-        "thumb_url",
-        "youtube_channel_id",
-        "youtube_channel_name",
-        "youtube_channel_thumbnail",
-        "youtube_source_id",
-        "youtube_watch_url",
-        "published_watch_url",
-    ):
-        clone.pop(k, None)
-    clone.pop("status", None)
-    clone.pop("project_id", None)
-    clone.pop("project_pid", None)
-    clone.pop("pid", None)
-    clone[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(
-        project_manager.export_profile_for_storage(copy.deepcopy(selected_config))
-    )
-    prof = clone.get(project_manager.PROJECT_PROFILE_KEY)
-    if isinstance(prof, dict):
-        old_vt = ""
-        base_prof = base.get(project_manager.PROJECT_PROFILE_KEY)
-        if isinstance(base_prof, dict):
-            old_vt = (base_prof.get("video_title") or "").strip()
-        new_vt = (prof.get("video_title") or "").strip()
-        if not new_vt:
-            lang = (selected_config.get("language") or clone.get("language") or "tw").strip()
-            new_vt = (
-                project_manager.title_from_scene_content(
-                    selected_config.get("scene_content")
-                )
-                or ""
-            ).strip()
-        if not new_vt:
-            new_vt = f"项目 {pid}"
-        if old_vt and new_vt == old_vt:
-            new_vt = f"{new_vt} ({pid})"
-        prof["video_title"] = new_vt
-    orig_id = (base.get("id") or "").strip()
-    if orig_id:
-        clone["cloned_from_id"] = orig_id
-    orig_url = (base.get("url") or "").strip()
-    if orig_url:
-        clone["cloned_from_url"] = orig_url
-    _sync_project_video_title_on_list_row(clone, selected_config)
-    _normalize_channel_list_item_for_storage(clone)
-    return clone
 
 
 def _video_detail_project_pid(vd) -> str:
@@ -4117,12 +3208,6 @@ def _find_cloned_project_pids_for_source(vd: dict, channel_videos: list) -> list
     return out
 
 
-def _linked_project_pids_for_video_detail(vd: dict, channel_videos: list | None) -> list[str]:
-    """本条已绑 pid，或从同源克隆行解析出的全部 pid（保持列表顺序）。"""
-    direct = _video_detail_project_pid(vd)
-    if direct:
-        return [direct]
-    return _find_cloned_project_pids_for_source(vd, channel_videos or [])
 
 
 def _list_row_index_for_pid(channel_videos: list, pid: str) -> int:
@@ -4292,24 +3377,6 @@ def _video_youtube_id(v):
     return ""
 
 
-def _video_id_present_in_url(v: dict) -> bool:
-    """外层 ``id`` 是否为 ``url`` 中的 YouTube 视频 id（源下载行 / 热门总表同行绑定项目）。
-
-    新建项目克隆行：``id`` 为 pid，``url`` 空或仅为发布后链接（pid 不在 url 中）→ False。
-    """
-    if not isinstance(v, dict):
-        return False
-    vid = (v.get("id") or "").strip()
-    if not vid:
-        return False
-    url = (v.get("url") or "").strip()
-    if not url:
-        return False
-    if re.search(rf"[?&]v={re.escape(vid)}(?:&|$)", url):
-        return True
-    if re.search(rf"youtu\.be/{re.escape(vid)}(?:[?&#/]|$)", url):
-        return True
-    return False
 
 
 def _should_update_upload_date(video: dict) -> bool:
@@ -4476,40 +3543,6 @@ def _open_feature_media_in_explorer(*preferred_files: str) -> None:
             subprocess.run(["xdg-open", gen_dir], check=False)
 
 
-def _copy_image_file_to_clipboard(parent, image_path: str) -> bool:
-    """将图片文件复制到 Windows 剪贴板（CF_DIB）。"""
-    from io import BytesIO
-
-    image_path = (image_path or "").strip()
-    if not image_path or not os.path.isfile(image_path):
-        messagebox.showwarning("提示", "图片文件不存在。", parent=parent)
-        return False
-    try:
-        import win32clipboard  # type: ignore
-        from PIL import Image
-
-        img = Image.open(image_path)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        output = BytesIO()
-        img.save(output, "BMP")
-        data = output.getvalue()[14:]
-        output.close()
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-        win32clipboard.CloseClipboard()
-        return True
-    except ImportError:
-        messagebox.showwarning(
-            "提示",
-            "复制图片到剪贴板需要 pywin32 与 Pillow。\n请运行: pip install pywin32",
-            parent=parent,
-        )
-        return False
-    except Exception as exc:
-        show_auto_close_popup(parent, "复制失败", str(exc), kind="error")
-        return False
 
 
 def _copy_file_to_clipboard_hdrop(parent, file_path: str) -> bool:
@@ -4546,69 +3579,8 @@ def _copy_file_to_clipboard_hdrop(parent, file_path: str) -> bool:
         return False
 
 
-def _collect_feature_media_clipboard_options(
-    video_detail: dict,
-) -> list[tuple[str, str, str]]:
-    """汇总可复制的成片媒体：(option_id, 按钮文案, 文件路径)。"""
-    if not isinstance(video_detail, dict):
-        return []
-    options: list[tuple[str, str, str]] = []
-    webp_p = _find_gen_video_webp_for_row(video_detail)
-    if webp_p:
-        options.append(
-            ("webp", f"封面图片 · {os.path.basename(webp_p)}", webp_p)
-        )
-    slide_p = _find_gen_video_slide_for_row(video_detail)
-    if slide_p:
-        options.append(
-            ("slide", f"幻灯片 PDF · {os.path.basename(slide_p)}", slide_p)
-        )
-    mp4_p = _find_gen_video_mp4_for_row(video_detail)
-    if mp4_p:
-        options.append(
-            ("mp4", f"成片视频 · {os.path.basename(mp4_p)}", mp4_p)
-        )
-    return options
 
 
-def _copy_feature_media_to_clipboard(parent, video_detail: dict) -> bool:
-    """复制封面/幻灯片/成片到剪贴板；多项时弹窗让用户选择。"""
-    options = _collect_feature_media_clipboard_options(video_detail)
-    if not options:
-        messagebox.showwarning(
-            "提示",
-            "尚无可复制的媒体。\n请拖入图片（封面）、PDF（幻灯片）或 MP4（成片）到本窗口。",
-            parent=parent,
-        )
-        return False
-
-    if len(options) == 1:
-        option_id, picked_label, file_path = options[0]
-    else:
-        picked = askchoice(
-            "封面复制",
-            [(oid, lbl) for oid, lbl, _ in options],
-            parent=parent,
-        )
-        if not picked:
-            return False
-        picked_id = picked[1] if isinstance(picked, (tuple, list)) else picked
-        match = next((o for o in options if o[0] == picked_id), None)
-        if not match:
-            return False
-        option_id, picked_label, file_path = match
-
-    if option_id == "webp":
-        ok = _copy_image_file_to_clipboard(parent, file_path)
-    else:
-        ok = _copy_file_to_clipboard_hdrop(parent, file_path)
-    if ok:
-        show_auto_close_popup(
-            parent,
-            "已复制",
-            f"已复制到剪贴板：\n{picked_label}",
-        )
-    return ok
 
 
 def _open_cover_image_for_row(parent, video_detail: dict) -> bool:
@@ -4662,260 +3634,22 @@ def _video_detail_can_create_project(vd: dict) -> bool:
     return _video_detail_has_scene_content(vd)
 
 
-def _scene_content_list_from_parsed(parsed) -> list | None:
-    if isinstance(parsed, list) and parsed:
-        items = [copy.deepcopy(x) for x in parsed if isinstance(x, dict)]
-        return items or None
-    if isinstance(parsed, dict):
-        return [copy.deepcopy(parsed)]
-    return None
 
 
-def _normalize_scene_content_list(scenes: list) -> list:
-    out: list = []
-    for item in scenes:
-        if not isinstance(item, dict):
-            continue
-        cp = copy.deepcopy(item)
-        project_manager.normalize_scene_content_item_for_workflow(cp)
-        out.append(cp)
-    return out
 
 
-def _read_scene_content_from_json_path(path: str) -> list | None:
-    path = (path or "").strip()
-    if not path or not os.path.isfile(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = f.read()
-        parsed = config.parse_json_from_text(raw)
-        return _scene_content_list_from_parsed(parsed)
-    except OSError:
-        return None
 
 
-def _apply_scene_content_import_to_video_detail(
-    video_detail: dict,
-    scenes: list,
-    mgr,
-    *,
-    refresh_tree_fn=None,
-    refresh_title_fn=None,
-) -> int:
-    normalized = _normalize_scene_content_list(scenes)
-    if not normalized or not isinstance(video_detail, dict):
-        return 0
-    video_detail["scene_content"] = normalized
-    ch_path = getattr(mgr, "channel_path", "") or ""
-    _normalize_channel_list_item_for_storage(video_detail, ch_path)
-    _persist_channel_videos(mgr)
-    if callable(refresh_tree_fn):
-        try:
-            refresh_tree_fn()
-        except Exception:
-            pass
-    if callable(refresh_title_fn):
-        try:
-            refresh_title_fn()
-        except Exception:
-            pass
-    return len(normalized)
 
 
-def _start_summary_scene_content_json_import(
-    summary_window: tk.Toplevel,
-    ctx: dict,
-    *,
-    json_path: str = "",
-    json_text: str = "",
-) -> bool:
-    scenes = None
-    if json_path:
-        scenes = _read_scene_content_from_json_path(json_path)
-    elif json_text:
-        parsed = config.parse_json_from_text(json_text)
-        scenes = _scene_content_list_from_parsed(parsed)
-    if not scenes:
-        try:
-            show_auto_close_popup(
-                summary_window,
-                "场景 JSON",
-                "无法解析为场景 JSON array（每项须为 object，含 speaking/caption 等字段）。",
-                kind="error",
-            )
-        except Exception:
-            pass
-        return False
-
-    vd = ctx.get("vd")
-    mgr = ctx.get("mgr")
-    if mgr is None or not isinstance(vd, dict):
-        return False
-
-    n = _apply_scene_content_import_to_video_detail(
-        vd,
-        scenes,
-        mgr,
-        refresh_tree_fn=ctx.get("refresh_channel_tree"),
-        refresh_title_fn=ctx.get("refresh_title_fields"),
-    )
-    rfn_feat = ctx.get("refresh_feature_media_row")
-    if callable(rfn_feat):
-        try:
-            rfn_feat()
-        except Exception:
-            pass
-    show_auto_close_popup(
-        summary_window,
-        "场景 JSON 已导入",
-        f"已写入 scene_content：{n} 个场景。",
-    )
-    return True
 
 
-def _try_paste_scene_content_json_from_clipboard(
-    summary_window: tk.Toplevel, ctx: dict
-) -> bool:
-    text = _read_host_clipboard_text(summary_window).strip()
-    if not text:
-        return False
-    head = text.lstrip()
-    if not (head.startswith("[") or head.startswith("{")):
-        return False
-    parsed = config.parse_json_from_text(text)
-    scenes = _scene_content_list_from_parsed(parsed)
-    if not scenes:
-        return False
-    return _start_summary_scene_content_json_import(
-        summary_window, ctx, json_text=text
-    )
 
 
-def _is_summary_scene_json_file_path(path: str) -> bool:
-    return (path or "").lower().endswith(".json")
 
 
-def _fill_prompt_picker_scroll_section(
-    parent: ttk.LabelFrame,
-    choices: list[tuple[str, str]],
-    *,
-    enabled: bool,
-    disabled_hint: str,
-    on_pick,
-) -> None:
-    """在 LabelFrame 内填充可滚动的提示词按钮列表。"""
-    if not enabled:
-        ttk.Label(
-            parent,
-            text=disabled_hint,
-            foreground="#888888",
-            justify=tk.CENTER,
-            wraplength=360,
-        ).pack(expand=True, pady=48, padx=12)
-        return
-
-    canvas = tk.Canvas(parent, highlightthickness=0, borderwidth=0)
-    scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
-    inner = ttk.Frame(canvas)
-    inner.bind(
-        "<Configure>",
-        lambda _e, c=canvas: c.configure(scrollregion=c.bbox("all")),
-    )
-    canvas.create_window((0, 0), window=inner, anchor=tk.NW)
-    canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def _on_mousewheel(event, c=canvas):
-        c.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
-    canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-    if not choices:
-        ttk.Label(inner, text="（未配置提示词）", foreground="#888888").pack(
-            anchor=tk.W, padx=8, pady=12
-        )
-        return
-
-    for lbl, tpl in choices:
-        def _make_cmd(label=lbl, template=tpl):
-            def _cmd():
-                on_pick(label, template)
-
-            return _cmd
-
-        ttk.Button(
-            inner,
-            text=lbl,
-            command=_make_cmd(),
-        ).pack(fill=tk.X, padx=4, pady=3, ipady=4)
 
 
-def show_image_slide_prompt_picker_dialog(
-    parent,
-    *,
-    slide_enabled: bool,
-    image_enabled: bool,
-    slide_path: str = "",
-    webp_path: str = "",
-    on_slide_pick,
-    on_image_pick,
-) -> None:
-    """双栏提示词选择窗：Slide（PDF）与 Image（封面）。"""
-    dlg = tk.Toplevel(parent)
-    dlg.title("拷贝提示词")
-    dlg.geometry("960x620")
-    dlg.minsize(720, 480)
-    dlg.transient(parent)
-    dlg.grab_set()
-    dlg.update_idletasks()
-    sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-    dlg.geometry(f"960x620+{(sw - 960) // 2}+{(sh - 620) // 2}")
-
-    outer = ttk.Frame(dlg, padding=12)
-    outer.pack(fill=tk.BOTH, expand=True)
-    ttk.Label(
-        outer,
-        text="选择提示词模板，点击即复制到剪贴板（含媒体路径与项目信息）。",
-        wraplength=900,
-    ).pack(anchor=tk.W, pady=(0, 10))
-
-    panes = ttk.Panedwindow(outer, orient=tk.HORIZONTAL)
-    panes.pack(fill=tk.BOTH, expand=True)
-
-    slide_title = "Slide · PDF 幻灯片分析"
-    if slide_path:
-        slide_title += f"\n（{os.path.basename(slide_path)}）"
-    slide_frame = ttk.LabelFrame(panes, text=slide_title, padding=8)
-    panes.add(slide_frame, weight=1)
-
-    image_title = "Image · 封面单图视频"
-    if webp_path:
-        image_title += f"\n（{os.path.basename(webp_path)}）"
-    image_frame = ttk.LabelFrame(panes, text=image_title, padding=8)
-    panes.add(image_frame, weight=1)
-
-    _fill_prompt_picker_scroll_section(
-        slide_frame,
-        config_prompt.SLIDE_ANALYSIS_PROMPT_CHOICES,
-        enabled=slide_enabled,
-        disabled_hint="尚无幻灯片 PDF。\n请先拖入 PDF 到摘要窗。",
-        on_pick=lambda lbl, tpl: (on_slide_pick(lbl, tpl), dlg.destroy()),
-    )
-    _fill_prompt_picker_scroll_section(
-        image_frame,
-        config_prompt.DIRECT_VIDEO_PROMPT_CHOICES,
-        enabled=image_enabled,
-        disabled_hint="尚无封面图片。\n请先拖入图片或 Ctrl+V 粘贴封面。",
-        on_pick=lambda lbl, tpl: (on_image_pick(lbl, tpl), dlg.destroy()),
-    )
-
-    btn_row = ttk.Frame(outer)
-    btn_row.pack(fill=tk.X, pady=(10, 0))
-    ttk.Button(btn_row, text="关闭", command=dlg.destroy).pack(side=tk.RIGHT)
-    dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
 
 
@@ -5379,7 +4113,6 @@ class MediaDownloader:
             return False
 
         # 4. 持续等待：同 session 内弹窗最多一次，避免频繁打扰
-        last_prompt_key = '_cookie_prompt_shown_at'
         while True:
             if os.path.exists(download_cookies):
                 print(f"🔄 在下载文件夹发现新的 cookies 文件: {download_cookies}")
@@ -5877,14 +4610,6 @@ class MediaDownloader:
         )
 
 
-    def find_video_basic(self, video_detail):
-        if not self.cookie_file:
-            return None
-
-        check_opts = self._get_ydl_opts_base(quiet=True, skip_download=True)
-        with yt_dlp.YoutubeDL(check_opts) as ydl:
-            info = ydl.extract_info(video_detail.get('url', ''), download=False)
-            return info
 
 
     def _find_caption_srt(self, download_prefix, target_lang):
@@ -6104,19 +4829,6 @@ class MediaDownloader:
                 return path
         return None
 
-    def pick_best_caption_language(self, all_languages):
-        """从可用语言中优先选中文，其次英文，否则返回 None"""
-        if not all_languages:
-            return None
-        zh_pattern = re.compile(r'^zh', re.I)  # zh, zh-CN, zh-TW, zh-Hans...
-        en_pattern = re.compile(r'^en', re.I)  # en, en-US, en-GB...
-        zh_langs = [l for l in all_languages if zh_pattern.match(l)]
-        en_langs = [l for l in all_languages if en_pattern.match(l)]
-        if zh_langs:
-            return zh_langs[0]
-        if en_langs:
-            return en_langs[0]
-        return None
 
     def download_audio_only(self, video_detail, sleep_interval=2):
         video_url = _normalize_youtube_watch_url(video_detail.get("url", ""))
@@ -6297,42 +5009,6 @@ class MediaDownloader:
             return None
 
 
-    def get_playlist_info(self, playlist_url):
-        """获取播放列表信息，不下载视频"""
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': True,  # 只提取基本信息，不下载
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(playlist_url, download=False)
-                
-                playlist_info = {
-                    'title': info.get('title', 'Unknown Playlist'),
-                    'description': info.get('description', ''),
-                    'video_count': info.get('playlist_count', 0),
-                    'videos': []
-                }
-                
-                if 'entries' in info:
-                    for entry in info['entries']:
-                        if entry:
-                            video_info = {
-                                'title': entry.get('title', 'Unknown Title'),
-                                'url': entry.get('url', ''),
-                                'duration': entry.get('duration', 0),
-                                'view_count': entry.get('view_count', 0),
-                                'uploader': entry.get('uploader', ''),
-                                'upload_date': entry.get('upload_date', '')
-                            }
-                            playlist_info['videos'].append(video_info)
-                
-                return playlist_info
-                
-            except Exception as e:
-                print(f"❌ 获取播放列表信息失败: {str(e)}")
-                return None
 
 
     def get_video_detail(self, video_url, channel_name='Unknown'):
@@ -6439,61 +5115,7 @@ class MediaDownloader:
         print(f"📺 频道名称: YouTubeChannel (fallback)")
         return "YouTubeChannel"
 
-    def _parse_relative_time_to_yyyymmdd(self, s):
-        """解析相对时间字符串为 YYYYMMDD。如 "1 day ago"=昨天, "2 weeks ago", "3 months ago"。
-        1天=24h, 1周=24*7, 1月≈30*24h。供 flat 抓取无 upload_date 时估算，download 时再更新精确值。"""
-        if not s or not isinstance(s, str):
-            return ''
-        s = s.strip().lower()
-        if not s:
-            return ''
-        # Unix 时间戳（秒）
-        if s.isdigit():
-            try:
-                t = datetime.fromtimestamp(int(s))
-                return t.strftime('%Y%m%d')
-            except (ValueError, OSError):
-                return ''
-        # 匹配 "X (second|minute|hour|day|week|month|year)(s)? ago" 或 "X 秒/分/时/天/周/月/年 前"
-        now = datetime.now()
-        m = re.search(r'(\d+)\s*(second|minute|hour|day|week|month|year|秒|分|时|天|周|月|年)s?\s*(ago|前)?', s, re.I)
-        if not m:
-            return ''
-        n = int(m.group(1))
-        unit = (m.group(2) or '').lower()
-        mul = {'second': 1/3600, 'minute': 1/60, 'hour': 1, 'day': 24, 'week': 24*7, 'month': 30*24, 'year': 365*24,
-               '秒': 1/3600, '分': 1/60, '时': 1, '天': 24, '周': 24*7, '月': 30*24, '年': 365*24}
-        if unit not in mul:
-            return ''
-        hours = n * mul[unit]
-        try:
-            from datetime import timedelta
-            t = now - timedelta(hours=hours)
-            return t.strftime('%Y%m%d')
-        except Exception:
-            return ''
 
-    def _entry_upload_date(self, entry):
-        """从 entry 提取 upload_date：优先 upload_date/release_timestamp，否则尝试解析相对时间字符串。"""
-        ud = (entry.get('upload_date') or entry.get('release_date') or '').strip()
-        if ud:
-            if len(ud) == 10 and '-' in ud:
-                return ud.replace('-', '')[:8]
-            if len(ud) >= 8 and ud.isdigit():
-                return ud[:8]
-        ts = entry.get('release_timestamp') or entry.get('timestamp')
-        if ts is not None:
-            try:
-                t = datetime.fromtimestamp(int(ts))
-                return t.strftime('%Y%m%d')
-            except (ValueError, OSError, TypeError):
-                pass
-        for v in (entry.get(k) for k in ('description', 'title') if entry.get(k)):
-            if isinstance(v, str) and ('ago' in v.lower() or '前' in v):
-                r = self._parse_relative_time_to_yyyymmdd(v)
-                if r:
-                    return r
-        return ''
 
     def fetch_channel_info_from_url(self, url):
         """从频道链接或视频链接解析出频道名和频道页 URL。供 YT文字/YT管理 创建新频道时共用。
@@ -7004,46 +5626,7 @@ class MediaDownloader:
         return response["id"]
 
 
-    def pick_best_caption_language(self, all_languages):
-        """优先选择中文，其次英文；若无则返回 None"""
-        if not all_languages:
-            return None
-        zh_langs = [l for l in all_languages if l and (l.startswith('zh') or l in ('zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW'))]
-        en_langs = [l for l in all_languages if l and l.startswith('en')]
-        if zh_langs:
-            return zh_langs[0]
-        if en_langs:
-            return en_langs[0]
-        return all_languages[0]
 
-    def try_download_caption_only(self, video_detail, target_lang):
-        """仅尝试下载字幕，不 fallback 到音频转录；成功返回路径，失败返回 None"""
-        if not target_lang or not self.cookie_file:
-            return None
-        video_url = video_detail.get('url', '')
-        if not video_url:
-            return None
-        download_prefix = self.youtube_dir + "/media/" + self.generate_video_prefix(video_detail)
-        ydl_opts = self._get_ydl_opts_base(
-            skip_download=True,
-            writesubtitles=True,
-            writeautomaticsub=True,
-            subtitleslangs=[target_lang],
-            subtitlesformat="srt",
-            outtmpl=download_prefix,
-            quiet=True,
-            no_warnings=True,
-        )
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
-            src_path = self._find_caption_srt(download_prefix, target_lang)
-            if src_path:
-                print(f"✅ 已下载字幕：语言 {target_lang}")
-                return src_path
-        except Exception as e:
-            print(f"⚠️ 字幕下载失败: {e}")
-        return None
 
 
 
@@ -7088,6 +5671,8 @@ class MediaGUIManager:
         
         self.llm_api_local = llm_api.LLMApi(llm_api.TEXT_MODEL)
         self.llm_api = llm_api.LLMApi()
+        self.llm_api_hard = llm_api.LLMApi(llm_api.MODEL_HARD)    # DeepSeek：难任务
+        self.llm_api_manual = llm_api.LLMApi(llm_api.MODEL_MANUAL)  # 最难：直接手动窗口
 
         # 创建YoutubeDownloader实例
         self.downloader = MediaDownloader(pid, self.youtube_dir, _dl_lang)
@@ -7295,62 +5880,6 @@ class MediaGUIManager:
         self._show_channel_videos_dialog()
 
 
-    def manage_topic_lists(self):
-        """打开 ``list_by_topic`` 里已按 topic_category 整理好的列表（无下载、无频道更新）。"""
-        self.downloader.language = "en" if self.language == "en" else "zh"
-        topic_dir = config.channel_list_by_topic_dir_abs(self.channel_path)
-        json_files = glob.glob(os.path.join(topic_dir, "*.json")) if os.path.isdir(topic_dir) else []
-        if not json_files:
-            messagebox.showinfo(
-                "主题列表",
-                f"还没有整理好的主题列表。\n{topic_dir}",
-                parent=self.root,
-            )
-            return
-
-        channel_data = []
-        for json_file in sorted(json_files):
-            filename = os.path.basename(json_file)
-            match = re.match(r"(.+?)\.json", filename)
-            if not match:
-                continue
-            video_count = 0
-            for encoding in ("utf-8", "gbk", "gb2312", "latin-1"):
-                try:
-                    with open(json_file, "r", encoding=encoding) as f:
-                        videos = json.load(f)
-                    video_count = len(videos) if isinstance(videos, list) else 0
-                    break
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    continue
-                except Exception as exc:
-                    print(f"❌ 读取主题列表失败: {exc}")
-                    break
-            channel_data.append({
-                "name": match.group(1),
-                "file": json_file,
-                "video_count": video_count,
-            })
-        if not channel_data:
-            messagebox.showwarning("提示", "未找到有效的主题列表", parent=self.root)
-            return
-
-        choices = []
-        choice_to_channel = {}
-        for channel in channel_data:
-            text = f"{channel['name']} ({channel['video_count']} 个视频)"
-            choices.append(text)
-            choice_to_channel[text] = channel
-        picked = askchoice("选择主题", choices, parent=self.root)
-        if not picked:
-            return
-        _, selected_choice = picked
-        channel = choice_to_channel.get(selected_choice)
-        if not channel:
-            return
-        if not self._load_channel_list_json_into_downloader(channel["file"]):
-            return
-        self._show_channel_videos_dialog()
 
 
     def _topic_subtype_filter_names(self) -> list:
@@ -7407,34 +5936,7 @@ class MediaGUIManager:
         return video_detail.get("analyzed_content")
 
 
-    def _youtube_story_llm_source_text(self, video_detail) -> str:
-        """Story 智能添加 / 生成的 LLM 输入原文。"""
-        if not isinstance(video_detail, dict):
-            return ""
-        scenes = video_detail.get("scene_content") or []
-        if not isinstance(scenes, list):
-            scenes = []
-        for item in scenes:
-            if not isinstance(item, dict):
-                continue
-            for key in ("story", "visual", "voiceover", "speaking"):
-                text = (item.get(key) or "").strip()
-                if text:
-                    return text
-        ac = video_detail.get("analyzed_content")
-        if ac.strip():
-            return ac.strip()
-        return (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
 
-    def _generate_youtube_story_summary_text(self, video_detail) -> str:
-        source = self._youtube_story_llm_source_text(video_detail)
-        if not source:
-            return ""
-        prompt = config_prompt.YOUTUBE_PUBLISH_DESCRIPTION_PROMPT.format(
-            language=config.llm_language_label(self.language)
-        )
-        result = self.llm_api_local.generate_text(prompt, source)
-        return config.chinese_convert(result or "", self.language).strip()
 
 
     def _combined_prompt_text_for_label(
@@ -7503,23 +6005,6 @@ class MediaGUIManager:
         )
         return lbl, prompt
 
-    def _notebooklm_prompt_text_for_label(
-        self,
-        video_detail: dict,
-        prompt_label: str,
-        *,
-        instruction: str = "",
-        content_override: str | None = None,
-        dialogue_mode: str = "",
-    ) -> tuple[str, str]:
-        """按频道 config 的提示 label 生成完整 prompt 文本。"""
-        return self._combined_prompt_text_for_label(
-            video_detail,
-            prompt_label,
-            instruction=instruction,
-            content_override=content_override,
-            dialogue_mode=dialogue_mode,
-        )
 
     def _generate_scene_content_from_notebooklm_prompt(
         self,
@@ -7546,7 +6031,7 @@ class MediaGUIManager:
         )
         if not (prompt or "").strip():
             return None
-        parsed = self.llm_api.generate_json(
+        parsed = self.llm_api_manual.generate_json(
             prompt, "", expect_list=True, attachment=(attachment or "").strip() or None
         )
         if isinstance(parsed, dict):
@@ -8089,149 +6574,8 @@ class MediaGUIManager:
         return bool(clip_body)
 
 
-    def _copy_image_prompt_instruction(
-        self,
-        *,
-        parent,
-        video_detail: dict,
-        story_raw: str,
-        main_character: str = "",
-        channel_path: str = "",
-        picked_label: str = "",
-        template: str = "",
-    ) -> bool:
-        """选择 Direct Video 指令模板并复制到剪贴板（单图 → 视频）。"""
-        if not (template or "").strip():
-            choices = config_prompt.DIRECT_VIDEO_PROMPT_CHOICES
-            if not choices:
-                show_auto_close_popup(
-                    parent, "Image Prompt", "未配置 image prompt 提示词。", kind="error"
-                )
-                return False
 
-            pick_labels = [lbl for lbl, _ in choices]
-            picked = askchoice("Image Prompt", pick_labels, parent=parent)
-            if not picked:
-                return False
-            picked_label = picked[1] if isinstance(picked, (tuple, list)) else picked
 
-            template = ""
-            for lbl, tpl in choices:
-                if lbl == picked_label:
-                    template = tpl
-                    break
-        if not (template or "").strip():
-            return False
-
-        entries = _parse_scene_json_list(story_raw)
-        clip_body = config_prompt.build_direct_video_clipbody(
-            instruction=template,
-            story_entries=entries,
-            main_character=(main_character or "").strip(),
-            visual_style=project_manager.LAST_VISUAL_STYLE,
-        )
-        _copy_text_to_clipboard(parent, clip_body)
-        if clip_body and (channel_path or "").strip():
-            channel_clipboard_append_item(
-                channel_path, clip_body, "direct_video_instruction"
-            )
-        show_auto_close_popup(parent, "Image Prompt", f"已拷贝到剪贴板：{picked_label}")
-        return bool(clip_body)
-
-    def _copy_slide_prompt_instruction(
-        self,
-        *,
-        parent,
-        video_detail: dict,
-        channel_path: str = "",
-        picked_label: str = "",
-        template: str = "",
-    ) -> bool:
-        """选择 Slide/PDF 分析指令模板并复制到剪贴板。"""
-        if not (template or "").strip():
-            choices = config_prompt.SLIDE_ANALYSIS_PROMPT_CHOICES
-            if not choices:
-                show_auto_close_popup(
-                    parent, "Slide Prompt", "未配置 slide 分析提示词。", kind="error"
-                )
-                return False
-
-            pick_labels = [lbl for lbl, _ in choices]
-            picked = askchoice("Slide Prompt", pick_labels, parent=parent)
-            if not picked:
-                return False
-            picked_label = picked[1] if isinstance(picked, (tuple, list)) else picked
-
-            template = ""
-            for lbl, tpl in choices:
-                if lbl == picked_label:
-                    template = tpl
-                    break
-        if not (template or "").strip():
-            return False
-
-        slide_path = _find_gen_video_slide_for_row(video_detail)
-        clip_body = config_prompt.build_slide_analysis_clipbody(
-            instruction=template,
-            slide_path=slide_path,
-            video_detail=video_detail,
-        )
-        _copy_text_to_clipboard(parent, clip_body)
-        if clip_body and (channel_path or "").strip():
-            channel_clipboard_append_item(
-                channel_path, clip_body, "slide_analysis_instruction"
-            )
-        hint = f"已拷贝到剪贴板：{picked_label}"
-        if not slide_path:
-            hint += "\n\n（提示：尚未拖入 PDF；可将 PDF 拖入本窗后 slide 路径会自动附带。）"
-        show_auto_close_popup(parent, "Slide Prompt", hint)
-        return bool(clip_body)
-
-    def _open_image_slide_prompt_picker(
-        self,
-        parent,
-        video_detail: dict,
-        *,
-        story_raw: str,
-        main_character: str,
-        channel_path: str,
-    ) -> None:
-        """打开双栏提示词选择窗（Slide / Image）。"""
-        webp_p = _find_gen_video_webp_for_row(video_detail)
-        slide_p = _find_gen_video_slide_for_row(video_detail)
-        has_webp = bool(webp_p)
-        has_slide = bool(slide_p)
-        if not has_webp and not has_slide:
-            messagebox.showwarning(
-                "提示",
-                "尚无封面图片或幻灯片 PDF。\n请先拖入图片或 PDF 到本窗口。",
-                parent=parent,
-            )
-            return
-
-        show_image_slide_prompt_picker_dialog(
-            parent,
-            slide_enabled=has_slide,
-            image_enabled=has_webp,
-            slide_path=slide_p,
-            webp_path=webp_p,
-            on_slide_pick=lambda lbl, tpl: self._copy_slide_prompt_instruction(
-                parent=parent,
-                video_detail=video_detail,
-                channel_path=channel_path,
-                picked_label=lbl,
-                template=tpl,
-            ),
-            on_image_pick=lambda lbl, tpl: self._copy_image_prompt_instruction(
-                parent=parent,
-                video_detail=video_detail,
-                story_raw=story_raw,
-                main_character=main_character,
-                channel_path=channel_path,
-                picked_label=lbl,
-                template=tpl,
-            ),
-        )
 
 
     def _show_scene_content_editor(
@@ -8963,8 +7307,6 @@ class MediaGUIManager:
             scene_ui["require_media_transcript"] = _require_media_transcript
 
             def _sync_material_widgets(*_args):
-                slide = (_find_gen_video_slide_for_row(video_detail) or "").strip()
-                series = "series" in (prompt_combo_var.get() or "").lower()
                 # PDF 一律一页一个场景，不再让人选。
                 pdf_layout_combo.pack_forget()
                 _paint_material_buttons()
@@ -9610,7 +7952,6 @@ class MediaGUIManager:
             dialogue_mode_var = scene_ui["dialogue_mode_var"]
             dialogue_mode_opts = scene_ui["dialogue_mode_opts"]
             _remember_pdf_source = scene_ui["remember_pdf_source"]
-            _pdf_layout_mode = scene_ui["pdf_layout_mode"]
             _scene_prompt_params = scene_ui["scene_prompt_params"]
             _pdf_instruction_for = scene_ui["pdf_instruction_for"]
             _pick_cover_image = scene_ui["pick_cover_image"]
@@ -9730,60 +8071,9 @@ class MediaGUIManager:
                         except (NameError, tk.TclError):
                             pass
 
-                    def _cycle_episode_choice():
-                        ids = _episode_ids_in_scenes(_scene_list_from_editor())
-                        cur = (_episode_choice[0] or "").strip()
-                        if not ids:
-                            _episode_choice[0] = ""
-                        elif _episode_choice_is_all(cur) or cur not in ids:
-                            _episode_choice[0] = ids[0]
-                        else:
-                            nxt = ids.index(cur) + 1
-                            _episode_choice[0] = "" if nxt >= len(ids) else ids[nxt]
-                        _scene_copy_index[0] = -1
-                        _sync_choice_buttons()
-                        _copy_selected_scenes_to_clipboard()
 
-                    def _selected_scene_payload() -> tuple[object, str] | None:
-                        filtered = _scenes_in_episode()
-                        if not filtered:
-                            return None
-                        ep_label = _episode_choice_label(_episode_choice[0])
-                        idx = _scene_copy_index[0]
-                        if idx < 0:
-                            payload = filtered
-                            if _episode_choice_is_all(_episode_choice[0]):
-                                msg = f"已拷贝全部 {len(filtered)} 个场景"
-                            else:
-                                msg = f"已拷贝第 {ep_label} 集的全部 {len(filtered)} 个场景"
-                            return payload, msg
-                        if idx >= len(filtered):
-                            return None
-                        if _episode_choice_is_all(_episode_choice[0]):
-                            msg = f"已拷贝第 {idx + 1} 个场景"
-                        else:
-                            msg = f"已拷贝第 {ep_label} 集的第 {idx + 1} 个场景"
-                        return filtered[idx], msg
 
-                    def _copy_selected_scenes_to_clipboard():
-                        picked = _selected_scene_payload()
-                        if not picked:
-                            return
-                        payload, msg = picked
-                        text = json.dumps(payload, ensure_ascii=False, indent=2)
-                        _copy_text_to_clipboard(dlg, text)
-                        show_auto_close_popup(dlg, "场景内容", msg)
 
-                    def _cycle_scene_copy_index():
-                        n = _scene_count()
-                        cur = _scene_copy_index[0]
-                        if cur < 0:
-                            _scene_copy_index[0] = 0 if n > 0 else -1
-                        else:
-                            nxt = cur + 1
-                            _scene_copy_index[0] = -1 if nxt >= n else nxt
-                        _sync_choice_buttons()
-                        _copy_selected_scenes_to_clipboard()
 
                     def _busy(btn):
                         try:
@@ -10292,10 +8582,10 @@ class MediaGUIManager:
                         dialogue_mode_var.set(matched)
                         return True, matched
 
-                def _set_instruction(value: str):
-                    instruction_tx.delete("1.0", tk.END)
-                    instruction_tx.insert("1.0", value)
-                    return True, "instruction set"
+                    def _set_instruction(value: str):
+                        instruction_tx.delete("1.0", tk.END)
+                        instruction_tx.insert("1.0", value)
+                        return True, "instruction set"
 
                     def _set_content(value: str):
                         tx.delete("1.0", tk.END)
@@ -10578,64 +8868,6 @@ class MediaGUIManager:
         messagebox.showwarning("错误", f"未知字段：{field}", parent=parent)
         return None
 
-    def _show_transcript_script_viewer(self, parent, video_detail: dict) -> None:
-        """只读展示转录原文（来自 transcribed_file，不可保存回列表）。"""
-        body = (config.read_transcript_text_from_video_detail(video_detail) or "").strip()
-        tf = (video_detail.get("transcribed_file") or "").strip()
-        if not body:
-            hint = f"\n\n文件：{tf}" if tf else ""
-            messagebox.showwarning(
-                "转录脚本",
-                f"无转录原文。请先下载并完成转录。{hint}",
-                parent=parent,
-            )
-            return
-
-        title = _youtube_row_display_title(video_detail) or "YouTube 视频"
-        top = tk.Toplevel(parent)
-        top.title("转录脚本 / Script")
-        top.minsize(560, 400)
-        top.transient(parent)
-        top.grab_set()
-
-        hdr = ttk.Frame(top, padding=(12, 10, 12, 0))
-        hdr.pack(fill=tk.X)
-        ttk.Label(
-            hdr,
-            text="转录原文（只读，来自 transcribed_file；不可在此保存）",
-            font=("Arial", 10),
-        ).pack(anchor=tk.W)
-        ttk.Label(hdr, text=title, wraplength=860, font=("Arial", 11, "bold")).pack(
-            anchor=tk.W, pady=(4, 2)
-        )
-        if tf:
-            ttk.Label(hdr, text=tf, wraplength=860, font=("Arial", 9)).pack(
-                anchor=tk.W, pady=(0, 8)
-            )
-
-        tx = scrolledtext.ScrolledText(
-            top, wrap=tk.WORD, width=100, height=30, font=("Consolas", 10)
-        )
-        tx.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-        tx.insert("1.0", body)
-        tx.configure(state=tk.DISABLED)
-        _copy_text_to_clipboard(top, body)
-
-        bf = ttk.Frame(top, padding=(12, 0, 12, 12))
-        bf.pack(fill=tk.X)
-
-        def _copy():
-            _copy_text_to_clipboard(top, body)
-
-        ttk.Button(bf, text="复制全文", command=_copy).pack(side=tk.LEFT)
-        ttk.Button(bf, text="关闭", command=top.destroy).pack(side=tk.RIGHT)
-
-        w, h = 900, 640
-        top.update_idletasks()
-        x = max(0, (top.winfo_screenwidth() - w) // 2)
-        y = max(0, (top.winfo_screenheight() - h) // 2)
-        top.geometry(f"{w}x{h}+{x}+{y}")
-        top.protocol("WM_DELETE_WINDOW", top.destroy)
 
 
     def check_video_status(self,video_detail):
@@ -10771,7 +9003,7 @@ class MediaGUIManager:
         prompt = self._format_analyze_prompt(video_detail)
         lang_label = config.llm_language_label(self.language)
         user_prompt = text_content if text_content else (f"YouTube URL: {url}" if url else " ")
-        rewritten = self.llm_api_local.generate_text(
+        rewritten = self.llm_api_hard.generate_text(
             prompt.format(url=url, language=lang_label),
             user_prompt,
         )
@@ -10803,7 +9035,7 @@ class MediaGUIManager:
         prompt = self._format_analyze_prompt(video_detail)
         lang_label = config.llm_language_label(self.language)
         user_prompt = text_content if text_content else f"YouTube URL: {url}"
-        rewritten = self.llm_api.generate_text(
+        rewritten = self.llm_api_hard.generate_text(
             prompt.format(language=lang_label, url=url),
             user_prompt,
         )
@@ -10927,7 +9159,7 @@ class MediaGUIManager:
             valid_content = config.read_transcript_text_from_video_detail(video_detail)
 
         # LLM API 调用在信号量保护下（已在上层 with 语句中）
-        result = self.llm_api_local.generate_json(
+        result = self.llm_api_hard.generate_json(
             config_prompt.GET_TOPIC_TYPES_COUNSELING_STORY_SYSTEM_PROMPT.format(language='Chinese', topic_choices=topic_choices), 
             valid_content,
             expect_list=False
@@ -11772,11 +10004,6 @@ class MediaGUIManager:
                 linked = _find_cloned_project_pids_for_source(vd, channel_videos)
                 if len(linked) == 1:
                     existing_pid = linked[0]
-            list_idx = -1
-            try:
-                list_idx = channel_videos.index(vd)
-            except ValueError:
-                pass
             list_path = (self.downloader.channel_list_json or "").strip()
 
             from project_manager import (
@@ -12431,20 +10658,6 @@ class MediaGUIManager:
 
                 show_auto_close_popup(summary_window, "成功", "名称、分析报告和场景内容已保存")
 
-            def _select_tree_row_for_key(target_key: str):
-                u = (target_key or "").strip()
-                if not u:
-                    return
-                try:
-                    for item in tree.get_children():
-                        t = _treeview_item_tags_safe(tree, item)
-                        if t and t[0] == u:
-                            tree.selection_set(item)
-                            tree.see(item)
-                            tree.focus(item)
-                            break
-                except tk.TclError:
-                    pass
 
             publish_info_var = tk.StringVar(value="发布: …")
 
@@ -13482,164 +11695,9 @@ class MediaGUIManager:
             show_auto_close_popup(dialog, "分组标签", "正在按分析内容分组，请稍等。")
 
 
-        def create_combo_project():
-            """把多选条目的 analyzed_content 收成一条新的组合分析，写入当前主题列表。"""
-            if not self.content_mode:
-                return
-            details = _unique_video_details_from_tree_selection()
-            usable = []
-            skipped = []
-            for vd in details:
-                text = (vd.get("analyzed_content") or "").strip()
-                title = _youtube_row_display_title(vd) or vd.get("id") or "未命名"
-                if text:
-                    usable.append((title, vd, text))
-                else:
-                    skipped.append(title)
-            if len(usable) < 2:
-                messagebox.showwarning(
-                    "合成项目",
-                    "请至少选择 2 条已经有分析内容（analyzed_content）的视频。",
-                    parent=dialog,
-                )
-                return
-            mode_pairs = [
-                (prompt, label)
-                for label, prompt in config_prompt.COMBO_ANALYZE_CHOICES
-                if (prompt or "").strip()
-            ]
-            picked = askchoice(
-                "合成方式",
-                [(prompt, label) for prompt, label in mode_pairs],
-                parent=dialog,
-            )
-            if not picked:
-                return
-            _mode_label, system_template = picked
-            lines = "\n".join(f"· {title}" for title, _, _ in usable)
-            extra = ""
-            if skipped:
-                extra = "\n\n以下条目没有分析内容，不会放进合成：\n" + "\n".join(
-                    f"· {name}" for name in skipped
-                )
-            if not messagebox.askyesno(
-                "合成项目",
-                f"方式：{_mode_label}\n"
-                f"将把下面 {len(usable)} 条收成一条新的组合分析，加到当前列表末尾。\n"
-                "场景和分集在打开这条之后，用场景里的 Series 提示再生成。\n\n"
-                f"{lines}{extra}",
-                parent=dialog,
-            ):
-                return
-
-            blocks = []
-            for i, (title, vd, text) in enumerate(usable, 1):
-                sub = (vd.get("topic_subtype") or "").strip()
-                blocks.append(
-                    f"=== {i}. {title}"
-                    + (f"\n子类型: {sub}" if sub else "")
-                    + f"\n{text}"
-                )
-            user_prompt = "\n\n".join(blocks)
-            lang_label = config.llm_language_label(self.language)
-            system_prompt = system_template.format(language=lang_label)
-            first = usable[0][1]
-
-            def work():
-                err = ""
-                parsed = None
-                try:
-                    parsed = self.llm_api_local.generate_json(
-                        system_prompt, user_prompt, expect_list=False
-                    )
-                except Exception as exc:
-                    err = str(exc)
-
-                def apply():
-                    if err:
-                        show_auto_close_popup(dialog, "合成失败", err, kind="error")
-                        return
-                    if not isinstance(parsed, dict):
-                        messagebox.showwarning(
-                            "合成项目", "模型没有返回可用的分析。", parent=dialog
-                        )
-                        return
-                    body = (parsed.get("analyzed_content") or "").strip()
-                    title = (parsed.get("title") or "").strip() or "组合分析"
-                    ignored_notes = []
-                    for item in parsed.get("ignored") or []:
-                        if isinstance(item, dict):
-                            idx = item.get("index")
-                            reason = (item.get("reason") or "").strip()
-                            name = ""
-                            try:
-                                name = usable[int(idx) - 1][0]
-                            except (TypeError, ValueError, IndexError):
-                                name = str(idx or "")
-                            ignored_notes.append(f"{name}：{reason}" if reason else name)
-                        elif str(item).strip():
-                            ignored_notes.append(str(item).strip())
-                    if not body:
-                        messagebox.showwarning(
-                            "合成项目", "模型没有写出 analyzed_content。", parent=dialog
-                        )
-                        return
-                    import uuid
-
-                    new_id = "combo_" + uuid.uuid4().hex[:12]
-                    tags = []
-                    seen_tags = set()
-                    for _, vd, _ in usable:
-                        raw_tags = vd.get("tags") or []
-                        if isinstance(raw_tags, str):
-                            raw_tags = [raw_tags]
-                        for tag in raw_tags:
-                            t = str(tag).strip()
-                            if t and t not in seen_tags:
-                                seen_tags.add(t)
-                                tags.append(t)
-                    row = {
-                        "id": new_id,
-                        "title": title,
-                        "channel": "组合",
-                        "analyzed_content": body,
-                        "topic_category": (first.get("topic_category") or "").strip(),
-                        "topic_subtype": (first.get("topic_subtype") or "").strip(),
-                        "tags": tags,
-                        "view_count": 0,
-                        "duration": 0,
-                        "upload_date": datetime.now().strftime("%Y%m%d"),
-                        "combo_mode": _mode_label,
-                        "combo_source_ids": [
-                            (vd.get("id") or "").strip() for _, vd, _ in usable if (vd.get("id") or "").strip()
-                        ],
-                    }
-                    self.downloader.channel_videos.append(row)
-                    try:
-                        _write_channel_list_json_file(
-                            self.downloader.channel_list_json,
-                            self.downloader.channel_videos,
-                        )
-                    except Exception as exc:
-                        self.downloader.channel_videos.pop()
-                        show_auto_close_popup(dialog, "写入失败", str(exc), kind="error")
-                        return
-                    populate_tree()
-                    done = f"方式：{_mode_label}\n已加入「{title}」。"
-                    if ignored_notes:
-                        done += "\n\n未纳入：\n" + "\n".join(ignored_notes)
-                    show_auto_close_popup(dialog, "已合成", done)
-
-                self.root.after(0, apply)
-
-            threading.Thread(target=work, daemon=True).start()
-            show_auto_close_popup(dialog, "合成项目", "正在综合所选分析，请稍等。")
-
-
         # 在所有函数定义后创建按钮
         if self.content_mode:
             ttk.Button(bottom_frame, text="分组标签", command=group_items_by_tag).pack(side=tk.LEFT, padx=5)
-            ttk.Button(bottom_frame, text="合成项目", command=create_combo_project).pack(side=tk.LEFT, padx=5)
         ttk.Button(bottom_frame, text="取消", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
 
         ttk.Button(bottom_frame, text="输出选择", command=export_selected_choices).pack(side=tk.RIGHT, padx=5)
