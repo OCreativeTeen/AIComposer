@@ -133,6 +133,27 @@ def send_video(
         raise RuntimeError(payload.get("description") or str(payload))
 
 
+
+def download_file(role: str, file_id: str, dest: str, *, timeout: int = 120) -> str:
+    """getFile + download a Telegram attachment to ``dest``."""
+    r = api_get(role, "getFile", params={"file_id": file_id}, timeout=30)
+    r.raise_for_status()
+    payload = r.json()
+    if not payload.get("ok"):
+        raise RuntimeError(payload.get("description") or str(payload))
+    file_path = (payload.get("result") or {}).get("file_path") or ""
+    if not file_path:
+        raise RuntimeError("getFile returned no file_path")
+    url = f"https://api.telegram.org/file/bot{token_for(role)}/{file_path}"
+    with requests.get(url, stream=True, timeout=timeout) as resp:
+        resp.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(1 << 16):
+                if chunk:
+                    f.write(chunk)
+    return dest
+
+
 def delete_webhook(role: str, *, drop_pending_updates: bool = False) -> None:
     """Clear webhook so getUpdates long-poll can work (ROLE_CLI only)."""
     if role != ROLE_CLI:

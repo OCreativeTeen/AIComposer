@@ -640,11 +640,23 @@ def run_cli_bot(handle_text=None, mode: str | None = None) -> int:
             chat = msg.get("chat") or {}
             chat_id = str(chat.get("id") or "").strip()
             text = (msg.get("text") or "").strip()
-            if not text:
-                continue
             if chat_id != allowed_chat:
-                print(f"[cli] ignore chat_id={chat_id}", flush=True)
+                if text or msg.get("photo") or msg.get("document"):
+                    print(f"[cli] ignore chat_id={chat_id}", flush=True)
                 continue
+            if not text:
+                # 图片 / 图片文件 -> 下载 -> grokprep（贴进 Grok Imagine，不提交）
+                from cli.grok_tg import image_file_from_message, save_telegram_attachment
+
+                att = image_file_from_message(msg)
+                if not att:
+                    continue
+                try:
+                    local = save_telegram_attachment(*att)
+                except Exception as exc:
+                    outbound.send(f"error\n图片下载失败: {exc}")
+                    continue
+                text = f'grokprep "{local}"'
             print(f"[cli] << {text}", flush=True)
             ok, reply = worker.submit(text)
             prefix = "ok" if ok else "error"

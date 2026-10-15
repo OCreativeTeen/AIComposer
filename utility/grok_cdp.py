@@ -1,0 +1,435 @@
+"""Grok in Chrome over CDP, for the manual LLM window's "CLI自动" button.
+
+Text:  grok.com chat -> paste prompt -> submit -> wait -> copy last response.
+Image: grok.com/imagine -> attach image + prompt -> submit -> wait -> fetch output image.
+
+Chrome connection reuses ``cli.browser_tasks`` (same approach as the CLI):
+connect over CDP on port 9222. When nothing answers on 9222 we launch Chrome
+the way the user does by hand:
+
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        --remote-debugging-port=9222
+        --user-data-dir="C:\\Users\\wenju\\AppData\\Local\\HermesChromeCDP"
+
+That user-data-dir already holds the profile logged in as bjtombj2023@gmail.com;
+we reuse it as is and never create or switch profiles here.
+
+Everything here is blocking; call it from a worker thread, never the Tk thread.
+Grok's DOM changes often: all selectors live in the constants below.
+"""
+from __future__ import annotations
+
+import base64
+import io
+import os
+import subprocess
+import time
+from pathlib import Path
+from typing import Callable, Optional
+
+import config
+
+CDP_PORT = int(getattr(config, "GROK_CDP_PORT", 9222) or 9222)
+CHROME_EXE = (getattr(config, "CHROME_EXE", "") or "").strip() or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+# Profile logged in as bjtombj2023@gmail.com lives in this user-data-dir (HermesChromeCDP).
+CHROME_USER_DATA_DIR = (getattr(config, "CHROME_CDP_USER_DATA_DIR", "") or "").strip() or os.path.join(
+    os.environ.get("LOCALAPPDATA") or r"C:\Users\wenju\AppData\Local", "HermesChromeCDP"
+)
+CHROME_LAUNCH_WAIT_S = 30.0
+
+GROK_CHAT_URL = "https://grok.com/"
+GROK_IMAGINE_URL = "https://grok.com/imagine"
+
+# ---- grok.com chat selectors (tried in order) ----
+# Chat input: ProseMirror contenteditable inside the chat-input box; older builds used a textarea.
+CHAT_INPUT_SELECTORS = (
+    'div[data-testid="chat-input"] div[contenteditable="true"]',
+    'form div.ProseMirror[contenteditable="true"]',
+    '[contenteditable="true"][aria-label]',
+    'form textarea',
+    'textarea',
+)
+# Send button (blue up arrow). Enter key is the fallback.
+CHAT_SUBMIT_SELECTORS = (
+    'button[data-testid="chat-submit"]',
+    'button[type="submit"]',
+    'button[aria-label="Submit"]',
+    'button[aria-label="提交"]',
+    'button[aria-label="Send"]',
+    'button[aria-label="发送"]',
+)
+# Visible while Grok is still streaming the answer.
+CHAT_STOP_SELECTORS = (
+    'button[aria-label="Stop model response"]',
+    'button[aria-label*="Stop"]',
+    'button[aria-label*="停止"]',
+)
+# One assistant reply bubble; the last match is the newest answer.
+CHAT_RESPONSE_SELECTORS = (
+    'div[id^="response-"] .message-bubble',
+    'div[id^="response-"]',
+    '.message-bubble',
+)
+# Copy icon: first button of the action row under a reply.
+CHAT_COPY_SELECTORS = (
+    'button[aria-label="Copy"]',
+    'button[aria-label="复制"]',
+    'button[aria-label*="Copy"]',
+    'button[aria-label*="复制"]',
+)
+# Logged-out grok.com: shows 登录/注册 and a "sign up to continue" card instead of answering.
+LOGGED_OUT_JS = """() => {
+  const t = (document.body && document.body.innerText) || '';
+  if (/注册以无缝继续|Sign up to continue|Sign in to continue/i.test(t)) return true;
+  return [...document.querySelectorAll('a[href*="sign-in"], a[href*="/login"], a[href*="accounts.x.ai"]')]
+    .some((a) => a.getBoundingClientRect().width > 0);
+}"""
+CHAT_TIMEOUT_S = 10 * 60
+CHAT_STABLE_POLLS = 3          # text unchanged this many polls in a row (and no stop button) = done
+CHAT_POLL_S = 1.5
+
+# ---- grok.com/imagine ----
+# Composer, file input and submit come from cli.browser_tasks (GROK_EDITOR_SEL, GROK_FILE_INPUT_SEL,
+# _GROK_FIND_SUBMIT_BUTTON_JS ...). Output image = biggest <img> outside the composer that was not
+# there before submit.
+IMAGINE_OUTPUT_IMAGES_JS = """() => {
+  const composer = document.querySelector('[data-testid="chat-input"]');
+  return [...document.querySelectorAll('img')].filter((img) => {
+    if (!img.src || (composer && composer.contains(img))) return false;
+    const r = img.getBoundingClientRect();
+    return r.width > 120 && r.height > 120 && img.complete && img.naturalWidth > 0;
+  }).sort((a, b) => {
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return rb.width * rb.height - ra.width * ra.height;
+  }).map((img) => img.currentSrc || img.src);
+}"""
+FETCH_AS_B64_JS = """async (src) => {
+  const r = await fetch(src, {credentials: 'include'});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const buf = new Uint8Array(await r.arrayBuffer());
+  let s = '';
+  for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return btoa(s);
+}"""
+IMAGINE_TIMEOUT_S = 6 * 60
+
+Status = Optional[Callable[[str], None]]
+
+
+def _bt():
+    from cli import browser_tasks
+    return browser_tasks
+
+
+def _say(status: Status, msg: str) -> None:
+    print(f"[grok_cdp] {msg}")
+    if status:
+        try:
+            status(msg)
+        except Exception:
+            pass
+
+
+def ensure_chrome(status: Status = None) -> int:
+    """Return the CDP port, launching Chrome with the HermesChromeCDP profile when 9222 is closed."""
+    bt = _bt()
+    if bt.cdp_ready(CDP_PORT):
+        return CDP_PORT
+    if not os.path.isfile(CHROME_EXE):
+        raise RuntimeError(f"找不到 Chrome: {CHROME_EXE}")
+    _say(status, f"启动 Chrome (端口 {CDP_PORT}) …")
+    subprocess.Popen(
+        [CHROME_EXE, f"--remote-debugging-port={CDP_PORT}", f"--user-data-dir={CHROME_USER_DATA_DIR}", GROK_CHAT_URL],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + CHROME_LAUNCH_WAIT_S
+    while time.monotonic() < deadline:
+        if bt.cdp_ready(CDP_PORT):
+            return CDP_PORT
+        time.sleep(1.0)
+    raise RuntimeError(
+        f"Chrome 端口 {CDP_PORT} 没有打开。如果 HermesChromeCDP 的 Chrome 已经开着但没带 "
+        "--remote-debugging-port=9222，请先关掉它再试。"
+    )
+
+
+def _first(page, selectors, *, visible=True):
+    for sel in selectors:
+        loc = page.locator(sel)
+        try:
+            n = loc.count()
+        except Exception:
+            continue
+        for i in range(n):
+            item = loc.nth(i)
+            try:
+                if not visible or item.is_visible():
+                    return item
+            except Exception:
+                continue
+    return None
+
+
+def _page_for(ctx, url_part: str, exclude: str = ""):
+    for p in ctx.pages:
+        u = p.url or ""
+        if url_part in u and not (exclude and exclude in u):
+            return p
+    return ctx.new_page()
+
+
+def _bubble_count(page) -> int:
+    for sel in CHAT_RESPONSE_SELECTORS:
+        try:
+            n = page.locator(sel).count()
+        except Exception:
+            n = 0
+        if n:
+            return n
+    return 0
+
+
+def _last_response_text(page, min_count: int) -> str:
+    """Text of the newest bubble, only once there are at least ``min_count`` bubbles
+    (user prompt bubble + Grok reply bubble), so the user's own message is never returned."""
+    for sel in CHAT_RESPONSE_SELECTORS:
+        loc = page.locator(sel)
+        try:
+            n = loc.count()
+            if n:
+                if n < min_count:
+                    return ""
+                return (loc.nth(n - 1).inner_text(timeout=3000) or "").strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _logged_out(page) -> bool:
+    try:
+        return bool(page.evaluate(LOGGED_OUT_JS))
+    except Exception:
+        return False
+
+
+def _stop_visible(page) -> bool:
+    return _first(page, CHAT_STOP_SELECTORS) is not None
+
+
+def _copy_last_response(page) -> str:
+    """Click the copy icon under the newest reply; return clipboard text or ''."""
+    bt = _bt()
+    sentinel = f"__grok_cdp_{time.time()}__"
+    try:
+        bt.write_windows_clipboard(sentinel)
+    except Exception:
+        return ""
+    for sel in CHAT_COPY_SELECTORS:
+        loc = page.locator(sel)
+        try:
+            n = loc.count()
+            if not n:
+                continue
+            btn = loc.nth(n - 1)
+            btn.scroll_into_view_if_needed(timeout=3000)
+            btn.hover(timeout=3000)
+            btn.click(timeout=5000)
+        except Exception:
+            continue
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                text = bt.read_windows_clipboard() or ""
+            except Exception:
+                text = ""
+            if text and text != sentinel:
+                return text.strip()
+    return ""
+
+
+def ask_text(prompt: str, status: Status = None) -> str:
+    """Send ``prompt`` to a new grok.com chat and return the reply text."""
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = _page_for(ctx, "grok.com", exclude="/imagine")
+        page.bring_to_front()
+        _say(status, "打开 grok.com 新对话 …")
+        page.goto(GROK_CHAT_URL, wait_until="domcontentloaded", timeout=45_000)
+        editor = None
+        deadline = time.monotonic() + 25
+        while editor is None and time.monotonic() < deadline:
+            editor = _first(page, CHAT_INPUT_SELECTORS)
+            if editor is None:
+                time.sleep(0.5)
+        if _logged_out(page):
+            raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
+        if editor is None:
+            raise RuntimeError("找不到 Grok 输入框")
+        _say(status, f"粘贴提示词 ({len(prompt)} 字) …")
+        time.sleep(1.5)  # editor shows up before the page is hydrated; typing too early is lost
+        probe = prompt[:20].strip()
+        for _attempt in range(3):
+            editor = _first(page, CHAT_INPUT_SELECTORS) or editor
+            editor.click(timeout=8000)
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Delete")
+            page.keyboard.insert_text(prompt)
+            time.sleep(0.8)
+            try:
+                got = editor.inner_text(timeout=3000) or editor.input_value(timeout=1000)
+            except Exception:
+                got = ""
+            if probe in (got or "").replace("\n", " ") or probe.split()[0] in (got or ""):
+                break
+            time.sleep(1.5)
+        else:
+            raise RuntimeError("提示词没有贴进 Grok 输入框")
+        before = _bubble_count(page)
+        btn = _first(page, CHAT_SUBMIT_SELECTORS)
+        clicked = False
+        if btn is not None:
+            for _ in range(20):  # aria-disabled="true" until the editor content registers
+                try:
+                    if btn.get_attribute("aria-disabled") != "true" and btn.is_enabled():
+                        btn.click(timeout=8000)
+                        clicked = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+        if not clicked:
+            editor.click(timeout=5000)
+            page.keyboard.press("Enter")
+        _say(status, "等待 Grok 回答 …")
+        started = time.monotonic()
+        last, same = "", 0
+        while time.monotonic() - started < CHAT_TIMEOUT_S:
+            time.sleep(CHAT_POLL_S)
+            if _logged_out(page):
+                raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
+            text = _last_response_text(page, before + 2)
+            if not text or text == prompt:
+                continue
+            if text == last and not _stop_visible(page):
+                same += 1
+                if same >= CHAT_STABLE_POLLS:
+                    break
+            else:
+                same = 0
+                last = text
+            _say(status, f"等待 Grok 回答 … {int(time.monotonic() - started)}s, {len(text)} 字")
+        else:
+            raise RuntimeError("Grok 回答超时")
+        _say(status, "拷贝回答 …")
+        copied = _copy_last_response(page)
+        return copied or last
+
+
+def _fetch_image_bytes(page, ctx, src: str) -> bytes:
+    if src.startswith("data:"):
+        return base64.b64decode(src.split(",", 1)[1])
+    try:
+        return base64.b64decode(page.evaluate(FETCH_AS_B64_JS, src))
+    except Exception as exc:
+        print(f"[grok_cdp] in-page fetch failed ({exc}); trying requests")
+    import requests
+    r = requests.get(src, cookies=_bt()._grok_cdp_cookies_for_download(ctx), timeout=120)
+    r.raise_for_status()
+    return r.content
+
+
+def _imagine_page(ctx, *, want_image: bool):
+    """Imagine tab: the one whose composer already holds an image when ``want_image``."""
+    bt = _bt()
+    pages = [p for p in ctx.pages if "grok.com/imagine" in (p.url or "")]
+    if want_image:
+        for p in pages:
+            if bt._grok_composer_has_image_page(p):
+                return p
+        return None
+    return pages[0] if pages else None
+
+
+def prepare_imagine(image_path: str, status: Status = None) -> None:
+    """Open/reuse a Grok Imagine tab and attach ``image_path`` to its composer. Does NOT submit."""
+    from PIL import Image
+
+    bt = _bt()
+    if not image_path or not os.path.isfile(image_path):
+        raise RuntimeError(f"找不到输入图片: {image_path}")
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    tmp_png = Path(os.environ.get("TEMP", ".")) / f"grok_cdp_in_{int(time.time())}.png"
+    with Image.open(image_path) as im:
+        im.convert("RGB").save(tmp_png, "PNG")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = _imagine_page(ctx, want_image=False) or ctx.new_page()
+            page.bring_to_front()
+            _say(status, "打开 Grok Imagine …")
+            page.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=45_000)
+            if _logged_out(page):
+                raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
+            _say(status, "上传图片 …")
+            if not bt._grok_paste_cover_image_cdp(page, tmp_png):
+                raise RuntimeError("图片没有贴进 Grok Imagine 输入框")
+    finally:
+        try:
+            tmp_png.unlink()
+        except OSError:
+            pass
+
+
+def run_imagine(prompt: str, status: Status = None):
+    """Use the already-prepared Imagine tab: add prompt, submit, wait, return the new image (PIL)."""
+    from PIL import Image
+
+    bt = _bt()
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = _imagine_page(ctx, want_image=True)
+        if page is None:
+            raise RuntimeError("没找到已贴好图片的 Grok Imagine 标签，请先发图片（grokprep）")
+        page.bring_to_front()
+        _say(status, "粘贴提示词 …")
+        bt._grok_paste_prompt_cdp(page, prompt, append=True)
+        try:
+            bt._grok_click_image_mode_cdp(page)
+        except Exception as exc:
+            print(f"[grok_cdp] image mode click skipped: {exc}")
+        old = set(page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or [])
+        _say(status, "提交生成 …")
+        bt._grok_click_generate_cdp(page, deep_image=False)
+        _say(status, "等待生成图片 …")
+        bt._grok_wait_image_ready_cdp(page, timeout_s=IMAGINE_TIMEOUT_S)
+        srcs = [s for s in (page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or []) if s not in old]
+        if not srcs:
+            raise RuntimeError("没找到生成的图片")
+        _say(status, "下载生成的图片 …")
+        data = _fetch_image_bytes(page, ctx, srcs[0])
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        return img
+
+
+def make_image(prompt: str, image_path: str, status: Status = None):
+    """Grok Imagine: attach ``image_path`` + ``prompt``, generate, return a PIL Image."""
+    prepare_imagine(image_path, status)
+    return run_imagine(prompt, status)

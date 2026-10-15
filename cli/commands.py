@@ -270,7 +270,8 @@ def split_command(raw: str) -> tuple[str, str]:
         text = text[1:].strip()
     if not text:
         return "", ""
-    first, _, rest = text.partition(" ")
+    parts = text.split(None, 1)  # 命令后面可以是空格或换行（ask 多行提示词）
+    first, rest = parts[0], (parts[1] if len(parts) > 1 else "")
     if "@" in first:
         first = first.split("@", 1)[0]
     key = first.strip()
@@ -361,6 +362,9 @@ def cmd_help() -> tuple[bool, str]:
         "",
         "scnlm / scnvs = 先无参看列表，再 scnlm N / scnvs N   grv 1 [变体序号] = 开标签+出图+出片+下载   vc = 审阅窗   gvd = 补下载",
         "长名仍可用（scene_lm / scene_visual_style / gemini / scene_save …）",
+        "",
+        "LLM:  ask [@strata|@gemini] 系统提示词 / --- / 用户指令  → 回复 + 剪贴板",
+        "GROK: 发图片 = grokprep（贴进 Grok Imagine，不提交）   grokgo 提示词 = 提交→出图→剪贴板+发回",
         "",
         "bot:  python -m cli bot",
     ]
@@ -2277,6 +2281,17 @@ def dispatch(raw: str) -> tuple[bool, str]:
         return cmd_video_concat(value)
     if cmd == "video_publish":
         return cmd_video_publish(value)
+    if cmd in ("ask", "grokprep", "grokgo"):
+        from cli import grok_tg
+
+        try:
+            if cmd == "ask":
+                return grok_tg.cmd_ask(value)
+            if cmd == "grokprep":
+                return grok_tg.cmd_grok_prepare(value)
+            return grok_tg.cmd_grok_go(value)
+        except Exception as exc:
+            return False, f"{cmd} 失败: {exc}"
 
     screen = current_screen()
 
