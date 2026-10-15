@@ -558,23 +558,10 @@ class FfmpegAudioProcessor:
             return self.make_silence(target_duration_sec)
         if inp_dur + 1e-2 >= float(target_duration_sec):
             return self.audio_cut_fade(audio_path, 0.0, float(target_duration_sec), 0, 0, 1.0)
-        output_path = config.get_temp_file(self.pid, "wav")
-        try:
-            subprocess.run([
-                ffmpeg_path, "-y",
-                "-stream_loop", "-1",
-                "-i", audio_path,
-                "-t", str(float(target_duration_sec)),
-                "-ac", "2",
-                "-ar", "44100",
-                "-c:a", "pcm_s16le",
-                output_path,
-            ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-            return output_path if os.path.exists(output_path) else None
-        except subprocess.CalledProcessError as e:
-            print(f"❌ FFmpeg 错误 (audio_trim_or_loop_to_duration): {e.stderr}")
-        except Exception as e:
-            print(f"❌ audio_trim_or_loop_to_duration: {e}")
+        # Never loop: pad the remainder with silence so the start of the track does not repeat.
+        out = self.fit_audio_to_duration(audio_path, float(target_duration_sec))
+        if out:
+            return out
         return self.make_silence(target_duration_sec)
 
 

@@ -2719,22 +2719,45 @@ class MagicWorkflow:
             n = len(scenes)
             idx = 0
             aud = self.ffmpeg_audio_processor
+            # Slots follow the joined video (transition overlaps included), so audio length == video length.
+            slots = self._segment_slots([seg["path"] for seg in video_segments], video_temp, with_transitions)
+            sel_ids = {id(x) for x in scenes}
             while idx < n:
                 scene0 = scenes[idx]
                 root_id = int(scene0.get("id", 0) / 10000)
                 story_dur = 0.0
                 j = idx
                 while j < n and int(scenes[j].get("id", 0) / 10000) == root_id:
-                    seg_path = video_segments[j]["path"]
-                    story_dur += self.ffmpeg_processor.get_duration(seg_path)
+                    story_dur += slots[j] if j < len(slots) else 0.0
                     j += 1
 
                 za = get_file_path(scene0, "zero_audio")
                 if za and os.path.isfile(za):
-                    if abs(speed - 1.0) > 0.001:
-                        # ZERO 音轨也要跟画面同样变速
-                        za = aud.change_tempo(za, speed) or za
-                    tiled = aud.audio_trim_or_loop_to_duration(za, story_dur)
+                    # When the range starts mid-story, skip (in source time) the part of earlier unselected scenes.
+                    skip = 0.0
+                    for s0 in self.scenes:
+                        if id(s0) in sel_ids:
+                            break
+                        if int(s0.get("id", 0) / 10000) != root_id:
+                            continue
+                        cp = get_file_path(s0, "clip")
+                        if cp and os.path.isfile(cp):
+                            skip += self.ffmpeg_processor.get_duration(cp)
+                    za_dur = aud.get_duration(za) or 0.0
+                    if skip >= za_dur - 0.5:
+                        skip = 0.0
+                    rem = za_dur - skip
+                    if skip > 0 and rem > 0:
+                        za = aud.fit_audio_to_duration(za, rem, skip_sec=skip) or za
+                    # Stretch the ZERO track to the real span it covers in the final video
+                    # (speed, extensions and transitions included), so it neither loops nor ends early.
+                    if rem > 0 and story_dur > 0:
+                        tempo = max(0.5, min(2.0, rem / story_dur))
+                        print(f"ZERO audio {rem:.2f}s -> {story_dur:.2f}s, atempo {tempo:.4f}")
+                        if abs(tempo - 1.0) > 0.001:
+                            za = aud.change_tempo(za, tempo) or za
+                    # Trim or pad (only a few ms after stretching); never loop.
+                    tiled = aud.fit_audio_to_duration(za, story_dur)
                 else:
                     clip_paths = []
                     for k in range(idx, j):
@@ -2747,12 +2770,7 @@ class MagicWorkflow:
                         merged = aud.concat_audios(clip_paths)
                         if merged and abs(speed - 1.0) > 0.001:
                             merged = aud.change_tempo(merged, speed) or merged
-                        if not merged:
-                            tiled = aud.make_silence(story_dur)
-                        else:
-                            tiled = aud.extend_audio(merged, 0.0, story_dur)
-                            if not tiled:
-                                tiled = aud.make_silence(story_dur)
+                        tiled = aud.fit_audio_to_duration(merged, story_dur) if merged else None
 
                 if not tiled:
                     tiled = aud.make_silence(story_dur)
@@ -2779,6 +2797,26 @@ class MagicWorkflow:
 
 
 
+    def _segment_slots(self, paths, joined_video, with_transitions,
+                       extend_sec=1.0, transition_sec=0.5):
+        """Per-segment time slots inside the joined video (sum == joined video duration)."""
+        fp = self.ffmpeg_processor
+        n = len(paths)
+        slots = []
+        for i, p in enumerate(paths):
+            d = fp.get_video_stream_duration(p)
+            if with_transitions and n > 1:
+                # concat_videos_with_transitions: each segment extended by extend_sec, overlaps transition_sec
+                d += extend_sec
+                if i < n - 1:
+                    d -= transition_sec
+            slots.append(max(0.0, d))
+        total = fp.get_video_stream_duration(joined_video) if joined_video else 0.0
+        if slots and total and total > 0:
+            slots[-1] = max(0.0, total - sum(slots[:-1]))
+        return slots
+
+
     def _build_continuous_scene_audio(self, video_segments, joined_video, with_transitions,
                                       extend_sec=1.0, transition_sec=0.5):
         """把每场（已变速、已延长）片段的声音按它在成片时间线上占的长度补齐/裁切成 WAV，
@@ -2792,19 +2830,7 @@ class MagicWorkflow:
         if not any(has_audio):
             return None
         n = len(paths)
-        slots = []
-        for i, p in enumerate(paths):
-            d = fp.get_video_stream_duration(p)
-            if with_transitions and n > 1:
-                # concat_videos_with_transitions：每段再延长 extend_sec，除最后一段外被下一段的淡入淡出叠掉 transition_sec
-                d += extend_sec
-                if i < n - 1:
-                    d -= transition_sec
-            slots.append(max(0.0, d))
-        total = fp.get_video_stream_duration(joined_video)
-        if total and total > 0:
-            # 让音轨总长和成片画面完全一致，误差全部落在最后一段
-            slots[-1] = max(0.0, total - sum(slots[:-1]))
+        slots = self._segment_slots(paths, joined_video, with_transitions, extend_sec, transition_sec)
         pieces = []
         for p, d, ha in zip(paths, slots, has_audio):
             if d <= 0:
