@@ -126,6 +126,100 @@ FETCH_AS_B64_JS = """async (src) => {
   return btoa(s);
 }"""
 IMAGINE_TIMEOUT_S = 6 * 60
+IMAGINE_DONE_TIMEOUT_S = 180
+IMAGINE_SUBMIT_CONFIRM_S = 15
+
+# Real DOM (grok.com/imagine, Oct 2026; dump in %TEMP%\\mpp\\grok_imagine_dom.json):
+# - editor: [data-testid="chat-input"] div.ProseMirror[contenteditable], placeholder
+#   "描述你的编辑内容，输入 @ 引用图片"
+# - submit: the round arrow button right of the editor; on a post page aria-label="编辑"
+#   (disabled while the editor is empty). Other builds: Submit / 提交 / Send / 发送.
+# - finished post: URL /imagine/post/<id>; canvas <img> inside [data-testid="drop-ui"]
+# - left filmstrip: button[aria-label="Thumbnail N"] (N=1 is the input; the highest N is
+#   the newest generation). Focus stays on Thumbnail 1 after generate until clicked.
+# - focused NEW result src: .../generated/<uuid>/image.jpg (not .../<postId>/content)
+# - action row: 赞 / 踩 / 点赞 / 在 X 上发布 / 复制图像 / 下载 / 更多选项
+IMAGINE_SUBMIT_LABELS = ("编辑", "Edit", "Submit", "提交", "Send", "发送", "生成", "Generate")
+IMAGINE_COPY_LABELS = ("复制图像", "Copy image")
+IMAGINE_DOWNLOAD_LABELS = ("下载", "Download")
+
+IMAGINE_FIND_SUBMIT_JS = """(labels) => {
+  const input = document.querySelector('[data-testid="chat-input"]');
+  if (!input) return null;
+  const ed = input.querySelector('[contenteditable="true"]') || input;
+  const er = ed.getBoundingClientRect();
+  const vis = (b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  let scope = input;
+  for (let i = 0; i < 4 && scope.parentElement; i++) scope = scope.parentElement;
+  const cands = [...scope.querySelectorAll('button')].filter(vis).filter((b) => {
+    const a = (b.getAttribute('aria-label') || '').trim();
+    return labels.includes(a) || b.type === 'submit';
+  }).map((b) => ({b, r: b.getBoundingClientRect()}))
+    .filter(({r}) => r.left >= er.left + er.width * 0.5 && Math.abs((r.top + r.height / 2) - (er.top + er.height / 2)) < 80)
+    .sort((x, y) => y.r.left - x.r.left);
+  if (!cands.length) return null;
+  const {b, r} = cands[0];
+  b.setAttribute('data-grok-cdp-submit', '1');
+  return {aria: b.getAttribute('aria-label') || '', disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true',
+          x: r.left + r.width / 2, y: r.top + r.height / 2};
+}"""
+
+IMAGINE_STATE_JS = """(args) => {
+  const [copyLabels, downloadLabels] = args;
+  const input = document.querySelector('[data-testid="chat-input"]');
+  const ed = input && (input.querySelector('[contenteditable="true"]') || input);
+  const editorText = ed ? (ed.innerText || '').trim() : '';
+  const m = location.pathname.match(/\\/imagine\\/post\\/([^/?#]+)/);
+  const postId = m ? m[1] : '';
+  const drop = document.querySelector('[data-testid="drop-ui"]');
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  let img = null;
+  if (drop) {
+    img = [...drop.querySelectorAll('img')].filter(vis).sort((a, b) => {
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      return rb.width * rb.height - ra.width * ra.height;
+    })[0] || null;
+  }
+  const src = img ? (img.currentSrc || img.src || '') : '';
+  const area = drop || document.body;
+  const progress = [...area.querySelectorAll('[role="progressbar"], [aria-busy="true"], [class*="shimmer"], [class*="animate-pulse"], [class*="animate-spin"]')].some(vis)
+    || /正在生成|生成中|Generating|\\b\\d{1,2}%/i.test((drop && drop.innerText) || '');
+  const btn = (labels) => [...document.querySelectorAll('button')].find((b) => vis(b) && labels.includes((b.getAttribute('aria-label') || '').trim()));
+  const copyBtn = btn(copyLabels), dlBtn = btn(downloadLabels);
+  const rowOk = !!(copyBtn && dlBtn && copyBtn.parentElement === dlBtn.parentElement);
+  const thumbs = [...document.querySelectorAll('button[aria-label^="Thumbnail"]')].filter(vis).map((b) => {
+    const a = (b.getAttribute('aria-label') || '').trim();
+    const n = parseInt(a.replace(/\\D/g, ''), 10) || 0;
+    return {n, aria: a, ring: /(?:^|\\s)ring-2(?:\\s|$)/.test(String(b.className))};
+  }).sort((a, b) => a.n - b.n);
+  const generated = /\\/generated\\//.test(src);
+  return {url: location.href, postId, editorText, src, nw: img ? img.naturalWidth : 0, nh: img ? img.naturalHeight : 0,
+          complete: img ? img.complete : false, progress, actionRow: rowOk, copyEnabled: !!(copyBtn && !copyBtn.disabled),
+          thumbCount: thumbs.length, newestThumb: thumbs.length ? thumbs[thumbs.length - 1].n : 0,
+          focusedGenerated: generated};
+}"""
+
+IMAGINE_FOCUS_NEWEST_THUMB_JS = """() => {
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const thumbs = [...document.querySelectorAll('button[aria-label^="Thumbnail"]')].filter(vis)
+    .map((b) => ({b, n: parseInt((b.getAttribute('aria-label') || '').replace(/\\D/g, ''), 10) || 0}))
+    .filter((t) => t.n > 0).sort((a, b) => a.n - b.n);
+  if (!thumbs.length) return {ok: false, reason: 'no-thumbs'};
+  const newest = thumbs[thumbs.length - 1];
+  newest.b.click();
+  return {ok: true, n: newest.n, count: thumbs.length};
+}"""
+
+IMAGINE_CLICK_COPY_JS = """(args) => {
+  const [copyLabels, downloadLabels] = args;
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const dl = [...document.querySelectorAll('button')].find((b) => vis(b) && downloadLabels.includes((b.getAttribute('aria-label') || '').trim()));
+  const row = dl ? dl.parentElement : document;
+  const c = [...row.querySelectorAll('button')].find((b) => vis(b) && copyLabels.includes((b.getAttribute('aria-label') || '').trim()));
+  if (!c || c.disabled) return false;
+  c.click();
+  return true;
+}"""
 
 Status = Optional[Callable[[str], None]]
 
@@ -440,6 +534,223 @@ def prepare_imagine(image_path: str, status: Status = None) -> None:
             pass
 
 
+def _imagine_state(page) -> dict:
+    try:
+        return page.evaluate(IMAGINE_STATE_JS, [list(IMAGINE_COPY_LABELS), list(IMAGINE_DOWNLOAD_LABELS)]) or {}
+    except Exception as exc:
+        print(f"[grok_cdp] imagine state probe failed: {exc}")
+        return {}
+
+
+def _imagine_submitted(st: dict, before: dict) -> bool:
+    """Submit counts as done once the prompt left the editor, the URL moved to a new post, or a progress
+    indicator shows. The arrow button may vanish while generating, so it is not required."""
+    if not st:
+        return False
+    if st.get("postId") and st.get("postId") != before.get("postId"):
+        return True
+    if st.get("progress"):
+        return True
+    return bool(before.get("editorText")) and not st.get("editorText")
+
+
+def _imagine_submit(page, status: Status) -> None:
+    before = _imagine_state(page)
+    pt = None
+    try:
+        pt = page.evaluate(IMAGINE_FIND_SUBMIT_JS, list(IMAGINE_SUBMIT_LABELS))
+    except Exception as exc:
+        print(f"[grok_cdp] submit probe failed: {exc}")
+    if pt and not pt.get("disabled"):
+        _say(status, f"提交生成（{pt.get('aria') or 'submit'}）…")
+        try:
+            page.locator('button[data-grok-cdp-submit="1"]').first.click(timeout=5000)
+        except Exception:
+            page.mouse.click(pt["x"], pt["y"])
+    else:
+        # Fallback: the old multi-strategy helper. It raises when it cannot *see* generation start,
+        # which is not proof that nothing was submitted, so check the page before giving up.
+        try:
+            _bt()._grok_click_generate_cdp(page, deep_image=False)
+            return
+        except Exception as exc:
+            if _imagine_submitted(_imagine_state(page), before):
+                print(f"[grok_cdp] submit helper said {exc!r}, but the page shows it was submitted")
+                return
+            raise
+    deadline = time.monotonic() + IMAGINE_SUBMIT_CONFIRM_S
+    while time.monotonic() < deadline:
+        if _imagine_submitted(_imagine_state(page), before):
+            return
+        time.sleep(0.5)
+    # Never click a second time: a double submit would make two generations.
+    raise RuntimeError("点了提交，但 15 秒内没看到开始生成（提示词还在输入框里）")
+
+
+def _imagine_wait_done(page, old_srcs: set, status: Status, timeout_s: float = IMAGINE_DONE_TIMEOUT_S, *, min_thumbs: int = 0) -> dict:
+    """Done when generation finished: no progress, action row present, and either a new filmstrip
+    thumbnail appeared or the canvas shows a /generated/ image that was not there before submit.
+
+    Note: after generate, focus often stays on Thumbnail 1 (the input). Its canvas src is
+    ``.../<postId>/content``, which is NOT the new result — do not treat that as ready.
+    """
+    _say(status, "等待生成图片 …")
+    started = time.monotonic()
+    stable = 0
+    last = {}
+    while time.monotonic() - started < timeout_s:
+        st = _imagine_state(page)
+        last = st
+        src = st.get("src") or ""
+        thumbs_ready = (st.get("thumbCount") or 0) > max(min_thumbs, 1)
+        gen_ready = bool(src) and "/generated/" in src and src not in old_srcs and (st.get("nw") or 0) > 0
+        ready = (
+            st.get("actionRow")
+            and not st.get("progress")
+            and st.get("complete")
+            and (thumbs_ready or gen_ready)
+        )
+        stable = stable + 1 if ready else 0
+        if stable >= 2:
+            return st
+        time.sleep(1.5)
+    raise RuntimeError(
+        f"等了 {int(timeout_s)} 秒 Grok 图片还没好（progress={last.get('progress')}, "
+        f"thumbs={last.get('thumbCount')}, generated={last.get('focusedGenerated')}）"
+    )
+
+
+def _clipboard_seq() -> int:
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetClipboardSequenceNumber())
+    except Exception:
+        return -1
+
+
+def _img_fingerprint(img) -> tuple:
+    """(size, md5 of a 32x32 RGB thumbnail) — enough to tell input from a new generation."""
+    import hashlib
+    from PIL import Image as _Image
+
+    if not isinstance(img, _Image.Image):
+        return ((0, 0), "")
+    rgb = img.convert("RGB")
+    small = rgb.resize((32, 32))
+    return (rgb.size, hashlib.md5(small.tobytes()).hexdigest())
+
+
+def _focus_newest_thumbnail(page, status: Status = None, *, reject_fp=None) -> dict:
+    """Click the highest Thumbnail N so the canvas and 复制图像 row belong to the NEW result.
+
+    After generate, Grok leaves Thumbnail 1 (input) focused; Thumbnail N (highest) is the new one.
+    Retries once if the canvas still looks like the input (``reject_fp``).
+    """
+    before = _imagine_state(page)
+    try:
+        info = page.evaluate(IMAGINE_FOCUS_NEWEST_THUMB_JS) or {}
+    except Exception as exc:
+        print(f"[grok_cdp] focus newest thumb failed: {exc}")
+        info = {}
+    if not info.get("ok"):
+        _say(status, "没有找到左侧缩略图，按当前画面取图")
+        return before
+    _say(status, f"切到最新缩略图 Thumbnail {info.get('n')} …")
+    deadline = time.monotonic() + 8
+    st = before
+    while time.monotonic() < deadline:
+        time.sleep(0.4)
+        st = _imagine_state(page)
+        src = st.get("src") or ""
+        if src and src != (before.get("src") or "") and (st.get("nw") or 0) > 0 and st.get("complete"):
+            break
+        if st.get("focusedGenerated") and (st.get("nw") or 0) > 0:
+            break
+    # If still looking like the input, click newest again (sometimes the first click is a no-op).
+    if reject_fp is not None and not st.get("focusedGenerated"):
+        try:
+            page.evaluate(IMAGINE_FOCUS_NEWEST_THUMB_JS)
+            time.sleep(0.8)
+            st = _imagine_state(page)
+        except Exception:
+            pass
+    return st
+
+
+def _grab_focused_image(page, st: dict, status: Status = None):
+    """复制图像 on the focused canvas, else fetch its src. Returns a PIL Image."""
+    from PIL import Image, ImageGrab
+
+    want = (int(st.get("nw") or 0), int(st.get("nh") or 0))
+    seq = _clipboard_seq()
+    try:
+        clicked = page.evaluate(IMAGINE_CLICK_COPY_JS, [list(IMAGINE_COPY_LABELS), list(IMAGINE_DOWNLOAD_LABELS)])
+    except Exception as exc:
+        clicked = False
+        print(f"[grok_cdp] copy-image click failed: {exc}")
+    if clicked and seq >= 0:
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            if _clipboard_seq() != seq:
+                time.sleep(0.3)
+                try:
+                    clip = ImageGrab.grabclipboard()
+                except Exception as exc:
+                    print(f"[grok_cdp] clipboard read failed: {exc}")
+                    clip = None
+                if isinstance(clip, Image.Image) and (not want[0] or clip.size == want or "/generated/" in (st.get("src") or "")):
+                    _say(status, "已从「复制图像」拿到结果")
+                    clip.load()
+                    return clip
+                if clip is not None:
+                    print(f"[grok_cdp] clipboard image {getattr(clip, 'size', type(clip))} != {want}; fetching src")
+                break
+            time.sleep(0.2)
+    src = st.get("src") or ""
+    if not src:
+        raise RuntimeError("当前画面没有可下载的图片地址")
+    _say(status, "下载生成的图片 …")
+    data = _fetch_image_bytes(page, page.context, src)
+    img = Image.open(io.BytesIO(data))
+    img.load()
+    return img
+
+
+def extract_imagine_result(page, st: dict, status: Status = None, *, reject_image=None):
+    """Focus the newest filmstrip thumbnail, then copy/download that result.
+
+    ``reject_image`` is the input (or any image that must NOT be returned). If the first grab
+    matches it, focus the newest thumbnail again and retry once.
+    """
+    reject_fp = _img_fingerprint(reject_image) if reject_image is not None else None
+    st = _focus_newest_thumbnail(page, status, reject_fp=reject_fp)
+    img = _grab_focused_image(page, st, status)
+    if reject_fp is not None and _img_fingerprint(img) == reject_fp:
+        _say(status, "拿到的是输入图，再切到最新缩略图重试 …")
+        st = _focus_newest_thumbnail(page, status, reject_fp=reject_fp)
+        img = _grab_focused_image(page, st, status)
+        if _img_fingerprint(img) == reject_fp:
+            raise RuntimeError("复制/下载到的仍是输入图，不是新生成的结果")
+    return img
+
+
+def fetch_current_imagine_result(status: Status = None):
+    """Read-only helper: take the result of the Imagine post page that is open now (no submit)."""
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = next((pg for pg in ctx.pages if "grok.com/imagine/post/" in (pg.url or "")), None)
+        if page is None:
+            raise RuntimeError("没有打开的 grok.com/imagine/post/ 页面")
+        st = _imagine_wait_done(page, set(), status, timeout_s=20)
+        # Prefer the /generated/ result; no input image to reject in this read-only helper.
+        return extract_imagine_result(page, st, status)
+
+
 def run_imagine(prompt: str, status: Status = None):
     """Use the already-prepared Imagine tab: add prompt, submit, wait, return the new image (PIL)."""
     from PIL import Image
@@ -464,19 +775,21 @@ def run_imagine(prompt: str, status: Status = None):
             bt._grok_click_image_mode_cdp(page)
         except Exception as exc:
             print(f"[grok_cdp] image mode click skipped: {exc}")
+        # Everything visible now (the input image, older results) is "old".
+        before_st = _imagine_state(page)
         old = set(page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or [])
-        _say(status, "提交生成 …")
-        bt._grok_click_generate_cdp(page, deep_image=False)
-        _say(status, "等待生成图片 …")
-        bt._grok_wait_image_ready_cdp(page, timeout_s=IMAGINE_TIMEOUT_S)
-        srcs = [s for s in (page.evaluate(IMAGINE_OUTPUT_IMAGES_JS) or []) if s not in old]
-        if not srcs:
-            raise RuntimeError("没找到生成的图片")
-        _say(status, "下载生成的图片 …")
-        data = _fetch_image_bytes(page, ctx, srcs[0])
-        img = Image.open(io.BytesIO(data))
-        img.load()
-        return img
+        old.add(before_st.get("src") or "")
+        min_thumbs = int(before_st.get("thumbCount") or 0)
+        reject = None
+        try:
+            if before_st.get("src"):
+                reject = Image.open(io.BytesIO(_fetch_image_bytes(page, ctx, before_st["src"])))
+                reject.load()
+        except Exception as exc:
+            print(f"[grok_cdp] could not snapshot input image for reject check: {exc}")
+        _imagine_submit(page, status)
+        st = _imagine_wait_done(page, old, status, min_thumbs=min_thumbs)
+        return extract_imagine_result(page, st, status, reject_image=reject)
 
 
 def make_image(prompt: str, image_path: str, status: Status = None):
@@ -590,5 +903,6 @@ def _locked(fn):
 ask_text = _locked(ask_text)
 extract_last_reply = _locked(extract_last_reply)
 prepare_imagine = _locked(prepare_imagine)
+fetch_current_imagine_result = _locked(fetch_current_imagine_result)
 run_imagine = _locked(run_imagine)
 make_image = _locked(make_image)

@@ -10,6 +10,7 @@ import config_prompt
 import project_manager
 from gui.slide_prompt_dialog import pack_narrative_choices, pack_scene_field_choices
 from gui.video_prompt_dialog import _place_popup_near
+from gui.prompt_fyi import clean_fyi_text, pack_fyi_note, prepend_fyi
 
 
 _DEFAULT_CHOICE = {
@@ -42,6 +43,7 @@ def _clean_choice(saved) -> dict:
         choice["actor_override"] = saved["actor_override"]
     if saved.get("image") in ("clip_image", "clip_image_last"):
         choice["image"] = saved["image"]
+    choice["fyi"] = clean_fyi_text(saved)
     return choice
 
 
@@ -114,6 +116,14 @@ def open_picture_prompt_dialog(
         bottom, _scene_image, initial=last.get("image", "clip_image")
     )
 
+    # FYI / 注意: text persisted in picture_prompt; checkbox always ON on open.
+    _fyi_box, get_fyi_text, fyi_include_var = pack_fyi_note(
+        main, initial_text=last.get("fyi", ""), pady=(8, 0)
+    )
+    # Keep FYI above the bottom row (fields / image / submit).
+    _fyi_box.pack_forget()
+    _fyi_box.pack(fill=tk.X, pady=(8, 0), before=bottom)
+
     def current_choice() -> dict:
         return {
             "task": task_var.get(),
@@ -124,6 +134,7 @@ def open_picture_prompt_dialog(
             "actor": bool(actor_var.get()),
             "actor_override": override_var.get(),
             "image": image_to_save(),
+            "fyi": get_fyi_text(),
         }
 
     def remember() -> None:
@@ -195,6 +206,9 @@ def open_picture_prompt_dialog(
         except ValueError as exc:
             messagebox.showwarning("图片提示", str(exc), parent=dlg)
             return
+        prompt = prepend_fyi(
+            prompt, get_fyi_text(), include=bool(fyi_include_var.get())
+        )
         remember()
         dlg.destroy()
         if callable(open_manual):

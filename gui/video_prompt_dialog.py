@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 import config
 import config_prompt
 import project_manager
+from gui.prompt_fyi import clean_fyi_text, pack_fyi_note, prepend_fyi
 
 
 def _place_popup_near(dlg: tk.Toplevel, anchor, *, below: bool) -> None:
@@ -107,6 +108,7 @@ def open_video_prompt_dialog(
 
     saved_narrative = "story"
     saved_text = "erase"
+    saved_fyi = clean_fyi_text(saved_choice)
     if isinstance(saved_choice, dict):
         picked = saved_choice.get("narrative")
         if picked in {k for k, _ in config_prompt.SLIDE_FLOW_NARRATIVE_CHOICES}:
@@ -179,7 +181,12 @@ def open_video_prompt_dialog(
         ttk.Label(summary, text="\n".join(lines), justify=tk.LEFT).pack(anchor=tk.W)
 
     def current_choice() -> dict:
-        return {"narrative": narrative_var.get(), "text": text_var.get(), "image": image_to_save()}
+        return {
+            "narrative": narrative_var.get(),
+            "text": text_var.get(),
+            "image": image_to_save(),
+            "fyi": get_fyi_text(),
+        }
 
     def remember() -> None:
         if save_choice is None:
@@ -243,6 +250,9 @@ def open_video_prompt_dialog(
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
             return
+        prompt = prepend_fyi(
+            prompt, get_fyi_text(), include=bool(fyi_include_var.get())
+        )
         images = []
         missing = []
         if get_image is not None:
@@ -268,6 +278,13 @@ def open_video_prompt_dialog(
         dlg.destroy()
         if callable(open_manual):
             open_manual(prompt, images)
+
+    # FYI / 注意: text persisted in video_prompt; checkbox always ON on open.
+    _fyi_box, get_fyi_text, fyi_include_var = pack_fyi_note(
+        advanced, initial_text=saved_fyi, pady=(0, 8)
+    )
+    _fyi_box.pack_forget()
+    _fyi_box.pack(fill=tk.X, pady=(0, 8), before=actions)
 
     from gui.clip_image_choice import pack_clip_image_choice
 
