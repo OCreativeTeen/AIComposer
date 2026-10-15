@@ -281,6 +281,17 @@ class MediaImportMixin:
             later.append(item)
         return later
 
+    def _current_clip_length(self) -> float:
+        """这一场现有 clip 的时长（主窗口“共 …”），没有视频就返回 0。"""
+        try:
+            scene = self.workflow.get_scene_by_index(self.current_scene_index)
+            path = get_file_path(scene, "clip") if scene else ""
+            if not path or not os.path.isfile(path):
+                return 0.0
+            return float(self.workflow.ffmpeg_processor.get_duration(path) or 0.0)
+        except Exception:
+            return 0.0
+
     def _later_scene_lengths(self) -> list[float]:
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         fp = self.workflow.ffmpeg_processor
@@ -318,6 +329,13 @@ class MediaImportMixin:
         fade_in = float(audio.get("fade_in") or 0.0)
         fade_out = float(audio.get("fade_out") or 0.0)
         ratio = float(audio.get("mix_ratio") if audio.get("mix_ratio") is not None else 0.5)
+        # 混音+声音淡变：先把导入片的画面/原声淡好，再逐场混旁白。
+        fi = float(audio.get("video_fade_in") or 0.0)
+        fo = float(audio.get("video_fade_out") or 0.0)
+        af = bool(audio.get("audio_fade", True))
+        if af and (fi >= 0.05 or fo >= 0.05):
+            first_video = self._fade_finished_clip(first_video, fi, fo, audio_fade=True)
+            fi, fo, af = 0.0, 0.0, False
         offset = 0.0
         written = 0
         for index, target in enumerate(targets):
@@ -352,12 +370,9 @@ class MediaImportMixin:
             if not mixed or not os.path.isfile(mixed):
                 break
             raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
-            if index == 0:
-                mixed = self._fade_finished_clip(
-                    mixed,
-                    float(audio.get("video_fade_in") or 0.0),
-                    float(audio.get("video_fade_out") or 0.0),
-                )
+            if index == 0 and (fi >= 0.05 or fo >= 0.05):
+                # 仅剩画面淡变（声音已在混音前处理，或未勾选同时淡变声音）
+                mixed = self._fade_finished_clip(mixed, fi, fo, audio_fade=False)
                 raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed) or raw
             self._backup_clip_to_scene_back(target)
             refresh_scene_media(target, "clip", ".mp4", mixed)
@@ -416,20 +431,30 @@ class MediaImportMixin:
         if audio and audio.get("use") == "mix" and not stage_download:
             audio["video_fade_in"] = pick.get("video_fade_in") or 0.0
             audio["video_fade_out"] = pick.get("video_fade_out") or 0.0
+            audio["audio_fade"] = bool(pick.get("audio_fade"))
             self._blend_audio_across_scenes(scene, mp4, audio)
             return
+        fi = float(pick.get("video_fade_in") or 0.0)
+        fo = float(pick.get("video_fade_out") or 0.0)
+        af = bool(pick.get("audio_fade"))
         if audio:
             if audio.get("use") == "mix":
+                # 混音：先淡导入片原声(+画面)，再混入所选旁白；之后不再对混音结果 afade。
+                if af and (fi >= 0.05 or fo >= 0.05):
+                    pre = self._fade_finished_clip(mp4, fi, fo, audio_fade=True)
+                    if pre and os.path.isfile(pre):
+                        mp4 = pre
+                    fi, fo, af = 0.0, 0.0, False
                 mp4, mixed_wav = self._blend_audio_into_video(mp4, audio)
             else:
+                # 配声替换：只允许画面淡变
+                af = False
                 mp4, mixed_wav = self._mix_audio_onto_video(mp4, audio)
             if mixed_wav:
                 wav = mixed_wav
-        faded = self._fade_finished_clip(
-            mp4,
-            float(pick.get("video_fade_in") or 0.0),
-            float(pick.get("video_fade_out") or 0.0),
-        )
+        # 导入视频原声/混音(radio)：此处先淡，再交给 simple_replacement 混合场景声。
+        # 配声：audio_fade=False，只淡画面。
+        faded = self._fade_finished_clip(mp4, fi, fo, audio_fade=af)
         if faded and faded != mp4 and os.path.isfile(faded):
             mp4 = faded
             extracted = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mp4)
@@ -495,8 +520,18 @@ class MediaImportMixin:
         else:
             show_auto_close_popup(self.root, "片段", "已写回这一场。")
 
-    def _fade_finished_clip(self, video_path: str, fade_in: float, fade_out: float) -> str:
-        """成片写回之前的最后一步：画面和声音一起淡入、淡出。两项都没设就原样返回。"""
+    def _fade_finished_clip(
+        self,
+        video_path: str,
+        fade_in: float,
+        fade_out: float,
+        audio_fade: bool = True,
+    ) -> str:
+        """成片写回之前：画面淡入/淡出；audio_fade 时同一时长也对音轨 afade。
+
+        导入视频混音顺序：先对本段（导入原声）做淡变，再与旁白/场景声混合。
+        配声模式应传 audio_fade=False，只淡画面。
+        """
         fade_in = max(0.0, min(3.0, float(fade_in or 0.0)))
         fade_out = max(0.0, min(3.0, float(fade_out or 0.0)))
         if fade_in < 0.05 and fade_out < 0.05:
@@ -505,11 +540,15 @@ class MediaImportMixin:
             return video_path
         fp = self.workflow.ffmpeg_processor
         duration = float(fp.get_duration(video_path) or 0.0)
-        if duration > 0.05 and fade_in + fade_out > duration:
-            scale = duration / (fade_in + fade_out)
-            fade_in *= scale
-            fade_out *= scale
-        faded = fp.fade_video(video_path, fade_in, fade_out)
+        if duration > 0.05:
+            half = duration / 2.0
+            fade_in = min(fade_in, half)
+            fade_out = min(fade_out, half)
+            if fade_in + fade_out > duration:
+                scale = duration / (fade_in + fade_out)
+                fade_in *= scale
+                fade_out *= scale
+        faded = fp.fade_video(video_path, fade_in, fade_out, audio_fade=bool(audio_fade))
         if faded and os.path.isfile(faded) and os.path.getsize(faded) > 0:
             return faded
         return video_path
@@ -723,6 +762,7 @@ class MediaImportMixin:
             audio_sources=self._audio_source_specs(),
             dest_options=list(self._CLIP_DEST_OPTIONS),
             initial_source=initial_source,
+            target_clip_length=self._current_clip_length(),
         )
         if not pick:
             return

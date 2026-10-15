@@ -1,0 +1,49 @@
+24:    import sounddevice as sd
+25:    import soundfile as sf
+228:    radios: Optional[tuple] = None,
+257:        radios = current.get("radios")
+265:        radios = None
+282:    radio_holder = [radios]
+325:    if sources or radios:
+390:            replace_rb = ttk.Radiobutton(use_row, text="替换声音", value="replace", variable=audio_use_var)
+554:    radio_var = tk.StringVar(value="")
+555:    mix_level_var = tk.IntVar(value=50)
+563:        source_radios = []
+573:            source_radios.append(rb)
+575:            for rb in source_radios:
+662:    def _apply_lock(c, keep: str = "start") -> None:
+668:        if keep == "end":
+1079:            _apply_lock(c, keep="start")
+1082:            _apply_lock(c, keep="end")
+1502:                f"做法：把这段音频混进 Clip 现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
+1510:                f"做法：用这段音频换掉视频里的声音。两边长度不一致时，把视频缩放到和音频一样长。"
+1517:                f"做法：用这段音频换掉视频里的声音，视频长度改成和音频处理后一样，"
+1536:            sound_mode = radio_var.get() if radio_holder[0] else ""
+1537:            if sound_mode == "overlay":
+1539:                    f"做法：把这段视频的声音按 {int(mix_level_var.get())}% 混进 {dest_name} 现有的声音（现有的保持 100%）。"
+1543:            elif sound_mode == "replace_speed":
+1545:                    f"做法：用这段视频替换 {dest_name} 的画面，但声音保留现有的，"
+1546:                    f"视频会伸缩到和现有声音一样长。"
+1548:            elif sound_mode == "keep":
+1549:                how = f"做法：用这段视频的画面和它自带的声音，替换 {dest_name} 上现有的画面和声音。"
+1551:                how = f"做法：用这段视频替换 {dest_name} 上现有的画面和声音。"
+1620:            picked = picked + (radio_var.get(),)
+1650:                "radio": radio_var.get() if radio_holder[0] else "",
+1651:                "mix_volume": max(10, min(100, int(mix_level_var.get()))) / 100.0,
+1675:                messagebox.showwarning("录音", "没有录到声音。", parent=dlg)
+1775:            messagebox.showerror("录音", "录音不可用。请安装 sounddevice 和 soundfile。", parent=dlg)
+1826:            radio_var.set(default_radio)
+1835:                    variable=radio_var,
+1838:            if any(value == "overlay" for value, _label in radio_options):
+1839:                # 混音时：导入视频的声音占多大（10%–100%，默认 50%）。只在选了“混音”时显示。
+1841:                ttk.Label(mix_box, text="导入声音", style="PickChoice.TLabel").pack(
+1846:                def _on_mix_level(_v=None) -> None:
+1847:                    pct = int(round(float(mix_level_var.get()) / 5.0)) * 5
+1849:                    mix_level_var.set(pct)
+1854:                    variable=mix_level_var, command=_on_mix_level,
+1858:                _on_mix_level()
+1860:                def _show_mix_level(*_a) -> None:
+1862:                        if radio_var.get() == "overlay":
+1870:                radio_var.trace_add("write", _show_mix_level)
+1871:                _show_mix_level()
+1898:        radio_holder[0] = spec.get("radios")

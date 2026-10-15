@@ -233,6 +233,7 @@ def ask_mp4_pick_with_trim_preview(
     audio_edit: bool = False,
     later_scene_lengths: Optional[list] = None,
     initial_source: Optional[str] = None,
+    target_clip_length: Optional[float] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
@@ -270,8 +271,9 @@ def ask_mp4_pick_with_trim_preview(
 
     dlg = tk.Toplevel(parent)
     dlg.title(title)
-    dlg.geometry("980x820" if audio_edit else ("980x760" if audio_sources else "980x640"))
-    dlg.minsize(900, 740 if audio_edit else (680 if audio_sources else 580))
+    # Heights leave room for fade/lock/fit rows + pinned bottom button bar.
+    dlg.geometry("980x900" if audio_edit else ("980x880" if audio_sources else "980x760"))
+    dlg.minsize(900, 820 if audio_edit else (800 if audio_sources else 700))
     if parent:
         dlg.transient(parent)
     dlg.grab_set()
@@ -312,8 +314,12 @@ def ask_mp4_pick_with_trim_preview(
         wraplength=920,
     ).pack(anchor=tk.W, pady=(0, 8))
 
+    # Reserve bottom button bar first so it never clips when content grows.
+    foot = ttk.Frame(root)
+    foot.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+
     body = ttk.Frame(root)
-    body.pack(fill=tk.BOTH, expand=True)
+    body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
     left = ttk.LabelFrame(body, text="文件列表", padding=6)
     left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
@@ -502,18 +508,48 @@ def ask_mp4_pick_with_trim_preview(
     video_fade_out_on = tk.BooleanVar(value=False)
     video_fade_in_sec = tk.DoubleVar(value=1.0)
     video_fade_out_sec = tk.DoubleVar(value=1.0)
-    if audio_edit:
-        def _pack_video_fade(parent, label: str, flag, seconds) -> None:
-            row = ttk.Frame(parent)
-            row.pack(fill=tk.X, pady=(0, 4))
-            ttk.Checkbutton(row, text=label, variable=flag).pack(side=tk.LEFT)
-            ttk.Spinbox(
-                row, from_=0.5, to=3.0, increment=0.5, width=6, textvariable=seconds,
-            ).pack(side=tk.LEFT, padx=(8, 4))
-            ttk.Label(row, text="秒，最长 3 秒").pack(side=tk.LEFT)
+    # 成片画面淡入/淡出（默认关=0 秒）。另有“同时淡变声音”：原声/混音可用，配声禁用。
+    audio_fade_var = tk.BooleanVar(value=True)
+    audio_fade_chk_holder: list = [None]
 
-        _pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
-        _pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
+    def _pack_video_fade(parent, label: str, flag, seconds) -> None:
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Checkbutton(row, text=label, variable=flag).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            row, from_=0.0, to=3.0, increment=0.5, width=6, textvariable=seconds,
+        ).pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Label(row, text="秒，最长 3 秒").pack(side=tk.LEFT)
+
+    _pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
+    _pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
+    audio_fade_row = ttk.Frame(trim_box)
+    audio_fade_row.pack(fill=tk.X, pady=(0, 4))
+    audio_fade_chk = ttk.Checkbutton(
+        audio_fade_row,
+        text="同时淡变声音（原声/混音；配声不可用）",
+        variable=audio_fade_var,
+    )
+    audio_fade_chk.pack(side=tk.LEFT)
+    audio_fade_chk_holder[0] = audio_fade_chk
+
+    # 锁定本场长度：target 是这一场现有 clip 的时长（主窗口“共 …”）。
+    # 锁定后，输出时长 (end-start)/speed 最多等于 target：
+    #   - 往后拖终点超过上限时，起点跟着往后走，窗口保持 target 长；
+    #   - 往前拖起点超过上限时，终点跟着往前收；
+    #   - 选得比 target 短没关系，不限制。
+    target_len = float(target_clip_length or 0.0)
+    lock_len_var = tk.BooleanVar(value=False)
+    lock_row = ttk.Frame(trim_box)
+    lock_row.pack(fill=tk.X, pady=(0, 4))
+    lock_chk = ttk.Checkbutton(
+        lock_row,
+        text=(f"锁定为本场长度 {_fmt_time(target_len)}" if target_len > 0.05 else "锁定为本场长度（本场还没有视频）"),
+        variable=lock_len_var, command=lambda: _on_lock_toggle(),
+    )
+    lock_chk.pack(side=tk.LEFT)
+    fit_btn = ttk.Button(lock_row, text="调速度配满本场", command=lambda: _fit_speed_to_target())
+    fit_btn.pack(side=tk.LEFT, padx=(12, 0))
 
     sel_dur_lbl = ttk.Label(trim_box, text="选中时长: —", foreground="#0a5a9e")
     sel_dur_lbl.pack(anchor=tk.W, pady=(0, 4))
@@ -535,6 +571,33 @@ def ask_mp4_pick_with_trim_preview(
     radio_var = tk.StringVar(value="")
     mix_level_var = tk.IntVar(value=50)
     dest_var = tk.StringVar(value=(dest_options[0][0] if dest_options else ""))
+    dest_var.trace_add("write", lambda *_a: _apply_ui())
+
+    def _audio_fade_allowed() -> bool:
+        # 配声 = 整条换成旁白/场景声，不给导入声做淡变；原声/混音才允许。
+        if audio_edit:
+            return audio_use_var.get() != "replace"
+        if radio_holder[0]:
+            return radio_var.get() != "replace_speed"
+        return True
+
+    _audio_fade_was_allowed = [True]
+
+    def _sync_audio_fade_gate(*_a) -> None:
+        allowed = _audio_fade_allowed()
+        chk = audio_fade_chk_holder[0]
+        if chk is not None:
+            try:
+                chk.state(["!disabled"] if allowed else ["disabled"])
+            except tk.TclError:
+                pass
+        if not allowed:
+            audio_fade_var.set(False)
+        elif not _audio_fade_was_allowed[0]:
+            # 刚从配声切回原声/混音：恢复默认勾选
+            audio_fade_var.set(True)
+        _audio_fade_was_allowed[0] = allowed
+
     source_var = tk.StringVar(value=(current["key"] if sources else ""))
     if sources:
         source_row = ttk.Frame(choice_box)
@@ -564,8 +627,7 @@ def ask_mp4_pick_with_trim_preview(
             ttk.Radiobutton(
                 dest_row, text=label, value=value, variable=dest_var, style="PickChoice.TRadiobutton",
             ).pack(side=tk.LEFT, padx=(0, 10))
-    foot = ttk.Frame(root)
-    foot.pack(fill=tk.X, pady=(10, 0))
+    # foot was packed early (side=BOTTOM) so the button row stays visible.
     mix_btn = None
     if audio_sources and not audio_edit:
         mix_btn = ttk.Button(foot, text="套用这段音频", state=tk.DISABLED)
@@ -609,7 +671,10 @@ def ask_mp4_pick_with_trim_preview(
         try:
             c = _ui_clip()
             if c is not None:
-                speed_lbl.config(text=f"{c.speed:.1f}×")
+                speed_lbl.config(text=(f"{c.speed:.1f}×" if abs(c.speed * 10 - round(c.speed * 10)) < 1e-6 else f"{c.speed:.2f}×"))
+                ok = _target_ok()
+                lock_chk.state(["!disabled"] if ok else ["disabled"])
+                fit_btn.state(["!disabled"] if ok else ["disabled"])
                 seg = max(0.0, c.end - c.start)
                 out_dur = seg / max(0.01, c.speed)
                 spd_note = f"  → 输出 {_fmt_time(out_dur)}（×{c.speed:.1f}）" if abs(c.speed - 1.0) > 0.001 else ""
@@ -626,19 +691,78 @@ def ask_mp4_pick_with_trim_preview(
         finally:
             syncing_ui[0] = False
 
+    def _target_ok() -> bool:
+        return target_len > 0.05 and (not dest_options or dest_var.get() == "clip")
+
+    def _lock_on() -> bool:
+        return _target_ok() and bool(lock_len_var.get())
+
+    def _lock_cap(c) -> float:
+        # 输出时长 = 源区间 / 速度，所以源区间上限 = target * speed。
+        return target_len * max(0.01, c.speed)
+
+    def _apply_lock(c, keep: str = "start") -> None:
+        if c is None or getattr(c, "is_audio", False) or not _lock_on():
+            return
+        cap = _lock_cap(c)
+        if c.end - c.start <= cap + 1e-6:
+            return
+        if keep == "end":
+            c.start = _snap_time(max(0.0, c.end - cap), c)
+        else:
+            c.end = _snap_time(min(c.duration, c.start + cap), c)
+
+    def _on_lock_toggle() -> None:
+        c = _ui_clip()
+        if c is None or not _lock_on():
+            _apply_ui()
+            return
+        cap = _lock_cap(c)
+        st = c.start
+        if st + cap > c.duration:
+            st = max(0.0, c.duration - cap)
+        c.start = _snap_time(st, c)
+        c.end = _snap_time(min(c.duration, c.start + cap), c)
+        if c.end < c.start + _PREVIEW_MIN_CLIP_SEC:
+            c.end = _snap_time(min(c.duration, c.start + _PREVIEW_MIN_CLIP_SEC), c)
+        _apply_ui()
+
+    def _set_speed(c, new_speed: float) -> None:
+        # 改速度时从起点重算终点：锁定时让输出 = 本场长度；没锁时保持原来的输出时长。
+        old = max(0.01, c.speed)
+        out_dur = target_len if _lock_on() else (c.end - c.start) / old
+        c.speed = new_speed
+        end = c.start + out_dur * max(0.01, new_speed)
+        c.end = _snap_time(min(c.duration, max(c.start + _PREVIEW_MIN_CLIP_SEC, end)), c)
+        _apply_ui()
+
+    def _fit_speed_to_target() -> None:
+        c = _ui_clip()
+        if c is None or not _target_ok():
+            return
+        seg = max(_PREVIEW_MIN_CLIP_SEC, c.end - c.start)
+        spd = seg / target_len
+        lo, hi = 0.5, 2.0
+        if spd < lo or spd > hi:
+            messagebox.showinfo(
+                "调速度",
+                f"要把 {_fmt_time(seg)} 配成 {_fmt_time(target_len)} 需要 {spd:.2f}x，超出 {lo}–{hi}x，已按边界设置。",
+                parent=dlg,
+            )
+        c.speed = round(max(lo, min(hi, spd)), 3)
+        _apply_ui()
+
     def _speed_up() -> None:
         c = _ui_clip()
         if c is None:
             return
-        c.speed = round(min(_PREVIEW_SPEED_MAX, c.speed + _PREVIEW_SPEED_STEP), 1)
-        _apply_ui()
+        _set_speed(c, round(min(_PREVIEW_SPEED_MAX, c.speed + _PREVIEW_SPEED_STEP), 1))
 
     def _speed_down() -> None:
         c = _ui_clip()
         if c is None:
             return
-        c.speed = round(max(_PREVIEW_SPEED_MIN, c.speed - _PREVIEW_SPEED_STEP), 1)
-        _apply_ui()
+        _set_speed(c, round(max(_PREVIEW_SPEED_MIN, c.speed - _PREVIEW_SPEED_STEP), 1))
 
     def _time_to_x(t: float, c=None, canvas=None) -> float:
         c = _ui_clip() if c is None else c
@@ -994,8 +1118,10 @@ def ask_mp4_pick_with_trim_preview(
         t = _x_to_time(event.x, c, timeline)
         if tl_drag[0] == "start":
             c.start = _snap_time(min(t, c.end - _PREVIEW_MIN_CLIP_SEC), c)
+            _apply_lock(c, keep="start")
         elif tl_drag[0] == "end":
             c.end = _snap_time(max(t, c.start + _PREVIEW_MIN_CLIP_SEC), c)
+            _apply_lock(c, keep="end")
         elif tl_drag[0] == "scrub":
             current_t[0] = t
             video_at[0] = t
@@ -1117,6 +1243,7 @@ def ask_mp4_pick_with_trim_preview(
             widget.config(state=tk.NORMAL if enabled else tk.DISABLED)
 
     def _sync_audio_edit() -> None:
+        _sync_audio_fade_gate()
         if not audio_edit or len(audio_edit_widgets) < 11:
             return
         has = audio_state.get("clip") is not None
@@ -1198,6 +1325,8 @@ def ask_mp4_pick_with_trim_preview(
         sel_fn[0] = fn
         if clip[0] is None or os.path.normpath(clip[0].path) != full:
             clip[0] = _ClipTrim(full)
+            if _lock_on():
+                _on_lock_toggle()
             video_at[0] = clip[0].start
         current_t[0] = video_at[0]
         _apply_ui()
@@ -1384,6 +1513,18 @@ def ask_mp4_pick_with_trim_preview(
             except (tk.TclError, ValueError, TypeError):
                 return 0.0
 
+        def _video_fade_amounts() -> tuple[float, float]:
+            fi = min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec))
+            fo = min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec))
+            # 不超过选中输出时长的一半，避免淡入淡出重叠过头
+            if c is not None:
+                out_len = max(0.0, (c.end - c.start) / max(float(c.speed or 1.0), 0.1))
+                if out_len > 0.05:
+                    half = out_len / 2.0
+                    fi = min(fi, half)
+                    fo = min(fo, half)
+            return fi, fo
+
         if audio_edit and c is not None and ac is not None and audio_use_var.get() == "mix":
             fade_in = _fade_seconds(fade_in_on, fade_in_sec)
             fade_out = _fade_seconds(fade_out_on, fade_out_sec)
@@ -1509,7 +1650,7 @@ def ask_mp4_pick_with_trim_preview(
             if audio_edit and ac is not None:
                 video_vol = 1.0 if audio_use_var.get() == "replace" else vol
                 mp4_adj, wav_adj = build_adjusted_pair(
-                    c.path, video_vol, start=c.start, end=c.end, speed=round(c.speed, 1),
+                    c.path, video_vol, start=c.start, end=c.end, speed=round(c.speed, 3),
                 )
             elif ac is not None:
                 mp4_adj, wav_adj = build_adjusted_pair(
@@ -1517,7 +1658,7 @@ def ask_mp4_pick_with_trim_preview(
                 )
             else:
                 mp4_adj, wav_adj = build_adjusted_pair(
-                    c.path, vol, start=c.start, end=c.end, speed=round(c.speed, 1),
+                    c.path, vol, start=c.start, end=c.end, speed=round(c.speed, 3),
                 )
             if not mp4_adj:
                 raise RuntimeError("生成本地临时音视频失败")
@@ -1556,6 +1697,7 @@ def ask_mp4_pick_with_trim_preview(
                     except ValueError:
                         audio_payload["mix_scenes"] = 1
                     audio_payload["mix_at"] = _mix_start_in_output(c) if c is not None else 0.0
+            _vf_in, _vf_out = _video_fade_amounts()
             result[0] = {
                 "filename": picked[0],
                 "mp4": picked[1],
@@ -1566,8 +1708,13 @@ def ask_mp4_pick_with_trim_preview(
                 "source": source_var.get() if sources else "",
                 "dest": dest_var.get() if dest_options else "",
                 "audio": audio_payload,
-                "video_fade_in": min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec)) if audio_edit else 0.0,
-                "video_fade_out": min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec)) if audio_edit else 0.0,
+                "video_fade_in": _vf_in,
+                "video_fade_out": _vf_out,
+                "audio_fade": (
+                    bool(audio_fade_var.get())
+                    and _audio_fade_allowed()
+                    and (_vf_in > 0.01 or _vf_out > 0.01)
+                ),
             }
         else:
             result[0] = picked
@@ -1783,6 +1930,8 @@ def ask_mp4_pick_with_trim_preview(
 
                 radio_var.trace_add("write", _show_mix_level)
                 _show_mix_level()
+            radio_var.trace_add("write", _sync_audio_fade_gate)
+        _sync_audio_fade_gate()
         ttk.Button(btn_host, text="取消", command=_close).pack(side=tk.RIGHT, padx=(6, 0))
         actions = confirm_holder[0]
         confirm_anchor[0] = None
@@ -1830,7 +1979,10 @@ def ask_mp4_pick_with_trim_preview(
 
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
     dlg.update_idletasks()
-    _dw, _dh = (980, 820) if audio_edit else ((980, 760) if audio_sources else (980, 640))
+    req_h = max(dlg.winfo_reqheight(), 700)
+    _dw, _dh = (980, 900) if audio_edit else ((980, 880) if audio_sources else (980, 760))
+    _dh = max(_dh, min(req_h + 20, max(sh - 80, _dh)))
+    dlg.minsize(900, min(_dh, 820 if audio_edit else (800 if audio_sources else 700)))
     dlg.geometry(f"{_dw}x{_dh}+{(sw - _dw) // 2}+{(sh - _dh) // 2}")
     dlg.wait_window()
     return result[0]

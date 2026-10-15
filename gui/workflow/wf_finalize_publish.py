@@ -553,6 +553,8 @@ class FinalizePublishMixin:
             return
        
         content = config.chinese_convert(content, self.workflow.language)
+        if not content.lower().startswith("fl_"):
+            content = "FL_" + content  # large footer title
 
         title_font_key = self.scene_language.get()
         if title_font_key in config.FONT_LIST:

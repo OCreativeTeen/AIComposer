@@ -10,7 +10,7 @@ import config_prompt
 import project_manager
 from gui.slide_prompt_dialog import pack_narrative_choices, pack_scene_field_choices
 from gui.video_prompt_dialog import _place_popup_near
-from gui.prompt_fyi import clean_fyi_text, pack_fyi_note, prepend_fyi
+from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
 
 
 _DEFAULT_CHOICE = {
@@ -43,7 +43,7 @@ def _clean_choice(saved) -> dict:
         choice["actor_override"] = saved["actor_override"]
     if saved.get("image") in ("clip_image", "clip_image_last"):
         choice["image"] = saved["image"]
-    choice["fyi"] = clean_fyi_text(saved)
+    choice["fyi_history"] = clean_fyi_history(saved)
     return choice
 
 
@@ -117,8 +117,8 @@ def open_picture_prompt_dialog(
     )
 
     # FYI / 注意: text persisted in picture_prompt; checkbox always ON on open.
-    _fyi_box, get_fyi_text, fyi_include_var = pack_fyi_note(
-        main, initial_text=last.get("fyi", ""), pady=(8, 0)
+    _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
+        main, history=last.get("fyi_history", []), pady=(8, 0)
     )
     # Keep FYI above the bottom row (fields / image / submit).
     _fyi_box.pack_forget()
@@ -134,7 +134,7 @@ def open_picture_prompt_dialog(
             "actor": bool(actor_var.get()),
             "actor_override": override_var.get(),
             "image": image_to_save(),
-            "fyi": get_fyi_text(),
+            "fyi_history": get_fyi_history(),
         }
 
     def remember() -> None:

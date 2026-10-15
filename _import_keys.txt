@@ -1,0 +1,92 @@
+79:                    "build_volume_adjusted_pair": self._build_volume_adjusted_mp4_wav_pair,
+96:                self._video_simple_replacement_async(
+212:    def _mix_audio_onto_video(self, video_path: str, audio: dict) -> tuple[str, str]:
+219:        volume = float(audio.get("volume") or 1.0)
+222:            abs(volume - 1.0) < 0.001
+228:            src, start, end, speed, volume,
+232:        mixed = self.workflow.ffmpeg_processor.add_audio_to_video(video_path, wav, True, "speed")
+233:        if mixed and os.path.isfile(mixed):
+234:            return mixed, wav
+251:        fade_in = float(audio.get("fade_in") or 0.0)
+252:        fade_out = float(audio.get("fade_out") or 0.0)
+255:        mix_len = audio_dur
+257:            mix_len = video_dur
+258:        if mix_len > 0.05 and (fade_in > 0.01 or fade_out > 0.01 or mix_len < audio_dur - 0.05):
+259:            piece = fp.extract_audio_segment(wav, 0, mix_len, fade_in, fade_out)
+262:        ratio = float(audio.get("mix_ratio") if audio.get("mix_ratio") is not None else 0.5)
+263:        mixed = fp.video_audio_mix(video_path, wav, volume=ratio, audio_mix_position=0.0, match_audio_length=False)
+264:        if not mixed or not os.path.isfile(mixed):
+266:        raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
+267:        return mixed, raw or wav
+318:            messagebox.showerror("混音", "这段音频处理失败。", parent=self.root)
+323:            messagebox.showerror("混音", "这段音频没有长度。", parent=self.root)
+325:        count = max(1, int(audio.get("mix_scenes") or 1))
+326:        mix_at = max(0.0, float(audio.get("mix_at") or 0.0))
+329:        fade_in = float(audio.get("fade_in") or 0.0)
+330:        fade_out = float(audio.get("fade_out") or 0.0)
+331:        ratio = float(audio.get("mix_ratio") if audio.get("mix_ratio") is not None else 0.5)
+342:            room = max(0.0, video_dur - mix_at) if index == 0 else video_dur
+345:            mix_len = min(room, remaining)
+346:            last = index == len(targets) - 1 or offset + mix_len >= audio_dur - 0.05
+350:                mix_len,
+351:                fade_in if offset <= 0.05 else 0.0,
+352:                fade_out if last else 0.0,
+356:            mixed = fp.video_audio_mix(
+359:                volume=ratio,
+360:                audio_mix_position=mix_at if index == 0 else 0.0,
+363:            if not mixed or not os.path.isfile(mixed):
+365:            raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed)
+367:                mixed = self._fade_finished_clip(
+368:                    mixed,
+369:                    float(audio.get("video_fade_in") or 0.0),
+370:                    float(audio.get("video_fade_out") or 0.0),
+372:                raw = self.workflow.ffmpeg_audio_processor.extract_audio_from_video(mixed) or raw
+374:            refresh_scene_media(target, "clip", ".mp4", mixed)
+377:            offset += mix_len
+380:            messagebox.showerror("混音", "没有混进任何一场。", parent=self.root)
+384:        show_auto_close_popup(self.root, "混音", f"已混进 {written} 场。每一场可以用时钟退回。")
+404:                    float(audio.get("volume") or 1.0),
+427:        if audio and audio.get("use") == "mix" and not stage_download:
+428:            audio["video_fade_in"] = pick.get("video_fade_in") or 0.0
+429:            audio["video_fade_out"] = pick.get("video_fade_out") or 0.0
+433:            if audio.get("use") == "mix":
+434:                mp4, mixed_wav = self._blend_audio_into_video(mp4, audio)
+436:                mp4, mixed_wav = self._mix_audio_onto_video(mp4, audio)
+437:            if mixed_wav:
+438:                wav = mixed_wav
+439:        faded = self._fade_finished_clip(
+441:            float(pick.get("video_fade_in") or 0.0),
+442:            float(pick.get("video_fade_out") or 0.0),
+444:        if faded and faded != mp4 and os.path.isfile(faded):
+445:            mp4 = faded
+463:            self._video_simple_replacement_async(
+466:                mix_volume=float(pick.get("mix_volume") or 0.5),
+480:                pick.get("action") or "replace",
+490:                res["mix_volume"] = float(pick.get("mix_volume") or 0.5)
+509:    def _fade_finished_clip(self, video_path: str, fade_in: float, fade_out: float) -> str:
+511:        fade_in = max(0.0, min(3.0, float(fade_in or 0.0)))
+512:        fade_out = max(0.0, min(3.0, float(fade_out or 0.0)))
+513:        if fade_in < 0.05 and fade_out < 0.05:
+519:        if duration > 0.05 and fade_in + fade_out > duration:
+520:            scale = duration / (fade_in + fade_out)
+521:            fade_in *= scale
+522:            fade_out *= scale
+523:        faded = fp.fade_video(video_path, fade_in, fade_out)
+524:        if faded and os.path.isfile(faded) and os.path.getsize(faded) > 0:
+525:            return faded
+624:            place_mode = res.get("place") or "replace"
+631:            if preset in ("keep", "replace_speed", "replace_trim", "overlay"):
+638:                        ("replace_speed", "场景音轨替换/SPEED"),
+639:                        ("replace_trim", "场景音轨替换/TRIM"),
+641:                        ("mix", "ZERO混音伸缩"),
+642:                        ("mix_flat", "ZERO混音平铺"),
+649:            self._video_simple_replacement_async(
+657:                mix_volume=float(res.get("mix_volume") or 0.5),
+682:            ("replace", "替换"),
+684:        # 声音：原声 = 用导入视频自带的声音；配声 = 用本场现有音频，视频伸缩去配它；
+685:        # 混音 = 本场音频 100% 加上导入视频的声音 66%，视频原速，长裁短定格。
+689:            [("keep", "原声"), ("replace_speed", "配声"), ("overlay", "混音")],
+690:            "replace_speed",
+715:                "confirm_actions": [("replace", "替换")],
+732:            build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,
+760:            build_volume_adjusted_pair=self._build_volume_adjusted_mp4_wav_pair,

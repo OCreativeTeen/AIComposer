@@ -203,7 +203,7 @@ class TracksMixin:
         en = float(end if end is not None else dur)
         if en <= 0 or en > dur:
             en = dur
-        spd = round(float(speed or 1.0), 1)
+        spd = round(float(speed or 1.0), 3)
         vol = float(volume or 1.0)
 
         mp4_out = fp.trim_video(src_mp4, st, en, volume=1.0, speed=spd)

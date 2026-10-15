@@ -1,0 +1,22 @@
+.\gui\mp4_pick_preview_dialog.py:502:video_fade_in_on = tk.BooleanVar(value=False)
+.\gui\mp4_pick_preview_dialog.py:503:video_fade_out_on = tk.BooleanVar(value=False)
+.\gui\mp4_pick_preview_dialog.py:504:video_fade_in_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:505:video_fade_out_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:507:def _pack_video_fade(parent, label: str, flag, seconds) -> None:
+.\gui\mp4_pick_preview_dialog.py:516:_pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
+.\gui\mp4_pick_preview_dialog.py:517:_pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
+.\gui\mp4_pick_preview_dialog.py:1655:"video_fade_in": min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec)) if audio_edit else 0.0,
+.\gui\mp4_pick_preview_dialog.py:1656:"video_fade_out": min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec)) if audio_edit else 0.0,
+.\gui\workflow\wf_media_import.py:369:float(audio.get("video_fade_in") or 0.0),
+.\gui\workflow\wf_media_import.py:370:float(audio.get("video_fade_out") or 0.0),
+.\gui\workflow\wf_media_import.py:428:audio["video_fade_in"] = pick.get("video_fade_in") or 0.0
+.\gui\workflow\wf_media_import.py:429:audio["video_fade_out"] = pick.get("video_fade_out") or 0.0
+.\gui\workflow\wf_media_import.py:441:float(pick.get("video_fade_in") or 0.0),
+.\gui\workflow\wf_media_import.py:442:float(pick.get("video_fade_out") or 0.0),
+.\gui\workflow\wf_tracks.py:186:def _build_volume_adjusted_mp4_wav_pair(
+.\gui\workflow\wf_tracks.py:238:def _video_simple_replacement_async(
+.\utility\ffmpeg_audio_processor.py:645:print(f"FFmpeg Error in fade_audio: {e.stderr}")
+.\utility\ffmpeg_audio_processor.py:647:print(f"An error occurred in fade_audio: {e}")
+.\utility\ffmpeg_processor.py:1382:def video_fade(self, video_path, fade_in_length, fade_out_length, audio_fade):
+.\utility\ffmpeg_processor.py:1459:print(f"❌ video_fade出错: {e}")
+.\utility\ffmpeg_processor.py:4146:resized_video = self.video_fade(resized_video, transition_duration, transition_duration, False)

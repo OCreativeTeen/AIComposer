@@ -1,0 +1,312 @@
+1:"""从文件夹挑选 MP4：预览、裁剪起止、变速、音量；确认后产出临时 mp4/wav。"""
+49:    return f"{m:d}:{s:05.2f}"
+52:def _snap_mp4_preview_volume(raw: float) -> float:
+54:    return max(0.5, min(2.0, v))
+58:    return os.path.splitext(path or "")[1].lower() in (".mp3", ".wav", ".m4a", ".aac")
+70:        return max(0.01, float((r.stdout or "").strip() or 0.01))
+72:        return 0.01
+89:    return max(0.01, dur), max(1.0, fps), max(1, fc)
+101:        return bool(r.stdout.strip())
+103:        return False
+110:        return ""
+120:    return ",".join(parts)
+124:    video_path: str, start: float, length: float, volume: float, out_wav: str,
+127:        return False
+128:    vol = float(volume or 1.0)
+129:    af = f"volume={vol}" if abs(vol - 1.0) > 0.001 else "anull"
+143:        return r.returncode == 0 and os.path.isfile(out_wav)
+145:        return False
+154:            return os.path.isfile(out_wav)
+156:            return False
+167:        return r.returncode == 0 and os.path.isfile(out_wav)
+169:        return False
+173:    video_path: str, start: float, stop: float, speed: float, volume: float,
+175:    """裁剪区间 wav，再按 speed 做 atempo（慢放时输出时长 = 区间/speed）。"""
+179:    if not _ffmpeg_extract_segment_raw_wav(video_path, start, length, volume, tmp):
+184:        return ""
+187:        return tmp
+195:        return tmp2
+196:    return tmp
+220:    choices: list,
+224:    build_adjusted_pair: Optional[
+228:    radios: Optional[tuple] = None,
+240:  ``build_adjusted_pair(full_path, volume, start=, end=, speed=) -> (tmp_mp4, tmp_wav)``
+248:        if build_adjusted_pair is None or cv2 is None:
+250:                messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
+251:            return None
+256:        choices = list(current.get("choices") or [])
+257:        radios = current.get("radios")
+260:        if build_adjusted_pair is None or cv2 is None or not choices:
+262:                messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
+263:            return None
+265:        radios = None
+267:    elif not choices or build_adjusted_pair is None or cv2 is None:
+269:            messagebox.showwarning("预览", "需要安装 opencv-python 才能预览视频。", parent=parent)
+270:        return None
+280:    result: list = [None]
+282:    radio_holder = [radios]
+284:    if choices:
+285:        clip = [_ClipTrim(os.path.join(folder_box[0], choices[0]))]
+286:        sel_fn = [choices[0]]
+312:        text="拖动时间轴设定起止；单击预览播放/暂停；双击按选中区间播放（含速度）。",
+321:    choice_style = ttk.Style(dlg)
+322:    choice_style.configure("PickChoice.TLabel", font=("Microsoft YaHei UI", 14))
+323:    choice_style.configure("PickChoice.TRadiobutton", font=("Microsoft YaHei UI", 14))
+324:    choice_box = ttk.Frame(left)
+325:    if sources or radios:
+326:        choice_box.pack(fill=tk.X, anchor=tk.W, pady=(0, 8))
+334:    for c in choices:
+339:    audio_choices: list = []
+342:    audio_use_var = tk.StringVar(value="replace")
+344:    fade_in_on = tk.BooleanVar(value=True)
+345:    fade_out_on = tk.BooleanVar(value=True)
+346:    fade_in_sec = tk.DoubleVar(value=1.0)
+347:    fade_out_sec = tk.DoubleVar(value=1.0)
+370:            audio_choices.extend(usable_audio[0].get("choices") or [])
+385:        for name in audio_choices:
+390:            replace_rb = ttk.Radiobutton(use_row, text="替换声音", value="replace", variable=audio_use_var)
+392:            mix_rb = ttk.Radiobutton(use_row, text="混音", value="mix", variable=audio_use_var)
+399:            ratio_name = ttk.Label(ratio_row, text="混音比例")
+412:            fade_in_row = ttk.Frame(mix_box)
+413:            fade_in_row.pack(fill=tk.X, pady=(4, 0))
+414:            fade_in_chk = ttk.Checkbutton(fade_in_row, text="渐强", variable=fade_in_on, command=lambda: _sync_audio_edit())
+415:            fade_in_chk.pack(side=tk.LEFT)
+416:            fade_in_spin = ttk.Spinbox(
+417:                fade_in_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_in_sec,
+419:            fade_in_spin.pack(side=tk.LEFT, padx=(8, 4))
+420:            fade_in_unit = ttk.Label(fade_in_row, text="秒")
+421:            fade_in_unit.pack(side=tk.LEFT)
+422:            fade_out_row = ttk.Frame(mix_box)
+423:            fade_out_row.pack(fill=tk.X, pady=(4, 0))
+424:            fade_out_chk = ttk.Checkbutton(fade_out_row, text="渐弱", variable=fade_out_on, command=lambda: _sync_audio_edit())
+425:            fade_out_chk.pack(side=tk.LEFT)
+426:            fade_out_spin = ttk.Spinbox(
+427:                fade_out_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_out_sec,
+429:            fade_out_spin.pack(side=tk.LEFT, padx=(8, 4))
+430:            fade_out_unit = ttk.Label(fade_out_row, text="秒")
+431:            fade_out_unit.pack(side=tk.LEFT)
+444:                ratio_name, ratio_lbl, ratio_scale, fade_in_chk, fade_in_spin, fade_in_unit,
+445:                fade_out_chk, fade_out_spin, fade_out_unit,
+471:    trim_box = ttk.LabelFrame(video_pane, text="视频" if split_av else "选中区间", padding=8)
+481:    speed_row = ttk.Frame(trim_box)
+482:    speed_row.pack(fill=tk.X, pady=(0, 6))
+483:    ttk.Label(speed_row, text="区间速度", width=8).pack(side=tk.LEFT)
+484:    ttk.Button(speed_row, text="◀", width=3, command=lambda: _speed_down()).pack(side=tk.LEFT)
+485:    speed_lbl = ttk.Label(speed_row, text="1.0×", width=8, anchor=tk.CENTER)
+487:    ttk.Button(speed_row, text="▶", width=3, command=lambda: _speed_up()).pack(side=tk.LEFT)
+488:    ttk.Label(speed_row, text="（0.7–1.2）", foreground="#555").pack(side=tk.LEFT, padx=(8, 0))
+490:    vol_row = ttk.Frame(trim_box)
+491:    vol_row.pack(fill=tk.X, pady=(0, 6))
+492:    volume_var = tk.DoubleVar(value=_snap_mp4_preview_volume(1.0))
+493:    ttk.Label(vol_row, text="音量增益").pack(side=tk.LEFT, padx=(0, 8))
+494:    vol_lbl = ttk.Label(vol_row, text=f"{volume_var.get():.1f}×", width=8)
+497:        vol_row, from_=0.5, to=2.0, resolution=0.5, orient=tk.HORIZONTAL,
+498:        variable=volume_var, command=lambda _: _on_volume_change(), showvalue=0, length=220,
+502:    video_fade_in_on = tk.BooleanVar(value=False)
+503:    video_fade_out_on = tk.BooleanVar(value=False)
+504:    video_fade_in_sec = tk.DoubleVar(value=1.0)
+505:    video_fade_out_sec = tk.DoubleVar(value=1.0)
+507:        def _pack_video_fade(parent, label: str, flag, seconds) -> None:
+516:        _pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
+517:        _pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
+519:    # 锁定本场长度：target 是这一场现有 clip 的时长（主窗口“共 …”）。
+520:    # 锁定后，输出时长 (end-start)/speed 最多等于 target：
+525:    lock_len_var = tk.BooleanVar(value=False)
+530:        text=(f"锁定为本场长度 {_fmt_time(target_len)}" if target_len > 0.05 else "锁定为本场长度（本场还没有视频）"),
+531:        variable=lock_len_var, command=lambda: _on_lock_toggle(),
+534:    fit_btn = ttk.Button(lock_row, text="调速度配满本场", command=lambda: _fit_speed_to_target())
+554:    radio_var = tk.StringVar(value="")
+560:        source_row = ttk.Frame(choice_box)
+563:        source_radios = []
+573:            source_radios.append(rb)
+575:            for rb in source_radios:
+577:    extra_host = ttk.Frame(choice_box)
+580:        dest_row = ttk.Frame(choice_box)
+599:            return audio_state["clip"]
+600:        return clip[0]
+604:            return clip[0]
+605:        return _c()
+610:            return max(0.0, float(t))
+614:        return frame / c.fps
+619:            return
+653:        return target_len > 0.05 and (not dest_options or dest_var.get() == "clip")
+656:        return _target_ok() and bool(lock_len_var.get())
+659:        # 输出时长 = 源区间 / 速度，所以源区间上限 = target * speed。
+660:        return target_len * max(0.01, c.speed)
+664:            return
+667:            return
+677:            return
+689:        # 改速度时从起点重算终点：锁定时让输出 = 本场长度；没锁时保持原来的输出时长。
+697:    def _fit_speed_to_target() -> None:
+700:            return
+706:                "调速度",
+716:            return
+722:            return
+730:            return 2.0
+731:        return 2 + (t / c.duration) * (w - 4)
+739:            return 0.0
+740:        return _snap_time(frac * c.duration, c)
+748:            return
+764:            return
+772:            return
+792:            return
+798:            return
+803:            return
+808:            return
+821:            return
+844:        start_t: float, stop_t: float, speed: float, volume: float, *, on_ready=None,
+846:        """后台生成试听 wav；完成后加载播放，并可选回调（用于同步启动视频时钟）。"""
+854:            return
+858:        vol = float(volume or 1.0)
+870:                    return
+877:                    return
+932:        return bool(video_cap[0] and video_cap[0].isOpened())
+944:            messagebox.showwarning("预览", "选中区间过短。", parent=dlg)
+945:            return
+949:                return
+971:        vol = _snap_mp4_preview_volume(volume_var.get())
+986:            return
+999:                return
+1005:            vol = _snap_mp4_preview_volume(volume_var.get())
+1023:                    return
+1046:    def _on_volume_change() -> None:
+1047:        v = _snap_mp4_preview_volume(volume_var.get())
+1048:        volume_var.set(v)
+1061:            return
+1075:            return
+1089:            return
+1103:            return
+1119:            return
+1131:            return
+1147:                return
+1189:            return
+1205:            return
+1207:        mixing = has and audio_use_var.get() == "mix"
+1212:                _set_enabled(widget, mixing and bool(fade_in_on.get()))
+1214:                _set_enabled(widget, mixing and bool(fade_out_on.get()))
+1227:        return max(0.0, min((t - float(video.start)) / spd, span / spd))
+1233:            return 1
+1240:            return 1
+1247:        return count
+1251:            return
+1269:            return
+1314:            return
+1315:        fn = choices[sel[0]]
+1323:            return
+1327:        audio_choices.clear()
+1328:        audio_choices.extend(spec.get("choices") or [])
+1330:        for name in audio_choices:
+1344:            return
+1347:            return
+1348:        fn = audio_choices[sel[0]]
+1370:        audio_use_var.trace_add("write", lambda *_a: _sync_audio_edit())
+1385:        return trimmed or sped or abs(vol - 1.0) >= 0.001
+1388:        choice = {"value": None}
+1401:            choice["value"] = value
+1408:            ttk.Button(row, text="去掉视频", command=lambda: _pick("drop_video")).pack(side=tk.LEFT, padx=4)
+1438:        return choice["value"]
+1442:        vol = _snap_mp4_preview_volume(volume_var.get())
+1446:            messagebox.showwarning("导入", "先选一段视频或音频。", parent=dlg)
+1447:            return
+1449:            messagebox.showerror("区间无效", "音频的结束时间必须大于开始时间。", parent=dlg)
+1450:            return
+1452:            messagebox.showerror("区间无效", "结束时间必须大于开始时间。", parent=dlg)
+1453:            return
+1454:        vol_line = "音量是 1 倍，不改大小。" if abs(vol - 1.0) < 0.001 else f"音量调到 {vol:.1f} 倍。"
+1465:        def _fade_seconds(flag, var) -> float:
+1467:                return 0.0
+1469:                return max(0.0, float(var.get()))
+1471:                return 0.0
+1473:        if audio_edit and c is not None and ac is not None and audio_use_var.get() == "mix":
+1474:            fade_in = _fade_seconds(fade_in_on, fade_in_sec)
+1475:            fade_out = _fade_seconds(fade_out_on, fade_out_sec)
+1476:            fade_in_line = f"开头渐强 {fade_in:.1f} 秒" if fade_in > 0 else "开头不渐强"
+1477:            fade_out_line = f"结尾渐弱 {fade_out:.1f} 秒" if fade_out > 0 else "结尾不渐弱"
+1498:                f"你在编辑这段视频，并选了音频。只混进 Clip。\n"
+1499:                f"视频先按 {c.start:.1f}–{c.end:.1f} 秒、速度 {c.speed:.1f} 裁好。\n"
+1502:                f"做法：把这段音频混进 Clip 现有的声音，混音比例 {float(mix_ratio_var.get()) * 100:.0f}%。\n"
+1503:                f"{fade_in_line}，{fade_out_line}。{cut_line}"
+1507:                f"你在编辑这段视频，并选了音频。\n"
+1508:                f"视频：{sel_fn[0]}，{c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。\n"
+1510:                f"做法：用这段音频换掉视频里的声音。两边长度不一致时，把视频缩放到和音频一样长。"
+1514:                f"你选了视频，也选了音频。\n"
+1515:                f"视频：{sel_fn[0]}\n"
+1517:                f"做法：用这段音频换掉视频里的声音，视频长度改成和音频处理后一样，"
+1524:                    f"你只选了音频，没有视频。\n"
+1527:                    f"区间 {ac.start:.1f}–{ac.end:.1f} 秒，速度 {ac.speed:.1f}。{vol_line}"
+1531:                    f"你只选了音频，没有视频。\n"
+1533:                    f"做法：只把这段音频原样拷进项目，文件名是原来的名字加上 -1、-2。不裁剪，不改音量，不替换画面。"
+1536:            sound_mode = radio_var.get() if radio_holder[0] else ""
+1539:                    f"做法：把这段视频的声音按 {int(mix_level_var.get())}% 混进 {dest_name} 现有的声音（现有的保持 100%）。"
+1540:                    f"画面换成这段视频，从头按原速播放；比现有的长就裁掉多出来的，"
+1545:                    f"做法：用这段视频替换 {dest_name} 的画面，但声音保留现有的，"
+1546:                    f"视频会伸缩到和现有声音一样长。"
+1549:                how = f"做法：用这段视频的画面和它自带的声音，替换 {dest_name} 上现有的画面和声音。"
+1551:                how = f"做法：用这段视频替换 {dest_name} 上现有的画面和声音。"
+1553:                f"你只选了视频，没有另外的音频。\n"
+1554:                f"视频：{sel_fn[0]}\n"
+1556:                f"区间 {c.start:.1f}–{c.end:.1f} 秒，速度 {c.speed:.1f}。{vol_line}"
+1565:            return
+1568:            return
+1570:            return
+1572:            result[0] = {
+1578:                "radio": "",
+1587:                    "volume": vol,
+1593:            return
+1596:                video_vol = 1.0 if audio_use_var.get() == "replace" else vol
+1597:                mp4_adj, wav_adj = build_adjusted_pair(
+1601:                mp4_adj, wav_adj = build_adjusted_pair(
+1605:                mp4_adj, wav_adj = build_adjusted_pair(
+1609:                raise RuntimeError("生成本地临时音视频失败")
+1612:            mp4_adj, wav_adj = build_adjusted_pair(c.path, vol)
+1616:            return
+1619:        if radio_holder[0]:
+1620:            picked = picked + (radio_var.get(),)
+1632:                    "volume": vol,
+1636:                    audio_payload["use"] = audio_use_var.get()
+1638:                    audio_payload["fade_in"] = _fade_seconds(fade_in_on, fade_in_sec)
+1639:                    audio_payload["fade_out"] = _fade_seconds(fade_out_on, fade_out_sec)
+1645:            result[0] = {
+1650:                "radio": radio_var.get() if radio_holder[0] else "",
+1651:                "mix_volume": max(10, min(100, int(mix_level_var.get()))) / 100.0,
+1655:                "video_fade_in": min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec)) if audio_edit else 0.0,
+1656:                "video_fade_out": min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec)) if audio_edit else 0.0,
+1659:            result[0] = picked
+1676:            return
+1681:            return
+1697:            return
+1702:                names = item.setdefault("choices", [])
+1712:            audio_choices.clear()
+1713:            audio_choices.extend(matched.get("choices") or [])
+1715:            for item_name in audio_choices:
+1717:            if name in audio_choices:
+1718:                idx = audio_choices.index(name)
+1751:            return
+1754:                return
+1756:            return
+1763:            return
+1773:            return
+1776:            return
+1780:            return
+1783:            return
+1822:        spec = radio_holder[0]
+1824:            radio_title, radio_options = spec[0], spec[1]
+1825:            default_radio = spec[2] if len(spec) > 2 else radio_options[0][0]
+1826:            radio_var.set(default_radio)
+1827:            ttk.Label(extra_host, text=radio_title, style="PickChoice.TLabel").pack(
+1830:            for value, label in radio_options:
+1835:                    variable=radio_var,
+1838:            if any(value == "overlay" for value, _label in radio_options):
+1839:                # 混音时：导入视频的声音占多大（10%–100%，默认 50%）。只在选了“混音”时显示。
+1862:                        if radio_var.get() == "overlay":
+1870:                radio_var.trace_add("write", _show_mix_level)
+1889:            return
+1893:        choices.clear()
+1894:        choices.extend(spec["choices"])
+1896:        for name in choices:
+1898:        radio_holder[0] = spec.get("radios")
+1901:        if choices:
+1903:            _load_file(choices[0])
+1913:    if choices:
+1915:        _load_file(choices[0])
+1922:    return result[0]

@@ -1262,7 +1262,7 @@ class FfmpegProcessor:
 
 
     # to fade the video with fade_in_length and fade_out_length, without aLpha channel
-    def fade_video(self, video_path, fade_in_length, fade_out_length):
+    def fade_video(self, video_path, fade_in_length, fade_out_length, audio_fade=True):
         output_path = config.get_temp_file(self.pid, "mp4")
         video_length = self.get_duration(video_path)
         has_audio = self.has_audio_stream(video_path)
@@ -1305,20 +1305,22 @@ class FfmpegProcessor:
             
             # 音频处理逻辑 - 对音频同样应用淡入淡出效果
             if has_audio:
-                audio_filters = []
-                if fade_in_length > 0:
-                    audio_filters.append(f"afade=t=in:st=0:d={fade_in_length}")
-                if fade_out_length > 0:
-                    audio_fade_out_start = max(0, video_length - fade_out_length)
-                    audio_filters.append(f"afade=t=out:st={audio_fade_out_start}:d={fade_out_length}")
-                
-                if audio_filters:
-                    cmd.extend(["-af", ",".join(audio_filters)])
-                    print(f"🎵 添加音频淡入淡出效果: {','.join(audio_filters)}")
-                
-                cmd.extend(self._get_audio_encode_args())
-            
-            # 使用标准的 H.264 编码，输出为 MP4 (不支持 alpha 通道)
+                if audio_fade and (float(fade_in_length or 0) > 0 or float(fade_out_length or 0) > 0):
+                    audio_filters = []
+                    if fade_in_length > 0:
+                        audio_filters.append(f"afade=t=in:st=0:d={fade_in_length}")
+                    if fade_out_length > 0:
+                        audio_fade_out_start = max(0, video_length - fade_out_length)
+                        audio_filters.append(f"afade=t=out:st={audio_fade_out_start}:d={fade_out_length}")
+                    if audio_filters:
+                        cmd.extend(["-af", ",".join(audio_filters)])
+                        print(f"🔊 添加音频淡变滤镜: {','.join(audio_filters)}")
+                    cmd.extend(self._get_audio_encode_args())
+                else:
+                    # 只淡画面：音轨原样重编码（配声模式或未勾选同时淡变声音）
+                    cmd.extend(self._get_audio_encode_args())
+                    print("🔊 保留原声音轨（不施加 afade）")
+
             cmd.extend([
                 "-c:v", "libx264",
                 "-crf", "23",

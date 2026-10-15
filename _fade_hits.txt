@@ -1,0 +1,120 @@
+.\config.py:2064:TRANSITION_EFFECTS = ["fade", "circleopen", "radial", "dissolve", "diagtl", "circleclose"]
+.\config.py:2245:"Spoken intro → gradual transition into singing → emotional half-spoken, half-sung storytelling → fade back into speech near the ending → fi
+.\config.py:2264:"Lo-fi ↔ studio crossfade",
+.\config.py:2265:"Muffled, lo-fi vintage radio vocal intro, sounding like a distant memory. Suddenly crossfades into crystal-clear, modern studio-quality sin
+.\config_prompt.py:828:"The captions fade away little by little until the picture is clean. "
+.\config_prompt.py:1430:"The captions fade away little by little until the picture is clean. "
+.\config_prompt.py:1461:"The text fades away little by little until the picture is clean. A viewer should see it disappear, not a cut.",
+.\config_prompt.py:2032:** This is a page turn. Do not replace it with a plain fade or a jump cut."""
+.\config_prompt.py:2336:"叠化": "** The join is a short dissolve. Picture 1 fades and picture 2 appears through it. They overlap for a moment. Write that dissolve int
+.\magic_workflow.py:623:trimmed_audio = self.ffmpeg_audio_processor.audio_cut_fade(
+.\magic_workflow.py:1253:piece = fa.audio_cut_fade(full_wav, start, end - start)
+.\magic_workflow.py:2662:#    video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
+.\magic_workflow.py:2664:#    #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
+.\magic_workflow.py:2673:#video_segments.append({"path":s["clip"], "transition":"fade", "duration":1.0, "extend":ext})
+.\magic_workflow.py:2674:video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":ext})
+.\magic_workflow.py:2677:#    video_segments.append({"path":s["narration"], "transition":"fade", "duration":1.0, "extend":ext})
+.\magic_workflow.py:2679:#    #video_segments.append({"path":v, "transition":"fade", "duration":1.0, "extend":0})
+.\magic_workflow.py:2814:fade_sec=0.01 if ha else 0.0,
+.\magic_workflow.py:2848:audio_segments.append( self.ffmpeg_audio_processor.audio_cut_fade(zero, started, zero_end-started, 1.0, 1.0, zero_volume) )
+.\gui\mp4_pick_preview_dialog.py:344:fade_in_on = tk.BooleanVar(value=True)
+.\gui\mp4_pick_preview_dialog.py:345:fade_out_on = tk.BooleanVar(value=True)
+.\gui\mp4_pick_preview_dialog.py:346:fade_in_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:347:fade_out_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:412:fade_in_row = ttk.Frame(mix_box)
+.\gui\mp4_pick_preview_dialog.py:413:fade_in_row.pack(fill=tk.X, pady=(4, 0))
+.\gui\mp4_pick_preview_dialog.py:414:fade_in_chk = ttk.Checkbutton(fade_in_row, text="渐强", variable=fade_in_on, command=lambda: _sync_audio_edit())
+.\gui\mp4_pick_preview_dialog.py:415:fade_in_chk.pack(side=tk.LEFT)
+.\gui\mp4_pick_preview_dialog.py:416:fade_in_spin = ttk.Spinbox(
+.\gui\mp4_pick_preview_dialog.py:417:fade_in_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_in_sec,
+.\gui\mp4_pick_preview_dialog.py:419:fade_in_spin.pack(side=tk.LEFT, padx=(8, 4))
+.\gui\mp4_pick_preview_dialog.py:420:fade_in_unit = ttk.Label(fade_in_row, text="秒")
+.\gui\mp4_pick_preview_dialog.py:421:fade_in_unit.pack(side=tk.LEFT)
+.\gui\mp4_pick_preview_dialog.py:422:fade_out_row = ttk.Frame(mix_box)
+.\gui\mp4_pick_preview_dialog.py:423:fade_out_row.pack(fill=tk.X, pady=(4, 0))
+.\gui\mp4_pick_preview_dialog.py:424:fade_out_chk = ttk.Checkbutton(fade_out_row, text="渐弱", variable=fade_out_on, command=lambda: _sync_audio_edit())
+.\gui\mp4_pick_preview_dialog.py:425:fade_out_chk.pack(side=tk.LEFT)
+.\gui\mp4_pick_preview_dialog.py:426:fade_out_spin = ttk.Spinbox(
+.\gui\mp4_pick_preview_dialog.py:427:fade_out_row, from_=0.5, to=30.0, increment=0.5, width=6, textvariable=fade_out_sec,
+.\gui\mp4_pick_preview_dialog.py:429:fade_out_spin.pack(side=tk.LEFT, padx=(8, 4))
+.\gui\mp4_pick_preview_dialog.py:430:fade_out_unit = ttk.Label(fade_out_row, text="秒")
+.\gui\mp4_pick_preview_dialog.py:431:fade_out_unit.pack(side=tk.LEFT)
+.\gui\mp4_pick_preview_dialog.py:444:ratio_name, ratio_lbl, ratio_scale, fade_in_chk, fade_in_spin, fade_in_unit,
+.\gui\mp4_pick_preview_dialog.py:445:fade_out_chk, fade_out_spin, fade_out_unit,
+.\gui\mp4_pick_preview_dialog.py:502:video_fade_in_on = tk.BooleanVar(value=False)
+.\gui\mp4_pick_preview_dialog.py:503:video_fade_out_on = tk.BooleanVar(value=False)
+.\gui\mp4_pick_preview_dialog.py:504:video_fade_in_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:505:video_fade_out_sec = tk.DoubleVar(value=1.0)
+.\gui\mp4_pick_preview_dialog.py:507:def _pack_video_fade(parent, label: str, flag, seconds) -> None:
+.\gui\mp4_pick_preview_dialog.py:516:_pack_video_fade(trim_box, "淡入", video_fade_in_on, video_fade_in_sec)
+.\gui\mp4_pick_preview_dialog.py:517:_pack_video_fade(trim_box, "淡出", video_fade_out_on, video_fade_out_sec)
+.\gui\mp4_pick_preview_dialog.py:1212:_set_enabled(widget, mixing and bool(fade_in_on.get()))
+.\gui\mp4_pick_preview_dialog.py:1214:_set_enabled(widget, mixing and bool(fade_out_on.get()))
+.\gui\mp4_pick_preview_dialog.py:1465:def _fade_seconds(flag, var) -> float:
+.\gui\mp4_pick_preview_dialog.py:1474:fade_in = _fade_seconds(fade_in_on, fade_in_sec)
+.\gui\mp4_pick_preview_dialog.py:1475:fade_out = _fade_seconds(fade_out_on, fade_out_sec)
+.\gui\mp4_pick_preview_dialog.py:1476:fade_in_line = f"开头渐强 {fade_in:.1f} 秒" if fade_in > 0 else "开头不渐强"
+.\gui\mp4_pick_preview_dialog.py:1477:fade_out_line = f"结尾渐弱 {fade_out:.1f} 秒" if fade_out > 0 else "结尾不渐弱"
+.\gui\mp4_pick_preview_dialog.py:1503:f"{fade_in_line}，{fade_out_line}。{cut_line}"
+.\gui\mp4_pick_preview_dialog.py:1638:audio_payload["fade_in"] = _fade_seconds(fade_in_on, fade_in_sec)
+.\gui\mp4_pick_preview_dialog.py:1639:audio_payload["fade_out"] = _fade_seconds(fade_out_on, fade_out_sec)
+.\gui\mp4_pick_preview_dialog.py:1655:"video_fade_in": min(3.0, _fade_seconds(video_fade_in_on, video_fade_in_sec)) if audio_edit else 0.0,
+.\gui\mp4_pick_preview_dialog.py:1656:"video_fade_out": min(3.0, _fade_seconds(video_fade_out_on, video_fade_out_sec)) if audio_edit else 0.0,
+.\gui\summary_mp4_review_dialog.py:801:ap = self.ff_audio.audio_cut_fade(self._full_audio, start_t, length) or ""
+.\gui\workflow\wf_media_drop.py:289:clip_wav = fa.audio_cut_fade(wav_path, offset, out_len, fade_in=0, fade_out=0)
+.\gui\workflow\wf_media_import.py:251:fade_in = float(audio.get("fade_in") or 0.0)
+.\gui\workflow\wf_media_import.py:252:fade_out = float(audio.get("fade_out") or 0.0)
+.\gui\workflow\wf_media_import.py:258:if mix_len > 0.05 and (fade_in > 0.01 or fade_out > 0.01 or mix_len < audio_dur - 0.05):
+.\gui\workflow\wf_media_import.py:259:piece = fp.extract_audio_segment(wav, 0, mix_len, fade_in, fade_out)
+.\gui\workflow\wf_media_import.py:329:fade_in = float(audio.get("fade_in") or 0.0)
+.\gui\workflow\wf_media_import.py:330:fade_out = float(audio.get("fade_out") or 0.0)
+.\gui\workflow\wf_media_import.py:351:fade_in if offset <= 0.05 else 0.0,
+.\gui\workflow\wf_media_import.py:352:fade_out if last else 0.0,
+.\gui\workflow\wf_media_import.py:367:mixed = self._fade_finished_clip(
+.\gui\workflow\wf_media_import.py:369:float(audio.get("video_fade_in") or 0.0),
+.\gui\workflow\wf_media_import.py:370:float(audio.get("video_fade_out") or 0.0),
+.\gui\workflow\wf_media_import.py:428:audio["video_fade_in"] = pick.get("video_fade_in") or 0.0
+.\gui\workflow\wf_media_import.py:429:audio["video_fade_out"] = pick.get("video_fade_out") or 0.0
+.\gui\workflow\wf_media_import.py:439:faded = self._fade_finished_clip(
+.\gui\workflow\wf_media_import.py:441:float(pick.get("video_fade_in") or 0.0),
+.\gui\workflow\wf_media_import.py:442:float(pick.get("video_fade_out") or 0.0),
+.\gui\workflow\wf_media_import.py:444:if faded and faded != mp4 and os.path.isfile(faded):
+.\gui\workflow\wf_media_import.py:445:mp4 = faded
+.\gui\workflow\wf_media_import.py:509:def _fade_finished_clip(self, video_path: str, fade_in: float, fade_out: float) -> str:
+.\gui\workflow\wf_media_import.py:511:fade_in = max(0.0, min(3.0, float(fade_in or 0.0)))
+.\gui\workflow\wf_media_import.py:512:fade_out = max(0.0, min(3.0, float(fade_out or 0.0)))
+.\gui\workflow\wf_media_import.py:513:if fade_in < 0.05 and fade_out < 0.05:
+.\gui\workflow\wf_media_import.py:519:if duration > 0.05 and fade_in + fade_out > duration:
+.\gui\workflow\wf_media_import.py:520:scale = duration / (fade_in + fade_out)
+.\gui\workflow\wf_media_import.py:521:fade_in *= scale
+.\gui\workflow\wf_media_import.py:522:fade_out *= scale
+.\gui\workflow\wf_media_import.py:523:faded = fp.fade_video(video_path, fade_in, fade_out)
+.\gui\workflow\wf_media_import.py:524:if faded and os.path.isfile(faded) and os.path.getsize(faded) > 0:
+.\gui\workflow\wf_media_import.py:525:return faded
+.\gui\workflow\wf_scene_structure.py:1305:clip_wav = fa.audio_cut_fade(audio, start, duration)
+.\gui\workflow\wf_span_audio.py:368:head = ap.audio_cut_fade(audio, 0.0, cut_start, 0, 0)
+.\gui\workflow\wf_span_audio.py:379:tail = ap.audio_cut_fade(audio, cut_end, duration - cut_end, 0, 0)
+.\gui\workflow\wf_tracks.py:227:wav_out = ap.audio_cut_fade(raw, 0, raw_len, 0, 0, volume=vol)
+.\gui\workflow\wf_tracks.py:567:secondary_audio_copy = self.workflow.ffmpeg_audio_processor.audio_cut_fade(secondary_audio, start_time, audio_duration, 0, 0, 1.0)
+.\utility\ffmpeg_audio_processor.py:49:return self.audio_cut_fade(noise_wav_path, 0, duration, 0, 1.0)
+.\utility\ffmpeg_audio_processor.py:399:return self.audio_cut_fade(audio_path, start_time, target_length, 0, 1.0)
+.\utility\ffmpeg_audio_processor.py:404:cut_audio_path = self.audio_cut_fade(audio_path, start_time, available_duration, 0, 1.0)
+.\utility\ffmpeg_audio_processor.py:513:def fit_audio_to_duration(self, src_path, duration, fade_sec=0.0, skip_sec=0.0):
+.\utility\ffmpeg_audio_processor.py:515:src 没有音轨时输出同长静音。fade_sec>0 时首尾各做极短淡入淡出，防止接缝爆音。"""
+.\utility\ffmpeg_audio_processor.py:527:f = float(fade_sec or 0.0)
+.\utility\ffmpeg_audio_processor.py:529:af += f",afade=t=in:st=0:d={f:.4f},afade=t=out:st={d - f:.6f}:d={f:.4f}"
+.\utility\ffmpeg_audio_processor.py:560:return self.audio_cut_fade(audio_path, 0.0, float(target_duration_sec), 0, 0, 1.0)
+.\utility\ffmpeg_audio_processor.py:581:def audio_cut_fade(self, raw_auddio_path, start_time, output_length, fade_in=0, fade_out=0, volume=1.0):
+.\utility\ffmpeg_audio_processor.py:588:if (volume == 0.0 or volume == 1.0) and start_time==0 and fade_in==0 and fade_out==0 and output_length==raw_audio_length:
+.\utility\ffmpeg_audio_processor.py:600:# Add fade effects only if fade_length > 0
+.\utility\ffmpeg_audio_processor.py:601:if fade_in > 0:
+.\utility\ffmpeg_audio_processor.py:602:filter_parts.append(f"afade=t=in:st=0:d={fade_in}:curve=esin")
+.\utility\ffmpeg_audio_processor.py:604:if fade_out > 0:
+.\utility\ffmpeg_audio_processor.py:605:fade_out_start = max(0, output_length - fade_in)
+.\utility\ffmpeg_audio_processor.py:606:filter_parts.append(f"afade=t=out:st={fade_out_start}:d={fade_out}:curve=esin")
+.\utility\ffmpeg_audio_processor.py:638:print(f'⏱️  Audio timing: start={start_time}s, length={output_length}s, fade={fade_in}s')
+.\utility\ffmpeg_audio_processor.py:645:print(f"FFmpeg Error in fade_audio: {e.stderr}")
+.\utility\ffmpeg_audio_processor.py:647:print(f"An error occurred in fade_audio: {e}")
+.\utility\ffmpeg_processor.py:778:fade_in_duration=0,
+.\utility\ffmpeg_processor.py:779:fade_out_duration=0,
+.\utility\ffmpeg_processor.py:783:多段拼接时通常只在首段用 fade_in、末段用 fade_out，中间段两者均为 0。
