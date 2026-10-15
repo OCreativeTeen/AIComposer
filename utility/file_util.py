@@ -5,6 +5,7 @@ import glob
 from datetime import datetime
 from typing import List, Dict, Union, Any, Optional
 import re
+import time
 
 
 def safe_clipboard_json_copy(text: Optional[str]) -> str:
@@ -556,3 +557,162 @@ def show_auto_close_popup(
             pass
 
     win.after(duration_ms, _close)
+
+
+# --- moved from gui/downloader.py: path helpers ---
+def _sanitize_list_row_id_stem(raw_id: str) -> str:
+    rid = (raw_id or "").strip()
+    if not rid:
+        return ""
+    bad = '\\/:*?"<>|\r\n\t'
+    s = "".join(c if c not in bad else "_" for c in rid)
+    return s[:200] if len(s) > 200 else s
+
+
+_TEXT_DROP_SUFFIXES = (".txt", ".md", ".markdown", ".text", ".rst", ".log", ".csv")
+
+
+_AUDIO_DROP_SUFFIXES = (
+    ".mp3",
+    ".wav",
+    ".wave",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".oga",
+    ".wma",
+    ".opus",
+    ".aiff",
+    ".aif",
+    ".mp2",
+)
+
+
+_VIDEO_DROP_SUFFIXES = (".mp4", ".m4v", ".mov")
+
+
+def _drop_suffix(path: str) -> str:
+    return os.path.splitext(path or "")[1].lower()
+
+
+def _is_plain_text_file_path(path: str) -> bool:
+    return _drop_suffix(path) in _TEXT_DROP_SUFFIXES
+
+
+def _media_kind_for_path(path: str) -> str:
+    ext = _drop_suffix(path)
+    if ext in _AUDIO_DROP_SUFFIXES:
+        return "audio"
+    if ext in _VIDEO_DROP_SUFFIXES:
+        return "video"
+    return ""
+
+
+def _read_plain_text_file(path: str) -> str:
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _win_long_path(path: str) -> str:
+    """Windows 长路径前缀，避免超长路径 isfile 失败。"""
+    p = os.path.normpath(path)
+    if os.name != "nt" or p.startswith("\\\\?\\"):
+        return p
+    if p.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + p[2:]
+    if len(p) >= 240:
+        return "\\\\?\\" + p
+    return p
+
+
+def _is_existing_file(path: str) -> bool:
+    p = (path or "").strip()
+    if not p:
+        return False
+    lp = _win_long_path(p)
+    return os.path.isfile(lp) or os.path.isfile(p)
+
+
+def _collect_unique_file_paths(
+    paths: list[str], *, label: str = "", allow_duplicates: bool = False
+) -> list[str]:
+    """规范化路径列表；默认去重（保留顺序），``allow_duplicates=True`` 时保留重复项。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    raw_n = len(paths)
+    for raw in paths:
+        p = (raw or "").strip()
+        if p.startswith("{") and p.endswith("}"):
+            p = p[1:-1].strip()
+        if not p:
+            continue
+        p = os.path.normpath(p)
+        if not _is_existing_file(p):
+            print(f"⚠️ 跳过无效文件: {p}")
+            continue
+        if not allow_duplicates:
+            key = os.path.normcase(os.path.abspath(p))
+            if key in seen:
+                print(f"⚠️ 跳过重复: {os.path.basename(p)}")
+                continue
+            seen.add(key)
+        out.append(p)
+    if label and raw_n != len(out):
+        print(f"📎 {label}: 收到 {raw_n} 项 → 有效 {len(out)} 项")
+    return out
+
+
+def _is_windows_file_in_use(err: OSError) -> bool:
+    """WinError 32：文件正被另一进程使用。"""
+    if getattr(err, "winerror", None) == 32:
+        return True
+    # 非 Windows：EBUSY 等
+    en = getattr(err, "errno", None)
+    return en in (11, 16, 26)  # EAGAIN, EBUSY, ETXTBSY 等视平台而定
+
+
+def _move_file_to_dest_with_fallback(src: str, dst: str) -> None:
+    """优先 move；失败时 copy2 再删源。对「文件正被使用」短暂重试（预览刚停时句柄未立即释放）。"""
+    retries = 12
+    delay = 0.3
+    last_err: OSError | None = None
+    for attempt in range(retries):
+        try:
+            shutil.move(src, dst)
+            return
+        except OSError as e:
+            last_err = e
+            if _is_windows_file_in_use(e) and attempt < retries - 1:
+                time.sleep(delay)
+                delay = min(delay * 1.2, 2.0)
+                continue
+            break
+    delay = 0.3
+    for attempt in range(retries):
+        try:
+            shutil.copy2(src, dst)
+            try:
+                os.remove(src)
+            except OSError as rm_err:
+                if _is_windows_file_in_use(rm_err) and attempt < retries - 1:
+                    time.sleep(delay)
+                    delay = min(delay * 1.2, 2.0)
+                    continue
+                raise
+            return
+        except OSError as e:
+            last_err = e
+            if _is_windows_file_in_use(e) and attempt < retries - 1:
+                time.sleep(delay)
+                delay = min(delay * 1.2, 2.0)
+                continue
+            raise
+    if last_err:
+        raise last_err

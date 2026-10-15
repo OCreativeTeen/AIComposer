@@ -2912,41 +2912,6 @@ Story Json-Content:
 """
 
 
-IMAGE_DESCRIPTION_SYSTEM_PROMPT = """
-You are a professional expert who is good at analyzing & describing the image (attached in the user-prompt) as a Scene, in English.
-
-Please give details (Visual-Summary / camera-scene, and sound-effects) as below (FYI, don't use doubel-quotes & newlines in the values at all !):
-
-		** subject (detailed description of all speakers (gender/age/background/key features)  ~~ not including any narrator  ~~~ in original language)
-        ** visual_image (The dense, detailed text description of the scene's visual content ~~ Excluding any narrator info  ~~~ in original language)
-		** person_action (detailed description of the speakers' actions (reactions/mood/interactions), and visual expression ~~~ in original language)
-		** era_time (the time setting, including the historical era, season, time of day, and weather conditions  ~~~ in English)
-        ** environment (detailed description of the setting, including architecture, terrain, specific buildings, streets, market.   ~~~ in English)
-        ** sound_effect (Specific ambient sounds, sound effects, music cues for the scene [like heavy-rain, wind-blowing, birds-chirping, hand-tap, market-noise, etc. ~~~ in English])
-		** cinematography (Detailed directorial cues covering camera motion, shot scale, lighting, and lens choices. (NOT for the narrator!)  ~~~ in English)
-
-        ***FYI*** all values of the fields should NOT has double-quotes & newlinesin the valuesat all !
-
--------------------------------
-The response format: json dictionary
-like:
-
-    {{
-        "subject": "白蛇：身长五十尺，鳞片泛着珍珠般的光泽，眼神忧郁。徐明州：浑身湿透，满脸泥泞，一副惊恐万分的样子。",
-        "visual_image": "史诗级灾难场景：洪水摧毁城市，夜幕降临，一条巨大的白色巨蛇从水中升起，鳞片闪闪发光，一个矮小的男子蜷缩在屋顶上，暴雨倾盆。",
-        "person_action": "巨蟒用鼻子轻轻地把明州推到屋顶上。明州惊恐地向后爬去，发出尖叫。",
-        "era_time": "1000 BC, ancient time; late summer afternoon; dry air and blazing sun",
-        "environment": "Vineyard hills north of Jerusalem; rows of vines stretch across sun-baked slopes where olive trees shimmer in heat haze, distant stone cottages dot the ridgeline.",
-        "sound_effect": "crickets-chirping, gentle breeze through vines",
-        "cinematography": {{
-            "camera_movement": "The camera begins with a medium-wide shot sweeping through the vineyard. It glides forward along the rows, finally rising in a low angle toward the woman’s weary face, sunlight filtering through vine leaves in warm amber tones.",
-            "lighting_style": "dust floating in the golden light",
-            "lens_type": "Standard 50mm"
-        }}
-    }}
-"""
-
-
 MERGE_SENTENCES_SYSTEM_PROMPT = """
 You are a professional expert who is good at merge audio-text segments into complete sentences (each sentence describe a complete thought),
 from the audio-text segments (in json format) given in 'user-prompt', like below:

@@ -59,3 +59,49 @@ def merge_tag_pick(existing: List[str], feature: str, option: str) -> List[str]:
         out.append(ts)
     out.append(label)
     return out
+
+
+# --- moved from gui/downloader.py: text helpers ---
+def _plain_item_tags(video: dict) -> list[str]:
+    """条目上的分组 tag（纯名称）。预设的「特征=选项」不参与筛选。"""
+    if not isinstance(video, dict):
+        return []
+    raw = video.get("tags")
+    if isinstance(raw, list):
+        parts = [str(t).strip() for t in raw]
+    elif isinstance(raw, str):
+        parts = parse_tags_list(raw)
+    else:
+        return []
+    out = []
+    for part in parts:
+        name = part.strip()
+        if not name or "=" in name or name in out:
+            continue
+        out.append(name)
+    return out
+
+
+def _strip_markdown_embedded_images(text: str) -> tuple[str, int]:
+    """丢掉 Markdown 里嵌进去的图片原始数据。正文留下，base64 不要。"""
+    import re
+
+    data_uri = re.compile(
+        r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+",
+        re.IGNORECASE,
+    )
+    removed = 0
+    kept: list[str] = []
+    for line in (text or "").splitlines():
+        if line.startswith("（另有 ") and "嵌入图片" in line and "不展开" in line:
+            continue
+        if "<data:image/" in line and ";base64," in line and len(line) > 2000:
+            removed += 1
+            continue
+        cleaned, n = data_uri.subn("", line)
+        removed += n
+        if cleaned.strip() != line.strip() and not cleaned.strip():
+            continue
+        kept.append(cleaned)
+    body = "\n".join(kept).strip()
+    return body, removed

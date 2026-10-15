@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ctypes
+import tkinter as tk
 
 
 def _visible_titles(substr: str) -> list[tuple[int, str]]:
@@ -85,3 +86,84 @@ def raise_window(hwnd: int) -> bool:
         brought = bool(user32.SetForegroundWindow(hwnd)) or brought
         user32.keybd_event(0x12, 0, 2, 0)
     return brought or user32.GetForegroundWindow() == hwnd
+
+
+# --- moved from gui/downloader.py: Tk window raise helpers ---
+def _drop_topmost(win) -> None:
+    try:
+        win.attributes("-topmost", False)
+    except tk.TclError:
+        pass
+
+
+def _hwnds_for_tk(win) -> list[int]:
+    hwnds: list[int] = []
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        child = int(win.winfo_id())
+        root = int(user32.GetAncestor(child, 2) or 0)  # GA_ROOT
+        parent = int(user32.GetParent(child) or 0)
+        for h in (root, parent, child):
+            if h and h not in hwnds:
+                hwnds.append(h)
+    except Exception:
+        pass
+    return hwnds
+
+
+def _map_tk_window_noactivate(win) -> None:
+    """Show a Toplevel without AttachThreadInput / SetForegroundWindow."""
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        SW_SHOWNOACTIVATE = 4
+        SW_SHOW = 5
+        HWND_TOPMOST = -1
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOACTIVATE = 0x0010
+        SWP_SHOWWINDOW = 0x0040
+        SWP_FRAMECHANGED = 0x0020
+        flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED
+        for hwnd in _hwnds_for_tk(win):
+            user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+            user32.ShowWindow(hwnd, SW_SHOW)
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+    except Exception:
+        pass
+
+
+def _force_tk_repaint(win) -> None:
+    try:
+        win.update_idletasks()
+    except tk.TclError:
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        # Invalidate only — RDW_UPDATENOW / UpdateWindow / tk.update() wait for
+        # paint while Tk is already on the stack and freeze the bridge pump.
+        flags = 0x0001 | 0x0004 | 0x0080 | 0x0400
+        for hwnd in _hwnds_for_tk(win):
+            user32.InvalidateRect(hwnd, None, True)
+            user32.RedrawWindow(hwnd, None, None, flags)
+    except Exception:
+        pass
+
+
+def _raise_own_window(win) -> None:
+    """Map SCENE/STORY. Activation is done by the CLI process, not here."""
+    try:
+        win.deiconify()
+        win.lift()
+        win.attributes("-topmost", True)
+        _map_tk_window_noactivate(win)
+        _force_tk_repaint(win)
+        win.after(80, lambda: _force_tk_repaint(win))
+        win.after(400, lambda: _drop_topmost(win))
+    except tk.TclError:
+        pass

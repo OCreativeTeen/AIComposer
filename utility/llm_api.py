@@ -21,10 +21,6 @@ from . import file_util
 # 本机 Strata 上已加载的模型。/v1/models 的 id，上下文 65536，只收文字。
 STRATA = "qwen3.8-flash-next-iq3_xxs"
 
-# DeepSeek（云端）：难任务用。密钥 DEEPSEEK_API_KEY（没有再读 OPENAI_API_KEY）。
-GPT_MINI = "deepseek-flash"
-DEEPSEEK = GPT_MINI
-
 GEMINI = "gemini-3.5-flash-lite"
 
 MANUAL = "manual"
@@ -32,9 +28,9 @@ MANUAL = "manual"
 # 纯文字、不是手动窗口的调用都走这一台本机 Strata。带图片或附件的仍然先开手动窗口。
 TEXT_MODEL = STRATA
 
-# 难度分级：简单 -> Strata，难 -> DeepSeek，最难/带图 -> 手动窗口
+# 难度分级：简单 -> Strata，难 -> 手动窗口，最难/带图 -> 手动窗口
 MODEL_SIMPLE = STRATA
-MODEL_HARD = GPT_MINI
+MODEL_HARD = MANUAL  # 不再用 DeepSeek，难任务也走手动窗口
 MODEL_MANUAL = MANUAL
 # 生成长度上限。模型总窗口是 65536，提示词也算在里面，所以回答不要占满。
 STRATA_MAX_TOKENS = 32768
@@ -42,9 +38,6 @@ STRATA_MAX_TOKENS = 32768
 MODELS = {
     STRATA : {
         "url": "http://192.168.1.185:8080/v1"
-    },
-    GPT_MINI : {
-        "url": "https://api.deepseek.com/v1"
     },
     GEMINI : {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -56,7 +49,7 @@ class LLMApi:
 
     def __init__(self, model: str = None):
         self.model = model
-        # 自动调用（Strata / DeepSeek / Gemini）失败时，直接打开手动窗口。
+        # 自动调用（Strata / Gemini）失败时，直接打开手动窗口。
         # 调用方自己有手动兜底时（如 media_transcript 的 ManualBridge）设成 False，避免开两次。
         self.manual_fallback = True
         self._last_source = ""
@@ -64,11 +57,6 @@ class LLMApi:
         self.strata_client = OpenAI(
             api_key = os.getenv("STRATA_API_KEY", ""),
             base_url = MODELS[STRATA]["url"],
-            http_client = httpx.Client(timeout=httpx.Timeout(180.0))
-        )
-        self.openai_client = OpenAI(
-            api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
-            base_url = MODELS[GPT_MINI]["url"],
             http_client = httpx.Client(timeout=httpx.Timeout(180.0))
         )
         self.google_client = OpenAI(
@@ -314,9 +302,6 @@ class LLMApi:
     def _chat_completions(self, model: str, messages: List[Dict]) -> Any:
         if model == STRATA:
             return self.strata_client.chat.completions.create(**self._strata_request(model, messages))
-        if model == GPT_MINI:
-            return self.openai_client.chat.completions.create(
-                model=model, messages=messages, temperature=0.5, stream=False)
         if model == GEMINI:
             request_params = {
                 "model": model,
@@ -422,45 +407,6 @@ class LLMApi:
                 break
         return results
 
-    def analyze_image(
-        self, analyze_prompt, image_path, user_prompt: str = ""
-    ) -> Optional[str]:
-        """最多 3 张图只在手动窗口里供双击复制。发给模型的仍是文字。"""
-        user_text = (user_prompt or "").strip() or "Continue."
-        return self.generate_text(analyze_prompt or "", user_text, images=image_path)
-
-
-    def analyze_image_json(
-        self,
-        analyze_prompt,
-        image_path,
-        output_path=None,
-        expect_list=False,
-        user_prompt: str = "",
-    ) -> Union[Dict, List]:
-        """分析图片并解析为 JSON（与 generate_json 相同的清洗/解析流程）。"""
-        content = self.analyze_image(analyze_prompt, image_path, user_prompt=user_prompt)
-        if not isinstance(content, str) or not content.strip():
-            return [] if expect_list else {}
-
-        content_string = str(content).strip()
-        content_string = content_string.replace("```json", "").replace("```", "")
-        content_string = re.sub(r'\s+', ' ', content_string)
-        content_string = content_string.replace("\r\n", " ")
-        content_string = content_string.replace("\n", " ")
-        content_string = content_string.replace("\r", " ")
-        content_string = " ".join(content_string.splitlines())
-
-        if output_path:
-            try:
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(content_string)
-            except Exception as e:
-                print(f"警告：无法保存 JSON 文件到 {output_path}: {e}")
-
-        return file_util.parse_json(content_string=content_string, expect_list=expect_list)
-
-
     @staticmethod
     def _normalize_image_paths(images) -> list:
         """一张路径或一个列表，最多留 3 张存在的图。"""
@@ -526,8 +472,6 @@ class LLMApi:
         print(f"⚠️ 自动调用 {model} 没成功。")
         if model == STRATA and not os.getenv("STRATA_API_KEY"):
             print("⚠️ 没有找到 Strata 密钥：请在 .env 里加一行 STRATA_API_KEY=你的密钥。")
-        if model == GPT_MINI and not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")):
-            print("⚠️ 没有找到 DeepSeek 密钥：请在 .env 里加一行 DEEPSEEK_API_KEY=你的密钥。")
         return self._manual_fallback(system_prompt, user_prompt, images, attachment, model)
 
     def _manual_fallback(self, system_prompt, user_prompt, images, attachment, failed_model):
@@ -786,7 +730,6 @@ class LLMApi:
         model_btn_row.pack(fill=tk.X)
         for mid, btn_title in ([] if manual_only else [
             (STRATA, "Strata"),
-            (GPT_MINI, "DeepSeek"),
             (GEMINI, "Gemini"),
             (MANUAL, "Manual"),
         ]):
@@ -1198,8 +1141,9 @@ class LLMApi:
             reply_pic = ttk.Label(reply_hit)
             reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
 
-            def paste_response_image(_event=None):
-                img = self._image_from_clipboard()
+            def paste_response_image(_event=None, img=None):
+                if img is None:
+                    img = self._image_from_clipboard()
                 if img is None:
                     reply_hint.config(text="剪贴板里没有图片")
                     return "break"
@@ -1253,8 +1197,9 @@ class LLMApi:
             reply_pic = ttk.Label(reply_hit)
             reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
 
-            def paste_response_image(_event=None):
-                img = self._image_from_clipboard()
+            def paste_response_image(_event=None, img=None):
+                if img is None:
+                    img = self._image_from_clipboard()
                 if img is None:
                     reply_hint.config(text="剪贴板里没有图片")
                     return "break"
@@ -1301,8 +1246,9 @@ class LLMApi:
             reply_pic = ttk.Label(reply_hit)
             reply_pic.pack(anchor=tk.CENTER, expand=True, fill=tk.BOTH)
 
-            def paste_response_image(_event=None):
-                img = self._image_from_clipboard()
+            def paste_response_image(_event=None, img=None):
+                if img is None:
+                    img = self._image_from_clipboard()
                 if img is None:
                     reply_hint.config(text="剪贴板里没有图片")
                     return "break"
@@ -1417,11 +1363,101 @@ class LLMApi:
             dialog.clipboard_append(get_request_copy_content())
             dialog.update()
 
+        # ---- CLI自动：通过 CDP 驱动 Chrome 里的 Grok，自动完成这次手动来回（utility/grok_cdp.py）----
+        cli_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="#1f5fbf")
+        cli_status.pack(anchor=tk.W, pady=(2, 0))
+        cli_busy = [False]
+        cli_btn_ref = [None]
+
+        def _cli_ui(fn):
+            """后台线程改界面一律交给主线程（同 _show_model_dialog_from_thread 的做法）。"""
+            def _run():
+                try:
+                    if dialog.winfo_exists():
+                        fn()
+                except tk.TclError:
+                    pass
+            try:
+                dialog.after(0, _run)
+            except Exception:
+                pass
+
+        def _cli_set_status(text, color="#1f5fbf"):
+            _cli_ui(lambda: cli_status.config(text=text, foreground=color))
+
+        def _cli_done_ui():
+            cli_busy[0] = False
+            if cli_btn_ref[0] is not None:
+                cli_btn_ref[0].state(["!disabled"])
+
+        def on_cli_auto():
+            """有图：Grok Imagine 以图生图，结果进「返回的图」。没图：grok.com 对话，结果进「响应」。然后点完成。
+            失败时只显示错误，窗口照旧可以手动粘贴。"""
+            if cli_busy[0]:
+                return
+            if file_kind:
+                cli_status.config(text="CLI自动 不支持 PDF / 音频 / 视频附件，请手动操作", foreground="#c00000")
+                return
+            prompt = get_request_copy_content()
+            image_path = image_paths[0] if image_paths else ""
+            selected_model.set(MANUAL)
+            cli_busy[0] = True
+            if cli_btn_ref[0] is not None:
+                cli_btn_ref[0].state(["disabled"])
+            cli_status.config(text="CLI自动 开始 …", foreground="#1f5fbf")
+
+            def _work():
+                try:
+                    from . import grok_cdp
+
+                    if image_path:
+                        img = grok_cdp.make_image(prompt, image_path, status=_cli_set_status)
+
+                        def _apply_image():
+                            _cli_done_ui()
+                            handler = paste_image_handler[0]
+                            if handler is not None:
+                                handler(img=img)
+                            else:
+                                response_image[0] = img
+                            cli_status.config(text="CLI自动 完成", foreground="#1f7f1f")
+                            on_ok()
+
+                        _cli_ui(_apply_image)
+                    else:
+                        text = grok_cdp.ask_text(prompt, status=_cli_set_status)
+                        if not (text or "").strip():
+                            raise RuntimeError("Grok 返回了空回答")
+
+                        def _apply_text():
+                            _cli_done_ui()
+                            content = file_util.safe_clipboard_json_copy(text) or text
+                            response_text.delete("1.0", tk.END)
+                            response_text.insert("1.0", content)
+                            cli_status.config(text="CLI自动 完成", foreground="#1f7f1f")
+                            on_ok()
+
+                        _cli_ui(_apply_text)
+                except Exception as exc:
+                    msg = f"CLI自动 失败：{exc}（可以继续手动粘贴）"
+                    print(f"❌ {msg}")
+
+                    def _fail():
+                        _cli_done_ui()
+                        cli_status.config(text=msg, foreground="#c00000")
+
+                    _cli_ui(_fail)
+
+            threading.Thread(target=_work, name="grok-cli-auto", daemon=True).start()
+
         action_box = ttk.Frame(model_btn_row)
         action_box.pack(side=tk.RIGHT)
         ttk.Button(action_box, text=ok_text, command=on_ok).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
         ttk.Button(action_box, text=cancel_text, command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
         ttk.Button(action_box, text="重新拷贝提示词", command=on_copy).pack(side=tk.RIGHT, pady=2)
+        cli_btn = ttk.Button(action_box, text="CLI自动", command=on_cli_auto)
+        cli_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=2)
+        cli_btn_ref[0] = cli_btn
         ttk.Separator(model_btn_row, orient=tk.VERTICAL).pack(side=tk.RIGHT, fill=tk.Y, padx=48, pady=2)
 
         on_copy()

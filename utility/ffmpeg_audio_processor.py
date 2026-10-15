@@ -442,6 +442,110 @@ class FfmpegAudioProcessor:
             return None
 
 
+    @staticmethod
+    def atempo_chain(speed):
+        """atempo 只接受 0.5–2.0，超出范围时串联多个 atempo。"""
+        s = float(speed)
+        parts = []
+        while s > 2.0:
+            parts.append("atempo=2.0")
+            s /= 2.0
+        while s < 0.5:
+            parts.append("atempo=0.5")
+            s /= 0.5
+        parts.append(f"atempo={s:.6f}")
+        return ",".join(parts)
+
+
+    def change_tempo(self, audio_path, speed):
+        """按 speed 倍率变速（不变调），输出 WAV；speed≈1 时原样返回，失败返回 None。"""
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            return audio_path
+        if speed <= 0 or abs(speed - 1.0) <= 0.001:
+            return audio_path
+        if not audio_path or not os.path.exists(audio_path):
+            return None
+        output_path = config.get_temp_file(self.pid, "wav")
+        try:
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-i", audio_path,
+                "-vn",
+                "-af", self.atempo_chain(speed),
+                "-ac", "2",
+                "-ar", "44100",
+                "-c:a", "pcm_s16le",
+                output_path,
+            ], check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            return output_path if os.path.exists(output_path) else None
+        except subprocess.CalledProcessError as e:
+            print(f"❌ FFmpeg 错误 (change_tempo): {e.stderr}")
+        except Exception as e:
+            print(f"❌ change_tempo: {e}")
+        return None
+
+
+    def av_start_offset(self, video_path):
+        """视频流起点减音频流起点（秒）。变速/重编码后 AAC 前面常带 ~20ms 的编码器静音，
+        画面则从这个偏移处才开始；按画面对齐时要先跳过这段。取不到时返回 0。"""
+        starts = {}
+        try:
+            r = subprocess.run([
+                ffprobe_path, "-v", "error",
+                "-show_entries", "stream=codec_type,start_time",
+                "-of", "csv=p=0", video_path,
+            ], capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            for line in (r.stdout or "").splitlines():
+                parts = line.strip().split(",")
+                if len(parts) >= 2 and parts[0] in ("video", "audio") and parts[0] not in starts:
+                    try:
+                        starts[parts[0]] = float(parts[1])
+                    except ValueError:
+                        pass
+        except Exception:
+            return 0.0
+        off = starts.get("video", 0.0) - starts.get("audio", 0.0)
+        return off if 0.0 < off < 0.5 else 0.0
+
+
+    def fit_audio_to_duration(self, src_path, duration, fade_sec=0.0, skip_sec=0.0):
+        """取 src（音频或视频）的声音，跳过开头 skip_sec 秒，补静音/裁切到恰好 duration 秒，输出 WAV。
+        src 没有音轨时输出同长静音。fade_sec>0 时首尾各做极短淡入淡出，防止接缝爆音。"""
+        d = float(duration)
+        if d <= 0:
+            return None
+        output_path = config.get_temp_file(self.pid, "wav")
+        af = (
+            "aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo,"
+        )
+        s = float(skip_sec or 0.0)
+        if s > 0:
+            af += f"atrim=start={s:.6f},asetpts=PTS-STARTPTS,"
+        af += f"apad,atrim=end={d:.6f},asetpts=PTS-STARTPTS"
+        f = float(fade_sec or 0.0)
+        if f > 0 and d > 4 * f:
+            af += f",afade=t=in:st=0:d={f:.4f},afade=t=out:st={d - f:.6f}:d={f:.4f}"
+        tail = ["-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", output_path]
+        try:
+            if src_path and os.path.exists(src_path):
+                r = subprocess.run(
+                    [ffmpeg_path, "-y", "-i", src_path, "-vn", "-map", "0:a:0?", "-af", af] + tail,
+                    capture_output=True, text=True, encoding='utf-8', errors='ignore')
+                if r.returncode == 0 and os.path.exists(output_path) and self.get_duration(output_path) > 0:
+                    self.invalidate_duration_cache(output_path)
+                    return output_path
+            subprocess.run(
+                [ffmpeg_path, "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", f"{d:.6f}"] + tail,
+                check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
+            self.invalidate_duration_cache(output_path)
+            return output_path if os.path.exists(output_path) else None
+        except Exception as e:
+            print(f"❌ fit_audio_to_duration: {e}")
+            return None
+
+
     def audio_trim_or_loop_to_duration(self, audio_path, target_duration_sec):
         """长于目标则裁切；短于目标则循环拼接至恰好 target_duration_sec（WAV pcm_s16le）。"""
         if target_duration_sec <= 0:

@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -64,19 +65,32 @@ CHAT_STOP_SELECTORS = (
     'button[aria-label*="Stop"]',
     'button[aria-label*="停止"]',
 )
-# One assistant reply bubble; the last match is the newest answer.
-CHAT_RESPONSE_SELECTORS = (
-    'div[id^="response-"] .message-bubble',
-    'div[id^="response-"]',
-    '.message-bubble',
-)
-# Copy icon: first button of the action row under a reply.
-CHAT_COPY_SELECTORS = (
-    'button[aria-label="Copy"]',
-    'button[aria-label="复制"]',
-    'button[aria-label*="Copy"]',
-    'button[aria-label*="复制"]',
-)
+# Every chat turn is a div[id^="response-"]. The user's turn has class items-end and an
+# "Edit" button; Grok's turn has items-start. Grok's answer text lives in
+# .response-content-markdown (the "worked for 8s" thinking header sits outside it).
+CHAT_TURN_SEL = 'div[id^="response-"]'
+CHAT_REPLY_TEXT_SEL = '.response-content-markdown'
+# Copy button in the action row under Grok's reply (copy / link / like / dislike /
+# regenerate / more). The user's own message has a plain "复制"/"Copy" button, so the
+# reply's labels are matched first and the search is scoped to the reply's own turn.
+CHAT_REPLY_COPY_LABELS = ("复制响应", "Copy response", "Copy", "复制")
+CHAT_REPLY_JS = """() => {
+  const turns = [...document.querySelectorAll('div[id^="response-"]')].filter((r) =>
+    !/(^|\\s)items-end(\\s|$)/.test(String(r.className)) && !r.querySelector('button[aria-label="Edit"]'));
+  const last = turns[turns.length - 1];
+  if (!last) return {count: 0, id: '', text: ''};
+  const md = last.querySelectorAll('.response-content-markdown');
+  let text = '';
+  if (md.length) {
+    text = [...md].map((e) => e.innerText || e.textContent || '').join('\\n');
+  } else {
+    const bub = last.querySelector('.message-bubble') || last;
+    const clone = bub.cloneNode(true);
+    clone.querySelectorAll('.thinking-container, button').forEach((e) => e.remove());
+    text = clone.innerText || clone.textContent || '';
+  }
+  return {count: turns.length, id: last.id, text: text.trim()};
+}"""
 # Logged-out grok.com: shows 登录/注册 and a "sign up to continue" card instead of answering.
 LOGGED_OUT_JS = """() => {
   const t = (document.body && document.body.innerText) || '';
@@ -178,31 +192,28 @@ def _page_for(ctx, url_part: str, exclude: str = ""):
     return ctx.new_page()
 
 
-def _bubble_count(page) -> int:
-    for sel in CHAT_RESPONSE_SELECTORS:
-        try:
-            n = page.locator(sel).count()
-        except Exception:
-            n = 0
-        if n:
-            return n
-    return 0
+def _reply_state(page) -> dict:
+    """{count, id, text} for Grok's newest reply (assistant turns only)."""
+    try:
+        return page.evaluate(CHAT_REPLY_JS) or {"count": 0, "id": "", "text": ""}
+    except Exception:
+        return {"count": 0, "id": "", "text": ""}
 
 
-def _last_response_text(page, min_count: int) -> str:
-    """Text of the newest bubble, only once there are at least ``min_count`` bubbles
-    (user prompt bubble + Grok reply bubble), so the user's own message is never returned."""
-    for sel in CHAT_RESPONSE_SELECTORS:
-        loc = page.locator(sel)
-        try:
-            n = loc.count()
-            if n:
-                if n < min_count:
-                    return ""
-                return (loc.nth(n - 1).inner_text(timeout=3000) or "").strip()
-        except Exception:
-            continue
-    return ""
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _copy_matches(copied: str, dom_text: str) -> bool:
+    """Copy-button text (markdown) vs DOM innerText: same start/end and similar length."""
+    a, b = _norm(copied), _norm(dom_text)
+    if not a or not b:
+        return False
+    if not (0.8 <= len(a) / len(b) <= 1.3):
+        return False
+    strip = lambda t: re.sub(r"[`*_#>\-]", "", t)
+    a, b = strip(a), strip(b)
+    return a[:15] == b[:15] and a[-15:] == b[-15:]
 
 
 def _logged_out(page) -> bool:
@@ -216,35 +227,73 @@ def _stop_visible(page) -> bool:
     return _first(page, CHAT_STOP_SELECTORS) is not None
 
 
-def _copy_last_response(page) -> str:
-    """Click the copy icon under the newest reply; return clipboard text or ''."""
+def _copy_last_response(page, reply: dict) -> str:
+    """Scroll Grok's last reply into view, click the copy button in ITS action row,
+    wait for the clipboard to leave a sentinel, and accept it only if it matches the
+    reply's DOM text. Returns '' when the copy can't be trusted (caller uses DOM text)."""
     bt = _bt()
+    turn_id = (reply or {}).get("id") or ""
+    dom_text = (reply or {}).get("text") or ""
+    if not turn_id:
+        return ""
+    turn = page.locator(f'[id="{turn_id}"]')
+    try:
+        turn.evaluate("(e) => e.scrollIntoView({block: 'end'})")
+        time.sleep(0.4)
+        turn.hover(timeout=3000)
+    except Exception as exc:
+        print(f"[grok_cdp] scroll/hover reply failed: {exc}")
+    btn = None
+    for label in CHAT_REPLY_COPY_LABELS:
+        loc = turn.locator(f'button[aria-label="{label}"]')
+        try:
+            if loc.count():
+                btn = loc.last
+                break
+        except Exception:
+            continue
+    if btn is None:
+        print("[grok_cdp] copy button not found in reply action row")
+        return ""
     sentinel = f"__grok_cdp_{time.time()}__"
     try:
         bt.write_windows_clipboard(sentinel)
-    except Exception:
+    except Exception as exc:
+        print(f"[grok_cdp] clipboard unavailable ({exc}); using DOM text")
         return ""
-    for sel in CHAT_COPY_SELECTORS:
-        loc = page.locator(sel)
+    try:
+        btn.scroll_into_view_if_needed(timeout=3000)
+        btn.click(timeout=5000)
+    except Exception as exc:
+        print(f"[grok_cdp] copy click failed: {exc}")
+        return ""
+    for _ in range(20):
+        time.sleep(0.25)
         try:
-            n = loc.count()
-            if not n:
-                continue
-            btn = loc.nth(n - 1)
-            btn.scroll_into_view_if_needed(timeout=3000)
-            btn.hover(timeout=3000)
-            btn.click(timeout=5000)
+            text = bt.read_windows_clipboard() or ""
         except Exception:
-            continue
-        for _ in range(10):
-            time.sleep(0.3)
-            try:
-                text = bt.read_windows_clipboard() or ""
-            except Exception:
-                text = ""
-            if text and text != sentinel:
-                return text.strip()
+            text = ""
+        if text and text != sentinel:
+            text = text.strip()
+            if _copy_matches(text, dom_text):
+                return text
+            print(f"[grok_cdp] copied text does not match reply ({len(text)} vs {len(dom_text)} chars); using DOM text")
+            return ""
+    print("[grok_cdp] clipboard never changed after copy click; using DOM text")
     return ""
+
+
+def extract_last_reply(status: Status = None) -> str:
+    """Re-read Grok's last reply on the open grok.com/c/ tab (no new prompt)."""
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = _page_for(ctx, "grok.com/c/")
+        reply = _reply_state(page)
+        return _copy_last_response(page, reply) or reply.get("text") or ""
 
 
 def ask_text(prompt: str, status: Status = None) -> str:
@@ -291,7 +340,7 @@ def ask_text(prompt: str, status: Status = None) -> str:
             time.sleep(1.5)
         else:
             raise RuntimeError("提示词没有贴进 Grok 输入框")
-        before = _bubble_count(page)
+        before = int(_reply_state(page).get("count") or 0)
         btn = _first(page, CHAT_SUBMIT_SELECTORS)
         clicked = False
         if btn is not None:
@@ -309,13 +358,14 @@ def ask_text(prompt: str, status: Status = None) -> str:
             page.keyboard.press("Enter")
         _say(status, "等待 Grok 回答 …")
         started = time.monotonic()
-        last, same = "", 0
+        last, same, reply = "", 0, {}
         while time.monotonic() - started < CHAT_TIMEOUT_S:
             time.sleep(CHAT_POLL_S)
             if _logged_out(page):
                 raise RuntimeError("Chrome 里的 grok.com 没有登录，请先在这个 Chrome (端口 9222) 里登录 Grok")
-            text = _last_response_text(page, before + 2)
-            if not text or text == prompt:
+            reply = _reply_state(page)
+            text = reply.get("text") or ""
+            if int(reply.get("count") or 0) <= before or not text:
                 continue
             if text == last and not _stop_visible(page):
                 same += 1
@@ -328,7 +378,7 @@ def ask_text(prompt: str, status: Status = None) -> str:
         else:
             raise RuntimeError("Grok 回答超时")
         _say(status, "拷贝回答 …")
-        copied = _copy_last_response(page)
+        copied = _copy_last_response(page, reply)
         return copied or last
 
 

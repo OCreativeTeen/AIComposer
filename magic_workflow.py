@@ -2698,10 +2698,17 @@ class MagicWorkflow:
         #video_temp = self.ffmpeg_processor._concat_videos_with_transitions(video_segments, frames_deduct=5.95, keep_audio_if_has=True)
 
 
+        # 非 ZERO：画面单独拼接（不带声音），声音另做一条连续 PCM 音轨，最后只合成一次，避免接缝处 AAC 断音。
+        keep_audio = bool(replace_final_audio_with_zero)
         if with_transitions:
-            video_temp = self.ffmpeg_processor.concat_videos_with_transitions(video_segments, keep_audio_if_has=True)
+            video_temp = self.ffmpeg_processor.concat_videos_with_transitions(video_segments, keep_audio_if_has=keep_audio)
         else:
-            video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=True)
+            video_temp = self.ffmpeg_processor.concat_videos([seg["path"] for seg in video_segments], keep_audio=keep_audio)
+
+        if not replace_final_audio_with_zero:
+            continuous_audio = self._build_continuous_scene_audio(video_segments, video_temp, with_transitions)
+            if continuous_audio:
+                video_temp = self.ffmpeg_processor.add_audio_to_video(video_temp, continuous_audio)
 
         if replace_final_audio_with_zero:
             # 按时间线、连续同一 story（id 同一万档）分段。
@@ -2724,6 +2731,9 @@ class MagicWorkflow:
 
                 za = get_file_path(scene0, "zero_audio")
                 if za and os.path.isfile(za):
+                    if abs(speed - 1.0) > 0.001:
+                        # ZERO 音轨也要跟画面同样变速
+                        za = aud.change_tempo(za, speed) or za
                     tiled = aud.audio_trim_or_loop_to_duration(za, story_dur)
                 else:
                     clip_paths = []
@@ -2735,6 +2745,8 @@ class MagicWorkflow:
                         tiled = aud.make_silence(story_dur)
                     else:
                         merged = aud.concat_audios(clip_paths)
+                        if merged and abs(speed - 1.0) > 0.001:
+                            merged = aud.change_tempo(merged, speed) or merged
                         if not merged:
                             tiled = aud.make_silence(story_dur)
                         else:
@@ -2765,6 +2777,48 @@ class MagicWorkflow:
         # self.ffmpeg_processor.add_subtitle(final_video_path, mp4_path, final_srt_path)
         print(f"✅ Final video with audio created: {final_video_path}")
 
+
+
+    def _build_continuous_scene_audio(self, video_segments, joined_video, with_transitions,
+                                      extend_sec=1.0, transition_sec=0.5):
+        """把每场（已变速、已延长）片段的声音按它在成片时间线上占的长度补齐/裁切成 WAV，
+        再整条拼接成一条连续音轨。所有片段都没有声音时返回 None（保持原来无声）。"""
+        fp = self.ffmpeg_processor
+        aud = self.ffmpeg_audio_processor
+        paths = [seg["path"] for seg in video_segments]
+        if not paths:
+            return None
+        has_audio = [fp.has_audio_stream(p) for p in paths]
+        if not any(has_audio):
+            return None
+        n = len(paths)
+        slots = []
+        for i, p in enumerate(paths):
+            d = fp.get_video_stream_duration(p)
+            if with_transitions and n > 1:
+                # concat_videos_with_transitions：每段再延长 extend_sec，除最后一段外被下一段的淡入淡出叠掉 transition_sec
+                d += extend_sec
+                if i < n - 1:
+                    d -= transition_sec
+            slots.append(max(0.0, d))
+        total = fp.get_video_stream_duration(joined_video)
+        if total and total > 0:
+            # 让音轨总长和成片画面完全一致，误差全部落在最后一段
+            slots[-1] = max(0.0, total - sum(slots[:-1]))
+        pieces = []
+        for p, d, ha in zip(paths, slots, has_audio):
+            if d <= 0:
+                continue
+            w = aud.fit_audio_to_duration(
+                p if ha else None, d,
+                fade_sec=0.01 if ha else 0.0,
+                skip_sec=aud.av_start_offset(p) if ha else 0.0,
+            )
+            if not w:
+                print(f"⚠️ 连续音轨生成失败：{p}")
+                return None
+            pieces.append(w)
+        return aud.concat_audios(pieces) if pieces else None
 
 
     def make_background_audio(self):

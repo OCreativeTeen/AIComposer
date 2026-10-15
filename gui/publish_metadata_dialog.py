@@ -592,7 +592,7 @@ def ask_publish_title_and_description(
         desc_box,
         text="默认填本条 summary；没有 summary 时再按审阅文稿 → 场景 speaking/voiceover → 分析内容 → 场景 JSON；"
         "选定来源后编辑区显示原始素材（可改）。"
-        "summary 旁的「重新生成」按整集场景内容，用 DeepSeek 写成大约五六句的视频介绍。"
+        "summary 旁的「重新生成」按整集场景内容，用 LLM 写成大约五六句的视频介绍。"
         "点「生成描述概述」由 LLM 根据编辑区内容生成简短 YouTube 描述；"
         "双击编辑区可用剪贴板替换全文。勾选 poem 时，确认发布前会自动在描述下方追加诗歌。",
         wraplength=800,
@@ -646,7 +646,7 @@ def ask_publish_title_and_description(
                     messagebox.showerror("生成失败", str(err[0]), parent=dlg)
                     return
                 if not text[0]:
-                    messagebox.showwarning("提示", "DeepSeek 未返回有效介绍。", parent=dlg)
+                    messagebox.showwarning("提示", "LLM 未返回有效介绍。", parent=dlg)
                     return
                 item_summary = text[0]
                 try:

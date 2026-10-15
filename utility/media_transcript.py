@@ -250,7 +250,7 @@ def _ask_llm(llm, system: str, user: str, check_cancel: Optional[Callable[[], No
     """调用 LLM。自动调用失败（报错或返回空，比如 Gemini 忙返回 503）就转到手动模式。
 
     手动模式：``manual(system, user, what)`` 会打开 LLM 手动窗口，让人把提示词拿去处理，
-    再把结果贴回来；它的返回值就是这次的回答。每一次调用都先试自动（DeepSeek），
+    再把结果贴回来；它的返回值就是这次的回答。每一次调用都先试自动(Strata)，
     只有这一次失败才打开手动窗口，下一次调用仍然先试自动。``mode`` 只用来统计手动次数。
     自动调用失败后自动重试的次数由 ``config.TRANSCRIBE_LLM_RETRIES`` 决定，默认 1，就是不重试。
     手动也没拿到回答就返回 ``None``。
@@ -520,7 +520,7 @@ def transcribe_media_with_timestamps(
 
     出错抛 ``RuntimeError``，用户取消抛 ``InterruptedError``。
     ``progress(已完成的小段数, 小段总数, 说明)`` 会在转录过程中被调用。
-    补标点、判断说话人都要调用 LLM。自动调用（DeepSeek）某一次失败，这一次就转到手动模式：
+    补标点、判断说话人都要调用 LLM。自动调用(Strata)某一次失败，这一次就转到手动模式：
     调用 ``manual_llm(系统提示词, 用户提示词, 说明)`` 打开 LLM 手动窗口，让人处理后把结果贴回来，
     下一次调用仍然先试自动。不给 ``manual_llm`` 就不转手动，失败的那一步用没处理的结果。
     文字稿虽然写出来了，但 LLM 那几步（补标点、判断说话人）没成功时，会往 ``notes`` 里加说明文字，
@@ -561,15 +561,12 @@ def transcribe_media_with_timestamps(
         service = VoiceboxService(pid)
 
     llm = None
-    hard_llm = None
     try:
         from utility import llm_api
 
         llm = llm_api.LLMApi(llm_api.MODEL_SIMPLE)      # 补标点：简单，用 Strata
-        hard_llm = llm_api.LLMApi(llm_api.MODEL_HARD)   # 判断说话人：难，用 DeepSeek
         # 这里失败时由 ManualBridge 转手动（主线程），LLMApi 自己不再开手动窗口，免得开两次。
         llm.manual_fallback = False
-        hard_llm.manual_fallback = False
     except Exception as exc:  # noqa: BLE001
         print(f"LLM 没有准备好，转录结果不补标点、不按句分行：{exc}")
 
@@ -579,10 +576,11 @@ def transcribe_media_with_timestamps(
         def ask(system: str, user: str, what: str) -> Optional[str]:
             return _ask_llm(llm, system, user, check_cancel, what, manual_llm, mode)
 
-    ask_hard = ask
-    if hard_llm is not None or manual_llm is not None:
+    # 判断说话人：不再调 DeepSeek，直接走手动窗口（ManualBridge，主线程打开）。
+    ask_hard = None
+    if manual_llm is not None:
         def ask_hard(system: str, user: str, what: str) -> Optional[str]:
-            return _ask_llm(hard_llm, system, user, check_cancel, what, manual_llm, mode)
+            return _ask_llm(None, system, user, check_cancel, what, manual_llm, mode)
 
     batch_size = max(1, int(getattr(config, "TRANSCRIBE_LLM_BATCH_CHUNKS", 1) or 1))
     work_dir = tempfile.mkdtemp(prefix="transcribe_")
