@@ -68,7 +68,7 @@ def open_video_prompt_dialog(
     再打开手动窗口，里面放提示词和画面）。
 
     simple_actions: [(按钮文字, 回调), ...]，点了就关掉本窗口再调用回调。
-    ``saved_choice`` 记下上次的叙事风格；关窗或打开提示时 ``save_choice(dict)`` 记回去。
+    ``saved_choice`` 记下上次的叙事风格；关窗或提交时 ``save_choice(dict)`` 记回去。
     """
     opened = [s for s in (get_scenes() or []) if isinstance(s, dict)]
     transition = opened[0].get("transition") if opened else None
@@ -179,7 +179,7 @@ def open_video_prompt_dialog(
         ttk.Label(summary, text="\n".join(lines), justify=tk.LEFT).pack(anchor=tk.W)
 
     def current_choice() -> dict:
-        return {"narrative": narrative_var.get(), "text": text_var.get()}
+        return {"narrative": narrative_var.get(), "text": text_var.get(), "image": image_to_save()}
 
     def remember() -> None:
         if save_choice is None:
@@ -196,11 +196,11 @@ def open_video_prompt_dialog(
         keep_words = text_var.get() == "keep"
         for btn in bg_buttons:
             btn.configure(state=("normal" if keep_words else "disabled"))
-        go.config(text="打开提示")
+        go.config(text="提交")
         if is_transition or two:
-            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理：去掉文字会补上原来的画面，关键字作背景只留几个字在后面，用画面讲则中间用人物或场景把意思演出来。多画面用起始画面和终止画面。选好后打开提示窗口。选择会记下。")
+            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理：去掉文字会补上原来的画面，关键字作背景只留几个字在后面，用画面讲则中间用人物或场景把意思演出来。多画面用起始画面和终止画面。选好后点提交。选择会记下。")
         else:
-            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理。选「保留」时，背景里的不加、背景文字、思想泡泡才生效。运镜选默认就不写镜头怎么动。选好后打开提示窗口。选择会记下。")
+            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理。选「保留」时，背景里的不加、背景文字、思想泡泡才生效。运镜选默认就不写镜头怎么动。选好后点提交。选择会记下。")
 
     def close() -> None:
         remember()
@@ -246,7 +246,8 @@ def open_video_prompt_dialog(
         images = []
         missing = []
         if get_image is not None:
-            start = get_image("clip_image") or ""
+            # 多画面（起始 + 终止）照旧两张都给；单画面用上面选中的那张。
+            start = get_image("clip_image" if frames == "two" else chosen_image()) or ""
             if start:
                 images.append(start)
             else:
@@ -268,8 +269,17 @@ def open_video_prompt_dialog(
         if callable(open_manual):
             open_manual(prompt, images)
 
-    go = ttk.Button(actions, text="打开提示", command=on_go)
-    go.pack(side=tk.LEFT)
+    from gui.clip_image_choice import pack_clip_image_choice
+
+    # Which image goes to the LLM (single-frame); remembered with the other choices (key "image").
+    saved_image = saved_choice.get("image") if isinstance(saved_choice, dict) else ""
+    _img_box, chosen_image, image_to_save = pack_clip_image_choice(
+        actions,
+        (lambda key: get_image(key) if get_image is not None else ""),
+        initial=saved_image or "clip_image",
+    )
+    go = ttk.Button(actions, text="提交", command=on_go)
+    go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)

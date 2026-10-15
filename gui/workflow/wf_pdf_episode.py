@@ -461,19 +461,18 @@ class PdfEpisodeMixin:
         self.root.after(200, lambda: self._offer_still_videos_after_pdf([scene], summary))
 
     def _offer_still_videos_after_pdf(self, scenes: list, summary: str) -> None:
-        """页图写进 clip_image 之后，问要不要用新图加音频重做这些场景的 clip 视频。"""
+        """页图写进 clip_image 之后，直接用新图加音频重做这些场景的 clip 视频（不再询问）。"""
         scenes = [s for s in scenes if isinstance(s, dict)]
         if not scenes:
             messagebox.showinfo("PDF", summary, parent=self.root)
             return
-        if messagebox.askyesno(
+        show_auto_close_popup(
+            self.root,
             "重新生成 clip 视频",
-            f"{summary}\n\n"
-            f"要不要用新的 clip 图片加各场景的 clip 音频，重新生成这 {len(scenes)} 场的 clip 视频？\n"
-            "选“是”会替换原来的 clip 视频；没有 clip 音频的场景会跳过。",
-            parent=self.root,
-        ):
-            self._run_still_clip_videos(scenes)
+            f"{summary}\n\n正在用新的 clip 图片加 clip 音频重新生成 {len(scenes)} 场的 clip 视频"
+            "（替换原来的；没有 clip 音频的场景会跳过）。",
+        )
+        self._run_still_clip_videos(scenes)
 
     def _open_pdf_page_review(
         self,

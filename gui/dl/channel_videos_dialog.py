@@ -1382,7 +1382,7 @@ class ChannelVideosDialogImpl:
             summary_window._summary_drop_ctx["summary_dnd_title_suffix"] = ""
             _refresh_summary_window_title(summary_window, video_detail)
             main_frame = ttk.Frame(summary_window, padding=6)
-            main_frame.pack(fill=tk.BOTH, expand=False)
+            main_frame.pack(fill=tk.BOTH, expand=True)
 
             _look_nar = _project_look_from_row(video_detail)[2]
             source_title_var = tk.StringVar(
@@ -1654,7 +1654,8 @@ class ChannelVideosDialogImpl:
             summary_window.bind("<Destroy>", _unbind_story_root)
 
             scene_host = ttk.Frame(main_frame)
-            scene_host.pack(fill=tk.X, expand=False)
+            # The SCENE editor (and its materials panel) takes all extra height.
+            scene_host.pack(fill=tk.BOTH, expand=True)
 
             summary_window._summary_drop_ctx["nav_low_priority"] = low_priority
             if not getattr(summary_window, "_summary_nav_root_bound", False):

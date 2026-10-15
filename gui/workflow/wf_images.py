@@ -239,8 +239,8 @@ class ImagesMixin:
         try:
             images = self._image_paths_from_clipboard()
             if images:
-                if self._confirm_replace_clip_image(images[0]):
-                    self._apply_image_paths_to_preview_slot("clip_image", images[:1])
+                # No confirm: the pasted image replaces the clip image right away.
+                self._apply_image_paths_to_preview_slot("clip_image", images[:1])
                 return "break"
             videos = self._clipboard_mp4_source()[1]
             if videos:
@@ -522,6 +522,9 @@ class ImagesMixin:
             except tk.TclError:
                 pass
             self._image_click_after = None
+        if str(image_type).endswith("_image_last"):
+            self._swap_first_last_preview_image(image_type)
+            return
         if image_type != "clip_image":
             try:
                 self._copy_preview_slot_image(image_type)
@@ -535,6 +538,24 @@ class ImagesMixin:
             self._open_clip_image_pdf_review(current_scene)
         except Exception as e:
             messagebox.showerror("错误", f"打开页面预览失败: {e}", parent=self.root)
+
+    def _swap_first_last_preview_image(self, last_type: str) -> None:
+        """双击结束图：把这一场的起始图和结束图对调（clip / narration / zero），马上保存并刷新。"""
+        first_type = last_type[: -len("_last")]
+        name = self._preview_track_title(first_type)
+        scene = self.workflow.get_scene_by_index(self.current_scene_index)
+        if not isinstance(scene, dict):
+            return
+        first = scene.get(first_type) or ""
+        last = scene.get(last_type) or ""
+        if not (first and os.path.isfile(first) and last and os.path.isfile(last)):
+            show_auto_close_popup(self.root, "对调", f"{name} 要有起始图和结束图两张才能对调。", duration_ms=1800)
+            return
+        scene[first_type], scene[last_type] = last, first
+        self.workflow.save_scenes_to_json()
+        self.display_image_on_canvas_for_track(first_type)
+        self.display_image_on_canvas_for_track(last_type)
+        show_auto_close_popup(self.root, "对调", f"{name} 起始图和结束图已对调。", duration_ms=1500)
 
     def _open_clip_image_pdf_review(self, scene: dict) -> None:
         """本集 PDF 已拆则直接审阅；还没拆就先拆进 media/<episode>/ 再审阅。"""

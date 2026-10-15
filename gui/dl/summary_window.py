@@ -32,7 +32,7 @@ def _refresh_summary_window_title(
 
 
 def _fit_story_summary_window(summary_window) -> None:
-    """把预览窗高度收到内容底部，场景 JSON 下面不再留空带。"""
+    """STORY 窗占满屏幕可用高度（顶到任务栏上方），多出的高度给材料列表。"""
     try:
         if not summary_window.winfo_exists():
             return
@@ -40,14 +40,6 @@ def _fit_story_summary_window(summary_window) -> None:
         return
     try:
         summary_window.update_idletasks()
-        bottom = 0
-        for child in summary_window.winfo_children():
-            try:
-                bottom = max(bottom, child.winfo_y() + child.winfo_reqheight())
-            except tk.TclError:
-                continue
-        if bottom < 80:
-            return
         sw = summary_window.winfo_screenwidth()
         sh = summary_window.winfo_screenheight()
         try:
@@ -57,9 +49,12 @@ def _fit_story_summary_window(summary_window) -> None:
         if chrome < 8:
             chrome = 32
         width = 1100
-        height = min(max(bottom + chrome + 6, 240), sh - 36)
+        # Full usable height: top of the screen down to just above the taskbar.
+        # geometry() sets the client height, so subtract the title bar too.
+        taskbar = 44
+        height = max(240, sh - taskbar - chrome)
         x = max(0, (sw - width) // 2)
-        y = 12
+        y = 0
         summary_window.geometry(f"{width}x{height}+{x}+{y}")
     except tk.TclError:
         pass

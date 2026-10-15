@@ -483,3 +483,112 @@ def make_image(prompt: str, image_path: str, status: Status = None):
     """Grok Imagine: attach ``image_path`` + ``prompt``, generate, return a PIL Image."""
     prepare_imagine(image_path, status)
     return run_imagine(prompt, status)
+
+
+# ---- cross-process lock: the Telegram bot and the app share one Chrome ----
+# %LOCALAPPDATA%\AIComposer\grok_cdp.lock is held while one grok_cdp operation runs.
+# Waits up to LOCK_WAIT_S, then raises so the caller falls back to manual.
+import threading as _threading
+
+LOCK_WAIT_S = float(getattr(config, "GROK_CDP_LOCK_WAIT_S", 120) or 120)
+LOCK_PATH = os.path.join(os.environ.get("LOCALAPPDATA") or str(Path.home()), "AIComposer", "grok_cdp.lock")
+_local_lock = _threading.RLock()
+_held = {"depth": 0, "fh": None}
+
+
+def _try_file_lock(fh) -> bool:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock_file(fh) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        fh.close()
+    except OSError:
+        pass
+
+
+class chrome_lock:
+    """Re-entrant within this process (make_image -> prepare_imagine), exclusive across processes."""
+
+    def __init__(self, wait_s: float | None = None, status: Status = None):
+        self.wait_s = LOCK_WAIT_S if wait_s is None else float(wait_s)
+        self.status = status
+
+    def __enter__(self):
+        deadline = time.monotonic() + self.wait_s
+        if not _local_lock.acquire(timeout=max(0.0, self.wait_s)):
+            raise RuntimeError(f"Chrome 正被本程序的另一个 Grok 任务占用，等了 {self.wait_s:.0f} 秒")
+        if _held["depth"] > 0:
+            _held["depth"] += 1
+            return self
+        try:
+            os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
+            told = False
+            while True:
+                fh = open(LOCK_PATH, "a+b")
+                if _try_file_lock(fh):
+                    _held["fh"] = fh
+                    _held["depth"] = 1
+                    return self
+                fh.close()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"Chrome 正被另一个程序（如 Telegram 机器人）占用，等了 {self.wait_s:.0f} 秒"
+                    )
+                if not told:
+                    _say(self.status, "Chrome 正忙（另一个 Grok 任务），排队等待 …")
+                    told = True
+                time.sleep(0.5)
+        except BaseException:
+            _local_lock.release()
+            raise
+
+    def __exit__(self, *_exc):
+        _held["depth"] -= 1
+        if _held["depth"] == 0 and _held["fh"] is not None:
+            _unlock_file(_held["fh"])
+            _held["fh"] = None
+        _local_lock.release()
+        return False
+
+
+def _locked(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with chrome_lock(status=kwargs.get("status")):
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+ask_text = _locked(ask_text)
+extract_last_reply = _locked(extract_last_reply)
+prepare_imagine = _locked(prepare_imagine)
+run_imagine = _locked(run_imagine)
+make_image = _locked(make_image)

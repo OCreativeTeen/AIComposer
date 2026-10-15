@@ -40,6 +40,8 @@ def _clean_choice(saved) -> dict:
             choice[key] = bool(saved[key])
     if saved.get("actor_override") in {label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES}:
         choice["actor_override"] = saved["actor_override"]
+    if saved.get("image") in ("clip_image", "clip_image_last"):
+        choice["image"] = saved["image"]
     return choice
 
 
@@ -58,7 +60,7 @@ def open_picture_prompt_dialog(
 ) -> None:
     """先选画风改变和叙事风格，再打开手动窗口，里面是当前图和提示词。
 
-    ``saved_choice`` 是项目里记下的上次选择；关窗或打开提示时 ``save_choice(dict)`` 记回去。
+    ``saved_choice`` 是项目里记下的上次选择；关窗或提交时 ``save_choice(dict)`` 记回去。
     """
     dlg = tk.Toplevel(parent)
     dlg.title("图片提示")
@@ -101,6 +103,16 @@ def open_picture_prompt_dialog(
     _fields, field_buttons = pack_scene_field_choices(
         bottom, visual_var, speaking_var, actor_var, override_var
     )
+    from gui.clip_image_choice import pack_clip_image_choice
+
+    def _scene_image(key: str) -> str:
+        sc = get_scene() if get_scene is not None else None
+        return (sc.get(key) or "") if isinstance(sc, dict) else ""
+
+    # Which image goes to the LLM; remembered with the other choices (key "image").
+    _img_box, chosen_image, image_to_save = pack_clip_image_choice(
+        bottom, _scene_image, initial=last.get("image", "clip_image")
+    )
 
     def current_choice() -> dict:
         return {
@@ -111,6 +123,7 @@ def open_picture_prompt_dialog(
             "speaking": bool(speaking_var.get()),
             "actor": bool(actor_var.get()),
             "actor_override": override_var.get(),
+            "image": image_to_save(),
         }
 
     def remember() -> None:
@@ -126,7 +139,7 @@ def open_picture_prompt_dialog(
         for btn in text_buttons + story_buttons + field_buttons:
             btn.configure(state=("disabled" if extract else "normal"))
         if extract:
-            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后打开提示窗口。")
+            hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点提交。")
         else:
             hint.config(
                 text="画风改变决定这张图怎么画。叙事风格用当前这一场："
@@ -153,7 +166,7 @@ def open_picture_prompt_dialog(
         if not isinstance(scene, dict):
             messagebox.showwarning("图片提示", "没有当前场景", parent=dlg)
             return
-        path = scene.get("clip_image") if isinstance(scene, dict) else ""
+        path = scene.get(chosen_image()) if isinstance(scene, dict) else ""
         images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
         if not images:
             messagebox.showinfo("图片提示", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
@@ -187,7 +200,7 @@ def open_picture_prompt_dialog(
         if callable(open_manual):
             open_manual(prompt, images)
 
-    ttk.Button(bottom, text="打开提示", command=on_go).pack(side=tk.RIGHT, anchor=tk.S, padx=(12, 0))
+    ttk.Button(bottom, text="提交", command=on_go).pack(side=tk.RIGHT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     refresh()

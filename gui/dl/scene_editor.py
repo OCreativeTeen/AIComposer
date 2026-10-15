@@ -89,7 +89,8 @@ class SceneEditorImpl:
             dlg = parent
             self._scene_content_dialog = dlg
             frm = tk.Frame(embed_in, padx=4, pady=2, bg="#f0f0f0")
-            frm.pack(fill=tk.X, expand=False)
+            # Only the materials panel expands inside frm; it gets the spare height.
+            frm.pack(fill=tk.BOTH, expand=True)
 
         def _dismiss_scene_window() -> None:
             if embedded:
@@ -744,7 +745,7 @@ class SceneEditorImpl:
             scene_ui["require_media_transcript"] = _require_media_transcript
 
             # ---- 合并后的「材料」区：PDF、全部图片、音频/视频、文字稿一个列表（gui/dl/materials_panel.py）----
-            from gui.dl.materials_panel import MaterialsPanel
+            from gui.dl.materials_panel import MaterialsPanel, ROW_H
 
             _last_material = [None]
 
@@ -919,6 +920,8 @@ class SceneEditorImpl:
             materials_panel = MaterialsPanel(
                 frm,
                 get_entries=_material_entries,
+                # 5 rows x ROW_H plus a little margin, so nothing scrolls.
+                height=5 * ROW_H + 12,
                 on_select=_material_select,
                 on_copy=_material_copy,
                 build_menu=_material_menu,
@@ -929,7 +932,7 @@ class SceneEditorImpl:
             def _show_materials(on: bool) -> None:
                 if on:
                     material_preview.pack_forget()
-                    materials_panel.pack(fill=tk.X, expand=False, pady=(0, 8), after=material_row)
+                    materials_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 8), after=material_row)
                 else:
                     materials_panel.pack_forget()
                     material_preview.pack(fill=tk.X, expand=False, pady=(0, 8), after=material_row)
@@ -1598,7 +1601,7 @@ class SceneEditorImpl:
             _require_media_transcript = scene_ui["require_media_transcript"]
             ttk.Label(frm, text="scene_content（JSON 数组）：").pack(anchor=tk.W, pady=(0, 2))
             tx = scrolledtext.ScrolledText(
-                frm, wrap=tk.WORD, width=100, height=35, font=("Consolas", 10)
+                frm, wrap=tk.WORD, width=100, height=5, font=("Consolas", 10)
             )
             tx.pack(fill=tk.X, expand=False, pady=(0, 8))
             _bind_text_editor_replace_from_clipboard_on_double_click(tx, dlg)

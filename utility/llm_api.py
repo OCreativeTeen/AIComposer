@@ -45,6 +45,26 @@ MODELS = {
 }
 
 
+# 手动窗口打开后自动按「CLI自动」（文字，或以图生图）。全局开关存在 YT_tools_prefs.json 的
+# ``llm_auto_cli``（默认开），手动窗口里的「自动 CLI」勾选框改的就是它。
+LLM_AUTO_CLI_PREF = "llm_auto_cli"
+AUTO_CLI_DELAY_MS = 300
+
+
+def llm_auto_cli_enabled() -> bool:
+    try:
+        return bool(config.load_yt_tools_prefs().get(LLM_AUTO_CLI_PREF, True))
+    except Exception:
+        return True
+
+
+def set_llm_auto_cli(enabled: bool) -> None:
+    try:
+        config.save_yt_tools_prefs({LLM_AUTO_CLI_PREF: bool(enabled)})
+    except Exception as exc:
+        print(f"⚠️ 自动 CLI 设置没有记下：{exc}")
+
+
 class LLMApi:
 
     def __init__(self, model: str = None):
@@ -321,6 +341,7 @@ class LLMApi:
         *,
         images=None,
         on_image_response=None,
+        auto_cli=None,
     ):
         """只打开手动窗口，用来复制提示词和图片。不调用模型。
 
@@ -331,7 +352,7 @@ class LLMApi:
         当返回图片（PIL Image）时调用，返回保存后的路径或 None。
         """
         _model, response = self._show_model_dialog(
-            system_prompt or "", user_prompt or "", image_paths=images
+            system_prompt or "", user_prompt or "", image_paths=images, auto_cli=auto_cli
         )
         if response is not None and callable(on_image_response) and hasattr(response, "save"):
             try:
@@ -346,6 +367,7 @@ class LLMApi:
         *,
         title: str = "手动流程",
         on_image_response=None,
+        auto_cli=None,
     ) -> List[Dict[str, Any]]:
         """一连串的手动窗口（一个小小的提示词流程）。不调用任何模型。
 
@@ -386,6 +408,7 @@ class LLMApi:
                 ok_text="完成" if is_last else "下一步 ▶",
                 cancel_text="取消流程",
                 manual_only=True,
+                auto_cli=auto_cli,
             )
             cancelled = bool(getattr(self, "_last_dialog_cancelled", False))
             saved_path = None
@@ -616,6 +639,7 @@ class LLMApi:
         ok_text: str = "确定",
         cancel_text: str = "取消",
         manual_only: bool = False,
+        auto_cli=None,
     ) -> Tuple[str, Optional[str]]:
         """从后台线程安全地调用 _show_model_dialog。
 
@@ -634,6 +658,7 @@ class LLMApi:
                     ok_text=ok_text,
                     cancel_text=cancel_text,
                     manual_only=manual_only,
+                    auto_cli=auto_cli,
                 )
                 result_queue.put(("ok", result))
             except Exception as exc:
@@ -669,12 +694,14 @@ class LLMApi:
         ok_text: str = "确定",
         cancel_text: str = "取消",
         manual_only: bool = False,
+        auto_cli=None,
     ) -> Tuple[str, Optional[str]]:
         """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。
 
         ``title`` 改窗口标题；``ok_text`` / ``cancel_text`` 改两个按钮上的字；``manual_only`` 为真时不显示
         Strata / Gemini / Manual 三个选模型按钮，只能走手动（多步手动流程用）。
         关窗后 ``self._last_dialog_cancelled`` 记着这次是不是取消（点取消或直接关窗）。
+        ``auto_cli``：True/False 强制开关这次的自动 CLI；None 用全局设置 ``llm_auto_cli``。
         """
         if threading.current_thread() is not threading.main_thread():
             return self._show_model_dialog_from_thread(
@@ -686,6 +713,7 @@ class LLMApi:
                 ok_text=ok_text,
                 cancel_text=cancel_text,
                 manual_only=manual_only,
+                auto_cli=auto_cli,
             )
         self._last_dialog_cancelled = True
         image_paths = self._normalize_image_paths(image_paths)
@@ -1369,18 +1397,36 @@ class LLMApi:
         cli_busy = [False]
         cli_btn_ref = [None]
 
+        cli_queue: queue.Queue = queue.Queue()
+
         def _cli_ui(fn):
-            """后台线程改界面一律交给主线程（同 _show_model_dialog_from_thread 的做法）。"""
-            def _run():
+            """后台线程改界面一律交给主线程：只放进队列，由主线程定时取出来执行。
+            （后台线程直接调 dialog.after 在主线程不在 mainloop 时会失败。）"""
+            cli_queue.put(fn)
+
+        def _cli_drain():
+            try:
+                if not dialog.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            while True:
                 try:
-                    if dialog.winfo_exists():
-                        fn()
+                    fn = cli_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    fn()
                 except tk.TclError:
                     pass
-            try:
-                dialog.after(0, _run)
-            except Exception:
-                pass
+                try:
+                    if not dialog.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+            dialog.after(100, _cli_drain)
+
+        dialog.after(100, _cli_drain)
 
         def _cli_set_status(text, color="#1f5fbf"):
             _cli_ui(lambda: cli_status.config(text=text, foreground=color))
@@ -1444,7 +1490,9 @@ class LLMApi:
 
                     def _fail():
                         _cli_done_ui()
+                        auto_state["failed"] = True
                         cli_status.config(text=msg, foreground="#c00000")
+                        _raise_for_manual()
 
                     _cli_ui(_fail)
 
@@ -1458,10 +1506,53 @@ class LLMApi:
         cli_btn = ttk.Button(action_box, text="CLI自动", command=on_cli_auto)
         cli_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=2)
         cli_btn_ref[0] = cli_btn
+        auto_var = tk.BooleanVar(
+            master=dialog, value=llm_auto_cli_enabled() if auto_cli is None else bool(auto_cli)
+        )
+        auto_state = {"started": False, "failed": False}
+
+        def _on_auto_toggle():
+            set_llm_auto_cli(bool(auto_var.get()))
+
+        ttk.Checkbutton(
+            action_box, text="自动 CLI", variable=auto_var, command=_on_auto_toggle
+        ).pack(side=tk.RIGHT, padx=(0, 6), pady=2)
+
+        def _raise_for_manual():
+            """自动失败：窗口留着，提到最前并拿到焦点，方便手动接着做。"""
+            try:
+                dialog.deiconify()
+                dialog.lift()
+                dialog.attributes("-topmost", True)
+                dialog.focus_force()
+                dialog.after(1500, lambda: dialog.winfo_exists() and dialog.attributes("-topmost", False))
+            except tk.TclError:
+                pass
+
+        def _auto_start():
+            # 每个窗口最多自动一次；失败后不再自动。PDF / 音频 / 视频不自动。
+            if auto_state["started"] or auto_state["failed"] or cli_busy[0] or file_kind:
+                return
+            if not auto_var.get():
+                return
+            try:
+                if not dialog.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            auto_state["started"] = True
+            on_cli_auto()
+
+        if auto_var.get() and not file_kind:
+            dialog.after(AUTO_CLI_DELAY_MS, _auto_start)
         ttk.Separator(model_btn_row, orient=tk.VERTICAL).pack(side=tk.RIGHT, fill=tk.Y, padx=48, pady=2)
 
         on_copy()
-        dialog.wait_window()
+        try:
+            if dialog.winfo_exists():
+                dialog.wait_window()
+        except tk.TclError:
+            pass
         model = result_model[0] if result_model[0] is not None else GEMINI
         response = result_response[0] if result_response[0] is not None else None
         return model, response
