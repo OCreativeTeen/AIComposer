@@ -700,8 +700,12 @@ class MediaImportMixin:
         self.workflow.get_scene_by_index(self.current_scene_index)[track + "_status"] = "ORIG"
         self.refresh_gui_scenes()
 
-    def choose_import_video(self, initial_source: str | None = None) -> None:
-        """导入视频。默认先看项目 media/input_video，也可以改到下载、频道或剪贴板。"""
+    def choose_import_video(self, initial_source: str | None = None, preselect_file: str | None = None) -> None:
+        """导入视频。默认先看项目 media/input_video，也可以改到下载、频道或剪贴板。
+
+        ``initial_source`` 预选来源（"project" / "download" / "channel" / "clipboard"）；
+        ``preselect_file`` 按文件名预选片段列表里的那一个（如 CLI自动 刚下载的 mp4）。
+        """
         project_folder, project_files = self._project_video_source()
         download_folder, download_files = self._download_mp4_source()
         channel_folder, channel_files = self._channel_mp4_source()
@@ -763,6 +767,7 @@ class MediaImportMixin:
             dest_options=list(self._CLIP_DEST_OPTIONS),
             initial_source=initial_source,
             target_clip_length=self._current_clip_length(),
+            preselect_file=preselect_file,
         )
         if not pick:
             return

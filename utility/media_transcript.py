@@ -312,8 +312,23 @@ class ManualBridge:
 
     def call(self, system: str, user: str, what: str) -> Optional[str]:
         """后台线程用：等主线程把手动窗口的结果送回来。"""
-        request = {"system": system, "user": user, "what": what,
-                   "event": self._threading.Event(), "result": None, "taken": False}
+        return self._wait({"system": system, "user": user, "what": what})
+
+    def call_file(self, system: str, user: str, what: str, *, images=None,
+                  cli_kind: str = "video", file_dest_dir: str = "", extra: Optional[dict] = None) -> Optional[str]:
+        """后台线程用：结果是一个文件（如 CLI自动 生成的 mp4）。返回文件路径，拿不到返回 None。
+
+        主线程开的是带图的手动窗口（``LLMApi.show_manual_window(cli_kind=..., file_dest_dir=...)``）；
+        手动时也可以在窗口里点「选视频文件…」交回一个文件。
+        """
+        result = self._wait({"system": system, "user": user, "what": what, "images": list(images or []),
+                             "cli_kind": cli_kind, "file_dest_dir": file_dest_dir, "want_file": True,
+                             "extra": dict(extra or {})})
+        return str(result) if result else None
+
+    def _wait(self, fields: dict):
+        request = dict(fields)
+        request.update({"event": self._threading.Event(), "result": None, "taken": False})
         with self._lock:
             self._request = request
         while not request["event"].wait(0.3):
@@ -345,7 +360,16 @@ class ManualBridge:
                 before(request["what"])
             from utility import llm_api
 
-            result = llm_api.LLMApi(llm_api.MANUAL).generate_text(request["system"], request["user"])
+            api = llm_api.LLMApi(llm_api.MANUAL)
+            if request.get("want_file"):
+                resp = api.show_manual_window(
+                    request["system"], request["user"], images=request.get("images"),
+                    cli_kind=request.get("cli_kind"), file_dest_dir=request.get("file_dest_dir"),
+                    extra=request.get("extra"),
+                )
+                result = str(resp) if isinstance(resp, llm_api.FileResult) else None
+            else:
+                result = api.generate_text(request["system"], request["user"])
         except Exception as exc:  # noqa: BLE001
             print(f"手动窗口出错：{type(exc).__name__}: {exc}")
             result = None

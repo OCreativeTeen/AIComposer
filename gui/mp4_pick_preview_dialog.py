@@ -234,10 +234,12 @@ def ask_mp4_pick_with_trim_preview(
     later_scene_lengths: Optional[list] = None,
     initial_source: Optional[str] = None,
     target_clip_length: Optional[float] = None,
+    preselect_file: Optional[str] = None,
 ) -> Union[dict, Tuple[str, str, str], Tuple[str, str, str, str], None]:
     """
   左侧文件列表 + 右侧裁剪/变速预览。
   ``build_adjusted_pair(full_path, volume, start=, end=, speed=) -> (tmp_mp4, tmp_wav)``
+  ``initial_source`` 选中哪个来源（如 "download"）；``preselect_file`` 按文件名（不分大小写）在片段列表里预选这一个。
     """
     if parent is None:
         try:
@@ -1974,8 +1976,13 @@ def ask_mp4_pick_with_trim_preview(
     if sources:
         source_var.trace_add("write", lambda *_args: _apply_source())
     if choices:
-        listbox.selection_set(0)
-        _load_file(choices[0])
+        first = 0
+        if preselect_file:
+            want = os.path.basename(str(preselect_file)).lower()
+            first = next((i for i, n in enumerate(choices) if os.path.basename(str(n)).lower() == want), 0)
+        listbox.selection_set(first)
+        listbox.see(first)
+        _load_file(choices[first])
 
     sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
     dlg.update_idletasks()

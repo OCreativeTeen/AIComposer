@@ -78,8 +78,11 @@ class FinalizePublishMixin:
                 if "error" in task_info:
                     message += f"\n错误: {task_info['error']}"
             
-            # 显示通知对话框
-            messagebox.showinfo(title, message)
+            # 显示通知对话框（video_finalize 成功时多一个「播放视频」）
+            if task_status == "完成" and task_type == "video_finalize":
+                self._show_finalize_done_dialog(title, message, pid)
+            else:
+                messagebox.showinfo(title, message)
 
 
 
@@ -246,9 +249,41 @@ class FinalizePublishMixin:
                 msg += f"\nhttps://www.youtube.com/watch?v={vid}"
             messagebox.showinfo("提示", msg + tg_block, parent=self.root)
 
-    def play_finalize_video(self):
+    def _show_finalize_done_dialog(self, title, message, pid=None):
+        """任务完成通知：OK + 播放视频（复用 play_finalize_video）。"""
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frame = ttk.Frame(dlg, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=message, justify=tk.LEFT).pack(anchor="w", pady=(0, 12))
+        btns = ttk.Frame(frame)
+        btns.pack(anchor="e")
+
+        def _play():
+            dlg.destroy()
+            self.play_finalize_video(pid=pid)
+
+        ttk.Button(btns, text="播放视频", command=_play).pack(side=tk.LEFT, padx=(0, 8))
+        ok = ttk.Button(btns, text="OK", command=dlg.destroy)
+        ok.pack(side=tk.LEFT)
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.update_idletasks()
+        try:
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+            dlg.geometry(f"+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            pass
+        ok.focus_set()
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+
+    def play_finalize_video(self, pid=None):
         """与 magic_workflow.finalize_video 相同的路径规则；用系统默认播放器打开（独立窗口、含声音）。"""
-        final_path = config.publish_final_video_path(self.workflow.pid)
+        final_path = config.publish_final_video_path(pid or self.workflow.pid)
         if not os.path.isfile(final_path):
             messagebox.showwarning(
                 "Video播放",

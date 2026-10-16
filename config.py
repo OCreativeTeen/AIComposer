@@ -1179,6 +1179,8 @@ GEMINI_CHROME_PROFILE_DIRECTORY = (
 ).strip()
 GEMINI_URL = "https://gemini.google.com/"
 NOTEBOOKLM_URL = "https://notebooklm.google.com/"
+# 手工 LLM 窗口 CLI自动：演示文稿 / 信息图 / 音频概览 / 视频概览 用这个笔记本（项目配置 notebooklm_studio_url 可覆盖）
+NOTEBOOKLM_STUDIO_URL = os.environ.get("NOTEBOOKLM_STUDIO_URL") or "https://notebook.google.com/notebook/dedcfa57-6639-4635-82ed-461550d48a94"
 # NotebookLM / itc: use HermesChromeCDP on GROK_CDP_PORT (9222), same as Hermes nb_cover_dl.
 NOTEBOOKLM_CDP_PORT = int(os.environ.get("NOTEBOOKLM_CDP_PORT") or "9222")
 # Grok ``grv``: HermesChromeCDP + profile（与 D:\Hermes\run_grok_imagine.bat 相同模型）。

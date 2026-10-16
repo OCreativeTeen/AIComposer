@@ -64,10 +64,11 @@ def pack_scene_field_choices(
     override_var,
     *,
     title: str = "写进提示词的内容",
+    anchor=tk.S,
 ):
     """visual / speaking / actor 勾选，外加「换成」人物覆盖。两个提示窗用这一份。"""
     options = ttk.LabelFrame(parent, text=title, padding=(8, 4))
-    options.pack(side=tk.LEFT, anchor=tk.S)
+    options.pack(side=tk.LEFT, anchor=anchor, padx=((8, 0) if anchor == tk.N else 0))
     buttons = []
     for text, var in (
         ("场景描述 (visual)", visual_var),
@@ -102,11 +103,12 @@ def open_slide_prompt_dialog(
     main_character: str = "",
     saved_choice=None,
     save_choice=None,
+    open_manual=None,
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
     ``saved_choice`` 是项目里记下的上次选择；``save_choice(dict)`` 在关窗或拷贝时把当前选择记回项目。
-    按一次「拷贝提示词」就拷走并关闭。
+    按「提交」：拷走提示词并关窗；给了 ``open_manual(prompt)`` 就再交给手工 LLM 窗口（NotebookLM 演示文稿）。
     """
     dlg = tk.Toplevel(parent)
     dlg.title("幻灯提示")
@@ -142,11 +144,12 @@ def open_slide_prompt_dialog(
         btn.pack(anchor=tk.W)
         text_buttons.append(btn)
 
-    pack_scene_field_choices(bottom, visual_var, speaking_var, actor_var, override_var)
+    # 写进提示词的内容 放在「说明文字」右边，同一行。
+    pack_scene_field_choices(groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N)
 
     hints = {
         "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",
-        "narration": "叙事：用图案、物件和背景文字讲，人物少。有 actor 时，讲员是叙述者，其他人物是嘉宾。",
+        "narration": "叙事：用图案、物件和背景文字讲，人物少。没有讲员时，画面独自演示场景内容，讲话当作要画出来的故事内容。有讲员时，讲员在叙述，背景画面配合讲的内容。",
         "tech": "技术方案汇报：每张是一页架构、流程或对比图。有 actor 时，讲员是汇报人。",
         "exec": "高管简报：每张一个结论，一个数字或图标。有 actor 时，讲员是汇报人。",
     }
@@ -158,7 +161,7 @@ def open_slide_prompt_dialog(
             btn.configure(state=("disabled" if presentation else "normal"))
         single = "幻灯片是每场一张图。"
         hint.config(
-            text=f"{hints.get(narrative, '')}\n{single}场景描述和讲话至少选一项。选好后按「拷贝提示词」。"
+            text=f"{hints.get(narrative, '')}\n{single}场景描述和讲话至少选一项。选好后按「提交」，会拷贝提示词并交给 NotebookLM 生成演示文稿（PDF）。"
         )
 
     def remember() -> None:
@@ -226,8 +229,10 @@ def open_slide_prompt_dialog(
             messagebox.showwarning("幻灯提示", "提示词没有放进剪贴板。", parent=dlg)
             return
         close()
+        if callable(open_manual):
+            parent.after(50, lambda: open_manual(prompt))
 
-    # 拷贝按钮放在右边，字比默认大 30%，加粗。
+    # 提交按钮放在右下角，字比默认大 30%，加粗。
     base_font = tkfont.nametofont("TkDefaultFont")
     big_font = tkfont.Font(
         family=base_font.actual("family"),
@@ -236,7 +241,7 @@ def open_slide_prompt_dialog(
     )
     dlg._slide_copy_font = big_font  # 防止字体对象被回收
     ttk.Style().configure("SlideCopy.TButton", font=big_font, padding=(18, 10))
-    ttk.Button(bottom, text="拷贝提示词", style="SlideCopy.TButton", command=copy_prompt).pack(
+    ttk.Button(bottom, text="提交", style="SlideCopy.TButton", command=copy_prompt).pack(
         side=tk.RIGHT, anchor=tk.S
     )
 

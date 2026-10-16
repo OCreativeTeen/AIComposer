@@ -197,6 +197,27 @@ class PromptFlowsMixin:
                     f"返回的图片已保存到封面列表：\n{os.path.basename(dest)}",
                 )
 
+        def _video_download_dir() -> str:
+            """导入视频「下载」来源看的目录：用户 Downloads（存在时），否则项目 download 文件夹。"""
+            from gui.workflow.wf_common import _user_downloads_folder
+
+            folder = _user_downloads_folder()
+            if folder and os.path.isdir(folder):
+                return folder
+            folder = config.get_project_path(self.workflow.pid) + "/download"
+            os.makedirs(folder, exist_ok=True)
+            return folder
+
+        def _on_video_file_response(path: str) -> None:
+            """CLI自动 生成的 mp4：打开导入视频，来源=下载，片段列表预选这个文件（不自动导入）。"""
+            if not path or not os.path.isfile(path):
+                return
+            show_auto_close_popup(self.root, "生场视频", f"视频已下载：\n{os.path.basename(path)}")
+            self.root.after(
+                200,
+                lambda: self.choose_import_video(initial_source="download", preselect_file=os.path.basename(path)),
+            )
+
         def save_video_choice(choice: dict) -> None:
             cfg = project_manager.PROJECT_CONFIG
             if not isinstance(cfg, dict) or cfg.get("video_prompt") == choice:
@@ -214,8 +235,10 @@ class PromptFlowsMixin:
             host_narrator=project_manager.project_narrator(),
             get_image=get_image,
             copy_image=lambda path: bool(self.copy_image_to_clipboard(path, silent=True)),
-            open_manual=lambda prompt, images: self.llm_api.show_manual_window(
-                prompt, "", images=images, on_image_response=_on_video_image_response
+            open_manual=lambda prompt, images, extra=None: self.llm_api.show_manual_window(
+                prompt, "", images=images, on_image_response=_on_video_image_response,
+                cli_kind="video", file_dest_dir=_video_download_dir(),
+                on_file_response=_on_video_file_response, extra=extra,
             ),
             saved_choice=(project_manager.PROJECT_CONFIG or {}).get("video_prompt"),
             save_choice=save_video_choice,
@@ -272,6 +295,22 @@ class PromptFlowsMixin:
             cfg["slide_prompt"] = choice
             save_project_config(parent=self.root)
 
+        def open_slides_manual(prompt: str) -> None:
+            """提交：手工 LLM 窗口 CLI自动 → NotebookLM 演示文稿 → 下载 PDF → 系统查看器打开。"""
+            import os
+            from pathlib import Path
+
+            def _open_pdf(path: str) -> None:
+                try:
+                    os.startfile(path)
+                except OSError as exc:
+                    messagebox.showwarning("幻灯提示", f"PDF 打不开：{exc}\n{path}", parent=self.root)
+
+            self.llm_api.show_manual_window(
+                prompt, "", auto_cli=True, cli_kind="slides",
+                file_dest_dir=str(Path.home() / "Downloads"), on_file_response=_open_pdf,
+            )
+
         open_slide_prompt_dialog(
             self.root,
             getattr(self, "_slide_prompt_btn", None),
@@ -283,4 +322,5 @@ class PromptFlowsMixin:
             host_narrator=project_manager.project_narrator(),
             get_place=get_place,
             main_character="",
+            open_manual=open_slides_manual,
         )

@@ -41,12 +41,40 @@ def _place_popup_near(dlg: tk.Toplevel, anchor, *, below: bool) -> None:
             y = min(max(8, sh - h - 8), ay + ah + gap)
     x = max(8, min(x, max(8, sw - w - 8)))
     y = max(8, min(y, max(8, sh - h - 8)))
-    dlg.geometry(f"{w}x{h}+{x}+{y}")
+    # 不锁死宽高：内容变长（提示文字换行、FYI 历史等）时窗口会自己长高，按钮不会被裁掉。
+    margin = 60
+    if h > sh - margin:
+        h = sh - margin
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+    else:
+        dlg.geometry(f"+{x}+{y}")
+    dlg.minsize(w, h)
     dlg.deiconify()
+    if not getattr(dlg, "_fit_bound", False):
+        dlg._fit_bound = True
+        dlg.bind("<Configure>", lambda e, d=dlg: _keep_on_screen(d) if e.widget is d else None, add="+")
     try:
         dlg.lift()
     except tk.TclError:
         pass
+
+
+def _keep_on_screen(dlg: tk.Toplevel) -> None:
+    """内容长高后若底部出屏，就把窗口往上挪；同时更新 minsize。"""
+    try:
+        w = max(int(dlg.winfo_reqwidth()), 200)
+        h = int(dlg.winfo_reqheight())
+        sh = int(dlg.winfo_screenheight())
+        y = int(dlg.winfo_y())
+        x = int(dlg.winfo_x())
+    except tk.TclError:
+        return
+    h = min(h, sh - 60)
+    dlg.minsize(w, h)
+    if y + h > sh - 48:
+        ny = max(8, sh - h - 48)
+        if ny != y:
+            dlg.geometry(f"+{x}+{ny}")
 
 
 def open_video_prompt_dialog(
@@ -118,13 +146,35 @@ def open_video_prompt_dialog(
             saved_text = picked_text
     narrative_var = tk.StringVar(value=saved_narrative)
     text_var = tk.StringVar(value=saved_text)
+    # 视频长度：不进提示词，作为 extra 参数交给 CLI自动（Grok Imagine 视频时长）。记在 video_prompt["duration"]。
+    saved_duration = saved_choice.get("duration") if isinstance(saved_choice, dict) else None
+    duration_var = tk.StringVar(value=saved_duration if saved_duration in ("6s", "10s", "15s") else "15s")
+    saved_visual = True
+    saved_speaking = True
+    saved_actor = False
+    saved_override = config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES[0][0]
+    if isinstance(saved_choice, dict):
+        if "visual" in saved_choice:
+            saved_visual = bool(saved_choice["visual"])
+        if "speaking" in saved_choice:
+            saved_speaking = bool(saved_choice["speaking"])
+        if "actor" in saved_choice:
+            saved_actor = bool(saved_choice["actor"])
+        if saved_choice.get("actor_override") in {
+            label for label, _en in config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES
+        }:
+            saved_override = saved_choice["actor_override"]
+    visual_var = tk.BooleanVar(value=saved_visual)
+    speaking_var = tk.BooleanVar(value=saved_speaking)
+    actor_var = tk.BooleanVar(value=saved_actor)
+    override_var = tk.StringVar(value=saved_override)
     frame_var = tk.StringVar(value="two" if is_transition else "one")
     bg_var = tk.StringVar(value="none")
     evolve_var = tk.StringVar(value="keep")
     camera_var = tk.StringVar(value="none")
     motion_var = tk.StringVar(value="")
 
-    from gui.slide_prompt_dialog import pack_narrative_choices
+    from gui.slide_prompt_dialog import pack_narrative_choices, pack_scene_field_choices
 
     narrative_row = ttk.Frame(body)
     narrative_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 8))
@@ -133,6 +183,9 @@ def open_video_prompt_dialog(
     text_box.pack(side=tk.LEFT, anchor=tk.N)
     for value, label in config_prompt.FLOW_CAPTION_CHOICES:
         ttk.Radiobutton(text_box, text=label, value=value, variable=text_var).pack(anchor=tk.W)
+    pack_scene_field_choices(
+        narrative_row, visual_var, speaking_var, actor_var, override_var
+    )
 
     groups = ttk.Frame(body)
     if not is_transition:
@@ -182,8 +235,13 @@ def open_video_prompt_dialog(
 
     def current_choice() -> dict:
         return {
+            "duration": duration_var.get(),
             "narrative": narrative_var.get(),
             "text": text_var.get(),
+            "visual": bool(visual_var.get()),
+            "speaking": bool(speaking_var.get()),
+            "actor": bool(actor_var.get()),
+            "actor_override": override_var.get(),
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
         }
@@ -204,16 +262,40 @@ def open_video_prompt_dialog(
         for btn in bg_buttons:
             btn.configure(state=("normal" if keep_words else "disabled"))
         go.config(text="提交")
-        if is_transition or two:
-            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理：去掉文字会补上原来的画面，关键字作背景只留几个字在后面，用画面讲则中间用人物或场景把意思演出来。多画面用起始画面和终止画面。选好后点提交。选择会记下。")
+        narrative = narrative_var.get()
+        if narrative == "narration":
+            if actor_var.get():
+                narr = "叙事：有讲员时，讲员在叙述内容，背景画面配合所讲的内容。"
+            else:
+                narr = "叙事：没有讲员时，画面独自演示场景内容；讲话当作要画出来的故事内容，可以不要声音。"
+        elif narrative == "story":
+            narr = "故事：人物在画面里演这个故事。"
+        elif narrative == "tech":
+            narr = "技术方案汇报：图示为主。"
+        elif narrative == "exec":
+            narr = "高管简报：结论为主。"
         else:
-            hint.config(text="叙事风格决定这段视频怎么讲。说明文字决定字怎么处理。选「保留」时，背景里的不加、背景文字、思想泡泡才生效。运镜选默认就不写镜头怎么动。选好后点提交。选择会记下。")
+            narr = "叙事风格决定这段视频怎么讲。"
+        base = (
+            narr
+            + " 写进提示词的内容勾选场景描述、讲话、人物。说明文字决定字怎么处理。"
+            + (
+                "多画面用起始画面和终止画面。"
+                if (is_transition or two)
+                else "选「保留」时背景选项才生效。运镜选默认就不写镜头怎么动。"
+            )
+            + "选好后点提交。选择会记下。"
+        )
+        hint.config(text=base)
 
     def close() -> None:
         remember()
         dlg.destroy()
 
     def on_go() -> None:
+        if not (visual_var.get() or speaking_var.get() or actor_var.get()):
+            messagebox.showwarning("视频提示", "场景描述、讲话、人物至少要选一项。", parent=dlg)
+            return
         scenes = [s for s in (get_scenes() or []) if isinstance(s, dict)]
         if not scenes:
             messagebox.showwarning("视频提示", "没有可用场景", parent=dlg)
@@ -222,6 +304,14 @@ def open_video_prompt_dialog(
         if not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
         frames = "two" if is_transition else frame_var.get()
+        field_kw = dict(
+            use_visual=bool(visual_var.get()),
+            use_speaking=bool(speaking_var.get()),
+            use_actor=bool(actor_var.get()),
+            actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(
+                override_var.get(), ""
+            ),
+        )
         try:
             if is_transition:
                 prompt = config_prompt.build_transition_video_prompt(
@@ -232,6 +322,7 @@ def open_video_prompt_dialog(
                     host_narrator=host_narrator or "",
                     narrative=narrative_var.get(),
                     text=text_var.get(),
+                    **field_kw,
                 )
             else:
                 prompt = config_prompt.build_video_flow_prompt(
@@ -246,6 +337,7 @@ def open_video_prompt_dialog(
                     motion=motion_var.get(),
                     narrative=narrative_var.get(),
                     text=text_var.get(),
+                    **field_kw,
                 )
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
@@ -277,7 +369,11 @@ def open_video_prompt_dialog(
         remember()
         dlg.destroy()
         if callable(open_manual):
-            open_manual(prompt, images)
+            extra = {"duration": duration_var.get(), "resolution": "720p"}
+            try:
+                open_manual(prompt, images, extra=extra)
+            except TypeError:
+                open_manual(prompt, images)  # old callers without extra
 
     # FYI / 注意: text persisted in video_prompt; checkbox always ON on open.
     _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
@@ -295,11 +391,17 @@ def open_video_prompt_dialog(
         (lambda key: get_image(key) if get_image is not None else ""),
         initial=saved_image or "clip_image",
     )
+    length_box = ttk.LabelFrame(actions, text="长度", padding=(8, 4))
+    length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
+    for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
+        ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var).pack(anchor=tk.W)
     go = ttk.Button(actions, text="提交", command=on_go)
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)
     text_var.trace_add("write", refresh_choices)
+    narrative_var.trace_add("write", refresh_choices)
+    actor_var.trace_add("write", refresh_choices)
     refresh_choices()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

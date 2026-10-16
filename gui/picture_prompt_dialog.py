@@ -152,10 +152,20 @@ def open_picture_prompt_dialog(
         if extract:
             hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点提交。")
         else:
+            if narrative_var.get() == "narration":
+                if actor_var.get():
+                    narr = "叙事：有讲员时，讲员在叙述内容，背景画面配合所讲的内容。"
+                else:
+                    narr = "叙事：没有讲员时，画面独自演示场景内容；讲话当作要画出来的故事内容。"
+            else:
+                narr = (
+                    "叙事风格用当前这一场：场景描述只作画面参考，讲话决定故事发展和对话，"
+                    "人物决定性别、国籍和年龄。"
+                )
             hint.config(
-                text="画风改变决定这张图怎么画。叙事风格用当前这一场："
-                "场景描述只作画面参考，讲话决定故事发展和对话，人物决定性别、国籍和年龄。"
-                "三项至少选一项。选择会记下，下次还在。"
+                text="画风改变决定这张图怎么画。"
+                + narr
+                + "勾选要写进提示词的内容，选好后点提交。"
             )
 
     def close() -> None:
@@ -217,6 +227,8 @@ def open_picture_prompt_dialog(
     ttk.Button(bottom, text="提交", command=on_go).pack(side=tk.RIGHT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
+    narrative_var.trace_add("write", refresh)
+    actor_var.trace_add("write", refresh)
     refresh()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)

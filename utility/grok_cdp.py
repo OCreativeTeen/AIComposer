@@ -139,7 +139,37 @@ IMAGINE_SUBMIT_CONFIRM_S = 15
 #   the newest generation). Focus stays on Thumbnail 1 after generate until clicked.
 # - focused NEW result src: .../generated/<uuid>/image.jpg (not .../<postId>/content)
 # - action row: 赞 / 踩 / 点赞 / 在 X 上发布 / 复制图像 / 下载 / 更多选项
-IMAGINE_SUBMIT_LABELS = ("编辑", "Edit", "Submit", "提交", "Send", "发送", "生成", "Generate")
+IMAGINE_SUBMIT_LABELS = ("编辑", "Edit", "Submit", "提交", "Send", "发送", "生成", "Generate", "生成视频", "Generate video")
+
+# Video mode (read-only DOM check, Oct 2026), all next to the composer:
+# - mode: button[role="radio"][aria-label="视频"] (image: aria-label="图片")
+# - resolution: button[aria-label="视频分辨率"][aria-haspopup="menu"] -> [role="menuitemradio"] "480p|720p|1080p"
+# - duration:   button[aria-label="视频时长"][aria-haspopup="menu"]   -> [role="menuitemradio"] "6s|10s|15s"
+# - (also 视频音频 toggle, 宽高比 menu)
+IMAGINE_VIDEO_MODE_LABELS = ("视频", "Video")
+IMAGINE_VIDEO_RES_LABELS = ("视频分辨率", "Video resolution", "Resolution")
+IMAGINE_VIDEO_DUR_LABELS = ("视频时长", "Video duration", "Duration")
+IMAGINE_VIDEO_TIMEOUT_S = 15 * 60
+
+IMAGINE_VIDEO_STATE_JS = """() => {
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const drop = document.querySelector('[data-testid="drop-ui"]') || document.body;
+  const vids = [...drop.querySelectorAll('video')].filter(vis).sort((a, b) => {
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return rb.width * rb.height - ra.width * ra.height;
+  });
+  const v = vids[0] || null;
+  let src = v ? (v.currentSrc || v.src || '') : '';
+  if (v && !src) { const s = v.querySelector('source'); src = s ? (s.src || '') : ''; }
+  const m = location.pathname.match(/\\/imagine\\/post\\/([^/?#]+)/);
+  const progress = [...drop.querySelectorAll('[role="progressbar"], [aria-busy="true"], [class*="shimmer"], [class*="animate-pulse"], [class*="animate-spin"]')].some(vis)
+    || /正在生成|生成中|Generating|\\b\\d{1,2}%/i.test(drop.innerText || '');
+  const thumbs = [...document.querySelectorAll('button[aria-label^="Thumbnail"]')].filter(vis).length;
+  const dl = [...document.querySelectorAll('button')].some((b) => vis(b) && ['下载', 'Download'].includes((b.getAttribute('aria-label') || '').trim()));
+  return {url: location.href, postId: m ? m[1] : '', src, ready: !!(v && (v.readyState >= 2 || v.duration > 0) && !v.error),
+          duration: v ? (v.duration || 0) : 0, vw: v ? v.videoWidth : 0, vh: v ? v.videoHeight : 0,
+          progress, thumbCount: thumbs, download: dl};
+}"""
 IMAGINE_COPY_LABELS = ("复制图像", "Copy image")
 IMAGINE_DOWNLOAD_LABELS = ("下载", "Download")
 
@@ -792,6 +822,188 @@ def run_imagine(prompt: str, status: Status = None):
         return extract_imagine_result(page, st, status, reject_image=reject)
 
 
+def _menu_pick(page, trigger_labels, item_text: str, status: Status = None) -> bool:
+    """Open a composer popover menu (by aria-label) and pick the menuitemradio whose text starts with ``item_text``."""
+    btn = None
+    for lab in trigger_labels:
+        loc = page.locator(f'button[aria-label="{lab}"]')
+        try:
+            if loc.count() and loc.first.is_visible():
+                btn = loc.first
+                break
+        except Exception:
+            continue
+    if btn is None:
+        _say(status, f"没找到 {trigger_labels[0]} 按钮")
+        return False
+    try:
+        if (btn.inner_text() or "").strip() == item_text:
+            return True
+        btn.click(timeout=5000)
+        item = page.locator('[role="menuitemradio"]').filter(has_text=item_text).first
+        item.click(timeout=5000)
+        time.sleep(0.4)
+        ok = (btn.inner_text() or "").strip() == item_text
+        if not ok:
+            page.keyboard.press("Escape")
+        return ok
+    except Exception as exc:
+        print(f"[grok_cdp] menu pick {trigger_labels[0]}={item_text} failed: {exc}")
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False
+
+
+def _set_video_mode(page, resolution: str, duration: str, status: Status = None) -> None:
+    clicked = False
+    for lab in IMAGINE_VIDEO_MODE_LABELS:
+        loc = page.locator(f'button[role="radio"][aria-label="{lab}"]')
+        try:
+            if loc.count():
+                loc.first.click(timeout=5000)
+                clicked = True
+                break
+        except Exception:
+            continue
+    if not clicked:
+        raise RuntimeError("没找到 Grok Imagine 的「视频」模式按钮")
+    time.sleep(0.8)
+    if not _menu_pick(page, IMAGINE_VIDEO_RES_LABELS, resolution, status):
+        raise RuntimeError(f"没能把视频分辨率设成 {resolution}")
+    if not _menu_pick(page, IMAGINE_VIDEO_DUR_LABELS, duration, status):
+        raise RuntimeError(f"没能把视频时长设成 {duration}")
+    _say(status, f"视频模式：{resolution} · {duration}")
+
+
+def _video_state(page) -> dict:
+    try:
+        return page.evaluate(IMAGINE_VIDEO_STATE_JS) or {}
+    except Exception as exc:
+        print(f"[grok_cdp] video state probe failed: {exc}")
+        return {}
+
+
+def _wait_video_done(page, before: dict, status: Status, timeout_s: float = IMAGINE_VIDEO_TIMEOUT_S) -> dict:
+    """Done = new post / new thumbnail, newest thumbnail focused, a playable <video> with a new src, no progress."""
+    _say(status, "等待生成视频（可能要几分钟）…")
+    started = time.monotonic()
+    stable = 0
+    last_say = 0.0
+    last = {}
+    old_src = before.get("src") or ""
+    while time.monotonic() - started < timeout_s:
+        st = _video_state(page)
+        last = st
+        moved = (st.get("postId") and st.get("postId") != before.get("postId")) or (
+            (st.get("thumbCount") or 0) > (before.get("thumbCount") or 0)
+        )
+        if moved and not st.get("progress") and not (st.get("src") and st.get("src") != old_src and st.get("ready")):
+            # Generation may be finished but focus still on the input thumbnail.
+            try:
+                page.evaluate(IMAGINE_FOCUS_NEWEST_THUMB_JS)
+            except Exception:
+                pass
+            time.sleep(1.0)
+            st = _video_state(page)
+            last = st
+        ready = bool(st.get("src")) and st.get("src") != old_src and st.get("ready") and not st.get("progress")
+        stable = stable + 1 if ready else 0
+        if stable >= 2:
+            return st
+        el = time.monotonic() - started
+        if el - last_say >= 30:
+            _say(status, f"等待生成视频 … {int(el)} 秒")
+            last_say = el
+        time.sleep(3.0)
+    raise RuntimeError(
+        f"等了 {int(timeout_s // 60)} 分钟 Grok 视频还没好（progress={last.get('progress')}, video={bool(last.get('src'))}）"
+    )
+
+
+def _unique_video_path(dest_dir: str) -> str:
+    os.makedirs(dest_dir, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(dest_dir, f"grok_video_{stamp}.mp4")
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(dest_dir, f"grok_video_{stamp}_{n}.mp4")
+        n += 1
+    return path
+
+
+def _save_video(page, st: dict, dest_dir: str, status: Status = None) -> str:
+    """Fetch the focused <video> src (blob: or https). Fallback: the 下载 button in the action row."""
+    path = _unique_video_path(dest_dir)
+    src = st.get("src") or ""
+    data = b""
+    if src:
+        try:
+            _say(status, "下载生成的视频 …")
+            data = base64.b64decode(page.evaluate(FETCH_AS_B64_JS, src))
+        except Exception as exc:
+            print(f"[grok_cdp] in-page video fetch failed ({exc})")
+            if src.startswith("http"):
+                try:
+                    import requests
+
+                    r = requests.get(src, cookies=_bt()._grok_cdp_cookies_for_download(page.context), timeout=300)
+                    r.raise_for_status()
+                    data = r.content
+                except Exception as exc2:
+                    print(f"[grok_cdp] requests video fetch failed ({exc2})")
+    if len(data) > 10_000:
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+    _say(status, "用「下载」按钮保存视频 …")
+    with page.expect_download(timeout=120_000) as dl_info:
+        clicked = page.evaluate(IMAGINE_CLICK_COPY_JS.replace("copyLabels.includes", "downloadLabels.includes"),
+                                [list(IMAGINE_DOWNLOAD_LABELS), list(IMAGINE_DOWNLOAD_LABELS)])
+        if not clicked:
+            raise RuntimeError("没找到视频的「下载」按钮")
+    dl_info.value.save_as(path)
+    return path
+
+
+def run_imagine_video(prompt: str, dest_dir: str, status: Status = None, *,
+                      resolution: str = "720p", duration: str = "15s") -> str:
+    """Prepared Imagine tab (image attached): prompt, 视频 mode 720p/15s, submit, wait, save mp4 → path."""
+    bt = _bt()
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise RuntimeError("提示词是空的")
+    if not dest_dir:
+        raise RuntimeError("没有给视频的保存目录")
+    port = ensure_chrome(status)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = _imagine_page(ctx, want_image=True)
+        if page is None:
+            raise RuntimeError("没找到已贴好图片的 Grok Imagine 标签")
+        page.bring_to_front()
+        _set_video_mode(page, resolution, duration, status)
+        _say(status, "粘贴提示词 …")
+        bt._grok_paste_prompt_cdp(page, prompt, append=True)
+        before = _video_state(page)
+        _imagine_submit(page, status)
+        st = _wait_video_done(page, before, status)
+        path = _save_video(page, st, dest_dir, status)
+        _say(status, f"视频已保存：{os.path.basename(path)}")
+        return path
+
+
+def make_video(prompt: str, image_path: str, dest_dir: str, status: Status = None, *,
+               resolution: str = "720p", duration: str = "15s") -> str:
+    """Grok Imagine image→video: attach ``image_path`` + ``prompt``; returns the saved mp4 path."""
+    prepare_imagine(image_path, status)
+    return run_imagine_video(prompt, dest_dir, status, resolution=resolution, duration=duration)
+
+
 def make_image(prompt: str, image_path: str, status: Status = None):
     """Grok Imagine: attach ``image_path`` + ``prompt``, generate, return a PIL Image."""
     prepare_imagine(image_path, status)
@@ -906,3 +1118,5 @@ prepare_imagine = _locked(prepare_imagine)
 fetch_current_imagine_result = _locked(fetch_current_imagine_result)
 run_imagine = _locked(run_imagine)
 make_image = _locked(make_image)
+run_imagine_video = _locked(run_imagine_video)
+make_video = _locked(make_video)

@@ -51,6 +51,20 @@ LLM_AUTO_CLI_PREF = "llm_auto_cli"
 AUTO_CLI_DELAY_MS = 300
 
 
+# CLI自动 returns a file for these kinds (video = Grok Imagine; the rest = NotebookLM Studio).
+STUDIO_CLI_KINDS = ("slides", "infographic", "audio_overview", "video_overview")
+FILE_CLI_KINDS = ("video",) + STUDIO_CLI_KINDS
+
+
+class FileResult(str):
+    """手动窗口的「文件」结果：就是一个文件路径（str 子类，老代码当字符串用也不出错）。
+    例如 CLI自动 生成视频时返回下载好的 mp4 路径。用 ``isinstance(resp, FileResult)`` 区分。"""
+
+    @property
+    def path(self) -> str:
+        return str(self)
+
+
 def llm_auto_cli_enabled() -> bool:
     try:
         return bool(config.load_yt_tools_prefs().get(LLM_AUTO_CLI_PREF, True))
@@ -342,8 +356,18 @@ class LLMApi:
         images=None,
         on_image_response=None,
         auto_cli=None,
+        cli_kind=None,
+        file_dest_dir=None,
+        extra=None,
+        on_file_response=None,
     ):
         """只打开手动窗口，用来复制提示词和图片。不调用模型。
+
+        ``cli_kind="video"``：CLI自动 用 Grok Imagine 把（第一张）图做成视频，下载到 ``file_dest_dir``，
+        结果是 :class:`FileResult`（mp4 路径）；手动时也可以点「选视频文件…」交回一个文件。
+        ``on_file_response(path)`` 在拿到文件结果时调用。
+        ``extra``：不进提示词的参数字典，原样交给 CLI自动，窗口里只读显示。
+        视频用 ``{"duration": "6s"|"10s"|"15s", "resolution": "480p"|"720p"|"1080p"}``。
 
         有返回图时得到内存里的 PIL Image。没有图、文字有内容时得到这段文字。
         两边都空时得到空字符串，和原来没有贴回时一样。
@@ -352,8 +376,14 @@ class LLMApi:
         当返回图片（PIL Image）时调用，返回保存后的路径或 None。
         """
         _model, response = self._show_model_dialog(
-            system_prompt or "", user_prompt or "", image_paths=images, auto_cli=auto_cli
+            system_prompt or "", user_prompt or "", image_paths=images, auto_cli=auto_cli,
+            cli_kind=cli_kind, file_dest_dir=file_dest_dir, extra=extra,
         )
+        if isinstance(response, FileResult) and callable(on_file_response):
+            try:
+                on_file_response(str(response))
+            except Exception as exc:
+                print(f"⚠️ on_file_response 回调失败: {exc}")
         if response is not None and callable(on_image_response) and hasattr(response, "save"):
             try:
                 on_image_response(response)
@@ -640,6 +670,9 @@ class LLMApi:
         cancel_text: str = "取消",
         manual_only: bool = False,
         auto_cli=None,
+        cli_kind=None,
+        file_dest_dir=None,
+        extra=None,
     ) -> Tuple[str, Optional[str]]:
         """从后台线程安全地调用 _show_model_dialog。
 
@@ -659,6 +692,9 @@ class LLMApi:
                     cancel_text=cancel_text,
                     manual_only=manual_only,
                     auto_cli=auto_cli,
+                    cli_kind=cli_kind,
+                    file_dest_dir=file_dest_dir,
+                    extra=extra,
                 )
                 result_queue.put(("ok", result))
             except Exception as exc:
@@ -675,7 +711,8 @@ class LLMApi:
             return MANUAL, None
 
         try:
-            status, value = result_queue.get(timeout=600)
+            # 视频生成要很久，等长一点。
+            status, value = result_queue.get(timeout=(3000 if cli_kind in FILE_CLI_KINDS else 600))
             if status == "error":
                 raise value
             return value
@@ -695,6 +732,9 @@ class LLMApi:
         cancel_text: str = "取消",
         manual_only: bool = False,
         auto_cli=None,
+        cli_kind=None,
+        file_dest_dir=None,
+        extra=None,
     ) -> Tuple[str, Optional[str]]:
         """没有图时右栏是 User Prompt。有图时左栏是提示词和文字贴回，右栏上三分之二是输入图，下三分之一是贴回的图。带了 PDF、音频或视频时，右栏上方改成这个文件。
 
@@ -702,6 +742,8 @@ class LLMApi:
         Strata / Gemini / Manual 三个选模型按钮，只能走手动（多步手动流程用）。
         关窗后 ``self._last_dialog_cancelled`` 记着这次是不是取消（点取消或直接关窗）。
         ``auto_cli``：True/False 强制开关这次的自动 CLI；None 用全局设置 ``llm_auto_cli``。
+        ``cli_kind``：None 按有没有图自动（文字 / 以图生图）；"video" 时 CLI自动 以图生视频，
+        mp4 下载到 ``file_dest_dir``，结果是 :class:`FileResult`。
         """
         if threading.current_thread() is not threading.main_thread():
             return self._show_model_dialog_from_thread(
@@ -714,6 +756,9 @@ class LLMApi:
                 cancel_text=cancel_text,
                 manual_only=manual_only,
                 auto_cli=auto_cli,
+                cli_kind=cli_kind,
+                file_dest_dir=file_dest_dir,
+                extra=extra,
             )
         self._last_dialog_cancelled = True
         image_paths = self._normalize_image_paths(image_paths)
@@ -1392,6 +1437,15 @@ class LLMApi:
             dialog.update()
 
         # ---- CLI自动：通过 CDP 驱动 Chrome 里的 Grok，自动完成这次手动来回（utility/grok_cdp.py）----
+        # ``extra``：不进提示词的参数（如 {"duration": "10s", "resolution": "720p"}），交给 CLI自动；只读显示。
+        extra_params = dict(extra) if isinstance(extra, dict) else {}
+        if extra_params:
+            ttk.Label(
+                model_frame,
+                text="参数: " + " · ".join(str(v) for v in extra_params.values() if v not in (None, "")),
+                font=("TkDefaultFont", 9),
+                foreground="gray35",
+            ).pack(anchor=tk.W, pady=(2, 0))
         cli_status = ttk.Label(model_frame, text="", font=("TkDefaultFont", 9), foreground="#1f5fbf")
         cli_status.pack(anchor=tk.W, pady=(2, 0))
         cli_busy = [False]
@@ -1456,7 +1510,36 @@ class LLMApi:
                 try:
                     from . import grok_cdp
 
-                    if image_path:
+                    if cli_kind in STUDIO_CLI_KINDS:
+                        from . import notebooklm_cdp
+
+                        studio_file = notebooklm_cdp.make_studio(
+                            cli_kind, prompt, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                            extra=extra_params,
+                        )
+
+                        def _apply_studio_file():
+                            _cli_done_ui()
+                            cli_status.config(text=f"CLI自动 完成：{os.path.basename(studio_file)}", foreground="#1f7f1f")
+                            _finish_with_file(studio_file)
+
+                        _cli_ui(_apply_studio_file)
+                    elif cli_kind == "video":
+                        if not image_path:
+                            raise RuntimeError("生成视频需要一张起始图")
+                        mp4 = grok_cdp.make_video(
+                            prompt, image_path, dest_dir=file_dest_dir or "", status=_cli_set_status,
+                            resolution=str(extra_params.get("resolution") or "720p"),
+                            duration=str(extra_params.get("duration") or "15s"),
+                        )
+
+                        def _apply_file():
+                            _cli_done_ui()
+                            cli_status.config(text=f"CLI自动 完成：{os.path.basename(mp4)}", foreground="#1f7f1f")
+                            _finish_with_file(mp4)
+
+                        _cli_ui(_apply_file)
+                    elif image_path:
                         img = grok_cdp.make_image(prompt, image_path, status=_cli_set_status)
 
                         def _apply_image():
@@ -1498,11 +1581,45 @@ class LLMApi:
 
             threading.Thread(target=_work, name="grok-cli-auto", daemon=True).start()
 
+        def _finish_with_file(path: str) -> None:
+            """文件结果：关窗，返回 FileResult(path)。"""
+            result_model[0] = MANUAL
+            result_response[0] = FileResult(path)
+            self._last_dialog_cancelled = False
+            try:
+                dialog.clipboard_clear()
+                dialog.clipboard_append(get_request_copy_content())
+            except tk.TclError:
+                pass
+            dialog.destroy()
+
+        def _result_filetypes():
+            kinds = {
+                "slides": [("PDF", "*.pdf"), ("PowerPoint", "*.pptx")],
+                "infographic": [("图片", "*.png *.jpg *.jpeg *.webp")],
+                "audio_overview": [("音频", "*.m4a *.mp3 *.wav *.aac *.ogg")],
+            }
+            return kinds.get(cli_kind, [("视频", "*.mp4 *.mov *.webm")]) + [("所有文件", "*.*")]
+
+        def _pick_result_file() -> None:
+            from tkinter import filedialog
+
+            picked = filedialog.askopenfilename(
+                parent=dialog,
+                title="选择生成好的视频",
+                initialdir=(file_dest_dir or None),
+                filetypes=_result_filetypes(),
+            )
+            if picked:
+                _finish_with_file(picked)
+
         action_box = ttk.Frame(model_btn_row)
         action_box.pack(side=tk.RIGHT)
         ttk.Button(action_box, text=ok_text, command=on_ok).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
         ttk.Button(action_box, text=cancel_text, command=on_cancel).pack(side=tk.RIGHT, padx=(6, 0), pady=2)
         ttk.Button(action_box, text="重新拷贝提示词", command=on_copy).pack(side=tk.RIGHT, pady=2)
+        if cli_kind in FILE_CLI_KINDS:
+            ttk.Button(action_box, text=("选视频文件…" if cli_kind == "video" else "选结果文件…"), command=_pick_result_file).pack(side=tk.RIGHT, padx=(0, 6), pady=2)
         cli_btn = ttk.Button(action_box, text="CLI自动", command=on_cli_auto)
         cli_btn.pack(side=tk.RIGHT, padx=(0, 6), pady=2)
         cli_btn_ref[0] = cli_btn
