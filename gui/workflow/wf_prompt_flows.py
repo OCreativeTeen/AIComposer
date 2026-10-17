@@ -233,6 +233,10 @@ class PromptFlowsMixin:
             copy_text=copy_text,
             language=getattr(self.workflow, "language", "") or "",
             host_narrator=project_manager.project_narrator(),
+            get_place=lambda: (
+                (self.setting_region.get() or "").strip(),
+                (self.setting_era.get() or "").strip(),
+            ),
             get_image=get_image,
             copy_image=lambda path: bool(self.copy_image_to_clipboard(path, silent=True)),
             open_manual=lambda prompt, images, extra=None: self.llm_api.show_manual_window(
@@ -251,12 +255,12 @@ class PromptFlowsMixin:
         )
 
     def _open_slide_prompt_flow(self) -> None:
-        """幻灯提示：只取当前场景所在这一集的场景，选叙事风格后拷提示词。"""
+        """全集生成：只取当前场景所在这一集的场景，选叙事风格后拷提示词。"""
         from gui.slide_prompt_dialog import open_slide_prompt_dialog
 
         self.update_current_scene()
         if not self.workflow or not self.workflow.get_scene_by_index(self.current_scene_index):
-            messagebox.showwarning("幻灯提示", "没有当前场景", parent=self.root)
+            messagebox.showwarning("全集生成", "没有当前场景", parent=self.root)
             return
 
         def episode_scenes() -> list:
@@ -295,20 +299,43 @@ class PromptFlowsMixin:
             cfg["slide_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_slides_manual(prompt: str) -> None:
-            """提交：手工 LLM 窗口 CLI自动 → NotebookLM 演示文稿 → 下载 PDF → 系统查看器打开。"""
+        def open_slides_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "") -> None:
+            """提交：手工 LLM 窗口 CLI自动 → NotebookLM Studio（kind）→ 下载 → 系统程序打开。"""
             import os
             from pathlib import Path
 
-            def _open_pdf(path: str) -> None:
+            working = r"D:\AI_MEDIA\working"
+
+            def _open_file(path: str) -> None:
+                """Studio 下载结果移到 D:\\AI_MEDIA\\working（同名覆盖）。PDF 走拆页预览 / 分配；其余直接打开。"""
+                import shutil
+
+                try:
+                    os.makedirs(working, exist_ok=True)
+                    dest = os.path.join(working, os.path.basename(path))
+                    if os.path.abspath(dest) != os.path.abspath(path):
+                        if os.path.exists(dest):
+                            os.remove(dest)
+                        shutil.move(path, dest)
+                    path = dest
+                except OSError as exc:
+                    print(f"⚠️ 移动到 working 失败，用原位置：{exc}")
+                if path.lower().endswith(".pdf"):
+                    self.root.after(50, lambda p=path: self._on_media_drop_pdf(p))
+                    return
                 try:
                     os.startfile(path)
                 except OSError as exc:
-                    messagebox.showwarning("幻灯提示", f"PDF 打不开：{exc}\n{path}", parent=self.root)
+                    messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=self.root)
 
+            extra = {"output": kind}
+            if notebook_url:
+                extra["notebook_url"] = notebook_url
+            if source_pdf:
+                extra["source_pdf"] = source_pdf  # CLI自动：先上传为笔记本来源，再生成
             self.llm_api.show_manual_window(
-                prompt, "", auto_cli=True, cli_kind="slides",
-                file_dest_dir=str(Path.home() / "Downloads"), on_file_response=_open_pdf,
+                prompt, "", auto_cli=True, cli_kind=kind or "slides",
+                file_dest_dir=working, on_file_response=_open_file, extra=extra,
             )
 
         open_slide_prompt_dialog(

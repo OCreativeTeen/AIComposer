@@ -621,6 +621,8 @@ class FinalizePublishMixin:
         talk = config.normalize_dialogue_mode(pc.get("dialogue_mode") or "")
         if talk:
             self.scene_dialogue_mode.set(talk)
+        scene_style = config_prompt.normalize_scene_style(pc.get("scene_style"))
+        self.scene_style.set(scene_style or config_prompt.SCENE_STYLE_LABELS[0])
         region = (pc.get("setting_region") or "").strip()
         if region not in config_prompt.SETTING_PLACES:
             region = ""
@@ -659,6 +661,10 @@ class FinalizePublishMixin:
         talk = config.normalize_dialogue_mode(self.scene_dialogue_mode.get() or "")
         if talk and pc.get("dialogue_mode") != talk:
             pc["dialogue_mode"] = talk
+            changed = True
+        scene_style = config_prompt.normalize_scene_style(self.scene_style.get())
+        if (pc.get("scene_style") or "") != scene_style:
+            pc["scene_style"] = scene_style
             changed = True
         region = (self.setting_region.get() or "").strip()
         era = (self.setting_era.get() or "").strip()

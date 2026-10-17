@@ -36,6 +36,7 @@ class AudioTranscriber:
         self.llm_api = llm_api.LLMApi(llm_api.TEXT_MODEL)
         self.ffmpeg_audio_processor = FfmpegAudioProcessor(pid)
         self._whisperx_engine: Optional[Any] = None
+        self.last_error = ""  # 上一次 transcribe_with_whisper 的出错说明（如 CUDA out of memory），成功为空
 
     def _ensure_whisperx(self):
         if self._whisperx_engine is None:
@@ -66,6 +67,7 @@ class AudioTranscriber:
         失败时回退到原有 HTTP API。
         """
         print(f"🔍 开始转录：{audio_path}")
+        self.last_error = ""
 
         lang = language
         if lang == "zh-CN" or lang == "tw":
@@ -103,7 +105,9 @@ class AudioTranscriber:
             if segments:
                 print(f"✅ WhisperX 转录完成，共 {len(segments)} 个片段")
                 return segments
+            self.last_error = str(getattr(wx, "last_error", "") or "")
         except Exception as e:
-            print(f"⚠️ WhisperX 转录失败，回退 HTTP API：{type(e).__name__}: {e}")
+            print(f"⚠️ WhisperX 转录失败：{type(e).__name__}: {e}")
+            self.last_error = f"{type(e).__name__}: {e}"
 
         return []

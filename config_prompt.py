@@ -272,11 +272,28 @@ FLOW_CAPTION_CHOICES = (
 )
 SLIDE_FLOW_TEXT_CHOICES = FLOW_CAPTION_CHOICES
 SLIDE_FLOW_NARRATIVE_CHOICES = (
-    ("story", "故事（人物在画面里表演）"),
-    ("narration", "叙事（图案和背景文字，人物少或没有）"),
+    ("narration", "讲述（用场景和背景文字讲；若有人物，人物不说话）"),
+    ("story", "故事（人物在场景中表演对话）"),
     ("tech", "技术方案汇报"),
     ("exec", "高管简报"),
 )
+# 讲述及其两个变体（技术方案汇报、高管简报）：只有第三方讲员说话。旧的「叙事」存值 "narration" 就是讲述。
+TELLING_NARRATIVES = ("narration", "tech", "exec")
+
+
+def scene_content_label(narrative: str) -> str:
+    """场景主要内容（来自 speaking 栏）在提示词里叫什么。只有故事叫 Dialogue。"""
+    if narrative == "story":
+        return "Dialogue"
+    if narrative in ("tech", "exec"):
+        return "Narration content"
+    return "Scene narration"
+
+
+def scene_content_key(narrative: str) -> str:
+    """视频场景 JSON 里讲述类内容的字段名（故事仍用 speaking / voiceover）。"""
+    return {"tech": "narration_content", "exec": "narration_content"}.get(narrative, "scene_narration")
+
 
 # 叙事风格：这套幻灯片最终要表达什么，用什么形式表达。具体怎么用 visual、speaking、actor，见下面各风格的规则。
 SLIDE_FLOW_NARRATIVE_NOTES = {
@@ -286,19 +303,21 @@ Goal: the audience follows a story that people live in front of them.
 Form: every picture shows the people of the story in their place, acting and interacting. Their faces, bodies, gestures, and what passes between them carry the moment. The place and a few props support them. Do not replace the people with symbols or diagrams.
 """.strip(),
     "narration": """
-Narrative style: NARRATION. Present the story or the idea with pictures, not with acting and not with a default voiceover.
-Goal: the audience understands the meaning through the pictures.
-Form: few people, or none. Say it with images: places, objects, symbols, metaphors, diagrams, and strong composition. Where the text rule below allows it, short background words carry the point. Speech exists only when a 讲员 is listed in Actors.
+Narrative style: TELLING (讲述). The content is told by a third-party narrator (讲员) and shown with scenes, pictures, and background text.
+Goal: the audience understands the content through what they see while the 讲员 tells it.
+Form: places, objects, symbols, metaphors, diagrams, and strong composition. Where the text rule below allows it, short background words carry the point. People may appear, but they never speak; they act silently. Only the 讲员 speaks.
 """.strip(),
     "tech": """
 Narrative style: TECHNICAL SOLUTION REPORT. The deck is a technical solution presentation for clients or decision-makers.
 Goal: the audience grasps the architecture, the flow, and the value of the solution step by step.
 Form: each picture is a clean presentation slide. It is an architecture, flow, sequence, comparison, or component diagram that shows what that scene explains, laid out in reading order, top to bottom and left to right, with the relations between parts drawn. No story scene and no decoration without meaning.
+This is a variant of TELLING: only the 讲员 speaks. People rarely appear; if they do, they only support silently.
 """.strip(),
     "exec": """
 Narrative style: EXECUTIVE BRIEF. The deck is a short briefing for executives.
 Goal: the audience takes the conclusion and the decision from each slide in seconds.
 Form: each picture is a sparse, high-signal slide. One conclusion per picture, as a headline of a few words, backed by one key number, trend, risk, or action item shown as a simple chart or icon. No technical detail, no crowd, no story scene.
+This is a variant of TELLING: only the 讲员 speaks. People rarely appear; if they do, they only support silently.
 """.strip(),
 }
 
@@ -340,37 +359,40 @@ def _scenes_have_narrator_host(scenes: list) -> bool:
 
 
 def _prompt_has_speaker(narrative: str, use_actor: bool, scenes: list) -> bool:
-    """Whether this prompt should include a speaking narrator / cast.
+    """Whether ``Actors`` goes into this prompt.
 
-    - 叙事 (narration): only when actor is checked AND a 讲员 is listed.
-    - 故事 / 汇报: when actor is checked AND any actor entry is non-empty.
+    - 讲述 / 技术方案汇报 / 高管简报: only when actor is checked AND a 讲员 is listed
+      (the 讲员 then appears on camera; without one the 讲员 is an off-screen voice).
+    - 故事: when actor is checked AND any actor entry is non-empty.
     """
     if not use_actor:
         return False
-    if narrative == "narration":
+    if narrative in TELLING_NARRATIVES:
         return _scenes_have_narrator_host(scenes)
     return _scenes_have_speaker(scenes)
 
 
 def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords: bool, narrative: str = "story") -> str:
-    """这一次给了哪几项，每一项叫什么。"""
+    """这一次给了哪几项，每一项叫什么。场景主要内容总是来自讲话栏。"""
     lines = ["Each scene gives only these fields:"]
     if visual:
         lines.append("- ``Shown``: the scene description: place, action, and camera angle.")
     if speaking:
-        if narrative == "narration" and not actor:
-            text = (
-                "- ``scene_content`` (场景内容): the meaning of this scene to express with pictures only. "
-                "Not dialogue. Not narration. Not voiceover. Nobody speaks it aloud."
-            )
-        else:
-            text = "- ``Said``: what is said in the scene."
+        if narrative == "story":
+            text = "- ``Dialogue`` (讲话): the main content of the scene, said by the characters to each other."
             if actor:
                 text += (
                     " ``<1>``, ``<2>``, ``<3>`` mark who speaks: the number is that person's place in ``Actors``. "
                     "The same person keeps talking until the next ``<N>``. "
                     "A number with a decimal point such as ``<0.5>`` is a pause in seconds, nobody speaks."
                 )
+        else:
+            label = scene_content_label(narrative)
+            zh = "讲述内容" if narrative in ("tech", "exec") else "场景叙事"
+            text = (
+                f"- ``{label}`` ({zh}): the main content of the scene, told by the 讲员. "
+                "It is narration, never lines for anyone in the picture."
+            )
         lines.append(text)
     if actor:
         lines.append(
@@ -384,125 +406,115 @@ def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords:
     return "\n".join(lines)
 
 
+def narrative_mode_text(narrative: str, actor_checked: bool) -> str:
+    """叙事风格 + 「人物」勾选 → 一句话，提示窗里显示。讲员有没有要看场景里的 actor，所以写成「若…否则…」。"""
+    if narrative == "story":
+        if actor_checked:
+            return ("故事：人物在场景中表演对话（套用 actor 形象）。若人物中有讲员，讲员为辅，"
+                    "开头介绍或结尾总结、过渡、提问；否则没有讲员。")
+        return "故事：人物在场景中表演对话，人物自由虚构，无讲员。"
+    head = {
+        "tech": "技术方案汇报（讲述的一种）：架构 / 流程图和背景文字讲，人物很少且不说话。",
+        "exec": "高管简报（讲述的一种）：每场一个结论＋一个数字或图标，人物很少且不说话。",
+    }.get(narrative, "")
+    if actor_checked:
+        tail = "若人物中有讲员，讲员出镜叙述，其他人物只表演不说话；否则讲员在画外旁白。"
+    else:
+        tail = "讲员在画外旁白，画面中人物不说话。"
+    if head:
+        return head + tail
+    if actor_checked:
+        return "讲述：" + tail
+    return "讲述，无讲员出镜：讲员在画外旁白，场景、画面和背景文字表达内容，画面中人物不说话。"
+
+
 def _slide_flow_story_rules(visual: bool, speaking: bool, actor: bool) -> str:
-    """故事：人物对话、表演。有 actor 时套用外貌；没有则自由虚构人物和对白。"""
-    never_speakers = (
-        "Never draw a studio host discussing the story from outside it, unless a 讲员 is listed in ``Actors``. "
-        "Keep each person's face and clothes the same from scene to scene."
-    )
+    """故事：人物在场景中表演对话。actor 里有讲员时讲员为辅；没有就纯人物表演。"""
+    keep = "Keep each person's face and clothes the same from scene to scene."
+    no_host = "Pure character performance: there is no 讲员, no host, no narrator, and no voice-over."
     if not actor:
-        if speaking and visual:
-            return (
-                "Story style: characters have conversation and action inside the story. "
-                "No actor list was given — invent the characters and their dialogue freely from ``Said``. "
-                "``Shown`` helps with place, look, and camera. Where ``Shown`` is silent, take it from ``Said``. "
-                "They act the story out in the picture. " + never_speakers
-            )
-        if speaking:
-            return (
-                "Story style: characters have conversation and action inside the story. "
-                "No actor list was given — invent the characters and their dialogue freely from ``Said``: "
-                "place, people, what they do, the mood. They act it out. " + never_speakers
-            )
-        return (
-            "Story style. Show the story exactly as ``Shown`` tells it: its place, its people, their actions, the camera angle. "
-            "No actor list was given — invent the people the story needs. Follow ``Shown``."
-        )
+        lines = [
+            "Story style: the characters act and talk with each other inside the scene."
+            + (" The dialogue comes from ``Dialogue``." if speaking else ""),
+            "No actor list was given. Invent the characters the story needs.",
+            no_host,
+        ]
+        if visual:
+            lines.append("``Shown`` gives the place, the look, and the camera." + (
+                " Where ``Shown`` is silent, take it from ``Dialogue``." if speaking else ""))
+        lines.append(keep)
+        return "\n".join(lines)
     lines = [
-        "Story style: characters have conversation and dialogue inside the story. "
-        "``Actors`` is the cast — apply each entry's look, gender, age band, and ethnicity to that character. "
-        "The 人物 entries are IN the picture, in the story's place, acting and speaking. "
-        "The 讲员, when listed, is a third party OUTSIDE the story: a commentator who introduces, sets up, "
-        "comments on, or sums up the story."
+        "Story style: the characters act and talk with each other inside the scene."
+        + (" The dialogue comes from ``Dialogue``." if speaking else ""),
+        "``Actors`` is the cast. Each listed person uses their own character image: look, gender, age band, and ethnicity.",
+        "The 人物 entries are IN the scene, in the story's place, acting and talking.",
     ]
     if visual:
         lines.append("Put the actors inside the ``Shown`` scene. Follow its place, action, and camera angle.")
     elif speaking:
-        lines.append("Invent the place and the action from ``Said``.")
+        lines.append("Invent the place and the action from ``Dialogue``.")
     if speaking:
         lines.append(
-            "A line marked with a 人物's number is spoken by that actor inside the story: show that actor speaking "
-            "and the others listening or reacting. A line marked with the 讲员's number is commentary, not something "
-            "a story character says."
+            "A line marked with a 人物's number is said by that person inside the story: show that person talking "
+            "and the others listening or reacting."
         )
+    lines.append("If ``Actors`` has no 讲员: " + no_host)
     lines.append(
-        "When the 讲员 is shown, he or she stands clearly apart from the story people: at the edge of the frame, "
-        "in the foreground, or as a small inset, while the story goes on. When the 讲员 is not part of a scene, "
-        "the picture is just the story acted."
+        "If ``Actors`` includes a 讲员: the story characters lead and do the talking. The 讲员 is supporting and "
+        "stands outside the story. He or she may appear on camera at the start to introduce, or at the end to sum up, "
+        "bridge to what comes next, or ask the audience a question. A line marked with the 讲员's number is that "
+        "introduction or closing, not something a story character says. The 讲员 never takes over the story and stands "
+        "clearly apart from the story people: at the edge of the frame, in the foreground, or as a small inset."
     )
-    lines.append(
-        "If ``Actors`` lists only the 讲员 and no 人物, invent the people of the story from what is given. "
-        "If there is no 讲员, only the story's actors appear. Do not add a host."
-    )
+    lines.append("If ``Actors`` lists only the 讲员 and no 人物, invent the story people from the content.")
+    lines.append(keep)
     return "\n".join(lines)
 
 
 def _slide_flow_narration_rules(visual: bool, speaking: bool, actor: bool) -> str:
-    """叙事：用图案、物件和背景文字讲，人物少。仅当有讲员时才有旁白。"""
-    lines = []
-    if not actor:
-        # No 讲员: visuals alone. Field is scene_content, never speech.
-        if visual and speaking:
-            lines.append(
-                "``Shown`` is the scene picture: place, look, and camera. "
-                "``scene_content`` is the meaning of this scene to express with pictures only."
-            )
-        elif speaking:
-            lines.append(
-                "``scene_content`` is the meaning of this scene to express with pictures only: "
-                "places, objects, symbols, metaphors, diagrams, composition."
-            )
-        else:
-            lines.append(
-                "Follow ``Shown`` as the picture. The visuals alone express the scene's meaning."
-            )
-        lines.append(
-            "No narrator. No voiceover. Nobody speaks — not on screen, not off screen. "
-            "Do not invent a host, a commentator, or an unseen voice. "
-            "If a person appears, they are only a small figure in the matter, never speaking. "
-            "For video: ambient sound of the place is fine; no speech and no sung lyrics."
-        )
-        return "\n".join(lines)
-    # With 讲员: third-party narrator speaks; visuals illustrate what they say.
-    if visual and speaking:
-        lines.append(
-            "``Said`` is what the 讲员 narrates aloud. ``Shown`` is the background picture that supports and illustrates "
-            "what the 讲员 is saying."
-        )
+    """讲述：只有第三方讲员说话。actor 为真表示 actor 里有讲员（讲员出镜）；否则讲员在画外旁白。"""
+    lines = [
+        "Telling style: only the third-party 讲员 speaks."
+        + (" ``Scene narration`` is the 讲员's narration." if speaking else ""),
+        "Nobody in the picture speaks: no dialogue, no talking mouths, no speech bubbles. "
+        "People, if any, act silently.",
+    ]
+    if visual:
+        lines.append("``Shown`` gives the place, the look, and the camera.")
     elif speaking:
+        lines.append("Invent the scenes, objects, and background that carry the narration.")
+    if not actor:
         lines.append(
-            "``Said`` is what the 讲员 narrates aloud. Invent a supporting background picture that illustrates that narration."
+            "The 讲员 is off screen: a voice-over only. Do not draw a narrator, host, or presenter. "
+            "The scenes, the pictures, and the background text carry the content."
         )
     else:
-        lines.append("Follow ``Shown`` as the picture behind the 讲员.")
-    lines.append(
-        "``Actors``: only a 讲员 may narrate. Show the 讲员 as a storyteller, small, at the edge or in the foreground, "
-        "not in the middle of the picture. "
-        "The 人物 entries, if any, are guests beside the 讲员; they are few and small. "
-        "Without a 讲员 entry, treat this as no narrator: nobody speaks."
-    )
-    if speaking:
-        lines.append("Only the 讲员 speaks the narration. Guests listen. No other voice.")
-    lines.append("The picture itself stays an image of the matter, not of a conversation.")
+        lines.append(
+            "The 讲员 listed in ``Actors`` appears on camera and narrates, with that entry's look. "
+            "The other listed people act silently in the scene, each with their own character image. "
+            "Around the 讲员, the picture illustrates what is being told."
+        )
     return "\n".join(lines)
 
 def _slide_flow_report_rules(visual: bool, speaking: bool, actor: bool) -> str:
-    """技术方案汇报和高管简报：一页一页的汇报画面。"""
-    lines = []
+    """技术方案汇报 / 高管简报：讲述的变体。actor 为真表示 actor 里有讲员（讲员出镜汇报）。"""
+    lines = ["This is a variant of telling. Only the 讲员 speaks."]
     if visual:
         lines.append("``Shown`` says what the slide shows. Use it as content for the diagram, not as a photograph to paint.")
     if speaking:
-        lines.append("``Said`` is the point the slide must make. Read it and put that point on the slide.")
+        lines.append(
+            "``Narration content`` is the point the slide must make, told by the 讲员. "
+            "Put that point on the slide as a diagram, a chart, and short labels."
+        )
+    lines.append("People rarely appear. If they do, they only support, small and silent.")
     if not actor:
-        lines.append("No person is drawn.")
-        return "\n".join(lines)
-    lines.append(
-        "``Actors``: the 讲员 is the presenter, and the 人物 entries are the other people in the meeting. "
-        "Show them only as small figures beside the slide, the presenter pointing at it. "
-        "The slide stays the main thing."
-    )
-    if speaking:
-        lines.append("The person whose number marks a line is shown speaking it. The others listen.")
+        lines.append("The 讲员 is off screen: a voice-over only. No presenter is drawn.")
+    else:
+        lines.append(
+            "The 讲员 listed in ``Actors`` appears on camera as the presenter, small beside the slide, pointing at it "
+            "while narrating. Nobody else speaks. The slide stays the main thing."
+        )
     return "\n".join(lines)
 
 
@@ -517,10 +529,11 @@ def slide_flow_scene_payload(
 ) -> list[dict]:
     """幻灯/图片提示用的场景内容：只留用户勾选的项。
 
-    叙事且无讲员时，原 speaking 改名为 ``scene_content``（场景内容），避免被读成旁白。
+    讲话栏是场景的主要内容：故事里叫 ``Dialogue``；讲述类叫 ``Scene narration`` / ``Narration content``，并去掉 ``<N>``。
     没有 actor 时，speaking 里的 ``<N>`` 说话人标记一起去掉。
     """
-    silent_narration = narrative == "narration" and not use_actor
+    telling = narrative in TELLING_NARRATIVES
+    content_label = scene_content_label(narrative)
     out: list[dict] = []
     for scene in scenes:
         base = _notebooklm_scene_content_base(scene)
@@ -537,20 +550,20 @@ def slide_flow_scene_payload(
         if use_speaking:
             speaking = (base.get("speaking") or "").strip()
             voiceover = (base.get("voiceover") or "").strip()
-            if not use_actor:
+            if not use_actor or telling:
                 speaking = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", speaking)
                 speaking = re.sub(r"[ \t]{2,}", " ", speaking).strip()
                 voiceover = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", voiceover)
                 voiceover = re.sub(r"[ \t]{2,}", " ", voiceover).strip()
-            if silent_narration:
+            if telling:
                 combined = " ".join(p for p in (speaking, voiceover) if p).strip()
                 if combined:
-                    lines.append(f"scene_content: {combined}")
+                    lines.append(f"{content_label}: {combined}")
             else:
                 if speaking:
-                    lines.append(f"Said: {speaking}")
+                    lines.append(f"Dialogue: {speaking}")
                 if voiceover:
-                    lines.append(f"Also said: {voiceover}")
+                    lines.append(f"Also dialogue: {voiceover}")
         out.append({"show_this_content": "\n".join(lines)} if lines else {})
     return out
 
@@ -573,6 +586,36 @@ def slide_flow_choice_label(
     return " · ".join(parts)
 
 
+# 全集生成（NotebookLM Studio）四种产物都用的讲述规则，放在提示词最前面。
+NOTEBOOKLM_SPEAKER_RULE = (
+    "讲述方式（必须遵守）：\n"
+    "- 即使下面的内容用了文章式的编号或结构（一、二、三 / 1. 2. 3. / 小标题），也不要照着念，不要像汇报一样逐条展开；要像一个人在自然地讲解、和大家聊这件事。\n"
+    "- 绝对不要提「材料」「资料」「来源」「文档」「提供的内容」之类的词，不要说「根据材料」「资料里说」。\n"
+    "- 把这些想法当成讲述者自己的亲身经历、思考和观点，用第一人称，从自己心里说出来，和听众分享、讨论。\n"
+    "How to speak (must follow):\n"
+    "- Even if the content below uses article-style numbering or structure (一、二、三 / 1. 2. 3. / headings), do not read it out or walk through it like a report. Speak naturally, like a person explaining and discussing.\n"
+    "- Never mention \"the material\", \"the source\", \"the document\" or \"what we were given\".\n"
+    "- Present the ideas as the speaker's own first-person experience, thinking and views, shared and discussed with the audience from their own mind."
+)
+NOTEBOOKLM_VISUAL_RULE = (
+    "- 幻灯片和信息图上也不要出现「材料中的第一点」「资料指出」这类说法；标题和文字都用第一人称、自己的视角来写。\n"
+    "- Slides and infographics: no \"point one of the material\" style wording; titles and text keep the first-person, own-perspective framing."
+)
+NOTEBOOKLM_OUTPUT_LEADS = {
+    "slides": "产物：演示文稿（每场一页幻灯片）。Output: a slide deck, one slide per scene.",
+    "infographic": "产物：一张信息图，把全集内容按场景顺序排在一张图里。Output: one infographic that lays out all scenes in order.",
+    "audio_overview": (
+        "产物：语音概览（只有声音，没有幻灯片和画面）。下面写的画面要求只用来帮助理解每一场的情景，"
+        "要把它们讲出来，不要描述「图片」或「幻灯片」。Output: an audio overview (sound only, no slides or pictures). "
+        "The picture notes below only explain each scene; turn them into spoken storytelling and never talk about images or slides."
+    ),
+    "video_overview": (
+        "产物：视频概览。按场景顺序讲，画面配合讲的内容。Output: a video overview that follows the scenes in order, "
+        "with visuals that support what is being said."
+    ),
+}
+
+
 def build_slide_flow_prompt(
     *,
     target: str,
@@ -588,8 +631,15 @@ def build_slide_flow_prompt(
     use_actor: bool = False,
     narrative: str = "story",
     actor_override: str = "",
+    output: str = "slides",
+    content_source: str = "",
 ) -> str:
-    """按叙事风格，以及勾选了 visual、speaking、actor 中的哪几项，组装这一次的幻灯提示词。
+    """``content_source``（如 "content.pdf"）非空时：场景内容不写进提示词，改为说明它在笔记本来源里。
+
+按叙事风格，以及勾选了 visual、speaking、actor 中的哪几项，组装这一次的幻灯提示词。
+
+    ``output`` 是全集生成要的 NotebookLM 产物：slides / infographic / audio_overview / video_overview。
+    四种都会在最前面加 ``NOTEBOOKLM_SPEAKER_RULE``，并按产物类型加一段 ``NOTEBOOKLM_OUTPUT_LEADS``。
 
     ``actor_override`` 是 ``SLIDE_FLOW_ACTOR_OVERRIDES`` 里的英文描述，不为空时覆盖画面里人物的族裔和年代。
 
@@ -644,7 +694,7 @@ def build_slide_flow_prompt(
         if presentation:
             lines.append("Lay the whole report out as one slide: the main parts in reading order, top to bottom, left to right.")
         elif narrative == "narration":
-            lines.append("Show it through the place, the objects, symbols, and the composition that carry the whole story.")
+            lines.append("Show it through the place, the objects, symbols, and the composition that carry the whole telling.")
         else:
             lines.append("Show the story through the place, the people, their faces, their poses, and a few objects that carry the story.")
         lines.append("Read each scene's show_this_content as what must be visible somewhere in this one picture.")
@@ -673,7 +723,7 @@ def build_slide_flow_prompt(
         lines.append(_slide_flow_narration_rules(use_visual, use_speaking, has_speaker))
     else:
         lines.append(_slide_flow_report_rules(use_visual, use_speaking, has_speaker))
-    if has_speaker:
+    if has_speaker and _scenes_have_narrator_host(scenes):  # 讲员出镜才写默认讲员外貌
         host = (host_narrator or "").strip()
         if host:
             lines.append(f"The host chosen for this project is {host}. The 讲员 entry in ``Actors`` is this person.")
@@ -713,10 +763,29 @@ def build_slide_flow_prompt(
             )
     if has_speaker:
         lines.extend(["", ACTOR_AGE_LOOK])
-    parts = {
-        "Instruction_for_image": "\n".join(lines),
-        "Story_Scene_Content": json_content,
-    }
+    parts = {}
+    if output in NOTEBOOKLM_OUTPUT_LEADS:
+        rule = NOTEBOOKLM_SPEAKER_RULE
+        if output in ("slides", "infographic"):
+            rule += "\n" + NOTEBOOKLM_VISUAL_RULE
+        if narrative == "story":
+            rule += ("\n- 故事：内容由故事人物彼此对话来讲，用他们自己的口吻；讲员（若有）只在开头或结尾用第一人称说几句。"
+                     "\n- Story: the characters carry it by talking to each other in their own voices; the 讲员, if any, "
+                     "only speaks a few first-person lines at the start or the end.")
+        else:
+            rule += ("\n- 讲述 / 汇报：讲员用第一人称讲，画面中的人物不说话。"
+                     "\n- Telling / report: the 讲员 speaks in the first person; people in the pictures do not speak.")
+        parts["Output_rules"] = NOTEBOOKLM_OUTPUT_LEADS[output] + "\n\n" + rule
+    body = "\n".join(lines)
+    if content_source:
+        body = body.replace("each scene's show_this_content", f"each scene's entry in {content_source}")
+        body = body.replace("that scene's show_this_content", f"that scene's entry in {content_source}")
+        body = body.replace("show_this_content", f"the scene entry in {content_source}")
+    parts["Instruction_for_image" if output in ("slides", "infographic") else "Instruction_for_scenes"] = body
+    if content_source:
+        parts["Scene_Content_Source"] = notebooklm_content_source_note(content_source, output)
+    else:
+        parts["Story_Scene_Content"] = json_content
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
 
 
@@ -779,6 +848,12 @@ SETTING_PLACES: dict[str, dict] = {
             ("明朝", "the Ming dynasty"),
             ("清朝", "the Qing dynasty"),
             ("民国", "Republican China"),
+            ("1950-60年代", "1950s and 1960s China"),
+            ("1970年代", "1970s China"),
+            ("1980年代", "1980s China"),
+            ("1990年代", "1990s China"),
+            ("2000年代", "2000s China"),
+            ("现代", "present-day China"),
         ],
     },
     "日本": {
@@ -787,6 +862,11 @@ SETTING_PLACES: dict[str, dict] = {
             ("平安时代", "the Heian period"),
             ("江户时代", "the Edo period"),
             ("明治时代", "the Meiji period"),
+            ("大正时代", "the Taisho period (1910s-1920s)"),
+            ("昭和战后", "post-war Showa Japan (1950s-1970s)"),
+            ("1980年代", "1980s Japan"),
+            ("平成时代", "the Heisei period (1990s-2000s)"),
+            ("现代", "present-day Japan"),
         ],
     },
     "欧洲": {
@@ -796,21 +876,38 @@ SETTING_PLACES: dict[str, dict] = {
             ("罗马帝国", "the Roman Empire"),
             ("中世纪", "the Middle Ages"),
             ("文艺复兴", "the Renaissance"),
+            ("维多利亚时代", "the Victorian era (19th century)"),
+            ("二战时期", "the Second World War era (1940s)"),
+            ("1960年代", "1960s Europe"),
+            ("1980年代", "1980s Europe"),
+            ("现代", "present-day Europe"),
         ],
     },
     "埃及": {
         "en": "Egypt",
-        "eras": [("古埃及", "ancient Egypt")],
+        "eras": [
+            ("古埃及", "ancient Egypt"),
+            ("20世纪中期", "mid-20th-century Egypt (1950s-1960s)"),
+            ("现代", "present-day Egypt"),
+        ],
     },
     "非洲": {
         "en": "Africa",
-        "eras": [("原始部落", "a traditional tribal setting, before modern cities")],
+        "eras": [
+            ("原始部落", "a traditional tribal setting, before modern cities"),
+            ("殖民时期", "the colonial era (late 19th to mid 20th century)"),
+            ("1970-80年代", "1970s and 1980s Africa"),
+            ("现代", "present-day Africa"),
+        ],
     },
     "中东": {
         "en": "the Middle East",
         "eras": [
             ("古巴比伦", "ancient Babylon"),
             ("阿拉伯帝国", "the early Arab empires"),
+            ("奥斯曼帝国", "the Ottoman Empire"),
+            ("20世纪中期", "the mid-20th-century Middle East (1950s-1970s)"),
+            ("现代", "the present-day Middle East"),
         ],
     },
     "印度": {
@@ -818,6 +915,9 @@ SETTING_PLACES: dict[str, dict] = {
         "eras": [
             ("孔雀王朝", "the Maurya period"),
             ("莫卧儿帝国", "the Mughal Empire"),
+            ("英属印度", "British India (19th to mid 20th century)"),
+            ("1970-80年代", "1970s and 1980s India"),
+            ("现代", "present-day India"),
         ],
     },
 }
@@ -851,6 +951,87 @@ def setting_place_phrase(region: str, era: str) -> str:
     if not era_en:
         return ""
     return f"{place['en']}, {era_en}"
+
+
+_NO_PERSON = {"", "不出现", "none", "无"}
+
+
+def person_ethnicity(person: str) -> str:
+    """'woman/mature/chinese' → 'Chinese'；只取族裔，不带性别年龄。"""
+    bits = [b.strip().lower() for b in (_clean_person(person) or "").split("/") if b.strip()]
+    for b in bits:
+        if b in ("chinese",) or "中" in b or "华" in b:
+            return "Chinese"
+        if b in ("english", "western") or "英" in b or "西" in b:
+            return "Western (European)"
+    return ""
+
+
+def narrator_voice_phrase(person: str) -> str:
+    """讲员外貌串 → 只描述声音：'a mature female voice'。不含外貌。"""
+    bits = [b.strip().lower() for b in (_clean_person(person) or "").split("/") if b.strip()]
+    gender = "female" if "woman" in bits else ("male" if "man" in bits else "")
+    age = next((b for b in bits if b in ("kids", "youth", "teenager", "mature", "senior")), "")
+    words = " ".join(w for w in (age, gender) if w)
+    return f"a {words} voice" if words else ""
+
+
+def _clean_person(person: str) -> str:
+    p = (person or "").strip()
+    return "" if p in _NO_PERSON else p
+
+
+def background_condition_label(region: str, era: str, person: str) -> str:
+    """提示窗口里「背景」勾选框上的字：背景：中国 · 明朝 · woman/mature/chinese。"""
+    parts = [x for x in ((region or "").strip(), (era or "").strip(), _clean_person(person)) if x]
+    return "背景：" + (" · ".join(parts) if parts else "（未选）")
+
+
+def background_condition_block(region: str, era: str, person: str) -> str:
+    """地域 / 时代 / 人物 写成提示词里的背景条件；缺的项跳过，全空返回空。
+
+    图片、幻灯、视频三个提示都用这一段，放在 FYI 之后、场景内容之前。
+    """
+    region = (region or "").strip()
+    era = (era or "").strip()
+    person = _clean_person(person)
+    place = SETTING_PLACES.get(region)
+    region_en = place["en"] if place else region
+    era_en = ""
+    if place:
+        era_en = next((en for name, en in place["eras"] if name == era), "")
+    if era and not era_en:
+        era_en = era
+    lines = []
+    if region_en:
+        lines.append(
+            f"- Setting region: {region_en}. Landscape, streets, buildings, and everyday life belong to this place."
+        )
+    if era_en:
+        lines.append(
+            f"- Historical era: {era_en}. Architecture, clothing, hairstyles, props, vehicles, and objects "
+            "must all match this era. Nothing from another period."
+        )
+    ethnicity = person_ethnicity(person)
+    if ethnicity or region_en or era_en:
+        # 只给「若有人出现」的族裔 / 衣着；绝不写讲员的性别年龄外貌，免得被当成要画的主持人。
+        who = f"{ethnicity} people" if ethnicity else "people of this place"
+        lines.append(
+            f"- If people appear, they are {who}, with the clothing and hairstyles of this region and era. "
+            "This is not a presenter: it adds no host, narrator, or speaker to the picture."
+        )
+    if not lines:
+        return ""
+    return "BACKGROUND CONDITION (applies to everything below):\n" + "\n".join(lines)
+
+
+def prepend_background_condition(prompt: str, region: str, era: str, person: str, *, include: bool) -> str:
+    """勾选时把背景条件放在提示词最前面（FYI 之后再由 prepend_fyi 加在它上面）。"""
+    body = (prompt or "").strip()
+    block = background_condition_block(region, era, person) if include else ""
+    if not block:
+        return body
+    return block + "\n\n---\n\n" + body if body else block
 
 
 def _softer_transform_prompt(*, remove_text: bool, style: str, period: str) -> str:
@@ -952,7 +1133,7 @@ VIDEO: frame one is still picture 1. Across the clip, each referenced person gra
 
 ACTOR_AGE_LOOK = """
 ** Read each actor as woman or man / age band / chinese or english, and the name last when there is one.
-** Age band is kids, youth, teenager, mature, or senior. Example: woman/mature/chinese/封氏. Without a name: woman/mature/chinese.
+** Age band is kids, youth, teenager, mature, or senior. Example: man/youth/english/Tom. Without a name: man/youth/english.
 ** There is no age number. The face and the body must look that age band.
 """.strip()
 
@@ -1054,11 +1235,10 @@ def _picture_story_lines(
         "``Shown``, when it is given, is only a reference for the place, the angle, and the look. "
         "The story does not depend on it. If it is absent, the attached picture is enough.",
         (
-            "``scene_content``, when it is given, is the meaning of this scene to express with pictures only — "
-            "not dialogue, not narration, not voiceover — when the narrative style is narration and no 讲员 is included; "
-            "otherwise ``Said`` is how the story develops, the background, and the words the people say."
-            if narrative == "narration" and not use_actor
-            else "``Said``, when it is given, is the story itself: how it develops, the background, and the words the people say."
+            "``Dialogue``, when it is given, is the story itself: how it develops and the words the characters say to each other."
+            if narrative == "story"
+            else f"``{scene_content_label(narrative)}``, when it is given, is the main content of this scene, told by the 讲员. "
+            "Nobody in the picture says it."
         ),
         "When the story needs a person who is not yet in the picture, add that person.",
         "When ``Actors`` is given, each person follows that entry: woman or man, chinese or english, and the age band.",
@@ -1238,7 +1418,7 @@ def build_picture_flow_prompt(
             use_visual=use_visual,
             use_speaking=use_speaking,
             use_actor=has_speaker,
-            host_narrator=host_narrator,
+            host_narrator=host_narrator if (has_speaker and _scenes_have_narrator_host(scenes)) else "",
             main_character=main_character,
             actor_override=actor_override,
             region=region,
@@ -1961,18 +2141,16 @@ VIDEO_FLOW_EVOLVE_CHOICES = (
 VIDEO_FLOW_CAMERA_CHOICES = (
     ("none", "默认"),
     ("wide", "广角 (Wide)"),
-    ("medium", "中景 (Medium)"),
     ("close", "特写 (Close-up)"),
     ("push", "推进 (Push In)"),
     ("pull", "拉远 (Pull Back)"),
-    ("push_pull", "推拉 (Zoom In and Out)"),
-    ("pan", "摇移 (Pan)"),
-    ("tilt", "上摇 (Tilt Up)"),
     ("arc", "环绕 (Arc)"),
     ("track", "跟拍 (Tracking)"),
-    ("handheld", "手持 (Handheld)"),
-    ("compound", "复合 (Compound)"),
+    ("rotate", "转镜 (Rotate)"),
+    ("timelapse", "延时 (Time-lapse)"),
 )
+# 旧「动画」里的转镜 / 延时并入运镜；其余动画项已改为项目级「场景风格」。
+_MOTION_TO_CAMERA = {"转镜 (Rotate)": "rotate", "延时 (Time-lapse)": "timelapse"}
 
 
 def video_flow_choice_label(
@@ -2015,6 +2193,8 @@ def _video_flow_camera_line(camera: str) -> str:
         "tilt": "** Camera move: tilt upward, from a lower part of the picture toward what is above.",
         "arc": "** Camera move: a short arc around the subject. The place stays recognizable.",
         "track": "** Camera move: tracking. The camera travels with the person or the action. Do not leave them behind.",
+        "rotate": "** Camera move: the camera rotates slowly around the scene.",
+        "timelapse": "** Camera: time-lapse. Time passes in the picture. Light shifts, shadows lengthen, and the change is gradual.",
         "handheld": "** Camera: handheld. A little natural sway. Not a locked tripod, and not a wild shake.",
         "compound": "** Camera move: one compound move, for example a push-in that also pans. Keep it readable. Do not stack several unrelated moves.",
     }
@@ -2031,41 +2211,39 @@ def _video_narrative_speech(
     use_speaking: bool = True,
     has_speaker: bool = True,
 ) -> str:
-    """叙事风格决定这一段里谁说话、画面怎么长。有讲员 / 没有讲员两种叙事用法。"""
-    if narrative == "narration":
+    """叙事风格决定这一段里谁说话。讲述类：has_speaker = actor 里有讲员（出镜），否则画外旁白。"""
+    if narrative in TELLING_NARRATIVES:
+        key = scene_content_key(narrative)
+        if narrative == "narration":
+            head = "** Narrative style is telling (讲述). The visuals carry the content with places, objects, symbols, and background text."
+        else:
+            head = ("** Narrative style is a presentation, a variant of telling. The diagram or the brief is the main thing, "
+                    "not a story scene. People rarely appear; if they do, they only support silently.")
         if not has_speaker:
-            return """** Narrative style is narration. SILENT. No narrator. No voiceover. Nobody speaks — on screen or off screen.
-** Do not invent a host, a commentator, or an unseen voice. No lip-sync. No spoken words at all.
-** The visuals alone express the scene. Carry the meaning with places, objects, symbols, and how they move.
-** ``scene_content``, when given, is the meaning to express with pictures only. It is not a line to read aloud.
-** ``visual``, when given, is the scene picture: place, angle, and look.
-** Ambient sound of the place is fine. No sung lyrics. No speech."""
-        return """** Narrative style is narration. A 讲员 (narrator role in ``actor``) speaks as a third-party narrator.
-** Only the 讲员 narrates ``Said``. The background visuals support and illustrate what the 讲员 is saying.
-** Story people / 人物 stay quiet. Do not stage a dialogue. Do not walk a new person in.
-** ``visual`` is only a reference for the place, the angle, and the look.
-** One voice at a time. No music."""
-    if narrative in ("tech", "exec"):
-        if not has_speaker:
-            return """** Narrative style is a presentation. The diagram or the brief is the main thing, not a story scene.
-** No speaker. Nobody speaks aloud. Show the point through the diagram itself.
-** ``visual`` says what the diagram shows. It is not a photograph to act out.
-** No music."""
-        return """** Narrative style is a presentation. The diagram or the brief is the main thing, not a story scene.
-** A 讲员 may speak the point in ``speaking`` or ``voiceover``. Other people, if shown, stay small and listen. Do not walk a new person in.
-** ``visual`` says what the diagram shows. It is not a photograph to act out.
-** One voice at a time. No music."""
+            who = (f"** The 讲员 narrates ``{key}`` as an off-screen voice-over. Do not show a narrator. "
+                   "Nobody on screen speaks. No lip-sync.")
+        else:
+            who = (f"** The 讲员 listed in ``actor`` appears on camera and narrates ``{key}``. Lip-sync only for the 讲员. "
+                   "Other people act silently; their mouths do not move.")
+        return "\n".join([
+            head,
+            who,
+            f"** ``{key}`` is narration, never a line for anyone in the picture.",
+            "** ``visual`` is only a reference for the place, the angle, and the look.",
+            "** One voice only: the 讲员. No music.",
+        ])
     if not has_speaker:
-        return """** Narrative style is story. Characters have conversation and dialogue inside the story.
-** No actor list was given — invent the characters and their dialogue freely from ``speaking`` / ``voiceover``.
+        return """** Narrative style is story. The characters act and talk with each other inside the scene.
+** ``speaking`` / ``voiceover`` are the Dialogue (讲话). No actor list was given: invent the characters from it.
+** Pure character performance. No 讲员, no narrator, no voice-over.
 ** ``visual`` is only a reference for the place, the angle, and the look.
 ** Show the story through action and talk. One voice at a time. No music."""
-    return """** Narrative style is story. Characters have conversation and dialogue inside the story.
-** Read ``actor`` from left to right. Skip anyone named 不出现. Apply each entry's look, gender, age band, and ethnicity.
-** Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
+    return """** Narrative style is story. The characters act and talk with each other inside the scene.
+** Read ``actor`` from left to right. Skip anyone named 不出现. Each listed person uses their own character image: look, gender, age band, and ethnicity.
+** ``speaking`` and ``voiceover`` are the Dialogue (讲话). Entry 1's text is ``speaking``. Entry 2's text, if any, is ``voiceover``.
 ** A 人物 speaks that entry's line inside the story. That mouth moves only for that line. The others listen or react.
-** A 讲员 speaks commentary and stands apart from the story people.
-** ``speaking`` and ``voiceover`` are also how the story develops. Show that development, not only the spoken words.
+** If ``actor`` includes a 讲员: the story people lead and talk; the 讲员 is supporting, stands apart, and may appear at the start to introduce or at the end to sum up, bridge, or ask a question. Never taking over.
+** If ``actor`` has no 讲员: pure character performance, no narrator.
 ** ``visual`` is only a reference for the place, the angle, and the look. The story does not depend on it.
 ** When the story needs a person who is not yet in the frame, that person may enter.
 ** One voice at a time. No music."""
@@ -2088,15 +2266,14 @@ def _video_narrative_block(
         rules = _slide_flow_narration_rules(use_visual, use_speaking, has_speaker)
     else:
         rules = _slide_flow_report_rules(use_visual, use_speaking, has_speaker)
-    if narrative == "narration" and not has_speaker:
+    if narrative in TELLING_NARRATIVES:
         field_map = (
-            "In Story_Scene_Content, ``visual`` is the scene picture. "
-            "``scene_content`` (场景内容) is the meaning to express with pictures only — not dialogue, "
-            "not narration, not voiceover. There is no Actors field and no speech."
+            f"In Story_Scene_Content, ``visual`` is Shown, ``{scene_content_key(narrative)}`` is "
+            f"{scene_content_label(narrative)} (the 讲员's narration), and ``actor``, when present, is Actors."
         )
     else:
         field_map = (
-            "In Story_Scene_Content, ``visual`` is Shown, ``speaking`` and ``voiceover`` together are Said, "
+            "In Story_Scene_Content, ``visual`` is Shown, ``speaking`` and ``voiceover`` together are the Dialogue (讲话), "
             "and ``actor`` is Actors."
         )
     return "\n\n".join([
@@ -2136,8 +2313,11 @@ def _video_flow_instruction(
 ** Pictures after picture 2, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
 ** A 人物 reference only shows who that person is."""
         else:
-            two_core += """
-** Do not add a narrator, host, or off-screen speaker."""
+            two_core += (
+                "\n** The 讲员 is heard only as an off-screen voice-over. Do not show a narrator or host on screen."
+                if narrative in TELLING_NARRATIVES
+                else "\n** Do not add a narrator, host, or off-screen speaker."
+            )
         chunks.append(two_core)
     else:
         one_core = """** One scene picture is attached. Picture 1 is the only scene. Keep the same place."""
@@ -2146,8 +2326,11 @@ def _video_flow_instruction(
 ** Pictures after picture 1, if any are pasted, are actor references in ``actor`` order, skipping 不出现.
 ** A 人物 reference only shows who that person is."""
         else:
-            one_core += """
-** Do not add a narrator, host, or off-screen speaker."""
+            one_core += (
+                "\n** The 讲员 is heard only as an off-screen voice-over. Do not show a narrator or host on screen."
+                if narrative in TELLING_NARRATIVES
+                else "\n** Do not add a narrator, host, or off-screen speaker."
+            )
         chunks.append(one_core)
         if evolve == "to_style":
             chunks.append(
@@ -2203,12 +2386,10 @@ def _video_flow_instruction(
             has_speaker=has_speaker,
         )
     )
-    if narrative == "narration" and not has_speaker:
-        chunks.append(VIDEO_NARRATION_SILENT_AUDIO.strip())
     if text == "keep":
         content_fields = (
-            "``scene_content``"
-            if narrative == "narration" and not has_speaker
+            f"``{scene_content_key(narrative)}``"
+            if narrative in TELLING_NARRATIVES
             else "``speaking`` and ``voiceover``"
         )
         if background == "art_text":
@@ -2219,9 +2400,9 @@ def _video_flow_instruction(
 ** Do not turn the content into captions or spoken lines."""
             )
         elif background == "bubble":
-            if narrative == "narration" and not has_speaker:
+            if narrative in TELLING_NARRATIVES:
                 chunks.append(
-                    """** Do not use a thought bubble. This clip has no speaker. Keywords, if any, stay as background lettering only."""
+                    """** Do not use a thought bubble. Nobody in the picture speaks. Keywords, if any, stay as background lettering only."""
                 )
             else:
                 chunks.append(
@@ -2240,13 +2421,7 @@ def _video_flow_instruction(
     motion_line = _video_flow_motion_line(motion)
     if motion_line:
         chunks.append(motion_line)
-    if narrative == "narration" and not has_speaker:
-        chunks.append(
-            "** Ambient sound of the place only (wind, water, birds, room tone, footsteps). "
-            "No speech. No sung lyrics. No musical score in this clip."
-        )
-    else:
-        chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
+    chunks.append(NOTEBOOKLM_VIDEO_NO_MUSIC.strip())
     return "\n".join(chunk.strip() for chunk in chunks if chunk and chunk.strip())
 
 
@@ -2389,11 +2564,13 @@ def _video_prompt_scene_payload(
         speaking = (sc.get("speaking") or "").strip() if use_speaking else ""
         voiceover = (sc.get("voiceover") or "").strip() if use_speaking else ""
         if use_speaking and (speaking or voiceover):
-            if narrative == "narration" and not has_speaker:
-                # Never use a speech-like key; models treat "speaking" as narration.
+            if narrative in TELLING_NARRATIVES:
+                # Narration by the 讲员; never a "speaking" key, or on-screen people start talking.
                 combined = " ".join(p for p in (speaking, voiceover) if p).strip()
+                combined = re.sub(r"<\s*\d+(?:\.\d+)?\s*>", " ", combined)
+                combined = re.sub(r"[ \t]{2,}", " ", combined).strip()
                 if combined:
-                    slim["scene_content"] = combined
+                    slim[scene_content_key(narrative)] = combined
             else:
                 if speaking:
                     slim["speaking"] = speaking
@@ -2428,11 +2605,11 @@ def build_video_flow_prompt(
         background = "none"
     if evolve not in {k for k, _ in VIDEO_FLOW_EVOLVE_CHOICES}:
         evolve = "keep"
+    if (camera in (None, "", "none")) and (motion or "").strip() in _MOTION_TO_CAMERA:
+        camera = _MOTION_TO_CAMERA[(motion or "").strip()]
     if camera not in {k for k, _ in VIDEO_FLOW_CAMERA_CHOICES}:
-        camera = "none"
-    motion = (motion or "").strip()
-    if motion not in {item["name"] for item in ANIMATION_PROMPTS}:
-        motion = ""
+        camera = "none"  # 已删除的运镜（中景、推拉、摇移、上摇、手持、复合）回到默认
+    motion = ""  # 视频提示不再有「动画」；场景氛围改由项目「场景风格」写入
     if narrative not in SLIDE_FLOW_NARRATIVE_NOTES:
         narrative = "story"
     if text not in {k for k, _ in FLOW_CAPTION_CHOICES}:
@@ -2482,12 +2659,18 @@ def build_video_flow_prompt(
             "Keep each person's name, role, gender, and age from ``actor``, "
             "but ignore any ethnicity, nationality, or period that the actor descriptions suggest."
         )
-    silent = narrative == "narration" and not has_speaker
-    voices = (
-        ""
-        if silent or not use_speaking
-        else speaking_voice_lines(scenes)
-    )
+    if has_speaker and _scenes_have_narrator_host(scenes) and (host_narrator or "").strip():
+        # 讲员出镜才写默认讲员外貌
+        instruction += f"\n** The 讲员 in ``actor`` is the project host, on camera: {host_narrator.strip()}."
+    silent = False  # 讲述无讲员出镜时也有画外旁白，不再是无声
+    if narrative in TELLING_NARRATIVES:
+        voice = narrator_voice_phrase(host_narrator)
+        voices = (
+            f"** The 讲员's narration uses {voice}. Only the 讲员 speaks."
+            if use_speaking and voice else ""
+        )
+    else:
+        voices = "" if not use_speaking else speaking_voice_lines(scenes)
     if silent:
         # Do not attach voice/lip-sync/language-speech rules — they reintroduce an off-screen narrator.
         lang_note = VIDEO_NARRATION_SILENT_AUDIO.strip()
@@ -2676,12 +2859,18 @@ def build_transition_video_prompt(
             "Keep each person's name, role, gender, and age from ``actor``, "
             "but ignore any ethnicity, nationality, or period that the actor descriptions suggest."
         )
-    silent = narrative == "narration" and not has_speaker
-    voices = (
-        ""
-        if silent or not use_speaking
-        else speaking_voice_lines(scenes)
-    )
+    if has_speaker and _scenes_have_narrator_host(scenes) and (host_narrator or "").strip():
+        # 讲员出镜才写默认讲员外貌
+        instruction += f"\n** The 讲员 in ``actor`` is the project host, on camera: {host_narrator.strip()}."
+    silent = False  # 讲述无讲员出镜时也有画外旁白，不再是无声
+    if narrative in TELLING_NARRATIVES:
+        voice = narrator_voice_phrase(host_narrator)
+        voices = (
+            f"** The 讲员's narration uses {voice}. Only the 讲员 speaks."
+            if use_speaking and voice else ""
+        )
+    else:
+        voices = "" if not use_speaking else speaking_voice_lines(scenes)
     if silent:
         lang_note = VIDEO_NARRATION_SILENT_AUDIO.strip()
         audio = "\n".join(part for part in (lang_note, instruction) if part)
@@ -3059,8 +3248,8 @@ def _audio_language_instruction(language: str) -> str:
         return ""
     return (
         f"** Audio / spoken language: {label}.\n"
-        f"** All lip-sync dialogue, protagonist ``speaking`` lines, and "
-        f"narrator/host ``voiceover`` MUST be delivered in {label}."
+        f"** All spoken words (character dialogue and the 讲员's narration) "
+        f"MUST be delivered in {label}."
     )
 
 
@@ -4228,3 +4417,111 @@ ANIMATE_WS2V = ["WS2V"]
 ANIMATE_AI2V = ["AI2V"]
 
 ANIMATE_SOURCE = ANIMATE_S2V + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_WS2V + ANIMATE_AI2V
+
+
+
+# ---------------------------------------------------------------------------
+def notebooklm_content_source_note(name: str, output: str) -> str:
+    """全集生成：场景内容在笔记本来源 content.pdf 里（不在提示词里）。"""
+    lines = [
+        f"场景内容在本笔记本的来源文件「{name}」里，不在这段提示词里。",
+        f"The scene-by-scene content is in the source file {name} in this notebook's sources, not in this prompt.",
+        f"{name} lists the scenes in order (场景 1 / Scene 1, 场景 2 / Scene 2, ...). Each scene gives the fields "
+        "described above under the same names (for example 场景描述 / Shown, 讲话 / Dialogue, "
+        "场景叙事 / Scene narration, 讲述内容 / Narration content, 人物 / Actors).",
+    ]
+    if output == "audio_overview":
+        lines.append("Some scenes include an image; for this audio you do not need the images.")
+    else:
+        lines.append(
+            "Some scenes include an image. When a scene has one, use it as the visual reference for that scene: "
+            "its people, place, look, and colors. It is fine if no scene has an image."
+        )
+    lines.append(
+        f"Generate from {name}. If this notebook has other sources, focus on {name}; use the others only as background."
+    )
+    lines.append("The scene headings and field labels in the file are for you only; never show or read them out.")
+    return "\n".join(lines)
+
+
+# 项目级「场景风格」：所有提示词（图片 / 全集生成 / 视频）都在画面风格旁写一行。空 = 不写。
+SCENE_STYLE_CHOICES = (
+    ("", "(空)", ""),
+    ("真实 (Real)", "Real", "true-to-life, natural light and believable everyday atmosphere, nothing stylized or dreamlike"),
+    ("轻动 (Gentle)", "Gentle", "calm, quiet and gentle atmosphere; soft mist and soft light, nothing dramatic"),
+    ("梦幻 (Dream)", "Dream", "dreamy, soft, ethereal atmosphere; softened colors and light glowing through haze"),
+    ("古风 (Antiquity)", "Antiquity", "antique Chinese atmosphere; mist over tiled roofs, silk, water and leaves"),
+    ("史诗 (Epic)", "Epic", "epic, grand and calm atmosphere; vast places, distant clouds and banners"),
+    ("浪漫 (Romance)", "Romance", "romantic, tender atmosphere; petals, flowing hair and fabric, warm light"),
+    ("自然 (Nature)", "Nature", "natural, living atmosphere; sunlight through leaves, rippling water, drifting clouds"),
+    ("科技 (Futuristic)", "Futuristic", "quiet futuristic atmosphere; clean lines, glowing light, soft reflections"),
+    ("神圣 (Sacred)", "Sacred", "sacred, still and reverent atmosphere; soft light descending through mist"),
+)
+SCENE_STYLE_LABELS = tuple(label for _k, label, _d in SCENE_STYLE_CHOICES)
+
+
+def normalize_scene_style(value) -> str:
+    """存值 → 合法场景风格（空字符串表示不写）。接受中文标签或英文名。"""
+    text = (value or "").strip() if isinstance(value, str) else ""
+    for key, label, _d in SCENE_STYLE_CHOICES:
+        if key and text in (key, label):
+            return key
+    return ""
+
+
+def project_scene_style() -> str:
+    try:
+        import project_manager
+
+        return normalize_scene_style((project_manager.PROJECT_CONFIG or {}).get("scene_style"))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def scene_style_short(value=None) -> str:
+    """灰字「始终写入」用的短名，如「梦幻」；空返回空。"""
+    key = normalize_scene_style(project_scene_style() if value is None else value)
+    return key.split(" (")[0] if key else ""
+
+
+def scene_style_line(value=None) -> str:
+    key = normalize_scene_style(project_scene_style() if value is None else value)
+    for k, en, desc in SCENE_STYLE_CHOICES:
+        if k and k == key:
+            return f"Scene style / 场景风格: {en} — {desc}. Apply this atmosphere to the place, light, and mood; it is not a camera move."
+    return ""
+
+
+def insert_scene_style(prompt: str, value=None) -> str:
+    """把场景风格行放在画面风格那一行旁边；找不到画面风格就放在最前面。"""
+    line = scene_style_line(value)
+    body = prompt or ""
+    if not line or line in body:
+        return body
+    if body.startswith("Visual_Style:\n"):
+        cut = body.find("\n\n")
+        if cut < 0:
+            return body + "\n\nScene_Style:\n" + line
+        return body[:cut] + "\n\nScene_Style:\n" + line + body[cut:]
+    lines = body.split("\n")
+    for i, text in enumerate(lines):
+        if re.search(r"Visual style for every picture:|target style:|project style:|Visual_Style|target visual style", text):
+            lines.insert(i + 1, line)
+            return "\n".join(lines)
+    return line + "\n\n" + body
+
+
+def _with_scene_style(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, scene_style=None, **kwargs):
+        return insert_scene_style(fn(*args, **kwargs), scene_style)
+
+    return wrapper
+
+
+for _name in ("build_slide_flow_prompt", "build_picture_flow_prompt", "build_video_flow_prompt",
+              "build_transition_video_prompt"):
+    globals()[_name] = _with_scene_style(globals()[_name])
+del _name

@@ -10,13 +10,13 @@ import config_prompt
 import project_manager
 from gui.slide_prompt_dialog import pack_narrative_choices, pack_scene_field_choices
 from gui.video_prompt_dialog import _place_popup_near
-from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
+from gui.prompt_fyi import clean_fyi_history, pack_background_check, pack_fyi_note, prepend_fyi
 
 
 _DEFAULT_CHOICE = {
     "task": "keep",
     "text": "keep",
-    "narrative": "story",
+    "narrative": "narration",
     "visual": True,
     "speaking": True,
     "actor": False,
@@ -44,6 +44,7 @@ def _clean_choice(saved) -> dict:
     if saved.get("image") in ("clip_image", "clip_image_last"):
         choice["image"] = saved["image"]
     choice["fyi_history"] = clean_fyi_history(saved)
+    choice["background"] = bool(saved.get("background", True))
     return choice
 
 
@@ -88,23 +89,26 @@ def open_picture_prompt_dialog(
     actor_var = tk.BooleanVar(value=last["actor"])
     override_var = tk.StringVar(value=last["actor_override"])
 
-    task_box = ttk.LabelFrame(groups, text="画风改变", padding=(8, 4))
-    task_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
-    for value, label in config_prompt.PICTURE_FLOW_TASK_CHOICES:
-        ttk.Radiobutton(task_box, text=label, value=value, variable=task_var).pack(anchor=tk.W)
+    # 与全集生成相同：叙事风格 | 说明文字 | 写进提示词的内容；画风改变放到下面一行。
+    _story_box, story_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
 
     text_box = ttk.LabelFrame(groups, text="说明文字", padding=(8, 4))
-    text_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+    text_box.pack(side=tk.LEFT, anchor=tk.N)
     text_buttons = []
     for value, label in config_prompt.PICTURE_FLOW_TEXT_CHOICES:
         btn = ttk.Radiobutton(text_box, text=label, value=value, variable=text_var)
         btn.pack(anchor=tk.W)
         text_buttons.append(btn)
 
-    _story_box, story_buttons = pack_narrative_choices(groups, narrative_var, padx=(0, 0))
     _fields, field_buttons = pack_scene_field_choices(
-        bottom, visual_var, speaking_var, actor_var, override_var
+        groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N
     )
+
+    task_box = ttk.LabelFrame(bottom, text="画风改变", padding=(8, 4))
+    task_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+    for value, label in config_prompt.PICTURE_FLOW_TASK_CHOICES:
+        ttk.Radiobutton(task_box, text=label, value=value, variable=task_var).pack(anchor=tk.W)
+
     from gui.clip_image_choice import pack_clip_image_choice
 
     def _scene_image(key: str) -> str:
@@ -124,6 +128,30 @@ def open_picture_prompt_dialog(
     _fyi_box.pack_forget()
     _fyi_box.pack(fill=tk.X, pady=(8, 0), before=bottom)
 
+    # 背景：地域 · 时代 · 人物（全场内容），默认勾上；放在 FYI 下面。
+    region, era = ("", "")
+    if get_place is not None:
+        try:
+            region, era = get_place()
+        except (TypeError, ValueError):
+            region, era = ("", "")
+    from gui.prompt_fyi import pack_background_block
+
+    _bg_box, bg_include_var = pack_background_block(
+        main, region, era, host_narrator,
+        style=(get_style() or "").strip(), actor_var=actor_var,
+        initial=last.get("background", True),
+    )
+    # 下方一行：背景（左）+ 画风改变 / 交给 LLM 的图 / 提交（右，顶端对齐），同全集生成。
+    lower = ttk.Frame(main)
+    lower.pack(fill=tk.X, pady=(6, 0), before=bottom)
+    _bg_box.pack_forget()
+    _bg_box.pack(in_=lower, side=tk.LEFT, anchor=tk.N)
+    _bg_box.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
+    bottom.pack_forget()
+    bottom.pack(in_=lower, side=tk.LEFT, anchor=tk.N, padx=(16, 0))
+    bottom.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
+
     def current_choice() -> dict:
         return {
             "task": task_var.get(),
@@ -135,6 +163,7 @@ def open_picture_prompt_dialog(
             "actor_override": override_var.get(),
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
+            "background": bool(bg_include_var.get()),
         }
 
     def remember() -> None:
@@ -152,20 +181,8 @@ def open_picture_prompt_dialog(
         if extract:
             hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点提交。")
         else:
-            if narrative_var.get() == "narration":
-                if actor_var.get():
-                    narr = "叙事：有讲员时，讲员在叙述内容，背景画面配合所讲的内容。"
-                else:
-                    narr = "叙事：没有讲员时，画面独自演示场景内容；讲话当作要画出来的故事内容。"
-            else:
-                narr = (
-                    "叙事风格用当前这一场：场景描述只作画面参考，讲话决定故事发展和对话，"
-                    "人物决定性别、国籍和年龄。"
-                )
             hint.config(
-                text="画风改变决定这张图怎么画。"
-                + narr
-                + "勾选要写进提示词的内容，选好后点提交。"
+                text="画风改变决定这张图怎么画；叙事风格下面的蓝字说明这次怎么讲。勾选要写进提示词的内容，选好后点提交。"
             )
 
     def close() -> None:
@@ -191,19 +208,13 @@ def open_picture_prompt_dialog(
         images = [path] if isinstance(path, str) and path and os.path.isfile(path) else []
         if not images:
             messagebox.showinfo("图片提示", "这一场没有当前图。提示窗口里只放提示词。", parent=dlg)
-        region, era = ("", "")
-        if get_place is not None:
-            try:
-                region, era = get_place()
-            except (TypeError, ValueError):
-                region, era = ("", "")
         try:
             prompt = config_prompt.build_picture_flow_prompt(
                 task=task_var.get(),
                 text=text_var.get(),
                 visual_style=style,
-                region=region or "",
-                era=era or "",
+                region="",  # 地域/时代改由下面的背景条件统一写入
+                era="",
                 narrative=narrative_var.get(),
                 use_visual=bool(visual_var.get()),
                 use_speaking=bool(speaking_var.get()),
@@ -216,6 +227,10 @@ def open_picture_prompt_dialog(
         except ValueError as exc:
             messagebox.showwarning("图片提示", str(exc), parent=dlg)
             return
+        prompt = config_prompt.prepend_background_condition(
+            prompt, region, era, host_narrator,
+            include=bool(bg_include_var.get()) and not extract,
+        )
         prompt = prepend_fyi(
             prompt, get_fyi_text(), include=bool(fyi_include_var.get())
         )
@@ -224,7 +239,9 @@ def open_picture_prompt_dialog(
         if callable(open_manual):
             open_manual(prompt, images)
 
-    ttk.Button(bottom, text="提交", command=on_go).pack(side=tk.RIGHT, anchor=tk.S, padx=(12, 0))
+    from gui.slide_prompt_dialog import big_submit_button
+
+    big_submit_button(dlg, bottom, on_go).pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)

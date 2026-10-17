@@ -62,6 +62,22 @@ def _transcribe_segments(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+def _transcribe_form(language: Optional[str]) -> Optional[Dict[str, str]]:
+    """/transcribe 的表单字段：language，以及 config.VOICEBOX_STT_MODEL 指定的 model。"""
+    form: Dict[str, str] = {}
+    if language:
+        form["language"] = language
+    try:
+        import config as _cfg
+
+        model = str(getattr(_cfg, "VOICEBOX_STT_MODEL", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        model = ""
+    if model:
+        form["model"] = model
+    return form or None
+
+
 def _transcribe_result_json(text: str, duration: Any = None) -> str:
     """统一为 JSON 字符串，含 ``text`` 与 ``duration``（无则 ``null``）。"""
     payload: Dict[str, Any] = {"text": text}
@@ -478,7 +494,8 @@ class VoiceboxService:
         print(f"Voicebox: timeout downloading audio for id={job_id}: {last_err}")
         return None
 
-    def transcribe(self, file_path: str, with_timestamps: bool = False) -> Optional[str]:
+    def transcribe(self, file_path: str, with_timestamps: bool = False,
+                   language: Optional[str] = None) -> Optional[str]:
         """
         POST /transcribe，multipart 字段名 ``file``。
 
@@ -502,6 +519,7 @@ class VoiceboxService:
                 r = requests.post(
                     self._transcribe_url(),
                     files={"file": (os.path.basename(file_path), f)},
+                    data=_transcribe_form(language),
                     timeout=600,
                 )
         except requests.RequestException as e:
@@ -511,7 +529,10 @@ class VoiceboxService:
 
         if r.status_code != 200:
             self._last_transcribe_error = f"HTTP {r.status_code}: {(r.text or '')[:400]}"
-            print(f"Voicebox /transcribe HTTP {r.status_code}: {r.text[:800]}")
+            # 同样的错误连续出现只打印第一次，免得刷屏
+            if self._last_transcribe_error != getattr(self, "_last_printed_transcribe_error", ""):
+                print(f"Voicebox /transcribe HTTP {r.status_code}: {r.text[:800]}")
+                self._last_printed_transcribe_error = self._last_transcribe_error
             return None
 
         raw = (r.text or "").strip()

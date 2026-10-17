@@ -623,12 +623,26 @@ def _actor_voice_names() -> set:
 
 
 def _actor_segments(text: str) -> list:
-    raw = (text or "").replace("；", "|").replace(";", "|")
+    raw = _normalize_host_alias(text).replace("；", "|").replace(";", "|")
     return [p.strip() for p in raw.split("|") if p.strip() and p.strip() != "没主持人"]
 
 
+# 讲员的别名（繁体 / 旧称），判断与显示前统一成「讲员」。
+HOST_ALIASES = ("讲员", "講員", "主持人")
+
+
+def _normalize_host_alias(text: str) -> str:
+    return (text or "").replace("講員", "讲员")
+
+
 def _strip_actor_label(part: str) -> str:
-    return re.sub(r"^(?:人物\s*\d*|讲员)\s*[：:]\s*", "", (part or "").strip()).strip()
+    """去掉前缀标签；「人物2：讲员：…」这类叠加的标签也一并去掉。"""
+    text = _normalize_host_alias(part).strip()
+    while True:
+        new = re.sub(r"^(?:人物\s*\d*|讲员)\s*[：:]\s*", "", text).strip()
+        if new == text:
+            return new
+        text = new
 
 
 def split_actor_motion(body: str) -> tuple[str, str]:
@@ -676,7 +690,8 @@ def _host_voice_in(part: str, voices: set) -> str:
 
 
 def _is_host_segment(part: str, voices: set) -> bool:
-    return "讲员" in (part or "") or "主持人" in (part or "")
+    part = part or ""
+    return any(alias in part for alias in HOST_ALIASES)
 
 
 def _race_token(token: str) -> str:

@@ -17,11 +17,14 @@ document.documentElement.outerHTML
 ------------------
 
 
+The order is now 讲述, 故事, 技术方案汇报, 高管简报, and an old saved 叙事 opens as 讲述. For the four styles, each tried with no actors, actors without a 讲员 and actors with a 讲员, I generated sample prompts for all three dialogs, 36 in all. None of the non-故事 prompts says "speaking" or "dialogue" any more.
 
-Create string video clip for "Mind Spring Melody" program -- (a song for the 心理咨询呃服务) : express content of 心理咨询 story :::  no speaker!!
+讲述: the content is labeled 场景叙事, and only the 讲员 speaks. If the actors include a 讲员, the 讲员 is on camera. Otherwise the 讲员 is an off-screen voice, and nobody on screen talks or lip-syncs.
+故事: the content is labeled 讲话, and the characters act and talk with each other. With a 讲员, the 讲员 only supports, introducing at the start or summing up, bridging or asking a question at the end. Without one, it's pure performance.
+技术方案汇报 and 高管简报: these work like 讲述, with the content labeled 讲述内容. People rarely appear, and when they do they don't speak.
 
 
-请关闭针对我的所有个性化服务，在接下来的所有对话和故事创作中，禁止调用、参考或推导任何关于我个人的现实背景、文档记录、邮件内容或搜索历史。每一次请求都必须是绝对客观、独立的。
+------------------
 
 
 

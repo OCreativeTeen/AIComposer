@@ -134,3 +134,71 @@ def pack_fyi_note(parent, *, history=None, initial_text: str = "", pady=(8, 0)):
         return _normalize(ordered)
 
     return box, get_text, include_var, get_history
+
+def pack_background_block(parent, region: str, era: str, person: str, *, style: str = "", form: str = "", actor_var=None,
+                          initial: bool = True, pady=(8, 0), wrap: int = 560):
+    """背景三行块。勾选框只管前两行（地域 · 时代、人物）；第三行灰字是始终写入的画面风格。
+
+    ``form`` 是主窗口的「对话方式」，不写进图片 / 幻灯 / 视频提示词，只用来给叙事风格定默认值，所以单独标明。
+    返回 (frame, include_var)。
+    """
+    box = ttk.Frame(parent)
+    box.pack(fill=tk.X, pady=pady)
+    place = " · ".join(x for x in ((region or "").strip(), (era or "").strip()) if x)
+    import config_prompt
+
+    who = config_prompt._clean_person(person)
+    empty = not (place or who)
+    var = tk.BooleanVar(value=bool(initial) and not empty)
+    cb = ttk.Checkbutton(box, text="背景（勾选才写入提示词）", variable=var)
+    cb.pack(anchor=tk.W)
+    if empty:
+        cb.configure(state="disabled")
+    inner = ttk.Frame(box)
+    inner.pack(anchor=tk.W, padx=(24, 0))
+    ttk.Label(inner, text="地域 · 时代：" + (place or "（未选）")).pack(anchor=tk.W)
+    host_lbl = ttk.Label(
+        inner, text="默认讲员：" + (who or "（未选）") + "（仅当人物中有讲员出镜时写入）"
+    )
+    host_lbl.pack(anchor=tk.W)
+    if actor_var is not None:
+        def _gray(*_a):
+            try:
+                host_lbl.configure(foreground=("black" if actor_var.get() else "gray55"))
+            except tk.TclError:
+                pass
+
+        actor_var.trace_add("write", _gray)
+        _gray()
+    gray = {"foreground": "gray40", "justify": tk.LEFT}
+    always = "始终写入：画面风格 " + ((style or "").strip() or "（未选）")
+    scene = config_prompt.scene_style_short()  # ??????????????
+    if scene:
+        always += " · 场景风格 " + scene
+    ttk.Label(box, text=always, **gray).pack(
+        anchor=tk.W, padx=(24, 0), pady=(2, 0)
+    )
+    return box, var
+
+
+def current_dialogue_mode() -> str:
+    """主窗口「对话方式」（项目配置 dialogue_mode）。"""
+    try:
+        import project_manager
+
+        return str((project_manager.PROJECT_CONFIG or {}).get("dialogue_mode") or "").strip()
+    except Exception:
+        return ""
+
+
+def pack_background_check(parent, label: str, *, initial: bool = True, pady=(8, 0)):
+    """背景（地域 · 时代 · 人物）勾选框，默认勾上。返回 (frame, include_var)。"""
+    box = ttk.Frame(parent)
+    box.pack(fill=tk.X, pady=pady)
+    empty = label.endswith("（未选）")
+    var = tk.BooleanVar(value=bool(initial) and not empty)
+    cb = ttk.Checkbutton(box, text=label + "　写入提示词", variable=var)
+    cb.pack(side=tk.LEFT)
+    if empty:
+        cb.configure(state="disabled")
+    return box, var

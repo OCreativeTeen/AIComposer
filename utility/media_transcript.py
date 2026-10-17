@@ -178,27 +178,156 @@ def _items_whisper(transcriber, wav: str, language: str, length: float) -> list[
     return items
 
 
-def _items_voicebox(service, wav: str, length: float) -> tuple[list[dict], str]:
-    """Voicebox：有分段时间用分段，没有就整小段一行。返回 (片段, 错误说明)。"""
-    raw = service.transcribe(wav, with_timestamps=True)
-    data = None
-    if raw:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = None
+VOICEBOX_PIECE_MAX = 15.0   # Voicebox 只回整段文字：按停顿切成不超过这么多秒的小块，每块一行，时间就是这块的起止
+
+
+def _speech_regions(wav: str, length: float) -> list[tuple[float, float]]:
+    """用 ffmpeg silencedetect 找出有声音的区间（相对这个 wav 的秒数）。"""
+    from utility.ffmpeg_audio_processor import ffmpeg_path
+
+    try:
+        out = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-nostats", "-i", wav,
+             "-af", "silencedetect=noise=-35dB:d=0.35", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+        )
+        log = out.stderr or ""
+    except (OSError, subprocess.SubprocessError):
+        return [(0.0, float(length))]
+    regions: list[tuple[float, float]] = []
+    cursor = 0.0
+    in_silence = False
+    for kind, value in re.findall(r"silence_(start|end):\s*(-?\d+(?:\.\d+)?)", log):
+        t = min(max(0.0, float(value)), float(length))
+        if kind == "start":
+            if t - cursor > 0.15:
+                regions.append((cursor, t))
+            in_silence = True
+        else:
+            cursor = t
+            in_silence = False
+    if not in_silence and float(length) - cursor > 0.15:
+        regions.append((cursor, float(length)))  # 一直有声到最后
+    return regions
+
+
+def _voicebox_pieces(wav: str, length: float, max_len: float = VOICEBOX_PIECE_MAX) -> list[tuple[float, float]]:
+    """把有声区间合成不超过 max_len 秒的小块；只在停顿处切，一个区间本身太长才硬切。"""
+    pieces: list[tuple[float, float]] = []
+    for s0, e0 in _speech_regions(wav, length):
+        while e0 - s0 > max_len:
+            pieces.append((s0, s0 + max_len))
+            s0 += max_len
+        if pieces and e0 - pieces[-1][0] <= max_len and (s0 - pieces[-1][1] < 1.2 or e0 - s0 < 0.5):
+            pieces[-1] = (pieces[-1][0], e0)   # 停顿很短（或这块太短），并到上一块
+        else:
+            pieces.append((s0, e0))
+    # 不到 0.5 秒又并不进去的小块（多半是咳嗽、杂音），不送去识别
+    return [pc for pc in pieces if pc[1] - pc[0] >= 0.5]
+
+
+VOICEBOX_FAIL_LIMIT = 3          # 同一个 5xx 错误连续这么多次，这次转录就不再用 Voicebox
+VOICEBOX_DOWN = "VOICEBOX_DOWN:"  # _items_voicebox 返回的错误说明以它开头 = Voicebox 不能用了
+
+
+def _voicebox_text(service, wav: str, language: str) -> tuple[str, list[dict], str]:
+    """调 Voicebox 一次。返回 (整段文字, 服务端分段, 错误说明)。"""
+    raw = service.transcribe(wav, with_timestamps=True, language=(language or None))
+    if not raw:
+        return "", [], str(getattr(service, "_last_transcribe_error", "") or "").strip() or "Voicebox 没有返回"
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return str(raw).strip(), [], ""
     if not isinstance(data, dict):
-        text = str(raw or "").strip()
-        if text:
-            return [{"start": 0.0, "end": float(length), "text": text}], ""
-        return [], str(getattr(service, "_last_transcribe_error", "") or "").strip()
-    segments = data.get("segments")
-    if isinstance(segments, list) and segments:
-        return [dict(s) for s in segments if isinstance(s, dict)], ""
-    text = str(data.get("text") or "").strip()
-    if text:
-        return [{"start": 0.0, "end": float(length), "text": text}], ""
-    return [], str(getattr(service, "_last_transcribe_error", "") or "").strip()
+        return str(data).strip(), [], ""
+    segs = data.get("segments")
+    segs = [dict(x) for x in segs if isinstance(x, dict)] if isinstance(segs, list) else []
+    return str(data.get("text") or "").strip(), segs, ""
+
+
+def _items_voicebox(service, wav: str, length: float, language: str = "") -> tuple[list[dict], str]:
+    """Voicebox → 和本机 Whisper 一样的片段 ``[{"start", "end", "text"}]``（秒，相对这一小段）。
+
+    Voicebox 的 /transcribe 只回 ``{"text", "duration"}``，没有分段时间（也没有开时间戳的参数）。
+    所以先按停顿把这一小段切成 ≤15 秒的小块，一块调一次，这块的起止时间就是这几句的时间
+    （起点是这块第一个有声的地方，精确到 ffmpeg 停顿检测）。服务端将来若带了分段，就直接用分段。
+    """
+    lang = (language or "").strip()
+    if lang in ("zh-CN", "tw", "zh-TW", "zh-tw"):
+        lang = "zh"
+    pieces = _voicebox_pieces(wav, length)
+    if not pieces:
+        return [], ""
+    items: list[dict] = []
+    last_err = ""
+    folder = os.path.dirname(wav)
+    stem = os.path.splitext(os.path.basename(wav))[0]
+    for n, (p0, p1) in enumerate(pieces):
+        piece = os.path.join(folder, f"{stem}_vb{n:03d}.wav")
+        lo = max(0.0, p0 - 0.1)
+        if not _cut_chunk(wav, lo, (p1 + 0.15) - lo, piece):
+            last_err = "切小块失败"
+            continue
+        try:
+            text, segs, err = _voicebox_text(service, piece, lang)
+        finally:
+            try:
+                os.remove(piece)
+            except OSError:
+                pass
+        if err:
+            last_err = err
+            if err.startswith("HTTP 5"):
+                state = getattr(service, "_vb_fail", None) or {"err": "", "count": 0}
+                state = {"err": err, "count": state["count"] + 1 if state["err"] == err else 1}
+                service._vb_fail = state
+                if state["count"] >= VOICEBOX_FAIL_LIMIT:
+                    return items, VOICEBOX_DOWN + err
+            continue
+        service._vb_fail = None
+        if segs:
+            for seg in segs:
+                try:
+                    st = lo + float(seg.get("start") or 0.0)
+                    en = lo + float(seg.get("end") or seg.get("start") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                t = str(seg.get("text") or "").strip()
+                if t:
+                    items.append({"start": st, "end": max(en, st), "text": t})
+        elif text:
+            items.append({"start": round(p0, 2), "end": round(p1, 2), "text": text})
+    return items, ("" if items else last_err)
+
+
+def _items_whisper_pieces(transcriber, wav: str, language: str, length: float) -> list[dict]:
+    """本机 Whisper（CPU 兜底时用）：和 Voicebox 一样先按停顿切成 ≤15 秒的小块，一块一块转，
+    每块的片段加上这块的起点，开始时间更准。"""
+    items: list[dict] = []
+    folder = os.path.dirname(wav)
+    stem = os.path.splitext(os.path.basename(wav))[0]
+    for n, (p0, p1) in enumerate(_voicebox_pieces(wav, length)):
+        piece = os.path.join(folder, f"{stem}_wp{n:03d}.wav")
+        lo = max(0.0, p0 - 0.1)
+        if not _cut_chunk(wav, lo, (p1 + 0.15) - lo, piece):
+            continue
+        try:
+            for it in _items_whisper(transcriber, piece, language, (p1 + 0.15) - lo):
+                st = max(p0, lo + float(it["start"]))
+                items.append({"start": st, "end": max(st, lo + float(it["end"])), "text": it["text"]})
+        finally:
+            for f in (piece, os.path.splitext(piece)[0] + ".srt.json"):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+    return items
+
+
+def _is_cuda_error(message: str) -> bool:
+    low = (message or "").lower()
+    return "cuda" in low or "out of memory" in low or "cublas" in low or "cudnn" in low
 
 
 def _strip(text: str) -> str:
@@ -579,7 +708,7 @@ def transcribe_media_with_timestamps(
         from utility import audio_transcriber
 
         transcriber = audio_transcriber.AudioTranscriber(pid, model_size="small", device="cuda")
-    else:
+    else:  # voicebox
         from utility.voicebox_speech_service import VoiceboxService
 
         service = VoiceboxService(pid)
@@ -633,11 +762,58 @@ def transcribe_media_with_timestamps(
             if not _cut_chunk(path, start, length, wav):
                 last_error = "有一段声音没有切出来。"
                 continue
+            items = []
             if transcriber is not None:
-                items = _items_whisper(transcriber, wav, language, length)
-            else:
-                items, err = _items_voicebox(service, wav, length)
-                if err:
+                if getattr(transcriber, "cpu_pieces", False):
+                    items = _items_whisper_pieces(transcriber, wav, language, length)
+                else:
+                    items = _items_whisper(transcriber, wav, language, length)
+                werr = str(getattr(transcriber, "last_error", "") or "")
+                if not items and _is_cuda_error(werr):
+                    # 本机显卡显存不够（或别的 CUDA 错误）：这一段和后面所有段都改用 Voicebox。
+                    print(f"⚠️ 本机 Whisper 出 CUDA 错误（{werr[:160]}），"
+                          f"从第 {index + 1} 段起改用 Voicebox 转录。")
+                    if notes is not None:
+                        notes.append("本机 Whisper 显存不够，这次转录中途改用了 Voicebox。")
+                    try:
+                        engine_x = getattr(transcriber, "_whisperx_engine", None)
+                        transcriber._whisperx_engine = None
+                        del engine_x
+                        import gc
+                        import torch
+
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    transcriber = None
+                    for leftover in (os.path.splitext(wav)[0] + ".srt.json",):
+                        try:
+                            os.remove(leftover)
+                        except OSError:
+                            pass
+                    from utility.voicebox_speech_service import VoiceboxService
+
+                    service = VoiceboxService(pid)
+                elif werr:
+                    last_error = werr
+            if transcriber is None:
+                items, err = _items_voicebox(service, wav, length, language)
+                if err.startswith(VOICEBOX_DOWN):
+                    reason = err[len(VOICEBOX_DOWN):]
+                    print(f"⚠️ Voicebox 连续 {VOICEBOX_FAIL_LIMIT} 次同样出错（{reason[:160]}），"
+                          f"从第 {index + 1} 段起改用本机 Whisper（CPU，int8）转录，会慢一些。")
+                    if notes is not None:
+                        notes.append(f"Voicebox 服务端出错（{reason[:120]}），这次转录改用了本机 CPU Whisper。")
+                    from utility import audio_transcriber
+
+                    transcriber = audio_transcriber.AudioTranscriber(pid, model_size="small", device="cpu")
+                    transcriber.cpu_pieces = True
+                    items = _items_whisper_pieces(transcriber, wav, language, length)
+                    werr = str(getattr(transcriber, "last_error", "") or "")
+                    if werr:
+                        last_error = werr
+                elif err:
                     last_error = err
             for item in items:
                 item["start"] = start + float(item["start"])

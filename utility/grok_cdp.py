@@ -308,11 +308,50 @@ def _first(page, selectors, *, visible=True):
     return None
 
 
+def _host_of(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(url or "").hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def site_page(ctx, host: str, url: str = "", *, close_duplicates: bool = True, front: bool = True):
+    """每个站点只用一个常驻标签页：找到 host 相同的第一个标签复用，没有才新建（并打开 ``url``）。
+
+    ``close_duplicates``：同一 host 的多余标签关掉（只关这个 host，绝不碰别的网站）。
+    复用的标签从不关闭。
+    """
+    host = (host or "").lower()
+    same = [p for p in ctx.pages if _host_of(p.url) == host]
+    page = same[0] if same else None
+    if close_duplicates:
+        for extra in same[1:]:
+            try:
+                extra.close()
+                print(f"[grok_cdp] closed duplicate {host} tab")
+            except Exception:
+                pass
+    if page is None:
+        page = ctx.new_page()
+        if url:
+            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    if front:
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+    return page
+
+
 def _page_for(ctx, url_part: str, exclude: str = ""):
     for p in ctx.pages:
         u = p.url or ""
         if url_part in u and not (exclude and exclude in u):
             return p
+    if "grok.com" in url_part:
+        return site_page(ctx, "grok.com")  # 复用唯一的 Grok 标签（调用方再 goto）
     return ctx.new_page()
 
 
@@ -548,7 +587,7 @@ def prepare_imagine(image_path: str, status: Status = None) -> None:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = _imagine_page(ctx, want_image=False) or ctx.new_page()
+            page = _imagine_page(ctx, want_image=False) or site_page(ctx, "grok.com")
             page.bring_to_front()
             _say(status, "打开 Grok Imagine …")
             page.goto(GROK_IMAGINE_URL, wait_until="domcontentloaded", timeout=45_000)

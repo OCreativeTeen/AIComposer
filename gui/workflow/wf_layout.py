@@ -494,7 +494,15 @@ class LayoutMixin:
             values=list(config.DIALOGUE_MODE_OPTIONS),
             state="readonly",
         )
-        self.scene_dialogue_mode.pack(side=tk.LEFT, padx=(0, 0))
+        # 对话方式已从界面移除：控件保留但不显示，旧的读写代码照常运行（旧存值被忽略）。
+        self.scene_style = ttk.Combobox(
+            look_row2,
+            width=14,
+            values=list(config_prompt.SCENE_STYLE_LABELS),
+            state="readonly",
+        )
+        self.scene_style.set(config_prompt.SCENE_STYLE_LABELS[0])
+        self.scene_style.pack(side=tk.LEFT, padx=(0, 0))
 
         episode_gap = ttk.Frame(right_panel, height=24)
         episode_gap.pack(side=tk.TOP)
@@ -516,12 +524,7 @@ class LayoutMixin:
             width=8,
             command=self.copy_episode_prompt,
         ).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(
-            episode_btn_row,
-            text="拷贝PDF",
-            width=8,
-            command=self.copy_current_episode_pdf,
-        ).pack(side=tk.LEFT, padx=(0, 4))
+        # 「拷贝PDF」已移入「全集生成」（content.pdf 上传为 NotebookLM 来源）。
         ttk.Button(
             episode_btn_row,
             text="拆成新集",
@@ -536,7 +539,7 @@ class LayoutMixin:
         ).pack(side=tk.LEFT, padx=(0, 4))
         self._slide_prompt_btn = ttk.Button(
             episode_btn_row,
-            text="幻灯提示",
+            text="全集生成",
             width=8,
             command=self._open_slide_prompt_flow,
         )

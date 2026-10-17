@@ -130,17 +130,14 @@ def chinese_convert(text, language):
 # =============================================================================
 VISUAL_STYLE_OPTIONS = [
     "写实 (Realistic)",
-    "三维卡通 (3D Cartoon)",
+    "三维卡通 (Pixar-Art Cartoon)",
     "中国画 (Chinese Painting)",
-    "工笔重彩 (Gongbi)",
     "水彩 (Watercolor)",
     "油画 (Oil Painting)",
     "铅笔素描 (Pencil Drawing)",
     "黑白连环画 (Ink Comic)",
     "黏土动画 (Claymation)",
     "复古胶片 (Vintage Film)",
-    "长曝光 (Long Exposure)",
-    "移轴摄影 (Tilt-shift)",
     "魔幻现实主义 (Magical Realism)",
     "奇幻氛围 (Wondrous Atmosphere)",
 ]
@@ -149,16 +146,15 @@ VISUAL_STYLE_OPTIONS = [
 _VISUAL_STYLE_ALIASES = {
     "写实": "写实 (Realistic)",
     "realistic": "写实 (Realistic)",
-    "三维卡通": "三维卡通 (3D Cartoon)",
-    "pixar-art cartoon": "三维卡通 (3D Cartoon)",
-    "pixar-art cartoon + realistic": "三维卡通 (3D Cartoon)",
-    "cartoon": "三维卡通 (3D Cartoon)",
-    "3D Cartoon Style": "三维卡通 (3D Cartoon)",
+    "三维卡通": "三维卡通 (Pixar-Art Cartoon)",
+    "pixar-art cartoon": "三维卡通 (Pixar-Art Cartoon)",
+    "pixar-art cartoon + realistic": "三维卡通 (Pixar-Art Cartoon)",
+    "cartoon": "三维卡通 (Pixar-Art Cartoon)",
+    "3D Cartoon Style": "三维卡通 (Pixar-Art Cartoon)",
     "中国画": "中国画 (Chinese Painting)",
     "中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
     "pixar-art cartoon + 中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
     "realistic + 中国画(水墨/花鸟/山水)": "中国画 (Chinese Painting)",
-    "工笔重彩": "工笔重彩 (Gongbi)",
     "水彩": "水彩 (Watercolor)",
     "Watercolor Painting Style": "水彩 (Watercolor)",
     "油画": "油画 (Oil Painting)",
@@ -171,10 +167,6 @@ _VISUAL_STYLE_ALIASES = {
     "Claymation Style": "黏土动画 (Claymation)",
     "复古胶片": "复古胶片 (Vintage Film)",
     "复古(胶片/旧照片)": "复古胶片 (Vintage Film)",
-    "长曝光": "长曝光 (Long Exposure)",
-    "Long Exposure Photography": "长曝光 (Long Exposure)",
-    "移轴摄影": "移轴摄影 (Tilt-shift)",
-    "Tilt-shift Photography": "移轴摄影 (Tilt-shift)",
     "魔幻现实主义": "魔幻现实主义 (Magical Realism)",
     "Magical Realism": "魔幻现实主义 (Magical Realism)",
     "奇幻氛围": "奇幻氛围 (Wondrous Atmosphere)",
@@ -251,10 +243,12 @@ def normalize_dialogue_mode(mode: str) -> str:
     return DIALOGUE_MODE_OPTIONS[0] if DIALOGUE_MODE_OPTIONS else ""
 
 
-def dialogue_mode_instruction(mode: str) -> str:
-    """所选对话方式的英文说明。未知值回落到「解说带一人表演」。"""
-    key = normalize_dialogue_mode(mode)
-    return (_DIALOGUE_MODE_PROMPTS.get(key) or "").strip()
+def dialogue_mode_instruction(mode: str = "") -> str:
+    """对话方式已从界面移除。返回中性说明，忽略旧存值。"""
+    return (
+        "speaking 写场景的主要内容。多人说话时用 <1>、<2> 标出说话人；"
+        "不必强加讲员，也不必强行写成对话，由内容决定。"
+    )
 
 _CHARACTER_PERSON_OPTIONS_FALLBACK = [
     "",
@@ -756,7 +750,9 @@ TRANSCRIBE_FALLBACK_TO_AUDIO = True
 #   "whisper"  = 本机 Whisper
 #   "voicebox" = 调 Voicebox 的 /transcribe 接口
 # 想换的话直接改这一行，不用重启其它东西，重新打开工作流窗口就生效。
-TRANSCRIBE_ENGINE = "whisper"
+TRANSCRIBE_ENGINE = "voicebox"
+# Voicebox 转录用哪个 Whisper 模型（/transcribe 的 model 字段）：base / small / medium / large / turbo；空 = 服务端默认
+VOICEBOX_STT_MODEL = "medium"
 
 # 长音频/视频转录成「带时间戳的文字」时，每一小段多少秒；一段一段转，再合起来。
 TRANSCRIBE_CHUNK_SECONDS = 600

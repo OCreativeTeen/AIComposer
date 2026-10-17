@@ -1,4 +1,4 @@
-﻿"""NotebookLM (Gemini Notebook) Studio over CDP: 演示文稿 / 信息图 / 音频概览 / 视频概览.
+"""NotebookLM (Gemini Notebook) Studio over CDP: 演示文稿 / 信息图 / 音频概览 / 视频概览.
 
 Used by the manual LLM window's CLI自动 for cli_kind in STUDIO_KINDS.
 
@@ -138,18 +138,14 @@ def _notebook_id(url: str) -> str:
 
 
 def _studio_page(ctx, url: str, status: Status):
+    from .grok_cdp import site_page
+
     nid = _notebook_id(url)
-    page = None
-    for p in ctx.pages:
-        u = p.url or ""
-        if (nid and nid in u) or (not nid and u.rstrip("/") == url.rstrip("/")):
-            page = p
-            break
-    if page is None:
-        _say(status, "打开 NotebookLM 笔记本 …")
-        page = ctx.new_page()
+    page = site_page(ctx, NOTEBOOK_HOST)  # 唯一的 NotebookLM 标签
+    u = page.url or ""
+    if not ((nid and nid in u) or (not nid and u.rstrip("/") == url.rstrip("/"))):
+        _say(status, "open notebook .")
         page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    page.bring_to_front()
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if "accounts.google.com" in (page.url or ""):
@@ -309,6 +305,106 @@ def _wait_new_row(page, before: set, spec: dict, status: Status, timeout_s: floa
     raise RuntimeError(f"等了 {int(timeout_s // 60)} 分钟，「{spec['name']}」还没生成完")
 
 
+
+# ---- 来源（左侧「来源」面板）：上传 content.pdf ----
+# 行: .single-source-container；标题 .source-title；更多: button.source-item-more-button[aria-description=<title>]
+# 更多菜单: [role=menuitem] 「移除来源」/「重命名来源」；勾选: mat-checkbox.select-checkbox(.mat-mdc-checkbox-checked)
+# 「添加来源」: button[aria-label="添加来源"] → mat-dialog-container 里「上传文件」按钮（点了才出 input[type=file]，
+# 所以用 Playwright 的 file chooser 拦截 = CDP Page.setInterceptFileChooserDialog + DOM.setFileInputFiles，不弹系统对话框）。
+SOURCE_ROW_SEL = ".single-source-container"
+ADD_SOURCE_SEL = 'button[aria-label="添加来源"], button[aria-label="Add source"], button[aria-label="Add sources"]'
+UPLOAD_BTN_RE = re.compile(r"上传文件|Upload files?|Upload", re.I)
+REMOVE_ITEM_RE = re.compile(r"移除来源|删除来源|Remove source|Delete source", re.I)
+CONFIRM_RE = re.compile(r"^\s*(删除|移除|Delete|Remove)\s*$", re.I)
+
+SOURCES_JS = r"""() => [...document.querySelectorAll('.single-source-container')].map((row, i) => {
+  const t = row.querySelector('.source-title');
+  const cb = row.querySelector('mat-checkbox.select-checkbox');
+  const input = cb && cb.querySelector('input[type=checkbox]');
+  const spin = !!row.querySelector('mat-spinner, mat-progress-spinner, mat-progress-bar, [class*="loading"], [class*="spinner"]');
+  return {
+    i,
+    title: t ? t.textContent.trim() : '',
+    checked: !!(input && input.checked) || !!(cb && cb.classList.contains('mat-mdc-checkbox-checked')),
+    hasCheckbox: !!cb,
+    loading: spin || !cb,
+  };
+})"""
+
+
+def _sources(page) -> list:
+    try:
+        return list(page.evaluate(SOURCES_JS) or [])
+    except Exception as exc:
+        print(f"[notebooklm_cdp] sources failed: {exc}")
+        return []
+
+
+def _remove_sources_named(page, name: str, status: Status) -> int:
+    """删除标题为 ``name`` 的旧来源（更多 → 移除来源 → 确认）。返回删除个数。"""
+    removed = 0
+    for _ in range(10):
+        rows = [r for r in _sources(page) if r.get("title") == name]
+        if not rows:
+            break
+        _say(status, f"移除旧来源 {name} .")
+        row = page.locator(SOURCE_ROW_SEL).nth(rows[0]["i"])
+        row.scroll_into_view_if_needed(timeout=5000)
+        row.locator("button.source-item-more-button").first.click(timeout=5000)
+        page.wait_for_timeout(700)
+        page.locator('[role="menuitem"]').filter(has_text=REMOVE_ITEM_RE).first.click(timeout=5000)
+        page.wait_for_timeout(900)
+        dlg = page.locator(DIALOG_SEL)
+        if dlg.count():
+            btn = dlg.last.get_by_role("button", name=CONFIRM_RE)
+            if not btn.count():
+                btn = dlg.last.locator("button", has_text=re.compile(r"删除|移除|Delete|Remove", re.I))
+            btn.last.click(timeout=5000)
+        before = len(_sources(page))
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if len([r for r in _sources(page) if r.get("title") == name]) < len(rows):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f"移除旧来源 {name} 没有生效")
+        removed += 1
+    return removed
+
+
+def upload_source(page, path: str, status: Status = None, *, timeout_s: float = 300) -> dict:
+    """把 ``path`` 上传为笔记本来源（先移除同名旧来源），等处理完成且已勾选。返回该来源行信息。"""
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"找不到来源文件：{path}")
+    name = os.path.basename(path)
+    _close_dialog(page)
+    _remove_sources_named(page, name, status)
+    _say(status, f"添加来源 {name} .")
+    page.locator(ADD_SOURCE_SEL).first.click(timeout=8000)
+    page.wait_for_selector(DIALOG_SEL, timeout=15_000)
+    dlg = page.locator(DIALOG_SEL).last
+    with page.expect_file_chooser(timeout=15_000) as fc:
+        dlg.locator("button", has_text=UPLOAD_BTN_RE).first.click(timeout=8000)
+    fc.value.set_files(path)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout_s:
+        rows = [r for r in _sources(page) if r.get("title") == name]
+        el = int(time.monotonic() - t0)
+        if rows and not rows[0].get("loading"):
+            row = rows[0]
+            if not row.get("checked"):
+                page.locator(SOURCE_ROW_SEL).nth(row["i"]).locator("mat-checkbox.select-checkbox").first.click()
+                page.wait_for_timeout(600)
+                row = next((r for r in _sources(page) if r.get("title") == name), row)
+            _close_dialog(page)
+            _say(status, f"来源 {name} 已就绪（{el}s）")
+            return row
+        _say(status, f"等待来源 {name} 处理 . {el}s")
+        time.sleep(2.0)
+    raise RuntimeError(f"来源 {name} {int(timeout_s)}s 内未处理完")
+
+
 def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str = "",
                 status: Status = None, *, extra: Optional[dict] = None,
                 timeout_s: Optional[float] = None) -> str:
@@ -333,6 +429,10 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
             browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = _studio_page(ctx, url, status)
+            source_pdf = str(extra.get("source_pdf") or "").strip()
+            if source_pdf:
+                # 其他来源保持原勾选；提示词里写明以 content.pdf 为主。
+                upload_source(page, source_pdf, status)
             before = {r.get("key") for r in _rows(page)}
             dlg = _open_customize(page, spec, status)
             _click_dialog_options(dlg, extra.get("nblm_options"))
@@ -369,3 +469,173 @@ def probe(kinds=None, status: Status = None) -> dict:
                 out[kind] = {"textarea": ta, "generate_now": gen, "closed": not page.locator(DIALOG_SEL).count()}
             out["rows"] = _rows(page)[:5]
     return out
+
+# ---- notebook list (https://notebook.google.com/ 我的笔记本) ----
+NOTEBOOK_HOME_URL = "https://notebook.google.com/"
+NOTEBOOK_HOST = "notebook.google.com"
+NOTEBOOK_PREF_KEY = "nblm_notebook"  # config.load/save_yt_tools_prefs: {"url": ..., "title": ...}
+NOTEBOOK_CACHE_PATH = os.path.join(
+    os.environ.get("LOCALAPPDATA") or str(Path.home()), "AIComposer", "nblm_notebooks.json"
+)
+# Each card: <project-button> with <a class="primary-action-button" href="/notebook/<id>"
+# aria-labelledby="project-<id>-title ...">; title text in #project-<id>-title.
+NOTEBOOK_CARDS_JS = r"""() => {
+  const scope = document.querySelector('.my-projects-container') || document;
+  const out = [], seen = new Set();
+  scope.querySelectorAll('project-button a.primary-action-button[href*="/notebook/"], project-button a[href*="/notebook/"]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/\/notebook\/([0-9a-f-]{8,})/i);
+    if (!m || seen.has(m[1])) return;
+    seen.add(m[1]);
+    const card = a.closest('project-button');
+    const tEl = document.getElementById('project-' + m[1] + '-title')
+      || (card && card.querySelector('.project-button-title, [id$="-title"]'));
+    out.push({id: m[1], title: tEl ? tEl.textContent.trim() : '', href});
+  });
+  return out;
+}"""
+_list_lock = __import__("threading").Lock()
+_waiters_lock = __import__("threading").Lock()
+
+
+def list_notebooks(status: Status = None, *, timeout_s: float = 40.0) -> list:
+    """Read the notebook cards on notebook.google.com in the single reused NotebookLM tab
+    (same 9222 Chrome, chrome_lock); go back to the notebook it was on. Returns [(title, url)] in page order and updates the cache."""
+    from . import grok_cdp
+
+    with grok_cdp.chrome_lock(status=status):
+        port = grok_cdp.ensure_chrome(status)
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            from .grok_cdp import site_page
+
+            page = site_page(ctx, NOTEBOOK_HOST, front=False)  # 复用唯一的 NotebookLM 标签
+            back_to = page.url if _notebook_id(page.url or "") else ""
+            try:
+                page.goto(NOTEBOOK_HOME_URL, wait_until="domcontentloaded", timeout=60_000)
+                cards: list = []
+                deadline = time.monotonic() + timeout_s
+                while time.monotonic() < deadline:
+                    if "accounts.google.com" in (page.url or ""):
+                        print(f"[notebooklm_cdp] not signed in to Google in Chrome {port}")
+                        raise RuntimeError(f"not signed in to Google in Chrome {port}（NotebookLM 没有登录）")
+                    try:  # a fresh Chrome may still redirect/reload the page
+                        cards = page.evaluate(NOTEBOOK_CARDS_JS) or []
+                        if cards:
+                            page.wait_for_timeout(1500)  # let the grid finish rendering
+                            cards = page.evaluate(NOTEBOOK_CARDS_JS) or cards
+                            break
+                    except Exception as exc:
+                        print(f"[notebooklm_cdp] home page not ready yet: {exc}")
+                        cards = []
+                    time.sleep(1.0)
+            finally:
+                if back_to:  # 读完首页再回到原来的笔记本，标签停在选定的笔记本上
+                    try:
+                        page.goto(back_to, wait_until="domcontentloaded", timeout=60_000)
+                    except Exception as exc:
+                        print(f"[notebooklm_cdp] back to notebook failed: {exc}")
+    result = [
+        (c.get("title") or c["id"], f"https://notebook.google.com/notebook/{c['id']}") for c in cards
+    ]
+    if result:
+        save_cached_notebooks(result)
+    return result
+
+
+def load_cached_notebooks() -> list:
+    import json
+
+    try:
+        with open(NOTEBOOK_CACHE_PATH, encoding="utf-8") as f:
+            return [(str(t), str(u)) for t, u in json.load(f)]
+    except Exception:
+        return []
+
+
+def save_cached_notebooks(items: list) -> None:
+    import json
+
+    try:
+        os.makedirs(os.path.dirname(NOTEBOOK_CACHE_PATH), exist_ok=True)
+        with open(NOTEBOOK_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump([list(x) for x in items], f, ensure_ascii=False, indent=1)
+    except Exception as exc:
+        print(f"[notebooklm_cdp] notebook cache not saved: {exc}")
+
+
+_refresh_waiters: list = []
+
+
+def refresh_notebooks_in_background(on_done: Optional[Callable[[list], None]] = None, *,
+                                    only_if_running: bool = False) -> None:
+    """Non-blocking refresh of the notebook list; failures are only logged.
+
+    Launches the HermesChromeCDP Chrome on 9222 when it is not running (``list_notebooks`` calls
+    ``grok_cdp.ensure_chrome`` under ``chrome_lock``, so two callers never launch two Chromes).
+    If a refresh is already running, ``on_done`` is queued and called with that run's result.
+    ``only_if_running`` is accepted for old callers and ignored."""
+    import threading
+
+    with _waiters_lock:
+        if on_done:
+            _refresh_waiters.append(on_done)
+        if not _list_lock.acquire(blocking=False):
+            return  # a refresh is in flight; it will call our on_done
+
+    def _run():
+        items: list = []
+        try:
+            from . import grok_cdp
+
+            was_up = grok_cdp._bt().cdp_ready(grok_cdp.CDP_PORT)
+            items = list_notebooks()
+            if was_up:
+                print(f"[notebooklm_cdp] notebooks refreshed: {len(items)}")
+            else:
+                print(f"[notebooklm_cdp] launched Chrome {grok_cdp.CDP_PORT}, {len(items)} notebooks")
+        except Exception as exc:
+            print(f"[notebooklm_cdp] notebook list refresh failed (ignored): {exc}")
+        finally:
+            with _waiters_lock:
+                waiters = list(_refresh_waiters)
+                _refresh_waiters.clear()
+                _list_lock.release()
+            for fn in waiters:
+                try:
+                    fn(items)
+                except Exception as exc:
+                    print(f"[notebooklm_cdp] refresh callback failed: {exc}")
+
+    threading.Thread(target=_run, name="nblm-list", daemon=True).start()
+
+
+def saved_notebook_pref() -> dict:
+    try:
+        v = config.load_yt_tools_prefs().get(NOTEBOOK_PREF_KEY) or {}
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_notebook_pref(title: str, url: str) -> None:
+    try:
+        config.save_yt_tools_prefs({NOTEBOOK_PREF_KEY: {"title": title, "url": url}})
+    except Exception as exc:
+        print(f"[notebooklm_cdp] notebook pref not saved: {exc}")
+
+
+def pick_saved_index(items: list, pref: Optional[dict] = None) -> int:
+    """Index of the saved notebook in ``items`` (by URL, then title); 0 when not found."""
+    pref = saved_notebook_pref() if pref is None else pref
+    url, title = pref.get("url") or "", pref.get("title") or ""
+    for i, (_t, u) in enumerate(items):
+        if url and u == url:
+            return i
+    for i, (t, _u) in enumerate(items):
+        if title and t == title:
+            return i
+    return 0

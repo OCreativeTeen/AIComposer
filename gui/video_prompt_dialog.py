@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 import config
 import config_prompt
 import project_manager
-from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
+from gui.prompt_fyi import clean_fyi_history, pack_background_check, pack_fyi_note, prepend_fyi
 
 
 def _place_popup_near(dlg: tk.Toplevel, anchor, *, below: bool) -> None:
@@ -86,6 +86,7 @@ def open_video_prompt_dialog(
     copy_text,
     language: str = "",
     host_narrator: str = "",
+    get_place=None,
     get_image=None,
     copy_image=None,
     open_manual=None,
@@ -134,7 +135,7 @@ def open_video_prompt_dialog(
     actions = ttk.Frame(advanced)
     actions.pack(fill=tk.X)
 
-    saved_narrative = "story"
+    saved_narrative = "narration"
     saved_text = "erase"
     saved_fyi = clean_fyi_history(saved_choice)
     if isinstance(saved_choice, dict):
@@ -178,13 +179,13 @@ def open_video_prompt_dialog(
 
     narrative_row = ttk.Frame(body)
     narrative_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 8))
-    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 8))
+    pack_narrative_choices(narrative_row, narrative_var, padx=(0, 8), actor_var=actor_var)
     text_box = ttk.LabelFrame(narrative_row, text="说明文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
     for value, label in config_prompt.FLOW_CAPTION_CHOICES:
         ttk.Radiobutton(text_box, text=label, value=value, variable=text_var).pack(anchor=tk.W)
     pack_scene_field_choices(
-        narrative_row, visual_var, speaking_var, actor_var, override_var
+        narrative_row, visual_var, speaking_var, actor_var, override_var, anchor=tk.N
     )
 
     groups = ttk.Frame(body)
@@ -213,14 +214,10 @@ def open_video_prompt_dialog(
         evolve_buttons.append(btn)
 
     camera_box = ttk.LabelFrame(groups, text="运镜", padding=(8, 4))
-    camera_box.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 8))
+    camera_box.pack(side=tk.LEFT, anchor=tk.N)
     for value, label in config_prompt.VIDEO_FLOW_CAMERA_CHOICES:
         ttk.Radiobutton(camera_box, text=label, value=value, variable=camera_var).pack(anchor=tk.W)
 
-    motion_box = ttk.LabelFrame(groups, text="动画", padding=(8, 4))
-    motion_box.pack(side=tk.LEFT, anchor=tk.N)
-    for value, label in config_prompt.VIDEO_FLOW_MOTION_CHOICES:
-        ttk.Radiobutton(motion_box, text=label, value=value, variable=motion_var).pack(anchor=tk.W)
 
     summary = None
     if is_transition:
@@ -244,6 +241,7 @@ def open_video_prompt_dialog(
             "actor_override": override_var.get(),
             "image": image_to_save(),
             "fyi_history": get_fyi_history(),
+            "background": bool(bg_include_var.get()),
         }
 
     def remember() -> None:
@@ -262,23 +260,8 @@ def open_video_prompt_dialog(
         for btn in bg_buttons:
             btn.configure(state=("normal" if keep_words else "disabled"))
         go.config(text="提交")
-        narrative = narrative_var.get()
-        if narrative == "narration":
-            if actor_var.get():
-                narr = "叙事：有讲员时，讲员在叙述内容，背景画面配合所讲的内容。"
-            else:
-                narr = "叙事：没有讲员时，画面独自演示场景内容；讲话当作要画出来的故事内容，可以不要声音。"
-        elif narrative == "story":
-            narr = "故事：人物在画面里演这个故事。"
-        elif narrative == "tech":
-            narr = "技术方案汇报：图示为主。"
-        elif narrative == "exec":
-            narr = "高管简报：结论为主。"
-        else:
-            narr = "叙事风格决定这段视频怎么讲。"
         base = (
-            narr
-            + " 写进提示词的内容勾选场景描述、讲话、人物。说明文字决定字怎么处理。"
+            "叙事风格下面的蓝字说明这次怎么讲。写进提示词的内容勾选场景描述、讲话、人物。说明文字决定字怎么处理。"
             + (
                 "多画面用起始画面和终止画面。"
                 if (is_transition or two)
@@ -342,6 +325,9 @@ def open_video_prompt_dialog(
         except ValueError as exc:
             messagebox.showerror("视频提示", str(exc), parent=dlg)
             return
+        prompt = config_prompt.prepend_background_condition(
+            prompt, bg_region, bg_era, host_narrator, include=bool(bg_include_var.get())
+        )
         prompt = prepend_fyi(
             prompt, get_fyi_text(), include=bool(fyi_include_var.get())
         )
@@ -382,6 +368,31 @@ def open_video_prompt_dialog(
     _fyi_box.pack_forget()
     _fyi_box.pack(fill=tk.X, pady=(0, 8), before=actions)
 
+    # 背景：地域 · 时代 · 人物（全场内容），默认勾上；放在 FYI 下面。
+    bg_region, bg_era = ("", "")
+    if get_place is not None:
+        try:
+            bg_region, bg_era = get_place()
+        except (TypeError, ValueError):
+            bg_region, bg_era = ("", "")
+    from gui.prompt_fyi import pack_background_block
+
+    _bg_box, bg_include_var = pack_background_block(
+        advanced, bg_region, bg_era, host_narrator,
+        style=(get_style() or "").strip(), actor_var=actor_var,
+        initial=bool(saved_choice.get("background", True)) if isinstance(saved_choice, dict) else True,
+        pady=(0, 8),
+    )
+    # 下方一行：背景（左）+ 交给 LLM 的图 / 长度 / 提交（右，顶端对齐），同全集生成。
+    lower = ttk.Frame(advanced)
+    lower.pack(fill=tk.X, pady=(0, 8), before=actions)
+    _bg_box.pack_forget()
+    _bg_box.pack(in_=lower, side=tk.LEFT, anchor=tk.N)
+    _bg_box.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
+    actions.pack_forget()
+    actions.pack(in_=lower, side=tk.LEFT, anchor=tk.N, padx=(16, 0))
+    actions.lift(lower)  # 先建的控件在 lower 之下，需抬到上面才看得见
+
     from gui.clip_image_choice import pack_clip_image_choice
 
     # Which image goes to the LLM (single-frame); remembered with the other choices (key "image").
@@ -395,7 +406,9 @@ def open_video_prompt_dialog(
     length_box.pack(side=tk.LEFT, anchor=tk.S, padx=(8, 0))
     for value, label in (("6s", "6秒"), ("10s", "10秒"), ("15s", "15秒")):
         ttk.Radiobutton(length_box, text=label, value=value, variable=duration_var).pack(anchor=tk.W)
-    go = ttk.Button(actions, text="提交", command=on_go)
+    from gui.slide_prompt_dialog import big_submit_button
+
+    go = big_submit_button(dlg, actions, on_go)
     go.pack(side=tk.LEFT, anchor=tk.S, padx=(12, 0))
     dlg.protocol("WM_DELETE_WINDOW", close)
     frame_var.trace_add("write", refresh_choices)

@@ -200,6 +200,7 @@ class AudioTranscriberX:
         lang = self._normalize_language(language)
         root, _ = os.path.splitext(audio_path)
         transcribe_file = root + ".srt.json"
+        self.last_error = ""
 
         try:
             print(f"[INFO] 开始转录 (language={lang}) — {audio_path}")
@@ -255,6 +256,7 @@ class AudioTranscriberX:
             return srt_segments, transcribe_file
         except Exception as e:  # noqa: BLE001 - 顶层兜底，保持与 simple 版同样的接口
             print(f"[ERROR] 转录失败: {type(e).__name__}: {e}")
+            self.last_error = f"{type(e).__name__}: {e}"
         finally:
             self._release_gpu_memory()
         return [], ""

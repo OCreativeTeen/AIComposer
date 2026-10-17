@@ -95,7 +95,7 @@ class PdfEpisodeMixin:
         dlg.grab_set()
 
     def _on_media_drop_pdf(self, pdf_path: str) -> None:
-        """视频画布拖入 PDF：按当前 episode 拆成 1.webp、2.webp…，再打开翻页预览。"""
+        """拖进来的 PDF：先拆到临时目录预览；分配给场景时才复制进本集 media 文件夹。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -107,9 +107,9 @@ class PdfEpisodeMixin:
         try:
             self.root.config(cursor="watch")
             self.root.update_idletasks()
-            folder, pages = self.workflow.export_pdf_pages_to_group(pdf_path, group_name)
+            folder, pages = self.workflow.split_pdf_to_staging(pdf_path)
         except Exception as e:  # noqa: BLE001
-            messagebox.showerror("PDF", f"拆分失败：{e}", parent=self.root)
+            messagebox.showerror("PDF", f"拆页失败：{e}", parent=self.root)
             return
         finally:
             try:
@@ -117,21 +117,16 @@ class PdfEpisodeMixin:
             except tk.TclError:
                 pass
         if not pages:
-            messagebox.showwarning("PDF", "这份 PDF 没有拆出页面。", parent=self.root)
+            messagebox.showwarning("PDF", "这个 PDF 没有可用的页。", parent=self.root)
             return
-        print(f"✅ PDF 已拆成 {len(pages)} 页，加进第 {group_name} 集图片库：{folder}")
-        all_pages = self._episode_page_pngs(group_name)
-        start_idx = 0
-        try:
-            first_new = os.path.abspath(pages[0])
-            for i, path in enumerate(all_pages):
-                if os.path.abspath(path) == first_new:
-                    start_idx = i
-                    break
-        except (IndexError, OSError):
-            start_idx = 0
+        print(f"✅ PDF 拆成 {len(pages)} 页，临时目录：{folder}")
+        staging = {
+            "dir": folder,
+            "base": self.workflow.episode_next_page_base(group_name),
+            "pdf": os.path.abspath(pdf_path),
+        }
         self._open_pdf_page_review(
-            folder, all_pages, group_name, os.path.basename(pdf_path), initial_index=start_idx
+            folder, list(pages), group_name, os.path.basename(pdf_path), initial_index=0, staging=staging
         )
 
     def _episode_page_pngs(self, group_name: str) -> list[str]:
@@ -481,6 +476,7 @@ class PdfEpisodeMixin:
         group_name: str,
         pdf_name: str,
         initial_index: int = 0,
+        staging: dict | None = None,
     ) -> None:
         """翻页查看拆出的 PNG。左右方向键翻页；从当前页写到本集结束。"""
         dlg = tk.Toplevel(self.root)
@@ -489,6 +485,29 @@ class PdfEpisodeMixin:
         dlg.minsize(720, 560)
         dlg.transient(self.root)
         idx = [max(0, min(int(initial_index or 0), len(pages) - 1))]
+
+        def _fresh_pages() -> list:
+            """预览读哪里：临时拆页目录（staging），或本集 media 文件夹（双击 clip 的情形）。"""
+            if staging:
+                d = staging["dir"]
+                names = [n for n in os.listdir(d) if os.path.splitext(n)[0].isdigit()] if os.path.isdir(d) else []
+                return [os.path.join(d, n) for n in sorted(names, key=lambda n: int(os.path.splitext(n)[0]))]
+            return self._episode_page_pngs(group_name)
+
+        def _episode_no(page_no: int) -> int:
+            """临时页号 → 本集页号（接在已有页之后，同旧的拆页编号）。"""
+            return int(staging["base"]) + int(page_no) if staging else int(page_no)
+
+        def _assign_image(scene: dict, i: int) -> int:
+            """分配第 i 页给场景：staging 时先复制进本集 media 文件夹。返回本集页号。"""
+            page_no = _page_number(i)
+            src = pages[i]
+            if staging:
+                page_no = _episode_no(page_no)
+                src = self.workflow.stage_page_into_episode(src, group_name, page_no)
+            self._assign_scene_clip_image_from_file(scene, src)
+            self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
+            return page_no
         photo_holder: list = [None]
         showing = [False]
 
@@ -547,7 +566,7 @@ class PdfEpisodeMixin:
 
         def _show_page_body():
             # 每次都重新读文件夹，总页数以文件夹里实际有的图为准，和场景数无关。
-            fresh = self._episode_page_pngs(group_name)
+            fresh = _fresh_pages()
             if fresh:
                 pages[:] = fresh
             idx[0] = max(0, min(idx[0], len(pages) - 1))
@@ -571,7 +590,7 @@ class PdfEpisodeMixin:
             canvas.delete("all")
             canvas.create_image(cw // 2, ch // 2, image=photo)
             page_no = _page_number(i)
-            users = _page_users(page_no)
+            users = _page_users(_episode_no(page_no))
             if users:
                 usage_text = f"第 {page_no} 页 → 已分给：" + "、".join(users)
                 usage_color = "#0a6b0a"
@@ -598,7 +617,7 @@ class PdfEpisodeMixin:
             )
 
         def _step(delta: int):
-            fresh = self._episode_page_pngs(group_name)
+            fresh = _fresh_pages()
             if fresh:
                 pages[:] = fresh
             idx[0] = (idx[0] + delta) % len(pages)
@@ -614,10 +633,8 @@ class PdfEpisodeMixin:
             if not scene:
                 messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
                 return
-            page_no = _page_number(idx[0])
             try:
-                self._assign_scene_clip_image_from_file(scene, pages[idx[0]])
-                self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
+                page_no = _assign_image(scene, idx[0])
                 self.workflow.save_scenes_to_json()
                 self.display_image_on_canvas_for_track("clip_image")
             except Exception as e:  # noqa: BLE001
@@ -642,7 +659,7 @@ class PdfEpisodeMixin:
                 return
             page_i = idx[0]
             written = 0
-            first_page = _page_number(page_i)
+            first_page = _episode_no(_page_number(page_i))
             last_page_no = first_page
             written_scenes: list = []
             try:
@@ -650,9 +667,7 @@ class PdfEpisodeMixin:
                     scene = self.workflow.scenes[scene_i]
                     if not isinstance(scene, dict) or self.workflow.scene_group(scene) != group_name:
                         break
-                    self._assign_scene_clip_image_from_file(scene, pages[page_i])
-                    last_page_no = _page_number(page_i)
-                    self._tag_scene_pdf_page(scene, group_name, last_page_no, pdf_name)
+                    last_page_no = _assign_image(scene, page_i)
                     written += 1
                     written_scenes.append(scene)
                     scene_i += 1
@@ -677,6 +692,14 @@ class PdfEpisodeMixin:
         bar.pack(fill=tk.X, padx=8, pady=8)
         ttk.Button(bar, text="上一页", command=lambda: _step(-1)).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(bar, text="下一页", command=lambda: _step(1)).pack(side=tk.LEFT, padx=(0, 16))
+        if staging and staging.get("pdf"):
+            def _open_external():
+                try:
+                    os.startfile(staging["pdf"])
+                except OSError as exc:
+                    messagebox.showwarning("PDF", f"打不开：{exc}", parent=dlg)
+
+            ttk.Button(bar, text="外部打开 PDF", command=_open_external).pack(side=tk.RIGHT)
         ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(bar, text="写到本集结束", command=_assign_forward).pack(side=tk.LEFT)
 

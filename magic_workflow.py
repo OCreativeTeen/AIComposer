@@ -31,6 +31,14 @@ import tkinter as tk
 
 
 
+PDF_STAGING_ROOT = r"D:\AI_MEDIA\working\pdf_pages"
+
+
+def _safe_stem(path: str) -> str:
+    stem = os.path.splitext(os.path.basename(path or "pdf"))[0].strip() or "pdf"
+    return re.sub(r'[\\/:*?"<>|]+', "_", stem)[:80]
+
+
 class MagicWorkflow:
 
     def __init__(self, pid, language, channel, video_width=None, video_height=None):
@@ -1381,6 +1389,40 @@ class MagicWorkflow:
             except (TypeError, ValueError):
                 continue
         return highest + 1
+
+    def split_pdf_to_staging(self, pdf_path: str) -> tuple[str, list[str]]:
+        """PDF 拆成页图放进临时目录 D:\\AI_MEDIA\\working\\pdf_pages\\<PDF 名>\\（每次先清空）。
+
+        这里只供预览；分配给场景时才复制进项目 media/<集>/（见 stage_page_into_episode）。
+        """
+        folder = os.path.join(PDF_STAGING_ROOT, _safe_stem(pdf_path))
+        if os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
+        pages = self._pdf_pages_to_images(pdf_path, out_dir=folder, start_number=1)
+        return folder, pages
+
+    def episode_next_page_base(self, group_name: str) -> int:
+        """media/<集>/ 里已有页图的最大编号（新页从它 +1 开始，同旧的拆页编号）。"""
+        folder = os.path.join(config.get_media_path(self.pid), (group_name or "").strip() or "1")
+        highest = 0
+        if os.path.isdir(folder):
+            for name in os.listdir(folder):
+                stem, ext = os.path.splitext(name)
+                if stem.isdigit() and ext.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    highest = max(highest, int(stem))
+        return highest
+
+    def stage_page_into_episode(self, staged_path: str, group_name: str, page_no: int) -> str:
+        """把临时目录里的一页复制成 media/<集>/<page_no>.<ext>（覆盖），返回新路径。"""
+        group_name = (group_name or "").strip() or "1"
+        folder = os.path.join(config.get_media_path(self.pid), group_name)
+        os.makedirs(folder, exist_ok=True)
+        ext = os.path.splitext(staged_path)[1].lower() or ".webp"
+        dest = os.path.join(folder, f"{int(page_no)}{ext}")
+        if os.path.abspath(dest) != os.path.abspath(staged_path):
+            shutil.copy2(staged_path, dest)
+        return os.path.abspath(dest)
 
     def export_pdf_pages_to_group(self, pdf_path: str, group_name: str) -> tuple[str, list[str]]:
         """把 PDF 每一页渲成 webp，接在这一集图片库已有的最大编号后面。

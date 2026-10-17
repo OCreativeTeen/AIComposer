@@ -1,4 +1,5 @@
 """ConfigMixin: methods moved verbatim from GUI_wf.py:WorkflowGUI."""
+import config_prompt
 import tkinter as tk
 import tkinter.messagebox as messagebox
 import os
@@ -185,6 +186,12 @@ class ConfigMixin:
             if hasattr(self, "scene_language"):
                 self._load_project_look_into_controls()
             self._refresh_narrator_button()
+            try:  # 全集生成的笔记本列表：后台刷新，失败只记一行
+                from utility import notebooklm_cdp
+
+                notebooklm_cdp.refresh_notebooks_in_background()  # 没开 9222 Chrome 会在后台自己启动
+            except Exception as exc:
+                print(f"NotebookLM 笔记本列表没有刷新：{exc}")
             print(f"✅ 已将配置应用到GUI: 频道={channel}, 语言={language}, PID={pid}")
             
         except Exception as e:
@@ -274,6 +281,7 @@ class ConfigMixin:
             'dialogue_mode': config.normalize_dialogue_mode(
                 (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
             ),
+            'scene_style': config_prompt.normalize_scene_style(self.scene_style.get()),
             'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
             'setting_region': (self.setting_region.get() or "").strip(),
             'setting_era': (self.setting_era.get() or "").strip(),
@@ -322,7 +330,8 @@ class ConfigMixin:
                 'dialogue_mode': config.normalize_dialogue_mode(
                     (self.scene_dialogue_mode.get() or "").strip() or config_data.get("dialogue_mode")
                 ),
-                'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
+                'scene_style': config_prompt.normalize_scene_style(self.scene_style.get()),
+            'title_font': (self.scene_language.get() or "").strip() or config_data.get("title_font"),
                 'setting_region': (self.setting_region.get() or "").strip(),
                 'setting_era': (self.setting_era.get() or "").strip(),
             })
@@ -452,7 +461,7 @@ class ConfigMixin:
             field.bind('<KP_Enter>', self.on_scene_field_return_commit)
             field.bind('<FocusOut>', self.on_scene_field_focus_out)
 
-        for field in (self.shared_language, self.scene_visual_style, self.scene_dialogue_mode, self.scene_language, self.setting_era):
+        for field in (self.shared_language, self.scene_visual_style, self.scene_dialogue_mode, self.scene_style, self.scene_language, self.setting_era):
             field.bind("<<ComboboxSelected>>", self._save_project_look)
             field.bind("<FocusOut>", self._save_project_look)
         self.setting_region.bind("<<ComboboxSelected>>", self._on_setting_region_selected)
