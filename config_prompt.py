@@ -401,7 +401,11 @@ def _slide_flow_inputs_note(visual: bool, speaking: bool, actor: bool, keywords:
             "A person not listed here is not one of them."
         )
     if keywords:
-        lines.append("- ``Keyword hint``: a short phrase you may use as background lettering.")
+        lines.append(
+            "- ``Keyword hint``: a hint for the scene's one keyword. If it is longer than "
+            f"{KEYWORD_MAX_ZH} Chinese characters or {KEYWORD_MAX_EN_WORDS} English words, compress it to that limit. "
+            "It is the only text that may appear, blended into the scene."
+        )
     lines.append("No other field is given.")
     return "\n".join(lines)
 
@@ -538,7 +542,7 @@ def slide_flow_scene_payload(
     for scene in scenes:
         base = _notebooklm_scene_content_base(scene)
         lines: list[str] = []
-        caption = (base.get("caption") or "").strip()
+        caption = short_keyword_hint(base.get("caption") or "")
         if keywords and caption:
             lines.append(f"Keyword hint: {caption}")
         vis = (base.get("visual") or "").strip()
@@ -598,8 +602,8 @@ NOTEBOOKLM_SPEAKER_RULE = (
     "- Present the ideas as the speaker's own first-person experience, thinking and views, shared and discussed with the audience from their own mind."
 )
 NOTEBOOKLM_VISUAL_RULE = (
-    "- 幻灯片和信息图上也不要出现「材料中的第一点」「资料指出」这类说法；标题和文字都用第一人称、自己的视角来写。\n"
-    "- Slides and infographics: no \"point one of the material\" style wording; titles and text keep the first-person, own-perspective framing."
+    "- 幻灯片和信息图上也不要出现「材料中的第一点」「资料指出」这类说法；画面上若有文字（标题或关键词），也用第一人称、自己的视角来写。\n"
+    "- Slides and infographics: no \"point one of the material\" style wording; any text that does appear (a title or a keyword) keeps the first-person, own-perspective framing."
 )
 NOTEBOOKLM_OUTPUT_LEADS = {
     "slides": "产物：演示文稿（每场一页幻灯片）。Output: a slide deck, one slide per scene.",
@@ -614,6 +618,30 @@ NOTEBOOKLM_OUTPUT_LEADS = {
         "with visuals that support what is being said."
     ),
 }
+
+
+def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
+    """全集生成：NotebookLM 爱给幻灯加标题和正文，这里按说明文字写死画面上能有什么字。汇报类不管（有自己的规则）。"""
+    if presentation or output not in ("slides", "infographic", "video_overview"):
+        return ""
+    unit_zh = {"slides": "每页幻灯片", "infographic": "信息图的每个场景部分", "video_overview": "视频的每个画面"}[output]
+    unit_en = {"slides": "Each slide", "infographic": "Each scene section of the infographic",
+               "video_overview": "Each visual of the video"}[output]
+    if text == "keywords":
+        return (
+            f"- 画面文字：{unit_zh}没有标题，也没有正文，唯一的字就是那一个融进场景的关键词（中文≤8字 / 英文≤3词）。\n"
+            f"- On-screen text: {unit_en} has NO title text and NO body text. The only text is that one keyword, "
+            "blended into the scene (Chinese ≤ 8 characters / English ≤ 3 words). "
+            "No text box, panel, board, card, title bar, or caption area.\n"
+            + KEYWORD_BG_RULE_ZH
+        )
+    if text in ("erase", "express"):
+        return (
+            f"- 画面文字：{unit_zh}没有标题、没有正文、没有关键词，也没有任何文字框、面板或标题栏，全部用画面来讲。\n"
+            f"- On-screen text: {unit_en} has NO title, NO body text, and NO keyword. "
+            "No text box, panel, board, card, title bar, or caption area. The picture tells it all."
+        )
+    return ""
 
 
 def build_slide_flow_prompt(
@@ -739,6 +767,11 @@ def build_slide_flow_prompt(
     else:
         lines.append(flow_caption_rule(text))
     lines.append(SLIDE_FLOW_META_NOTE)
+    if keywords:
+        lines.append(
+            "The one exception: the single short keyword from ``Keyword hint``, blended into the scene as described above. "
+            "Never the full scene title."
+        )
 
     if not presentation:
         phrase = setting_place_phrase(region, era)
@@ -775,6 +808,9 @@ def build_slide_flow_prompt(
         else:
             rule += ("\n- 讲述 / 汇报：讲员用第一人称讲，画面中的人物不说话。"
                      "\n- Telling / report: the 讲员 speaks in the first person; people in the pictures do not speak.")
+        text_rule = _notebooklm_text_rule(text, output, presentation)
+        if text_rule:
+            rule += "\n" + text_rule
         parts["Output_rules"] = NOTEBOOKLM_OUTPUT_LEADS[output] + "\n\n" + rule
     body = "\n".join(lines)
     if content_source:
@@ -1163,21 +1199,60 @@ def picture_flow_choice_label(task: str, text: str, visual_style: str = "") -> s
     return label
 
 
+# 关键字作背景：每场只要一个很短的关键词，融进场景本身；绝不能是独立的文字板。
+KEYWORD_MAX_ZH = 8
+KEYWORD_MAX_EN_WORDS = 3
+KEYWORD_BG_RULE_ZH = (
+    "关键字作背景（必须遵守）：\n"
+    "- 每一场 / 每一页只提炼一个很短的关键词：中文最多 8 个字，英文最多 3 个词。只有这一个，不要句子、不要列表、不要副标题、不要第二行。\n"
+    "- 这个关键词要融进场景本身，成为环境的一部分：例如画在或刻在墙上、写在场景里的桌面或纸上、路面或路牌上、店铺的招幌上，"
+    "或者轻轻浮在天空、云里。字的大小适中或偏小，绝不能抢眼。\n"
+    "- 禁止：单独的文字框、面板、白板、卡片、屏幕、横幅叠加、标题栏、字幕区；文字占据画面的一大块；纯色底上的大段文字。\n"
+    "- 画面（场景）才是主体，关键词只是一个不显眼的点缀。"
+)
+KEYWORD_BG_RULE_EN = (
+    "Keyword as background (must follow):\n"
+    "- Take ONE short keyword phrase per scene / slide: Chinese at most 8 characters, English at most 3 words. "
+    "Nothing more: no sentence, no bullet list, no subtitle, no second line.\n"
+    "- Blend that keyword into the scene itself, as part of the environment: painted or carved on a wall, "
+    "written on a table or a sheet of paper in the scene, on a road or a sign, on a shop banner, "
+    "or floating softly in the sky or the clouds. Small to moderate size, never dominant.\n"
+    "- Forbidden: a separate text box, panel, board, card, screen, banner overlay, title bar, or caption area; "
+    "text covering a large part of the frame; plain flat-background blocks of text.\n"
+    "- The picture, the scene, stays the main content. The keyword is only a subtle accent."
+)
+# 去掉文字 / 用画面讲 / 关键字作背景 共用：不要任何独立的文字区。
+NO_TEXT_PANEL_LINE = (
+    "No separate text box, panel, board, card, screen, banner overlay, title bar, or caption area anywhere in the frame."
+)
+
+
+def short_keyword_hint(text: str) -> str:
+    """把场景标题之类的长文字压成关键词提示：取第一段，中文最多 8 字，英文最多 3 词。"""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    seg = next((p.strip() for p in re.split(r"[，。；：、！？,.;:!?|/（）()「」『』“”\"《》\[\]\n—–\-]+", raw) if p.strip()), raw)
+    if re.search(r"[\u3400-\u9fff]", seg):
+        seg = re.sub(r"\s+", "", seg)
+        return seg[:KEYWORD_MAX_ZH]
+    return " ".join(seg.split()[:KEYWORD_MAX_EN_WORDS])
+
+
 def flow_caption_rule(text: str) -> str:
     """说明文字的三种处理，外加保留。图片、幻灯、视频用同一段。"""
     if text == "keywords":
         return (
             "Take the explanation text off the picture. Do not leave an empty board, a blank panel, "
             "or a ring of decoration around nothing.\n"
-            "From that text, keep only a few short keywords. Draw them as artistic lettering in the background, "
-            "blended into the place, behind the subject. One word or a short phrase. Never a sentence. Never a paragraph. "
-            "Never a caption bar. They only set the mood and mark the point.\n"
-            "The meaning itself is shown in the middle, through the people, the place, or the story. "
+            + KEYWORD_BG_RULE_EN + "\n"
+            "The meaning itself is shown through the people, the place, or the story. "
             "The center is full. It is not blank."
         )
     if text == "express":
         return (
-            "No letters anywhere. No keyword, no caption, no subtitle, no background writing, no speech bubble.\n"
+            "No letters anywhere. No keyword, no caption, no subtitle, no title, no background writing, no speech bubble.\n"
+            + NO_TEXT_PANEL_LINE + "\n"
             "Do not leave an empty board in the middle, and do not leave a ring of decoration around a blank center.\n"
             "Show what that text meant through the people, the place, or the story, in the middle of the picture. "
             "The center carries the meaning. It stays full."
@@ -1188,7 +1263,7 @@ def flow_caption_rule(text: str) -> str:
             "Those words are not part of the drawing.\n"
             "Do not leave an empty board, a blank panel, or a hole. "
             "Continue the same picture through that area: the place, the people, and the objects that belong there.\n"
-            "Do not add new lettering."
+            "Do not add new lettering. " + NO_TEXT_PANEL_LINE
         )
     return "Keep any words already drawn in the picture. They stay part of the picture. Do not add a new caption."
 
@@ -2440,8 +2515,9 @@ def _video_flow_instruction(
         )
         if background == "art_text":
             chunks.append(
-                f"""** In the deep background, behind the people, place a few artistic words. They belong to the picture, not to a subtitle bar.
-** Take only the shortest keywords from {content_fields}. A word or a short phrase. Never a sentence. Never a paragraph.
+                f"""** In the deep background, behind the people, place ONE short artistic keyword, blended into the place (a wall, a sign, a banner, the sky). It belongs to the picture, not to a subtitle bar.
+** Take it from {content_fields}: Chinese at most 8 characters, English at most 3 words. Never a sentence, never a second line. Small to moderate size, never dominant.
+** {NO_TEXT_PANEL_LINE}
 ** Draw the letters in a hand that fits the picture. Do not cover faces.
 ** Do not turn the content into captions or spoken lines."""
             )
@@ -4474,7 +4550,7 @@ def notebooklm_content_source_note(name: str, output: str) -> str:
         f"The scene-by-scene content is in the source file {name} in this notebook's sources, not in this prompt.",
         f"{name} lists the scenes in order (场景 1 / Scene 1, 场景 2 / Scene 2, ...). Each scene gives the fields "
         "described above under the same names (for example 场景描述 / Shown, 讲话 / Dialogue, "
-        "场景叙事 / Scene narration, 讲述内容 / Narration content, 人物 / Actors).",
+        "场景叙事 / Scene narration, 讲述内容 / Narration content, 人物 / Actors, 关键词 / Keyword hint). The 关键词 / Keyword hint field, when present, is the hint for that scene's one blended keyword.",
     ]
     if output == "audio_overview":
         lines.append("Some scenes include an image; for this audio you do not need the images.")

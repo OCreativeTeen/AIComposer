@@ -94,8 +94,9 @@ class PdfEpisodeMixin:
             pass
         dlg.grab_set()
 
-    def _on_media_drop_pdf(self, pdf_path: str) -> None:
-        """拖进来的 PDF：先拆到临时目录预览；分配给场景时才复制进本集 media 文件夹。"""
+    def _on_media_drop_pdf(self, pdf_path: str, origin: str = "drop") -> None:
+        """拖进来的 PDF（origin="drop"）或全集生成下载的 PDF（origin="全集生成"）：先拆到临时目录预览；
+        分配给场景时才复制进本集 media 文件夹。每次拆页都记进本集的 PDF 导入记录。"""
         scene = self.workflow.get_scene_by_index(self.current_scene_index)
         if not scene:
             messagebox.showwarning("PDF", "请先选中一个场景。", parent=self.root)
@@ -120,6 +121,10 @@ class PdfEpisodeMixin:
             messagebox.showwarning("PDF", "这个 PDF 没有可用的页。", parent=self.root)
             return
         print(f"✅ PDF 拆成 {len(pages)} 页，临时目录：{folder}")
+        try:
+            self.workflow.record_pdf_import(group_name, pdf_path, folder, len(pages), origin)
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 记录 PDF 导入失败：{e}")
         staging = {
             "dir": folder,
             "base": self.workflow.episode_next_page_base(group_name),
@@ -469,6 +474,16 @@ class PdfEpisodeMixin:
         )
         self._run_still_clip_videos(scenes)
 
+    def _pdf_import_label(self, entry: dict) -> str:
+        """来源下拉框里一条导入记录的名字：<pdf 名> · N页 · 时间。"""
+        when = str(entry.get("imported_at") or "")
+        when = when[5:16] if len(when) >= 16 else when  # MM-DD HH:MM
+        origin = "全集生成" if entry.get("origin") == "全集生成" else ""
+        parts = [entry.get("pdf_name") or "PDF", f"{int(entry.get('page_count') or 0)}页", when]
+        if origin:
+            parts.append(origin)
+        return " · ".join(p for p in parts if p)
+
     def _open_pdf_page_review(
         self,
         folder: str,
@@ -478,36 +493,66 @@ class PdfEpisodeMixin:
         initial_index: int = 0,
         staging: dict | None = None,
     ) -> None:
-        """翻页查看拆出的 PNG。左右方向键翻页；从当前页写到本集结束。"""
+        """翻页查看页图。左右方向键翻页；当前页 → 当前场景；从当前页写到本集结束。
+
+        顶上的「来源」下拉框：本集媒体文件夹（双击 clip 的原样），或本集导入过的某个 PDF 的拆页文件夹。
+        选 PDF 时分配会先把页复制进本集 media 文件夹再写到场景（同拖进 PDF 后的预览）。
+        ``staging`` 给了就是刚导入的那个 PDF，打开时选中它。
+        """
         dlg = tk.Toplevel(self.root)
         dlg.title(f"PDF 页面 · 第 {group_name} 集")
-        dlg.geometry("980x800")
-        dlg.minsize(720, 560)
+        dlg.geometry("980x820")
+        dlg.minsize(720, 580)
         dlg.transient(self.root)
-        idx = [max(0, min(int(initial_index or 0), len(pages) - 1))]
+        MEDIA_LABEL = "本集媒体文件夹"
+        media_folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        # 当前来源：staging 为 None = 本集媒体文件夹
+        state = {"staging": staging, "pdf_name": pdf_name, "folder": folder, "missing": False}
+        history: list[dict] = []
+        # 本集媒体文件夹来源分配时记的 episode_pdf：双击打开时就是本集 PDF；从导入预览切回来时用当前场景的本集 PDF
+        if staging is None:
+            media_pdf_name = pdf_name
+        else:
+            cur = self.workflow.get_scene_by_index(self.current_scene_index) or {}
+            media_pdf_name = os.path.basename(self._resolve_scene_episode_pdf(cur) or "") if isinstance(cur, dict) else ""
+        idx = [max(0, min(int(initial_index or 0), max(0, len(pages) - 1)))]
 
         def _fresh_pages() -> list:
-            """预览读哪里：临时拆页目录（staging），或本集 media 文件夹（双击 clip 的情形）。"""
-            if staging:
-                d = staging["dir"]
-                names = [n for n in os.listdir(d) if os.path.splitext(n)[0].isdigit()] if os.path.isdir(d) else []
-                return [os.path.join(d, n) for n in sorted(names, key=lambda n: int(os.path.splitext(n)[0]))]
+            """预览读哪里：PDF 拆页目录（staging），或本集 media 文件夹。"""
+            st = state["staging"]
+            if st:
+                return self.workflow.staged_page_paths(st["dir"])
+            if state["missing"]:
+                return []
             return self._episode_page_pngs(group_name)
 
         def _episode_no(page_no: int) -> int:
             """临时页号 → 本集页号（接在已有页之后，同旧的拆页编号）。"""
-            return int(staging["base"]) + int(page_no) if staging else int(page_no)
+            st = state["staging"]
+            return int(st["base"]) + int(page_no) if st else int(page_no)
 
         def _assign_image(scene: dict, i: int) -> int:
-            """分配第 i 页给场景：staging 时先复制进本集 media 文件夹。返回本集页号。"""
+            """分配第 i 页给场景：PDF 来源时先复制进本集 media 文件夹。返回本集页号。"""
             page_no = _page_number(i)
             src = pages[i]
-            if staging:
+            st = state["staging"]
+            if st:
                 page_no = _episode_no(page_no)
                 src = self.workflow.stage_page_into_episode(src, group_name, page_no)
             self._assign_scene_clip_image_from_file(scene, src)
-            self._tag_scene_pdf_page(scene, group_name, page_no, pdf_name)
+            self._tag_scene_pdf_page(scene, group_name, page_no, state["pdf_name"])
             return page_no
+
+        # ---- 来源 ----
+        src_row = ttk.Frame(dlg)
+        src_row.pack(fill=tk.X, padx=8, pady=(8, 4))
+        ttk.Label(src_row, text="来源").pack(side=tk.LEFT, padx=(0, 6))
+        source_var = tk.StringVar(value=MEDIA_LABEL)
+        source_box = ttk.Combobox(src_row, textvariable=source_var, state="readonly", width=70)
+        source_box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        source_note = tk.Label(src_row, text="", anchor="w", fg="#888888")
+        source_note.pack(side=tk.LEFT, padx=(8, 0))
+
         photo_holder: list = [None]
         showing = [False]
 
@@ -566,9 +611,16 @@ class PdfEpisodeMixin:
 
         def _show_page_body():
             # 每次都重新读文件夹，总页数以文件夹里实际有的图为准，和场景数无关。
-            fresh = _fresh_pages()
-            if fresh:
-                pages[:] = fresh
+            pages[:] = _fresh_pages()
+            canvas.delete("all")
+            if not pages:
+                photo_holder[0] = None
+                msg = "这个来源的拆页文件夹和原 PDF 都不在了。" if state["missing"] else "这个来源里没有页图。"
+                canvas.create_text(20, 20, text=msg, anchor="nw", fill="#aaaaaa", font=("Microsoft YaHei UI", 14))
+                status.config(text=f"0 张图    {_scene_label()}")
+                usage_lbl.config(text="")
+                hint_lbl.config(text="")
+                return
             idx[0] = max(0, min(idx[0], len(pages) - 1))
             i = idx[0]
             path = pages[i]
@@ -587,20 +639,27 @@ class PdfEpisodeMixin:
             img = img.resize((nw, nh), Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(img)
             photo_holder[0] = photo
-            canvas.delete("all")
             canvas.create_image(cw // 2, ch // 2, image=photo)
             page_no = _page_number(i)
-            users = _page_users(_episode_no(page_no))
-            if users:
-                usage_text = f"第 {page_no} 页 → 已分给：" + "、".join(users)
-                usage_color = "#0a6b0a"
-                badge = "场景：" + "、".join(u.split("（")[0] for u in users)
-                badge_color = "#7CFC7C"
+            if state["staging"]:
+                # PDF 来源：这一页还没复制进本集，只能看本集同号的页有没有人用（分配后才算）
+                users = []
+                usage_text = f"PDF 第 {page_no} 页 → 分配后成为本集第 {_episode_no(page_no)} 页"
+                usage_color = "#1a4fa0"
+                badge = f"{state['pdf_name']} · 第 {page_no} 页"
+                badge_color = "#FFD54F"
             else:
-                usage_text = f"第 {page_no} 页 → 还没有被任何场景使用"
-                usage_color = "#b00020"
-                badge = "还没有被任何场景使用"
-                badge_color = "#FF8A80"
+                users = _page_users(_episode_no(page_no))
+                if users:
+                    usage_text = f"第 {page_no} 页 → 已分给：" + "、".join(users)
+                    usage_color = "#0a6b0a"
+                    badge = "场景：" + "、".join(u.split("（")[0] for u in users)
+                    badge_color = "#7CFC7C"
+                else:
+                    usage_text = f"第 {page_no} 页 → 还没有被任何场景使用"
+                    usage_color = "#b00020"
+                    badge = "还没有被任何场景使用"
+                    badge_color = "#FF8A80"
             usage_lbl.config(text=usage_text, fg=usage_color)
             hint_lbl.config(text=_forward_hint(i))
             canvas.create_text(
@@ -609,17 +668,18 @@ class PdfEpisodeMixin:
             canvas.create_text(
                 11, 11, text=badge, anchor="nw", fill=badge_color, font=("Microsoft YaHei UI", 14, "bold")
             )
+            where = "PDF 拆页" if state["staging"] else "本集文件夹"
             status.config(
                 text=(
-                    f"本集文件夹共 {len(pages)} 张图，当前第 {i + 1} / {len(pages)} 张"
+                    f"{where}共 {len(pages)} 张图，当前第 {i + 1} / {len(pages)} 张"
                     f"（{os.path.basename(path)}）    {_scene_label()}"
                 )
             )
 
         def _step(delta: int):
-            fresh = _fresh_pages()
-            if fresh:
-                pages[:] = fresh
+            pages[:] = _fresh_pages()
+            if not pages:
+                return
             idx[0] = (idx[0] + delta) % len(pages)
             _show_page()
 
@@ -632,6 +692,8 @@ class PdfEpisodeMixin:
             scene = self.workflow.get_scene_by_index(self.current_scene_index)
             if not scene:
                 messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
+                return
+            if not pages:
                 return
             try:
                 page_no = _assign_image(scene, idx[0])
@@ -656,6 +718,8 @@ class PdfEpisodeMixin:
             scene_i = self.current_scene_index
             if scene_i < 0 or scene_i >= len(self.workflow.scenes):
                 messagebox.showwarning("PDF", "请先在主窗口选中一个场景。", parent=dlg)
+                return
+            if not pages:
                 return
             page_i = idx[0]
             written = 0
@@ -692,22 +756,124 @@ class PdfEpisodeMixin:
         bar.pack(fill=tk.X, padx=8, pady=8)
         ttk.Button(bar, text="上一页", command=lambda: _step(-1)).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(bar, text="下一页", command=lambda: _step(1)).pack(side=tk.LEFT, padx=(0, 16))
-        if staging and staging.get("pdf"):
-            def _open_external():
-                try:
-                    os.startfile(staging["pdf"])
-                except OSError as exc:
-                    messagebox.showwarning("PDF", f"打不开：{exc}", parent=dlg)
 
-            ttk.Button(bar, text="外部打开 PDF", command=_open_external).pack(side=tk.RIGHT)
-        ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(bar, text="写到本集结束", command=_assign_forward).pack(side=tk.LEFT)
+        def _open_external():
+            st = state["staging"]
+            if not st or not st.get("pdf"):
+                return
+            try:
+                os.startfile(st["pdf"])
+            except OSError as exc:
+                messagebox.showwarning("PDF", f"打不开：{exc}", parent=dlg)
+
+        ext_btn = ttk.Button(bar, text="外部打开 PDF", command=_open_external)
+        ext_btn.pack(side=tk.RIGHT)
+        assign_btn = ttk.Button(bar, text="当前页 → 当前场景", command=_assign_current)
+        assign_btn.pack(side=tk.LEFT, padx=(0, 6))
+        forward_btn = ttk.Button(bar, text="写到本集结束", command=_assign_forward)
+        forward_btn.pack(side=tk.LEFT)
+
+        def _sync_buttons():
+            st = state["staging"]
+            can_open = bool(st and st.get("pdf") and os.path.isfile(st["pdf"]))
+            ext_btn.state(["!disabled"] if can_open else ["disabled"])
+            ok = not state["missing"]
+            for b in (assign_btn, forward_btn):
+                b.state(["!disabled"] if ok else ["disabled"])
+
+        def _labels() -> list[str]:
+            return [MEDIA_LABEL] + [self._pdf_import_label(e) for e in history]
+
+        def _reload_history():
+            history[:] = self.workflow.pdf_import_history(group_name)
+            source_box.config(values=_labels())
+
+        def _select_source(pos: int):
+            """pos 0 = 本集媒体文件夹；1.. = history[pos-1]。"""
+            state["missing"] = False
+            source_note.config(text="")
+            if pos <= 0 or pos > len(history):
+                state.update(staging=None, pdf_name=media_pdf_name, folder=media_folder)
+                source_var.set(MEDIA_LABEL)
+                dlg.title(f"PDF 页面 · 第 {group_name} 集 · {MEDIA_LABEL}")
+                path_lbl.config(text=media_folder)
+            else:
+                entry = history[pos - 1]
+                try:
+                    dlg.config(cursor="watch")
+                    dlg.update_idletasks()
+                    found, how = self.workflow.ensure_pdf_import_pages(group_name, entry)
+                except Exception as e:  # noqa: BLE001
+                    found, how = [], "missing"
+                    print(f"⚠️ 重新拆页失败：{e}")
+                finally:
+                    try:
+                        dlg.config(cursor="")
+                    except tk.TclError:
+                        pass
+                state.update(
+                    staging={
+                        "dir": entry.get("split_dir") or "",
+                        "base": self.workflow.episode_next_page_base(group_name),
+                        "pdf": entry.get("source_path") or "",
+                    },
+                    pdf_name=entry.get("pdf_name") or "",
+                    folder=entry.get("split_dir") or "",
+                )
+                if how == "missing":
+                    state["missing"] = True
+                    source_note.config(text="（拆页文件夹和原 PDF 都不在了）", fg="#888888")
+                elif how == "resplit":
+                    source_note.config(text="（拆页文件夹不在，已从原 PDF 重新拆）", fg="#1a4fa0")
+                    _reload_history()
+                source_box.current(pos)
+                dlg.title(f"PDF 页面 · 第 {group_name} 集 · {entry.get('pdf_name') or 'PDF'}")
+                path_lbl.config(text=state["folder"], foreground=("#888888" if state["missing"] else ""))
+            idx[0] = 0
+            _sync_buttons()
+            _show_page()
+
+        def _on_source(_event=None):
+            _select_source(source_box.current())
+
+        source_box.bind("<<ComboboxSelected>>", _on_source)
+        _reload_history()
+        # 打开时选哪个：刚导入的 PDF（staging）就选它那条，否则本集媒体文件夹（原样）
+        first_pos = 0
+        if staging:
+            first_pos = next(
+                (n for n, e in enumerate(history, start=1)
+                 if self.workflow._same_dir(e.get("split_dir"), staging.get("dir"))),
+                0,
+            )
+        if staging and first_pos == 0:
+            # 没有记录（不应发生）：照旧直接看这个临时目录
+            source_var.set(os.path.basename(staging.get("dir") or "PDF"))
+            path_lbl.config(text=staging.get("dir") or "")
+            _sync_buttons()
+        elif first_pos:
+            source_box.current(first_pos)
+            state["folder"] = history[first_pos - 1].get("split_dir") or folder
+            path_lbl.config(text=state["folder"])
+            dlg.title(f"PDF 页面 · 第 {group_name} 集 · {pdf_name}")
+            _sync_buttons()
+        else:
+            source_box.current(0)
+            dlg.title(f"PDF 页面 · 第 {group_name} 集 · {MEDIA_LABEL}")
+            _sync_buttons()
+            if not pages and history:
+                # 本集文件夹里还没有页图：直接看最新导入的 PDF
+                dlg.after(10, lambda: _select_source(1))
 
         def _on_left(_event=None):
+            if isinstance(_event.widget, ttk.Combobox):
+                return None
             _step(-1)
             return "break"
 
         def _on_right(_event=None):
+            if isinstance(_event.widget, ttk.Combobox):
+                return None
             _step(1)
             return "break"
 
@@ -715,6 +881,8 @@ class PdfEpisodeMixin:
         dlg.bind_all("<Right>", _on_right)
 
         def _release_keys(_event=None):
+            if _event is not None and _event.widget is not dlg:
+                return
             try:
                 dlg.unbind_all("<Left>")
                 dlg.unbind_all("<Right>")
@@ -723,5 +891,14 @@ class PdfEpisodeMixin:
 
         dlg.bind("<Destroy>", _release_keys)
         canvas.bind("<Configure>", _show_page)
+        # 测试和其他代码用：切换来源、分配
+        dlg._pdf_review = {
+            "select_source": _select_source,
+            "assign_current": _assign_current,
+            "state": state,
+            "pages": pages,
+            "labels": _labels,
+            "idx": idx,
+        }
         dlg.after(50, _show_page)
         dlg.after(80, canvas.focus_set)

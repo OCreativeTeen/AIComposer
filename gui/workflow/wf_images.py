@@ -563,6 +563,11 @@ class ImagesMixin:
         group_name = self.workflow.scene_group(scene)
         pages = self._episode_page_pngs(group_name)
         folder = os.path.join(config.get_media_path(self.workflow.pid), group_name)
+        has_history = bool(self.workflow.pdf_import_history(group_name))
+        if not pdf_path and not pages and has_history:
+            # 本集文件夹还没有页图，但导入过 PDF：打开预览，在「来源」里选那个 PDF
+            self._open_pdf_page_review(folder, [], group_name, "", initial_index=0)
+            return
         if not pdf_path and not pages:
             messagebox.showinfo(
                 "页图",

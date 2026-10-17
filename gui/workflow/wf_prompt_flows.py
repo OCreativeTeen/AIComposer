@@ -321,7 +321,7 @@ class PromptFlowsMixin:
                 except OSError as exc:
                     print(f"⚠️ 移动到 working 失败，用原位置：{exc}")
                 if path.lower().endswith(".pdf"):
-                    self.root.after(50, lambda p=path: self._on_media_drop_pdf(p))
+                    self.root.after(50, lambda p=path: self._on_media_drop_pdf(p, origin="全集生成"))
                     return
                 try:
                     os.startfile(path)

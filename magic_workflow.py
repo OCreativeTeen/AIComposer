@@ -32,6 +32,8 @@ import tkinter as tk
 
 
 PDF_STAGING_ROOT = r"D:\AI_MEDIA\working\pdf_pages"
+PDF_IMPORT_HISTORY_NAME = "pdf_imports.json"  # 每集一份：media/<集>/pdf_imports.json
+PDF_IMPORT_HISTORY_CAP = 20
 
 
 def _safe_stem(path: str) -> str:
@@ -1390,12 +1392,13 @@ class MagicWorkflow:
                 continue
         return highest + 1
 
-    def split_pdf_to_staging(self, pdf_path: str) -> tuple[str, list[str]]:
+    def split_pdf_to_staging(self, pdf_path: str, folder: str = "") -> tuple[str, list[str]]:
         """PDF 拆成页图放进临时目录 D:\\AI_MEDIA\\working\\pdf_pages\\<PDF 名>\\（每次先清空）。
 
         这里只供预览；分配给场景时才复制进项目 media/<集>/（见 stage_page_into_episode）。
+        同名 PDF 再导入就重用（覆盖）同一个文件夹，导入记录随之更新。``folder`` 给了就拆到那里（重新拆旧记录用）。
         """
-        folder = os.path.join(PDF_STAGING_ROOT, _safe_stem(pdf_path))
+        folder = folder or os.path.join(PDF_STAGING_ROOT, _safe_stem(pdf_path))
         if os.path.isdir(folder):
             shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, exist_ok=True)
@@ -1423,6 +1426,81 @@ class MagicWorkflow:
         if os.path.abspath(dest) != os.path.abspath(staged_path):
             shutil.copy2(staged_path, dest)
         return os.path.abspath(dest)
+
+    # ---- 每集 PDF 导入记录 -------------------------------------------------------------
+    def pdf_import_history_path(self, episode: str) -> str:
+        return os.path.join(self.episode_media_dir(episode), PDF_IMPORT_HISTORY_NAME)
+
+    def pdf_import_history(self, episode: str) -> list[dict]:
+        """这一集导入过的 PDF，新的在前。读不到就是空列表。"""
+        path = self.pdf_import_history_path(episode)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return []
+        items = data.get("imports") if isinstance(data, dict) else data
+        return [e for e in (items or []) if isinstance(e, dict) and e.get("split_dir")]
+
+    def _save_pdf_import_history(self, episode: str, items: list[dict]) -> None:
+        path = self.pdf_import_history_path(episode)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        part = path + ".part"
+        with open(part, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "imports": items[:PDF_IMPORT_HISTORY_CAP]}, f, ensure_ascii=False, indent=2)
+        os.replace(part, path)
+
+    @staticmethod
+    def _same_dir(a: str, b: str) -> bool:
+        return os.path.normcase(os.path.abspath(a or "")) == os.path.normcase(os.path.abspath(b or ""))
+
+    def record_pdf_import(self, episode: str, pdf_path: str, split_dir: str, page_count: int, origin: str) -> dict:
+        """记一次拆页导入：同一个拆页文件夹只留一条（更新并移到最前），最多 PDF_IMPORT_HISTORY_CAP 条。"""
+        entry = {
+            "pdf_name": os.path.basename(pdf_path or ""),
+            "pdf_stem": os.path.splitext(os.path.basename(pdf_path or ""))[0],
+            "source_path": os.path.abspath(pdf_path) if pdf_path else "",
+            "split_dir": os.path.abspath(split_dir),
+            "page_count": int(page_count or 0),
+            "imported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "origin": origin or "drop",
+        }
+        items = [e for e in self.pdf_import_history(episode) if not self._same_dir(e.get("split_dir"), split_dir)]
+        items.insert(0, entry)
+        self._save_pdf_import_history(episode, items)
+        return entry
+
+    @staticmethod
+    def staged_page_paths(folder: str) -> list[str]:
+        """拆页文件夹里按页码排好的图（文件名是数字）。"""
+        if not folder or not os.path.isdir(folder):
+            return []
+        names = [
+            n for n in os.listdir(folder)
+            if os.path.splitext(n)[0].isdigit() and os.path.splitext(n)[1].lower() in (".webp", ".png", ".jpg", ".jpeg")
+        ]
+        return [os.path.join(folder, n) for n in sorted(names, key=lambda n: int(os.path.splitext(n)[0]))]
+
+    def ensure_pdf_import_pages(self, episode: str, entry: dict) -> tuple[list[str], str]:
+        """打开一条导入记录：文件夹在就用；不在（或空）而原 PDF 还在就重新拆；都不在返回 ([], "missing")。
+
+        第二个值："ok" / "resplit" / "missing"。重新拆后更新记录里的页数（不改导入时间和顺序）。
+        """
+        folder = entry.get("split_dir") or ""
+        pages = self.staged_page_paths(folder)
+        if pages:
+            return pages, "ok"
+        src = entry.get("source_path") or ""
+        if not src or not os.path.isfile(src):
+            return [], "missing"
+        folder, pages = self.split_pdf_to_staging(src, folder=folder)
+        items = self.pdf_import_history(episode)
+        for e in items:
+            if self._same_dir(e.get("split_dir"), folder):
+                e["page_count"] = len(pages)
+        self._save_pdf_import_history(episode, items)
+        entry["page_count"] = len(pages)
+        return list(pages), "resplit"
 
     def export_pdf_pages_to_group(self, pdf_path: str, group_name: str) -> tuple[str, list[str]]:
         """把 PDF 每一页渲成 webp，接在这一集图片库已有的最大编号后面。
