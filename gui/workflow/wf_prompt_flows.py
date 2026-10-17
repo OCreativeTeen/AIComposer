@@ -299,7 +299,9 @@ class PromptFlowsMixin:
             cfg["slide_prompt"] = choice
             save_project_config(parent=self.root)
 
-        def open_slides_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "") -> None:
+        def open_slides_manual(
+            prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "", actor_pdf: str = ""
+        ) -> None:
             """提交：手工 LLM 窗口 CLI自动 → NotebookLM Studio（kind）→ 下载 → 系统程序打开。"""
             import os
             from pathlib import Path
@@ -333,6 +335,8 @@ class PromptFlowsMixin:
                 extra["notebook_url"] = notebook_url
             if source_pdf:
                 extra["source_pdf"] = source_pdf  # CLI自动：先上传为笔记本来源，再生成
+            if actor_pdf:
+                extra["actor_pdf"] = actor_pdf  # 本集人物：content.pdf 之后上传
             self.llm_api.show_manual_window(
                 prompt, "", auto_cli=True, cli_kind=kind or "slides",
                 file_dest_dir=working, on_file_response=_open_file, extra=extra,
@@ -350,4 +354,5 @@ class PromptFlowsMixin:
             get_place=get_place,
             main_character="",
             open_manual=open_slides_manual,
+            actor_avatar_dir=os.path.join(config.get_project_path(self.get_pid()), "avatar"),
         )

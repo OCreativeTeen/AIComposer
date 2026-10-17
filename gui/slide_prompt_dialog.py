@@ -152,6 +152,7 @@ def open_slide_prompt_dialog(
     saved_choice=None,
     save_choice=None,
     open_manual=None,
+    actor_avatar_dir: str = "",
 ) -> None:
     """先选叙事风格，再选目标、画面文字和写进提示词的内容。
 
@@ -197,7 +198,10 @@ def open_slide_prompt_dialog(
         text_buttons.append(btn)
 
     # 写进提示词的内容 放在「说明文字」右边，同一行。
-    from utility.content_pdf import CONTENT_PDF_NAME, CONTENT_PDF_PATH, build_content_pdf
+    from utility.content_pdf import (
+        ACTOR_PDF_NAME, ACTOR_PDF_PATH, CONTENT_PDF_NAME, CONTENT_PDF_PATH, build_actor_pdf, build_content_pdf,
+        scenes_have_images,
+    )
 
     pack_scene_field_choices(
         groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
@@ -273,6 +277,21 @@ def open_slide_prompt_dialog(
         if not scenes:
             messagebox.showwarning("全集生成", "没有可用场景", parent=dlg)
             return
+        cast = config_prompt.episode_actor_cast(scenes)
+        if cast and not actor_var.get():
+            # 场景里有人物，但「人物」没勾：不会有 Actors / actor.pdf / Actor_Reference。说清楚，让用户选。
+            names = "、".join(row["name"] for row in cast[:4]) + ("……" if len(cast) > 4 else "")
+            print(f"全集生成：本集场景里有人物（{names}），但「人物 (actor)」没勾，不生成 actor.pdf，提示词里也没有人物。")
+            answer = messagebox.askyesnocancel(
+                "全集生成",
+                f"本集场景里有人物：{names}\n\n但「人物 (actor)」没勾，这次不会生成 / 上传 actor.pdf，"
+                "content.pdf 和提示词里也不写人物。\n\n是 = 勾上人物再提交\n否 = 不要人物，照样提交\n取消 = 回去改",
+                parent=dlg,
+            )
+            if answer is None:
+                return
+            if answer:
+                actor_var.set(True)
         style = (get_style() or "").strip()
         if not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
@@ -293,6 +312,8 @@ def open_slide_prompt_dialog(
                 actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
                 output=output_var.get(),
                 content_source=CONTENT_PDF_NAME,
+                actor_source=ACTOR_PDF_NAME,
+                content_images=bool(image_var.get()) and scenes_have_images(scenes),
             )
         except ValueError as exc:
             messagebox.showerror("全集生成", str(exc), parent=dlg)
@@ -328,11 +349,35 @@ def open_slide_prompt_dialog(
                 dlg.config(cursor="")
             except tk.TclError:
                 pass
+        actor_pdf = ""
+        # 和提示词里 Actor_Reference 同一条件：带 Actors，或讲述/汇报没有讲员时的 Silent actors；没有人物就不做。
+        if config_prompt.prompt_has_cast(narrative, bool(actor_var.get()), scenes):
+            try:
+                actor_pdf, _cast = build_actor_pdf(scenes, avatar_dir=actor_avatar_dir, dest=ACTOR_PDF_PATH)
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showerror("全集生成", f"生成 {ACTOR_PDF_NAME} 失败：{exc}", parent=dlg)
+                return
+            print(f"全集生成：{ACTOR_PDF_NAME} = {actor_pdf or '（没有人物，未生成）'}")
+        elif not actor_var.get():
+            print(f"全集生成：「人物 (actor)」没勾，跳过 {ACTOR_PDF_NAME}。")
+        else:
+            print(f"全集生成：本集没有可用的人物（叙事风格 {narrative}），跳过 {ACTOR_PDF_NAME}。")
+        if not actor_pdf and "Actor_Reference:" in prompt:
+            prompt = config_prompt.strip_actor_reference(prompt, ACTOR_PDF_NAME)
+            try:
+                copy_text(prompt)
+            except (tk.TclError, OSError):
+                pass
+            print(f"全集生成：没有 {ACTOR_PDF_NAME}，已从提示词去掉 Actor_Reference。")
+        print(
+            f"全集生成：提交 output={output_var.get()} narrative={narrative} 人物={bool(actor_var.get())} "
+            f"Actor_Reference={'Actor_Reference:' in prompt} content.pdf={pdf_path} actor.pdf={actor_pdf or '-'}"
+        )
         kind = output_var.get()
         nb_url = current_notebook_url()
         close()
         if callable(open_manual):
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path))
+            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, actor_pdf))
 
     # 提交按钮放在右下角，字比默认大 30%，加粗。
     big_submit_button(dlg, bottom, copy_prompt).pack(

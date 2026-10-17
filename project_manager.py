@@ -3112,3 +3112,111 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
 
     return result, selected_config
 
+
+# speaking 里的说话人标记 ``<N>`` / ``＜N＞``（整数）。``<0.5>`` 这种带小数点的是停顿，不匹配。
+# N 是 actor 里按书写顺序的第 N 个人（讲员在哪个位置就算第几个），见 voicebox ``split_speaking_turns``
+# 和 ``_speaking_voice_turns``：第一个标记前面的字算第 1 个人。
+_SPEAKER_MARK_SPLIT_RE = re.compile(r"([<＜])(\d+)([>＞])")
+
+
+def actor_speaker_rows(text: str) -> list:
+    """配音用的那份名单：``actor_entries`` 里 body 不为空的各行，顺序就是 <N> 的 N。"""
+    return [r for r in actor_entries(text or "") if (r.get("body") or "").strip()]
+
+
+def actor_index_by_name(text: str, name: str) -> int:
+    """全名为 ``name`` 的那一位在 ``actor_speaker_rows`` 里的位置（从 1 起）；没有返回 0。"""
+    target = (name or "").strip()
+    if not target:
+        return 0
+    for i, row in enumerate(actor_speaker_rows(text), start=1):
+        body, _motion = split_actor_motion((row.get("body") or "").strip())
+        if body.strip() == target:
+            return i
+    return 0
+
+
+def speaker_mark_map(rows: list, deleted_index: int) -> dict:
+    """删掉第 ``deleted_index`` 位后，旧 N → 新 N。
+
+    被删的人的话归讲员（剩下的人里有讲员）；没有讲员就归剩下的第一位。后面的人往前挪一位。
+    """
+    n = len(rows or [])
+    if not (1 <= deleted_index <= n):
+        return {}
+    kept = [r for i, r in enumerate(rows, start=1) if i != deleted_index]
+    if not kept:
+        return {}
+    target = next((i for i, r in enumerate(kept, start=1) if r.get("role") == "host"), 1)
+    out = {}
+    for i in range(1, n + 1):
+        if i == deleted_index:
+            out[i] = target
+        else:
+            out[i] = i if i < deleted_index else i - 1
+    return out
+
+
+def remap_speaker_marks(text: str, mapping: dict) -> str:
+    """按 ``mapping`` 改 <N>，再把连着的同一个人的标记合成一个（``<1>a<1>b`` → ``<1>ab``）。
+
+    停顿 ``<0.5>`` 和别的不是整数的标记原样保留，也不打断「同一个人」。
+    第一个标记前面的字算第 1 个人；第 1 个人换了编号时，在开头补上新的标记。
+    不在 ``mapping`` 里的 N（超出名单的）原样保留。
+    """
+    if not text or not mapping:
+        return text or ""
+    parts = _SPEAKER_MARK_SPLIT_RE.split(text)
+    out = []
+    current = None
+    lead = parts[0]
+    if lead.strip():
+        current = mapping.get(1, 1)
+        if current != 1:
+            out.append(f"<{current}>")
+    out.append(lead)
+    i = 1
+    while i + 3 <= len(parts):
+        opener, num, closer, body = parts[i], parts[i + 1], parts[i + 2], parts[i + 3]
+        old = int(num)
+        new = mapping.get(old, old)
+        if new == current:
+            prev = out[-1] if out else ""
+            if prev[-1:] in (" ", "\t") and body[:1] in (" ", "\t"):
+                body = body.lstrip(" \t")
+        else:
+            out.append(f"{opener}{new}{closer}")
+            current = new
+        out.append(body)
+        i += 4
+    return "".join(out)
+
+
+def apply_actor_delete(scene: dict, actor_text: str, deleted_index: int) -> bool:
+    """从 ``scene`` 的名单（``actor_text``）里删掉第 ``deleted_index`` 位，并改 speaking 的 <N>。
+
+    speaking_timing 记录还对得上原 speaking 时，里面每段的 speaker 用同一张表改，并改记新的 speaking，
+    这样已有的分段时间不会因为 speaking 变了而作废。只剩这一位时不删，返回 False。
+    """
+    rows = actor_speaker_rows(actor_text)
+    if len(rows) <= 1 or not (1 <= deleted_index <= len(rows)):
+        return False
+    mapping = speaker_mark_map(rows, deleted_index)
+    kept = [r for i, r in enumerate(rows, start=1) if i != deleted_index]
+    scene["actor"] = normalize_actor_text(format_actor_entries(kept))
+    old_speaking = scene.get("speaking") or ""
+    new_speaking = remap_speaker_marks(old_speaking, mapping)
+    if new_speaking != old_speaking:
+        scene["speaking"] = new_speaking
+    record = scene.get("speaking_timing")
+    if isinstance(record, dict) and (record.get("text") or "").strip() == old_speaking.strip():
+        for sec in record.get("sections") or []:
+            if not isinstance(sec, dict):
+                continue
+            try:
+                sp = int(sec.get("speaker") or 1)
+            except (TypeError, ValueError):
+                continue
+            sec["speaker"] = mapping.get(sp, sp)
+        record["text"] = new_speaking.strip()
+    return True

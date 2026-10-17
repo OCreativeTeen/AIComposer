@@ -87,7 +87,11 @@ class ActorsMixin:
         motion_text = self._motion_chip_text(motion)
         if motion_text:
             text = f"{text} {motion_text}"
-        chip = tk.Frame(row, bg="white", relief="sunken", bd=1, cursor="fleur")
+        # 可以 Tab / 点一下获得焦点（蓝框 + 浅蓝底），再按 Delete / BackSpace 删除。
+        chip = tk.Frame(
+            row, bg="white", relief="sunken", bd=1, cursor="fleur", takefocus=1,
+            highlightthickness=2, highlightbackground="white", highlightcolor="#1a73e8",
+        )
         label = tk.Label(chip, text=text, bg="white", cursor="fleur", anchor="w")
         label.pack(fill=tk.BOTH, expand=True, padx=6, pady=2)
         chip._actor_entry = dict(entry)
@@ -101,6 +105,10 @@ class ActorsMixin:
             widget.bind("<B1-Motion>", self._actor_motion)
             widget.bind("<ButtonRelease-1>", self._actor_release)
             widget.bind("<Double-Button-1>", self._actor_double)
+        chip.bind("<FocusIn>", lambda _e, c=chip, l=label: self._actor_chip_focus(c, l, True))
+        chip.bind("<FocusOut>", lambda _e, c=chip, l=label: self._actor_chip_focus(c, l, False))
+        chip.bind("<Delete>", self._actor_delete_key)
+        chip.bind("<BackSpace>", self._actor_delete_key)
         self._actor_buttons.append(chip)
 
     def _actor_chip(self, widget):
@@ -109,8 +117,100 @@ class ActorsMixin:
             widget = getattr(widget, "master", None)
         return widget
 
+    @staticmethod
+    def _actor_chip_focus(chip, label, on: bool) -> None:
+        bg = "#dbe9ff" if on else "white"
+        try:
+            chip.configure(bg=bg)
+            label.configure(bg=bg)
+        except tk.TclError:
+            pass
+
+    def _actor_delete_key(self, event) -> str:
+        chip = self._actor_chip(event.widget)
+        entry = getattr(chip, "_actor_entry", None)
+        if isinstance(entry, dict):
+            self._delete_actor_from_chip(entry)
+        return "break"
+
+    def _delete_actor_from_chip(self, entry: dict, *, ask=None) -> str:
+        """人物栏按 Delete：问「本集所有场景同名都删？」是 = 本集每一场；否 = 只这一场；取消 = 不动。
+
+        ``ask`` 只给测试用（返回 True / False / None）。返回 "episode" / "scene" / "cancel" / "none"。
+        """
+        body, _motion = project_manager.split_actor_motion((entry.get("body") or "").strip())
+        name = body.strip()
+        if not name or project_manager.actor_is_absent(name):
+            return "none"
+        parent = self.root
+        if ask is None:
+            answer = messagebox.askyesnocancel(
+                "删除", f"要把本集所有场景中同名的「{name}」都删除吗？", parent=parent
+            )
+        else:
+            answer = ask(name)
+        if answer is None:
+            return "cancel"
+        if not answer:
+            rows = self._scene_actor_rows()
+            if len(rows) <= 1:
+                messagebox.showinfo("删除", "这一场至少要留下一个讲员或人物。", parent=parent)
+                return "none"
+            _kept, removed = self._drop_scene_actor(entry)
+            if not removed:
+                messagebox.showinfo("删除", "这一场的名单里没有这一位。", parent=parent)
+                return "none"
+            if not self._apply_current_scene_actor_delete(entry):
+                return "none"
+            self._after_actor_delete()
+            return "scene"
+        workflow = getattr(self, "workflow", None)
+        cur = workflow.get_scene_by_index(self.current_scene_index) if workflow else None
+        if not isinstance(cur, dict):
+            return "none"
+        changed = 0
+        kept_last = 0
+        self._sync_speaking_widget_to_scene(cur)
+        for scene in workflow.scenes_in_story(cur):
+            if not isinstance(scene, dict):
+                continue
+            text = self._actor_text if scene is cur else (scene.get("actor") or "")
+            index = project_manager.actor_index_by_name(text, name)
+            if not index:
+                continue
+            if not project_manager.apply_actor_delete(scene, text, index):
+                kept_last += 1  # 只剩这一位：整场不动
+                continue
+            if scene is cur:
+                self._actor_text = scene.get("actor") or ""
+            changed += 1
+        if changed:
+            self._show_scene_speaking(cur)
+            workflow.save_scenes_to_json()
+        self._render_actor_buttons()
+        self._after_actor_delete()
+        note = f"本集 {changed} 场删掉了「{name}」。"
+        if kept_last:
+            note += f"\n{kept_last} 场里只有这一位，按「至少留一个讲员或人物」没有删。"
+        show_auto_close_popup(self.root, "删除", note, duration_ms=2500)
+        return "episode"
+
+    def _after_actor_delete(self) -> None:
+        """删除后把焦点放回人物栏第一格，方便继续删。"""
+        buttons = getattr(self, "_actor_buttons", None) or []
+        if buttons:
+            try:
+                buttons[0].focus_set()
+            except tk.TclError:
+                pass
+
     def _actor_press(self, event) -> None:
         btn = self._actor_chip(event.widget)
+        if btn is not None:
+            try:
+                btn.focus_set()
+            except tk.TclError:
+                pass
         try:
             self._actor_drag_index = self._actor_buttons.index(btn)
         except ValueError:
@@ -942,7 +1042,54 @@ class ActorsMixin:
             return False
         if not messagebox.askyesno("删除", "删除这一位？这一场的人物里就没有他了。", parent=parent):
             return False
-        self._set_actor_text(project_manager.format_actor_entries(kept), save_scene=True)
+        return self._apply_current_scene_actor_delete(entry)
+
+    def _scene_actor_delete_index(self, entry: dict) -> int:
+        """``_drop_scene_actor`` 删的那一行在 <N> 名单里的位置（从 1 起）。讲员按角色找，人物按全名找。"""
+        target_role = (entry or {}).get("role")
+        target_body, _motion = project_manager.split_actor_motion((entry or {}).get("body") or "")
+        for i, row in enumerate(project_manager.actor_speaker_rows(self._actor_text), start=1):
+            body, _motion = project_manager.split_actor_motion(row.get("body") or "")
+            if row.get("role") == target_role and (target_role == "host" or body == target_body):
+                return i
+        return 0
+
+    def _sync_speaking_widget_to_scene(self, scene) -> None:
+        if isinstance(scene, dict) and hasattr(self, "scene_speaking"):
+            try:
+                scene["speaking"] = self.scene_speaking.get("1.0", tk.END).strip()
+            except tk.TclError:
+                pass
+
+    def _show_scene_speaking(self, scene) -> None:
+        if not (isinstance(scene, dict) and hasattr(self, "scene_speaking")):
+            return
+        loading = getattr(self, "_scene_widgets_loading", False)
+        self._scene_widgets_loading = True
+        try:
+            if self.scene_speaking.get("1.0", tk.END).strip() != (scene.get("speaking") or "").strip():
+                self.scene_speaking.delete("1.0", tk.END)
+                self.scene_speaking.insert("1.0", scene.get("speaking") or "")
+        except tk.TclError:
+            pass
+        finally:
+            self._scene_widgets_loading = loading
+
+    def _apply_current_scene_actor_delete(self, entry: dict) -> bool:
+        """当前场景删掉 ``entry``：改名单，并按新编号改 speaking 的 <N>（见 ``project_manager.apply_actor_delete``）。"""
+        scene = self.workflow.get_scene_by_index(self.current_scene_index) if getattr(self, "workflow", None) else None
+        index = self._scene_actor_delete_index(entry)
+        if not isinstance(scene, dict) or not index:
+            kept, _removed = self._drop_scene_actor(entry)
+            self._set_actor_text(project_manager.format_actor_entries(kept), save_scene=True)
+            return True
+        self._sync_speaking_widget_to_scene(scene)
+        if not project_manager.apply_actor_delete(scene, self._actor_text, index):
+            return False
+        self._set_actor_text(scene.get("actor") or "")
+        scene["actor"] = self._actor_text
+        self._show_scene_speaking(scene)
+        self.workflow.save_scenes_to_json()
         return True
 
     def _clear_scene_host(self, parent) -> bool:

@@ -433,6 +433,32 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
             if source_pdf:
                 # 其他来源保持原勾选；提示词里写明以 content.pdf 为主。
                 upload_source(page, source_pdf, status)
+            actor_pdf = str(extra.get("actor_pdf") or "").strip()
+            actor_ready = False
+            if actor_pdf:
+                # 本集人物（全名 + 形象图）：先删旧的 actor.pdf 来源，上传，等就绪后再生成。
+                try:
+                    upload_source(page, actor_pdf, status)
+                    actor_ready = True
+                    print(f"全集生成：actor.pdf 已上传并就绪：{actor_pdf}")
+                except Exception as exc:  # noqa: BLE001 上传失败：大声说，并从提示词去掉 Actor_Reference
+                    msg = f"⚠️ actor.pdf 上传失败：{exc}。这次不用 actor.pdf，已从提示词去掉 Actor_Reference。"
+                    print(f"全集生成：{msg}")
+                    _say(status, msg)
+                    try:
+                        _close_dialog(page)
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif source_pdf:
+                # 这一集没有人物：去掉上一次留下的 actor.pdf，免得按旧人物画。
+                _close_dialog(page)
+                _remove_sources_named(page, "actor.pdf", status)
+            if not actor_ready and "Actor_Reference:" in prompt:
+                # 保证：只有 actor.pdf 真的上传就绪，提示词里才有 Actor_Reference。
+                import config_prompt
+
+                prompt = config_prompt.strip_actor_reference(prompt)
+                print("全集生成：actor.pdf 没有就绪，提交前已去掉 Actor_Reference。")
             before = {r.get("key") for r in _rows(page)}
             dlg = _open_customize(page, spec, status)
             _click_dialog_options(dlg, extra.get("nblm_options"))

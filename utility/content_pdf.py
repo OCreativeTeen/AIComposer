@@ -18,6 +18,7 @@ FIELD_LABELS = {
     "Keyword hint": "关键词 / Keyword hint",
     "Shown": "场景描述 / Shown",
     "Actors": "人物 / Actors",
+    "Silent actors": "人物（不说话，只表演）/ Silent actors",
     "Dialogue": "讲话 / Dialogue",
     "Also dialogue": "讲话（续）/ Also dialogue",
     "Scene narration": "场景叙事 / Scene narration",
@@ -44,6 +45,11 @@ def _scene_image(scene: dict) -> str:
         if isinstance(path, str) and path and os.path.isfile(path):
             return path
     return ""
+
+
+def scenes_have_images(scenes: list) -> bool:
+    """勾了「场景图片」时，content.pdf 里是否真的会有图（至少一场有 clip_image / clip_image_last 文件）。"""
+    return any(_scene_image(s) for s in (scenes or []) if isinstance(s, dict))
 
 
 def _split_fields(text: str) -> list[tuple[str, str]]:
@@ -82,6 +88,7 @@ def build_content_pdf(
     if not scenes:
         raise ValueError("本集没有场景")
     has_speaker = config_prompt._prompt_has_speaker(narrative, use_actor, scenes)
+    silent = (not has_speaker) and config_prompt.prompt_silent_cast(narrative, use_actor, scenes)
     payload = config_prompt.slide_flow_scene_payload(
         scenes,
         use_visual=use_visual,
@@ -89,6 +96,7 @@ def build_content_pdf(
         use_actor=has_speaker,
         keywords=keywords,
         narrative=narrative,
+        silent_cast=silent,
     )
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="aicomposer_content_")
@@ -116,7 +124,7 @@ def build_content_pdf(
                     rgb.save(os.path.join(tmp, name), "JPEG", quality=85)
                 parts.append(f'<p><img src="{name}"/></p>')
         fields = _split_fields(item.get("show_this_content", ""))
-        if override and has_speaker:
+        if override and (has_speaker or silent):
             fields.append(("换成 / People override", f"draw every person as {override}"))
         for label, text in fields:
             if label:
@@ -159,3 +167,141 @@ def build_content_pdf(
     except Exception:
         pass
     return dest
+
+
+# ---------------------------------------------------------------------------
+# actor.pdf：本集出场人物（全名 + 形象图），给 NotebookLM 对照人物外貌。
+# ---------------------------------------------------------------------------
+ACTOR_PDF_PATH = r"D:\AI_MEDIA\working\actor.pdf"
+ACTOR_PDF_NAME = "actor.pdf"
+
+
+def portrait_stem(name: str) -> str:
+    """同 ``wf_actors._portrait_stem``：/ 换成 _，去掉文件名不允许的字符。"""
+    stem = (name or "").strip().replace("\\", "/").replace("/", "_")
+    for ch in '<>:"|?*':
+        stem = stem.replace(ch, "_")
+    return stem.strip(" .")
+
+
+def actor_portrait_path(role: str, name: str, avatar_dir: str = "") -> str:
+    """同 ``wf_actors._actor_entry_portrait``：讲员在 config.AVATAR_PATH，人物在项目 avatar 目录。找不到返回 ""。"""
+    import config
+
+    name = (name or "").strip()
+    if not name:
+        return ""
+    if role == "host":
+        names = [name]
+        bits = [b for b in name.split("/") if b]
+        if len(bits) >= 3:
+            names.append("/".join(bits[:3]))
+        for n in names:
+            stem = portrait_stem(n)
+            path = os.path.join(config.AVATAR_PATH, stem + ".png") if stem else ""
+            if path and os.path.isfile(path):
+                return path
+        return ""
+    stem = portrait_stem(name)
+    if not stem or not avatar_dir:
+        return ""
+    path = os.path.join(avatar_dir, stem + ".png")
+    return path if os.path.isfile(path) else ""
+
+
+def _write_pdf(stories_html: list, css: str, archive) -> bytes:
+    """每段 html 从新的一页开始（一人一页，名字和图不分开）。"""
+    import io
+
+    import fitz
+
+    mediabox = fitz.paper_rect("a4")
+    where = mediabox + (50, 50, -50, -50)
+    buf = io.BytesIO()
+    writer = fitz.DocumentWriter(buf)
+    for body in stories_html:
+        story = fitz.Story(html=body, user_css=css, archive=archive)
+        more = True
+        while more:
+            dev = writer.begin_page(mediabox)
+            more, _ = story.place(where)
+            story.draw(dev)
+            writer.end_page()
+    writer.close()
+    doc = fitz.open("pdf", buf.getvalue())
+    try:
+        doc.subset_fonts()
+        return doc.tobytes(garbage=4, deflate=True)
+    finally:
+        doc.close()
+
+
+def build_actor_pdf(scenes: list, *, avatar_dir: str = "", dest: str = ACTOR_PDF_PATH) -> tuple[str, list]:
+    """本集所有场景里出现的人物写成 actor.pdf（覆盖）：一人一页，全名标题 + 形象图（没有图就注明 no image）。
+
+    人物按全名去重（名字和 content.pdf「人物 / Actors」栏里的一样）。没有人物就不生成，返回 ("", [])，
+    并删掉旧的 actor.pdf，免得上传过期文件。返回 (路径, [{name, role, label, image}])。
+    """
+    import fitz
+    from PIL import Image
+
+    import config_prompt
+
+    cast = config_prompt.episode_actor_cast(scenes)
+    if not cast:
+        try:
+            if os.path.isfile(dest):
+                os.remove(dest)
+        except OSError:
+            pass
+        return "", []
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix="aicomposer_actor_")
+    font = _font_file()
+    css = (
+        (f"@font-face {{font-family: cjk; src: url({os.path.basename(font)});}}\n" if font else "")
+        + "* {font-family: cjk, sans-serif;}\n"
+        "body {font-size: 12pt; line-height: 1.45;}\n"
+        "h1 {font-size: 20pt; margin: 0 0 4pt 0;}\n"
+        "p.role {color: #555555; margin: 0 0 10pt 0;}\n"
+        "p.note {color: #aa0000; margin: 10pt 0 0 0;}\n"
+        "img {width: 70%;}\n"
+    )
+    pages = []
+    out = []
+    for n, row in enumerate(cast, start=1):
+        image = actor_portrait_path(row["role"], row["name"], avatar_dir)
+        role_line = "讲员 / Host (narrator)" if row["role"] == "host" else "人物 / Person"
+        parts = [
+            "<body>",
+            f"<h1>{html.escape(row['name'])}</h1>",
+            f'<p class="role">{html.escape(role_line)}</p>',
+        ]
+        if image:
+            fname = f"actor_{n}.jpg"
+            with Image.open(image) as im:
+                rgb = im.convert("RGB")
+                rgb.thumbnail((1200, 1200))
+                rgb.save(os.path.join(tmp, fname), "JPEG", quality=88)
+            parts.append(f'<p><img src="{fname}"/></p>')
+        else:
+            parts.append('<p class="note">no image（没有形象图）</p>')
+        # 一人一页（每段 html 另起一页），名字和图在同一页，不再补空行。
+        parts.append("</body>")
+        pages.append("".join(parts))
+        out.append({**row, "image": image})
+    archive = fitz.Archive(tmp)
+    if font:
+        archive.add(fitz.Archive(os.path.dirname(font)))
+    data = _write_pdf(pages, css, archive)
+    part = dest + ".part"
+    with open(part, "wb") as f:
+        f.write(data)
+    os.replace(part, dest)
+    try:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+    except Exception:
+        pass
+    return dest, out

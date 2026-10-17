@@ -358,6 +358,113 @@ def _scenes_have_narrator_host(scenes: list) -> bool:
     return False
 
 
+def episode_actor_cast(scenes: list) -> list[dict]:
+    """本集各场景 actor 里出现的人物，按全名去重，按首次出现排序。
+
+    名字取法和 ``slide_flow_scene_payload`` 的 ``Actors`` 栏一样（``actor_text_for_generation``），去掉动作括号。
+    返回 [{name, role: host|person, label: 讲员|人物N（首次出现时的编号）}]。只收场景里写了的人，不补默认讲员。
+    """
+    import project_manager
+
+    seen: dict = {}
+    out: list[dict] = []
+    for scene in scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        text = project_manager.actor_text_for_generation(scene.get("actor") or "")
+        for row in project_manager.active_actor_entries(text):
+            body, _motion = project_manager.split_actor_motion((row.get("body") or "").strip())
+            body = body.strip()
+            if not body or project_manager.actor_is_absent(body):
+                continue
+            role = "host" if row.get("role") == "host" else "person"
+            if body in seen:
+                if role == "host":  # 同一个名字既当讲员又当人物：按讲员算
+                    out[seen[body]]["role"] = "host"
+                continue
+            seen[body] = len(out)
+            out.append({"name": body, "role": role, "label": row.get("label") or ""})
+    return out
+
+
+def notebooklm_actor_reference_note(
+    name: str, output: str, narrative: str, content_name: str = "content.pdf", silent: bool = False
+) -> str:
+    """全集生成：actor.pdf 是本集人物（全名 + 形象图）。语音概览只用名字和身份。
+
+    ``silent``：讲述 / 汇报没有讲员，名单在 ``人物（不说话，只表演）/ Silent actors`` 栏，这些人只表演不说话。
+    """
+    field = "人物（不说话，只表演）/ Silent actors" if silent else "人物 / Actors"
+    short = SILENT_ACTORS_FIELD if silent else "Actors"
+    lines = [
+        f"{content_name} 是本集内容；{name} 是这些内容里出场 / 讲话的人物：每人一页，写着全名和形象图。",
+        f"{content_name} is the episode content; {name} contains the people who appear or speak in this content: "
+        "each one's full name and appearance image, one person per page.",
+    ]
+    if output == "audio_overview":
+        lines.append(
+            f"For this audio, use {name} only for each person's name and role (讲员 = the host, 人物 = the other people). "
+            "Ignore the images; never describe how anyone looks or mention a picture."
+        )
+        if silent:
+            lines.append(
+                "These people never speak in this audio; only the narrator speaks and may mention them by name and role. "
+                "Do not invent a host or any other speaker."
+            )
+    else:
+        lines.extend([
+            f"When a scene needs a person, look at that scene's {field} entry in {content_name}. "
+            f"If that person's full name is in {name}, match the name to its image and draw the person with exactly that look: "
+            "the same face, hair, age, and clothes in every scene. Never invent another look for them.",
+            f"A person written \"no image\" in {name} has no picture; follow the name (gender / age / origin) in {short} and keep that look consistent.",
+            f"Only people listed in that scene's {short} appear in that scene. {name} does not add anyone to a scene.",
+        ])
+        if silent:
+            lines.append(
+                "Telling / report with no 讲员: the narration is an off-screen voice and no 讲员, narrator, host, or presenter "
+                "is drawn. The listed people appear only in their scenes and act silently, never speaking."
+            )
+        elif narrative == "story":
+            lines.append("Story: the listed characters act and talk to each other; the 讲员, if listed, is outside the story.")
+        else:
+            lines.append(
+                "Telling / report: the 讲员 appears on camera only in scenes whose Actors list the 讲员; "
+                "the other listed people act silently. Never add a default 讲员 that is not listed."
+            )
+    lines.append(f"The names and labels in {name} are for you only; never show or read out the page headings.")
+    return "\n".join(lines)
+
+
+SILENT_ACTORS_FIELD = "Silent actors"
+SILENT_ACTORS_INPUT_NOTE = (
+    "- ``Silent actors`` (人物（不说话，只表演）): the people in that scene, joined by |. "
+    "They appear in that scene and act silently. They never speak."
+)
+SILENT_CAST_RULE = (
+    "The people in ``Silent actors`` appear only in their own scenes and act silently: "
+    "no lines, no talking mouths, no speech bubbles. The narration is an off-screen voice. "
+    "No 讲员, narrator, host, or presenter is drawn. Never add a 讲员 or anyone who is not listed."
+)
+
+
+def prompt_silent_cast(narrative: str, use_actor: bool, scenes: list) -> bool:
+    """全集生成：讲述 / 汇报，勾了人物，但本集没有一场写了讲员，场景里却有人物。
+
+    这时 ``_prompt_has_speaker`` 为 False（讲员在画外），人物照样写进 content.pdf / actor.pdf，
+    标成「不说话，只表演」。只给全集生成（幻灯 / 信息图 / 语音 / 视频概览）用；图片提示、生场视频不用。
+    """
+    if not use_actor or narrative not in TELLING_NARRATIVES:
+        return False
+    if _scenes_have_narrator_host(scenes):
+        return False
+    return bool(episode_actor_cast(scenes))
+
+
+def prompt_has_cast(narrative: str, use_actor: bool, scenes: list) -> bool:
+    """全集生成要不要 actor.pdf / Actor_Reference：会说话的名单（Actors）或不说话的名单（Silent actors）。"""
+    return _prompt_has_speaker(narrative, use_actor, scenes) or prompt_silent_cast(narrative, use_actor, scenes)
+
+
 def _prompt_has_speaker(narrative: str, use_actor: bool, scenes: list) -> bool:
     """Whether ``Actors`` goes into this prompt.
 
@@ -530,8 +637,11 @@ def slide_flow_scene_payload(
     use_actor: bool,
     keywords: bool,
     narrative: str = "story",
+    silent_cast: bool = False,
 ) -> list[dict]:
     """幻灯/图片提示用的场景内容：只留用户勾选的项。
+
+    ``silent_cast``（只有全集生成会给）：不写 ``Actors`` 时，改写一行 ``Silent actors``（不说话的人物）。
 
     讲话栏是场景的主要内容：故事里叫 ``Dialogue``；讲述类叫 ``Scene narration`` / ``Narration content``，并去掉 ``<N>``。
     没有 actor 时，speaking 里的 ``<N>`` 说话人标记一起去掉。
@@ -551,6 +661,8 @@ def slide_flow_scene_payload(
         actor = (base.get("actor") or "").strip()
         if use_actor and actor:
             lines.append(f"Actors: {actor}")
+        elif silent_cast and actor:
+            lines.append(f"{SILENT_ACTORS_FIELD}: {actor}")
         if use_speaking:
             speaking = (base.get("speaking") or "").strip()
             voiceover = (base.get("voiceover") or "").strip()
@@ -620,6 +732,54 @@ NOTEBOOKLM_OUTPUT_LEADS = {
 }
 
 
+# 全集生成：产物和 content.pdf 场景一一对应（放在 Output_rules 里，紧跟产物说明）。语音概览不加。
+NOTEBOOKLM_SCENE_ORDER_RULES = {
+    "slides": (
+        "场景对应（必须遵守）：\n"
+        "- 幻灯片的页数 = content.pdf 的场景数。第 N 页就是场景 N，顺序和 content.pdf 一样。\n"
+        "- 每页只对应一场：不合并两场，不把一场拆成两页，也不加任何额外的页：没有封面页、标题页、目录 / 议程页、过渡页、小结 / 总结页或结尾页。\n"
+        "Scene mapping (must follow):\n"
+        "- The number of slides equals the number of scenes in content.pdf. Slide N is scene N, in the same order as content.pdf.\n"
+        "- Each slide is exactly one scene: never merge two scenes, never split one scene across slides, and never add an extra slide: "
+        "no cover, title, agenda / table-of-contents, transition, summary / recap, or closing slide."
+    ),
+    "video_overview": (
+        "场景对应（必须遵守）：\n"
+        "- 按 content.pdf 的场景顺序，一场一段：第 N 段就是场景 N。不跳场、不合并、不调换顺序，也不另加开场概述段或结尾总结段；"
+        "讲员（若有）开头或结尾的几句，放在第一场或最后一场那一段里。\n"
+        "Scene mapping (must follow):\n"
+        "- Follow the scene order of content.pdf, one segment per scene: segment N is scene N. Do not skip, merge, or reorder scenes, "
+        "and do not add a separate overview intro or summary outro; any opening or closing lines of the 讲员 belong inside the first or last scene's segment."
+    ),
+    "infographic": (
+        "场景对应（必须遵守）：\n"
+        "- 信息图按 content.pdf 的场景顺序排列（场景 1 在最前），每场一个部分，不合并、不调换顺序，也不另加总结或目录部分。\n"
+        "Scene mapping (must follow):\n"
+        "- Lay the infographic out in the scene order of content.pdf (scene 1 first), one section per scene. "
+        "Do not merge or reorder scenes, and do not add an extra summary or table-of-contents section."
+    ),
+}
+
+# 全集生成：content.pdf 里带了场景图片时才加。{unit_zh} / {unit_en} 是产物（幻灯片 / 信息图 / 视频）。
+NOTEBOOKLM_SCENE_IMAGE_RULE = (
+    "场景图片（必须遵守）：content.pdf 里有些场景带一张场景图片。它只是这一场的视觉参考，用来给你思路和方向：气氛、场所、构图的提示。"
+    "不要照抄、不要复刻这张图，也不要把它贴进{unit_zh}；按上面的画面风格规则，重新画出新的画面。\n"
+    "Scene images (must follow): some scenes in content.pdf include a scene image. It is ONLY a visual reference for that scene's "
+    "idea and direction: mood, setting, and composition hints. Do NOT copy or reproduce it, and do not paste or insert it into {unit_en}; "
+    "create new visuals that follow the style rules above."
+)
+NOTEBOOKLM_SCENE_IMAGE_ACTOR_PRIORITY = (
+    "人物的长相以 actor.pdf 的形象图为准：场景图片里的人和 actor.pdf 不一样时，照 actor.pdf 画。\n"
+    "For people's faces and looks, actor.pdf takes priority over the scene images: if a person in a scene image looks different "
+    "from their actor.pdf image, follow actor.pdf."
+)
+_SCENE_IMAGE_UNITS = {
+    "slides": ("幻灯片", "the slides"),
+    "infographic": ("信息图", "the infographic"),
+    "video_overview": ("视频", "the video"),
+}
+
+
 def _notebooklm_text_rule(text: str, output: str, presentation: bool) -> str:
     """全集生成：NotebookLM 爱给幻灯加标题和正文，这里按说明文字写死画面上能有什么字。汇报类不管（有自己的规则）。"""
     if presentation or output not in ("slides", "infographic", "video_overview"):
@@ -661,8 +821,12 @@ def build_slide_flow_prompt(
     actor_override: str = "",
     output: str = "slides",
     content_source: str = "",
+    actor_source: str = "",
+    content_images: bool = False,
 ) -> str:
-    """``content_source``（如 "content.pdf"）非空时：场景内容不写进提示词，改为说明它在笔记本来源里。
+    """``actor_source``（如 "actor.pdf"）非空且本次带 Actors 时，加一段 ``Actor_Reference``。
+
+    ``content_source``（如 "content.pdf"）非空时：场景内容不写进提示词，改为说明它在笔记本来源里。
 
 按叙事风格，以及勾选了 visual、speaking、actor 中的哪几项，组装这一次的幻灯提示词。
 
@@ -690,6 +854,8 @@ def build_slide_flow_prompt(
     scenes = scene_content if isinstance(scene_content, list) else []
     # 叙事: needs a 讲员. 故事/汇报: any non-empty actor entry.
     has_speaker = _prompt_has_speaker(narrative, use_actor, scenes)
+    # 讲述 / 汇报没有讲员时：名单里的人照样出现，只表演不说话（讲员在画外）。
+    silent = (not has_speaker) and prompt_silent_cast(narrative, use_actor, scenes)
     json_content = json.dumps(
         slide_flow_scene_payload(
             scenes,
@@ -698,6 +864,7 @@ def build_slide_flow_prompt(
             use_actor=has_speaker,
             keywords=keywords,
             narrative=narrative,
+            silent_cast=silent,
         ),
         ensure_ascii=False,
         indent=2,
@@ -743,7 +910,10 @@ def build_slide_flow_prompt(
     lines.append("")
     lines.append(SLIDE_FLOW_NARRATIVE_NOTES[narrative])
     lines.append("")
-    lines.append(_slide_flow_inputs_note(use_visual, use_speaking, has_speaker, keywords, narrative))
+    inputs_note = _slide_flow_inputs_note(use_visual, use_speaking, has_speaker, keywords, narrative)
+    if silent:
+        inputs_note = inputs_note.replace("No other field is given.", SILENT_ACTORS_INPUT_NOTE + "\nNo other field is given.")
+    lines.append(inputs_note)
     lines.append("")
     if narrative == "story":
         lines.append(_slide_flow_story_rules(use_visual, use_speaking, has_speaker))
@@ -751,6 +921,8 @@ def build_slide_flow_prompt(
         lines.append(_slide_flow_narration_rules(use_visual, use_speaking, has_speaker))
     else:
         lines.append(_slide_flow_report_rules(use_visual, use_speaking, has_speaker))
+    if silent:
+        lines.append(SILENT_CAST_RULE)
     if has_speaker and _scenes_have_narrator_host(scenes):  # 讲员出镜才写默认讲员外貌
         host = (host_narrator or "").strip()
         if host:
@@ -782,10 +954,11 @@ def build_slide_flow_prompt(
             )
     override = (actor_override or "").strip()
     if override and not presentation:
-        if has_speaker:
+        if has_speaker or silent:
+            cast_field = "Actors" if has_speaker else SILENT_ACTORS_FIELD
             lines.append(
                 f"People override: draw every person in the pictures as {override}. "
-                "Keep each person's name, role, gender, and age from ``Actors``, "
+                f"Keep each person's name, role, gender, and age from ``{cast_field}``, "
                 "but ignore any ethnicity, nationality, or period that the actor descriptions suggest. "
                 "Face, skin, hair, and clothing all follow this override, and stay the same for the same person."
             )
@@ -794,7 +967,7 @@ def build_slide_flow_prompt(
                 f"People override: every person who appears in the pictures is {override}. "
                 "Face, skin, hair, and clothing all follow this, and stay the same for the same person."
             )
-    if has_speaker:
+    if has_speaker or silent:
         lines.extend(["", ACTOR_AGE_LOOK])
     parts = {}
     if output in NOTEBOOKLM_OUTPUT_LEADS:
@@ -811,7 +984,15 @@ def build_slide_flow_prompt(
         text_rule = _notebooklm_text_rule(text, output, presentation)
         if text_rule:
             rule += "\n" + text_rule
-        parts["Output_rules"] = NOTEBOOKLM_OUTPUT_LEADS[output] + "\n\n" + rule
+        lead = NOTEBOOKLM_OUTPUT_LEADS[output]
+        # 场景对应规则说的是 content.pdf 的场景，只在全集生成（有 content_source、每场一项）时加。
+        order_rule = (
+            NOTEBOOKLM_SCENE_ORDER_RULES.get(output, "").replace("content.pdf", content_source)
+            if content_source and target != "single" else ""
+        )
+        if order_rule:
+            lead += "\n\n" + order_rule
+        parts["Output_rules"] = lead + "\n\n" + rule
     body = "\n".join(lines)
     if content_source:
         body = body.replace("each scene's show_this_content", f"each scene's entry in {content_source}")
@@ -819,7 +1000,15 @@ def build_slide_flow_prompt(
         body = body.replace("show_this_content", f"the scene entry in {content_source}")
     parts["Instruction_for_image" if output in ("slides", "infographic") else "Instruction_for_scenes"] = body
     if content_source:
-        parts["Scene_Content_Source"] = notebooklm_content_source_note(content_source, output)
+        with_actor = bool(actor_source and (has_speaker or silent) and episode_actor_cast(scenes))
+        parts["Scene_Content_Source"] = notebooklm_content_source_note(
+            content_source, output, silent=silent, images=content_images,
+            actor_source=actor_source if with_actor else "",
+        )
+        if with_actor:
+            parts["Actor_Reference"] = notebooklm_actor_reference_note(
+                actor_source, output, narrative, content_name=content_source, silent=silent
+            )
     else:
         parts["Story_Scene_Content"] = json_content
     return "\n\n".join(f"{k}:\n{v}" for k, v in parts.items())
@@ -4543,8 +4732,29 @@ ANIMATE_SOURCE = ANIMATE_S2V + ANIMATE_I2V + ANIMATE_2I2V + ANIMATE_WS2V + ANIMA
 
 
 # ---------------------------------------------------------------------------
-def notebooklm_content_source_note(name: str, output: str) -> str:
-    """全集生成：场景内容在笔记本来源 content.pdf 里（不在提示词里）。"""
+def strip_actor_reference(prompt: str, actor_name: str = "actor.pdf") -> str:
+    """去掉提示词里所有依赖 actor.pdf 的部分：``Actor_Reference:`` 整段、场景图片的「人物以 actor.pdf 为准」两行、
+    以及「except actor.pdf ...」。actor.pdf 没有真正上传就绪时用，保证提示词不提一个不存在的来源。"""
+    text = prompt or ""
+    text = re.sub(r"\n*Actor_Reference:\n.*?(?=\n\n[A-Za-z_]+:\n|\Z)", "", text, flags=re.S)
+    priority = NOTEBOOKLM_SCENE_IMAGE_ACTOR_PRIORITY.replace("actor.pdf", actor_name)
+    for line in priority.split("\n"):
+        text = text.replace(line + "\n", "").replace("\n" + line, "")
+    text = text.replace(
+        f"; use the others only as background, except {actor_name}, which is the people reference described in Actor_Reference.",
+        "; use the others only as background.",
+    )
+    return text
+
+
+def notebooklm_content_source_note(
+    name: str, output: str, silent: bool = False, images: bool = False, actor_source: str = ""
+) -> str:
+    """全集生成：场景内容在笔记本来源 content.pdf 里（不在提示词里）。``silent`` 时多列一栏「人物（不说话，只表演）」。
+
+    ``images``：content.pdf 真的带了场景图片才写图片规则（只作思路参考，不照抄、不贴进产物）。
+    ``actor_source``：本次也上传了 actor.pdf 时，写明人物长相以它为准，并且它不算「只作背景」的其他来源。
+    """
     lines = [
         f"场景内容在本笔记本的来源文件「{name}」里，不在这段提示词里。",
         f"The scene-by-scene content is in the source file {name} in this notebook's sources, not in this prompt.",
@@ -4552,16 +4762,27 @@ def notebooklm_content_source_note(name: str, output: str) -> str:
         "described above under the same names (for example 场景描述 / Shown, 讲话 / Dialogue, "
         "场景叙事 / Scene narration, 讲述内容 / Narration content, 人物 / Actors, 关键词 / Keyword hint). The 关键词 / Keyword hint field, when present, is the hint for that scene's one blended keyword.",
     ]
-    if output == "audio_overview":
-        lines.append("Some scenes include an image; for this audio you do not need the images.")
+    if silent:
+        lines.append(
+            "人物（不说话，只表演）/ Silent actors is that scene's list of people who appear and act silently (the ``Silent actors`` field above)."
+        )
+    if images:
+        if output == "audio_overview":
+            lines.append("content.pdf 里有些场景带图片；这是语音，不用看图片。Some scenes include an image; for this audio you do not need the images.")
+        else:
+            unit_zh, unit_en = _SCENE_IMAGE_UNITS.get(output, ("画面", "the output"))
+            lines.append(NOTEBOOKLM_SCENE_IMAGE_RULE.format(unit_zh=unit_zh, unit_en=unit_en))
+            if actor_source:
+                lines.append(NOTEBOOKLM_SCENE_IMAGE_ACTOR_PRIORITY.replace("actor.pdf", actor_source))
+    if actor_source:
+        lines.append(
+            f"Generate from {name}. If this notebook has other sources, focus on {name}; use the others only as background, "
+            f"except {actor_source}, which is the people reference described in Actor_Reference."
+        )
     else:
         lines.append(
-            "Some scenes include an image. When a scene has one, use it as the visual reference for that scene: "
-            "its people, place, look, and colors. It is fine if no scene has an image."
+            f"Generate from {name}. If this notebook has other sources, focus on {name}; use the others only as background."
         )
-    lines.append(
-        f"Generate from {name}. If this notebook has other sources, focus on {name}; use the others only as background."
-    )
     lines.append("The scene headings and field labels in the file are for you only; never show or read them out.")
     return "\n".join(lines)
 
