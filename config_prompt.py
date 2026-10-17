@@ -1302,6 +1302,7 @@ def build_picture_flow_prompt(
     host_narrator: str = "",
     main_character: str = "",
     actor_override: str = "",
+    edit_request: str = "",
 ) -> str:
     """按画风改变、说明文字，以及叙事风格，组装这一次的图片提示词。
 
@@ -1321,6 +1322,8 @@ def build_picture_flow_prompt(
     has_speaker = _prompt_has_speaker(narrative, use_actor, scenes)
     story_on = task != "extract" and bool(scenes) and (use_visual or use_speaking or use_actor)
     if task != "extract" and not (use_visual or use_speaking or use_actor):
+        return _picture_edit_only_prompt(task, text, (visual_style or "").strip(), region, era, edit_request)
+    if False:
         raise ValueError("场景描述、讲话、人物至少要选一项。")
     style = (visual_style or "").strip()
     if task != "extract" and not style:
@@ -1443,6 +1446,49 @@ def build_picture_flow_prompt(
             f"Story_Scene_Content:\n{payload}"
         )
     return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n{body}"
+
+
+EDIT_KEEP_STYLE_LINE = (
+    "Keep the picture's own drawing or painting style exactly as it is. Do not move it toward any other style."
+)
+
+
+def _picture_edit_only_prompt(task: str, text: str, style: str, region: str, era: str, edit_request: str) -> str:
+    """图片提示「仅修改」：visual / speaking / actor 都没勾，没有场景内容，只按 FYI 改现有图片。
+
+    不写叙事风格规则（讲述 / 故事 / 讲员），不加人。画风：保持画风 = 原样，不提项目风格；
+    转成项目风格 = 改成项目画面风格（场景风格行由外层照常加在它旁边）。
+    """
+    request = (edit_request or "").strip()
+    lines = []
+    if request:
+        lines += ["Main edit request (most important):", request, ""]
+    else:
+        lines += ["No specific edit was requested. Make only the changes listed below.", ""]
+    lines += [
+        "This is an edit of the attached picture, not a new picture.",
+        "Keep everything else as it is: the composition, the people, their faces, poses, and clothes, "
+        "the place, and the objects. Change only what is asked here.",
+        "Do not add people. Do not remove anyone unless the main edit request says so.",
+    ]
+    if task == "restyle" and style:
+        lines += [
+            f"Restyle the whole picture into this target style: {style}.",
+            "Faces, clothes, the place, and the objects all take that style; the content stays the same.",
+        ]
+        label_style = f"转成项目风格 {style}"
+    else:
+        lines.append(EDIT_KEEP_STYLE_LINE)
+        label_style = "保持画风"
+    lines.append(_picture_flow_text_rule(text))
+    phrase = setting_place_phrase(region, era)
+    if phrase:
+        lines.append(
+            f"Place and period: {phrase}. Anything the edit adds or changes must belong to this place and this time."
+        )
+    text_label = dict(PICTURE_FLOW_TEXT_CHOICES).get(text, text)
+    label = f"仅修改现有图片 · {label_style} · {text_label}"
+    return f"Picture_choices:\n{label}\n\nInstruction_for_image:\n" + "\n".join(lines)
 
 
 def scene_speech_transform(actor_text: str) -> tuple[str, str] | None:
@@ -4496,8 +4542,8 @@ def insert_scene_style(prompt: str, value=None) -> str:
     """把场景风格行放在画面风格那一行旁边；找不到画面风格就放在最前面。"""
     line = scene_style_line(value)
     body = prompt or ""
-    if not line or line in body:
-        return body
+    if not line or line in body or EDIT_KEEP_STYLE_LINE in body:
+        return body  # 「仅修改 + 保持画风」不强加项目场景风格
     if body.startswith("Visual_Style:\n"):
         cut = body.find("\n\n")
         if cut < 0:

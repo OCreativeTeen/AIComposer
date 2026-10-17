@@ -178,7 +178,11 @@ def open_picture_prompt_dialog(
         extract = task_var.get() == "extract"
         for btn in text_buttons + story_buttons + field_buttons:
             btn.configure(state=("disabled" if extract else "normal"))
-        if extract:
+        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
+        hint.config(foreground=("#1f5fbf" if edit_only else ""))
+        if edit_only:
+            hint.config(text="未选内容：只按「注意 / FYI」修改现有图片")
+        elif extract:
             hint.config(text="人物提取只出当前图里每个人的肖像，不用叙事风格。选好后点提交。")
         else:
             hint.config(
@@ -191,7 +195,16 @@ def open_picture_prompt_dialog(
 
     def on_go() -> None:
         extract = task_var.get() == "extract"
-        if not extract and not (visual_var.get() or speaking_var.get() or actor_var.get()):
+        edit_only = not extract and not (visual_var.get() or speaking_var.get() or actor_var.get())
+        fyi_now = (get_fyi_text() or "").strip() if fyi_include_var.get() else ""
+        if edit_only and not fyi_now:
+            if not messagebox.askokcancel(
+                "图片提示",
+                "没有勾选任何内容，「注意 / FYI」也是空的（或没勾选），没有要修改的地方。\n仍然继续吗？",
+                parent=dlg,
+            ):
+                return
+        if False:
             messagebox.showwarning("图片提示", "场景描述、讲话、人物至少要选一项。", parent=dlg)
             return
         style = (get_style() or "").strip()
@@ -223,17 +236,25 @@ def open_picture_prompt_dialog(
                 host_narrator=host_narrator or "",
                 main_character=main_character or "",
                 actor_override=dict(config_prompt.SLIDE_FLOW_ACTOR_OVERRIDES).get(override_var.get(), ""),
+                edit_request=fyi_now if edit_only else "",
             )
         except ValueError as exc:
             messagebox.showwarning("图片提示", str(exc), parent=dlg)
             return
-        prompt = config_prompt.prepend_background_condition(
-            prompt, region, era, host_narrator,
-            include=bool(bg_include_var.get()) and not extract,
-        )
-        prompt = prepend_fyi(
-            prompt, get_fyi_text(), include=bool(fyi_include_var.get())
-        )
+        if edit_only:
+            # 仅修改：FYI 已作为「主要修改要求」写在最前；背景条件放在后面。
+            bg = config_prompt.background_condition_block(region, era, host_narrator) if bg_include_var.get() else ""
+            if bg:
+                bg = bg.replace("(applies to everything below)", "(applies to the whole edit)")
+                prompt = prompt + "\n\n---\n\n" + bg
+        else:
+            prompt = config_prompt.prepend_background_condition(
+                prompt, region, era, host_narrator,
+                include=bool(bg_include_var.get()) and not extract,
+            )
+            prompt = prepend_fyi(
+                prompt, get_fyi_text(), include=bool(fyi_include_var.get())
+            )
         remember()
         dlg.destroy()
         if callable(open_manual):
@@ -246,6 +267,8 @@ def open_picture_prompt_dialog(
     task_var.trace_add("write", refresh)
     narrative_var.trace_add("write", refresh)
     actor_var.trace_add("write", refresh)
+    visual_var.trace_add("write", refresh)
+    speaking_var.trace_add("write", refresh)
     refresh()
     near = anchor if anchor is not None else parent
     _place_popup_near(dlg, near, below=True)
