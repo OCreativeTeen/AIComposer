@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,41 @@ _NORMAL_BG = "#ffffff"
 _KIND_ICON = {"pdf": "PDF", "image": "图片", "audio": "音频", "video": "视频", "transcript": "文字稿"}
 _thumb_cache: dict[tuple, Image.Image | None] = {}
 _cache_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------- rename offer
+# 拖进 / 选进材料时，文件名像自动生成的就不问「要不要改项目名」。
+_GENERIC_STEM_PATTERNS = [re.compile(p, re.I) for p in (
+    r"^nblm[\s_-]",                                     # NotebookLM 下载
+    r"^aicomposer_",                                    # 本程序的临时文件
+    r"^(content|untitled|document|download|file|new|output|export|slides?|presentation|"
+    r"image|video|audio|scan|recording|voice|movie|clip|track)([\s_-]*(\(\d+\)|\d+))?$",
+    r"^(img|dsc|dscn|dcim|pxl|vid|mov|mvimg|wp|photo|pic|rec|audio|voice|screenshot|screen[\s_]?shot|"
+    r"wechat|weixin|whatsapp[\s_](image|video|audio))[\s_-]*\d",  # IMG_1234, Screenshot 2026-…, WhatsApp Image 2026…
+    r"^(chunk|part|page|scene|slide|frame|clip_image|clip|seg|segment)[\s_-]*\d+",  # chunk_*, scene_3
+    r"^\d+$",                                            # 纯数字（时间戳等）
+    r"^\d{4}[-_.]?\d{2}[-_.]?\d{2}([\sT_-]?\d{2}[-_.:]?\d{2}([-_.:]?\d{2})?)?([\s_-]*\(?\d+\)?)?$",  # 2026-10-17 10.15.00
+    r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$",  # uuid
+    r"^[0-9a-f]{16,}$",                                 # 长 hex
+)]
+
+
+def is_generic_file_stem(stem: str) -> bool:
+    """文件名（不带扩展名）是不是自动起的名字（nblm_*、content、时间戳、IMG_1234、chunk_* …）。"""
+    s = (stem or "").strip()
+    if len(s) < 2:
+        return True
+    return any(p.search(s) for p in _GENERIC_STEM_PATTERNS)
+
+
+def rename_offer_stem(path: str, current_name: str) -> str:
+    """该问「改项目名」时返回文件名 stem；同名或是自动名字就返回空。"""
+    stem = os.path.splitext(os.path.basename(path or ""))[0].strip()
+    if not stem or is_generic_file_stem(stem):
+        return ""
+    if stem.casefold() == (current_name or "").strip().casefold():
+        return ""
+    return stem
 
 
 # ---------------------------------------------------------------- previews

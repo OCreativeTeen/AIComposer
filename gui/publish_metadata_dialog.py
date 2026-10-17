@@ -291,6 +291,7 @@ def ask_publish_metadata_then_schedule(
     review_script_text: str = "",
     summary_text: str = "",
     video_detail: dict | None = None,
+    on_summary_regenerated: Callable[[str], None] | None = None,
     metadata_dialog_title: str = "上传视频 — 标题与描述",
     metadata_confirm_label: str = "确定",
     schedule_dialog_title: str = "上传至 YouTube",
@@ -321,6 +322,7 @@ def ask_publish_metadata_then_schedule(
         summary_text=summary_text,
         video_detail=video_detail,
         generate_text_fn=generate_text_fn,
+        on_summary_regenerated=on_summary_regenerated,
         dialog_title=metadata_dialog_title,
         confirm_label=metadata_confirm_label,
     )
@@ -377,10 +379,14 @@ def ask_publish_title_and_description(
     summary_text: str = "",
     video_detail: dict | None = None,
     generate_text_fn: Callable[[str, str], str],
+    on_summary_regenerated: Callable[[str], None] | None = None,
     dialog_title: str = "上传视频 — 标题与描述",
     confirm_label: str = "确定",
 ) -> dict | None:
-    """返回 ``{"title": str, "description": str}``；取消返回 ``None``。"""
+    """返回 ``{"title": str, "description": str}``；取消返回 ``None``。
+
+    ``on_summary_regenerated(text)``：「重新生成」summary 成功后调用（例如写回列表条目）。
+    """
     lang = language or "zh"
     scenes = scene_content_list or []
     item_summary = config.chinese_convert((summary_text or "").strip(), lang)
@@ -649,6 +655,13 @@ def ask_publish_title_and_description(
                     messagebox.showwarning("提示", "LLM 未返回有效介绍。", parent=dlg)
                     return
                 item_summary = text[0]
+                if isinstance(video_detail, dict):
+                    video_detail["summary"] = text[0]
+                if callable(on_summary_regenerated):
+                    try:
+                        on_summary_regenerated(text[0])
+                    except Exception as exc:  # noqa: BLE001
+                        messagebox.showwarning("summary", f"summary 没有写回列表：{exc}", parent=dlg)
                 try:
                     rb_summary.state(["!disabled"])
                 except tk.TclError:

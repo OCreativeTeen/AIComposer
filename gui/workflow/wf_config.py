@@ -495,6 +495,7 @@ class ConfigMixin:
         if hasattr(self, 'video_title'):
             self.video_title.bind('<KeyRelease>', self.on_video_title_change)
             self.video_title.bind('<FocusOut>', self.on_video_title_change)
+            self.video_title.bind('<Double-Button-1>', self.on_video_title_double_click)
         if hasattr(self, 'topic_category_combo'):
             self.topic_category_combo.bind('<<ComboboxSelected>>', self._on_topic_category_selected)
         if hasattr(self, 'topic_subtype_combo'):

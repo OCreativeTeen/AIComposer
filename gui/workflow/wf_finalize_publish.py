@@ -188,6 +188,17 @@ class FinalizePublishMixin:
         item_summary = (list_row.get("summary") or pc.get("summary") or "")
         analyzed = pc.get("analyzed_content") or list_row.get("analyzed_content") or ""
         review_script = config.read_transcript_text_from_video_detail(list_row)
+
+        def _save_regenerated_summary(text: str) -> None:
+            """重新生成的 summary 写回主题分表里本项目那一行（外层 summary），内存里的配置和行一起改。"""
+            ok, list_path, err = project_manager.save_list_row_summary_for_config(pc, text)
+            if isinstance(list_row, dict):
+                list_row["summary"] = text
+            if ok:
+                print(f"✅ summary 已写回列表：{list_path}")
+            else:
+                raise RuntimeError(f"{err}（{list_path or '没有主题分表'}）")
+
         flow = ask_publish_metadata_then_schedule(
             self.root,
             language=lang,
@@ -210,6 +221,7 @@ class FinalizePublishMixin:
                 ).strip()
             ),
             video_detail=list_row or None,
+            on_summary_regenerated=_save_regenerated_summary,
             generate_text_fn=self.llm_api_local.generate_text,
             schedule_dialog_fn=ask_publish_schedule_dialog,
             caption_scenes=scenes,

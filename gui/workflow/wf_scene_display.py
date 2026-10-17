@@ -1,5 +1,6 @@
 """SceneDisplayMixin: methods moved verbatim from GUI_wf.py:WorkflowGUI."""
 import tkinter as tk
+import tkinter.messagebox as messagebox
 import time
 import config
 import config_prompt
@@ -281,6 +282,37 @@ class SceneDisplayMixin:
             # save summary to project_manager.PROJECT_CONFIG
             project_manager.PROJECT_CONFIG["video_title"] = gui_title
             self.save_config()
+
+    def on_video_title_double_click(self, event=None):
+        """双击「标题」：问要不要按场景内容重新生成项目名称建议；是 → 选名称后走原来的改名保存。"""
+        if not messagebox.askyesno(
+            "项目名称", "要根据场景内容重新生成项目名称建议吗？", parent=self.root
+        ):
+            return None
+        from gui.project_title_suggest import ask_project_title
+
+        scenes = [s for s in (getattr(self.workflow, "scenes", None) or []) if isinstance(s, dict)]
+        if not scenes:
+            messagebox.showinfo("项目名称", "还没有场景内容。", parent=self.root)
+            return "break"
+        current = (self.video_title.get() or "").strip()
+
+        def _chosen(name: str) -> None:
+            # 原来的改名路径：标题栏 → workflow.title + PROJECT_CONFIG["video_title"] + save_config（同步 project_profile）
+            self.video_title.delete(0, tk.END)
+            self.video_title.insert(0, name)
+            self.on_video_title_change()
+            new_name = (project_manager.PROJECT_CONFIG or {}).get("video_title") or name
+            ok, list_path, err = project_manager.save_list_row_project_name_for_config(
+                project_manager.PROJECT_CONFIG, new_name
+            )
+            if ok:
+                print(f"✅ 项目名称已写回列表：{list_path}")
+            else:
+                messagebox.showwarning("项目名称", f"名称已改，但没有写回列表行：{err}", parent=self.root)
+
+        ask_project_title(self.root, current=current, scenes=scenes, on_chosen=_chosen)
+        return "break"
 
     def on_scene_field_enter(self, event=None):
         """当在场景编辑字段中按下Ctrl+Enter时的回调"""

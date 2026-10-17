@@ -197,6 +197,76 @@ def find_project_topic_list_row(cfg: dict) -> tuple[str, int, dict | None]:
     return lp, -1, None
 
 
+def save_list_row_summary_for_config(cfg: dict, summary: str) -> tuple[bool, str, str]:
+    """把 ``summary`` 写回本项目在主题分表里的那一行（外层 ``summary`` 键）并保存。
+
+    同时写进 ``cfg``（通常是 ``PROJECT_CONFIG``）：``summary`` 在 ``LIST_ITEM_TOP_PROJECT_KEYS`` 里，
+    以后 ``save_project_config`` 同步整行时不会再用旧值盖掉。返回 ``(ok, list_path, error)``。
+    """
+    text = (summary or "").strip()
+    lp, ix, _row = find_project_topic_list_row(cfg)
+    if isinstance(cfg, dict):
+        cfg["summary"] = text
+    if ix < 0:
+        return False, lp, "主题分表里找不到本项目这一行"
+    try:
+        with open(lp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        if not (isinstance(arr, list) and 0 <= ix < len(arr) and isinstance(arr[ix], dict)):
+            return False, lp, "主题分表格式不对"
+        arr[ix]["summary"] = text
+        config.write_channel_list_json(lp, arr)
+    except (OSError, ValueError) as exc:
+        return False, lp, str(exc)
+    return True, lp, ""
+
+
+# 还没有项目时用户选定的名称：新建项目时 ``_sync_project_video_title_on_list_row`` 用它作 video_title（用后删掉）
+PENDING_PROJECT_TITLE_KEY = "project_title"
+
+
+def apply_project_name_to_row(row: dict, name: str) -> None:
+    """项目改名写进列表行：外层 ``title``（STORY 窗名称栏用的那个）；有 ``project_profile`` 时也写它的 ``video_title``，
+    还没有项目时记在 ``project_title``，以后新建项目时用作成片名。"""
+    name = (name or "").strip()
+    if not isinstance(row, dict) or not name:
+        return
+    row["title"] = name
+    row.pop("video_title", None)
+    prof = row.get(PROJECT_PROFILE_KEY)
+    if isinstance(prof, dict) and prof:
+        prof["video_title"] = name
+        row.pop(PENDING_PROJECT_TITLE_KEY, None)
+    else:
+        row[PENDING_PROJECT_TITLE_KEY] = name
+
+
+def save_list_row_project_name_for_config(cfg: dict, name: str) -> tuple[bool, str, str]:
+    """把项目名称写回本项目在主题分表里那一行（``title`` + ``project_profile.video_title``）并保存。
+
+    同时把 ``cfg["video_title"]``（通常是 ``PROJECT_CONFIG``）改成新名称，以后 ``save_project_config``
+    同步 ``project_profile`` 时不会改回旧名。返回 ``(ok, list_path, error)``。
+    """
+    name = (name or "").strip()
+    if not name:
+        return False, "", "名称是空的"
+    if isinstance(cfg, dict):
+        cfg["video_title"] = name
+    lp, ix, _row = find_project_topic_list_row(cfg)
+    if ix < 0:
+        return False, lp, "主题分表里找不到本项目这一行"
+    try:
+        with open(lp, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+        if not (isinstance(arr, list) and 0 <= ix < len(arr) and isinstance(arr[ix], dict)):
+            return False, lp, "主题分表格式不对"
+        apply_project_name_to_row(arr[ix], name)
+        config.write_channel_list_json(lp, arr)
+    except (OSError, ValueError) as exc:
+        return False, lp, str(exc)
+    return True, lp, ""
+
+
 def _jsonish_preview_fragment(val, max_len: int = 200) -> str:
     """将字符串 / dict / list 压成单行预览（截断）。"""
     if val is None:

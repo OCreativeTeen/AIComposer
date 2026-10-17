@@ -119,6 +119,15 @@ def _sync_project_video_title_on_list_row(
     if not isinstance(prof, dict) or not prof:
         return
     cfg = selected_config if isinstance(selected_config, dict) else {}
+    pending = str(row.pop(project_manager.PENDING_PROJECT_TITLE_KEY, "") or "").strip()
+    if pending:
+        # 建项目之前用户选定的名称（拖进文件时改名等）：直接作成片名
+        merged = copy.deepcopy(prof)
+        merged["video_title"] = pending
+        row[project_manager.PROJECT_PROFILE_KEY] = project_manager.profile_for_list_storage(merged)
+        if isinstance(selected_config, dict):
+            selected_config["video_title"] = pending
+        return
     sc = row.get("scene_content") or cfg.get("scene_content")
     sc_title = (project_manager.title_from_scene_content(sc) or "").strip()
     vt = (prof.get("video_title") or cfg.get("video_title") or "").strip()

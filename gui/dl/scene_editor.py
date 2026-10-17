@@ -816,6 +816,57 @@ class SceneEditorImpl:
                                 "detail": "双击：现在转录" if media_path else "先加音频或 mp4，才能转录"})
                 return out
 
+            def _offer_rename_now(path: str) -> None:
+                """问一次：把这一条的名称改成文件名吗？任何文件类型都问；同名或自动起的文件名不问。
+
+                有名称栏（STORY 窗）：写名称栏，走「保存」按钮的路径。没有名称栏 / 还没有项目：
+                直接写列表行（外层 title；有项目时 project_profile.video_title，没有时记下来供新建项目用）并保存。
+                """
+                from gui.dl.materials_panel import rename_offer_stem
+
+                field = scene_ui.get("name_field")  # (StringVar, save_fn) 或 None
+                if field:
+                    current = (field[0].get() or "").strip()
+                else:
+                    current = _youtube_row_source_title(video_detail)
+                stem = rename_offer_stem(path, current)
+                if not stem:
+                    return
+                if not messagebox.askyesno(
+                    "项目名称",
+                    f"要把项目名称改成「{stem}」吗？\n\n现在的名称：{current or '（空）'}",
+                    parent=dlg,
+                ):
+                    return
+                project_manager.apply_project_name_to_row(video_detail, stem)
+                if field:
+                    field[0].set(stem)
+                    field[1]()
+                else:
+                    persist(video_detail, parent=dlg)
+                    drop_ctx_t = getattr(dlg, "_summary_drop_ctx", None)
+                    refresh_t = drop_ctx_t.get("refresh_title_fields") if isinstance(drop_ctx_t, dict) else None
+                    if callable(refresh_t):
+                        refresh_t()
+                    elif not embedded:
+                        try:
+                            dlg.title(f"SCENE | {stem[:48]}")
+                        except tk.TclError:
+                            pass
+                if callable(on_title_updated):
+                    try:
+                        on_title_updated()
+                    except Exception:
+                        pass
+
+            def _offer_rename(path: str) -> None:
+                try:
+                    _offer_rename_now(path)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"⚠️ 改项目名称失败：{exc}")
+
+            scene_ui["offer_rename"] = _offer_rename
+
             def _pick_item_media() -> None:
                 picked = filedialog.askopenfilename(
                     parent=dlg,
@@ -827,13 +878,16 @@ class SceneEditorImpl:
                 )
                 if picked:
                     _import_item_media(picked)
+                    _offer_rename(picked)
 
             def _material_pick(entry: dict) -> None:
                 kind = entry.get("kind") or ""
                 if kind == "pdf":
                     picked = ask_download_slide_pdf(dlg)
                     if picked:
+                        name_src = picked
                         _import_slide_pdf(picked)
+                        _offer_rename(name_src)
                 elif kind == "image":
                     _pick_cover_image()
                 elif kind in ("audio", "video", "media"):
@@ -996,7 +1050,9 @@ class SceneEditorImpl:
                 if _pdf_press["was_on"]:
                     picked = ask_download_slide_pdf(dlg)
                     if picked:
+                        name_src = picked
                         _import_slide_pdf(picked)
+                        _offer_rename(name_src)
                 return "break"
 
             _image_press = {"was_on": False, "when": 0}
@@ -1050,6 +1106,7 @@ class SceneEditorImpl:
                 )
                 if picked:
                     _import_cover_image(picked)
+                    _offer_rename(picked)
 
             scene_ui["import_cover_image"] = _import_cover_image
 
@@ -1731,6 +1788,14 @@ class SceneEditorImpl:
                         except tk.TclError:
                             pass
 
+                    def _on_smart_saved():
+                        """智能生成成功并保存之后：照旧 on_saved，再自动打开项目名称建议。"""
+                        if callable(on_saved):
+                            on_saved()
+                        offer = scene_ui.get("offer_title_suggest")
+                        if callable(offer):
+                            dlg.after(300, offer)
+
                     def on_smart_generate():
                         label = (prompt_combo_var.get() or "").strip()
                         user_instr = (instruction_tx.get("1.0", tk.END) or "").strip()
@@ -1938,7 +2003,7 @@ class SceneEditorImpl:
                             on_busy=lambda: _busy(smart_btn),
                             on_idle=lambda: _idle(smart_btn),
                             persist_fn=persist,
-                            on_saved=on_saved,
+                            on_saved=_on_smart_saved,
                             on_title_updated=on_title_updated,
                             content_override=override,
                             dialogue_mode=(dialogue_mode_var.get() or "").strip(),
@@ -2051,6 +2116,35 @@ class SceneEditorImpl:
                         ttk.Button(
                             title_host, text="保存", width=8, command=on_save_story
                         ).pack(side=tk.LEFT, padx=(0, 8))
+
+                        # 拖进文件改名时用这个名称栏和「保存」按钮的保存
+                        scene_ui["name_field"] = (title_var, on_save_story)
+
+                        def _offer_title_suggestions(_var=title_var) -> None:
+                            """智能生成之后：按场景内容出 3 个项目名建议，选了新名称就走「保存」按钮的路径改名。"""
+                            from gui.project_title_suggest import ask_project_title
+
+                            sc = video_detail.get("scene_content")
+                            scenes_now = [x for x in sc if isinstance(x, dict)] if isinstance(sc, list) else []
+                            if not scenes_now:
+                                return
+
+                            def _chosen(name: str) -> None:
+                                # 名称栏 → 外层 title；有项目时也改 project_profile.video_title（标题栏显示的就是它）
+                                prof = video_detail.get(project_manager.PROJECT_PROFILE_KEY)
+                                if isinstance(prof, dict) and prof:
+                                    prof["video_title"] = name
+                                _var.set(name)
+                                on_save_story()
+                                cfg = project_manager.PROJECT_CONFIG
+                                if isinstance(cfg, dict) and (cfg.get("pid") or "") and (
+                                    cfg.get("pid") == project_manager.list_json_row_workflow_pid(video_detail)
+                                ):
+                                    cfg["video_title"] = name  # 同一项目开着时，以后保存项目配置不会改回旧名
+
+                            ask_project_title(dlg, current=(_var.get() or "").strip(), scenes=scenes_now, on_chosen=_chosen)
+
+                        scene_ui["offer_title_suggest"] = _offer_title_suggestions
                     if callable(on_regen_project):
                         ttk.Button(
                             scene_ui["smart_slot"], text="重新生成项目", command=on_regen_project
@@ -2073,10 +2167,13 @@ class SceneEditorImpl:
                             p for p in paths
                             if os.path.splitext(p)[1].lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
                         ]
+                        offer = scene_ui.get("offer_rename")
                         if text_file:
                             importer = scene_ui.get("import_analyzed_text_file")
                             if callable(importer):
                                 importer(text_file)
+                            if callable(offer):
+                                offer(paths[0])  # 这一批第一个文件（任何类型）问一次
                             return
                         # 材料区：音频/视频换掉原来的，PDF 换掉原来的，图片加进列表；同时拖几种也都收下。
                         if media_file:
@@ -2090,6 +2187,9 @@ class SceneEditorImpl:
                             if callable(importer):
                                 for img_path in image_files:
                                     importer(img_path)
+                        # 这一批第一个文件（任何类型）：问一次要不要改项目名称
+                        if callable(offer):
+                            offer(paths[0])
 
                     if DND_FILES and callable(getattr(dlg, "drop_target_register", None)):
                         def _bind_pdf_drop(widget):
