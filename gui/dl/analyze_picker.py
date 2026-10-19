@@ -18,8 +18,26 @@ def resolve_choice(options: list, saved=None) -> dict:
     return {"key": key, "mode": mode}
 
 
-def ask_analyze_choice(parent, options: list, *, saved=None, title: str = "分析", source_label: str = "") -> dict | None:
-    """弹窗选分析方式和结果放法。点「开始」返回 {key, label, mode}，取消返回 None。只有一种方式时也照样显示。"""
+PROGRAM_SECTION_TITLE = "生成节目（NotebookLM）"
+PROGRAM_SECTION_TEXT = "不重新分析，直接用现在的分析报告内容，通过 NotebookLM 生成节目（幻灯片 / 语音概览 / 视频概览 / 信息图）。"
+PROGRAM_BUTTON_TEXT = "用分析报告生成节目…"
+
+
+def ask_analyze_choice(
+    parent,
+    options: list,
+    *,
+    saved=None,
+    title: str = "分析",
+    source_label: str = "",
+    on_program=None,
+    program_enabled: bool = True,
+) -> dict | None:
+    """弹窗选分析方式和结果放法。点「开始」返回 {key, label, mode}，取消返回 None。只有一种方式时也照样显示。
+
+    给了 ``on_program``（STORY 窗的分析报告）就在「结果」下面多一个「生成节目（NotebookLM）」区：
+    点按钮关掉这个窗，返回 None（不分析），再调用 ``on_program()``。``program_enabled`` 为 False 时按钮灰掉（没有分析内容）。
+    """
     options = [o for o in (options or []) if isinstance(o, dict) and o.get("key")]
     if not options:
         return None
@@ -43,6 +61,22 @@ def ask_analyze_choice(parent, options: list, *, saved=None, title: str = "分�
     for value, label in RESULT_CHOICES:
         ttk.Radiobutton(res, text=label, value=value, variable=mode_var).pack(anchor=tk.W, pady=1)
     out = [None]
+    want_program = [False]
+    if callable(on_program):
+        prog = ttk.LabelFrame(frm, text=PROGRAM_SECTION_TITLE, padding=8)
+        prog.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(prog, text=PROGRAM_SECTION_TEXT, wraplength=420, justify=tk.LEFT).pack(anchor=tk.W)
+
+        def go_program():
+            want_program[0] = True
+            out[0] = None
+            dlg.destroy()
+
+        prog_btn = ttk.Button(prog, text=PROGRAM_BUTTON_TEXT, command=go_program)
+        prog_btn.pack(anchor=tk.W, pady=(6, 0))
+        if not program_enabled:
+            prog_btn.state(["disabled"])
+            ttk.Label(prog, text="还没有分析内容。", foreground="gray40").pack(anchor=tk.W, pady=(2, 0))
 
     def go(_e=None):
         key = key_var.get()
@@ -65,4 +99,11 @@ def ask_analyze_choice(parent, options: list, *, saved=None, title: str = "分�
     except tk.TclError:
         pass
     dlg.wait_window()
+    if want_program[0]:
+        # 这个窗已关（grab 已放开）再打开节目生成窗。
+        try:
+            parent.after(30, on_program)
+        except tk.TclError:
+            on_program()
+        return None
     return out[0]

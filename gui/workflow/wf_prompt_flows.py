@@ -350,6 +350,9 @@ class PromptFlowsMixin:
                     messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=self.root)
 
             extra = {"output": kind}
+            # 画面比例用项目的宽高（1920×1080 → 16:9，1080×1920 → 9:16）。
+            _pc = project_manager.PROJECT_CONFIG or {}
+            extra["video_size"] = project_manager.video_size_key(_pc.get("video_width"), _pc.get("video_height"))
             if notebook_url:
                 extra["notebook_url"] = notebook_url
             if source_pdf:

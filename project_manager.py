@@ -1047,6 +1047,10 @@ LAST_YT_LANGUAGE = "tw"
 LAST_VIDEO_SIZE = "1080x1920"
 _VIDEO_SIZE_CHOICES = ("1920x1080", "1080x1920")
 
+# 创建项目时的地域 / 时代，和魔法工作流「全场内容」同一组。没有上次选择时留空。
+LAST_SETTING_REGION = ""
+LAST_SETTING_ERA = ""
+
 
 def video_size_pair(width=None, height=None) -> tuple[int, int]:
     """项目里已经写了宽高就用项目的。没有则用上次选择，再没有就是 1080x1920。"""
@@ -1062,9 +1066,52 @@ def video_size_pair(width=None, height=None) -> tuple[int, int]:
     return 1080, 1920
 
 
+def video_size_key(width=None, height=None) -> str:
+    """宽高 → "1920x1080"（横屏）或 "1080x1920"（竖屏）。没写宽高就用上次选择。"""
+    w, h = video_size_pair(width, height)
+    return "1920x1080" if w >= h else "1080x1920"
+
+
+def remember_video_size(size: str) -> bool:
+    """记下画面比例（新建项目窗口和 STORY 窗口共用 YT_tools_prefs 的 video_size）。"""
+    global LAST_VIDEO_SIZE
+    size = (size or "").strip()
+    if size not in _VIDEO_SIZE_CHOICES:
+        return False
+    LAST_VIDEO_SIZE = size
+    try:
+        if (config.load_yt_tools_prefs() or {}).get("video_size") != size:
+            config.save_yt_tools_prefs({"video_size": size})
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 画面比例没有记下：{exc}")
+    return True
+
+
+def remember_setting_place(region: str, era: str) -> None:
+    """记下地域和时代（STORY 窗口和新建项目共用 YT_tools_prefs）。"""
+    global LAST_SETTING_REGION, LAST_SETTING_ERA
+    region = (region or "").strip()
+    era = (era or "").strip()
+    if region not in config_prompt.SETTING_PLACES:
+        region = ""
+        era = ""
+    eras = config_prompt.setting_era_labels(region)
+    if era not in eras:
+        era = eras[0] if eras else ""
+    LAST_SETTING_REGION = region
+    LAST_SETTING_ERA = era
+    try:
+        prefs = config.load_yt_tools_prefs() or {}
+        if prefs.get("setting_region") != region or prefs.get("setting_era") != era:
+            config.save_yt_tools_prefs({"setting_region": region, "setting_era": era})
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ 地域和时代没有记下：{exc}")
+
+
 def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     """用 ``YT_tools_prefs.json`` 覆盖内存中的 LAST_*（若值合法）。"""
     global LAST_NARRATOR, LAST_VISUAL_STYLE, LAST_YT_LANGUAGE, LAST_VIDEO_SIZE
+    global LAST_SETTING_REGION, LAST_SETTING_ERA
     prefs = prefs if prefs is not None else config.load_yt_tools_prefs()
     if not prefs:
         return {}
@@ -1085,6 +1132,13 @@ def _apply_yt_tools_prefs_to_globals(prefs: dict | None = None) -> dict:
     size = (prefs.get("video_size") or "").strip()
     if size in _VIDEO_SIZE_CHOICES:
         LAST_VIDEO_SIZE = size
+
+    region = (prefs.get("setting_region") or "").strip()
+    if region in config_prompt.SETTING_PLACES:
+        eras = config_prompt.setting_era_labels(region)
+        era = (prefs.get("setting_era") or "").strip()
+        LAST_SETTING_REGION = region
+        LAST_SETTING_ERA = era if era in eras else (eras[0] if eras else "")
 
     return prefs
 
@@ -1886,7 +1940,8 @@ class ProjectSelectionDialog:
     def __init__(self, parent, config_manager, youtube_gui, create_only,
                  initial_channel=None, initial_language=None, initial_narrator=None, initial_visual_style=None,
                  initial_dialogue_mode=None,
-                 initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None):
+                 initial_analyzed_content=None, initial_scene_content=None, initial_category=None, initial_subtype=None, initial_tags=None,
+                 initial_video_size=None, initial_setting_region=None, initial_setting_era=None):
 
         self.parent = parent
         self.config_manager = config_manager
@@ -1904,6 +1959,18 @@ class ProjectSelectionDialog:
         _nar = initial_narrator or LAST_NARRATOR
         _vs = initial_visual_style or LAST_VISUAL_STYLE
         _dm = config.normalize_dialogue_mode(initial_dialogue_mode)
+        # 从 STORY 窗口新建：带上那里选的画面比例；没带就用上次选择（LAST_VIDEO_SIZE）。
+        _ivs = (initial_video_size or "").strip()
+        self.initial_video_size = _ivs if _ivs in _VIDEO_SIZE_CHOICES else ""
+        _region = (initial_setting_region or "").strip()
+        if _region not in config_prompt.SETTING_PLACES:
+            _region = LAST_SETTING_REGION if LAST_SETTING_REGION in config_prompt.SETTING_PLACES else ""
+        _eras = config_prompt.setting_era_labels(_region)
+        _era = (initial_setting_era or "").strip()
+        if _era not in _eras:
+            _era = LAST_SETTING_ERA if LAST_SETTING_ERA in _eras else (_eras[0] if _eras else "")
+        self.initial_setting_region = _region
+        self.initial_setting_era = _era
         
         self.default_project_config = {
             'languages': ['tw', 'zh', 'en'],
@@ -1955,6 +2022,8 @@ class ProjectSelectionDialog:
             'narrator': _nar,
             'visual_style': _vs,
             'dialogue_mode': _dm,
+            'setting_region': self.initial_setting_region,
+            'setting_era': self.initial_setting_era,
             'channel_prompt': None,
             'topic_category': icat,
             'topic_subtype': isub,
@@ -2169,7 +2238,7 @@ class ProjectSelectionDialog:
         ttk.Label(top_fields_row, text="视频:").pack(side=tk.LEFT, padx=(0, 4))
         resolution_frame = ttk.Frame(top_fields_row)
         resolution_frame.pack(side=tk.LEFT, padx=(0, 0))
-        resolution_var = tk.StringVar(value=LAST_VIDEO_SIZE)
+        resolution_var = tk.StringVar(value=getattr(self, "initial_video_size", "") or LAST_VIDEO_SIZE)
         ttk.Radiobutton(resolution_frame, text="1920x1080 (横向)", variable=resolution_var, value="1920x1080").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Radiobutton(resolution_frame, text="1080x1920 (纵向)", variable=resolution_var, value="1080x1920").pack(side=tk.LEFT)
         row += 1
@@ -3075,8 +3144,11 @@ def create_project_dialog(parent, youtube_gui=None):
 
 def create_project_with_initial_raw(parent, channel, language, narrator, visual_style,
                                     analyzed_content, scene_content, topic_category, topic_subtype, topic_tags,
-                                    dialogue_mode=None):
-    """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。"""
+                                    dialogue_mode=None, video_size=None,
+                                    setting_region=None, setting_era=None):
+    """用现有 RAW 材料直接启动创建新项目。``scene_content`` 必填；``analyzed_content`` 可选。
+    ``video_size``："1920x1080" / "1080x1920"，新建窗口里画面比例的初始值（STORY 窗口的选择）。
+    ``setting_region`` / ``setting_era``：STORY 窗口选的地域和时代，写进新项目。"""
     global PROJECT_CONFIG
     sc_ok = False
     if isinstance(scene_content, list) and scene_content:
@@ -3107,7 +3179,10 @@ def create_project_with_initial_raw(parent, channel, language, narrator, visual_
         initial_scene_content=scene_content,
         initial_category = topic_category,
         initial_subtype = topic_subtype,
-        initial_tags = topic_tags
+        initial_tags = topic_tags,
+        initial_video_size=video_size,
+        initial_setting_region=setting_region,
+        initial_setting_era=setting_era,
     )
 
     result = dialog.story_result.get('action', 'cancel')

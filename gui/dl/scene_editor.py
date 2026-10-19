@@ -33,127 +33,216 @@ from gui.dl.gen_video_files import STORY_MEDIA_KEY, STORY_TRANSCRIPT_KEY, _find_
 from gui.downloader import _apply_scene_lm_combo, _bind_text_editor_replace_from_clipboard_on_double_click, _episode_choice_label, _episode_ids_in_scenes, _filter_scenes_by_episode, _fit_story_summary_window, _image_material_override, _media_material_override, _open_cover_image_for_row, _pdf_pages_as_scene_source, _pdf_scene_generation_instruction, _project_look_from_row, _prompt_choice_entries, _prompt_text_for_material, apply_scene_content_from_editor_text, ask_download_slide_pdf, save_cover_image_as_gen_video_webp, save_pil_image_to_cover_array
 
 
-class SceneEditorImpl:
-    @staticmethod
-    def _story_analysis_text(video_detail: dict, scene_ui: dict) -> str:
-        """STORY 窗当前的分析内容：分析报告编辑区（含没保存的草稿），没有就用 video_detail['analyzed_content']。"""
-        text = None
-        reader = scene_ui.get("read_analyzed_draft") if isinstance(scene_ui, dict) else None
-        if callable(reader):
-            try:
-                text = reader()
-            except Exception:  # noqa: BLE001
-                text = None
-        if text is None:
-            raw = video_detail.get("analyzed_content") if isinstance(video_detail, dict) else ""
-            text = raw if isinstance(raw, str) else str(raw or "")
-        return (text or "").strip()
-
-    def _open_story_program_dialog(self, dlg, anchor, video_detail: dict, scene_ui: dict) -> None:
-        """节目生成：复用全集生成的窗口（分析模式）和 CLI自动 → NotebookLM Studio。
-
-        来源：分析内容 → D:\\AI_MEDIA\\working\\content.pdf（和全集生成同一个来源名，上传时替换旧的），
-        有原始材料 PDF 就另外上传（只作背景）。没有 actor.pdf（上传时会移除旧的 actor.pdf）。
-        产物下载到 D:\\AI_MEDIA\\working，用系统程序打开；不建项目、不改这一条的场景。
-        """
-        from gui.slide_prompt_dialog import open_slide_prompt_dialog
-
-        working = r"D:\AI_MEDIA\working"
-        material_pdf = (_find_gen_video_slide_for_row(video_detail) or "").strip()
-        if material_pdf and not material_pdf.lower().endswith(".pdf"):
-            material_pdf = ""
-
-        def copy_text(text: str) -> None:
-            _copy_text_to_clipboard(dlg, text)
-
-        def get_style() -> str:
-            var = scene_ui.get("visual_style_var")
-            vs = ""
-            try:
-                vs = (var.get() if var is not None else "") or ""
-            except tk.TclError:
-                vs = ""
-            return (
-                config.match_visual_style(vs) or vs.strip()
-                or (video_detail.get("visual_style") or "").strip()
-                or (project_manager.LAST_VISUAL_STYLE or "").strip()
-                or config.VISUAL_STYLE_OPTIONS[0]
-            )
-
-        narrator = ""
-        nvar = scene_ui.get("narrator_var")
+# 节目生成用的模块函数：SceneEditorImpl 的方法由 MediaGUIManager 以未绑定方式调用（self 是 MediaGUIManager），
+# 所以不能写成 SceneEditorImpl 的新方法再用 self._xxx 调；这里写成模块函数，直接调用。
+def _story_analysis_text(video_detail: dict, scene_ui: dict) -> str:
+    """STORY 窗当前的分析内容：分析报告编辑区（含没保存的草稿），没有就用 video_detail['analyzed_content']。"""
+    text = None
+    reader = scene_ui.get("read_analyzed_draft") if isinstance(scene_ui, dict) else None
+    if callable(reader):
         try:
-            narrator = ((nvar.get() if nvar is not None else "") or "").strip()
-        except tk.TclError:
-            narrator = ""
-        if not narrator:
-            narrator = (video_detail.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
-
-        def get_analysis() -> str:
-            return self._story_analysis_text(video_detail, scene_ui)
-
-        def save_choice(choice: dict) -> None:
-            try:
-                prefs = config.load_yt_tools_prefs() or {}
-                if prefs.get("program_prompt") != choice:
-                    config.save_yt_tools_prefs({"program_prompt": choice})
-            except Exception as exc:  # noqa: BLE001
-                print(f"节目生成：选择没有记下：{exc}")
-
-        try:
-            saved = (config.load_yt_tools_prefs() or {}).get("program_prompt")
+            text = reader()
         except Exception:  # noqa: BLE001
-            saved = None
+            text = None
+    if text is None:
+        raw = video_detail.get("analyzed_content") if isinstance(video_detail, dict) else ""
+        text = raw if isinstance(raw, str) else str(raw or "")
+    return (text or "").strip()
 
-        def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
-                        _actor_pdf: str = "", _cross: bool = False) -> None:
-            def _open_file(path: str) -> None:
-                import shutil
 
-                try:
-                    os.makedirs(working, exist_ok=True)
-                    dest = os.path.join(working, os.path.basename(path))
-                    if os.path.abspath(dest) != os.path.abspath(path):
-                        if os.path.exists(dest):
-                            os.remove(dest)
-                        shutil.move(path, dest)
-                    path = dest
-                except OSError as exc:
-                    print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
-                print(f"节目生成：已保存 {path}")
-                try:
-                    os.startfile(path)
-                except OSError as exc:
-                    messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=dlg)
+def _story_scene_list(video_detail: dict, scene_ui: dict) -> list:
+    """STORY 窗的场景：先取 scene_content JSON 编辑框（含没保存的改动），解析不出再用这一条保存的 scene_content。"""
+    tx = scene_ui.get("tx") if isinstance(scene_ui, dict) else None
+    if tx is not None:
+        try:
+            parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
+        except Exception:  # noqa: BLE001
+            parsed = None
+        if parsed:
+            return [s for s in parsed if isinstance(s, dict)]
+    sc = video_detail.get("scene_content") if isinstance(video_detail, dict) else None
+    return [s for s in sc if isinstance(s, dict)] if isinstance(sc, list) else []
 
-            extra = {"output": kind}
-            if notebook_url:
-                extra["notebook_url"] = notebook_url
-            if source_pdf:
-                extra["source_pdf"] = source_pdf
-            if material_pdf:
-                extra["extra_sources"] = [material_pdf]
-            self.llm_api.show_manual_window(
-                prompt, "", auto_cli=True, cli_kind=kind or "slides",
-                file_dest_dir=working, on_file_response=_open_file, extra=extra,
-            )
 
-        open_slide_prompt_dialog(
-            dlg,
-            anchor,
-            title="节目生成",
-            get_scenes=lambda: [],
-            get_style=get_style,
-            copy_text=copy_text,
-            host_narrator=narrator,
-            get_place=None,
-            saved_choice=saved,
-            save_choice=save_choice,
-            open_manual=open_manual,
-            get_analysis=get_analysis,
-            material_pdf=material_pdf,
+def _story_avatar_dir(video_detail: dict) -> str:
+    """这一条有项目时用项目的 avatar 目录（actor.pdf 的形象图），没有就空。"""
+    try:
+        pid = (project_manager.list_json_row_workflow_pid(video_detail) or "").strip()
+    except Exception:  # noqa: BLE001
+        pid = ""
+    if not pid:
+        return ""
+    d = os.path.join(config.get_project_path(pid), "avatar")
+    return d if os.path.isdir(d) else ""
+
+
+def _story_setting_place(video_detail: dict) -> tuple[str, str]:
+    """(地域, 时代)。这一条有项目就用项目的，否则用上次选择（和魔法工作流同一组）。"""
+    import config_prompt
+
+    region, era = "", ""
+    pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
+    for src in (pp, video_detail):
+        if not isinstance(src, dict):
+            continue
+        r = (src.get("setting_region") or "").strip()
+        if r in config_prompt.SETTING_PLACES:
+            region = r
+            era = (src.get("setting_era") or "").strip()
+            break
+    if region not in config_prompt.SETTING_PLACES:
+        region = project_manager.LAST_SETTING_REGION if project_manager.LAST_SETTING_REGION in config_prompt.SETTING_PLACES else ""
+    eras = config_prompt.setting_era_labels(region)
+    if era not in eras:
+        era = project_manager.LAST_SETTING_ERA if project_manager.LAST_SETTING_ERA in eras else (eras[0] if eras else "")
+    return region, era
+
+
+def _story_video_size(video_detail: dict) -> tuple[str, str]:
+    """(要显示的画面比例, 项目的画面比例)。
+
+    显示值跟新建项目窗口一样：上次选择（YT_tools_prefs 的 video_size），没有就 1080x1920。
+    这一条已有项目时，第二项是项目的宽高，只用来提示「和项目不一致」，不覆盖当前选择。
+    """
+    project_size = ""
+    pp = video_detail.get(project_manager.PROJECT_PROFILE_KEY) if isinstance(video_detail, dict) else None
+    if isinstance(pp, dict) and pp:
+        for src in (pp, video_detail):
+            try:
+                w, h = int(src.get("video_width")), int(src.get("video_height"))
+            except (TypeError, ValueError):
+                continue
+            if w > 0 and h > 0:
+                project_size = "1920x1080" if w >= h else "1080x1920"
+                break
+    last = project_manager.LAST_VIDEO_SIZE
+    if last not in ("1920x1080", "1080x1920"):
+        last = project_manager.video_size_key()
+    return last, project_size
+
+
+def _story_video_size_choice(scene_ui: dict, video_detail: dict) -> str:
+    """STORY 窗口第 1 行当前选的画面比例。"""
+    var = scene_ui.get("video_size_var") if isinstance(scene_ui, dict) else None
+    try:
+        v = (var.get() if var is not None else "") or ""
+    except tk.TclError:
+        v = ""
+    return v if v in ("1920x1080", "1080x1920") else _story_video_size(video_detail)[0]
+
+
+def _open_story_program_dialog(gui, dlg, anchor, video_detail: dict, scene_ui: dict) -> None:
+    """节目生成：打开和魔法工作流同一个「全集生成」窗，CLI自动 → NotebookLM Studio。
+
+    「写进 content.pdf 的内容」两节互斥：分析内容（分析报告 → content.pdf，原始材料 PDF 作背景另传），
+    或场景内容（这一条的 scene_content，规则同全集生成，可带 actor.pdf）。
+    产物下载到 D:\\AI_MEDIA\\working，用系统程序打开；不建项目、不改这一条的场景。
+    """
+    from gui.slide_prompt_dialog import open_slide_prompt_dialog
+
+    working = r"D:\AI_MEDIA\working"
+    material_pdf = (_find_gen_video_slide_for_row(video_detail) or "").strip()
+    if material_pdf and not material_pdf.lower().endswith(".pdf"):
+        material_pdf = ""
+
+    def copy_text(text: str) -> None:
+        _copy_text_to_clipboard(dlg, text)
+
+    def get_style() -> str:
+        var = scene_ui.get("visual_style_var")
+        vs = ""
+        try:
+            vs = (var.get() if var is not None else "") or ""
+        except tk.TclError:
+            vs = ""
+        return (
+            config.match_visual_style(vs) or vs.strip()
+            or (video_detail.get("visual_style") or "").strip()
+            or (project_manager.LAST_VISUAL_STYLE or "").strip()
+            or config.VISUAL_STYLE_OPTIONS[0]
         )
 
+    narrator = ""
+    nvar = scene_ui.get("narrator_var")
+    try:
+        narrator = ((nvar.get() if nvar is not None else "") or "").strip()
+    except tk.TclError:
+        narrator = ""
+    if not narrator:
+        narrator = (video_detail.get("narrator") or project_manager.LAST_NARRATOR or "").strip()
+
+    def get_analysis() -> str:
+        return _story_analysis_text(video_detail, scene_ui)
+
+    def save_choice(choice: dict) -> None:
+        try:
+            prefs = config.load_yt_tools_prefs() or {}
+            if prefs.get("program_prompt") != choice:
+                config.save_yt_tools_prefs({"program_prompt": choice})
+        except Exception as exc:  # noqa: BLE001
+            print(f"节目生成：选择没有记下：{exc}")
+
+    try:
+        saved = (config.load_yt_tools_prefs() or {}).get("program_prompt")
+    except Exception:  # noqa: BLE001
+        saved = None
+
+    def open_manual(prompt: str, kind: str = "slides", notebook_url: str = "", source_pdf: str = "",
+                    actor_pdf: str = "", _cross: bool = False, extra_sources=None) -> None:
+        def _open_file(path: str) -> None:
+            import shutil
+
+            try:
+                os.makedirs(working, exist_ok=True)
+                dest = os.path.join(working, os.path.basename(path))
+                if os.path.abspath(dest) != os.path.abspath(path):
+                    if os.path.exists(dest):
+                        os.remove(dest)
+                    shutil.move(path, dest)
+                path = dest
+            except OSError as exc:
+                print(f"⚠️ 节目生成：移动到 working 失败，用原位置：{exc}")
+            print(f"节目生成：已保存 {path}")
+            try:
+                os.startfile(path)
+            except OSError as exc:
+                messagebox.showwarning("打开失败", f"打不开：{exc}\n{path}", parent=dlg)
+
+        extra = {"output": kind}
+        # 画面比例：STORY 窗口第 1 行的选择 → NotebookLM 视频概览 / 信息图的比例（演示文稿写进提示词）。
+        extra["video_size"] = _story_video_size_choice(scene_ui, video_detail)
+        if notebook_url:
+            extra["notebook_url"] = notebook_url
+        if source_pdf:
+            extra["source_pdf"] = source_pdf
+        if actor_pdf:
+            extra["actor_pdf"] = actor_pdf  # 场景内容带人物：content.pdf 之后上传
+        if extra_sources:
+            extra["extra_sources"] = list(extra_sources)  # 分析内容：原始材料 PDF，只作背景
+        gui.llm_api.show_manual_window(
+            prompt, "", auto_cli=True, cli_kind=kind or "slides",
+            file_dest_dir=working, on_file_response=_open_file, extra=extra,
+        )
+
+    open_slide_prompt_dialog(
+        dlg,
+        anchor,
+        title="节目生成",
+        get_scenes=lambda: _story_scene_list(video_detail, scene_ui),
+        get_style=get_style,
+        copy_text=copy_text,
+        host_narrator=narrator,
+        get_place=None,
+        saved_choice=saved,
+        save_choice=save_choice,
+        open_manual=open_manual,
+        get_analysis=get_analysis,
+        material_pdf=material_pdf,
+        actor_avatar_dir=_story_avatar_dir(video_detail),
+    )
+
+
+class SceneEditorImpl:
     def _show_scene_content_editor(
         self,
         parent,
@@ -1135,12 +1224,29 @@ class SceneEditorImpl:
                     return
                 from gui.dl.analyze_picker import ask_analyze_choice
 
+                # 只有 STORY 窗双击「分析报告」（source_text 为 None）才有「生成节目（NotebookLM）」区；
+                # 材料列表里 PDF / 文字稿的「分析」是对那一项重新分析，跟现在的分析报告无关，不显示。
+                program_kw = {}
+                if source_text is None:
+                    def _program_from_analysis() -> None:
+                        if not (_story_analysis_text(video_detail, scene_ui) or _story_scene_list(video_detail, scene_ui)):
+                            messagebox.showwarning("节目生成", "还没有分析内容。", parent=dlg)
+                            return
+                        _open_story_program_dialog(self, dlg, btn_analyzed, video_detail, scene_ui)
+
+                    program_kw = {
+                        "on_program": _program_from_analysis,
+                        "program_enabled": bool(
+                            _story_analysis_text(video_detail, scene_ui) or _story_scene_list(video_detail, scene_ui)
+                        ),
+                    }
                 choice = ask_analyze_choice(
                     dlg,
                     _analyze_options(),
                     saved=_analyze_choice_saved(),
                     title="重新生成分析报告" if source_text is None else "分析这一项",
                     source_label=source_label,
+                    **program_kw,
                 )
                 if not choice:
                     return
@@ -1149,27 +1255,43 @@ class SceneEditorImpl:
                 if source_text is not None:
                     kw["source_text"] = source_text
                 try:
-                    on_resummarize(**kw)
+                    analyzed_ok = on_resummarize(**kw)
                 except TypeError:
                     if source_text is not None:
                         messagebox.showwarning("分析", "这个窗口还不支持只用这一项生成。", parent=dlg)
                         return
-                    on_resummarize()
+                    analyzed_ok = on_resummarize()
                 _analyzed_edit["text"] = None
                 _analyzed_edit["reload"] = True
                 if material_var.get() != "analyzed":
                     material_var.set("analyzed")
                 _fill_material_preview()
+                if analyzed_ok:
+                    offer = scene_ui.get("offer_title_suggest")
+                    if callable(offer):
+                        offer(source_text=_story_analysis_text(video_detail, scene_ui))
 
             def _material_analyze(entry: dict) -> None:
                 kind = entry.get("kind") or ""
                 path = entry.get("path") or ""
                 text = ""
                 if kind == "pdf" and path and os.path.isfile(path):
-                    src = _remember_pdf_source(path)
-                    text = (src.get("text") or "").strip() if src.get("has_text") else ""
+                    # 读 PDF 里的真文字。_remember_pdf_source 是给场景生成的（只有文件名 + 页数，has_text 永远 False）。
+                    from utility.pdf_util import pdf_text_content
+
+                    src = pdf_text_content(path)
+                    text = (src.get("text") or "").strip()
                     if not text:
-                        messagebox.showwarning("分析", "这份 PDF 没有可以提取的文字（可能是扫描图片）。", parent=dlg)
+                        if src.get("error"):
+                            why = f"（读取失败：{src['error']}）"
+                        elif src.get("scanned"):
+                            why = (f"：看起来是扫描件（{src['image_pages']}/{src['pages']} 页只有图片），"
+                                   "需要先做文字识别（OCR）")
+                        elif not src.get("pages"):
+                            why = "（没有页面）"
+                        else:
+                            why = "（是空白的）"
+                        messagebox.showwarning("分析", f"这份 PDF 没有可以提取的文字{why}。", parent=dlg)
                         return
                 elif kind == "transcript":
                     _tp, ttext = _item_transcript_text(video_detail)
@@ -1364,6 +1486,76 @@ class SceneEditorImpl:
             )
             visual_style_combo.pack(side=tk.LEFT)
             style_frm.pack(side=tk.LEFT, padx=(0, 8), before=action_bar)
+
+            # 画面比例：和新建项目窗口同一组选项、同一个默认（上次选择）。
+            # 单独放在最上面。STORY 窗只有 1100 宽，挤在标题那一行里会被裁掉，所以之前看不见。
+            # 在这里改会记住，并用于节目生成（视频概览 / 信息图）和从这里新建 / 重新生成项目；不改已经建好的项目。
+            _vsize_cur, _vsize_project = _story_video_size(video_detail)
+            video_size_var = tk.StringVar(value=_vsize_cur)
+            scene_ui["video_size_var"] = video_size_var
+            size_frm = ttk.Frame(frm)
+            ttk.Label(size_frm, text="画面:").pack(side=tk.LEFT, padx=(0, 4))
+            size_note = ttk.Label(size_frm, text="", foreground="#a05000")
+
+            def _sync_video_size_note():
+                cur = video_size_var.get()
+                if _vsize_project and cur != _vsize_project:
+                    size_note.config(
+                        text="（这一条已有项目是" + ("横屏" if _vsize_project == "1920x1080" else "竖屏") + "，换成这个比例要用「重新生成项目」）"
+                    )
+                    size_note.pack(side=tk.LEFT, padx=(8, 0))
+                else:
+                    size_note.pack_forget()
+
+            def _commit_video_size():
+                project_manager.remember_video_size(video_size_var.get())
+                _sync_video_size_note()
+
+            for _vs_val, _vs_txt in (("1920x1080", "1920x1080 (横向)"), ("1080x1920", "1080x1920 (纵向)")):
+                ttk.Radiobutton(
+                    size_frm, text=_vs_txt, value=_vs_val, variable=video_size_var, command=_commit_video_size
+                ).pack(side=tk.LEFT, padx=(0, 8))
+            _sync_video_size_note()
+
+            # 地域 / 时代：和魔法工作流「全场内容」同一组。跟在画面比例后面。
+            # 这一条有项目就用项目的；没有就用上次选择。创建 / 重新生成项目时传进去。
+            _set_region, _set_era = _story_setting_place(video_detail)
+            setting_region_var = tk.StringVar(value=_set_region)
+            setting_era_var = tk.StringVar(value=_set_era)
+            ttk.Label(size_frm, text="地域").pack(side=tk.LEFT, padx=(12, 4))
+            setting_region_combo = ttk.Combobox(
+                size_frm,
+                textvariable=setting_region_var,
+                values=list(config_prompt.SETTING_PLACES.keys()),
+                state="readonly",
+                width=7,
+            )
+            setting_region_combo.pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Label(size_frm, text="时代").pack(side=tk.LEFT, padx=(0, 4))
+            setting_era_combo = ttk.Combobox(
+                size_frm, textvariable=setting_era_var, state="readonly", width=12
+            )
+            setting_era_combo.pack(side=tk.LEFT)
+
+            def _sync_setting_eras(*_a):
+                eras = config_prompt.setting_era_labels(setting_region_var.get())
+                setting_era_combo["values"] = eras
+                if setting_era_var.get() not in eras:
+                    setting_era_var.set(eras[0] if eras else "")
+
+            def _commit_setting_place(_e=None):
+                _sync_setting_eras()
+                project_manager.remember_setting_place(setting_region_var.get(), setting_era_var.get())
+
+            _sync_setting_eras()
+            setting_region_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
+            setting_era_combo.bind("<<ComboboxSelected>>", _commit_setting_place)
+
+            size_frm.pack(fill=tk.X, pady=(0, 6), before=prompt_row)
+            _size_ctx = getattr(dlg, "_summary_drop_ctx", None)
+            if isinstance(_size_ctx, dict):
+                _size_ctx["story_video_size"] = video_size_var.get  # 打开项目 / 重新生成项目：新建窗口的初始比例
+                _size_ctx["story_setting"] = lambda: (setting_region_var.get(), setting_era_var.get())
 
             def _commit_visual_style(_e=None):
                 vs = config.match_visual_style(visual_style_var.get() or "")
@@ -2289,28 +2481,6 @@ class SceneEditorImpl:
                         side=tk.LEFT, padx=(0, 6), before=scene_ui["prompt_combo"]
                     )
 
-                    def on_program_generate():
-                        """节目生成：魔法工作流「全集生成」（NotebookLM）搬到 STORY 窗，来源是分析内容，不是场景。"""
-                        analysis = self._story_analysis_text(video_detail, scene_ui)
-                        if not analysis:
-                            messagebox.showwarning("节目生成", "还没有分析内容。", parent=dlg)
-                            return
-                        self._open_story_program_dialog(dlg, program_btn, video_detail, scene_ui)
-
-                    program_btn = ttk.Button(
-                        scene_ui["prompt_row"],
-                        text="节目生成",
-                        command=on_program_generate,
-                        style=smart_style,
-                        width=11,
-                    )
-                    # 第 1 行最前面（原来场景生成的位置），在「风格」前面。
-                    _row1 = scene_ui["prompt_row"].pack_slaves()
-                    if _row1:
-                        program_btn.pack(side=tk.LEFT, padx=(0, 6), before=_row1[0])
-                    else:
-                        program_btn.pack(side=tk.LEFT, padx=(0, 6))
-                    scene_ui["program_btn"] = program_btn
                     if embedded:
                         def _summary_scenes() -> list:
                             parsed = _parse_scene_json_list(tx.get("1.0", tk.END) or "")
@@ -2354,13 +2524,15 @@ class SceneEditorImpl:
                         # 拖进文件改名时用这个名称栏和「保存」按钮的保存
                         scene_ui["name_field"] = (title_var, on_save_story)
 
-                        def _offer_title_suggestions(_var=title_var) -> None:
-                            """场景生成之后：按场景内容出 3 个项目名建议，选了新名称就走「保存」按钮的路径改名。"""
+                        def _offer_title_suggestions(_var=title_var, source_text: str = "") -> None:
+                            """出 3 个项目名建议。有 source_text（分析报告）就用它，否则用场景内容。
+                            选了新名称就走「保存」按钮的路径改名。第一项永远是现在的名称。"""
                             from gui.project_title_suggest import ask_project_title
 
                             sc = video_detail.get("scene_content")
                             scenes_now = [x for x in sc if isinstance(x, dict)] if isinstance(sc, list) else []
-                            if not scenes_now:
+                            text = (source_text or "").strip()
+                            if not scenes_now and not text:
                                 return
 
                             def _chosen(name: str) -> None:
@@ -2376,7 +2548,10 @@ class SceneEditorImpl:
                                 ):
                                     cfg["video_title"] = name  # 同一项目开着时，以后保存项目配置不会改回旧名
 
-                            ask_project_title(dlg, current=(_var.get() or "").strip(), scenes=scenes_now, on_chosen=_chosen)
+                            ask_project_title(
+                                dlg, current=(_var.get() or "").strip(), scenes=scenes_now,
+                                on_chosen=_chosen, source_text=text,
+                            )
 
                         scene_ui["offer_title_suggest"] = _offer_title_suggestions
                     if callable(on_regen_project):

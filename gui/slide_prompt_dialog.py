@@ -176,12 +176,15 @@ def open_slide_prompt_dialog(
     ``get_scene_range(range_key)`` → ``(scenes, episodes)``：range_key 是 "episode"（本集）或 "to_end"（本集到结束），
     episodes 是和 scenes 等长的每场集名。不给就只有本集（``get_scenes``），也不显示「范围」。
 
-    节目生成（STORY 窗口）：给 ``get_analysis()`` → 分析内容文字，就是分析模式：叙事风格固定「讲述」，
-    不勾任何内容（场景描述 / 讲话 / 人物），没有 actor.pdf；分析内容全文放进「注意 / FYI」，
-    同时写成 content.pdf 作为来源。``material_pdf`` 是原始材料 PDF（只作背景，由 ``open_manual`` 另传上传）。
-    这时 ``open_manual(prompt, kind, nb_url, content_pdf, "", False)``。
+    「写进 content.pdf 的内容」分两节，互斥：
+    - 上面「分析内容（分析报告）」：只在 STORY 窗（给了 ``get_analysis()``）可用，默认勾上。分析报告写进 content.pdf
+      （不进提示词），叙事风格固定讲述；``material_pdf``（原始材料）作为背景来源：
+      ``open_manual(prompt, kind, nb_url, content_pdf, "", False, extra_sources=[material_pdf])``。
+    - 下面「场景内容」：原来的场景选项（场景图片 / 场景描述 / 讲话 / 人物），规则和以前完全一样。
+    魔法工作流不给 ``get_analysis``：上面一节灰掉（「只在 STORY 窗口可用」），行为和以前一样。
+    「注意 / FYI」：用户临时补充的短说明，勾上才放在提示词最前面；历史存在 ``saved_choice['fyi_history']``。
     """
-    analysis_mode = get_analysis is not None
+    story_mode = get_analysis is not None
     dlg = tk.Toplevel(parent)
     dlg.title(title)
     dlg.transient(parent)
@@ -210,11 +213,7 @@ def open_slide_prompt_dialog(
     override_var = tk.StringVar(value=last["actor_override"])
     output_var = tk.StringVar(value=last["output"])
     range_var = tk.StringVar(value=last["range"] if get_scene_range is not None else "episode")
-    if analysis_mode:
-        # 节目生成：固定讲述，没有场景内容、讲话和人物。
-        narrative_var.set("narration")
-        for _v in (visual_var, speaking_var, actor_var, image_var):
-            _v.set(False)
+    analysis_var = tk.BooleanVar(value=False)
 
     def scene_range() -> tuple[list, list]:
         """按「范围」取场景和每场集名。"""
@@ -230,13 +229,9 @@ def open_slide_prompt_dialog(
         scenes_e = [s for s in (get_scenes() or []) if isinstance(s, dict)]
         return scenes_e, []
 
-    _narr_box, narr_buttons = pack_narrative_choices(
-        groups, narrative_var, actor_var=None if analysis_mode else actor_var
-    )
-    if analysis_mode:
-        for btn in narr_buttons:
-            btn.configure(state="disabled")
-        ttk.Label(_narr_box, text="节目生成固定「讲述」", foreground="#1f5fbf").pack(anchor=tk.W, pady=(4, 0))
+    _narr_box, narr_buttons = pack_narrative_choices(groups, narrative_var, actor_var=actor_var)
+    narr_note = ttk.Label(_narr_box, text="", foreground="#1f5fbf", wraplength=340, justify=tk.LEFT)
+    narr_note.pack(anchor=tk.W, pady=(4, 0))
 
     text_box = ttk.LabelFrame(groups, text="说明文字", padding=(8, 4))
     text_box.pack(side=tk.LEFT, anchor=tk.N)
@@ -254,25 +249,116 @@ def open_slide_prompt_dialog(
 
     from utility.content_pdf import build_text_pdf
 
-    if analysis_mode:
-        src_box = ttk.LabelFrame(groups, text=f"写进 {CONTENT_PDF_NAME} 的内容", padding=(8, 4))
-        src_box.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
+    # 写进 content.pdf 的内容：上面「分析内容（分析报告）」，下面「场景内容」，两节互斥。
+    content_box = ttk.LabelFrame(groups, text=f"写进 {CONTENT_PDF_NAME} 的内容", padding=(8, 4))
+    content_box.pack(side=tk.LEFT, anchor=tk.N, padx=(8, 0))
+    top_box = ttk.LabelFrame(content_box, text="分析内容", padding=(8, 4))
+    top_box.pack(fill=tk.X, anchor=tk.W)
+    analysis_btn = ttk.Checkbutton(top_box, text="分析内容（分析报告）", variable=analysis_var)
+    analysis_btn.pack(anchor=tk.W)
+    analysis_hint = ttk.Label(top_box, foreground="gray40", wraplength=320, justify=tk.LEFT)
+    analysis_hint.pack(anchor=tk.W)
+    scene_opts, scene_buttons = pack_scene_field_choices(
+        content_box, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
+        title="场景内容", image_var=image_var,
+    )
+    scene_opts.pack_forget()
+    scene_opts.pack(fill=tk.X, anchor=tk.W, pady=(6, 0))
+    scene_widgets = list(scene_buttons)
+
+    def _collect_combos(w) -> None:
+        for c in w.winfo_children():
+            if isinstance(c, ttk.Combobox):
+                scene_widgets.append(c)
+            _collect_combos(c)
+
+    _collect_combos(scene_opts)
+    scene_hint = ttk.Label(scene_opts, foreground="gray40", wraplength=320, justify=tk.LEFT)
+    scene_hint.pack(anchor=tk.W)
+
+    analysis_len = 0
+    if story_mode:
         try:
-            _n = len((get_analysis() or "").strip())
+            analysis_len = len((get_analysis() or "").strip())
         except Exception:  # noqa: BLE001
-            _n = 0
-        ttk.Label(
-            src_box,
-            text=(f"分析内容（{_n} 字）全文放进「注意 / FYI」，作为主要内容；\n"
-                  "不写场景描述、讲话、人物，没有 actor.pdf。"
-                  + (f"\n另上传原始材料：{os.path.basename(material_pdf)}（只作背景）" if material_pdf else "\n没有原始材料 PDF。")),
-            justify=tk.LEFT, wraplength=330,
-        ).pack(anchor=tk.W)
+            analysis_len = 0
+    analysis_ok = story_mode and analysis_len > 0
+    try:
+        has_scenes = bool(scene_range()[0])
+    except Exception:  # noqa: BLE001
+        has_scenes = False
+    scenes_ok = has_scenes or not story_mode  # 魔法工作流照旧（没场景时提交会提示）
+    scene_vars = (image_var, visual_var, speaking_var, actor_var)
+    if not story_mode:
+        analysis_hint.config(text="只在 STORY 窗口可用。")
+    elif not analysis_ok:
+        analysis_hint.config(text="还没有分析内容。")
     else:
-        pack_scene_field_choices(
-            groups, visual_var, speaking_var, actor_var, override_var, anchor=tk.N,
-            title=f"写进 {CONTENT_PDF_NAME} 的内容", image_var=image_var,
+        analysis_hint.config(
+            text=f"{analysis_len} 字，写进 {CONTENT_PDF_NAME}（不进提示词）；叙事风格固定讲述。"
+            + (f"\n原始材料 {os.path.basename(material_pdf)} 另外上传，只作背景。" if material_pdf else "")
         )
+    if story_mode and not has_scenes:
+        scene_hint.config(text="这一条还没有场景内容（scene_content），不能用。")
+    _prev_narr = [narrative_var.get()]
+    _sync_busy = [False]
+
+    def sync_sources(*_a) -> None:
+        """两节互斥：勾分析就清掉并灰掉场景选项、叙事风格固定讲述；勾任何场景选项就清掉并灰掉分析。"""
+        if _sync_busy[0]:
+            return
+        _sync_busy[0] = True
+        try:
+            use_a = bool(analysis_var.get())
+            any_scene = any(bool(v.get()) for v in scene_vars)
+            if use_a and any_scene:
+                for v in scene_vars:
+                    v.set(False)
+                any_scene = False
+            analysis_btn.configure(state=("normal" if analysis_ok and not any_scene else "disabled"))
+            scene_state = "normal" if scenes_ok and not use_a else "disabled"
+            for w in scene_widgets:
+                try:
+                    w.configure(state=("readonly" if isinstance(w, ttk.Combobox) and scene_state == "normal" else scene_state))
+                except tk.TclError:
+                    pass
+            for btn in narr_buttons:
+                btn.configure(state=("disabled" if use_a else "normal"))
+            narr_note.config(text=("分析内容：固定「讲述」（只有画外旁白，画面里没有人物，也没有讲员出镜）。" if use_a else ""))
+        finally:
+            _sync_busy[0] = False
+
+    def on_analysis_toggle(*_a) -> None:
+        if _sync_busy[0]:
+            return
+        if analysis_var.get():
+            _prev_narr[0] = narrative_var.get()
+            _sync_busy[0] = True
+            try:
+                for v in scene_vars:
+                    v.set(False)
+                narrative_var.set("narration")
+            finally:
+                _sync_busy[0] = False
+        else:
+            _sync_busy[0] = True
+            try:
+                narrative_var.set(_prev_narr[0] or "narration")
+            finally:
+                _sync_busy[0] = False
+        sync_sources()
+
+    # 初始：STORY 有分析内容默认勾上面；STORY 没场景就把场景选项清空；魔法工作流照旧。
+    if analysis_ok:
+        analysis_var.set(True)
+        on_analysis_toggle()
+    elif story_mode and not has_scenes:
+        for v in scene_vars:
+            v.set(False)
+    analysis_var.trace_add("write", on_analysis_toggle)
+    for v in scene_vars:
+        v.trace_add("write", sync_sources)
+    sync_sources()
 
     # 范围：放在「写进 content.pdf 的内容」右边。
     if get_scene_range is not None:
@@ -292,11 +378,20 @@ def open_slide_prompt_dialog(
 
     _bg_box, bg_include_var = pack_background_block(
         main, region, era, host_narrator,
-        style=(get_style() or "").strip(), actor_var=None if analysis_mode else actor_var,
+        style=(get_style() or "").strip(), actor_var=actor_var,
         initial=bool(saved_choice.get("background", True)) if isinstance(saved_choice, dict) else True,
     )
     _bg_box.pack_forget()
     _bg_box.pack(in_=lower, side=tk.LEFT, anchor=tk.N, pady=(0, 6))
+
+    # 注意 / FYI：用户临时补充的短说明（和图片 / 视频提示窗同一个控件），勾上才放在提示词最前面。
+    from gui.prompt_fyi import clean_fyi_history, pack_fyi_note, prepend_fyi
+
+    _fyi_box, get_fyi_text, fyi_include_var, get_fyi_history = pack_fyi_note(
+        main, history=clean_fyi_history(saved_choice) if isinstance(saved_choice, dict) else [], pady=(0, 8)
+    )
+    _fyi_box.pack_forget()
+    _fyi_box.pack(fill=tk.X, pady=(0, 8), before=lower)
 
     hints = {
         "story": "故事：人物在画面里演这个故事。有 actor 时，讲员是故事外的评述者，其他人物是演员。",
@@ -320,10 +415,11 @@ def open_slide_prompt_dialog(
             span = f"范围：{where}，共 {len(scenes_now)} 场。"
         except Exception:  # noqa: BLE001 提示行算不出来不影响
             span = ""
-        if analysis_mode:
-            single = "幻灯片按分析内容的结构一部分一页。" if output_var.get() == "slides" else ""
+        if analysis_var.get():
+            single = "幻灯片按分析报告的结构一部分一页。" if output_var.get() == "slides" else ""
             hint.config(
-                text=f"节目生成：来源是分析内容（不是场景）。{single}按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
+                text=f"分析内容：分析报告写进 {CONTENT_PDF_NAME} 上传（不进提示词）。{single}"
+                f"按「提交」拷贝提示词，交给 NotebookLM 生成{out_label}，完成后自动打开。"
             )
             return
         hint.config(
@@ -348,6 +444,8 @@ def open_slide_prompt_dialog(
                     "background": bool(bg_include_var.get()),
                     "output": output_var.get(),
                     "range": range_var.get(),
+                    "source": "analysis" if analysis_var.get() else "scenes",
+                    "fyi_history": get_fyi_history(),
                 }
             )
         except Exception as exc:  # noqa: BLE001 记不下来不影响拷贝
@@ -358,7 +456,7 @@ def open_slide_prompt_dialog(
         dlg.destroy()
 
     def copy_analysis_prompt() -> None:
-        """节目生成：分析内容 → 提示词（FYI）+ content.pdf；没有人物、没有场景对应。"""
+        """分析内容：分析报告 → content.pdf（来源）；提示词只有规则（+ 背景条件 + FYI），不放分析内容。"""
         try:
             analysis = (get_analysis() or "").strip()
         except Exception:  # noqa: BLE001
@@ -370,7 +468,6 @@ def open_slide_prompt_dialog(
         if not style:
             style = (project_manager.LAST_VISUAL_STYLE or "").strip() or config.VISUAL_STYLE_OPTIONS[0]
         prompt = build_analysis_prompt_text(
-            analysis,
             output=output_var.get(),
             text=text_var.get(),
             style=style,
@@ -379,6 +476,8 @@ def open_slide_prompt_dialog(
             host_narrator=host_narrator or "",
             background=bool(bg_include_var.get()),
             material_pdf=material_pdf,
+            fyi_text=get_fyi_text(),
+            fyi_include=bool(fyi_include_var.get()),
         )
         try:
             copy_text(prompt)
@@ -398,17 +497,18 @@ def open_slide_prompt_dialog(
             except tk.TclError:
                 pass
         print(
-            f"{title}：提交 output={output_var.get()} 分析内容 {len(analysis)} 字 "
-            f"content.pdf={pdf_path} 材料={material_pdf or '-'} 提示词 {len(prompt)} 字"
+            f"{title}：提交（分析内容）output={output_var.get()} 分析报告 {len(analysis)} 字 → {pdf_path}；"
+            f"材料={material_pdf or '-'}；提示词 {len(prompt)} 字"
         )
         kind = output_var.get()
         nb_url = current_notebook_url()
         close()
         if callable(open_manual):
-            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False))
+            extra_sources = [material_pdf] if material_pdf else []
+            parent.after(50, lambda: open_manual(prompt, kind, nb_url, pdf_path, "", False, extra_sources=extra_sources))
 
     def copy_prompt() -> None:
-        if analysis_mode:
+        if analysis_var.get():
             copy_analysis_prompt()
             return
         if not (visual_var.get() or speaking_var.get()):
@@ -465,6 +565,7 @@ def open_slide_prompt_dialog(
         prompt = config_prompt.prepend_background_condition(
             prompt, region, era, host_narrator, include=bool(bg_include_var.get())
         )
+        prompt = prepend_fyi(prompt, get_fyi_text(), include=bool(fyi_include_var.get()))
         try:
             copy_text(prompt)
         except (tk.TclError, OSError):
@@ -611,6 +712,7 @@ def open_slide_prompt_dialog(
     fill_notebooks([])
     refresh_notebooks()  # 打开窗口就在后台刷新（必要时启动 9222 Chrome）
     output_var.trace_add("write", refresh_choices)
+    analysis_var.trace_add("write", refresh_choices)
     range_var.trace_add("write", refresh_choices)
 
     dlg.protocol("WM_DELETE_WINDOW", close)
@@ -621,7 +723,6 @@ def open_slide_prompt_dialog(
 
 
 def build_analysis_prompt_text(
-    analysis: str,
     *,
     output: str = "slides",
     text: str = "erase",
@@ -631,8 +732,10 @@ def build_analysis_prompt_text(
     host_narrator: str = "",
     background: bool = True,
     material_pdf: str = "",
+    fyi_text: str = "",
+    fyi_include: bool = True,
 ) -> str:
-    """节目生成的完整提示词：FYI（分析内容全文）→ 背景条件 → 规则。没有 Tk，方便测试。"""
+    """分析内容的完整提示词：FYI（用户补充，勾上才有）→ 背景条件 → 规则。分析报告本身在 content.pdf，不在这里。"""
     from gui.prompt_fyi import prepend_fyi
     from utility.content_pdf import CONTENT_PDF_NAME
 
@@ -640,10 +743,8 @@ def build_analysis_prompt_text(
         output=output,
         text=text,
         visual_style=style,
-        analysis=analysis,
         content_source=CONTENT_PDF_NAME,
         material_source=os.path.basename(material_pdf) if material_pdf else "",
     )
     prompt = config_prompt.prepend_background_condition(prompt, region, era, host_narrator, include=background)
-    return prepend_fyi(prompt, analysis, include=True)
-
+    return prepend_fyi(prompt, fyi_text, include=fyi_include)

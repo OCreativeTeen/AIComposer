@@ -210,6 +210,117 @@ def _click_dialog_options(dlg, options) -> None:
             print(f"[notebooklm_cdp] option {text!r} not clicked: {exc}")
 
 
+# ---- 画面比例（extra["video_size"]："1920x1080" 横屏 / "1080x1920" 竖屏）----
+# 视频概览：「格式」两张卡片，简洁版带 crop_9_16 图标（竖屏，NotebookLM 默认选它），说明视频带 crop_16_9（横屏）。
+# 信息图：「选择屏幕方向」切换组 aria-labelledby="aspectRatio-label"（横向 / 纵向 / 方形）。
+# 演示文稿 / 音频概览：没有比例选项。演示文稿把比例写进提示词。
+VIDEO_FORMAT_RADIO_SEL = "mat-radio-button.tile-radio-button"
+VIDEO_FORMAT_ICON = {"landscape": "crop_16_9", "portrait": "crop_9_16"}
+INFOGRAPHIC_ORIENT_SEL = 'mat-button-toggle-group[aria-labelledby="aspectRatio-label"]'
+INFOGRAPHIC_ORIENT_RE = {
+    "landscape": re.compile(r"^\s*(横向|Landscape)\s*$", re.I),
+    "portrait": re.compile(r"^\s*(纵向|Portrait)\s*$", re.I),
+}
+ORIENTATION_PROMPT_LINE = {
+    "landscape": "画面比例：横屏 16:9（1920×1080）。",
+    "portrait": "画面比例：竖屏 9:16（1080×1920）。",
+}
+ORIENTATION_NAME = {"landscape": "横屏 16:9", "portrait": "竖屏 9:16"}
+
+
+def orientation_of(video_size) -> str:
+    """"1920x1080" → "landscape"，"1080x1920" → "portrait"；看不懂返回 ""。"""
+    m = re.match(r"^\s*(\d+)\s*[x×*]\s*(\d+)\s*$", str(video_size or ""), re.I)
+    if not m:
+        return ""
+    w, h = int(m.group(1)), int(m.group(2))
+    if w <= 0 or h <= 0:
+        return ""
+    return "landscape" if w >= h else "portrait"
+
+
+def with_orientation_line(prompt: str, orientation: str) -> str:
+    """提示词末尾加一行画面比例（已经有就不再加）。"""
+    line = ORIENTATION_PROMPT_LINE.get(orientation or "")
+    prompt = prompt or ""
+    if not line or line in prompt:
+        return prompt
+    return prompt.rstrip() + "\n\n" + line
+
+
+def _radio_is_checked(card) -> bool:
+    cls = card.get_attribute("class") or ""
+    if "radio-checked" in cls:
+        return True
+    inp = card.locator("input[type='radio']")
+    try:
+        return bool(inp.count()) and inp.first.is_checked()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _video_format_card(dlg, icon: str):
+    """视频概览「格式」卡片：图标名 crop_16_9 / crop_9_16 写在 mat-icon 里。"""
+    exact = re.compile(rf"^\s*{re.escape(icon)}\s*$")
+    card = dlg.locator("mat-radio-button", has_text=exact)
+    if not card.count():
+        card = dlg.locator("mat-radio-button").filter(has=dlg.locator("mat-icon", has_text=exact))
+    if not card.count():
+        card = dlg.locator(VIDEO_FORMAT_RADIO_SEL, has_text=icon)
+    return card.first if card.count() else None
+
+
+def _set_orientation(page, dlg, kind: str, orientation: str):
+    """在自定义窗里选画面比例。True=已选好，False=这个窗口里找不到比例选项，None=这一类本来就没有比例选项。"""
+    if kind == "video_overview":
+        icon = VIDEO_FORMAT_ICON[orientation]
+        card = _video_format_card(dlg, icon)
+        if card is None:
+            return False
+        if not _radio_is_checked(card):
+            card.click(timeout=5000)
+            page.wait_for_timeout(500)
+        if not _radio_is_checked(card):
+            raise RuntimeError(f"点了「{icon}」格式，但没有选上")
+        return True
+    if kind == "infographic":
+        group = dlg.locator(INFOGRAPHIC_ORIENT_SEL)
+        if not group.count():
+            return False
+        btn = group.first.locator("button", has_text=INFOGRAPHIC_ORIENT_RE[orientation])
+        if not btn.count():
+            return False
+        btn = btn.first
+        if (btn.get_attribute("aria-checked") or "") != "true":
+            btn.click(timeout=5000)
+            page.wait_for_timeout(400)
+        if (btn.get_attribute("aria-checked") or "") != "true":
+            raise RuntimeError("点了屏幕方向，但没有选上")
+        return True
+    return None
+
+
+def _apply_video_size(page, dlg, kind: str, video_size, prompt: str, status: Status) -> str:
+    """按 ``video_size`` 选比例；没有比例选项（演示文稿）或没选上时把比例写进提示词。返回要填的提示词。"""
+    orientation = orientation_of(video_size)
+    if not orientation or kind == "audio_overview":
+        return prompt
+    name = ORIENTATION_NAME[orientation]
+    try:
+        ok = _set_orientation(page, dlg, kind, orientation)
+    except Exception as exc:  # noqa: BLE001 选不上不中断：写进提示词
+        print(f"[notebooklm_cdp] 画面比例 {name} 没有选上：{exc}")
+        ok = False
+    if ok:
+        _say(status, f"画面比例：{name}")
+        return prompt
+    if ok is None:
+        _say(status, f"「{STUDIO_KINDS[kind]['name']}」没有画面比例选项，已写进提示词：{name}")
+    else:
+        _say(status, f"⚠️ 没有选上画面比例 {name}，已写进提示词")
+    return with_orientation_line(prompt, orientation)
+
+
 def _fill_prompt(page, dlg, prompt: str) -> None:
     box = dlg.locator("textarea").first
     box.click()
@@ -372,21 +483,133 @@ def _remove_sources_named(page, name: str, status: Status) -> int:
     return removed
 
 
+BACKDROP_SEL = ".cdk-overlay-backdrop.cdk-overlay-backdrop-showing"
+FILE_INPUT_SEL = 'input[type="file"]'
+
+
+def _add_source_dialog(page):
+    """已经打开的「添加来源」窗（笔记本没有来源时 NotebookLM 会自己弹出来）：
+    对话框里有「上传文件 / Upload files / Upload sources」按钮或文件输入框。没有返回 None。"""
+    try:
+        dlgs = page.locator(DIALOG_SEL)
+        for i in range(dlgs.count() - 1, -1, -1):
+            dlg = dlgs.nth(i)
+            if dlg.locator("button", has_text=UPLOAD_BTN_RE).count() or dlg.locator(FILE_INPUT_SEL).count():
+                return dlg
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _backdrop_showing(page) -> bool:
+    try:
+        return bool(page.locator(BACKDROP_SEL).count())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _clear_overlays(page, status: Status = None, *, keep_add_source: bool = False, timeout_s: float = 6.0) -> None:
+    """关掉挡在页面上的弹窗 / 菜单（关闭按钮 → Escape），等遮罩消失。
+    ``keep_add_source``：已经打开的「添加来源」窗留着不关（直接拿来上传）。"""
+    deadline = time.monotonic() + timeout_s
+    tried_close = False
+    while _backdrop_showing(page) or page.locator(DIALOG_SEL).count():
+        if keep_add_source and _add_source_dialog(page) is not None:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("页面上的弹窗关不掉（遮罩一直在）")
+        if not tried_close:
+            _close_dialog(page)
+            tried_close = True
+        else:
+            try:
+                page.keyboard.press("Escape")
+            except Exception:  # noqa: BLE001
+                pass
+        page.wait_for_timeout(600)
+    _ = status
+
+
+def _open_add_source(page, status: Status = None):
+    """返回可以上传文件的「添加来源」窗：已经开着就直接用；否则清掉遮罩再点「添加来源」。
+    点击被遮罩拦住时（例如刚删完最后一个来源，NotebookLM 自己弹出添加来源窗），重新检查再试。"""
+    last_exc = None
+    for attempt in range(4):
+        dlg = _add_source_dialog(page)
+        if dlg is not None:
+            _say(status, "用已经打开的「添加来源」窗 .")
+            return dlg
+        _clear_overlays(page, status, keep_add_source=True)
+        dlg = _add_source_dialog(page)
+        if dlg is not None:
+            _say(status, "用已经打开的「添加来源」窗 .")
+            return dlg
+        try:
+            page.locator(ADD_SOURCE_SEL).first.click(timeout=8000)
+        except Exception as exc:  # noqa: BLE001 多半是刚弹出的窗挡住了，回头再看
+            last_exc = exc
+            page.wait_for_timeout(1200)
+            continue
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            dlg = _add_source_dialog(page)
+            if dlg is not None:
+                return dlg
+            page.wait_for_timeout(500)
+        last_exc = RuntimeError("点了「添加来源」，但没有出现上传窗")
+    raise RuntimeError(f"打不开「添加来源」窗：{last_exc}")
+
+
+def _choose_file(page, dlg, path: str) -> None:
+    """在添加来源窗里选文件：优先点「上传文件」接文件选择器；没有按钮就直接填文件输入框。"""
+    btn = dlg.locator("button", has_text=UPLOAD_BTN_RE)
+    if btn.count():
+        try:
+            with page.expect_file_chooser(timeout=15_000) as fc:
+                btn.first.click(timeout=8000)
+            fc.value.set_files(path)
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not dlg.locator(FILE_INPUT_SEL).count():
+                raise RuntimeError(f"点「上传文件」没有出现文件选择：{exc}")
+    inp = dlg.locator(FILE_INPUT_SEL)
+    if not inp.count():
+        inp = page.locator(FILE_INPUT_SEL)
+    if not inp.count():
+        raise RuntimeError("添加来源窗里没有「上传文件」按钮，也没有文件输入框")
+    inp.first.set_input_files(path)
+
+
 def upload_source(page, path: str, status: Status = None, *, timeout_s: float = 300) -> dict:
-    """把 ``path`` 上传为笔记本来源（先移除同名旧来源），等处理完成且已勾选。返回该来源行信息。"""
+    """把 ``path`` 上传为笔记本来源（先移除同名旧来源），等处理完成且已勾选。返回该来源行信息。
+
+    顺序仍是「先删同名旧来源，再上传」：两个同名来源同时存在时分不清哪个是新的（标题一样），
+    提示词里又是按文件名指定来源。删完可能一个来源都没有，NotebookLM 会自己弹出「添加来源」窗，
+    _open_add_source 会直接用这个窗，不再去点被挡住的「添加来源」按钮。出错时说明是哪一步。
+    """
     path = os.path.abspath(path)
     if not os.path.isfile(path):
         raise RuntimeError(f"找不到来源文件：{path}")
     name = os.path.basename(path)
-    _close_dialog(page)
-    _remove_sources_named(page, name, status)
+
+    def step(label, fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"上传来源 {name}：{label}失败：{exc}") from exc
+
+    step("关闭弹窗", lambda: _clear_overlays(page, status, keep_add_source=True))
+    if _add_source_dialog(page) is None:
+        step("移除同名旧来源", lambda: _remove_sources_named(page, name, status))
+    else:
+        # 添加来源窗挡着来源列表（多半是空笔记本）：先用它上传，没有同名旧来源要删
+        rows_now = [r for r in _sources(page) if r.get("title") == name]
+        if rows_now:
+            step("关闭添加来源窗", lambda: _clear_overlays(page, status))
+            step("移除同名旧来源", lambda: _remove_sources_named(page, name, status))
     _say(status, f"添加来源 {name} .")
-    page.locator(ADD_SOURCE_SEL).first.click(timeout=8000)
-    page.wait_for_selector(DIALOG_SEL, timeout=15_000)
-    dlg = page.locator(DIALOG_SEL).last
-    with page.expect_file_chooser(timeout=15_000) as fc:
-        dlg.locator("button", has_text=UPLOAD_BTN_RE).first.click(timeout=8000)
-    fc.value.set_files(path)
+    dlg = step("打开「添加来源」窗", lambda: _open_add_source(page, status))
+    step("选择文件", lambda: _choose_file(page, dlg, path))
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout_s:
         rows = [r for r in _sources(page) if r.get("title") == name]
@@ -394,15 +617,18 @@ def upload_source(page, path: str, status: Status = None, *, timeout_s: float = 
         if rows and not rows[0].get("loading"):
             row = rows[0]
             if not row.get("checked"):
-                page.locator(SOURCE_ROW_SEL).nth(row["i"]).locator("mat-checkbox.select-checkbox").first.click()
-                page.wait_for_timeout(600)
+                def _tick(r=row):
+                    _clear_overlays(page, status)
+                    page.locator(SOURCE_ROW_SEL).nth(r["i"]).locator("mat-checkbox.select-checkbox").first.click()
+                    page.wait_for_timeout(600)
+                step("勾选来源", _tick)
                 row = next((r for r in _sources(page) if r.get("title") == name), row)
-            _close_dialog(page)
+            step("关闭添加来源窗", lambda: _clear_overlays(page, status))
             _say(status, f"来源 {name} 已就绪（{el}s）")
             return row
         _say(status, f"等待来源 {name} 处理 . {el}s")
         time.sleep(2.0)
-    raise RuntimeError(f"来源 {name} {int(timeout_s)}s 内未处理完")
+    raise RuntimeError(f"上传来源 {name}：等待处理失败：{int(timeout_s)}s 内未处理完")
 
 
 def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str = "",
@@ -428,10 +654,13 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = _studio_page(ctx, url, status)
+            try:
+                page = _studio_page(ctx, url, status)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(f"打开笔记本失败：{exc}") from exc
             source_pdf = str(extra.get("source_pdf") or "").strip()
             if source_pdf:
-                # 其他来源保持原勾选；提示词里写明以 content.pdf 为主。
+                # 其他来源保持原勾选；提示词里写明以 content.pdf 为主。upload_source 的错误已写明是哪一步。
                 upload_source(page, source_pdf, status)
             # 额外来源（节目生成：原始材料 PDF，只作背景）。全集生成不传，行为不变。上传失败只提示，不中断。
             for extra_src in extra.get("extra_sources") or ():
@@ -466,24 +695,36 @@ def make_studio(kind: str, prompt: str, dest_dir: str = "", notebook_url_: str =
                         pass
             elif source_pdf:
                 # 这一集没有人物：去掉上一次留下的 actor.pdf，免得按旧人物画。
-                _close_dialog(page)
-                _remove_sources_named(page, "actor.pdf", status)
+                try:
+                    _clear_overlays(page, status)
+                    _remove_sources_named(page, "actor.pdf", status)
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(f"移除旧来源 actor.pdf 失败：{exc}") from exc
             if not actor_ready and "Actor_Reference:" in prompt:
                 # 保证：只有 actor.pdf 真的上传就绪，提示词里才有 Actor_Reference。
                 import config_prompt
 
                 prompt = config_prompt.strip_actor_reference(prompt)
                 print("全集生成：actor.pdf 没有就绪，提交前已去掉 Actor_Reference。")
+            def _step(label, fn):
+                try:
+                    return fn()
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(f"{label}失败：{exc}") from exc
+
+            _step("关闭弹窗", lambda: _clear_overlays(page, status))
             before = {r.get("key") for r in _rows(page)}
-            dlg = _open_customize(page, spec, status)
+            dlg = _step(f"打开「{spec['name']}」自定义窗", lambda: _open_customize(page, spec, status))
+            # 先选比例（视频概览的「格式」会换卡片），再点其他选项、填提示词。
+            prompt = _step("设置画面比例", lambda: _apply_video_size(page, dlg, kind, extra.get("video_size"), prompt, status))
             _click_dialog_options(dlg, extra.get("nblm_options"))
             _say(status, "填提示词 …")
-            _fill_prompt(page, dlg, prompt)
+            _step("填提示词", lambda: _fill_prompt(page, dlg, prompt))
             _say(status, "立即生成 …")
-            _click_generate_now(page, dlg)
-            idx = _wait_new_row(page, before, spec, status, timeout_s)
+            _step("立即生成", lambda: _click_generate_now(page, dlg))
+            idx = _step("等待生成", lambda: _wait_new_row(page, before, spec, status, timeout_s))
             _say(status, "下载 …")
-            path, _texts = _menu_download(page, idx, spec, dest_dir, kind)
+            path, _texts = _step("下载", lambda: _menu_download(page, idx, spec, dest_dir, kind))
             _say(status, f"已下载：{os.path.basename(path)}")
             return path
 

@@ -111,9 +111,16 @@ def _title_prompt(chinese: bool) -> str:
     )
 
 
-def suggest_project_titles(scenes, current: str = "", n: int = 3) -> list[str]:
-    """本机 Strata（llm_api.MODEL_SIMPLE）出 n 个项目名。失败或没内容就抛 RuntimeError。不开手动窗口。"""
-    text = scenes_text_for_titles(scenes)
+def suggest_project_titles(scenes, current: str = "", n: int = 3, source_text: str = "") -> list[str]:
+    """本机 Strata（llm_api.MODEL_SIMPLE）出 n 个项目名。失败或没内容就抛 RuntimeError。不开手动窗口。
+
+    给了 ``source_text``（分析报告）就用它，否则用场景内容。
+    """
+    text = (source_text or "").strip()
+    if text:
+        text = text[:SCENE_TEXT_MAX_CHARS].rstrip()
+    else:
+        text = scenes_text_for_titles(scenes)
     if not text:
         raise RuntimeError("没有场景内容，不能生成项目名称。")
     import utility.llm_api as llm_api
@@ -134,6 +141,7 @@ def ask_project_title(
     scenes,
     on_chosen: Callable[[str], None],
     title: str = "项目名称建议",
+    source_text: str = "",
 ) -> tk.Toplevel:
     """选项目名称的小窗：当前名称在最前（默认选中），后面是 3 个建议；可以直接改写。
 
@@ -155,7 +163,14 @@ def ask_project_title(
     name_var = tk.StringVar(value=current)
     entry = ttk.Entry(main, textvariable=name_var, width=58)
     entry.pack(fill=tk.X)
-    status = tk.Label(main, text="正在根据场景内容生成建议…", fg="#1a4fa0", anchor="w", justify=tk.LEFT)
+    _from_report = bool((source_text or "").strip())
+    status = tk.Label(
+        main,
+        text="正在根据分析报告生成建议…" if _from_report else "正在根据场景内容生成建议…",
+        fg="#1a4fa0",
+        anchor="w",
+        justify=tk.LEFT,
+    )
     status.pack(fill=tk.X, pady=(6, 0))
     bar = ttk.Frame(main)
     bar.pack(fill=tk.X, pady=(10, 0))
@@ -195,7 +210,7 @@ def ask_project_title(
 
     def _work():
         try:
-            results.put(("ok", suggest_project_titles(scenes, current)))
+            results.put(("ok", suggest_project_titles(scenes, current, source_text=source_text)))
         except Exception as exc:  # noqa: BLE001
             results.put(("err", str(exc)))
 

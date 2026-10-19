@@ -781,7 +781,7 @@ class ChannelVideosDialogImpl:
             """重新生成分析报告。``analyze_key`` 分析方式；``source_text`` 只用这段材料；``append`` 追加到末尾。"""
             host = parent or dialog
             if not isinstance(vd, dict):
-                return
+                return False
             self.update_text_content(vd)
             if not self.generate_analyzed_content_for_video(
                 vd, force_rewrite=True, analyze_key=analyze_key, source_text=source_text, append=append
@@ -791,8 +791,8 @@ class ChannelVideosDialogImpl:
                     "无法重新摘要：缺少足够转录原文，或生成失败。",
                     parent=host,
                 )
-                return
-            self.prepare_category_for_content(vd, self.topic_choices)
+                return False
+            # 分析方式只跑一次，结果直接写入分析报告。不再接着用这份结果去分类（那会再开一次 LLM）。
             try:
                 _write_channel_list_json_file(
                     self.downloader.channel_list_json, self.downloader.channel_videos
@@ -801,6 +801,7 @@ class ChannelVideosDialogImpl:
                 pass
             populate_tree()
             show_auto_close_popup(host, "重摘", "已重新生成 analyzed content。")
+            return True
 
         def _run_project_start_for_video_detail(
             vd,
@@ -813,8 +814,13 @@ class ChannelVideosDialogImpl:
             topic_tags=None,
             on_reopen_summary=None,
             after_persist=None,
+            video_size=None,
+            setting_region=None,
+            setting_era=None,
         ):
-            """启动/打开工作流项目。forced_action: None=完整流程；open=仅打开；new=仅新建。"""
+            """启动/打开工作流项目。forced_action: None=完整流程；open=仅打开；new=仅新建。
+            video_size：STORY 窗口选的画面比例，新建时作为新建窗口的初始值。
+            setting_region / setting_era：STORY 窗口选的地域和时代，新建时写进项目。"""
             if not isinstance(vd, dict):
                 return
 
@@ -1063,6 +1069,8 @@ class ChannelVideosDialogImpl:
                 topic_tags_kw=None,
                 superseded_pid: str = "",
                 dialogue_mode=None,
+                setting_region=None,
+                setting_era=None,
             ):
                 if not _scene_content_nonempty(
                     {"scene_content": scene_content}
@@ -1089,6 +1097,9 @@ class ChannelVideosDialogImpl:
                     topic_subtype=topic_subtype_kw if topic_subtype_kw is not None else _topic_subtype_val(),
                     topic_tags=topic_tags_kw if topic_tags_kw is not None else _topic_tags_val(),
                     dialogue_mode=dialogue_mode,
+                    video_size=video_size,
+                    setting_region=setting_region,
+                    setting_era=setting_era,
                 )
                 if result == "new" and selected_config:
                     _after_new_project_created(
@@ -1201,9 +1212,11 @@ class ChannelVideosDialogImpl:
                 topic_subtype_kw=_topic_subtype_val(),
                 topic_tags_kw=_topic_tags_val(),
                 dialogue_mode=_look_talk,
+                setting_region=setting_region,
+                setting_era=setting_era,
             )
 
-        def _regenerate_project_for_video_detail(vd, parent):
+        def _regenerate_project_for_video_detail(vd, parent, video_size=None, setting_region=None, setting_era=None):
             """确认后删掉这条已有项目的工作流文件，再用当前内容新建一个新 pid。"""
             if not isinstance(vd, dict):
                 return
@@ -1254,6 +1267,9 @@ class ChannelVideosDialogImpl:
                 topic_category=(vd.get("topic_category") or "").strip() or None,
                 topic_subtype=(vd.get("topic_subtype") or "").strip() or None,
                 topic_tags=vd.get("tags"),
+                video_size=video_size,
+                setting_region=setting_region,
+                setting_era=setting_era,
             )
 
         def _open_project_for_video_detail(
@@ -1263,6 +1279,9 @@ class ChannelVideosDialogImpl:
             topic_category=None,
             topic_subtype=None,
             topic_tags=None,
+            video_size=None,
+            setting_region=None,
+            setting_era=None,
         ):
             """当前这条已有项目则直接打开；还没有则把新建项目的信息写回这一条。"""
             if not isinstance(vd, dict):
@@ -1294,6 +1313,9 @@ class ChannelVideosDialogImpl:
                 topic_category=topic_category,
                 topic_subtype=topic_subtype,
                 topic_tags=topic_tags,
+                video_size=video_size,
+                setting_region=setting_region,
+                setting_era=setting_era,
             )
 
         def on_enter_key(event):
@@ -1672,17 +1694,46 @@ class ChannelVideosDialogImpl:
                 except (NameError, tk.TclError):
                     pass
 
+            def _story_video_size():
+                """STORY 窗口第 1 行选的画面比例（场景编辑器放进 _summary_drop_ctx 的取值函数）。"""
+                ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                getter = ctx.get("story_video_size") if isinstance(ctx, dict) else None
+                try:
+                    return (getter() if callable(getter) else "") or None
+                except tk.TclError:
+                    return None
+
+            def _story_setting():
+                """STORY 窗口选的地域和时代。"""
+                ctx = getattr(summary_window, "_summary_drop_ctx", None)
+                getter = ctx.get("story_setting") if isinstance(ctx, dict) else None
+                try:
+                    pair = getter() if callable(getter) else ("", "")
+                except tk.TclError:
+                    pair = ("", "")
+                if not isinstance(pair, (tuple, list)) or len(pair) < 2:
+                    return None, None
+                return pair[0] or None, pair[1] or None
+
             def _open_project_from_summary():
+                region, era = _story_setting()
                 _open_project_for_video_detail(
                     video_detail,
                     summary_window,
                     topic_category=(category_var.get() or "").strip() or None,
                     topic_subtype=(subtype_var.get() or "").strip() or None,
                     topic_tags=tags_var.get(),
+                    video_size=_story_video_size(),
+                    setting_region=region,
+                    setting_era=era,
                 )
 
             def _regen_project_from_summary():
-                _regenerate_project_for_video_detail(video_detail, summary_window)
+                region, era = _story_setting()
+                _regenerate_project_for_video_detail(
+                    video_detail, summary_window, video_size=_story_video_size(),
+                    setting_region=region, setting_era=era,
+                )
 
             def _resummarize_from_summary(**kw):
                 _resummarize_one_video_detail(video_detail, summary_window, **kw)
